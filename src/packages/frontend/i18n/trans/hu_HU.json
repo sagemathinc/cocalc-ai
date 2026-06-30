@@ -40,7 +40,7 @@
   "account.editor-settings.title": "Szerkesztő",
   "account.editor-settings.x11-keyboard-variant.label": "Billentyűzet variáns (X11 asztali környezethez)",
   "account.editor-settings.x11-physical-keyboard.label": "Billentyűzetkiosztás (X11 asztalhoz)",
-  "account.global-ssh-keys.help": "A projektbe való SSH belépéshez használja a következőt <code>username@host: [project-id-without-dashes]@ssh.cocalc.com</code> A kötőjelek nélküli projektazonosító az SSH kulcsok projektbeállításai részben található. Projektek közötti SSH-hoz használja <code>[project-id-without-dashes]@ssh</code>",
+  "account.global-ssh-keys.help": "A projektbe való SSH belépéshez használja a következőt <code>username@host: [project-id-without-dashes]@ssh.cocalc.ai</code> A kötőjelek nélküli projektazonosító az SSH kulcsok projektbeállításai részben található. Projektek közötti SSH-hoz használja <code>[project-id-without-dashes]@ssh</code>",
   "account.global-ssh-keys.info": "A globális SSH kulcsok, amelyek itt vannak felsorolva, lehetővé teszik, hogy a számítógépedről SSH-n keresztül csatlakozz <strong><i>minden projekthez</i></strong>, amelyeken tulajdonos vagy közreműködő vagy. Alternatív megoldásként állíts be SSH kulcsokat, amelyek csak egy projekthez adnak hozzáférést a projekt beállításaiban. További útmutatásért lásd <A>a dokumentációt</A> vagy a projekt beállítási oldalának SSH részét.",
   "account.keyboard-settings.intro": "Ezek többnyire CoCalc-specifikus billentyűparancsok a kód szerkesztéséhez. Ezek közül sok nem szabványos funkció, amelyeket a szerkesztő billentyűzetei biztosítanak. Sajnos a billentyűparancsok jelenleg nem testreszabhatók.",
   "account.keyboard-shortcuts.shortcut.autoindent": "Automatikus behúzás kijelölés",

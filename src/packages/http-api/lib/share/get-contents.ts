@@ -28,7 +28,7 @@ const UNLISTED_LIMITS = {
   whiteboard: 10 * MB,
   slides: 10 * MB,
   other: 5 * MB,
-  html: 40 * MB, // E.g., cambridge: https://cocalc.com/Cambridge/S002211202200903X/S002211202200903X-Figure-4/files/Figure4.html
+  html: 40 * MB, // E.g., cambridge: https://cocalc.ai/Cambridge/S002211202200903X/S002211202200903X-Figure-4/files/Figure4.html
 
   // no special viewer
   generic: 10 * MB,

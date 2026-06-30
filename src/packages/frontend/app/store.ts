@@ -42,7 +42,7 @@ export interface PageState {
   num_ghost_tabs: number;
   session?: string; // session query in the URL
   last_status_time?: Date;
-  get_api_key?: string; // Set, e.g., when you visit https://cocalc.com/app?get_api_key=myapp -- see /docs/api/http-api
+  get_api_key?: string; // Set, e.g., when you visit https://cocalc.ai/app?get_api_key=myapp -- see /docs/api/http-api
   kiosk_project_id?: string;
 
   popconfirm?: {

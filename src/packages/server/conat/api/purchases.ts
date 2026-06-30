@@ -1,5 +1,10 @@
 import getBalance from "@cocalc/server/purchases/get-balance";
 import getMinBalance0 from "@cocalc/server/purchases/get-min-balance";
+import { db } from "@cocalc/database";
+import {
+  getMembershipTierRows,
+  getMembershipTierUsageReport as getMembershipTierUsageReportLocal,
+} from "@cocalc/database/postgres/membership-tiers";
 import {
   getManagedEgressAdminHistory as getManagedEgressAdminHistory0,
   getManagedEgressAdminOverview as getManagedEgressAdminOverview0,
@@ -33,6 +38,7 @@ import { getAccountUsageOverviewForAccount } from "@cocalc/server/membership/acc
 import type {
   AbuseReviewCategory,
   AbuseReviewDisposition,
+  AdminMembershipTierRow,
   AdminMembershipTierPayload,
   AccountUsageWindowEpoch,
   AdminActiveUsersBucket,
@@ -40,6 +46,10 @@ import type {
   AdminRetentionCohortUnit,
   AdminResetMembershipUsageWindowsResult,
   AbuseReviewPriorityAdjustment,
+  MembershipTierAdminOverview,
+  MembershipTierAdminOverviewBay,
+  MembershipTierUsageCountRow,
+  MembershipTierUsageReport,
   MembershipClass,
   MembershipUsageWindowResetTarget,
 } from "@cocalc/conat/hub/api/purchases";
@@ -47,7 +57,10 @@ import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
-import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
+import {
+  listConfiguredBays,
+  resolveAccountHomeBay,
+} from "@cocalc/server/bay-directory";
 import { getClusterAccountByIdDirect } from "@cocalc/server/accounts/cluster-directory";
 import {
   assignMembershipPackageSeat as assignMembershipPackageSeat0,
@@ -109,6 +122,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
@@ -237,6 +251,171 @@ function assertMembershipTierAdminBay(): void {
   if (!isSeedBay()) {
     throw Error(
       "membership tier configuration must be changed on the seed bay",
+    );
+  }
+}
+
+const MEMBERSHIP_TIER_USAGE_COUNT_FIELDS = [
+  "subscription_count",
+  "subscribed_account_count",
+  "team_seat_count",
+  "team_account_count",
+  "course_account_count",
+  "site_account_count",
+  "admin_assigned_count",
+  "site_license_count",
+  "total_account_count",
+  "usage_history_count",
+] as const;
+
+function zeroMembershipTierUsageCountRow(
+  tier_id: string,
+): MembershipTierUsageCountRow {
+  return {
+    tier_id,
+    subscription_count: 0,
+    subscribed_account_count: 0,
+    team_seat_count: 0,
+    team_account_count: 0,
+    course_account_count: 0,
+    site_account_count: 0,
+    admin_assigned_count: 0,
+    site_license_count: 0,
+    total_account_count: 0,
+    usage_history_count: 0,
+  };
+}
+
+function addMembershipTierUsageCountRow(
+  countsByTier: Map<string, MembershipTierUsageCountRow>,
+  row: MembershipTierUsageCountRow,
+): void {
+  const tierId = `${row.tier_id ?? ""}`.trim();
+  if (!tierId) return;
+  const aggregate =
+    countsByTier.get(tierId) ?? zeroMembershipTierUsageCountRow(tierId);
+  for (const field of MEMBERSHIP_TIER_USAGE_COUNT_FIELDS) {
+    aggregate[field] += Math.max(0, Number(row[field] ?? 0) || 0);
+  }
+  countsByTier.set(tierId, aggregate);
+}
+
+function aggregateMembershipTierUsageReports(
+  reports: MembershipTierUsageReport[],
+): {
+  countsByTier: Map<string, MembershipTierUsageCountRow>;
+  totalActiveAccountCount: number;
+} {
+  const countsByTier = new Map<string, MembershipTierUsageCountRow>();
+  let totalActiveAccountCount = 0;
+  for (const report of reports) {
+    totalActiveAccountCount += Math.max(
+      0,
+      Number(report.total_active_account_count ?? 0) || 0,
+    );
+    for (const row of report.tiers ?? []) {
+      addMembershipTierUsageCountRow(countsByTier, row);
+    }
+  }
+  return { countsByTier, totalActiveAccountCount };
+}
+
+async function getMembershipTierUsageReportForBay({
+  account_id,
+  bay_id,
+  currentBayId,
+}: {
+  account_id?: string;
+  bay_id: string;
+  currentBayId: string;
+}): Promise<MembershipTierUsageReport> {
+  return bay_id === currentBayId
+    ? await getMembershipTierUsageReportLocal(db(), bay_id)
+    : await getInterBayBridge()
+        .bayOps(bay_id, { timeout_ms: 15_000 })
+        .getMembershipTierUsageReport({ account_id });
+}
+
+async function getConfiguredMembershipTierUsageReports({
+  account_id,
+  currentBayId,
+}: {
+  account_id?: string;
+  currentBayId: string;
+}): Promise<{
+  reports: MembershipTierUsageReport[];
+  bays: MembershipTierAdminOverviewBay[];
+}> {
+  const bayIds = await getConfiguredBayIdsForMembershipTierOverview();
+  const settled = await Promise.allSettled(
+    bayIds.map(async (bay_id) =>
+      getMembershipTierUsageReportForBay({
+        account_id,
+        bay_id,
+        currentBayId,
+      }),
+    ),
+  );
+  const reports: MembershipTierUsageReport[] = [];
+  const bays: MembershipTierAdminOverviewBay[] = bayIds.map((bay_id, i) => {
+    const result = settled[i];
+    if (result.status === "fulfilled") {
+      reports.push(result.value);
+      return { bay_id, ok: true };
+    }
+    return {
+      bay_id,
+      ok: false,
+      error: `${result.reason}`,
+    };
+  });
+  return { reports, bays };
+}
+
+function getUsageHistoryCountForTier(
+  report: MembershipTierUsageReport,
+  tier_id: string,
+): number {
+  const row = report.tiers.find((row) => row.tier_id === tier_id);
+  return Math.max(0, Number(row?.usage_history_count ?? 0) || 0);
+}
+
+function formatBayIds(bayIds: string[]): string {
+  return bayIds.join(", ");
+}
+
+async function assertNoMembershipTierUsageHistoryAcrossConfiguredBays({
+  account_id,
+  tier_id,
+  currentBayId,
+}: {
+  account_id?: string;
+  tier_id: string;
+  currentBayId: string;
+}): Promise<void> {
+  const { reports, bays } = await getConfiguredMembershipTierUsageReports({
+    account_id,
+    currentBayId,
+  });
+  const failedBayIds = bays.filter((bay) => !bay.ok).map((bay) => bay.bay_id);
+  if (failedBayIds.length > 0) {
+    throw Error(
+      `cannot delete membership tier "${tier_id}" because usage history could not be checked on bay(s): ${formatBayIds(
+        failedBayIds,
+      )}`,
+    );
+  }
+  const usedBays = reports
+    .map((report) => ({
+      bay_id: report.bay_id,
+      count: getUsageHistoryCountForTier(report, tier_id),
+    }))
+    .filter(({ count }) => count > 0);
+  if (usedBays.length > 0) {
+    throw Error(
+      `cannot delete membership tier "${tier_id}" because it has usage history on bay(s): ${usedBays
+        .map(({ bay_id, count }) => `${bay_id} (${count})`)
+        .join(", ")}`,
     );
   }
 }
@@ -389,6 +568,73 @@ export async function getMembershipDetails({
   });
 }
 
+async function getConfiguredBayIdsForMembershipTierOverview(): Promise<
+  string[]
+> {
+  const currentBayId = getConfiguredBayId();
+  return [
+    ...new Set(
+      (await listConfiguredBays())
+        .map((bay) => `${bay.bay_id ?? ""}`.trim())
+        .filter(Boolean)
+        .concat(currentBayId),
+    ),
+  ].sort();
+}
+
+export async function getMembershipTierAdminOverview({
+  account_id,
+}: {
+  account_id?: string;
+} = {}): Promise<MembershipTierAdminOverview> {
+  await requireAdmin(account_id);
+  assertMembershipTierAdminBay();
+  const currentBayId = getConfiguredBayId();
+  const seedBayId = getSeedBayId();
+  const tierRows = (await getMembershipTierRows(
+    db(),
+  )) as AdminMembershipTierRow[];
+  const { reports, bays } = await getConfiguredMembershipTierUsageReports({
+    account_id,
+    currentBayId,
+  });
+  const partialUsageReport = bays.some((bay) => !bay.ok);
+  const { countsByTier, totalActiveAccountCount } =
+    aggregateMembershipTierUsageReports(reports);
+  const tiers = tierRows.map((tier) => {
+    const counts =
+      countsByTier.get(tier.id) ?? zeroMembershipTierUsageCountRow(tier.id);
+    const has_usage_history =
+      counts.usage_history_count > 0
+        ? true
+        : partialUsageReport
+          ? undefined
+          : false;
+    return {
+      ...tier,
+      subscription_count: counts.subscription_count,
+      subscribed_account_count: counts.subscribed_account_count,
+      team_seat_count: counts.team_seat_count,
+      team_account_count: counts.team_account_count,
+      course_account_count: counts.course_account_count,
+      site_account_count: counts.site_account_count,
+      admin_assigned_count: counts.admin_assigned_count,
+      site_license_count: counts.site_license_count,
+      total_account_count: counts.total_account_count,
+      total_active_account_count: totalActiveAccountCount,
+      has_usage_history,
+    } satisfies AdminMembershipTierRow;
+  });
+  return {
+    checked_at: new Date().toISOString(),
+    current_bay_id: currentBayId,
+    seed_bay_id: seedBayId,
+    tiers,
+    total_active_account_count: totalActiveAccountCount,
+    bays,
+  };
+}
+
 export async function createMembershipTier({
   account_id,
   browser_id,
@@ -451,8 +697,18 @@ export async function deleteMembershipTier({
   session_hash?: string | null;
   id?: MembershipClass;
 } = {}): Promise<{ id: MembershipClass }> {
-  await requireFreshAuthAdmin({ account_id, browser_id, session_hash });
-  return await deleteMembershipTier0({ id: requireMembershipTierId(id) });
+  const accountId = await requireFreshAuthAdmin({
+    account_id,
+    browser_id,
+    session_hash,
+  });
+  const tierId = requireMembershipTierId(id);
+  await assertNoMembershipTierUsageHistoryAcrossConfiguredBays({
+    account_id: accountId,
+    tier_id: tierId,
+    currentBayId: getConfiguredBayId(),
+  });
+  return await deleteMembershipTier0({ id: tierId });
 }
 
 export async function getAccountUsageOverview({

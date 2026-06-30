@@ -3,19 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
-import { BulletList, featureAppPath as appPath } from "./page-components";
 import {
-  IconBadge,
-  StartCard,
-  StoryCard,
-  TerminalMock,
-} from "./feature-visuals";
+  PUBLIC_ELEVATION,
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
+import { BulletList, featureAppPath as appPath } from "./page-components";
+import { FEATURE_ACCENTS } from "./feature-accents";
+import { ContextList, FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -35,15 +35,15 @@ function JuliaProjectMock() {
         background:
           "linear-gradient(145deg, #ffffff 0%, #f7f4ff 52%, #f4fff8 100%)",
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
-        boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
+        borderRadius: PUBLIC_RADIUS.panel,
+        boxShadow: PUBLIC_ELEVATION.lg,
         padding: 20,
       }}
     >
       <Flex vertical gap={16}>
         <Flex align="center" justify="space-between" wrap gap={10}>
           <Flex align="center" gap={10}>
-            <IconBadge accent="#9558b2" icon="julia" />
+            <IconBadge accent={FEATURE_ACCENTS.julia} icon="julia" />
             <div>
               <Text strong>Julia project</Text>
               <div style={{ color: PUBLIC_COLORS.mutedText }}>
@@ -51,9 +51,6 @@ function JuliaProjectMock() {
               </div>
             </div>
           </Flex>
-          <Tag color="purple" style={{ marginInlineEnd: 0 }}>
-            technical computing
-          </Tag>
         </Flex>
 
         <Row gutter={[12, 12]}>
@@ -61,15 +58,15 @@ function JuliaProjectMock() {
             <Col key={title} xs={24} sm={12}>
               <div
                 style={{
-                  background: "#fff",
+                  background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 18,
+                  borderRadius: PUBLIC_RADIUS.panel,
                   height: "100%",
                   padding: 14,
                 }}
               >
                 <Flex align="center" gap={12}>
-                  <IconBadge accent="#9558b2" icon={icon} />
+                  <IconBadge accent={FEATURE_ACCENTS.julia} icon={icon} />
                   <div>
                     <Text strong>{title}</Text>
                     <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
@@ -79,87 +76,56 @@ function JuliaProjectMock() {
             </Col>
           ))}
         </Row>
-
-        <TerminalMock
-          title="julia"
-          rows={[
-            "$ julia --project",
-            "(@v1) pkg> instantiate",
-            'julia> include("src/Model.jl")',
-            "results written to output/",
-          ]}
-        />
       </Flex>
     </div>
   );
 }
 
-function JuliaPositioning() {
+function JuliaProjectFit() {
   return (
     <PublicSection>
       <Row gutter={[24, 24]} align="middle">
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
-            <Tag
-              color="blue"
-              style={{
-                alignSelf: "flex-start",
-                background: COLORS.ANTD_BG_BLUE_L,
-                color: COLORS.BLUE_D,
-              }}
-            >
-              Positioning
-            </Tag>
             <Title level={3} style={{ margin: 0 }}>
-              Julia works best in CoCalc when the project matters.
+              Keep Julia close to the rest of the research.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              Julia has strong native tools and notebook ecosystems. CoCalc is
-              useful when the Julia work needs a collaborative project around
-              it: notebooks, source files, package environments, terminals,
-              teaching workflows, and supporting Python, R, or shell scripts.
+              Julia's own editors and notebook tools are the right choice when
+              the work is mainly Julia. CoCalc earns its place when Julia is one
+              part of a larger research or engineering project, so collaborators
+              and reviewers work from the same files, environment, TimeTravel
+              history, and live notebook state.
             </Paragraph>
             <Paragraph style={{ margin: 0 }}>
-              Use Jupyter for collaborative notebooks, terminals for normal
-              Julia package and script work, and Pluto when reactive notebooks
-              are the right fit.
+              That fits shared package environments, models that mix Julia with
+              Python or R, and team review with real-time editing and visible
+              cursors — with teaching courses a natural extension, not the only
+              use.
             </Paragraph>
           </Flex>
         </Col>
         <Col xs={24} lg={12}>
-          <div
-            style={{
-              background: "#fff",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 26,
-              boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-              padding: 22,
-            }}
-          >
-            <Flex vertical gap={12}>
-              {[
-                ["jupyter", "Collaborative Jupyter notebooks"],
-                ["layout", "Pluto for reactive notebooks"],
-                ["terminal", "Julia packages and scripts in a shell"],
-                ["graduation-cap", "Shared environments for courses"],
-              ].map(([icon, label]) => (
-                <Flex
-                  align="center"
-                  gap={12}
-                  key={label}
-                  style={{
-                    background: "#faf7ff",
-                    border: "1px solid #d3adf7",
-                    borderRadius: 16,
-                    padding: 14,
-                  }}
-                >
-                  <IconBadge accent="#9558b2" icon={icon as IconName} />
-                  <Text strong>{label}</Text>
-                </Flex>
-              ))}
-            </Flex>
-          </div>
+          <ContextList
+            accent={FEATURE_ACCENTS.julia}
+            items={[
+              { icon: "jupyter", label: "Collaborative Jupyter notebooks" },
+              { icon: "layout", label: "Pluto for reactive notebooks" },
+              {
+                icon: "history",
+                label: "TimeTravel for source and notebook history",
+              },
+              {
+                icon: "terminal",
+                label: "Julia packages and scripts in a shell",
+              },
+              {
+                icon: "python",
+                label: "Mix with Python, R, and shell tools",
+              },
+            ]}
+            title="Project context"
+          />
         </Col>
       </Row>
     </PublicSection>
@@ -185,21 +151,12 @@ export default function JuliaFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag color="purple" style={{ alignSelf: "flex-start" }}>
-                Julia in a shared project
-              </Tag>
               <Title level={2} style={{ margin: 0 }}>
-                Use Julia in notebooks, terminals, Pluto, and source files.
+                Use Julia in Pluto, Jupyter, and shared modeling projects.
               </Title>
-              <Paragraph style={{ fontSize: 18, margin: 0 }}>
-                CoCalc supports Julia as part of the same collaborative project
-                environment as your files, notebooks, terminals, teaching
-                workflows, and Codex conversations.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                It is a good fit for classes, research groups, and
-                mixed-language technical projects where Julia should live
-                alongside the rest of the computational work.
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
+                Review results together while the whole modeling project stays
+                reproducible in one place.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
@@ -220,60 +177,35 @@ export default function JuliaFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#9558b2" icon="jupyter" title="Jupyter notebooks">
-            Use Julia kernels in CoCalc notebooks with collaboration, project
-            files, TimeTravel, and course workflows around them.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#278c83" icon="terminal" title="Normal Julia">
-            Use terminals for package environments, <code>julia --project</code>
-            , scripts, tests, and command-line workflows.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#ad6800" icon="layout" title="Pluto available">
-            Launch Pluto from a project when reactive Julia notebooks are a
-            better fit than classic Jupyter.
-          </StoryCard>
-        </Col>
-      </Row>
-
-      <JuliaPositioning />
+      <JuliaProjectFit />
 
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <Title level={3}>Why use Julia on CoCalc</Title>
-            <BulletList
-              items={[
-                "Use Jupyter, Pluto, source files, and terminal workflows together.",
-                "Share a Julia environment with students or collaborators.",
-                "Keep Julia work near data, reports, Python, R, and Linux tools.",
-                "Use CoCalc when collaboration and project context matter as much as the language.",
-              ]}
-            />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/linux")}>
-                Linux environment
-              </Button>
-              <Button href={appPath("features/teaching")}>Teaching</Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <StartCard
-              body="Open a project and use Julia in notebooks, terminals, Pluto, source files, or teaching workflows."
-              href={primaryHref}
-              label={finalLabel}
-              title="Start in a project"
-            />
-          </Col>
-        </Row>
+        <FeatureFinalBand
+          action={{
+            body: "Open a project and use Julia in notebooks, terminals, Pluto, source files, or teaching workflows.",
+            href: primaryHref,
+            label: finalLabel,
+            title: "Start in a project",
+          }}
+          relatedLinks={[
+            { href: appPath("features/linux"), label: "Linux environment" },
+            { href: appPath("features/teaching"), label: "Teaching" },
+            { href: appPath("products"), label: "Compare operating models" },
+            ...(helpEmail
+              ? [{ href: `mailto:${helpEmail}`, label: "Contact support" }]
+              : []),
+          ]}
+          title="When Julia belongs in CoCalc"
+        >
+          <BulletList
+            items={[
+              "Use Jupyter, Pluto, source files, and terminal workflows together.",
+              "Share a Julia environment with collaborators or students.",
+              "Keep Julia work near data, reports, Python, R, and Linux tools.",
+              "Best fit when collaboration and project context matter as much as the language.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );

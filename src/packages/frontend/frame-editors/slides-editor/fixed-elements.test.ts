@@ -26,7 +26,7 @@ describe("slides fixed elements", () => {
     }
   });
 
-  it("uses markdown heading placeholders compatible with cocalc.com", () => {
+  it("uses markdown heading placeholders compatible with CoCalc", () => {
     expect(SLIDE_TEMPLATE_ELEMENTS[0]).toMatchObject({
       data: {
         color: "#252937",

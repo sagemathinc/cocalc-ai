@@ -13,6 +13,10 @@ import LRU from "lru-cache";
 import { sleep, withTimeout } from "@cocalc/util/async-utils";
 import type { JSONValue } from "@cocalc/util/types";
 import { dirname, join } from "path";
+import {
+  getErrorMessage,
+  isConatInfoBootstrapTimeout,
+} from "./project-host-errors";
 
 export interface FileData {
   mtime: number;
@@ -424,7 +428,7 @@ function clearCached({ cacheId, path }: { cacheId: JSONValue; path: string }) {
 
 export function isRetryableListingError(err: unknown): boolean {
   const code = `${(err as any)?.code ?? ""}`.trim();
-  const message = `${(err as any)?.message ?? err ?? ""}`.trim().toLowerCase();
+  const message = getErrorMessage(err);
   if (code === "408" || code === "429") {
     return true;
   }
@@ -445,8 +449,9 @@ export function isRetryableListingError(err: unknown): boolean {
 }
 
 export function isStaleFilesystemClientError(err: unknown): boolean {
-  const message = `${(err as any)?.message ?? err ?? ""}`.trim().toLowerCase();
+  const message = getErrorMessage(err);
   return (
+    isConatInfoBootstrapTimeout(err) ||
     message === "closed" ||
     message === "error: closed" ||
     message.includes("connection closed") ||

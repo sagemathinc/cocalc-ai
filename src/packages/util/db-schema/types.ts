@@ -366,6 +366,7 @@ export type MembershipTierGetFields =
   | "admin_assigned_count"
   | "site_license_count"
   | "total_account_count"
+  | "total_active_account_count"
   | "has_usage_history"
   | "created"
   | "updated";

@@ -8,7 +8,11 @@ import { Suspense, lazy } from "react";
 
 import { Button, Empty, Flex, Spin, Typography } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { getSiteName, type PublicConfig } from "@cocalc/frontend/public/config";
+import {
+  getSiteName,
+  publicPoliciesUseBuiltin,
+  type PublicConfig,
+} from "@cocalc/frontend/public/config";
 import {
   PublicPage,
   PublicSection,
@@ -16,8 +20,12 @@ import {
 import type { PublicTopNavActiveKey } from "@cocalc/frontend/public/layout/top-nav";
 import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import "./code-block.css";
 
 const Markdown = lazy(() => import("@cocalc/frontend/markdown/component"));
+const StaticMarkdown = lazy(
+  () => import("@cocalc/frontend/editors/slate/static-markdown-public"),
+);
 const { Text } = Typography;
 
 export { getSiteName };
@@ -34,6 +42,15 @@ export async function fetchJson<T>(path: string): Promise<T> {
 
 export function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
+}
+
+export function builtinPolicyPath(
+  config: PublicConfig | undefined,
+  slug: string,
+): string | undefined {
+  return publicPoliciesUseBuiltin(config)
+    ? appPath(`policies/${slug}`)
+    : undefined;
 }
 
 export function MarkdownSection({ value }: { value: string }) {
@@ -77,6 +94,48 @@ export function LinkButton({
       {children}
     </Button>
   );
+}
+
+// Shared, copyable code block for public pages — curl examples, install
+// commands, snippets. Render through the public Slate static markdown path so
+// copy behavior and syntax highlighting stay consistent with docs pages.
+export function CodeBlock({
+  ariaLabel = "Code example",
+  code,
+  language = "",
+}: {
+  ariaLabel?: string;
+  code: string;
+  language?: string;
+}) {
+  return (
+    <div aria-label={ariaLabel} className="cocalc-public-code-block">
+      <Suspense fallback={<pre>{code}</pre>}>
+        <StaticMarkdown value={toFencedCodeBlock(code, language)} />
+      </Suspense>
+    </div>
+  );
+}
+
+function toFencedCodeBlock(content: string, language = ""): string {
+  const text = `${content ?? ""}`;
+  const fence = "`".repeat(Math.max(3, maxBacktickRun(text) + 1));
+  const info = language.trim();
+  return `${fence}${info}\n${text}\n${fence}`;
+}
+
+function maxBacktickRun(text: string): number {
+  let run = 0;
+  let max = 0;
+  for (const ch of text) {
+    if (ch === "`") {
+      run += 1;
+      max = Math.max(max, run);
+    } else {
+      run = 0;
+    }
+  }
+  return max;
 }
 
 export function PublicSectionShell({

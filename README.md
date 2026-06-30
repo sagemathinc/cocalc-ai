@@ -305,13 +305,13 @@ If you need:
 
 contact SageMath, Inc. through the commercial CoCalc channels:
 
-- https://cocalc.com/
-- https://cocalc.com/pricing/onprem
+- https://cocalc.ai/
+- https://cocalc.ai/pricing/onprem
 
 ## Project Links
 
-- Main CoCalc site: https://cocalc.com/
-- User documentation: https://doc.cocalc.com/
+- Main CoCalc site: https://cocalc.ai/
+- User documentation: https://cocalc.ai/docs
 - Active repository: https://github.com/sagemathinc/cocalc-ai
 - Historical/public CoCalc repository: https://github.com/sagemathinc/cocalc
 - This repo's docs index: [docs/README.md](./docs/README.md)

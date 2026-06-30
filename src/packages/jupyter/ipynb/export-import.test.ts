@@ -53,7 +53,7 @@ describe("ipynb format version defaults", () => {
       metadata: {
         kernelspec: {
           name: "python3",
-          metadata: { cocalc: { origin: "cocalc.com" } },
+          metadata: { cocalc: { origin: "cocalc.ai" } },
         },
       },
       cells: [
@@ -94,7 +94,7 @@ describe("ipynb format version defaults", () => {
         cocalc: { schemaVersion: 1 },
         kernelspec: {
           name: "python3",
-          metadata: { cocalc: { origin: "cocalc.com" } },
+          metadata: { cocalc: { origin: "cocalc.ai" } },
         },
       },
       cells: [

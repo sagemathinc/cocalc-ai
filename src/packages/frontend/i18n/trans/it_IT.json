@@ -40,7 +40,7 @@
   "account.editor-settings.title": "Editor",
   "account.editor-settings.x11-keyboard-variant.label": "Variante tastiera (per Desktop X11)",
   "account.editor-settings.x11-physical-keyboard.label": "Layout tastiera (per desktop X11)",
-  "account.global-ssh-keys.help": "Per SSH in un progetto, usa il seguente <code>username@host: [project-id-without-dashes]@ssh.cocalc.com</code> L'id del progetto senza trattini può essere trovato nella parte delle impostazioni del progetto riguardante le chiavi SSH. Per SSH tra progetti, usa <code>[project-id-without-dashes]@ssh</code>",
+  "account.global-ssh-keys.help": "Per SSH in un progetto, usa il seguente <code>username@host: [project-id-without-dashes]@ssh.cocalc.ai</code> L'id del progetto senza trattini può essere trovato nella parte delle impostazioni del progetto riguardante le chiavi SSH. Per SSH tra progetti, usa <code>[project-id-without-dashes]@ssh</code>",
   "account.global-ssh-keys.info": "Le chiavi SSH globali elencate qui ti permettono di connetterti dal tuo computer tramite SSH a <strong><i>tutti i progetti</i></strong> di cui sei proprietario o collaboratore. In alternativa, imposta chiavi SSH che concedono l'accesso solo a un progetto nelle impostazioni di quel progetto. Consulta <A>la documentazione</A> o la parte SSH della pagina delle impostazioni in un progetto per ulteriori istruzioni.",
   "account.keyboard-settings.intro": "Questi sono principalmente i tasti di scelta rapida specifici di CoCalc per l'editing del codice. Molti di questi non sono funzioni standard fornite dalle tastiere degli editor. Purtroppo, i tasti di scelta rapida non sono attualmente personalizzabili.",
   "account.keyboard-shortcuts.shortcut.autoindent": "Seleziona autoindentazione",

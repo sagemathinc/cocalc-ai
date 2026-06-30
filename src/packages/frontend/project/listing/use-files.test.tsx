@@ -330,6 +330,31 @@ describe("useFiles", () => {
     expect(refreshFs).toHaveBeenCalledTimes(1);
   });
 
+  it("requests a fresh filesystem client after an info bootstrap snapshot timeout", async () => {
+    const refreshFs = jest.fn();
+    (withTimeout as jest.Mock).mockRejectedValue(
+      new Error('once: timeout of 4000ms waiting for "info"'),
+    );
+    const listing = {
+      files: {},
+      on: jest.fn(),
+      close: jest.fn(),
+    };
+    const fs = {
+      getListing: jest.fn().mockResolvedValue({ files: {} }),
+      listing: jest.fn().mockResolvedValue(listing),
+    };
+
+    useFilesForTestWithOptions({
+      fs,
+      path: "/info-timeout-snapshot",
+      refreshFs,
+    });
+    await flushEffects();
+
+    expect(refreshFs).toHaveBeenCalledTimes(1);
+  });
+
   it("requests a fresh filesystem client after a closed watcher failure", async () => {
     const refreshFs = jest.fn();
     (withTimeout as jest.Mock).mockImplementation(
@@ -343,6 +368,30 @@ describe("useFiles", () => {
     useFilesForTestWithOptions({
       fs,
       path: "/closed-watcher",
+      refreshFs,
+    });
+    await flushEffects();
+
+    expect(refreshFs).toHaveBeenCalledTimes(1);
+  });
+
+  it("requests a fresh filesystem client after an info bootstrap watcher timeout", async () => {
+    const refreshFs = jest.fn();
+    (withTimeout as jest.Mock).mockImplementation(
+      async (promise: Promise<any>) => await promise,
+    );
+    const fs = {
+      getListing: jest.fn().mockResolvedValue({ files: {} }),
+      listing: jest
+        .fn()
+        .mockRejectedValue(
+          new Error('once: timeout of 4000ms waiting for "info"'),
+        ),
+    };
+
+    useFilesForTestWithOptions({
+      fs,
+      path: "/info-timeout-watcher",
       refreshFs,
     });
     await flushEffects();

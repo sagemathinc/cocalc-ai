@@ -1,6 +1,6 @@
 # Project Backups
 
-CoCalc backs up projects asynchronously from the project-host that holds the live btrfs subvolume. Backups are taken from a read-only snapshot (files + per-project persist store) and pushed to a rustic repository (Cloudflare R2 on cocalc.com; configurable elsewhere). Restores can target any project-host; archived projects may exist only as backups until restored.
+CoCalc backs up projects asynchronously from the project-host that holds the live btrfs subvolume. Backups are taken from a read-only snapshot (files + per-project persist store) and pushed to a rustic repository (Cloudflare R2 on cocalc.ai; configurable elsewhere). Restores can target any project-host; archived projects may exist only as backups until restored.
 
 ## Mermaid Overview
 
@@ -43,7 +43,7 @@ flowchart TD
 
 ## Storage / Repos
 
-- [cocalc.com](http://cocalc.com): region buckets on Cloudflare R2. Projects are assigned to a shared rustic repo recorded in Postgres via `project_backup_repos` and `projects.backup_repo_id`.
+- [cocalc.ai](https://cocalc.ai): region buckets on Cloudflare R2. Projects are assigned to a shared rustic repo recorded in Postgres via `project_backup_repos` and `projects.backup_repo_id`.
   - Today, the first project in a region auto-creates one active shared repo for that region.
   - Additional shards can be added later by inserting more active repo rows; new projects are assigned by the hub.
 - Untrusted hosts: use per\-host \(or per\-tenant\) buckets/credentials, or signed\-URL gateway uploads so untrusted hosts lack broad bucket access.

@@ -15,7 +15,7 @@ export const termsPolicy: PublicPolicy = {
   navLabel: "Terms",
   slug: "terms",
   title: "Terms of Service",
-  updated: "June 9, 2026",
+  updated: "June 30, 2026",
   content: (
     <>
       <p>
@@ -464,12 +464,12 @@ export const termsPolicy: PublicPolicy = {
           Terms. We have the right to investigate violations of these Terms or
           conduct that affects the Services. We may also consult and cooperate
           with law enforcement authorities to prosecute users who violate the
-          law. If your bandwidth usage in connection with your use of the
-          Services significantly exceeds the average bandwidth usage (as
-          determined solely by SMI) of our other users, we reserve the right to
+          law. If your usage of resources (including compute, memory, storage,
+          or bandwidth) in connection with your use of the Services
+          significantly exceeds average usage levels or otherwise deviates from
+          intended use (as determined solely by SMI), we reserve the right to
           immediately disable your Account or throttle your use of the Services
-          (including without limitation, file hosting) until you can reduce your
-          bandwidth consumption.{" "}
+          until you can reduce your consumption.{" "}
         </p>
       </PolicySection>
       <PolicySection title="DMCA/Copyright Policy">

@@ -11,7 +11,7 @@ export async function getFooter(): Promise<{
 
   // Make sure everything is defined somehow...
   if (!help_email) {
-    help_email = "help@cocalc.com";
+    help_email = "help@cocalc.ai";
   }
   if (!site_name) {
     site_name = "OpenCoCalc";

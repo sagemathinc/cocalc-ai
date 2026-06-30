@@ -18,6 +18,9 @@ const createMembershipTierMock = jest.fn();
 const updateMembershipTierMock = jest.fn();
 const importMembershipTiersMock = jest.fn();
 const deleteMembershipTierMock = jest.fn();
+const membershipTiersQueryMock = jest.fn();
+const getMembershipTierRowsMock = jest.fn();
+const getMembershipTierUsageReportMock = jest.fn();
 const getAccountUsageOverviewForAccountMock = jest.fn();
 const getProjectUsageAccountIdMock = jest.fn();
 const isAdminMock = jest.fn();
@@ -54,7 +57,9 @@ const purchaseTeamLicenseChangeMock = jest.fn();
 const getTeamLicenseOverviewForOwnerMock = jest.fn();
 const resolveTeamLicenseQuoteMock = jest.fn();
 const resolveAccountHomeBayMock = jest.fn();
+const listConfiguredBaysMock = jest.fn();
 const getClusterAccountByIdDirectMock = jest.fn();
+const dbMock = jest.fn();
 const interBayGetMembershipDetailsMock = jest.fn();
 const interBayGetAccountUsageOverviewMock = jest.fn();
 const interBayGetMembershipPackagesMock = jest.fn();
@@ -78,10 +83,14 @@ const interBayGetSiteLicenseAffiliationReverificationStatusForAccountMock =
 const interBayRefreshSiteLicenseAffiliationVerificationMock = jest.fn();
 const interBayRefreshSiteLicenseAffiliationVerificationForAccountMock =
   jest.fn();
+const interBayGetMembershipTierUsageReportMock = jest.fn();
+const interBayBayOpsMock = jest.fn();
+const getInterBayBridgeMock = jest.fn();
 const getBrowserAuthSessionHashMock = jest.fn();
 const requireFreshAuthForSessionHashMock = jest.fn();
 const assertAccountTrustedForProductAccessMock = jest.fn();
 const getConfiguredClusterSeedBayIdMock = jest.fn();
+const getConfiguredBayIdMock = jest.fn();
 
 jest.mock("@cocalc/server/purchases/get-balance", () => ({
   __esModule: true,
@@ -91,6 +100,18 @@ jest.mock("@cocalc/server/purchases/get-balance", () => ({
 jest.mock("@cocalc/server/purchases/get-min-balance", () => ({
   __esModule: true,
   default: jest.fn(),
+}));
+
+jest.mock("@cocalc/database", () => ({
+  db: (...args: any[]) => dbMock(...args),
+}));
+
+jest.mock("@cocalc/database/postgres/membership-tiers", () => ({
+  __esModule: true,
+  default: (...args: any[]) => membershipTiersQueryMock(...args),
+  getMembershipTierRows: (...args: any[]) => getMembershipTierRowsMock(...args),
+  getMembershipTierUsageReport: (...args: any[]) =>
+    getMembershipTierUsageReportMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/managed-egress", () => ({
@@ -235,6 +256,7 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 
 jest.mock("@cocalc/server/bay-directory", () => ({
   resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBayMock(...args),
+  listConfiguredBays: (...args: any[]) => listConfiguredBaysMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
@@ -243,7 +265,7 @@ jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
 }));
 
 jest.mock("@cocalc/server/bay-config", () => ({
-  getConfiguredBayId: jest.fn(() => "bay-0"),
+  getConfiguredBayId: (...args: any[]) => getConfiguredBayIdMock(...args),
 }));
 
 jest.mock("@cocalc/server/cluster-config", () => ({
@@ -268,6 +290,10 @@ jest.mock("@cocalc/server/accounts/trusted-product-access", () => ({
 
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: jest.fn(() => ({ kind: "fabric-client" })),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  getInterBayBridge: (...args: any[]) => getInterBayBridgeMock(...args),
 }));
 
 jest.mock("@cocalc/conat/inter-bay/api", () => ({
@@ -328,6 +354,10 @@ beforeEach(() => {
   updateMembershipTierMock.mockReset();
   importMembershipTiersMock.mockReset();
   deleteMembershipTierMock.mockReset();
+  membershipTiersQueryMock.mockReset();
+  getMembershipTierRowsMock.mockReset();
+  getMembershipTierUsageReportMock.mockReset();
+  dbMock.mockReset();
   purchaseMembershipPackageMock.mockReset();
   purchaseMembershipPackagesMock.mockReset();
   purchaseTeamLicenseChangeMock.mockReset();
@@ -348,13 +378,33 @@ beforeEach(() => {
   interBayListSiteLicenseOverviewsMock.mockReset();
   interBaySetSiteLicenseManagerMock.mockReset();
   interBayRemoveSiteLicenseManagerMock.mockReset();
+  interBayGetMembershipTierUsageReportMock.mockReset();
+  interBayBayOpsMock.mockReset();
+  getInterBayBridgeMock.mockReset();
   getConfiguredClusterSeedBayIdMock.mockReset();
+  getConfiguredBayIdMock.mockReset();
+  listConfiguredBaysMock.mockReset();
   resolveAccountHomeBayMock.mockReset();
   getClusterAccountByIdDirectMock.mockReset();
   getBrowserAuthSessionHashMock.mockReturnValue(undefined);
   requireFreshAuthForSessionHashMock.mockResolvedValue(undefined);
   assertAccountTrustedForProductAccessMock.mockResolvedValue(undefined);
+  dbMock.mockReturnValue({ kind: "db" });
+  membershipTiersQueryMock.mockResolvedValue([]);
+  getMembershipTierRowsMock.mockResolvedValue([]);
+  getMembershipTierUsageReportMock.mockResolvedValue({
+    bay_id: "bay-0",
+    total_active_account_count: 0,
+    tiers: [],
+  });
+  interBayBayOpsMock.mockReturnValue({
+    getMembershipTierUsageReport: (...args: any[]) =>
+      interBayGetMembershipTierUsageReportMock(...args),
+  });
+  getInterBayBridgeMock.mockReturnValue({ bayOps: interBayBayOpsMock });
+  getConfiguredBayIdMock.mockReturnValue("bay-0");
   getConfiguredClusterSeedBayIdMock.mockReturnValue("bay-0");
+  listConfiguredBaysMock.mockResolvedValue([{ bay_id: "bay-0" }]);
   resolveAccountHomeBayMock.mockResolvedValue({
     account_id: "account-1",
     home_bay_id: "bay-0",
@@ -2593,6 +2643,20 @@ describe("purchases abuse review annotations", () => {
 
 describe("purchases membership tier admin", () => {
   const tier = { id: "standard", label: "Standard" };
+  const usageRow = (tier_id: string, counts: Record<string, number> = {}) => ({
+    tier_id,
+    subscription_count: 0,
+    subscribed_account_count: 0,
+    team_seat_count: 0,
+    team_account_count: 0,
+    course_account_count: 0,
+    site_account_count: 0,
+    admin_assigned_count: 0,
+    site_license_count: 0,
+    total_account_count: 0,
+    usage_history_count: 0,
+    ...counts,
+  });
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -2727,6 +2791,212 @@ describe("purchases membership tier admin", () => {
     });
     expect(deleteMembershipTierMock).toHaveBeenCalledWith({ id: "draft" });
     expect(result).toEqual({ id: "draft" });
+  });
+
+  it("blocks deleting a tier with remote bay usage history", async () => {
+    isAdminMock.mockResolvedValue(true);
+    listConfiguredBaysMock.mockResolvedValue([
+      { bay_id: "bay-0" },
+      { bay_id: "bay-1" },
+    ]);
+    getMembershipTierUsageReportMock.mockResolvedValue({
+      bay_id: "bay-0",
+      total_active_account_count: 0,
+      tiers: [],
+    });
+    interBayGetMembershipTierUsageReportMock.mockResolvedValue({
+      bay_id: "bay-1",
+      total_active_account_count: 0,
+      tiers: [usageRow("draft", { usage_history_count: 1 })],
+    });
+
+    const { deleteMembershipTier } = await import("./purchases");
+    await expect(
+      deleteMembershipTier({
+        account_id: "admin-1",
+        session_hash: "fresh-session-4",
+        id: "draft",
+      }),
+    ).rejects.toThrow(
+      'cannot delete membership tier "draft" because it has usage history on bay(s): bay-1 (1)',
+    );
+
+    expect(deleteMembershipTierMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks deleting a tier when a remote bay cannot be checked", async () => {
+    isAdminMock.mockResolvedValue(true);
+    listConfiguredBaysMock.mockResolvedValue([
+      { bay_id: "bay-0" },
+      { bay_id: "bay-1" },
+    ]);
+    getMembershipTierUsageReportMock.mockResolvedValue({
+      bay_id: "bay-0",
+      total_active_account_count: 0,
+      tiers: [],
+    });
+    interBayGetMembershipTierUsageReportMock.mockRejectedValue(
+      new Error("bay offline"),
+    );
+
+    const { deleteMembershipTier } = await import("./purchases");
+    await expect(
+      deleteMembershipTier({
+        account_id: "admin-1",
+        session_hash: "fresh-session-4",
+        id: "draft",
+      }),
+    ).rejects.toThrow(
+      'cannot delete membership tier "draft" because usage history could not be checked on bay(s): bay-1',
+    );
+
+    expect(deleteMembershipTierMock).not.toHaveBeenCalled();
+  });
+
+  it("aggregates membership tier usage across configured bays", async () => {
+    isAdminMock.mockResolvedValue(true);
+    listConfiguredBaysMock.mockResolvedValue([
+      { bay_id: "bay-1" },
+      { bay_id: "bay-0" },
+    ]);
+    getMembershipTierRowsMock.mockResolvedValue([
+      { id: "standard", label: "Standard" },
+      { id: "basic", label: "Basic" },
+    ]);
+    getMembershipTierUsageReportMock.mockResolvedValue({
+      bay_id: "bay-0",
+      total_active_account_count: 10,
+      tiers: [
+        usageRow("standard", {
+          subscription_count: 1,
+          subscribed_account_count: 1,
+          total_account_count: 1,
+          usage_history_count: 1,
+        }),
+      ],
+    });
+    interBayGetMembershipTierUsageReportMock.mockResolvedValue({
+      bay_id: "bay-1",
+      total_active_account_count: 20,
+      tiers: [
+        usageRow("standard", {
+          subscription_count: 2,
+          subscribed_account_count: 2,
+          team_seat_count: 4,
+          team_account_count: 3,
+          total_account_count: 5,
+          usage_history_count: 2,
+        }),
+        usageRow("basic", {
+          site_account_count: 6,
+          site_license_count: 1,
+          total_account_count: 6,
+          usage_history_count: 1,
+        }),
+      ],
+    });
+
+    const { getMembershipTierAdminOverview } = await import("./purchases");
+    const result = await getMembershipTierAdminOverview({
+      account_id: "admin-1",
+    });
+
+    expect(getMembershipTierRowsMock).toHaveBeenCalledWith({ kind: "db" });
+    expect(membershipTiersQueryMock).not.toHaveBeenCalled();
+    expect(getMembershipTierUsageReportMock).toHaveBeenCalledWith(
+      { kind: "db" },
+      "bay-0",
+    );
+    expect(interBayBayOpsMock).toHaveBeenCalledWith("bay-1", {
+      timeout_ms: 15_000,
+    });
+    expect(interBayGetMembershipTierUsageReportMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+    });
+    expect(result.total_active_account_count).toBe(30);
+    expect(result.bays).toEqual([
+      { bay_id: "bay-0", ok: true },
+      { bay_id: "bay-1", ok: true },
+    ]);
+    expect(result.tiers).toEqual([
+      expect.objectContaining({
+        id: "standard",
+        subscription_count: 3,
+        subscribed_account_count: 3,
+        team_seat_count: 4,
+        team_account_count: 3,
+        site_account_count: 0,
+        site_license_count: 0,
+        total_account_count: 6,
+        total_active_account_count: 30,
+        has_usage_history: true,
+      }),
+      expect.objectContaining({
+        id: "basic",
+        subscription_count: 0,
+        subscribed_account_count: 0,
+        site_account_count: 6,
+        site_license_count: 1,
+        total_account_count: 6,
+        total_active_account_count: 30,
+        has_usage_history: true,
+      }),
+    ]);
+  });
+
+  it("keeps successful bay counts when one bay report fails", async () => {
+    isAdminMock.mockResolvedValue(true);
+    listConfiguredBaysMock.mockResolvedValue([
+      { bay_id: "bay-0" },
+      { bay_id: "bay-2" },
+    ]);
+    getMembershipTierRowsMock.mockResolvedValue([
+      { id: "standard", label: "Standard" },
+      { id: "draft", label: "Draft" },
+    ]);
+    getMembershipTierUsageReportMock.mockResolvedValue({
+      bay_id: "bay-0",
+      total_active_account_count: 10,
+      tiers: [
+        usageRow("standard", {
+          subscription_count: 1,
+          subscribed_account_count: 1,
+          total_account_count: 1,
+          usage_history_count: 1,
+        }),
+      ],
+    });
+    interBayGetMembershipTierUsageReportMock.mockRejectedValue(
+      new Error("bay offline"),
+    );
+
+    const { getMembershipTierAdminOverview } = await import("./purchases");
+    const result = await getMembershipTierAdminOverview({
+      account_id: "admin-1",
+    });
+
+    expect(result.total_active_account_count).toBe(10);
+    expect(result.bays).toEqual([
+      { bay_id: "bay-0", ok: true },
+      { bay_id: "bay-2", ok: false, error: "Error: bay offline" },
+    ]);
+    expect(result.tiers).toEqual([
+      expect.objectContaining({
+        id: "standard",
+        subscription_count: 1,
+        subscribed_account_count: 1,
+        total_account_count: 1,
+        total_active_account_count: 10,
+        has_usage_history: true,
+      }),
+      expect.objectContaining({
+        id: "draft",
+        subscription_count: 0,
+        total_account_count: 0,
+        total_active_account_count: 10,
+        has_usage_history: undefined,
+      }),
+    ]);
   });
 });
 

@@ -608,7 +608,7 @@ export default function TeachingFeaturePage({
               <Paragraph style={{ margin: 0 }}>
                 Kiran Kedlaya, Department of Mathematics, UC San Diego
               </Paragraph>
-              <LinkButton href="https://cocalc.com/testimonials">
+              <LinkButton href="https://cocalc.ai/testimonials">
                 Read more testimonials
               </LinkButton>
             </Flex>

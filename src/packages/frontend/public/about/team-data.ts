@@ -120,7 +120,7 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
     title: "CSO",
     position: "Chief Sales Officer at SageMath, Inc.",
     positionTimeframe: "2022-present",
-    email: "blaec@cocalc.com",
+    email: "blaec@cocalc.ai",
     imageSrc: "/public/about/blaec-bejarano.png",
     imageAlt: "A portrait of Blaec Bejarano.",
     bioTopText: [
@@ -272,7 +272,7 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
     title: "COO",
     position: "Chief Operations Officer at SageMath, Inc.",
     positionTimeframe: "2023-present",
-    email: "andrey@cocalc.com",
+    email: "andrey@cocalc.ai",
     imageSrc: "/public/about/andrey-novoseltsev.jpeg",
     imageAlt: "A portrait of Andrey Novoseltsev smiling.",
     bioTopText: [

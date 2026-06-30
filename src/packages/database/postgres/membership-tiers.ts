@@ -1,4 +1,8 @@
 import { callback2 } from "@cocalc/util/async-utils";
+import type {
+  MembershipTierUsageCountRow,
+  MembershipTierUsageReport,
+} from "@cocalc/conat/hub/api/purchases";
 import { PostgreSQL } from "./types";
 
 function isDelete(options: { delete?: boolean }[]) {
@@ -189,6 +193,19 @@ async function getLiveSubscriptionTierCounts(
   );
 }
 
+function accountHomeBayFilterSql(
+  accountAlias: string,
+  bay_id?: string,
+  paramIndex = 1,
+): { sql: string; params: string[] } {
+  const normalizedBayId = `${bay_id ?? ""}`.trim();
+  if (!normalizedBayId) return { sql: "", params: [] };
+  return {
+    sql: `AND COALESCE(NULLIF(BTRIM(${accountAlias}.home_bay_id), ''), $${paramIndex}::TEXT) = $${paramIndex}::TEXT`,
+    params: [normalizedBayId],
+  };
+}
+
 async function getActiveSiteLicenseTierCounts(
   db: PostgreSQL,
 ): Promise<Record<string, number>> {
@@ -278,13 +295,36 @@ async function getActivePackageAccountTierCounts(
 
 async function getActiveAdminAssignedTierCounts(
   db: PostgreSQL,
+  bay_id?: string,
 ): Promise<Record<string, number>> {
+  const homeBayFilter = accountHomeBayFilterSql("a", bay_id);
   const { rows } = await callback2(db._query, {
-    query: `SELECT membership_class AS tier_id,
-                   COUNT(*)::int AS admin_assigned_count
-            FROM admin_assigned_memberships
-            WHERE expires_at IS NULL OR expires_at > NOW()
-            GROUP BY membership_class`,
+    query: `SELECT tier_id,
+                   COUNT(DISTINCT account_id)::int AS admin_assigned_count
+              FROM (
+                SELECT m.membership_class AS tier_id,
+                       m.account_id
+                  FROM admin_assigned_memberships m
+                  LEFT JOIN accounts a
+                    ON a.account_id = m.account_id
+                 WHERE m.account_id IS NOT NULL
+                   AND (m.expires_at IS NULL OR m.expires_at > NOW())
+                   ${homeBayFilter.sql}
+                UNION ALL
+                SELECT 'admin' AS tier_id,
+                       a.account_id
+                  FROM accounts a
+                  JOIN membership_tiers t
+                    ON t.id = 'admin'
+                   AND coalesce(t.disabled,false)=false
+                 WHERE 'admin' = ANY(a.groups)
+                   AND coalesce(a.deleted,false)=false
+                   ${homeBayFilter.sql}
+              ) admin_sources
+             WHERE tier_id IS NOT NULL
+               AND tier_id != ''
+             GROUP BY tier_id`,
+    params: homeBayFilter.params.length ? homeBayFilter.params : undefined,
   });
   return (rows ?? []).reduce((acc, row) => {
     if (!row?.tier_id) return acc;
@@ -295,7 +335,9 @@ async function getActiveAdminAssignedTierCounts(
 
 async function getTotalAccountTierCounts(
   db: PostgreSQL,
+  bay_id?: string,
 ): Promise<Record<string, number>> {
+  const homeBayFilter = accountHomeBayFilterSql("a", bay_id);
   const includePackageAccounts = await hasMembershipPackageUsageTables(db);
   const packageAccountUnion = includePackageAccounts
     ? `UNION ALL
@@ -310,6 +352,16 @@ async function getTotalAccountTierCounts(
           AND (p.starts_at IS NULL OR p.starts_at <= NOW())
           AND (p.expires_at IS NULL OR p.expires_at > NOW())`
     : "";
+  const adminGroupAccountUnion = `UNION ALL
+                SELECT 'admin' AS tier_id,
+                       a.account_id
+                  FROM accounts a
+                  JOIN membership_tiers t
+                    ON t.id = 'admin'
+                   AND coalesce(t.disabled,false)=false
+                 WHERE 'admin' = ANY(a.groups)
+                   AND coalesce(a.deleted,false)=false
+                   ${homeBayFilter.sql}`;
   const { rows } = await callback2(db._query, {
     query: `SELECT tier_id,
                    COUNT(DISTINCT account_id)::int AS total_account_count
@@ -320,22 +372,139 @@ async function getTotalAccountTierCounts(
                  WHERE ${LIVE_MEMBERSHIP_SUBSCRIPTION_FILTER}
                    AND account_id IS NOT NULL
                 UNION ALL
-                SELECT membership_class AS tier_id,
-                       account_id
-                  FROM admin_assigned_memberships
-                 WHERE account_id IS NOT NULL
-                   AND (expires_at IS NULL OR expires_at > NOW())
+                SELECT m.membership_class AS tier_id,
+                       m.account_id
+                  FROM admin_assigned_memberships m
+                  LEFT JOIN accounts a
+                    ON a.account_id = m.account_id
+                 WHERE m.account_id IS NOT NULL
+                   AND (m.expires_at IS NULL OR m.expires_at > NOW())
+                   ${homeBayFilter.sql}
                 ${packageAccountUnion}
+                ${adminGroupAccountUnion}
               ) accounts
              WHERE tier_id IS NOT NULL
                AND tier_id != ''
              GROUP BY tier_id`,
+    params: homeBayFilter.params.length ? homeBayFilter.params : undefined,
   });
   return (rows ?? []).reduce((acc, row) => {
     if (!row?.tier_id) return acc;
     acc[row.tier_id] = row.total_account_count ?? 0;
     return acc;
   }, {});
+}
+
+async function getTotalActiveAccountCount(
+  db: PostgreSQL,
+  bay_id?: string,
+): Promise<number> {
+  const normalizedBayId = `${bay_id ?? ""}`.trim();
+  const homeBayFilter = normalizedBayId
+    ? `AND COALESCE(NULLIF(BTRIM(home_bay_id), ''), $1::TEXT) = $1::TEXT`
+    : "";
+  const { rows } = await callback2(db._query, {
+    query: `SELECT COUNT(*)::int AS total_active_account_count
+              FROM accounts
+             WHERE coalesce(deleted,false)=false
+               ${homeBayFilter}`,
+    params: normalizedBayId ? [normalizedBayId] : undefined,
+  });
+  return rows?.[0]?.total_active_account_count ?? 0;
+}
+
+function ensureUsageCountRow(
+  rows: Map<string, MembershipTierUsageCountRow>,
+  tier_id: string,
+): MembershipTierUsageCountRow {
+  const existing = rows.get(tier_id);
+  if (existing != null) return existing;
+  const row: MembershipTierUsageCountRow = {
+    tier_id,
+    subscription_count: 0,
+    subscribed_account_count: 0,
+    team_seat_count: 0,
+    team_account_count: 0,
+    course_account_count: 0,
+    site_account_count: 0,
+    admin_assigned_count: 0,
+    site_license_count: 0,
+    total_account_count: 0,
+    usage_history_count: 0,
+  };
+  rows.set(tier_id, row);
+  return row;
+}
+
+export async function getMembershipTierUsageReport(
+  db: PostgreSQL,
+  bay_id: string,
+): Promise<MembershipTierUsageReport> {
+  const [
+    usageHistoryByTier,
+    subscriptionByTier,
+    siteLicenseByTier,
+    adminAssignedByTier,
+    teamSeatsByTier,
+    packageAccountsByTier,
+    totalAccountsByTier,
+    totalActiveAccountCount,
+  ] = await Promise.all([
+    getHistoricalTierUsageCounts(db),
+    getLiveSubscriptionTierCounts(db),
+    getActiveSiteLicenseTierCounts(db),
+    getActiveAdminAssignedTierCounts(db, bay_id),
+    getActiveTeamSeatTierCounts(db),
+    getActivePackageAccountTierCounts(db),
+    getTotalAccountTierCounts(db, bay_id),
+    getTotalActiveAccountCount(db, bay_id),
+  ]);
+  const rows = new Map<string, MembershipTierUsageCountRow>();
+  for (const [tier_id, usage_history_count] of Object.entries(
+    usageHistoryByTier,
+  )) {
+    ensureUsageCountRow(rows, tier_id).usage_history_count =
+      usage_history_count ?? 0;
+  }
+  for (const [tier_id, counts] of Object.entries(subscriptionByTier)) {
+    const row = ensureUsageCountRow(rows, tier_id);
+    row.subscription_count = counts.subscription_count ?? 0;
+    row.subscribed_account_count = counts.subscribed_account_count ?? 0;
+  }
+  for (const [tier_id, site_license_count] of Object.entries(
+    siteLicenseByTier,
+  )) {
+    ensureUsageCountRow(rows, tier_id).site_license_count =
+      site_license_count ?? 0;
+  }
+  for (const [tier_id, admin_assigned_count] of Object.entries(
+    adminAssignedByTier,
+  )) {
+    ensureUsageCountRow(rows, tier_id).admin_assigned_count =
+      admin_assigned_count ?? 0;
+  }
+  for (const [tier_id, team_seat_count] of Object.entries(teamSeatsByTier)) {
+    ensureUsageCountRow(rows, tier_id).team_seat_count = team_seat_count ?? 0;
+  }
+  for (const [tier_id, counts] of Object.entries(packageAccountsByTier)) {
+    const row = ensureUsageCountRow(rows, tier_id);
+    row.team_account_count = counts.team_account_count ?? 0;
+    row.course_account_count = counts.course_account_count ?? 0;
+    row.site_account_count = counts.site_account_count ?? 0;
+  }
+  for (const [tier_id, total_account_count] of Object.entries(
+    totalAccountsByTier,
+  )) {
+    ensureUsageCountRow(rows, tier_id).total_account_count =
+      total_account_count ?? 0;
+  }
+  return {
+    bay_id,
+    total_active_account_count: totalActiveAccountCount,
+    tiers: [...rows.values()].sort((a, b) =>
+      a.tier_id.localeCompare(b.tier_id),
+    ),
+  };
 }
 
 async function assertTierNotUsedByActiveMembershipUsage(
@@ -582,6 +751,13 @@ export async function upsertMembershipTier(
   return rows;
 }
 
+export async function getMembershipTierRows(db: PostgreSQL): Promise<any[]> {
+  const { rows } = await callback2(db._query, {
+    query: "SELECT * FROM membership_tiers",
+  });
+  return rows.map(mapStorageRow);
+}
+
 export default async function membershipTiersQuery(
   db: PostgreSQL,
   options: { delete?: boolean }[],
@@ -593,9 +769,7 @@ export default async function membershipTiersQuery(
   }
 
   if (query.id == "*") {
-    const { rows } = await callback2(db._query, {
-      query: "SELECT * FROM membership_tiers",
-    });
+    const rows = await getMembershipTierRows(db);
     const usageHistoryByTier = await getHistoricalTierUsageCounts(db);
     const subscriptionByTier = await getLiveSubscriptionTierCounts(db);
     const siteLicenseByTier = await getActiveSiteLicenseTierCounts(db);
@@ -603,6 +777,7 @@ export default async function membershipTiersQuery(
     const teamSeatsByTier = await getActiveTeamSeatTierCounts(db);
     const packageAccountsByTier = await getActivePackageAccountTierCounts(db);
     const totalAccountsByTier = await getTotalAccountTierCounts(db);
+    const totalActiveAccountCount = await getTotalActiveAccountCount(db);
     return rows.map((row) => ({
       ...mapStorageRow(row),
       ...(subscriptionByTier[row.id] ?? {
@@ -619,6 +794,7 @@ export default async function membershipTiersQuery(
       admin_assigned_count: adminAssignedByTier[row.id] ?? 0,
       site_license_count: siteLicenseByTier[row.id] ?? 0,
       total_account_count: totalAccountsByTier[row.id] ?? 0,
+      total_active_account_count: totalActiveAccountCount,
     }));
   } else if (query.id) {
     return await upsertMembershipTier(db, query);

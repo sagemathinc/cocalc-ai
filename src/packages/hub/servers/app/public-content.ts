@@ -240,6 +240,8 @@ export default function initPublicContent(router: Router): void {
     "/news/:slug/:timestamp/",
     "/products",
     "/products/",
+    "/products/cocalc-star",
+    "/products/cocalc-star/",
     "/products/cocalc-launchpad",
     "/products/cocalc-launchpad/",
     "/products/cocalc-plus",

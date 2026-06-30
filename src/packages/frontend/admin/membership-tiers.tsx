@@ -46,9 +46,11 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import { JsonObjectEditor } from "@cocalc/frontend/components/json-object-editor";
 import { labels } from "@cocalc/frontend/i18n";
-import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { AdminMembershipTierPayload } from "@cocalc/conat/hub/api/purchases";
+import type {
+  AdminMembershipTierPayload,
+  MembershipTierAdminOverview,
+} from "@cocalc/conat/hub/api/purchases";
 import { currency } from "@cocalc/util/misc";
 import {
   applyMembershipTierTemplateFallbacks,
@@ -222,6 +224,7 @@ interface Tier {
   admin_assigned_count?: number;
   site_license_count?: number;
   total_account_count?: number;
+  total_active_account_count?: number;
   has_usage_history?: boolean;
   created?: dayjs.Dayjs;
   updated?: dayjs.Dayjs;
@@ -745,6 +748,10 @@ function prioritySortValue(tier: Tier): number {
 
 function useMembershipTiers() {
   const [data, set_data] = React.useState<{ [key: string]: Tier }>({});
+  const [total_active_account_count, set_total_active_account_count] =
+    React.useState<number | null>(null);
+  const [overview, set_overview] =
+    React.useState<MembershipTierAdminOverview | null>(null);
   const [editing, set_editing] = React.useState<Tier | null>(null);
   const [saving, set_saving] = React.useState<boolean>(false);
   const [loading, set_loading] = React.useState<boolean>(false);
@@ -770,61 +777,25 @@ function useMembershipTiers() {
   }
 
   async function load() {
-    let result: any;
     set_loading(true);
     try {
-      result = await query({
-        query: {
-          membership_tiers: {
-            id: "*",
-            label: null,
-            store_visible: null,
-            store_description: null,
-            store_highlights: null,
-            site_license_pool_description: null,
-            team_visible: null,
-            course_store_visible: null,
-            course_allowed_domains: null,
-            priority: null,
-            price_monthly: null,
-            price_yearly: null,
-            trial_days: null,
-            course_price: null,
-            course_duration_days: null,
-            course_grace_days: null,
-            project_defaults: null,
-            ai_limits: null,
-            features: null,
-            usage_limits: null,
-            disabled: null,
-            notes: null,
-            history: null,
-            subscription_count: null,
-            subscribed_account_count: null,
-            team_seat_count: null,
-            team_account_count: null,
-            course_account_count: null,
-            site_account_count: null,
-            admin_assigned_count: null,
-            site_license_count: null,
-            total_account_count: null,
-            has_usage_history: null,
-            created: null,
-            updated: null,
-          },
-        },
-      });
+      const result =
+        await webapp_client.conat_client.hub.purchases.getMembershipTierAdminOverview(
+          {},
+        );
       const next = {};
-      for (const row of result.query.membership_tiers ?? []) {
+      for (const row of result.tiers ?? []) {
         const tier = applyMembershipTierTemplateFallbacks({
           ...row,
-        });
+        } as Partial<Tier> & { id: string }) as Tier;
         if (tier.created) tier.created = dayjs(tier.created);
         if (tier.updated) tier.updated = dayjs(tier.updated);
         next[tier.id] = tier;
       }
       set_error("");
       set_data(next);
+      set_total_active_account_count(result.total_active_account_count ?? null);
+      set_overview(result);
     } catch (err) {
       set_error(err.message ?? String(err));
     } finally {
@@ -962,6 +933,8 @@ function useMembershipTiers() {
 
   return {
     data,
+    total_active_account_count,
+    overview,
     form,
     editing,
     saving,
@@ -991,6 +964,8 @@ export function MembershipTiers() {
   );
   const {
     data,
+    total_active_account_count,
+    overview,
     form,
     editing,
     saving,
@@ -3601,9 +3576,34 @@ export function MembershipTiers() {
       }),
       [(tier) => -prioritySortValue(tier), "id"],
     );
+    const failedBays = overview?.bays.filter((bay) => !bay.ok) ?? [];
+    const okBayCount = overview?.bays.length
+      ? overview.bays.length - failedBays.length
+      : 0;
     return (
       <Space direction="vertical" style={{ width: "100%" }}>
         {render_buttons()}
+        {failedBays.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            message="Partial cluster counts"
+            description={
+              <>
+                Membership tier counts include {okBayCount} of{" "}
+                {overview?.bays.length ?? 0} bays. Missing bays:{" "}
+                <Text code>
+                  {failedBays.map((bay) => bay.bay_id).join(", ")}
+                </Text>
+              </>
+            }
+          />
+        )}
+        {total_active_account_count != null && (
+          <Text type="secondary">
+            Total active accounts: {total_active_account_count.toLocaleString()}
+          </Text>
+        )}
         <Table<Tier>
           size={"small"}
           dataSource={table_data}
@@ -3812,7 +3812,7 @@ export function MembershipTiers() {
           <Table.Column<Tier>
             title={compactColumnTitle(
               "Admin assign",
-              "Active admin-assigned memberships using this tier",
+              "Active admin-managed memberships using this tier, including site admins on the Admin tier",
             )}
             dataIndex="admin_assigned_count"
             align="center"

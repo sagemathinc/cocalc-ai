@@ -240,13 +240,13 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText("A terminal is a live project document."),
+      screen.getByText("A Linux terminal that lives in your project."),
     ).not.toBeNull();
     expect(
-      screen.getAllByText("A .term file gives the shell an address").length,
+      screen.getAllByText("Each terminal opens in its own folder.").length,
     ).toBeGreaterThan(0);
     expect(
-      screen.getByText("Collaborate in one terminal stream"),
+      screen.getByText("Put the shell beside the work it changes"),
     ).not.toBeNull();
   });
 
@@ -267,7 +267,7 @@ describe("PublicFeaturesApp", () => {
     for (const link of projectLinks) {
       expect(link.getAttribute("href")).toBe("/projects");
     }
-    expect(screen.queryByText("Start using CoCalc terminals")).toBeNull();
+    expect(screen.queryByText("Create account")).toBeNull();
   });
 
   it("renders the richer linux environment page", () => {
@@ -320,8 +320,10 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText("Python that moves from notebook to script to paper."),
     ).not.toBeNull();
-    expect(screen.getByText("From notebook to script to paper")).not.toBeNull();
-    expect(screen.getByText("Real Python on real Linux")).not.toBeNull();
+    expect(
+      screen.getByText("The right interface at each stage"),
+    ).not.toBeNull();
+    expect(screen.getByText("Project context")).not.toBeNull();
   });
 
   it("uses projects as the python CTA for authenticated users", () => {
@@ -341,7 +343,7 @@ describe("PublicFeaturesApp", () => {
     for (const link of projectLinks) {
       expect(link.getAttribute("href")).toBe("/projects");
     }
-    expect(screen.queryByText("Start using Python on CoCalc")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Create account" })).toBeNull();
   });
 
   it("renders the richer whiteboard feature page", () => {
@@ -371,13 +373,13 @@ describe("PublicFeaturesApp", () => {
     },
     {
       slug: "julia",
-      title: "Use Julia in notebooks, terminals, Pluto, and source files.",
-      section: "Julia works best in CoCalc when the project matters.",
+      title: "Use Julia in Pluto, Jupyter, and shared modeling projects.",
+      section: "Keep Julia close to the rest of the research.",
     },
     {
       slug: "r-statistical-software",
-      title: "Use R when statistics is part of a larger workflow.",
-      section: "CoCalc is not trying to be RStudio.",
+      title: "Use R for statistics and reproducible reporting.",
+      section: "Keep R close to the rest of the analysis.",
     },
     {
       slug: "octave",
@@ -409,6 +411,24 @@ describe("PublicFeaturesApp", () => {
 
       expect(screen.getByText(title)).not.toBeNull();
       expect(screen.getByText(section)).not.toBeNull();
+    },
+  );
+
+  it.each(["julia", "r-statistical-software"])(
+    "renders the configured support link on the %s feature page",
+    (slug) => {
+      render(
+        <PublicFeaturesApp
+          config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+          initialRoute={{ slug, view: "detail" }}
+        />,
+      );
+
+      expect(
+        screen
+          .getByRole("link", { name: "Contact support" })
+          .getAttribute("href"),
+      ).toBe("mailto:help@example.com");
     },
   );
 

@@ -52,24 +52,56 @@ interface NewsDetailPayload {
 
 type PublicNewsDetailRoute = Exclude<PublicNewsRoute, { view: "news" }>;
 
-function NewsMarkdown({
-  preview,
-  value,
-}: {
-  preview?: boolean;
-  value: string;
-}) {
+const NEWS_EXCERPT_MAX_CHARS = 220;
+const NEWS_EXCERPT_STYLE = {
+  display: "-webkit-box",
+  margin: 0,
+  overflow: "hidden",
+  WebkitBoxOrient: "vertical",
+  WebkitLineClamp: 4,
+} as const;
+
+function NewsMarkdown({ value }: { value: string }) {
   return (
     <Suspense fallback={<div>Loading content…</div>}>
       <StaticMarkdown
         style={{
-          fontSize: preview ? "0.98rem" : undefined,
           overflowX: "auto",
         }}
         value={value}
       />
     </Suspense>
   );
+}
+
+function truncateAtWord(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+
+  const candidate = value.slice(0, maxLength).trimEnd();
+  const wordBreak = candidate.lastIndexOf(" ");
+  const truncated =
+    wordBreak > Math.floor(maxLength * 0.6)
+      ? candidate.slice(0, wordBreak)
+      : candidate;
+  return `${truncated.trimEnd()}...`;
+}
+
+export function newsExcerpt(markdown: string): string {
+  const text = markdown
+    .replace(/```[^\n]*\n([\s\S]*?)```/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s{0,3}[-*+]\s+/gm, "")
+    .replace(/^\s{0,3}>\s?/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return truncateAtWord(text, NEWS_EXCERPT_MAX_CHARS);
 }
 
 function NewsCard({ item }: { item: NewsItem }) {
@@ -79,10 +111,10 @@ function NewsCard({ item }: { item: NewsItem }) {
         <Tag color="blue">{item.channel}</Tag>
         <Text type="secondary">{formatNewsDate(item.date)}</Text>
       </Flex>
-      <Title level={3} style={{ margin: 0 }}>
+      <Title level={2} style={{ margin: 0, fontSize: 24, lineHeight: "32px" }}>
         {item.title}
       </Title>
-      <NewsMarkdown preview value={item.text} />
+      <Paragraph style={NEWS_EXCERPT_STYLE}>{newsExcerpt(item.text)}</Paragraph>
       {item.tags?.length ? (
         <Flex gap={8} wrap>
           {item.tags.map((tag) => (

@@ -4,6 +4,10 @@
  */
 
 import { parseRetryInAboutSeconds } from "@cocalc/conat/auth/retry-window";
+import {
+  getErrorMessage,
+  isConatInfoBootstrapTimeout,
+} from "@cocalc/frontend/project/listing/project-host-errors";
 
 export function shouldShowWrongAccountListingError(error: unknown): boolean {
   return (
@@ -13,7 +17,7 @@ export function shouldShowWrongAccountListingError(error: unknown): boolean {
 }
 
 export function getUserFacingListingError(error: unknown): unknown {
-  const message = `${(error as any)?.message ?? (error as any)?.error ?? error ?? ""}`;
+  const message = getErrorMessage(error);
   if (!message.trim()) {
     return error;
   }
@@ -28,14 +32,12 @@ export function getUserFacingListingError(error: unknown): unknown {
 }
 
 function isTransientProjectHostListingError(error: unknown): boolean {
-  const message =
-    `${(error as any)?.message ?? (error as any)?.error ?? error ?? ""}`
-      .trim()
-      .toLowerCase();
+  const message = getErrorMessage(error);
   if (!message.trim()) {
     return false;
   }
   return (
+    isConatInfoBootstrapTimeout(error) ||
     parseRetryInAboutSeconds(message) != null ||
     message === "closed" ||
     message === "error: closed" ||

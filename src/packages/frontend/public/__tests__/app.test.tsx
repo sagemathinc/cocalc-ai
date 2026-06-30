@@ -841,7 +841,7 @@ describe("PublicApp", () => {
     expect(screen.getByText("#launchpad")).not.toBeNull();
   });
 
-  it("renders rich markdown in public news cards", async () => {
+  it("renders plain-text excerpts in public news cards", async () => {
     const initialNews: NewsItem[] = [
       {
         channel: "feature",
@@ -869,11 +869,14 @@ describe("PublicApp", () => {
       />,
     );
 
-    await waitFor(() =>
-      expect(screen.getByRole("img", { name: "Image" })).not.toBeNull(),
-    );
-    expect(screen.getByText("foo")).not.toBeNull();
-    expect(screen.getByText("bar")).not.toBeNull();
+    expect(
+      await screen.findByRole("heading", {
+        name: "Markdown update",
+        level: 2,
+      }),
+    ).not.toBeNull();
+    expect(screen.getByText("This is a test. foo bar")).not.toBeNull();
+    expect(screen.queryByRole("img", { name: "Image" })).toBeNull();
   });
 
   it("shows admin news actions on the public news page for admins", async () => {

@@ -23,6 +23,11 @@ describe("isRetryableListingError", () => {
         new Error("failed to sign in - missing project-host bearer token"),
       ),
     ).toBe(true);
+    expect(
+      isRetryableListingError(
+        new Error('once: timeout of 4000ms waiting for "info"'),
+      ),
+    ).toBe(true);
   });
 
   it("does not retry ordinary listing failures", () => {
@@ -35,6 +40,11 @@ describe("isStaleFilesystemClientError", () => {
     expect(isStaleFilesystemClientError(new Error("closed"))).toBe(true);
     expect(
       isStaleFilesystemClientError(new Error("socket has been disconnected")),
+    ).toBe(true);
+    expect(
+      isStaleFilesystemClientError(
+        new Error('once: timeout of 4000ms waiting for "info"'),
+      ),
     ).toBe(true);
   });
 

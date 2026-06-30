@@ -8,7 +8,7 @@ class Project:
 
     def __init__(self,
                  api_key: str,
-                 host: str = "https://cocalc.com",
+                 host: str = "https://cocalc.ai",
                  project_id: Optional[str] = None):
         self.project_id = project_id
         self.api_key = api_key

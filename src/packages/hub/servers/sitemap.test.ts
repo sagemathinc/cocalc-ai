@@ -5,6 +5,7 @@ import initPublicFeatures from "./app/public-features";
 import initPublicLang from "./app/public-lang";
 import initPublicSupport from "./app/public-support";
 import initSitemap, { PUBLIC_SITEMAP_PATHS } from "./sitemap";
+import { getPublicFeatureIndexPages } from "@cocalc/util/public-feature-pages";
 
 jest.mock("@cocalc/database/postgres/news", () => ({
   getFeedData: jest.fn(async () => []),
@@ -61,7 +62,12 @@ describe("public sitemap", () => {
     }
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/auth");
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/support/new");
-    expect(PUBLIC_SITEMAP_PATHS).not.toContain("/products/cocalc-star");
+    expect(PUBLIC_SITEMAP_PATHS).toContain("/products/cocalc-star");
+    expect(
+      PUBLIC_SITEMAP_PATHS.filter((path) => path.startsWith("/features/")),
+    ).toEqual(
+      getPublicFeatureIndexPages().map((page) => `/features/${page.slug}`),
+    );
   });
 
   it("serves every listed path through current public route handlers", async () => {

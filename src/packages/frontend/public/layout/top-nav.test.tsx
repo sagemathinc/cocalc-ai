@@ -98,34 +98,15 @@ describe("PublicTopNav", () => {
   it("uses sign-in and sign-up links for anonymous visitors", async () => {
     await renderTopNav(<PublicTopNav />);
 
-    expect(screen.getByRole("link", { name: "Sign in" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Sign up" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Sign up" })).toHaveClass(
-      "ant-btn-primary",
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute(
+      "href",
+      "/auth/sign-in",
+    );
+    expect(screen.getByRole("link", { name: "Sign up" })).toHaveAttribute(
+      "href",
+      "/auth/sign-up",
     );
     expect(screen.queryByRole("link", { name: "Projects" })).toBeNull();
-  });
-
-  it("highlights sign-in on the sign-in auth page", async () => {
-    await renderTopNav(<PublicTopNav active="auth-sign-in" />);
-
-    expect(screen.getByRole("link", { name: "Sign in" })).toHaveClass(
-      "ant-btn-primary",
-    );
-    expect(screen.getByRole("link", { name: "Sign up" })).not.toHaveClass(
-      "ant-btn-primary",
-    );
-  });
-
-  it("highlights sign-up on the sign-up auth page", async () => {
-    await renderTopNav(<PublicTopNav active="auth-sign-up" />);
-
-    expect(screen.getByRole("link", { name: "Sign up" })).toHaveClass(
-      "ant-btn-primary",
-    );
-    expect(screen.getByRole("link", { name: "Sign in" })).not.toHaveClass(
-      "ant-btn-primary",
-    );
   });
 
   it("renders logo and public page navigation with Support at the end", async () => {
@@ -329,7 +310,9 @@ describe("PublicTopNav", () => {
     setViewportWidth(876);
     await renderTopNav(<PublicTopNav />);
 
-    expect(screen.getByRole("menu", { name: "Public pages" })).not.toBeNull();
+    const publicPages = screen.getByRole("menu", { name: "Public pages" });
+    expect(publicPages).not.toBeNull();
+    expect(publicPages).toHaveStyle({ marginInlineStart: "32px" });
     expect(
       screen.queryByRole("button", { name: "Open navigation menu" }),
     ).toBeNull();

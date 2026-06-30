@@ -3,7 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import membershipTiersQuery from "./membership-tiers";
+import membershipTiersQuery, {
+  getMembershipTierUsageReport,
+} from "./membership-tiers";
 
 type QueryCall = {
   query: string;
@@ -25,6 +27,10 @@ function createDb({
   ],
   siteLicenseTablesExist = true,
   membershipPackageTablesExist = true,
+  tierRows = [
+    { id: "student", label: "Student" },
+    { id: "instructor", label: "Instructor" },
+  ],
   subscriptionRows = [
     {
       tier_id: "student",
@@ -37,11 +43,13 @@ function createDb({
   packageAccountRows = [],
   adminAssignedRows = [],
   totalAccountRows = [],
+  totalActiveAccountCount = 12,
   usageHistoryRows = [],
 }: {
   existingTables?: string[];
   siteLicenseTablesExist?: boolean;
   membershipPackageTablesExist?: boolean;
+  tierRows?: { id: string; label?: string }[];
   subscriptionRows?: {
     tier_id: string;
     subscription_count: number;
@@ -57,6 +65,7 @@ function createDb({
   }[];
   adminAssignedRows?: { tier_id: string; admin_assigned_count: number }[];
   totalAccountRows?: { tier_id: string; total_account_count: number }[];
+  totalActiveAccountCount?: number;
   usageHistoryRows?: { tier_id: string; usage_history_count: number }[];
 } = {}) {
   const calls: QueryCall[] = [];
@@ -96,13 +105,14 @@ function createDb({
         opts.cb(null, { rows: packageAccountRows });
       } else if (sql === "SELECT * FROM membership_tiers") {
         opts.cb(null, {
-          rows: [
-            { id: "student", label: "Student" },
-            { id: "instructor", label: "Instructor" },
-          ],
+          rows: tierRows,
         });
       } else if (sql.includes("usage_history_count")) {
         opts.cb(null, { rows: usageHistoryRows });
+      } else if (sql.includes("total_active_account_count")) {
+        opts.cb(null, {
+          rows: [{ total_active_account_count: totalActiveAccountCount }],
+        });
       } else if (sql.includes("total_account_count")) {
         opts.cb(null, { rows: totalAccountRows });
       } else if (sql.includes("subscription_count")) {
@@ -141,6 +151,7 @@ describe("membershipTiersQuery", () => {
         { tier_id: "student", total_account_count: 10 },
         { tier_id: "instructor", total_account_count: 4 },
       ],
+      totalActiveAccountCount: 99,
     });
 
     const result = await membershipTiersQuery(db, [], { id: "*" });
@@ -158,6 +169,7 @@ describe("membershipTiersQuery", () => {
         admin_assigned_count: 1,
         site_license_count: 0,
         total_account_count: 10,
+        total_active_account_count: 99,
         has_usage_history: true,
       },
       {
@@ -172,6 +184,7 @@ describe("membershipTiersQuery", () => {
         admin_assigned_count: 4,
         site_license_count: 2,
         total_account_count: 4,
+        total_active_account_count: 99,
         has_usage_history: false,
       },
     ]);
@@ -193,6 +206,127 @@ describe("membershipTiersQuery", () => {
       expect(query).toContain("status IN ('active','canceled')");
       expect(query).toContain("current_period_end >= NOW()");
     }
+  });
+
+  it("includes an active account summary with tier rows", async () => {
+    const { db, calls } = createDb({ totalActiveAccountCount: 123 });
+
+    const result = await membershipTiersQuery(db, [], { id: "*" });
+
+    expect(result).toEqual([
+      expect.objectContaining({ total_active_account_count: 123 }),
+      expect.objectContaining({ total_active_account_count: 123 }),
+    ]);
+    const accountSummaryQuery = calls.find((call) =>
+      call.query.includes("total_active_account_count"),
+    )?.query;
+    expect(accountSummaryQuery).toContain("FROM accounts");
+    expect(accountSummaryQuery).toContain("coalesce(deleted,false)=false");
+  });
+
+  it("counts site admins as admin-tier admin memberships", async () => {
+    const { db, calls } = createDb({
+      tierRows: [{ id: "admin", label: "Admin" }],
+      subscriptionRows: [],
+      adminAssignedRows: [{ tier_id: "admin", admin_assigned_count: 4 }],
+      totalAccountRows: [{ tier_id: "admin", total_account_count: 4 }],
+    });
+
+    const result = await membershipTiersQuery(db, [], { id: "*" });
+
+    expect(result).toEqual([
+      {
+        id: "admin",
+        label: "Admin",
+        subscription_count: 0,
+        subscribed_account_count: 0,
+        team_seat_count: 0,
+        team_account_count: 0,
+        course_account_count: 0,
+        site_account_count: 0,
+        admin_assigned_count: 4,
+        site_license_count: 0,
+        total_account_count: 4,
+        total_active_account_count: 12,
+        has_usage_history: false,
+      },
+    ]);
+    const adminAssignedQuery = calls.find((call) =>
+      call.query.includes("admin_assigned_count"),
+    )?.query;
+    const totalAccountQuery = calls.find((call) =>
+      call.query.includes("total_account_count"),
+    )?.query;
+    for (const query of [adminAssignedQuery, totalAccountQuery]) {
+      expect(query).toContain("'admin' = ANY(a.groups)");
+      expect(query).toContain("coalesce(t.disabled,false)=false");
+      expect(query).toContain("coalesce(a.deleted,false)=false");
+    }
+  });
+
+  it("builds bay-local usage reports with home-bay filtered active account counts", async () => {
+    const { db, calls } = createDb({
+      siteLicenseRows: [{ tier_id: "instructor", site_license_count: 2 }],
+      teamSeatRows: [{ tier_id: "student", team_seat_count: 7 }],
+      packageAccountRows: [
+        {
+          tier_id: "student",
+          team_account_count: 3,
+          course_account_count: 5,
+          site_account_count: 2,
+        },
+      ],
+      adminAssignedRows: [
+        { tier_id: "student", admin_assigned_count: 1 },
+        { tier_id: "instructor", admin_assigned_count: 4 },
+      ],
+      usageHistoryRows: [{ tier_id: "student", usage_history_count: 1 }],
+      totalAccountRows: [
+        { tier_id: "student", total_account_count: 10 },
+        { tier_id: "instructor", total_account_count: 4 },
+      ],
+      totalActiveAccountCount: 44,
+    });
+
+    const result = await getMembershipTierUsageReport(db, "bay-1");
+
+    expect(result).toEqual({
+      bay_id: "bay-1",
+      total_active_account_count: 44,
+      tiers: [
+        {
+          tier_id: "instructor",
+          subscription_count: 0,
+          subscribed_account_count: 0,
+          team_seat_count: 0,
+          team_account_count: 0,
+          course_account_count: 0,
+          site_account_count: 0,
+          admin_assigned_count: 4,
+          site_license_count: 2,
+          total_account_count: 4,
+          usage_history_count: 0,
+        },
+        {
+          tier_id: "student",
+          subscription_count: 3,
+          subscribed_account_count: 2,
+          team_seat_count: 7,
+          team_account_count: 3,
+          course_account_count: 5,
+          site_account_count: 2,
+          admin_assigned_count: 1,
+          site_license_count: 0,
+          total_account_count: 10,
+          usage_history_count: 1,
+        },
+      ],
+    });
+    const accountSummaryCall = calls.find((call) =>
+      call.query.includes("total_active_account_count"),
+    );
+    expect(accountSummaryCall?.query).toContain("home_bay_id");
+    expect(accountSummaryCall?.params).toEqual(["bay-1"]);
   });
 
   it("blocks deleting a tier used by active site licenses", async () => {

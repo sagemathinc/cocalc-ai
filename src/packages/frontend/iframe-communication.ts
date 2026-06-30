@@ -159,7 +159,7 @@ async function handle_open({ data, reply }) {
 
 async function process_message(mesg) {
   // NOTE: all kinds of messages might come in. e.g. there is the react
-  // debugger in chrome's dev console. it has cocalc.com as origin.
+  // debugger in chrome's dev console. it has cocalc.ai as origin.
   // it's ignored, because we only allow certain external domains here.
 
   //console.log(

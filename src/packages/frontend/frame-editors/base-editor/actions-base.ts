@@ -19,6 +19,10 @@ about string-only docs (e.g., SyncString.to_str) in subclasses.
 
 const WIKI_HELP_URL = "https://github.com/sagemathinc/cocalc/wiki/";
 const SAVE_ERROR = "Error saving file to disk";
+const FILE_SERVER_NOT_INITIALIZED = "file server not initialized";
+const SAVE_TO_DISK_FILE_SERVER_RETRY_DELAYS_MS = [
+  500, 1000, 2000, 4000, 8000,
+] as const;
 const FAST_OPEN_SYNCSTRING_DISABLE_QUERY_PARAM =
   "cocalc_disable_fast_open_syncstring";
 const FAST_OPEN_SYNCSTRING_DISABLE_LOCAL_STORAGE_KEY =
@@ -62,6 +66,47 @@ function isFastOpenSyncstringEnabled(): boolean {
     // no-op
   }
   return true;
+}
+
+export function isFileServerNotInitializedError(err: unknown): boolean {
+  const message =
+    typeof err === "string"
+      ? err
+      : typeof (err as { message?: unknown })?.message === "string"
+        ? (err as { message: string }).message
+        : `${err}`;
+  return message.toLowerCase().includes(FILE_SERVER_NOT_INITIALIZED);
+}
+
+export async function saveToDiskWithFileServerRetry({
+  retryDelaysMs = SAVE_TO_DISK_FILE_SERVER_RETRY_DELAYS_MS,
+  save,
+  shouldRetry = () => true,
+  wait = delay,
+}: {
+  retryDelaysMs?: readonly number[];
+  save: () => Promise<void>;
+  shouldRetry?: () => boolean;
+  wait?: (ms: number) => Promise<unknown>;
+}): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await save();
+      return;
+    } catch (err) {
+      if (
+        !isFileServerNotInitializedError(err) ||
+        attempt >= retryDelaysMs.length ||
+        !shouldRetry()
+      ) {
+        throw err;
+      }
+      await wait(retryDelaysMs[attempt]);
+      if (!shouldRetry()) {
+        throw err;
+      }
+    }
+  }
 }
 
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -2135,7 +2180,10 @@ export class BaseEditorActions<
     this.set_syncstring_to_codemirror(undefined, true);
     this.setState({ is_saving: true });
     try {
-      await this._syncstring.save_to_disk();
+      await saveToDiskWithFileServerRetry({
+        save: () => this._syncstring.save_to_disk(),
+        shouldRetry: () => this._state !== "closed" && !this.isClosed(),
+      });
     } catch (err) {
       console.warn("save_to_disk", this.path, "ERROR", err);
       if (this._state !== "closed") {

@@ -20,14 +20,22 @@ steps:
       depot: /opt/julia-depot
     timeout: 1800
 
+  - uses: cocalc/code-server
+    with:
+      extensions:
+        - julialang.language-julia
+    timeout: 900
+
 verify:
   - command -v julia
-  - export JULIA_DEPOT_PATH=/opt/julia-depot${JULIA_DEPOT_PATH:+:$JULIA_DEPOT_PATH}; julia -e 'import Pluto'
+  - command -v code-server
+  - julia -e 'import Pluto'
+  - code-server --extensions-dir=/opt/code-server/extensions --list-extensions | grep -Fx julialang.language-julia
 
 publish:
   label: Julia + Pluto
   slug: julia-pluto
-  description: Julia with Pluto.jl installed, plus a CoCalc Pluto app launcher and examples.
+  description: Julia with Pluto.jl installed system-wide, plus code-server with the Julia extension, a CoCalc Pluto app launcher, and examples.
   family: julia
   version: "1.12"
   channel: stable
@@ -35,3 +43,5 @@ publish:
   tags:
     - julia
     - pluto
+    - code-server
+    - vscode

@@ -95,6 +95,27 @@ function signInHrefWithCurrentTarget(): string {
   return `/auth/sign-in?target=${encodeURIComponent(target)}`;
 }
 
+function useClientSignedIn(): boolean {
+  const [signedIn, setSignedIn] = useState<boolean>(() =>
+    webapp_client.is_signed_in(),
+  );
+
+  useEffect(() => {
+    const update = () => setSignedIn(webapp_client.is_signed_in());
+    update();
+    webapp_client.on("signed_in", update);
+    webapp_client.on("signed_out", update);
+    webapp_client.on("remember_me_failed", update);
+    return () => {
+      webapp_client.off("signed_in", update);
+      webapp_client.off("signed_out", update);
+      webapp_client.off("remember_me_failed", update);
+    };
+  }, []);
+
+  return signedIn;
+}
+
 export const Page: React.FC = () => {
   const page_actions = useActions("page");
 
@@ -120,7 +141,8 @@ export const Page: React.FC = () => {
 
   const [showSignInTab, setShowSignInTab] = useState<boolean>(false);
   useEffect(() => {
-    setTimeout(() => setShowSignInTab(true), 3000);
+    const timeout = setTimeout(() => setShowSignInTab(true), 3000);
+    return () => clearTimeout(timeout);
   }, []);
 
   const active_top_tab = useTypedRedux("page", "active_top_tab");
@@ -133,6 +155,8 @@ export const Page: React.FC = () => {
   const accountIsReady = useTypedRedux("account", "is_ready");
   const account_id = useTypedRedux("account", "account_id");
   const is_logged_in = useTypedRedux("account", "is_logged_in");
+  const clientSignedIn = useClientSignedIn();
+  const effectivelySignedIn = is_logged_in || clientSignedIn;
   const groups = useTypedRedux("account", "groups");
   const show_i18n = useShowI18NBanner();
   const zendesk = !!useTypedRedux("customize", "zendesk");
@@ -225,7 +249,9 @@ export const Page: React.FC = () => {
   }
 
   function render_sign_in_tab(): React.JSX.Element | null {
-    if (lite || is_logged_in || !showSignInTab) return null;
+    if (lite || effectivelySignedIn || !showSignInTab) {
+      return null;
+    }
 
     return (
       <Next

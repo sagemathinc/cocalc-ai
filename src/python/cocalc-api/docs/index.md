@@ -6,7 +6,7 @@ Install the Python client API `cocalc-api` that is [hosted on Pypi](https://pypi
 pip install cocalc-api
 ```
 
-Obtain a [CoCalc account API Key](https://doc.cocalc.com/apikeys.html) by going to [your account keys](/settings/keys), then start using CoCalc from your Python scripts. Account API keys are scoped: they must have explicit capabilities, and project/file/exec capabilities require an allowed project list.
+Obtain a [CoCalc account API Key](https://cocalc.ai/docs/api/http-api) by going to [your account keys](/settings/keys), then start using CoCalc from your Python scripts. Account API keys are scoped: they must have explicit capabilities, and project/file/exec capabilities require an allowed project list.
 
 Depending on the capabilities granted to the key, the cocalc_api Python library can be used to do operations such as:
 

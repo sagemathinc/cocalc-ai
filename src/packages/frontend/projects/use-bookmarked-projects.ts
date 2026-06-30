@@ -34,11 +34,27 @@ const bookmarkedProjectsListeners = new Set<
   (bookmarkedProjects: BookmarkedProjects) => void
 >();
 
+function sameBookmarkedProjects(a: BookmarkedProjects, b: BookmarkedProjects) {
+  return (
+    a.length === b.length && a.every((project_id, i) => b[i] === project_id)
+  );
+}
+
 function setCurrentBookmarkedProjects(bookmarkedProjects: BookmarkedProjects) {
   const next = uniq(bookmarkedProjects);
+  if (sameBookmarkedProjects(currentBookmarkedProjects, next)) {
+    return;
+  }
   currentBookmarkedProjects = next;
   for (const listener of bookmarkedProjectsListeners) {
     listener(next);
+  }
+}
+
+export function resetBookmarkedProjectsForTests() {
+  currentBookmarkedProjects = [];
+  for (const listener of bookmarkedProjectsListeners) {
+    listener(currentBookmarkedProjects);
   }
 }
 
@@ -109,7 +125,7 @@ export function useBookmarkedProjects() {
         setBookmarks(conatBookmarks);
 
         // Load initial data from conat
-        const initialBookmarks = conatBookmarks.get(PROJECTS_KEY) ?? [];
+        const initialBookmarks = conatBookmarks.get(PROJECTS_KEY);
         if (Array.isArray(initialBookmarks)) {
           setCurrentBookmarkedProjects(initialBookmarks);
         }
@@ -121,9 +137,11 @@ export function useBookmarkedProjects() {
           prev?: Record<string, any>;
         }) => {
           if (changeEvent.key === PROJECTS_KEY) {
-            const remoteBookmarks =
-              (changeEvent.value as BookmarkedProjects) ?? [];
-            setCurrentBookmarkedProjects(remoteBookmarks);
+            if (Array.isArray(changeEvent.value)) {
+              setCurrentBookmarkedProjects(changeEvent.value);
+            } else if (changeEvent.value == null) {
+              setCurrentBookmarkedProjects([]);
+            }
           }
         };
 

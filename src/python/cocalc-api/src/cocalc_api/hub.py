@@ -6,7 +6,7 @@ from .api_types import PingResponse, UserSearchResult, MessageType, TokenType, O
 
 class Hub:
 
-    def __init__(self, api_key: str, host: str = "https://cocalc.com"):
+    def __init__(self, api_key: str, host: str = "https://cocalc.ai"):
         self.api_key = api_key
         self.host = host
         self.client = httpx.Client(

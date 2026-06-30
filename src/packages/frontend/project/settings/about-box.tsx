@@ -11,15 +11,12 @@ import { useIntl } from "react-intl";
 import { useProjectFromMap } from "@cocalc/frontend/app-framework";
 import {
   CopyToClipBoard,
-  HelpIcon,
-  Icon,
   LabeledRow,
   Paragraph,
   SettingBox,
   ThemeEditorModal,
   TimeAgo,
 } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import {
@@ -27,7 +24,6 @@ import {
   projectThemeFromProject,
 } from "@cocalc/frontend/projects/theme";
 import { ProjectsActions } from "@cocalc/frontend/todo-types";
-import { useBookmarkedProjects } from "@cocalc/frontend/projects/use-bookmarked-projects";
 import { useProjectCourseInfo } from "../use-project-course";
 import { useProjectCreated } from "../use-project-created";
 import {
@@ -59,7 +55,6 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
-  const projectsLabelLower = intl.formatMessage(labels.projects).toLowerCase();
   const { course } = useProjectCourseInfo(project_id);
   const courseProjectType = course?.get("type") as any;
   const hasReadonlyFields = ["student", "shared"].includes(courseProjectType);
@@ -71,8 +66,6 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   const [appearanceDraft, setAppearanceDraft] =
     useState<ThemeEditorDraft | null>(null);
   const { created } = useProjectCreated(project_id);
-
-  const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
 
   function renderReadonly() {
     if (!hasReadonlyFields) return;
@@ -162,54 +155,6 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
             >
               Edit appearance
             </Button>
-          </div>
-        </LabeledRow>
-        <LabeledRow
-          label={intl.formatMessage(labels.starred)}
-          vertical={isFlyout}
-          style={{ marginBottom: "15px" }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              width: "100%",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <Icon
-                name={isProjectBookmarked(project_id) ? "star-filled" : "star"}
-                style={{
-                  color: isProjectBookmarked(project_id)
-                    ? COLORS.STAR
-                    : COLORS.GRAY,
-                  fontSize: "18px",
-                  cursor: "pointer",
-                }}
-                onClick={() =>
-                  setProjectBookmarked(
-                    project_id,
-                    !isProjectBookmarked(project_id),
-                  )
-                }
-              />
-              <Typography.Text>
-                {isProjectBookmarked(project_id) ? "Enabled" : "Disabled"}
-              </Typography.Text>
-            </div>
-            <HelpIcon title={`${projectLabel} Starring`}>
-              {intl.formatMessage(
-                {
-                  id: "project.settings.about-box.starred.help",
-                  defaultMessage:
-                    "Starred {projectsLabel} can be filtered by clicking the starred filter button in your {projectsLabel} list.",
-                  description:
-                    "Help text explaining how project starring works",
-                },
-                { projectsLabel: projectsLabelLower },
-              )}
-            </HelpIcon>
           </div>
         </LabeledRow>
         {created && (

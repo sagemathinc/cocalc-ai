@@ -171,7 +171,7 @@ export class WebappConfiguration {
   private get_vanity_id(host: string): string | undefined {
     const host_parsed = parseDomain(host);
     if (host_parsed.type === ParseResultType.Listed) {
-      // vanity for vanity.cocalc.com or foo.p for foo.p.cocalc.com
+      // vanity for vanity.cocalc.ai or foo.p for foo.p.cocalc.ai
       return host_parsed.subDomains.join(".");
     }
     return undefined;

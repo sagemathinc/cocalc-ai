@@ -40,7 +40,7 @@
   "account.editor-settings.title": "에디터",
   "account.editor-settings.x11-keyboard-variant.label": "키보드 변형 (X11 데스크탑용)",
   "account.editor-settings.x11-physical-keyboard.label": "키보드 레이아웃 (X11 데스크탑용)",
-  "account.global-ssh-keys.help": "프로젝트에 SSH 접속을 하려면 다음을 사용하세요 <code>username@host: [project-id-without-dashes]@ssh.cocalc.com</code> 대시 없이 프로젝트 ID는 SSH 키와 관련된 프로젝트 설정 부분에서 찾을 수 있습니다. 프로젝트 간에 SSH 접속을 하려면 <code>[project-id-without-dashes]@ssh</code>를 사용하세요.",
+  "account.global-ssh-keys.help": "프로젝트에 SSH 접속을 하려면 다음을 사용하세요 <code>username@host: [project-id-without-dashes]@ssh.cocalc.ai</code> 대시 없이 프로젝트 ID는 SSH 키와 관련된 프로젝트 설정 부분에서 찾을 수 있습니다. 프로젝트 간에 SSH 접속을 하려면 <code>[project-id-without-dashes]@ssh</code>를 사용하세요.",
   "account.global-ssh-keys.info": "여기에 나열된 전역 SSH 키는 소유자 또는 공동 작업자인 <strong><i>모든 프로젝트</i></strong>에 SSH를 통해 컴퓨터에서 연결할 수 있도록 합니다. 또는 해당 프로젝트의 설정에서 프로젝트에만 액세스를 허용하는 SSH 키를 설정하세요. 자세한 지침은 <A>문서</A> 또는 프로젝트의 설정 페이지의 SSH 부분을 참조하세요.",
   "account.keyboard-settings.intro": "이들은 대부분 코드 편집을 위한 CoCalc 전용 키보드 단축키입니다. 이들 중 많은 것이 편집기 키보드에서 제공하는 표준 기능이 아닙니다. 안타깝게도 키보드 단축키는 현재 사용자 정의가 불가능합니다.",
   "account.keyboard-shortcuts.shortcut.autoindent": "자동 들여쓰기 선택",

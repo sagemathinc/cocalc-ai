@@ -34,7 +34,7 @@ export async function exec_shell_code(socket: CoCalcSocket, mesg) {
     let error = `Error executing command '${mesg.command}' with args '${mesg.args}' -- ${err}`;
     if (error.indexOf("Connection refused") !== -1) {
       error +=
-        "-- Email help@cocalc.com if you need full internet access, which is disabled by default.";
+        "-- Email help@cocalc.ai if you need full internet access, which is disabled by default.";
     }
     const err_mesg = message.error({
       id: mesg.id,

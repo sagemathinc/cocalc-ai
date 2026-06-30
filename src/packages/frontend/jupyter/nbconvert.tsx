@@ -14,6 +14,7 @@ import { useIntl } from "react-intl";
 import { redux } from "@cocalc/frontend/app-framework";
 import { A, Icon, Loading, TimeAgo } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
+import { BASE_URL } from "@cocalc/frontend/misc/base-url";
 import * as misc from "@cocalc/util/misc";
 import { JupyterActions } from "./browser-actions";
 import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
@@ -373,7 +374,7 @@ export const NBConvert: React.FC<NBConvertProps> = React.memo(
         misc.path_split(path).tail,
       ).name;
       const name = base + ".slides.html#/";
-      return `https://cocalc.com/${project_id}/server/18080/` + name;
+      return `${BASE_URL}/${project_id}/server/18080/${name}`;
     }
 
     function render_slides_workaround() {
