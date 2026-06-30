@@ -7,9 +7,14 @@ import type { Request, Response } from "express";
 
 import basePath from "@cocalc/backend/base-path";
 import { getLogger } from "@cocalc/hub/logger";
+import { getPublicFeatureIndexPages } from "@cocalc/util/public-feature-pages";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 const logger = getLogger("hub:servers:sitemap");
+
+const FEATURE_SITEMAP_PATHS = getPublicFeatureIndexPages().map(
+  ({ slug }) => `/features/${slug}`,
+);
 
 export const PUBLIC_SITEMAP_PATHS = [
   "/",
@@ -22,21 +27,7 @@ export const PUBLIC_SITEMAP_PATHS = [
   "/about/team/andrey-novoseltsev",
   "/docs",
   "/features",
-  "/features/jupyter-notebook",
-  "/features/latex-editor",
-  "/features/ai",
-  "/features/slides",
-  "/features/whiteboard",
-  "/features/r-statistical-software",
-  "/features/sage",
-  "/features/octave",
-  "/features/python",
-  "/features/julia",
-  "/features/terminal",
-  "/features/linux",
-  "/features/teaching",
-  "/features/api",
-  "/features/compare",
+  ...FEATURE_SITEMAP_PATHS,
   "/guides",
   "/lang",
   "/en",

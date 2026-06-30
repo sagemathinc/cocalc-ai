@@ -4,6 +4,10 @@
  */
 
 import { LOCALE } from "./i18n/locale";
+import {
+  getPublicFeatureIndexPages,
+  getPublicFeaturePage,
+} from "./public-feature-pages";
 import { SITE_NAME } from "./theme";
 
 export interface PublicRouteMetadata {
@@ -38,13 +42,6 @@ export interface PublicRouteMetadataOptions {
 export interface PublicMetadataRoute {
   route?: any;
   section: string;
-}
-
-interface PublicFeatureMetadata {
-  image?: string;
-  slug: string;
-  summary: string;
-  title: string;
 }
 
 const DEFAULT_SOCIAL_IMAGE = "public/landing/home-hero.jpg";
@@ -83,150 +80,6 @@ const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
   "/public/landing/project-workflows.jpg": { height: 1024, width: 1536 },
 };
 
-const PUBLIC_FEATURE_METADATA: PublicFeatureMetadata[] = [
-  {
-    slug: "jupyter-notebook",
-    title: "Jupyter Notebooks",
-    summary:
-      "Run Jupyter notebooks inside a shared CoCalc project with collaboration, synchronized output, history, recovery, course workflows, terminals, files, and AI agent context nearby.",
-    image: "/public/features/cocalc-jupyter2-20170508.png",
-  },
-  {
-    slug: "latex-editor",
-    title: "LaTeX Editor",
-    summary:
-      "Edit LaTeX in the browser with synchronized collaboration, build output, history, and the rest of the CoCalc project environment close by.",
-    image: "/public/features/latex-editor-main-20251003.png",
-  },
-  {
-    slug: "ai",
-    title: "AI Agents",
-    summary:
-      "Work with Codex near files, notebooks, terminals, screenshots, patches, review notes, and live notebook state.",
-    image: "/public/features/chatgpt-fix-code.png",
-  },
-  {
-    slug: "automations",
-    title: "Project Automations",
-    summary:
-      "Schedule recurring project work, rebuild reports, run notebooks or scripts, and keep outputs in the shared CoCalc project.",
-    image: "/public/features/terminal.png",
-  },
-  {
-    slug: "cli",
-    title: "CoCalc CLI",
-    summary:
-      "Run documented commands against CoCalc projects so scripts and shell-capable agents can inspect context, run notebook checks, and leave outputs for review.",
-    image: "/public/features/terminal.png",
-  },
-  {
-    slug: "slides",
-    title: "Slides",
-    summary:
-      "Build presentation decks as a focused part of CoCalc's whiteboards and slides workflow, with markdown, math, diagrams, Jupyter cells, collaboration, and project context.",
-    image: "/public/features/whiteboard-sage.png",
-  },
-  {
-    slug: "whiteboard",
-    title: "Whiteboard & Slides",
-    summary:
-      "Use collaborative whiteboards and slide-sized pages for markdown, KaTeX math, Jupyter cells, diagrams, presentations, and project context.",
-    image: "/public/features/whiteboard-sage.png",
-  },
-  {
-    slug: "r-statistical-software",
-    title: "R Statistical Software",
-    summary:
-      "Work with R in notebooks, terminals, scripts, RMarkdown-style documents, Quarto-style workflows, Knitr, and shared course projects.",
-    image: "/public/features/cocalc-r-jupyter.png",
-  },
-  {
-    slug: "sage",
-    title: "SageMath",
-    summary:
-      "Use SageMath for teaching, notebooks, SageTeX documents, source development, and long-running mathematics computations in a real collaborative Linux project.",
-    image: "/public/features/sagemath-jupyter.png",
-  },
-  {
-    slug: "octave",
-    title: "GNU Octave",
-    summary:
-      "Use GNU Octave for MATLAB-style numerical computing in collaborative projects with notebooks, .m files, terminals, plots, and teaching workflows.",
-    image: "/public/features/cocalc-octave-jupyter-20200511.png",
-  },
-  {
-    slug: "more-languages",
-    title: "More Languages",
-    summary:
-      "Use C, C++, Fortran, Rust, Go, Java, Bash, SQL, JavaScript, TypeScript, and many other tools through shared project files, terminals, notebooks, and scripts.",
-    image: "/public/features/terminal.png",
-  },
-  {
-    slug: "python",
-    title: "Python",
-    summary:
-      "Use Python for technical computing, data science, and machine learning with a large preinstalled package set and collaborative tooling around it.",
-    image: "/public/features/frame-editor-python.png",
-  },
-  {
-    slug: "julia",
-    title: "Julia",
-    summary:
-      "Run Julia in a collaborative project with Jupyter notebooks, Pluto, package environments, source files, terminals, and course workflows.",
-    image: "/public/features/julia-jupyter.png",
-  },
-  {
-    slug: "terminal",
-    title: "Linux Terminal",
-    summary:
-      "Work in a shared Linux shell, keep tools and files near your notebooks and documents, and avoid local environment drift.",
-    image: "/public/features/terminal.png",
-  },
-  {
-    slug: "linux",
-    title: "Online Linux Environment",
-    summary:
-      "Treat CoCalc projects as collaborative Linux environments with editors, terminals, files, and web-accessible services.",
-    image: "/public/features/cocalc-shell-script-run.png",
-  },
-  {
-    slug: "teaching",
-    title: "Technical Courses and Labs",
-    summary:
-      "Organize assignments, distribute files, collect work, and grade notebooks or other project files with a workflow built for technical courses, labs, and training environments.",
-    image: "/public/features/cocalc-course-assignments-2019.png",
-  },
-  {
-    slug: "api",
-    title: "HTTP API",
-    summary:
-      "Use the CoCalc HTTP API for automation, integration, and provisioning workflows without depending on the web UI.",
-    image: "/public/features/api-screenshot.png",
-  },
-  {
-    slug: "compare",
-    title: "Compare CoCalc",
-    summary:
-      "CoCalc combines notebooks, terminals, documents, AI agents, course tools, sharing, recovery, and collaborative editing in one web-based technical workspace.",
-  },
-  {
-    slug: "icons",
-    title: "Feature Assets",
-    summary:
-      "This route is kept available so older links to feature assets still resolve cleanly.",
-  },
-  {
-    slug: "i18n",
-    title: "Internationalization",
-    summary:
-      "CoCalc supports translated public pages and localized product interfaces.",
-  },
-];
-
-const PUBLIC_FEATURE_METADATA_MAP = new Map(
-  PUBLIC_FEATURE_METADATA.map((page) => [page.slug, page]),
-);
-
 export const PUBLIC_SITE_DESCRIPTION =
   "CoCalc is a shared project workspace for research, teaching, and technical teams, keeping collaboration, AI assistance, history, and recovery close to the work.";
 
@@ -237,25 +90,6 @@ const PRODUCT_SITEMAP_PATHS = [
   "products/cocalc-launchpad",
   "products/cocalc-rocket",
 ] as const;
-
-// Keep this in sync with frontend/public/features/catalog.ts index pages.
-const FEATURE_SITEMAP_SLUGS = new Set([
-  "jupyter-notebook",
-  "latex-editor",
-  "ai",
-  "slides",
-  "whiteboard",
-  "r-statistical-software",
-  "sage",
-  "octave",
-  "python",
-  "julia",
-  "terminal",
-  "linux",
-  "teaching",
-  "api",
-  "compare",
-]);
 
 const POLICY_SITEMAP_SLUGS = [
   "terms",
@@ -310,9 +144,9 @@ export const PUBLIC_SITEMAP_PATHS = uniquePublicPaths([
   ...TEAM_MEMBER_SITEMAP_SLUGS.map((slug) => publicPath(`about/team/${slug}`)),
   publicPath("docs"),
   publicPath("features"),
-  ...PUBLIC_FEATURE_METADATA.filter((page) =>
-    FEATURE_SITEMAP_SLUGS.has(page.slug),
-  ).map((page) => publicPath(`features/${page.slug}`)),
+  ...getPublicFeatureIndexPages().map((page) =>
+    publicPath(`features/${page.slug}`),
+  ),
   publicPath("guides"),
   langPath(),
   ...LOCALE.map((locale) => langPath(locale)),
@@ -503,9 +337,7 @@ function featureRouteMetadata(
   siteName: string,
   options?: PublicRouteMetadataOptions,
 ): PublicRouteMetadata {
-  const page = route?.slug
-    ? PUBLIC_FEATURE_METADATA_MAP.get(route.slug)
-    : undefined;
+  const page = getPublicFeaturePage(route?.slug);
   if (route?.slug === "compare") {
     return {
       canonicalPath: publicPath("features/compare", options),
@@ -527,9 +359,9 @@ function featureRouteMetadata(
   if (page) {
     return {
       canonicalPath: publicPath(`features/${page.slug}`, options),
-      description: page.summary,
+      description: page.metadataSummary ?? page.summary,
       imagePath: publicPath(page.image ?? FEATURE_SOCIAL_IMAGE, options),
-      title: pageTitle(page.title, siteName),
+      title: pageTitle(page.metadataTitle ?? page.title, siteName),
     };
   }
   return {

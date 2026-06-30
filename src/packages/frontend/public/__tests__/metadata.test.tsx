@@ -5,6 +5,7 @@ import { render, waitFor } from "@testing-library/react";
 import { getPublicRouteMetadata, PublicRouteHeadMetadata } from "../metadata";
 import type { PublicRoute } from "../routes";
 import { PUBLIC_SITEMAP_PATHS } from "../sitemap-paths";
+import { getFeatureIndexPages } from "../features/catalog";
 
 type PublicProductsRoute = Extract<PublicRoute, { section: "products" }>;
 
@@ -148,9 +149,12 @@ describe("public route metadata", () => {
   });
 
   it("only emits routable feature detail pages in the public metadata sitemap", () => {
-    expect(PUBLIC_SITEMAP_PATHS).toContain("/features/julia");
-    expect(PUBLIC_SITEMAP_PATHS).toContain("/features/r-statistical-software");
-    expect(PUBLIC_SITEMAP_PATHS).toContain("/features/compare");
+    const featurePaths = PUBLIC_SITEMAP_PATHS.filter((path) =>
+      path.startsWith("/features/"),
+    );
+    expect(featurePaths).toEqual(
+      getFeatureIndexPages().map((page) => `/features/${page.slug}`),
+    );
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/features/automations");
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/features/cli");
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/features/more-languages");
