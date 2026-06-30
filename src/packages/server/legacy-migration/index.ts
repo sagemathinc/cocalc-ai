@@ -25,6 +25,7 @@ import {
   syncProjectUsersOnHost,
 } from "@cocalc/server/project-host/control";
 import {
+  disableMigratedLegacyPublicDirectoryShare,
   normalizePublicDirectorySharePath,
   normalizePublicDirectoryShareSlug,
   upsertMigratedLegacyPublicDirectoryShare,
@@ -408,9 +409,17 @@ async function replayLegacyPublicPathsForProject({
   for (const { legacy_id, payload } of rows) {
     const legacyPublicPathId = clean(payload.id) ?? legacy_id;
     const slug = legacyPublicPathSlug(payload);
-    // Do not replay legacy file public paths as containing-directory shares.
-    // That broadens access beyond the originally published file.
-    if (!legacyPublicPathId || !slug || legacyPublicPathIsFile(payload)) {
+    if (!legacyPublicPathId || !slug) {
+      skipped += 1;
+      continue;
+    }
+    if (legacyPublicPathIsFile(payload)) {
+      // Do not replay legacy file public paths as containing-directory shares.
+      // That broadens access beyond the originally published file.
+      await disableMigratedLegacyPublicDirectoryShare({
+        account_id,
+        legacy_public_path_id: legacyPublicPathId,
+      });
       skipped += 1;
       continue;
     }

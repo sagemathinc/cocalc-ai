@@ -1645,6 +1645,57 @@ export async function upsertMigratedLegacyPublicDirectoryShare(
   });
 }
 
+export async function disableMigratedLegacyPublicDirectoryShare({
+  legacy_public_path_id,
+  account_id,
+  reason = "legacy file-scoped public path disabled until exact file share replay is supported",
+}: {
+  legacy_public_path_id: string;
+  account_id?: string | null;
+  reason?: string;
+}): Promise<boolean> {
+  await ensurePublicDirectorySharesSchema();
+  const { rows } = await getPool().query<{ project_id: string }>(
+    `
+    WITH target AS (
+      SELECT id, project_id
+        FROM public_project_paths
+       WHERE legacy_public_path_id=$1
+    ),
+    updated_paths AS (
+      UPDATE public_project_paths p
+         SET disabled=TRUE,
+             visibility='disabled',
+             metadata=jsonb_set(
+               COALESCE(p.metadata, '{}'::jsonb),
+               '{legacy_migration_disabled_reason}',
+               to_jsonb($2::text),
+               true
+             ),
+             updated_at=NOW()
+        FROM target
+       WHERE p.id=target.id
+       RETURNING p.id
+    ),
+    updated_slugs AS (
+      UPDATE public_project_path_slugs s
+         SET disabled=TRUE,
+             updated_at=NOW()
+        FROM target
+       WHERE s.public_project_path_id=target.id
+       RETURNING s.slug
+    )
+    SELECT DISTINCT project_id
+      FROM target
+    `,
+    [legacy_public_path_id, reason],
+  );
+  for (const { project_id } of rows) {
+    await syncPublicDirectoryShareProjectLabels({ project_id, account_id });
+  }
+  return rows.length > 0;
+}
+
 async function savePublicDirectoryShare(
   opts: UpsertPublicDirectoryShareOptions,
 ): Promise<PublicDirectoryShareSummary> {
