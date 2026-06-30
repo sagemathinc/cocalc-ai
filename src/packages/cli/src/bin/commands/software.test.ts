@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { Command } from "commander";
@@ -401,7 +401,8 @@ test("software help lists supported components", () => {
   assert.ok(list);
   assert.ok(deploy);
   assert.match(info.helpInformation(), /tools-minimal/);
-  assert.match(build.helpInformation(), /static\|hub\|bay\|project-host/);
+  assert.match(build.helpInformation(), /host-bootstrap/);
+  assert.match(build.helpInformation(), /project-host/);
   assert.match(list.helpInformation(), /cli\|launchpad\|plus\|star/);
   assert.match(deploy.helpInformation(), /bay-conat-router/);
   assert.match(deploy.helpInformation(), /--build/);
@@ -2998,6 +2999,98 @@ test("software deploy project-host publishes compatibility object and sets fleet
   );
   assert.equal(history.deployments[0].status, "succeeded");
   assert.equal(history.deployments[0].artifact_id, artifactId);
+});
+
+test("software deploy host-bootstrap publishes latest bootstrap and reconciles hosts", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-host-bootstrap-"));
+  const localStore = join(dir, "store");
+  const bootstrapSource = join(
+    dir,
+    "src",
+    "packages",
+    "server",
+    "cloud",
+    "bootstrap",
+    "bootstrap.py",
+  );
+  const bootstrapBody = "#!/usr/bin/env python3\nprint('bootstrap')\n";
+  mkdirSync(dirname(bootstrapSource), { recursive: true });
+  writeFileSync(bootstrapSource, bootstrapBody);
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({
+      localStore,
+      runs,
+      cwd: dir,
+      repoRoot: dir,
+      env: r2Env,
+      r2Client: r2.client,
+    }),
+  );
+  const originalArgv1 = process.argv[1];
+  process.argv[1] = "software";
+
+  try {
+    await program.parseAsync([
+      "node",
+      "test",
+      "--quiet",
+      "software",
+      "deploy",
+      "--build",
+      "host-bootstrap:bootstrap-fix",
+      "staging",
+      "--env-file",
+      join(dir, "missing.env"),
+    ]);
+  } finally {
+    process.argv[1] = originalArgv1;
+  }
+
+  const artifactId = "20260614T235912Z-e882d124-bootstrap-fix";
+  const artifactKey = `software/artifacts/host-bootstrap/${artifactId}/files/bootstrap.py`;
+  assert.equal(r2.objects.get(artifactKey)!.toString("utf8"), bootstrapBody);
+  assert.equal(
+    r2.objects.get("software/bootstrap/latest/bootstrap.py")!.toString("utf8"),
+    bootstrapBody,
+  );
+  const sha256 = createHash("sha256").update(bootstrapBody).digest("hex");
+  assert.equal(
+    r2.objects
+      .get("software/bootstrap/latest/bootstrap.py.sha256")!
+      .toString("utf8"),
+    `${sha256}  bootstrap.py\n`,
+  );
+  assert.equal(runs.length, 1);
+  assert.deepEqual(runs[0].args, [
+    "--profile",
+    "staging",
+    "host",
+    "reconcile",
+    "--all-online",
+    "--wait",
+  ]);
+  const history = JSON.parse(
+    r2.objects
+      .get("software/deployments/staging/host-bootstrap/index.json")!
+      .toString("utf8"),
+  );
+  assert.equal(history.deployments[0].status, "succeeded");
+  assert.equal(history.deployments[0].artifact_component, "host-bootstrap");
+  assert.equal(history.deployments[0].target.kind, "project-host-fleet");
+  const record = JSON.parse(
+    r2.objects
+      .get(
+        `software/deployments/staging/host-bootstrap/${history.deployments[0].deployment_id}.json`,
+      )!
+      .toString("utf8"),
+  );
+  assert.equal(
+    record.details.host_bootstrap_url,
+    "https://software.example.test/software/bootstrap/latest/bootstrap.py",
+  );
+  assert.equal(record.details.host_bootstrap_reconcile, true);
 });
 
 test("software deploy project-host --rollout sets fleet default and upgrades online hosts", async () => {
