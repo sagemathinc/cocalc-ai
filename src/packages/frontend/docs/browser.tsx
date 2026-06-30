@@ -51,7 +51,7 @@ import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { useProjectHostLatencies } from "@cocalc/frontend/hosts/use-project-host-latencies";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown-public";
 import type {
   DocsPrivateEntrySummary,
   DocsPrivateFilter,

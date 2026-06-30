@@ -192,6 +192,9 @@ export default function PublicApp({
   }, [resolvedConfig]);
 
   useEffect(() => {
+    if (initialRoute.section === "docs") {
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
@@ -212,7 +215,7 @@ export default function PublicApp({
     return () => {
       cancelled = true;
     };
-  }, [config]);
+  }, [config, initialRoute.section]);
 
   return (
     <Suspense fallback={null}>
