@@ -525,6 +525,27 @@ function ActionBarEnabled({
     if (checked_files.size === 0) {
       return;
     } else if (readOnly) {
+      let isSingleFile = false;
+      if (checked_files.size === 1) {
+        const item = checked_files.first();
+        isSingleFile = listing.some(
+          (file) =>
+            misc.path_to_file(current_path, file.name) === item && !file.isDir,
+        );
+      }
+      if (isSingleFile) {
+        return (
+          <FileActionsDropdown
+            names={["download", "copy"]}
+            current_path={current_path}
+            actions={actions}
+            selectedPaths={checked_files.toArray()}
+            label="Actions"
+            showEllipsis={false}
+            showDown={false}
+          />
+        );
+      }
       return (
         <Button
           bsStyle="primary"

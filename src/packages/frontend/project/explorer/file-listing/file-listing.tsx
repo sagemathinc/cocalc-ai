@@ -41,6 +41,7 @@ import { fileItemStyle } from "@cocalc/frontend/project/page/flyouts/utils";
 import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 import { type DirectoryListingEntry } from "@cocalc/frontend/project/explorer/types";
 import {
+  FILE_ACTIONS,
   type FileAction,
   type ProjectActions,
 } from "@cocalc/frontend/project_actions";
@@ -782,9 +783,17 @@ export function FileListing({
               triggerFileAction(record.fullPath, action),
           }),
         );
+      } else if (allowReadOnlyCopy) {
+        items.push({ key: "divider-1", type: "divider" });
+        items.push({
+          key: "copy",
+          icon: <Icon name={FILE_ACTIONS.copy.icon} />,
+          label: intl.formatMessage(FILE_ACTIONS.copy.name),
+          onClick: () => triggerFileAction(record.fullPath, "copy"),
+        });
       }
 
-      if (!readOnly && !record.isDir) {
+      if (!record.isDir) {
         items.push({ key: "divider-2", type: "divider" });
         items.push({
           key: "download",
@@ -800,6 +809,7 @@ export function FileListing({
     [
       student_project_functionality.disableActions,
       readOnly,
+      allowReadOnlyCopy,
       checked_files,
       current_path,
       intl,
