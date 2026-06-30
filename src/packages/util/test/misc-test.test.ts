@@ -917,7 +917,7 @@ describe("parse_user_search", () => {
 
   it("works with line breaks, too", () => {
     const exp = {
-      email_queries: ["foo@bar.com", "baz+123@cocalc.com", "jd@cocalc.com"],
+      email_queries: ["foo@bar.com", "baz+123@cocalc.ai", "jd@cocalc.ai"],
       string_queries: [
         ["john", "doe"],
         ["dr.", "foo", "bar", "baz"],
@@ -925,10 +925,10 @@ describe("parse_user_search", () => {
     };
     const query = `
                 foo@bar.com
-                baz+123@cocalc.com
+                baz+123@cocalc.ai
                 John Doe
                 Dr. Foo Bar BAZ
-                Jane Dae <jd@cocalc.com>
+                Jane Dae <jd@cocalc.ai>
                 `;
     expect(pus(query)).toEqual(exp);
   });

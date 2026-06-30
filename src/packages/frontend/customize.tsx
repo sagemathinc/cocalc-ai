@@ -98,7 +98,7 @@ export interface CustomizeState {
   signup_email_domain_public_policy?: SignupEmailDomainPublicPolicy;
   commercial: boolean;
   default_quotas: TypedMap<DefaultQuotaSetting>;
-  dns: string; // e.g. "cocalc.com"
+  dns: string; // e.g. "cocalc.ai"
   public_viewer_dns?: string;
   email_enabled: false;
   email_signup: boolean;

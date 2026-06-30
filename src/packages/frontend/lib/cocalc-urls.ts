@@ -60,7 +60,7 @@ export function removeOrigin(href: string): string {
 }
 
 // True if starts with host's URL, but is not a port or proxy URL (e.g.,
-// cocalc.com/[project_id]), since it makes no sense to open a proxy server
+// cocalc.ai/[project_id]), since it makes no sense to open a proxy server
 // URL directly inside CoCalc.
 // See https://github.com/sagemathinc/cocalc/issues/4889 and 5423
 // for historical discussion of this function.

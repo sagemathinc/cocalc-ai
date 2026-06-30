@@ -40,7 +40,7 @@
   "account.editor-settings.title": "エディター",
   "account.editor-settings.x11-keyboard-variant.label": "X11デスクトップ用のキーボードバリアント",
   "account.editor-settings.x11-physical-keyboard.label": "キーボードレイアウト（X11デスクトップ用）",
-  "account.global-ssh-keys.help": "プロジェクトにSSHするには、次の<code>username@host: [project-id-without-dashes]@ssh.cocalc.com</code>を使用します。ダッシュのないプロジェクトIDは、SSHキーに関するプロジェクト設定の部分で見つけることができます。プロジェクト間でSSHするには、<code>[project-id-without-dashes]@ssh</code>を使用します。",
+  "account.global-ssh-keys.help": "プロジェクトにSSHするには、次の<code>username@host: [project-id-without-dashes]@ssh.cocalc.ai</code>を使用します。ダッシュのないプロジェクトIDは、SSHキーに関するプロジェクト設定の部分で見つけることができます。プロジェクト間でSSHするには、<code>[project-id-without-dashes]@ssh</code>を使用します。",
   "account.global-ssh-keys.info": "ここに記載されているグローバルSSHキーは、SSHを介してコンピュータから<strong><i>すべてのプロジェクト</i></strong>に接続することを可能にしますが、あなたがオーナーまたはコラボレーターである必要があります。あるいは、そのプロジェクトの設定でプロジェクトのみにアクセスを許可するSSHキーを設定することもできます。詳細な手順については、<A>ドキュメント</A>またはプロジェクトの設定ページのSSH部分を参照してください。",
   "account.keyboard-settings.intro": "これらは主にコード編集のためのCoCalc専用のキーボードショートカットです。多くはエディタのキーボードが提供する標準機能ではありません。残念ながら、キーボードショートカットは現在カスタマイズできません。",
   "account.keyboard-shortcuts.shortcut.autoindent": "選択範囲の自動インデント",

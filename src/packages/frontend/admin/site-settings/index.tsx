@@ -36,7 +36,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { TAGS, Tag, to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { deep_copy, keys } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { COLORS, DNS } from "@cocalc/util/theme";
 import { site_settings_conf } from "@cocalc/util/schema";
 import { RenderRow } from "./render-row";
 import { Data, IsClearing, IsReadonly, IsSet, State } from "./types";
@@ -275,7 +275,7 @@ export default function SiteSettings({ close }) {
     }
     if (conf.hidden && !showHidden) return false;
     if (conf.cocalc_only) {
-      if (!document.location.host.endsWith("cocalc.com")) {
+      if (!document.location.host.endsWith(DNS)) {
         return false;
       }
     }

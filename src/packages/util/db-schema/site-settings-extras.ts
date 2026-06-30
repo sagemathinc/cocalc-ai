@@ -1158,7 +1158,7 @@ export const EXTRAS: SettingsExtras = {
   },
   zendesk_username: {
     name: "Zendesk Username",
-    desc: "This is the username for Zendesk.  E.g., for `cocalc.com` it is `support-agent@cocalc.com`",
+    desc: "This is the username for Zendesk.  E.g., for `cocalc.ai` it is `support-agent@cocalc.ai`",
     default: "",
     show: () => true,
     tags: ["Zendesk", "Support"],
@@ -1167,7 +1167,7 @@ export const EXTRAS: SettingsExtras = {
   },
   zendesk_uri: {
     name: "Zendesk Subdomain",
-    desc: "This is the Subdomain of your Zendesk server.  E.g., for `cocalc.com` it is `sagemathcloud`",
+    desc: "This is the Subdomain of your Zendesk server.  E.g., for `cocalc.ai` it is `sagemathcloud`",
     default: "",
     show: () => true,
     tags: ["Zendesk", "Support"],

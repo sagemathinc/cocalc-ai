@@ -12,9 +12,9 @@ one actually goes to the database.
 IMPORTANT: This *only* caches a query if the query actually
 returns at least one row.  If the query returns nothing,
 that fact is not cached.  This is usually what we want, e.g.,
-if somebody access https://cocalc.com/wstein/myproject, and
+if somebody access https://cocalc.ai/wstein/myproject, and
 notices that myproject isn't the set name, then they may
-set it and immediately try  https://cocalc.com/wstein/myproject again.
+set it and immediately try  https://cocalc.ai/wstein/myproject again.
 In that case, we don't want to the cache to mean that they don't
 see the page for a while. On the other hand, if querying for the
 project that myproject resolves to is cached for a minute that is

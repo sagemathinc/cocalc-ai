@@ -69,7 +69,7 @@ export default async function getCustomize(
       legacy_migration_enabled: !!settings.legacy_migration_enabled,
       legacy_migration_page_message: settings.legacy_migration_page_message,
 
-      // additionally restrict showing landing pages only in cocalc.com-mode
+      // additionally restrict showing landing pages only in hosted CoCalc mode
       landingPages:
         !!settings.landing_pages && settings.kucalc === KUCALC_COCALC_COM,
 

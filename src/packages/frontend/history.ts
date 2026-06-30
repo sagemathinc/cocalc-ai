@@ -9,42 +9,42 @@ and src/packages/hub/servers/app/app-redirect.ts
 
 The URI schema handled by the single page app is as follows:
      Overall settings:
-        https://cocalc.com/settings
+        https://cocalc.ai/settings
      Admin only page:
-        https://cocalc.com/admin
+        https://cocalc.ai/admin
      Account profile:
-        https://cocalc.com/settings/profile
+        https://cocalc.ai/settings/profile
      Preferences:
-        https://cocalc.com/settings/appearance
-        https://cocalc.com/settings/ai
-        https://cocalc.com/settings/keys
+        https://cocalc.ai/settings/appearance
+        https://cocalc.ai/settings/ai
+        https://cocalc.ai/settings/keys
         etc.
      Billing:
-        https://cocalc.com/settings/membership
-        https://cocalc.com/settings/payment-methods
-        https://cocalc.com/settings/statements
+        https://cocalc.ai/settings/membership
+        https://cocalc.ai/settings/payment-methods
+        https://cocalc.ai/settings/statements
      Support:
-        https://cocalc.com/settings/support
+        https://cocalc.ai/settings/support
      Projects page:
-        https://cocalc.com/projects/
+        https://cocalc.ai/projects/
      Specific project:
-        https://cocalc.com/projects/project-id/
+        https://cocalc.ai/projects/project-id/
      Create new file page (in given directory):
-        https://cocalc.com/projects/project-id/new/path/to/dir
+        https://cocalc.ai/projects/project-id/new/path/to/dir
      Search (in given directory):
-        https://cocalc.com/projects/project-id/search/path/to/dir
+        https://cocalc.ai/projects/project-id/search/path/to/dir
      Settings:
-        https://cocalc.com/projects/project-id/settings
+        https://cocalc.ai/projects/project-id/settings
      Log:
-        https://cocalc.com/projects/project-id/log
+        https://cocalc.ai/projects/project-id/log
      Folder listing (must have slash at end):
-       https://cocalc.com/projects/project-id/files/path/to/dir/
+       https://cocalc.ai/projects/project-id/files/path/to/dir/
      Open file:
-       https://cocalc.com/projects/project-id/files/path/to/file
+       https://cocalc.ai/projects/project-id/files/path/to/file
      (From before) raw http:
-       https://cocalc.com/projects/project-id/raw/path/...
+       https://cocalc.ai/projects/project-id/raw/path/...
      (From before) proxy server (supports websockets and ssl) to a given port.
-       https://cocalc.com/projects/project-id/port/<number>/.
+       https://cocalc.ai/projects/project-id/port/<number>/.
 */
 
 import { join } from "path";

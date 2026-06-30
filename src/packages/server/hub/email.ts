@@ -30,6 +30,7 @@ import {
   COMPANY_EMAIL,
   COMPANY_NAME,
   COLORS,
+  DOMAIN_URL,
   DNS,
   HELP_EMAIL,
   LIVE_DEMO_REQUEST,
@@ -101,11 +102,14 @@ function escapeHtmlText(value: string | undefined): string {
     .replace(/'/g, "&#39;");
 }
 
-function baseUrlFromInviteLink(link: string | undefined): string {
+function baseUrlFromInviteLink(
+  link: string | undefined,
+  fallbackBaseUrl = DOMAIN_URL,
+): string {
   try {
-    return link ? new URL(link).origin : "https://cocalc.com";
+    return link ? new URL(link).origin : fallbackBaseUrl;
   } catch {
-    return "https://cocalc.com";
+    return fallbackBaseUrl;
   }
 }
 
@@ -315,8 +319,9 @@ export function create_email_body(
   _project_title,
   link2proj,
   allow_urls_in_emails,
+  fallback_base_url?: string,
 ): string {
-  const base_url = baseUrlFromInviteLink(link2proj);
+  const base_url = baseUrlFromInviteLink(link2proj, fallback_base_url);
   const accept_or_reject = link2proj
     ? `<a href="${escapeHtmlText(link2proj)}" style="display:inline-block; background:${COLORS.ANTD_LINK_BLUE}; color:${COLORS.TOP_BAR.ACTIVE}; text-decoration:none; padding:12px 18px; border-radius:8px; font-weight:700;">Accept or reject this invitation</a>`
     : `<a href="${base_url}/app" style="display:inline-block; background:${COLORS.ANTD_LINK_BLUE}; color:${COLORS.TOP_BAR.ACTIVE}; text-decoration:none; padding:12px 18px; border-radius:8px; font-weight:700;">Open CoCalc to accept or reject this invitation</a>`;
@@ -359,7 +364,7 @@ interface InviteOpts {
 }
 
 export function send_invite_email(opts: InviteOpts) {
-  try {
+  void (async () => {
     const email_body = create_email_body(
       opts.subject,
       opts.email,
@@ -367,11 +372,12 @@ export function send_invite_email(opts: InviteOpts) {
       opts.title,
       opts.link2proj,
       opts.allow_urls,
+      await siteUrl(),
     );
-    send_email({
+    await send_email({
       to: opts.to,
       bcc:
-        opts.settings.kucalc === KUCALC_COCALC_COM ? "invites@cocalc.com" : "",
+        opts.settings.kucalc === KUCALC_COCALC_COM ? "invites@cocalc.ai" : "",
       fromname: fallback(opts.settings.organization_name, COMPANY_NAME),
       from: fallback(opts.settings.organization_email, COMPANY_EMAIL),
       category: "invite",
@@ -383,9 +389,9 @@ export function send_invite_email(opts: InviteOpts) {
       replyto_name: opts.replyto_name,
       cb: opts.cb,
     });
-  } catch (err) {
+  })().catch((err) => {
     opts.cb(err);
-  }
+  });
 }
 
 export function is_banned(address): boolean {
@@ -675,7 +681,7 @@ ${site_name} supports online editing of
     <a href="${joinUrlPath(url, "docs/jupyter/use-jupyter")}">Working with Jupyter Notebooks</a>
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
-    <strong><a href="https://cocalc.com/policies/pricing.html">Subscriptions:</a></strong> make hosting more robust and increase project quotas
+    <strong><a href="${joinUrlPath(url, "pricing")}">Subscriptions:</a></strong> make hosting more robust and increase project quotas
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
     <a href="${joinUrlPath(url, "docs/teaching/course-workflow")}">Teaching a course on CoCalc</a>.
@@ -719,7 +725,7 @@ You can share your thoughts in a <strong>side chat</strong> next to each documen
 </ul>
 
 <p style="margin-top:0;margin-bottom:20px;">
-Visit our <a href="https://cocalc.com/doc/software.html">Software overview page</a> for more details!
+Visit our <a href="${joinUrlPath(url, "software")}">Software overview page</a> for more details!
 </p>
 
 

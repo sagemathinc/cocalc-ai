@@ -19,7 +19,7 @@ interface ResourceLink {
 
 const CDN = "cdn";
 
-// prefix must be a full URL, e.g. https://cocalc.com/ or https://cocalc.foo.bar/subdir/
+// prefix must be a full URL, e.g. https://cocalc.ai/ or https://cocalc.foo.bar/subdir/
 export function resource_links(
   prefix: string,
   with_version: boolean = false,

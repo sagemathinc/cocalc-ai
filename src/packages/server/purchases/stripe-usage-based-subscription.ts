@@ -65,6 +65,7 @@ import syncPaidInvoices from "./sync-paid-invoices";
 import { isValidUUID } from "@cocalc/util/misc";
 import dayjs from "dayjs";
 import { moneyToStripe, toDecimal, type MoneyValue } from "@cocalc/util/money";
+import { DOMAIN_URL } from "@cocalc/util/theme";
 
 const logger = getLogger("purchases:stripe-usage-based-subscription");
 
@@ -166,7 +167,7 @@ async function getPriceId(): Promise<string> {
       name: "CoCalc Automatic Billing",
       id: PRODUCT_ID,
       statement_descriptor: "COCALC BILLING",
-      url: "https://cocalc.com",
+      url: DOMAIN_URL,
     });
     const price = await stripe.prices.create({
       unit_amount: 1,

@@ -735,7 +735,7 @@ def node_version_check() -> None:
         err = f"CoCalc requires node.js v14, but you're using node v{version}."
         if os.environ.get("COCALC_USERNAME",
                           '') == 'user' and 'COCALC_PROJECT_ID' in os.environ:
-            err += '\nIf you are using https://cocalc.com, put ". /cocalc/nvm/nvm.sh" in ~/.bashrc\nto get an appropriate version of node.'
+            err += '\nIf you are using https://cocalc.ai, put ". /cocalc/nvm/nvm.sh" in ~/.bashrc\nto get an appropriate version of node.'
         raise RuntimeError(err)
 
 

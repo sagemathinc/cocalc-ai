@@ -51,7 +51,7 @@ It is also possible to obtain an API key using a javascript-enabled automated we
 This option is useful for applications that embed CoCalc
 in a custom environment, for example [juno.sh](https://juno.sh),
 the iOS application for Jupyter notebooks.
-Visiting the link :samp:\`https://cocalc.com/app?get_api_key=myapp\`,
+Visiting the link :samp:\`https://cocalc.ai/app?get_api_key=myapp\`,
 where "myapp" is an identifier for your application,
 returns a modified sign-in page with the banner
 "CoCalc API Key Access for Myapp".
@@ -68,7 +68,7 @@ Do not share your API key with others or post it in publicly accessible forums.
 
 ## Additional References
 
-- The [CoCalc API tutorial](https://cocalc.com/share/65f06a34-6690-407d-b95c-f51bbd5ee810/Public/README.md?viewer=share) illustrates API calls in Python.
+- The [CoCalc API tutorial](https://cocalc.ai/share/65f06a34-6690-407d-b95c-f51bbd5ee810/Public/README.md?viewer=share) illustrates API calls in Python.
 - The CoCalc PostgreSQL schema definition [src/packages/util/db-schema](https://github.com/sagemathinc/cocalc/blob/master/src/packages/util/db-schema) has information on tables and fields used with the API \`query\` request.
 - The API test suite [src/packages/hub/test/api/](https://github.com/sagemathinc/cocalc/tree/master/src/packages/hub/test/api) contains mocha unit tests for the API messages.
 - The CoCalc message definition file [src/packages/util/message.js](https://github.com/sagemathinc/cocalc/blob/master/src/packages/util/message.js) contains the source for this guide.
@@ -295,7 +295,7 @@ Create a new account:
     -d last_name=Doe00 \\
     -d email_address=jd@example.com \\
     -d password=xyzabc09090 \\
-    -d agreed_to_terms=true https://cocalc.com/api/v1/create_account
+    -d agreed_to_terms=true https://cocalc.ai/api/v1/create_account
 \`\`\`
 
 Option \`agreed_to_terms\` must be present and specified as true.
@@ -310,7 +310,7 @@ Attempting to create the same account a second time results in an error:
     -d last_name=Doe00 \\
     -d email_address=jd@example.com \\
     -d password=xyzabc09090 \\
-    -d agreed_to_terms=true https://cocalc.com/api/v1/create_account
+    -d agreed_to_terms=true https://cocalc.ai/api/v1/create_account
   ==> {"event":"account_creation_failed",
        "id":"2332be03-aa7d-49a6-933a-cd9824b7331a",
        "reason":{"email_address":"This e-mail address is already taken."}}
@@ -352,7 +352,7 @@ Delete an existing account:
 \`\`\`
   curl -u sk_abcdefQWERTY090900000000: \\
     -d account_id=99ebde5c-58f8-4e29-b6e4-b55b8fd71a1b \\
-    https://cocalc.com/api/v1/delete_account
+    https://cocalc.ai/api/v1/delete_account
   ==> {"event":"account_deleted","id":"9e8b68ac-08e8-432a-a853-398042fae8c9"}
 \`\`\`
 
@@ -579,7 +579,7 @@ Simple built-in shell command.
   curl -u sk_abcdefQWERTY090900000000: \\
     -d command=pwd \\
     -d project_id=e49e86aa-192f-410b-8269-4b89fd934fba \\
-    https://cocalc.com/api/v1/project_exec
+    https://cocalc.ai/api/v1/project_exec
   ==> {"event":"project_exec_output",
        "id":"8a78a37d-b2fb-4e29-94ae-d66acdeac949",
        "stdout":"/projects/e49e86aa-192f-410b-8269-4b89fd934fba\\n","stderr":"","exit_code":0}
@@ -591,7 +591,7 @@ Shell command with different working directory.
     -d command=pwd \\
     -d path=Private \\
     -d project_id=e49e86aa-192f-410b-8269-4b89fd934fba \\
-    https://cocalc.com/api/v1/project_exec
+    https://cocalc.ai/api/v1/project_exec
   ==> {"event":"project_exec_output",
        "id":"8a78a37d-b2fb-4e29-94ae-d66acdeac949",
        "stdout":"/projects/e49e86aa-192f-410b-8269-4b89fd934fba/Private\\n","stderr":"","exit_code":0}
@@ -602,7 +602,7 @@ Command line arguments specified by 'args' option. Note JSON format for request 
   curl -u sk_abcdefQWERTY090900000000: \\
     -H 'Content-Type: application/json' \\
     -d '{"command":"echo","args":["xyz","abc"],"project_id":"e49e86aa-192f-410b-8269-4b89fd934fba"}' \\
-    https://cocalc.com/api/v1/project_exec
+    https://cocalc.ai/api/v1/project_exec
   ==> {"event":"project_exec_output",
        "id":"39289ba7-0333-48ad-984e-b25c8b8ffa0e",
        "stdout":"xyz abc\\n",
@@ -615,7 +615,7 @@ Limiting output of the command to 3 characters.
   curl -u sk_abcdefQWERTY090900000000: \\
     -H 'Content-Type: application/json' \\
     -d '{"command":"echo","args":["xyz","abc"],"max_output":3,"project_id":"e49e86aa-192f-410b-8269-4b89fd934fba"}' \\
-    https://cocalc.com/api/v1/project_exec
+    https://cocalc.ai/api/v1/project_exec
   ==> {"event":"project_exec_output",
        "id":"02feab6c-a743-411a-afca-8a23b58988a9",
        "stdout":"xyz (truncated at 3 characters)",
@@ -628,7 +628,7 @@ Setting a timeout for the command.
   curl -u sk_abcdefQWERTY090900000000: \\
     -H 'Content-Type: application/json' \\
     -d '{"command":"sleep 5","timeout":2,"project_id":"e49e86aa-192f-410b-8269-4b89fd934fba"}' \\
-    https://cocalc.com/api/v1/project_exec
+    https://cocalc.ai/api/v1/project_exec
   ==>  {"event":"error",
         "id":"86fea3f0-6a90-495b-a541-9c14a25fbe58",
         "error":"Error executing command 'sleep 5' with args '' -- killed command 'bash /tmp/f-11757-1677-8ei2z0.t4fex0qkt9', , "}
@@ -763,13 +763,13 @@ Examples:
 
 Omitting request id:
 \`\`\`
-  curl -X POST -u sk_abcdefQWERTY090900000000: https://cocalc.com/api/v1/ping
+  curl -X POST -u sk_abcdefQWERTY090900000000: https://cocalc.ai/api/v1/ping
   ==> {"event":"pong","id":"c74afb40-d89b-430f-836a-1d889484c794","now":"2017-05-24T13:29:11.742Z"}
 \`\`\`
 
 Omitting request id and using blank security key:
 \`\`\`
-  curl -X POST -u : https://cocalc.com/api/v1/ping
+  curl -X POST -u : https://cocalc.ai/api/v1/ping
   ==>  {"event":"pong","id":"d90f529b-e026-4a60-8131-6ce8b6d4adc8","now":"2017-11-05T21:10:46.585Z"}
 \`\`\`
 
@@ -777,14 +777,14 @@ Using \`uuid\` shell command to create a request id:
 \`\`\`
   uuid
   ==> 553f2815-1508-416d-8e69-2dde5af3aed8
-  curl -u sk_abcdefQWERTY090900000000: https://cocalc.com/api/v1/ping -d id=553f2815-1508-416d-8e69-2dde5af3aed8
+  curl -u sk_abcdefQWERTY090900000000: https://cocalc.ai/api/v1/ping -d id=553f2815-1508-416d-8e69-2dde5af3aed8
   ==> {"event":"pong","id":"553f2815-1508-416d-8e69-2dde5af3aed8","now":"2017-05-24T13:47:21.312Z"}
 \`\`\`
 
 Using JSON format to provide request id:
 \`\`\`
   curl -u sk_abcdefQWERTY090900000000: -H "Content-Type: application/json" \\
-    -d '{"id":"8ec4ac73-2595-42d2-ad47-0b9641043b46"}' https://cocalc.com/api/v1/ping
+    -d '{"id":"8ec4ac73-2595-42d2-ad47-0b9641043b46"}' https://cocalc.ai/api/v1/ping
   ==> {"event":"pong","id":"8ec4ac73-2595-42d2-ad47-0b9641043b46","now":"2017-05-24T17:15:59.288Z"}
 \`\`\`\
 `,
@@ -819,7 +819,7 @@ is provided for future reference.
   curl -u sk_abcdefQWERTY090900000000: \\
     -d id=34a424dc-1731-4b31-ba3d-fc8a484980d9 \\
     -d "error=cannot load library xyz" \\
-    https://cocalc.com/api/v1/log_client_error
+    https://cocalc.ai/api/v1/log_client_error
   ==> {"event":"success",
        "id":"34a424dc-1731-4b31-ba3d-fc8a484980d9"}
 \`\`\`
@@ -1057,7 +1057,7 @@ Get title and description for a project, given the project id.
 \`\`\`
   curl -u sk_abcdefQWERTY090900000000: -H "Content-Type: application/json" \\
     -d '{"query":{"projects":{"project_id":"29163de6-b5b0-496f-b75d-24be9aa2aa1d","title":null,"description":null}}}' \\
-    https://cocalc.com/api/v1/query
+    https://cocalc.ai/api/v1/query
   ==> {"event":"query",
        "id":"8ec4ac73-2595-42d2-ad47-0b9641043b46",
        "query":{"projects":{"project_id":"29163de6-b5b0-496f-b75d-24be9aa2aa1d",
@@ -1075,7 +1075,7 @@ In this example, project title and description are returned.
 \`\`\`
   curl -u sk_abcdefQWERTY090900000000: -H "Content-Type: application/json" \\
     -d '{"query":{"projects":[{"project_id":null,"title":null,"description":null}]}}' \\
-    https://cocalc.com/api/v1/query
+    https://cocalc.ai/api/v1/query
   ==> {"event":"query",
        "id":"8ec4ac73-2595-42d2-ad47-0b9641043b46",
        "multi_response": False,
@@ -1092,7 +1092,7 @@ Get project id, given title and description.
 \`\`\`
   curl -u sk_abcdefQWERTY090900000000: -H "Content-Type: application/json" \\
     -d '{"query":{"projects":{"project_id":null,"title":"MY NEW PROJECT 2","description":"desc 2"}}}' \\
-    https://cocalc.com/api/v1/query
+    https://cocalc.ai/api/v1/query
   ==> {"event":"query",
        "query":{"projects":{"project_id":"29163de6-b5b0-496f-b75d-24be9aa2aa1d",
                             "title":"MY NEW PROJECT 2",
@@ -1106,7 +1106,7 @@ Get users, given the project id.
   curl -u sk_abcdefQWERTY090900000000: \\
     -H "Content-Type: application/json" \\
     -d '{"query":{"projects":{"project_id":"29163de6-b5b0-496f-b75d-24be9aa2aa1d","users":null}}}' \\
-    https://cocalc.com/api/v1/query
+    https://cocalc.ai/api/v1/query
   ==> {"event":"query",
        "query":{"projects":{"project_id":"29163de6-b5b0-496f-b75d-24be9aa2aa1d",
                             "users":{"6c28c5f4-3235-46be-b025-166b4dcaac7e":{"group":"owner"},
@@ -1122,7 +1122,7 @@ Get editor settings for the present user.
   curl -u sk_abcdefQWERTY090900000000: \\
     -H "Content-Type: application/json" \\
     -d '{"query":{"accounts":{"account_id":"29163de6-b5b0-496f-b75d-24be9aa2aa1d","editor_settings":null}}}' \\
-    https://cocalc.com/api/v1/query
+    https://cocalc.ai/api/v1/query
   ==> {"event":"query",
        "multi_response":false,
        "id":"9dd3ef3f-002b-4893-b31f-ff51440c855f",
@@ -1160,7 +1160,7 @@ Set title and description for a project, given the project id.
     -d '{"query":{"projects":{"project_id":"29163de6-b5b0-496f-b75d-24be9aa2aa1d", \\
                               "title":"REVISED TITLE", \\
                               "description":"REVISED DESC"}}}' \\
-    https://cocalc.com/api/v1/query
+    https://cocalc.ai/api/v1/query
     ==> {"event":"query",
          "query":{},
          "multi_response":false,
@@ -1178,7 +1178,7 @@ if you are only setting the \`jupyter_classic\` attribute because changes are me
   curl -u sk_abcdefQWERTY090900000000: \\
     -H "Content-Type: application/json" \\
     -d '{"query":{"accounts":{"account_id":"29163de6-b5b0-496f-b75d-24be9aa2aa1d","editor_settings":{"jupyter_classic":false}}}}' \\
-    https://cocalc.com/api/v1/query
+    https://cocalc.ai/api/v1/query
   ==> {"event":"query",
        "multi_response":false,
        "id":"9dd3ef3f-002b-4893-b31f-ff51440c855f",

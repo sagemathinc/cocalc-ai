@@ -417,7 +417,7 @@ function isLocalBrowserOrigin(origin: string | undefined): boolean {
 
 // This is intentionally simple and deterministic. It is enough for the
 // supported launchpad patterns:
-//   - cocalc.com            -> cocalc.com
+//   - cocalc.ai             -> cocalc.ai
 //   - lite4b.cocalc.ai      -> cocalc.ai
 //   - launchpad.example.com -> example.com
 // For exotic multi-level public suffixes, this can be refined later.

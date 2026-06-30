@@ -37,7 +37,7 @@ describe("lite hub project detail getters", () => {
 
     upsertRow("accounts", JSON.stringify({ account_id: ACCOUNT_ID }), {
       account_id: ACCOUNT_ID,
-      email_address: "user@cocalc.com",
+      email_address: "user@cocalc.ai",
     });
     upsertRow("projects", JSON.stringify({ project_id: PROJECT_ID }), {
       project_id: PROJECT_ID,

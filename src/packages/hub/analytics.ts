@@ -148,14 +148,18 @@ function check_cors(
     ) {
       return true;
     }
-    // we also allow cocalc.com and sagemath.com
-    if (isEqual(origin_parsed.topLevelDomains, ["com"])) {
-      if (
-        origin_parsed.domain === "cocalc" ||
-        origin_parsed.domain === "sagemath"
-      ) {
-        return true;
-      }
+    // we also allow cocalc.ai and sagemath.com
+    if (
+      isEqual(origin_parsed.topLevelDomains, ["ai"]) &&
+      origin_parsed.domain === "cocalc"
+    ) {
+      return true;
+    }
+    if (
+      isEqual(origin_parsed.topLevelDomains, ["com"]) &&
+      origin_parsed.domain === "sagemath"
+    ) {
+      return true;
     }
     // … as well as sagemath.org
     if (
@@ -309,7 +313,7 @@ export async function initAnalytics(
     dbg(`/analytics.js POST token='${token}'`);
     if (token) {
       // req.body is an object (json middlewhere somewhere?)
-      // e.g. {"utm":{"source":"asdfasdf"},"landing":"https://cocalc.com/..."}
+      // e.g. {"utm":{"source":"asdfasdf"},"landing":"https://cocalc.ai/..."}
       // ATTN key/values could be malicious
       // record it, there is no need for a callback
       recordAnalyticsData(database, token, req.body, pii_retention);

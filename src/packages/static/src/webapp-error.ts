@@ -30,7 +30,7 @@ function handleError(event) {
     // We ignore that here.  E.g., this happens when you open
     // a project sometimes with this input:
     // {msg: "ResizeObserver loop limit exceeded",
-    // url: "https://cocalc.com/45f...44a1-b842-6eaf5ee07f8f/files/?session=default", lineno: 0, colno: 0, error: null}
+    // url: "https://cocalc.ai/45f...44a1-b842-6eaf5ee07f8f/files/?session=default", lineno: 0, colno: 0, error: null}
     return;
   }
   console.warn("handleError", { msg, url, lineno, colno, error });

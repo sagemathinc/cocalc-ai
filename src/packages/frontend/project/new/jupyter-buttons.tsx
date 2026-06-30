@@ -165,7 +165,7 @@ export function JupyterNotebookButtons({
   //   // decide, if we pick and sort by priority, or just show all of them by name
   //   const havePriority = filtered.some((name, _) => getPriority(name) > 0);
 
-  //   // e.g. in cocalc.com case, we have priorities and we pick those >= 10 – otherwise just all kernels
+  //   // e.g. in hosted CoCalc case, we have priorities and we pick those >= 10 – otherwise just all kernels
   //   if (havePriority) {
   //     return filtered
   //       .filter((name, _) => {

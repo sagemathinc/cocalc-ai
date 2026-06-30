@@ -12,7 +12,7 @@
 // TODO: for now, this is backend only. example DB query:
 /*
 INSERT INTO whitelabeling (id, theme)
-VALUES ('vanity', '{"site_name":"Vanity", "site_description": "A vanity address test setup", "help_email": "hsy+vanity@cocalc.com"}'::JSONB)
+VALUES ('vanity', '{"site_name":"Vanity", "site_description": "A vanity address test setup", "help_email": "hsy+vanity@cocalc.ai"}'::JSONB)
 ON CONFLICT(id) DO UPDATE SET theme=EXCLUDED.theme;
 */
 

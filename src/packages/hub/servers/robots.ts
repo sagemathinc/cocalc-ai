@@ -17,7 +17,7 @@ export default function getHandler() {
                Disallow: /
                `);
       } else {
-        // If landing pages are enabled, which should only be cocalc.com (and maybe some test sites temporarily),
+        // If landing pages are enabled, which should only be hosted CoCalc (and maybe some test sites temporarily),
         // then we only disallow some obvious bad routes.  This allows the share server, landing pages, etc.
         // If we need to switch to a whitelist, see app/next.ts for what to allow...
         res.write(`User-agent: *
