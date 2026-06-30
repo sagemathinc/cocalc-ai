@@ -42,7 +42,11 @@ import {
 } from "@cocalc/frontend/rootfs/catalog-ui";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { R2_REGION_LABELS } from "@cocalc/util/consts";
-import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
+import {
+  LEGACY_RESTORE_FILE_FAILURE_REPORT_LIMIT,
+  OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON,
+  legacyRestoreMissingArchiveEntriesFromError,
+} from "@cocalc/util/legacy-migration";
 import type {
   LegacyMigrationImportProjectResult,
   LegacyMigrationMatchedAccount,
@@ -172,12 +176,99 @@ function restoreProgressText(
   return parts.join(" • ");
 }
 
+function restoreMissingArchiveFiles(
+  project: LegacyMigrationProjectSummary,
+): string[] {
+  const fromResult = project.restore_result?.missing_archive_files;
+  if (Array.isArray(fromResult) && fromResult.length > 0) {
+    return fromResult.map((path) => `${path}`).filter(Boolean);
+  }
+  const fromProgress = (project.restore_progress?.detail as any)
+    ?.missing_archive_files;
+  if (Array.isArray(fromProgress) && fromProgress.length > 0) {
+    return fromProgress.map((path) => `${path}`).filter(Boolean);
+  }
+  return legacyRestoreMissingArchiveEntriesFromError(project.restore_error);
+}
+
+function restoreMissingArchiveFileCount(
+  project: LegacyMigrationProjectSummary,
+): number {
+  const fromResult = project.restore_result?.missing_archive_file_count;
+  if (typeof fromResult === "number" && Number.isFinite(fromResult)) {
+    return fromResult;
+  }
+  const fromProgress = (project.restore_progress?.detail as any)
+    ?.missing_archive_file_count;
+  if (typeof fromProgress === "number" && Number.isFinite(fromProgress)) {
+    return fromProgress;
+  }
+  return restoreMissingArchiveFiles(project).length;
+}
+
+function showRestoreIssueDetails(project: LegacyMigrationProjectSummary): void {
+  const missingFiles = restoreMissingArchiveFiles(project);
+  const missingCount = restoreMissingArchiveFileCount(project);
+  const hiddenMissing = Math.max(0, missingCount - missingFiles.length);
+  const title =
+    missingCount > 0
+      ? `Restore completed with ${missingCount.toLocaleString()} file warning${
+          missingCount === 1 ? "" : "s"
+        }`
+      : "Legacy project restore error";
+  Modal.info({
+    title,
+    width: 720,
+    content: (
+      <Space direction="vertical" size={10} style={{ width: "100%" }}>
+        {missingCount > 0 ? (
+          <>
+            <Text>
+              The archive restore extracted the available files, but tar
+              reported that these legacy archive entries could not be found
+              during extraction.
+            </Text>
+            <div style={{ maxHeight: 260, overflow: "auto" }}>
+              {missingFiles
+                .slice(0, LEGACY_RESTORE_FILE_FAILURE_REPORT_LIMIT)
+                .map((path) => (
+                  <Text
+                    code
+                    key={path}
+                    style={{ display: "block", whiteSpace: "normal" }}
+                  >
+                    {path}
+                  </Text>
+                ))}
+            </div>
+            {hiddenMissing > 0 ? (
+              <Text type="secondary">
+                {hiddenMissing.toLocaleString()} more file warning
+                {hiddenMissing === 1 ? "" : "s"} omitted from this summary.
+              </Text>
+            ) : null}
+          </>
+        ) : null}
+        {project.restore_error ? (
+          <Text
+            type={missingCount > 0 ? "secondary" : "danger"}
+            style={{ whiteSpace: "pre-wrap" }}
+          >
+            {project.restore_error}
+          </Text>
+        ) : null}
+      </Space>
+    ),
+  });
+}
+
 function projectStatusFilter(
   project: LegacyMigrationProjectSummary,
 ): Exclude<LegacyProjectStatusFilter, "all"> {
   if (
     project.import_status === "failed" ||
-    project.restore_status === "failed"
+    (project.restore_status === "failed" &&
+      restoreMissingArchiveFileCount(project) === 0)
   ) {
     return "failed";
   }
@@ -189,7 +280,13 @@ function projectStatusFilter(
   ) {
     return "restoring";
   }
-  if (project.restore_status === "restored") return "restored";
+  if (
+    project.restore_status === "restored" ||
+    (project.restore_status === "failed" &&
+      restoreMissingArchiveFileCount(project) > 0)
+  ) {
+    return "restored";
+  }
   if (!archiveAvailable(project) && !project.project_id) {
     return "not-available";
   }
@@ -198,7 +295,18 @@ function projectStatusFilter(
 
 function projectStatusTag(project: LegacyMigrationProjectSummary) {
   const status = projectStatusFilter(project);
-  if (status === "restored") return <Tag color="green">Restored</Tag>;
+  if (
+    project.restore_status === "failed" &&
+    restoreMissingArchiveFileCount(project) > 0
+  ) {
+    return <Tag color="orange">Partial restore</Tag>;
+  }
+  if (status === "restored") {
+    if (restoreMissingArchiveFileCount(project) > 0) {
+      return <Tag color="orange">Restored with warnings</Tag>;
+    }
+    return <Tag color="green">Restored</Tag>;
+  }
   if (status === "restoring") return <Tag color="blue">Restoring</Tag>;
   if (status === "failed") return <Tag color="red">Failed</Tag>;
   if (status === "not-available") return <Tag>Not yet available</Tag>;
@@ -975,24 +1083,39 @@ export function LegacyMigrationPage() {
       title: "Status",
       key: "status",
       width: 180,
-      render: (_: unknown, project: LegacyMigrationProjectSummary) => (
-        <Space direction="vertical" size={4}>
-          {projectStatusTag(project)}
-          {project.restore_error ? (
-            <Text type="danger" ellipsis={{ tooltip: project.restore_error }}>
-              {project.restore_error}
-            </Text>
-          ) : null}
-          {restoreProgressText(project.restore_progress) ? (
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {restoreProgressText(project.restore_progress)}
-              {restoreProgressPercent(project.restore_progress) != null
-                ? ` (${restoreProgressPercent(project.restore_progress)}%)`
-                : ""}
-            </Text>
-          ) : null}
-        </Space>
-      ),
+      render: (_: unknown, project: LegacyMigrationProjectSummary) => {
+        const missingCount = restoreMissingArchiveFileCount(project);
+        const progressText = restoreProgressText(project.restore_progress);
+        return (
+          <Space direction="vertical" size={4}>
+            {projectStatusTag(project)}
+            {missingCount > 0 || project.restore_error ? (
+              <Button
+                danger={missingCount === 0}
+                size="small"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  showRestoreIssueDetails(project);
+                }}
+              >
+                {missingCount > 0
+                  ? `${missingCount.toLocaleString()} file warning${
+                      missingCount === 1 ? "" : "s"
+                    }`
+                  : "Show error"}
+              </Button>
+            ) : null}
+            {progressText ? (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {progressText}
+                {restoreProgressPercent(project.restore_progress) != null
+                  ? ` (${restoreProgressPercent(project.restore_progress)}%)`
+                  : ""}
+              </Text>
+            ) : null}
+          </Space>
+        );
+      },
     },
     {
       title: "Last edited",

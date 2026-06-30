@@ -15,6 +15,7 @@ import {
   LEGACY_RESTORE_LRO_LABEL,
   LEGACY_RESTORE_STATUS_LABEL,
   LEGACY_SOURCE_PROJECT_LABEL,
+  legacyRestoreMissingArchiveEntriesFromError,
 } from "@cocalc/util/legacy-migration";
 
 const { Text } = Typography;
@@ -55,6 +56,16 @@ function knownRestoredKey({
   opId: string;
 }): string {
   return `legacy-project-restore-known-restored:${project_id}:${opId || "no-op"}`;
+}
+
+function restoreIssueDismissKey({
+  project_id,
+  opId,
+}: {
+  project_id: string;
+  opId: string;
+}): string {
+  return `legacy-project-restore-issue-dismissed:${project_id}:${opId || "no-op"}`;
 }
 
 export function markLegacyProjectRestoreKnownRestored({
@@ -106,6 +117,20 @@ function wasKnownRestored(key: string): boolean {
   } catch {
     return false;
   }
+}
+
+function wasRestoreIssueDismissed(key: string): boolean {
+  try {
+    return globalThis.localStorage?.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markRestoreIssueDismissed(key: string): void {
+  try {
+    globalThis.localStorage?.setItem(key, "1");
+  } catch {}
 }
 
 function isActiveRestoreStatus(status: string): boolean {
@@ -255,35 +280,79 @@ type OptimisticRestoreState = {
 function skippedRestoreText({
   summary,
   progress,
+  error,
 }: {
   summary?: LroSummary;
   progress?: Extract<LroEvent, { type: "progress" }>;
+  error?: string;
 }): string {
   const detail =
     progress?.detail ??
-    (summary?.progress_summary?.detail as Record<string, unknown> | undefined);
+    (summary?.progress_summary?.detail as
+      | Record<string, unknown>
+      | undefined) ??
+    (summary?.result as Record<string, unknown> | undefined);
   if (!detail || typeof detail !== "object") return "";
-  const count = (detail as any).skipped_file_count;
-  if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) {
-    return "";
-  }
-  const bytes = formatBytes((detail as any).skipped_bytes);
-  const files = Array.isArray((detail as any).skipped_files)
-    ? (detail as any).skipped_files
-    : [];
-  const shown = files
-    .map((file) => labelValue(file?.path))
-    .filter(Boolean)
-    .slice(0, 5);
-  const hidden = Math.max(0, count - shown.length);
-  const parts = [
-    `${formatCount(count)} oversized file(s) were not restored${
-      bytes ? ` (${bytes})` : ""
-    }.`,
-  ];
-  if (shown.length > 0) {
+  const parts: string[] = [];
+  const skippedCount = (detail as any).skipped_file_count;
+  if (
+    typeof skippedCount === "number" &&
+    Number.isFinite(skippedCount) &&
+    skippedCount > 0
+  ) {
+    const bytes = formatBytes((detail as any).skipped_bytes);
+    const files = Array.isArray((detail as any).skipped_files)
+      ? (detail as any).skipped_files
+      : [];
+    const shown = files
+      .map((file) => labelValue(file?.path))
+      .filter(Boolean)
+      .slice(0, 5);
+    const hidden = Math.max(0, skippedCount - shown.length);
     parts.push(
-      `Skipped: ${shown.join(", ")}${hidden ? `, and ${hidden} more` : ""}.`,
+      `${formatCount(skippedCount)} oversized file(s) were not restored${
+        bytes ? ` (${bytes})` : ""
+      }.`,
+    );
+    if (shown.length > 0) {
+      parts.push(
+        `Skipped: ${shown.join(", ")}${hidden ? `, and ${hidden} more` : ""}.`,
+      );
+    }
+  }
+  const missingCount = (detail as any).missing_archive_file_count;
+  if (
+    typeof missingCount === "number" &&
+    Number.isFinite(missingCount) &&
+    missingCount > 0
+  ) {
+    const files = Array.isArray((detail as any).missing_archive_files)
+      ? (detail as any).missing_archive_files
+      : [];
+    const shown = files.map(labelValue).filter(Boolean).slice(0, 5);
+    const hidden = Math.max(0, missingCount - shown.length);
+    parts.push(
+      `${formatCount(missingCount)} archive entr${
+        missingCount === 1 ? "y was" : "ies were"
+      } listed but not restored.`,
+    );
+    if (shown.length > 0) {
+      parts.push(
+        `Missing: ${shown.join(", ")}${hidden ? `, and ${hidden} more` : ""}.`,
+      );
+    }
+  }
+  const missingFromError = legacyRestoreMissingArchiveEntriesFromError(error);
+  if (missingFromError.length > 0 && parts.length === 0) {
+    const shown = missingFromError.slice(0, 5);
+    const hidden = Math.max(0, missingFromError.length - shown.length);
+    parts.push(
+      `${formatCount(missingFromError.length)} archive entr${
+        missingFromError.length === 1 ? "y was" : "ies were"
+      } listed but not restored.`,
+    );
+    parts.push(
+      `Missing: ${shown.join(", ")}${hidden ? `, and ${hidden} more` : ""}.`,
     );
   }
   return parts.join(" ");
@@ -318,6 +387,10 @@ export function LegacyMigrationRestoreBanner({
     () => activeRestoreSeenKey({ project_id, opId: effectiveOpId }),
     [effectiveOpId, project_id],
   );
+  const restoreIssueKey = useMemo(
+    () => restoreIssueDismissKey({ project_id, opId: effectiveOpId }),
+    [effectiveOpId, project_id],
+  );
   const [reopenDismissed, setReopenDismissed] = useState(() =>
     wasReopenDismissed(dismissKey),
   );
@@ -326,6 +399,9 @@ export function LegacyMigrationRestoreBanner({
   );
   const [knownRestored, setKnownRestored] = useState(() =>
     wasKnownRestored(knownRestoredKey({ project_id, opId: effectiveOpId })),
+  );
+  const [restoreIssueDismissed, setRestoreIssueDismissed] = useState(() =>
+    wasRestoreIssueDismissed(restoreIssueKey),
   );
 
   useEffect(() => {
@@ -347,6 +423,10 @@ export function LegacyMigrationRestoreBanner({
       wasKnownRestored(knownRestoredKey({ project_id, opId: effectiveOpId })),
     );
   }, [effectiveOpId, project_id]);
+
+  useEffect(() => {
+    setRestoreIssueDismissed(wasRestoreIssueDismissed(restoreIssueKey));
+  }, [restoreIssueKey]);
 
   useEffect(() => {
     setSummary(undefined);
@@ -411,6 +491,7 @@ export function LegacyMigrationRestoreBanner({
   ]);
 
   if (!legacyProjectId) return null;
+  if (restoreIssueDismissed && failed) return null;
 
   async function reopenProject() {
     setReopening(true);
@@ -488,6 +569,9 @@ export function LegacyMigrationRestoreBanner({
     progress,
   });
   const error = failed ? labelValue(summary?.error) || effectiveError : "";
+  const warningText = skippedRestoreText({ summary, progress, error });
+  const errorIsMissingArchiveEntries =
+    legacyRestoreMissingArchiveEntriesFromError(error).length > 0;
 
   async function retryRestore() {
     setRetrying(true);
@@ -517,6 +601,19 @@ export function LegacyMigrationRestoreBanner({
     }
   }
 
+  async function acceptRestoreIssue() {
+    markRestoreIssueDismissed(restoreIssueKey);
+    setRestoreIssueDismissed(true);
+    if (effectiveOpId) {
+      await webapp_client.conat_client.hub.lro
+        .dismiss({ op_id: effectiveOpId })
+        .catch((err) => {
+          console.warn("failed to dismiss legacy restore LRO", err);
+        });
+    }
+    void message.success("Legacy restore warning hidden for this project.");
+  }
+
   return (
     <Alert
       showIcon
@@ -542,9 +639,9 @@ export function LegacyMigrationRestoreBanner({
               {detailExtra}
             </Text>
           ) : null}
-          {skippedText ? (
+          {warningText ? (
             <Text type="warning" style={{ fontSize: 12 }}>
-              {skippedText}
+              {warningText}
             </Text>
           ) : null}
           {percent != null ? (
@@ -554,15 +651,22 @@ export function LegacyMigrationRestoreBanner({
               status={progressBarStatus(summary?.status)}
             />
           ) : null}
-          {error ? <Text type="danger">{error}</Text> : null}
+          {error && !errorIsMissingArchiveEntries ? (
+            <Text type="danger">{error}</Text>
+          ) : null}
           {failed ? (
-            <Button
-              loading={retrying}
-              onClick={() => void retryRestore()}
-              size="small"
-            >
-              Retry file restore
-            </Button>
+            <Space wrap>
+              <Button
+                loading={retrying}
+                onClick={() => void retryRestore()}
+                size="small"
+              >
+                Retry full file restore
+              </Button>
+              <Button onClick={() => void acceptRestoreIssue()} size="small">
+                Accept and hide
+              </Button>
+            </Space>
           ) : null}
         </Space>
       }

@@ -22,6 +22,11 @@ import type {
   ProjectArchiveRestoreResult,
   SignedProjectArchiveDownload,
 } from "@cocalc/conat/files/file-server";
+import {
+  LEGACY_RESTORE_FILE_FAILURE_REPORT_LIMIT,
+  legacyRestoreMissingArchiveEntriesFromTarStderr,
+  legacyRestoreTarStderrHasOnlyMissingArchiveEntries,
+} from "@cocalc/util/legacy-migration";
 import { publishLroEvent } from "../lro/stream";
 
 import { normalizeArchivePath } from "../archive-path";
@@ -274,11 +279,13 @@ function runProjectArchiveTarCommand({
         }
       }
       if (code !== 0) {
-        reject(
-          new Error(
-            `tar failed with code ${code ?? "null"} signal ${signal ?? "null"}: ${stderr.trim() || inputError?.message || "unknown error"}`,
-          ),
+        const error = new Error(
+          `tar failed with code ${code ?? "null"} signal ${signal ?? "null"}: ${stderr.trim() || inputError?.message || "unknown error"}`,
         );
+        (error as any).tarStderr = stderr;
+        (error as any).tarCode = code;
+        (error as any).tarSignal = signal;
+        reject(error);
         return;
       }
       if (inputError) {
@@ -488,7 +495,7 @@ async function extractProjectArchiveTar({
   expected_file_count?: number;
   expected_uncompressed_bytes?: number;
   lro?: LroRef;
-}): Promise<void> {
+}): Promise<{ missing_archive_files: string[] }> {
   publishArchiveProgress({
     lro,
     phase: "extract",
@@ -517,36 +524,65 @@ async function extractProjectArchiveTar({
   const runAs = currentUid === owner.uid ? undefined : owner;
   let extracted_count = 0;
   let lastProgress = 0;
-  await runProjectArchiveTarCommand({
-    archivePath,
-    args,
-    runAs,
-    onStdoutLine: (line) => {
-      const path = normalizeProjectArchiveMemberPath(line);
-      if (!path) return;
-      assertSafeArchivePath(path);
-      extracted_count += 1;
-      const now = Date.now();
-      if (now - lastProgress < PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS) return;
-      lastProgress = now;
-      const progress =
-        expected_file_count != null && expected_file_count > 0
-          ? Math.min(88, 70 + (extracted_count / expected_file_count) * 18)
-          : 75;
+  try {
+    await runProjectArchiveTarCommand({
+      archivePath,
+      args,
+      runAs,
+      onStdoutLine: (line) => {
+        const path = normalizeProjectArchiveMemberPath(line);
+        if (!path) return;
+        assertSafeArchivePath(path);
+        extracted_count += 1;
+        const now = Date.now();
+        if (now - lastProgress < PROJECT_ARCHIVE_PROGRESS_INTERVAL_MS) return;
+        lastProgress = now;
+        const progress =
+          expected_file_count != null && expected_file_count > 0
+            ? Math.min(88, 70 + (extracted_count / expected_file_count) * 18)
+            : 75;
+        publishArchiveProgress({
+          lro,
+          phase: "extract",
+          message: "extracting archive files",
+          progress,
+          detail: {
+            current_path: truncateProgressPath(path),
+            extracted_count,
+            file_count: expected_file_count,
+            uncompressed_bytes: expected_uncompressed_bytes,
+          },
+        });
+      },
+    });
+    return { missing_archive_files: [] };
+  } catch (err) {
+    const stderr = (err as any)?.tarStderr;
+    const missing = legacyRestoreMissingArchiveEntriesFromTarStderr(stderr);
+    if (
+      missing.length > 0 &&
+      legacyRestoreTarStderrHasOnlyMissingArchiveEntries(stderr)
+    ) {
       publishArchiveProgress({
         lro,
         phase: "extract",
-        message: "extracting archive files",
-        progress,
+        message: "archive extracted with file warnings",
+        progress: 90,
         detail: {
-          current_path: truncateProgressPath(path),
           extracted_count,
           file_count: expected_file_count,
           uncompressed_bytes: expected_uncompressed_bytes,
+          missing_archive_file_count: missing.length,
+          missing_archive_files: missing.slice(
+            0,
+            LEGACY_RESTORE_FILE_FAILURE_REPORT_LIMIT,
+          ),
         },
       });
-    },
-  });
+      return { missing_archive_files: missing };
+    }
+    throw err;
+  }
 }
 
 async function downloadSignedProjectArchive({
@@ -768,7 +804,7 @@ export function createLegacyProjectArchiveHandlers({
           await chmod(member_list_path, 0o644);
         }
         const homeStat = await stat(home);
-        await extractProjectArchiveTar({
+        const extraction = await extractProjectArchiveTar({
           archivePath,
           dest: home,
           owner: { uid: homeStat.uid, gid: homeStat.gid },
@@ -777,6 +813,7 @@ export function createLegacyProjectArchiveHandlers({
           expected_uncompressed_bytes: uncompressed_bytes,
           lro,
         });
+        const missingArchiveFiles = extraction.missing_archive_files;
         let quotaUsedBytes: number | undefined;
         let quotaSizeBytes: number | undefined;
         if (quotaGraceEnabled) {
@@ -810,6 +847,11 @@ export function createLegacyProjectArchiveHandlers({
             skipped_file_count,
             skipped_bytes,
             skipped_files,
+            missing_archive_file_count: missingArchiveFiles.length,
+            missing_archive_files: missingArchiveFiles.slice(
+              0,
+              LEGACY_RESTORE_FILE_FAILURE_REPORT_LIMIT,
+            ),
           },
         });
         invalidateProjectFsServer(project_id);
@@ -824,6 +866,11 @@ export function createLegacyProjectArchiveHandlers({
           skipped_file_count,
           skipped_bytes,
           skipped_files,
+          missing_archive_file_count: missingArchiveFiles.length,
+          missing_archive_files: missingArchiveFiles.slice(
+            0,
+            LEGACY_RESTORE_FILE_FAILURE_REPORT_LIMIT,
+          ),
           duration_ms: Date.now() - started,
         };
       } finally {

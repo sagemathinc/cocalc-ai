@@ -84,6 +84,8 @@ export interface ProjectArchiveRestoreResult {
   skipped_file_count?: number;
   skipped_bytes?: number;
   skipped_files?: ProjectArchiveEntry[];
+  missing_archive_file_count?: number;
+  missing_archive_files?: string[];
   duration_ms: number;
 }
 
