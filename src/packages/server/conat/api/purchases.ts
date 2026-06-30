@@ -320,6 +320,106 @@ function aggregateMembershipTierUsageReports(
   return { countsByTier, totalActiveAccountCount };
 }
 
+async function getMembershipTierUsageReportForBay({
+  account_id,
+  bay_id,
+  currentBayId,
+}: {
+  account_id?: string;
+  bay_id: string;
+  currentBayId: string;
+}): Promise<MembershipTierUsageReport> {
+  return bay_id === currentBayId
+    ? await getMembershipTierUsageReportLocal(db(), bay_id)
+    : await getInterBayBridge()
+        .bayOps(bay_id, { timeout_ms: 15_000 })
+        .getMembershipTierUsageReport({ account_id });
+}
+
+async function getConfiguredMembershipTierUsageReports({
+  account_id,
+  currentBayId,
+}: {
+  account_id?: string;
+  currentBayId: string;
+}): Promise<{
+  reports: MembershipTierUsageReport[];
+  bays: MembershipTierAdminOverviewBay[];
+}> {
+  const bayIds = await getConfiguredBayIdsForMembershipTierOverview();
+  const settled = await Promise.allSettled(
+    bayIds.map(async (bay_id) =>
+      getMembershipTierUsageReportForBay({
+        account_id,
+        bay_id,
+        currentBayId,
+      }),
+    ),
+  );
+  const reports: MembershipTierUsageReport[] = [];
+  const bays: MembershipTierAdminOverviewBay[] = bayIds.map((bay_id, i) => {
+    const result = settled[i];
+    if (result.status === "fulfilled") {
+      reports.push(result.value);
+      return { bay_id, ok: true };
+    }
+    return {
+      bay_id,
+      ok: false,
+      error: `${result.reason}`,
+    };
+  });
+  return { reports, bays };
+}
+
+function getUsageHistoryCountForTier(
+  report: MembershipTierUsageReport,
+  tier_id: string,
+): number {
+  const row = report.tiers.find((row) => row.tier_id === tier_id);
+  return Math.max(0, Number(row?.usage_history_count ?? 0) || 0);
+}
+
+function formatBayIds(bayIds: string[]): string {
+  return bayIds.join(", ");
+}
+
+async function assertNoMembershipTierUsageHistoryAcrossConfiguredBays({
+  account_id,
+  tier_id,
+  currentBayId,
+}: {
+  account_id?: string;
+  tier_id: string;
+  currentBayId: string;
+}): Promise<void> {
+  const { reports, bays } = await getConfiguredMembershipTierUsageReports({
+    account_id,
+    currentBayId,
+  });
+  const failedBayIds = bays.filter((bay) => !bay.ok).map((bay) => bay.bay_id);
+  if (failedBayIds.length > 0) {
+    throw Error(
+      `cannot delete membership tier "${tier_id}" because usage history could not be checked on bay(s): ${formatBayIds(
+        failedBayIds,
+      )}`,
+    );
+  }
+  const usedBays = reports
+    .map((report) => ({
+      bay_id: report.bay_id,
+      count: getUsageHistoryCountForTier(report, tier_id),
+    }))
+    .filter(({ count }) => count > 0);
+  if (usedBays.length > 0) {
+    throw Error(
+      `cannot delete membership tier "${tier_id}" because it has usage history on bay(s): ${usedBays
+        .map(({ bay_id, count }) => `${bay_id} (${count})`)
+        .join(", ")}`,
+    );
+  }
+}
+
 function normalizeAllowedDomain(domain: string): string {
   const value = `${domain ?? ""}`.trim().toLowerCase().replace(/^@+/, "");
   if (
@@ -494,34 +594,22 @@ export async function getMembershipTierAdminOverview({
   const tierRows = (await getMembershipTierRows(
     db(),
   )) as AdminMembershipTierRow[];
-  const bayIds = await getConfiguredBayIdsForMembershipTierOverview();
-  const settled = await Promise.allSettled(
-    bayIds.map(async (bay_id) =>
-      bay_id === currentBayId
-        ? await getMembershipTierUsageReportLocal(db(), bay_id)
-        : await getInterBayBridge()
-            .bayOps(bay_id, { timeout_ms: 15_000 })
-            .getMembershipTierUsageReport({ account_id }),
-    ),
-  );
-  const reports: MembershipTierUsageReport[] = [];
-  const bays: MembershipTierAdminOverviewBay[] = bayIds.map((bay_id, i) => {
-    const result = settled[i];
-    if (result.status === "fulfilled") {
-      reports.push(result.value);
-      return { bay_id, ok: true };
-    }
-    return {
-      bay_id,
-      ok: false,
-      error: `${result.reason}`,
-    };
+  const { reports, bays } = await getConfiguredMembershipTierUsageReports({
+    account_id,
+    currentBayId,
   });
+  const partialUsageReport = bays.some((bay) => !bay.ok);
   const { countsByTier, totalActiveAccountCount } =
     aggregateMembershipTierUsageReports(reports);
   const tiers = tierRows.map((tier) => {
     const counts =
       countsByTier.get(tier.id) ?? zeroMembershipTierUsageCountRow(tier.id);
+    const has_usage_history =
+      counts.usage_history_count > 0
+        ? true
+        : partialUsageReport
+          ? undefined
+          : false;
     return {
       ...tier,
       subscription_count: counts.subscription_count,
@@ -534,7 +622,7 @@ export async function getMembershipTierAdminOverview({
       site_license_count: counts.site_license_count,
       total_account_count: counts.total_account_count,
       total_active_account_count: totalActiveAccountCount,
-      has_usage_history: counts.usage_history_count > 0,
+      has_usage_history,
     } satisfies AdminMembershipTierRow;
   });
   return {
@@ -609,8 +697,18 @@ export async function deleteMembershipTier({
   session_hash?: string | null;
   id?: MembershipClass;
 } = {}): Promise<{ id: MembershipClass }> {
-  await requireFreshAuthAdmin({ account_id, browser_id, session_hash });
-  return await deleteMembershipTier0({ id: requireMembershipTierId(id) });
+  const accountId = await requireFreshAuthAdmin({
+    account_id,
+    browser_id,
+    session_hash,
+  });
+  const tierId = requireMembershipTierId(id);
+  await assertNoMembershipTierUsageHistoryAcrossConfiguredBays({
+    account_id: accountId,
+    tier_id: tierId,
+    currentBayId: getConfiguredBayId(),
+  });
+  return await deleteMembershipTier0({ id: tierId });
 }
 
 export async function getAccountUsageOverview({
