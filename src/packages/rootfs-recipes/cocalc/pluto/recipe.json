@@ -47,7 +47,7 @@
               "command": "bash",
               "args": [
                 "-lc",
-                "export JULIA_DEPOT_PATH=/opt/julia-depot${JULIA_DEPOT_PATH:+:$JULIA_DEPOT_PATH}; julia -e 'import Pluto; Pluto.run(launch_browser=false, require_secret_for_access=false, host=get(ENV,\"HOST\",\"127.0.0.1\"), port=parse(Int, ENV[\"PORT\"]))'"
+                "julia -e 'import Pluto; Pluto.run(launch_browser=false, require_secret_for_access=false, host=get(ENV,\"HOST\",\"127.0.0.1\"), port=parse(Int, ENV[\"PORT\"]))'"
               ]
             },
             "network": {

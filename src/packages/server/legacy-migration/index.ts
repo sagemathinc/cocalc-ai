@@ -29,7 +29,10 @@ import {
   normalizePublicDirectorySharePath,
   upsertMigratedLegacyPublicDirectoryShare,
 } from "@cocalc/server/public-directory-shares";
-import { legacyPublicPathSlugForRecord } from "@cocalc/server/legacy-migration/public-path-slugs";
+import {
+  legacyPublicPathSlugForRecord,
+  normalizeLegacyPublicPathDescription,
+} from "@cocalc/server/legacy-migration/public-path-slugs";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { triggerLegacyMigrationProjectRestoreWorker } from "@cocalc/server/legacy-migration/restore-worker";
@@ -410,7 +413,8 @@ async function replayLegacyPublicPathsForProject({
         requires_auth: true,
         availability_status: "available",
         title: clean(payload.title) ?? clean(payload.name) ?? null,
-        description: clean(payload.description) ?? null,
+        description:
+          normalizeLegacyPublicPathDescription(payload.description) ?? null,
         license: clean(payload.license) ?? null,
         image: clean(payload.image) ?? null,
         redirect: clean(payload.redirect) ?? null,

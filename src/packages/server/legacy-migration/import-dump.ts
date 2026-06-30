@@ -14,6 +14,7 @@ import {
   normalizePublicDirectorySharePath,
   normalizePublicDirectoryShareSlug,
 } from "@cocalc/server/public-directory-shares";
+import { normalizeLegacyPublicPathDescription } from "@cocalc/server/legacy-migration/public-path-slugs";
 import { is_valid_uuid_string as isValidUUID } from "@cocalc/util/misc";
 import { OTHER_SETTINGS_LEGACY_MIGRATION_PROJECTS_BUTTON } from "@cocalc/util/legacy-migration";
 
@@ -1012,7 +1013,7 @@ function normalizeRow(target: ImportTarget, row: Record<string, any>): void {
       return;
     }
     row.name = clean(row.name);
-    row.description = clean(row.description);
+    row.description = normalizeLegacyPublicPathDescription(row.description);
     row.url = clean(row.url);
     row.legacy_site_license_id = clean(row.site_license_id);
     row.site_license_id = validUuidOrNull(row.site_license_id);
