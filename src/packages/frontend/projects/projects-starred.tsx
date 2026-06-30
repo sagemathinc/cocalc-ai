@@ -154,10 +154,8 @@ export function StarredProjectsBar() {
   // State for tracking how many projects can be shown
   const [visibleCount, setVisibleCount] = useState<number>(0);
   const [measurementPhase, setMeasurementPhase] = useState<boolean>(true);
-  const [containerHeight, setContainerHeight] = useState<number>(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const spaceRef = useRef<HTMLDivElement>(null);
-  const measurementContainerRef = useRef<HTMLDivElement>(null);
   const buttonWidthsRef = useRef<number[]>([]);
 
   // Calculate how many buttons fit based on measured widths
@@ -213,10 +211,11 @@ export function StarredProjectsBar() {
   // Reset measurement phase when projects change
   useLayoutEffect(() => {
     setMeasurementPhase(true);
-    setVisibleCount(0);
   }, [starredProjects]);
 
-  // Measure button widths from hidden container and calculate visible count
+  // Measure visible button widths and calculate visible count. During the
+  // measurement pass we render all buttons rather than an empty bar, so page
+  // switches and bookmark reloads do not make starred projects blink away.
   useLayoutEffect(() => {
     if (!measurementPhase || starredProjects.length === 0) {
       return;
@@ -224,21 +223,14 @@ export function StarredProjectsBar() {
 
     // Use requestAnimationFrame to ensure buttons are fully laid out before measuring
     const frameId = requestAnimationFrame(() => {
-      if (!measurementContainerRef.current) {
+      if (!spaceRef.current) {
         setMeasurementPhase(false);
         return;
       }
 
-      const buttons =
-        measurementContainerRef.current.querySelectorAll<HTMLElement>(
-          ".starred-project-button",
-        );
-
-      // Capture the height of the measurement container to prevent height collapse
-      const height = measurementContainerRef.current.offsetHeight;
-      if (height > 0) {
-        setContainerHeight(height);
-      }
+      const buttons = spaceRef.current.querySelectorAll<HTMLElement>(
+        ".starred-project-button",
+      );
 
       if (buttons && buttons.length === starredProjects.length) {
         buttonWidthsRef.current = Array.from(buttons).map(
@@ -324,7 +316,10 @@ export function StarredProjectsBar() {
   }
 
   // Get overflow projects for the dropdown menu
-  const overflowProjects = starredProjects.slice(visibleCount);
+  const displayCount = measurementPhase ? starredProjects.length : visibleCount;
+  const overflowProjects = measurementPhase
+    ? []
+    : starredProjects.slice(displayCount);
 
   const renderTooltipContent = (project: any) => {
     return (
@@ -392,70 +387,32 @@ export function StarredProjectsBar() {
         items={allProjectIds}
         strategy={horizontalListSortingStrategy}
       >
-        <div
-          ref={containerRef}
-          style={{
-            ...STARRED_BAR_STYLE,
-            minHeight: containerHeight > 0 ? `${containerHeight}px` : undefined,
-          }}
-        >
-          {/* Hidden measurement container - rendered off-screen so it doesn't cause visual flicker */}
-          {measurementPhase && (
-            <div
-              ref={measurementContainerRef}
-              style={{
-                position: "fixed",
-                visibility: "hidden",
-                width: containerRef.current?.offsetWidth ?? "100%",
-                display: "flex",
-                gap: "8px",
-                pointerEvents: "none",
-                top: -9999,
-                left: -9999,
-              }}
-            >
-              {starredProjects.map((project) => (
-                <DraggableProjectButton
-                  key={project.project_id}
-                  project={project}
-                  showTooltip={false}
-                  visibility="visible"
-                  onProjectClick={handleProjectClick}
-                  renderTooltipContent={renderTooltipContent}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Actual visible content - only rendered after measurement phase */}
+        <div ref={containerRef} style={STARRED_BAR_STYLE}>
+          {/* Actual visible content stays mounted during measurement to avoid flicker. */}
           <Space size="small" ref={spaceRef}>
-            {!measurementPhase && (
-              <>
-                {starredProjects.slice(0, visibleCount).map((project) => (
-                  <DraggableProjectButton
-                    key={project.project_id}
-                    project={project}
-                    showTooltip={true}
-                    onProjectClick={handleProjectClick}
-                    renderTooltipContent={renderTooltipContent}
-                  />
-                ))}
-                {/* Show overflow dropdown if there are hidden projects */}
-                {overflowProjects.length > 0 && (
-                  <Dropdown
-                    menu={{ items: overflowMenuItems }}
-                    placement="bottomRight"
-                    trigger={["click"]}
-                  >
-                    <Button
-                      icon={<Icon name="ellipsis" />}
-                      style={{ backgroundColor: "white", marginLeft: "auto" }}
-                    >
-                      +{overflowProjects.length}
-                    </Button>
-                  </Dropdown>
-                )}
-              </>
+            {starredProjects.slice(0, displayCount).map((project) => (
+              <DraggableProjectButton
+                key={project.project_id}
+                project={project}
+                showTooltip={true}
+                onProjectClick={handleProjectClick}
+                renderTooltipContent={renderTooltipContent}
+              />
+            ))}
+            {/* Show overflow dropdown if there are hidden projects */}
+            {overflowProjects.length > 0 && (
+              <Dropdown
+                menu={{ items: overflowMenuItems }}
+                placement="bottomRight"
+                trigger={["click"]}
+              >
+                <Button
+                  icon={<Icon name="ellipsis" />}
+                  style={{ backgroundColor: "white", marginLeft: "auto" }}
+                >
+                  +{overflowProjects.length}
+                </Button>
+              </Dropdown>
             )}
           </Space>
         </div>
