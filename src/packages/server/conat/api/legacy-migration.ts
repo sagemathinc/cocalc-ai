@@ -25,10 +25,11 @@ function isSeedBay(): boolean {
   return getConfiguredBayId() === getSeedBayId();
 }
 
-function getSeedLegacyMigrationClient() {
+function getSeedLegacyMigrationClient(timeout?: number) {
   return createInterBayAccountLocalClient({
     client: getInterBayFabricClient(),
     dest_bay: getSeedBayId(),
+    timeout,
   });
 }
 
@@ -45,7 +46,9 @@ export async function importProjects(
 ) {
   return isSeedBay()
     ? await localLegacyMigration.importProjects(opts)
-    : await getSeedLegacyMigrationClient().legacyMigrationImportProjects(opts);
+    : await getSeedLegacyMigrationClient(
+        opts.timeout,
+      ).legacyMigrationImportProjects(opts);
 }
 
 export async function retryProjectRestore(

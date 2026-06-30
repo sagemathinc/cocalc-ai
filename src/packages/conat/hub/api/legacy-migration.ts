@@ -85,6 +85,9 @@ export interface LegacyMigrationImportProjectsOptions {
   rootfs_image_id?: string;
   host_id?: string;
   region?: string;
+  // Transport timeout for the bounded import setup/enqueue RPC. File restore
+  // itself runs asynchronously via project LROs.
+  timeout?: number;
 }
 
 export interface LegacyMigrationImportProjectResult {

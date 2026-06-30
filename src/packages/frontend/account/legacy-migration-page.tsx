@@ -52,6 +52,8 @@ import type { SettingsPageDefinition } from "./settings-page";
 
 const { Text } = Typography;
 
+const LEGACY_PROJECT_IMPORT_SETUP_TIMEOUT_MS = 5 * 60 * 1000;
+
 function InternalRouteLink({
   children,
   href,
@@ -353,6 +355,7 @@ function LegacyProjectImportModal({
           rootfs_image_id: draft.rootfs_image_id,
           host_id: draft.host_id,
           region: draft.region,
+          timeout: LEGACY_PROJECT_IMPORT_SETUP_TIMEOUT_MS,
         });
       const result = response.results[0];
       if (!result?.project_id || result.status === "failed") {
@@ -556,6 +559,7 @@ function LegacyProjectBulkImportModal({
           rootfs_image_id: draft.rootfs_image_id,
           host_id: draft.host_id,
           region: draft.region,
+          timeout: LEGACY_PROJECT_IMPORT_SETUP_TIMEOUT_MS,
         });
       await onImported(response.results);
       onClose();
@@ -821,6 +825,7 @@ export function LegacyMigrationPage() {
           await webapp_client.conat_client.hub.legacyMigration.importProjects({
             legacy_project_ids: [project.legacy_project_id],
             restore_mode: "full",
+            timeout: LEGACY_PROJECT_IMPORT_SETUP_TIMEOUT_MS,
           });
         const result = response.results[0];
         if (!result?.project_id || result.status === "failed") {
