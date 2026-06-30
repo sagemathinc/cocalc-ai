@@ -40,7 +40,7 @@
   "account.editor-settings.title": "संपादक",
   "account.editor-settings.x11-keyboard-variant.label": "कीबोर्ड प्रकार (X11 डेस्कटॉप के लिए)",
   "account.editor-settings.x11-physical-keyboard.label": "कीबोर्ड लेआउट (X11 डेस्कटॉप के लिए)",
-  "account.global-ssh-keys.help": "एक प्रोजेक्ट में SSH करने के लिए, निम्नलिखित का उपयोग करें <code>username@host: [project-id-without-dashes]@ssh.cocalc.com</code> SSH कुंजियों के बारे में प्रोजेक्ट सेटिंग्स के भाग में प्रोजेक्ट आईडी बिना डैश के पाई जा सकती है। प्रोजेक्ट्स के बीच SSH करने के लिए, <code>[project-id-without-dashes]@ssh</code> का उपयोग करें।",
+  "account.global-ssh-keys.help": "एक प्रोजेक्ट में SSH करने के लिए, निम्नलिखित का उपयोग करें <code>username@host: [project-id-without-dashes]@ssh.cocalc.ai</code> SSH कुंजियों के बारे में प्रोजेक्ट सेटिंग्स के भाग में प्रोजेक्ट आईडी बिना डैश के पाई जा सकती है। प्रोजेक्ट्स के बीच SSH करने के लिए, <code>[project-id-without-dashes]@ssh</code> का उपयोग करें।",
   "account.global-ssh-keys.info": "यहां सूचीबद्ध वैश्विक SSH कुंजियाँ आपको अपने कंप्यूटर से SSH के माध्यम से उन <strong><i>सभी प्रोजेक्ट्स</i></strong> से कनेक्ट करने की अनुमति देती हैं जिन पर आप मालिक या सहयोगी हैं। वैकल्पिक रूप से, उस प्रोजेक्ट की सेटिंग्स में केवल एक प्रोजेक्ट तक पहुँच प्रदान करने वाली SSH कुंजियाँ सेट करें। आगे के निर्देशों के लिए <A>दस्तावेज़</A> या किसी प्रोजेक्ट में सेटिंग्स पेज के SSH भाग को देखें।",
   "account.keyboard-settings.intro": "ये ज्यादातर कोकैल्क-विशिष्ट कीबोर्ड शॉर्टकट कोड संपादित करने के लिए हैं। इनमें से कई संपादक कीबोर्ड द्वारा प्रदान की जाने वाली मानक कार्यप्रणालियाँ नहीं हैं। दुर्भाग्यवश, कीबोर्ड शॉर्टकट वर्तमान में अनुकूलन योग्य नहीं हैं।",
   "account.keyboard-shortcuts.shortcut.autoindent": "ऑटोइंडेंट चयन",

@@ -1,5 +1,5 @@
 /*
-Returns absolute url, e.g., https://cocalc.com or https://cocalc.com/{path}
+Returns absolute url, e.g., https://cocalc.ai or https://cocalc.ai/{path}
 
 optional path may or may not start with a /, either way is fine.
 */

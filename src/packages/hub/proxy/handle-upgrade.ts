@@ -128,7 +128,7 @@ function denyUpgrade(socket) {
 }
 
 function isConatUpgradePath(url: string) {
-  const u = new URL(url, "http://cocalc.com");
+  const u = new URL(url, "http://cocalc.ai");
   let pathname = u.pathname;
   if (basePath.length > 1) {
     pathname = pathname.slice(basePath.length);

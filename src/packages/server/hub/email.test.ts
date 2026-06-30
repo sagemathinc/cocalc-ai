@@ -17,10 +17,10 @@ describe("escape_email_body", () => {
 
   it("keeps links only when URL links are allowed", () => {
     expect(
-      escape_email_body('<a href="https://cocalc.com">CoCalc</a>', true),
-    ).toContain('<a href="https://cocalc.com">');
+      escape_email_body('<a href="https://cocalc.ai">CoCalc</a>', true),
+    ).toContain('<a href="https://cocalc.ai">');
     expect(
-      escape_email_body('<a href="https://cocalc.com">CoCalc</a>', false),
+      escape_email_body('<a href="https://cocalc.ai">CoCalc</a>', false),
     ).toBe("CoCalc");
   });
 });
@@ -42,5 +42,20 @@ describe("create_email_body", () => {
     expect(body).not.toContain("Sign in or create an account");
     expect(body).not.toContain("exactly");
     expect(body).not.toContain("<script>");
+  });
+
+  it("uses the configured site URL when no invite link is provided", () => {
+    const body = create_email_body(
+      "Course invite",
+      "<p>Please join</p>",
+      "student@example.com",
+      "Course",
+      "",
+      false,
+      "https://cocalc.ai",
+    );
+
+    expect(body).toContain('href="https://cocalc.ai/app"');
+    expect(body).not.toContain("cocalc.com");
   });
 });

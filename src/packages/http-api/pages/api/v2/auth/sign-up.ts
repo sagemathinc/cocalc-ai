@@ -23,7 +23,7 @@ API Usage:
 curl -d displayName='John Doe' \
   -d email=jd@example.com \
   -d password=xyzabc09090 \
-  -d terms=true https://cocalc.com/api/v2/auth/sign-up
+  -d terms=true https://cocalc.ai/api/v2/auth/sign-up
 
 TIP: If you want to pass in an email like jd+1@example.com, use '%2B' in place of '+'.
 */

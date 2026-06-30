@@ -312,7 +312,7 @@ const logger = getLogger("core/client");
 interface Options {
   // address = the address of a cocalc server, including the base url, e.g.,
   //
-  //   https://cocalc.com
+  //   https://cocalc.ai
   //
   // or for a dev server running locally with a base url:
   //

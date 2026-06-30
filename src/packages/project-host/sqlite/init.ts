@@ -18,6 +18,6 @@ function ensureAccountRow() {
   if (existing) return;
   upsertRow("accounts", pk, {
     account_id,
-    email_address: "user@cocalc.com",
+    email_address: "user@cocalc.ai",
   });
 }

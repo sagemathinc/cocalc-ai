@@ -14,7 +14,7 @@ export function javascript_eval(line: string, element: any): string {
   let require: any;
   require = requirejs = () => {
     throw Error(
-      "require is not available in CoCalc; if you need a Javascript library, please email help@cocalc.com.",
+      "require is not available in CoCalc; if you need a Javascript library, please email help@cocalc.ai.",
     );
   };
   let define = (..._) => {

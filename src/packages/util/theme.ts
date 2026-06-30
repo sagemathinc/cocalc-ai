@@ -29,7 +29,7 @@ export const SITE_NAME = "CoCalc";
 export const COMPANY_NAME = "SageMath, Inc.";
 export const COMPANY_EMAIL = "office@sagemath.com";
 export const APP_TAGLINE = "Collaborative Calculation";
-export const DNS = "cocalc.com";
+export const DNS = "cocalc.ai";
 export const DOMAIN_URL = `https://${DNS}`;
 export const DISCUSSION_GROUP =
   "https://groups.google.com/forum/#!forum/cocalc";
@@ -38,7 +38,7 @@ export const FIELD_GUIDES_URL = "https://sagemathinc.github.io/cocalc-guides/";
 export const BLOG_URL = "https://blog.sagemath.com/";
 export const LIVE_DEMO_REQUEST =
   "https://docs.google.com/forms/d/e/1FAIpQLSesDZkGD2XVu8BHKd_sPwn5g7MrLAA8EYRTpB6daedGVMTpkA/viewform";
-export const HELP_EMAIL = "help@cocalc.com";
+export const HELP_EMAIL = "help@cocalc.ai";
 export const TWITTER_HANDLE = "cocalc_com"; // without the @
 export const BILLING_EMAIL = "billing@sagemath.com";
 export const BILLING_TAXID = "TAX EIN: 47-3015407";

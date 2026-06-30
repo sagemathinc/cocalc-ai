@@ -147,7 +147,7 @@ export async function support() {
 or [create a support ticket](${await url("support", "new")}).\n\n---\n\n`;
 }
 
-// Given a URL like /support/new, this returns something like https://cocalc.com/support/new,
+// Given a URL like /support/new, this returns something like https://cocalc.ai/support/new,
 // but for this site.   url("support", "new")
 export async function url(...args) {
   return await siteUrl(join(...args.map((x) => `${x}`)));

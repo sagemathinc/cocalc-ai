@@ -61,6 +61,17 @@ async function getWelcomeEmail(
   const site_url = await siteURL();
   const manual_docs_url = joinUrlPath(site_url, "docs");
   const jupyter_docs_url = joinUrlPath(site_url, "docs/jupyter/use-jupyter");
+  const jupyter_feature_url = joinUrlPath(
+    site_url,
+    "features/jupyter-notebook",
+  );
+  const sage_feature_url = joinUrlPath(site_url, "features/sage");
+  const latex_feature_url = joinUrlPath(site_url, "features/latex-editor");
+  const octave_feature_url = joinUrlPath(site_url, "features/octave");
+  const julia_feature_url = joinUrlPath(site_url, "features/julia");
+  const features_url = joinUrlPath(site_url, "features");
+  const pricing_url = joinUrlPath(site_url, "pricing");
+  const software_url = joinUrlPath(site_url, "software");
   const teaching_docs_url = joinUrlPath(
     site_url,
     "docs/teaching/course-workflow",
@@ -91,9 +102,9 @@ These are personal workspaces which contain your files, computational worksheets
 You can run your computations through the web interface, via interactive worksheets
 and notebooks, or by executing a program in a terminal. ${site_name} supports
 online editing of
-    <a href="https://cocalc.com/features/jupyter-notebook">Jupyter Notebooks</a>,
-    <a href="https://cocalc.com/features/sage">SageMath</a>,
-    <a href="https://cocalc.com/features/latex-editor">LaTeX files</a>, etc.
+    <a href="${jupyter_feature_url}">Jupyter Notebooks</a>,
+    <a href="${sage_feature_url}">SageMath</a>,
+    <a href="${latex_feature_url}">LaTeX files</a>, etc.
 </p>
 
 <p style="margin-top:0;margin-bottom:10px;">
@@ -108,7 +119,7 @@ online editing of
     <a href="${jupyter_docs_url}">Working with Jupyter Notebooks</a>
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
-    <strong><a href="https://cocalc.com/policies/pricing.html">Subscriptions:</a></strong> make hosting more robust and increase project quotas
+    <strong><a href="${pricing_url}">Subscriptions:</a></strong> make hosting more robust and increase project quotas
 </li>
 <li style="margin-top:0;margin-bottom:10px;">
     <a href="${teaching_docs_url}">Teaching a course on CoCalc</a>.
@@ -142,17 +153,17 @@ You can share your thoughts in a <strong>side chat</strong> next to each documen
     <a href="http://pandas.pydata.org/">Pandas</a>,
     <a href="http://www.statsmodels.org/">statsmodels</a>,
     <a href="http://scikit-learn.org/">scikit-learn</a>,
-    <a href="http://www.nltk.org/">NLTK</a>, and <a href="https://cocalc.com/software">much more</a>.
+    <a href="http://www.nltk.org/">NLTK</a>, and <a href="${software_url}">much more</a>.
 </li>
 <li style="margin-top:0;margin-bottom:10px;">Various other Computation:
     <a href="https://www.tensorflow.org/">Tensorflow</a>,
-    <a href="https://cocalc.com/features/octave">Octave</a>,
-    <a href="https://cocalc.com/features/julia">Julia</a>, etc.
+    <a href="${octave_feature_url}">Octave</a>,
+    <a href="${julia_feature_url}">Julia</a>, etc.
 </li>
 </ul>
 
 <p style="margin-top:0;margin-bottom:20px;">
-Visit our <a href="https://cocalc.com/features">Feature Overview Page</a> for more details!
+Visit our <a href="${features_url}">Feature Overview Page</a> for more details!
 </p>
 
 
@@ -160,7 +171,7 @@ Visit our <a href="https://cocalc.com/features">Feature Overview Page</a> for mo
 <strong>Questions?</strong>
 </p>
 <p style="margin-top:0;margin-bottom:10px;">
-Schedule a Live Demo with a specialist from CoCalc.com: <a href="${LIVE_DEMO_REQUEST}">request form</a>.
+Schedule a Live Demo with a specialist from CoCalc: <a href="${LIVE_DEMO_REQUEST}">request form</a>.
 </p>
 <p style="margin-top:0;margin-bottom:20px;">
 In case of problems, concerns why you received this email, or other questions please contact:
@@ -193,7 +204,7 @@ CoCalc Docs: ${manual_docs_url}
 
 Working with Jupyter Notebooks: ${jupyter_docs_url}
 
-Subscriptions: https://cocalc.com/policies/pricing.html
+Subscriptions: ${pricing_url}
 
 Teaching a course on CoCalc: ${teaching_docs_url}
 
@@ -214,16 +225,16 @@ SOFTWARE
 
 - Statistics and Data Science: https://www.r-project.org/, http://pandas.pydata.org/,
 http://www.statsmodels.org/, http://scikit-learn.org/, http://www.nltk.org/, and
-much more.  See https://cocalc.com/software
+much more.  See ${software_url}
 
-Various other Computation: https://www.tensorflow.org/, https://cocalc.com/features/octave,
-https://cocalc.com/features/julia
+Various other Computation: https://www.tensorflow.org/, ${octave_feature_url},
+${julia_feature_url}
 
-Visit our Feature Overview Page at https://cocalc.com/features for more details!
+Visit our Feature Overview Page at ${features_url} for more details!
 
 QUESTIONS?
 
-Schedule a Live Demo with a specialist from CoCalc.com:
+Schedule a Live Demo with a specialist from CoCalc:
 
 ${LIVE_DEMO_REQUEST}
 

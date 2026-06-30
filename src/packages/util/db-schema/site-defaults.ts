@@ -167,7 +167,7 @@ export interface Config {
   readonly type?: RowType;
   readonly clearable?: boolean; // default false
   readonly multiline?: number;
-  readonly cocalc_only?: boolean; // only for use on cocalc.com (or subdomains)
+  readonly cocalc_only?: boolean; // only for use on hosted CoCalc (or subdomains)
   readonly help?: string; // markdown formatted help text
   readonly tags?: Readonly<Tag[]>; // tags for filtering
   readonly managed_by_wizard?: boolean; // shown as wizard-managed in admin UI

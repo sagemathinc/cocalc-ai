@@ -40,7 +40,7 @@
   "account.editor-settings.title": "Editör",
   "account.editor-settings.x11-keyboard-variant.label": "Klavye çeşidi (X11 Masaüstü için)",
   "account.editor-settings.x11-physical-keyboard.label": "Klavye düzeni (X11 Masaüstü için)",
-  "account.global-ssh-keys.help": "Bir projeye SSH ile bağlanmak için şu adresi kullanın <code>username@host: [project-id-without-dashes]@ssh.cocalc.com</code> Proje id'si tireler olmadan, SSH anahtarlarıyla ilgili proje ayarları bölümünde bulunabilir. Projeler arasında SSH yapmak için <code>[project-id-without-dashes]@ssh</code> kullanın",
+  "account.global-ssh-keys.help": "Bir projeye SSH ile bağlanmak için şu adresi kullanın <code>username@host: [project-id-without-dashes]@ssh.cocalc.ai</code> Proje id'si tireler olmadan, SSH anahtarlarıyla ilgili proje ayarları bölümünde bulunabilir. Projeler arasında SSH yapmak için <code>[project-id-without-dashes]@ssh</code> kullanın",
   "account.global-ssh-keys.info": "Burada listelenen global SSH anahtarları, bilgisayarınızdan SSH aracılığıyla sahibi veya iş birliği yaptığınız <strong><i>tüm projeler</i></strong> bağlanmanıza olanak tanır. Alternatif olarak, yalnızca bir projeye erişim izni veren SSH anahtarlarını o projenin ayarlarında belirleyin. Daha fazla talimat için <A>belgelere</A> veya bir projedeki ayarlar sayfasının SSH bölümüne bakın.",
   "account.keyboard-settings.intro": "Bunlar çoğunlukla kod düzenleme için CoCalc'e özgü klavye kısayollarıdır. Bunların birçoğu, editör klavyeleri tarafından sağlanan standart işlevler değildir. Maalesef, klavye kısayolları şu anda özelleştirilebilir değil.",
   "account.keyboard-shortcuts.shortcut.autoindent": "Seçimi otomatik girintile",

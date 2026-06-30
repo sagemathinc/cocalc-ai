@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Request, Response } from "express";
 
 import ROOT_PATH from "@cocalc/http-api/lib/root-path";
+import { DOMAIN_URL } from "@cocalc/util/theme";
 
 const handler = docsApiRoute({
   deniedPaths: ["/api/conat/**", "/api/share/**", "/api/v2/**/*.test"],
@@ -40,12 +41,12 @@ const handler = docsApiRoute({
     servers: [
       {
         description: "CoCalc Production",
-        url: "https://cocalc.com",
+        url: DOMAIN_URL,
         variables: {
           apiKey: {
             default: "",
             description: `API key to use for the request. An account-wide key may be
-            obtained by visiting https://cocalc.com/settings/keys`,
+            obtained by visiting ${DOMAIN_URL}/settings/keys`,
           },
         },
       },
@@ -67,12 +68,12 @@ const handler = docsApiRoute({
     provider: "redoc", // redoc | swagger-ui
     title: "CoCalc API",
     description: "",
-    logoUrl: "https://cocalc.com/_next/static/media/full.0a70e50d.svg",
+    logoUrl: `${DOMAIN_URL}/_next/static/media/full.0a70e50d.svg`,
     ogConfig: {
       title: "CoCalc HTTP API (v2)",
       type: "website",
-      url: "https://cocalc.com/api/v2",
-      imageUrl: "https://cocalc.com/webapp/favicon.ico",
+      url: `${DOMAIN_URL}/api/v2`,
+      imageUrl: `${DOMAIN_URL}/webapp/favicon.ico`,
     },
   },
 });

@@ -15,7 +15,7 @@ include = ["src/cocalc_api/py.typed"]
 [project.urls]
 Homepage = "https://github.com/sagemathinc/cocalc/src/python/cocalc-api"
 Repository = "https://github.com/sagemathinc/cocalc"
-Documentation = "https://cocalc.com/api/python"
+Documentation = "https://cocalc.ai/api/python"
 Source = "https://github.com/sagemathinc/cocalc/src/python/cocalc-api"
 Issues = "https://github.com/sagemathinc/cocalc/issues"
 

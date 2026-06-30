@@ -15,7 +15,7 @@ import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facin
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown-public";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { COLORS } from "@cocalc/util/theme";
+import { COLORS, DOMAIN_URL } from "@cocalc/util/theme";
 
 const { Text } = Typography;
 
@@ -67,9 +67,7 @@ function shareImageUrl(
 
   try {
     const base =
-      typeof window === "undefined"
-        ? "https://cocalc.com"
-        : window.location.origin;
+      typeof window === "undefined" ? DOMAIN_URL : window.location.origin;
     const url = new URL(value, base);
     if (url.protocol === "http:" || url.protocol === "https:") {
       return value;

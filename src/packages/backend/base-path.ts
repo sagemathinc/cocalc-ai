@@ -23,7 +23,7 @@ These are not valid:
 - //
 - "" (empty string)
 - /foo/
-- https://cocalc.com/
+- https://cocalc.ai/
 
 If the environment variable BASE_PATH is set then use that (e.g., used
 when running a project), or throw an error if our assumptions are not satisfied.
@@ -70,7 +70,7 @@ function basePath(): string {
     // deduce the base path from that URL. Examples:
     //   API_SERVER=http://localhost:5000/6659c2e3-ff5e-4bb4-9a43-8830aa951282/port/5000 --> "/6659c2e3-ff5e-4bb4-9a43-8830aa951282/port/5000"
     //   API_SERVER=https://compute.cocalc.io --> "/"
-    //   API_SERVER=https://cocalc.com --> "/"
+    //   API_SERVER=https://cocalc.ai --> "/"
     const url = process.env.API_SERVER;
     const i = url.indexOf("://");
     if (i == -1) {

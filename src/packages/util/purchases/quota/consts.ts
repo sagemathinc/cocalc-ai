@@ -9,7 +9,7 @@ import costVersions from "./cost-versions";
 export const CURRENT_VERSION = "3";
 
 // Another gamble implicit in this is that pre's are available.  When they
-// aren't, cocalc.com switches to uses MUCH more expensive non-preemptibles.
+// aren't, hosted CoCalc switches to use MUCH more expensive non-preemptibles.
 
 export interface CostMap {
   ram: number;

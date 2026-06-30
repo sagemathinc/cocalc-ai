@@ -17,7 +17,7 @@ describe("normalizeRootfsContentManifest", () => {
       subtitle: "Jupyter and LaTeX",
       publisher: {
         name: "CoCalc",
-        url: "https://cocalc.com/",
+        url: "https://cocalc.ai/",
       },
       license: {
         name: "MIT",
@@ -86,7 +86,7 @@ describe("normalizeRootfsContentManifest", () => {
       subtitle: "Jupyter and LaTeX",
       publisher: {
         name: "CoCalc",
-        url: "https://cocalc.com/",
+        url: "https://cocalc.ai/",
       },
       license: {
         name: "MIT",

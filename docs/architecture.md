@@ -140,7 +140,7 @@ flowchart TB
 
 ## Backups
 
-- Taken from a RO snapshot + persist dir; stored in a rustic repo selected by the hub (shared per-region repo on cocalc.com, configurable elsewhere).
+- Taken from a RO snapshot + persist dir; stored in a rustic repo selected by the hub (shared per-region repo on cocalc.ai, configurable elsewhere).
 - Restores can target any host; archived projects may exist only as backups.
 - Scheduling: daily per active project (host-side) plus user-triggered; one at a time per project.
 

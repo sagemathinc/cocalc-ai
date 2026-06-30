@@ -4,7 +4,7 @@ This provides POST upload to /blobs and download from /blobs so the
 user of a cocalc lite server can paste images into documents, and
 have them be referenced by their sha1 hash.
 
-In cocalc.com they images are stored in the postgresql database.
+In hosted CoCalc they images are stored in the postgresql database.
 For CoCalc lite there is no postgresql database, and instead
 we store the images in a Conat AKV (async key:value store) with
 key the sha1 hash of the file being stored.

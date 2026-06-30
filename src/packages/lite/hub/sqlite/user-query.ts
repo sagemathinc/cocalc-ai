@@ -55,7 +55,7 @@ export function init(options: InitOptions = {}): void {
 function seedDefaultData(): void {
   ensureRow("accounts", {
     account_id,
-    email_address: "user@cocalc.com",
+    email_address: "user@cocalc.ai",
   });
   ensureRow("projects", {
     project_id,

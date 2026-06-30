@@ -40,7 +40,7 @@
   "account.editor-settings.title": "Configurações do Editor",
   "account.editor-settings.x11-keyboard-variant.label": "Variante do teclado (para X11 Desktop)",
   "account.editor-settings.x11-physical-keyboard.label": "Layout de teclado (para X11 Desktop)",
-  "account.global-ssh-keys.help": "Para acessar um projeto via SSH, use o seguinte <code>username@host: [project-id-without-dashes]@ssh.cocalc.com</code> O ID do projeto sem traços pode ser encontrado na parte das configurações do projeto sobre chaves SSH. Para acessar entre projetos via SSH, use <code>[project-id-without-dashes]@ssh</code>",
+  "account.global-ssh-keys.help": "Para acessar um projeto via SSH, use o seguinte <code>username@host: [project-id-without-dashes]@ssh.cocalc.ai</code> O ID do projeto sem traços pode ser encontrado na parte das configurações do projeto sobre chaves SSH. Para acessar entre projetos via SSH, use <code>[project-id-without-dashes]@ssh</code>",
   "account.global-ssh-keys.info": "As chaves SSH globais listadas aqui permitem que você se conecte do seu computador via SSH a <strong><i>todos os projetos</i></strong> nos quais você é proprietário ou colaborador. Alternativamente, defina chaves SSH que concedam acesso apenas a um projeto nas configurações desse projeto. Veja <A>os documentos</A> ou a parte de SSH da página de configurações de um projeto para mais instruções.",
   "account.keyboard-settings.intro": "Esses são principalmente atalhos de teclado específicos do CoCalc para edição de código. Muitos deles não são funções padrão fornecidas por teclados de editores. Infelizmente, os atalhos de teclado não são personalizáveis no momento.",
   "account.keyboard-shortcuts.shortcut.autoindent": "Seleção de autoidentação",

@@ -40,7 +40,7 @@
   "account.editor-settings.title": "المحرر",
   "account.editor-settings.x11-keyboard-variant.label": "متغير لوحة المفاتيح (لجهاز سطح المكتب X11)",
   "account.editor-settings.x11-physical-keyboard.label": "تخطيط لوحة المفاتيح (لـ X11 Desktop)",
-  "account.global-ssh-keys.help": "للدخول إلى مشروع باستخدام SSH، استخدم التالي <code>username@host: [project-id-without-dashes]@ssh.cocalc.com</code> يمكن العثور على معرف المشروع بدون فواصل في جزء إعدادات المشروع المتعلق بمفاتيح SSH. للدخول بين المشاريع باستخدام SSH، استخدم <code>[project-id-without-dashes]@ssh</code>.",
+  "account.global-ssh-keys.help": "للدخول إلى مشروع باستخدام SSH، استخدم التالي <code>username@host: [project-id-without-dashes]@ssh.cocalc.ai</code> يمكن العثور على معرف المشروع بدون فواصل في جزء إعدادات المشروع المتعلق بمفاتيح SSH. للدخول بين المشاريع باستخدام SSH، استخدم <code>[project-id-without-dashes]@ssh</code>.",
   "account.global-ssh-keys.info": "مفاتيح SSH العالمية المدرجة هنا تسمح لك بالاتصال من جهاز الكمبيوتر الخاص بك عبر SSH إلى <strong><i>جميع المشاريع</i></strong> التي تكون فيها مالكًا أو متعاونًا. بدلاً من ذلك، قم بتعيين مفاتيح SSH التي تمنح الوصول فقط إلى مشروع في إعدادات ذلك المشروع. راجع <A>الوثائق</A> أو الجزء الخاص بـ SSH في صفحة الإعدادات في المشروع للحصول على تعليمات إضافية.",
   "account.keyboard-settings.intro": "هذه في الغالب اختصارات لوحة مفاتيح خاصة بـCoCalc لتحرير الشيفرة. العديد منها ليست وظائف قياسية توفرها لوحات مفاتيح المحرر. لسوء الحظ، اختصارات لوحة المفاتيح غير قابلة للتخصيص حاليًا.",
   "account.keyboard-shortcuts.shortcut.autoindent": "التنسيق التلقائي للتحديد",

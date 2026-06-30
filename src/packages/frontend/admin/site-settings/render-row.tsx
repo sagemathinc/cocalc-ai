@@ -19,7 +19,7 @@ import {
   Tag,
   to_bool,
 } from "@cocalc/util/db-schema/site-defaults";
-import { COLORS } from "@cocalc/util/theme";
+import { COLORS, DNS } from "@cocalc/util/theme";
 import { Data, IsReadonly, IsSet } from "./types";
 import { RowEntry } from "./row-entry";
 
@@ -122,7 +122,7 @@ export function RenderRow({
     }
   }
   if (conf.cocalc_only) {
-    if (!document.location.host.endsWith("cocalc.com")) {
+    if (!document.location.host.endsWith(DNS)) {
       return null;
     }
   }

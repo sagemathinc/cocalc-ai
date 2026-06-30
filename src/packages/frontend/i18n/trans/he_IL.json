@@ -40,7 +40,7 @@
   "account.editor-settings.title": "עורך",
   "account.editor-settings.x11-keyboard-variant.label": "גרסת מקלדת (לשולחן עבודה X11)",
   "account.editor-settings.x11-physical-keyboard.label": "פריסת מקלדת (לשולחן העבודה X11)",
-  "account.global-ssh-keys.help": "כדי להתחבר בפרוטוקול SSH לפרויקט, השתמש ב-<code>username@host: [project-id-without-dashes]@ssh.cocalc.com</code> ניתן למצוא את מזהה הפרויקט ללא מקפים בחלק של הגדרות הפרויקט לגבי מפתחות SSH. כדי להתחבר בפרוטוקול SSH בין פרויקטים, השתמש ב-<code>[project-id-without-dashes]@ssh</code>",
+  "account.global-ssh-keys.help": "כדי להתחבר בפרוטוקול SSH לפרויקט, השתמש ב-<code>username@host: [project-id-without-dashes]@ssh.cocalc.ai</code> ניתן למצוא את מזהה הפרויקט ללא מקפים בחלק של הגדרות הפרויקט לגבי מפתחות SSH. כדי להתחבר בפרוטוקול SSH בין פרויקטים, השתמש ב-<code>[project-id-without-dashes]@ssh</code>",
   "account.global-ssh-keys.info": "מפתחות ה-SSH הגלובליים המופיעים כאן מאפשרים לך להתחבר מהמחשב שלך דרך SSH ל<strong><i>כל הפרויקטים</i></strong> עליהם אתה בעלים או משתתף. לחלופין, הגדר מפתחות SSH המעניקים גישה רק לפרויקט בהגדרות של אותו פרויקט. ראה את <A>התיעוד</A> או את חלק ה-SSH בדף ההגדרות בפרויקט להנחיות נוספות.",
   "account.keyboard-settings.intro": "אלה קיצורי מקלדת ספציפיים ל-CoCalc לעריכת קוד. רבים מהם אינם פונקציות סטנדרטיות שמסופקות על ידי מקלדות עורכים. לצערנו, קיצורי המקלדת אינם ניתנים להתאמה אישית כרגע.",
   "account.keyboard-shortcuts.shortcut.autoindent": "בחירת הזחה אוטומטית",

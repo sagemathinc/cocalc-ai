@@ -40,7 +40,7 @@
   "account.editor-settings.title": "Editorearen Ezarpenak",
   "account.editor-settings.x11-keyboard-variant.label": "Teklatuaren aldaera (X11 Mahaigainarentzat)",
   "account.editor-settings.x11-physical-keyboard.label": "Teklatuaren diseinua (X11 Mahaigainarentzat)",
-  "account.global-ssh-keys.help": "SSH bidez proiektu batean sartzeko, erabili honako hau <code>username@host: [proiektuaren-id-gidoi-barik]@ssh.cocalc.com</code> Proiektuaren IDa gidoirik gabe SSH gakoen inguruko proiektuaren ezarpenetan aurki daiteke. Proiektuen artean SSH egiteko, erabili <code>[proiektuaren-id-gidoi-barik]@ssh</code>",
+  "account.global-ssh-keys.help": "SSH bidez proiektu batean sartzeko, erabili honako hau <code>username@host: [proiektuaren-id-gidoi-barik]@ssh.cocalc.ai</code> Proiektuaren IDa gidoirik gabe SSH gakoen inguruko proiektuaren ezarpenetan aurki daiteke. Proiektuen artean SSH egiteko, erabili <code>[proiektuaren-id-gidoi-barik]@ssh</code>",
   "account.global-ssh-keys.info": "Hemen zerrendatutako SSH gako globalek zure ordenagailutik SSH bidez jabe edo kide zaren <strong><i>proiektu guztietara</i></strong> eta <strong><i>konputazio-zerbitzari</i></strong> konektatzea ahalbidetzen dizute. Proiektu bakarrerako sarbidea ematen duten SSH gakoak konfiguratzeko, proiektu beraren ezarpenetara joan. Ikusi <A>dokumentazioa</A> edo proiektu baten ezarpen orriko SSH zatia jarraibide gehiagorako.",
   "account.keyboard-settings.intro": "CoCalc-en kodea editatzeko teklatuko lasterbide espezifikoak dira hauek. Asko ez dira editore teklatuen bidez ematen diren funtzio estandarrak. Zoritxarrez, teklatuko lasterbideak ez dira une honetan pertsonalizagarriak.",
   "account.keyboard-shortcuts.shortcut.autoindent": "Hautapena automatikoki indentatu",

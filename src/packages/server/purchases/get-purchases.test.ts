@@ -45,7 +45,7 @@ describe("creates and get purchases using various options", () => {
   });
 
   it("gets purchase along with email address", async () => {
-    const email_address = `${account_id}@cocalc.com`;
+    const email_address = `${account_id}@cocalc.ai`;
     const pool = getPool();
     await pool.query(
       "UPDATE accounts SET email_address=$1 WHERE account_id=$2",

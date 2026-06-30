@@ -25,7 +25,7 @@ describe("lite sqlite user query", () => {
       query: { accounts: [{ email_address: null }] },
     });
     expect(result.accounts).toHaveLength(1);
-    expect(result.accounts[0].email_address).toBe("user@cocalc.com");
+    expect(result.accounts[0].email_address).toBe("user@cocalc.ai");
     expect(result.accounts[0].account_id).toBe(account_id);
   });
 
@@ -35,7 +35,7 @@ describe("lite sqlite user query", () => {
         accounts: {
           account_id,
           first_name: "Test",
-          email_address: "new@cocalc.com",
+          email_address: "new@cocalc.ai",
         },
       },
       options: [{ set: true }],
@@ -54,7 +54,7 @@ describe("lite sqlite user query", () => {
     });
 
     expect(result.accounts[0].first_name).toBe("Test");
-    expect(result.accounts[0].email_address).toBe("new@cocalc.com");
+    expect(result.accounts[0].email_address).toBe("new@cocalc.ai");
   });
 
   test("changefeed receives updates", async () => {
@@ -103,7 +103,7 @@ describe("lite sqlite user query", () => {
       query: {
         accounts: {
           account_id: pk,
-          email_address: "deleteme@cocalc.com",
+          email_address: "deleteme@cocalc.ai",
         },
       },
       options: [{ set: true }],
@@ -132,7 +132,7 @@ describe("lite sqlite user query", () => {
       query: {
         accounts: {
           account_id: pk1,
-          email_address: "a1@cocalc.com",
+          email_address: "a1@cocalc.ai",
         },
       },
       options: [{ set: true }],
@@ -141,7 +141,7 @@ describe("lite sqlite user query", () => {
       query: {
         accounts: {
           account_id: pk2,
-          email_address: "a2@cocalc.com",
+          email_address: "a2@cocalc.ai",
         },
       },
       options: [{ set: true }],
@@ -159,7 +159,7 @@ describe("lite sqlite user query", () => {
     });
 
     const emails = result.accounts.map((x) => x.email_address).sort();
-    expect(emails).toEqual(["a1@cocalc.com", "a2@cocalc.com"]);
+    expect(emails).toEqual(["a1@cocalc.ai", "a2@cocalc.ai"]);
   });
 
   test("defaults apply when fields missing", () => {
@@ -168,7 +168,7 @@ describe("lite sqlite user query", () => {
       query: {
         accounts: {
           account_id: account_id,
-          email_address: "defaults@cocalc.com",
+          email_address: "defaults@cocalc.ai",
         },
       },
       options: [{ set: true }],

@@ -50,7 +50,7 @@ export default function Page({
     const annotation: any = annotation0 as any; // TODO
     if (annotation.url) {
       // Link to an external URL.
-      // TODO: make it work for cocalc URL's, e.g., cocalc.com...
+      // TODO: make it work for cocalc URL's, e.g., cocalc.ai...
       const win = window.open(annotation.url, "_blank");
       if (win) {
         win.focus();

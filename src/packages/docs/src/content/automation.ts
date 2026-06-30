@@ -98,11 +98,11 @@ The HTTP API uses basic authentication. Put the API key in the username field
 and leave the password blank.
 
 ~~~sh
-curl -u "$COCALC_API_KEY:" https://cocalc.com/api/v2
+curl -u "$COCALC_API_KEY:" https://cocalc.ai/api/v2
 ~~~
 
 For local development, use the local site origin instead of
-\`https://cocalc.com\`.
+\`https://cocalc.ai\`.
 
 ## When to use something else
 

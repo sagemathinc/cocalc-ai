@@ -41,7 +41,7 @@ export async function verifyLocalSignInPassword({
   }
   if (banned) {
     throw Error(
-      `'${email}' is banned -- if you think this is a mistake, please email help@cocalc.com and explain.`,
+      `'${email}' is banned -- if you think this is a mistake, please email help@cocalc.ai and explain.`,
     );
   }
   return {
