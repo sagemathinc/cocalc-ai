@@ -275,6 +275,58 @@ export interface AdminMembershipTierPayload {
   notes?: string | null;
 }
 
+export interface AdminMembershipTierRow extends AdminMembershipTierPayload {
+  history?: unknown[] | null;
+  subscription_count?: number;
+  subscribed_account_count?: number;
+  team_seat_count?: number;
+  team_account_count?: number;
+  course_account_count?: number;
+  site_account_count?: number;
+  admin_assigned_count?: number;
+  site_license_count?: number;
+  total_account_count?: number;
+  total_active_account_count?: number;
+  has_usage_history?: boolean;
+  created?: Date | string | null;
+  updated?: Date | string | null;
+}
+
+export interface MembershipTierUsageCountRow {
+  tier_id: string;
+  subscription_count: number;
+  subscribed_account_count: number;
+  team_seat_count: number;
+  team_account_count: number;
+  course_account_count: number;
+  site_account_count: number;
+  admin_assigned_count: number;
+  site_license_count: number;
+  total_account_count: number;
+  usage_history_count: number;
+}
+
+export interface MembershipTierUsageReport {
+  bay_id: string;
+  total_active_account_count: number;
+  tiers: MembershipTierUsageCountRow[];
+}
+
+export interface MembershipTierAdminOverviewBay {
+  bay_id: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface MembershipTierAdminOverview {
+  checked_at: string;
+  current_bay_id: string;
+  seed_bay_id: string;
+  tiers: AdminMembershipTierRow[];
+  total_active_account_count: number;
+  bays: MembershipTierAdminOverviewBay[];
+}
+
 export interface MembershipPackageQuote {
   package_id?: string;
   kind: MembershipPackageKind;
@@ -1230,6 +1282,9 @@ export interface Purchases {
     user_account_id?: string;
     refresh_usage_status?: boolean;
   }) => Promise<MembershipDetails>;
+  getMembershipTierAdminOverview: (opts?: {
+    account_id?: string;
+  }) => Promise<MembershipTierAdminOverview>;
   createMembershipTier: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -1591,6 +1646,7 @@ export const purchases = {
   getMinBalance: authFirst,
   getMembership: authFirst,
   getMembershipDetails: authFirst,
+  getMembershipTierAdminOverview: authFirst,
   createMembershipTier: authFirst,
   updateMembershipTier: authFirst,
   importMembershipTiers: authFirst,

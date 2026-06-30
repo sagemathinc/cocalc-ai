@@ -46,10 +46,11 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import { JsonObjectEditor } from "@cocalc/frontend/components/json-object-editor";
 import { labels } from "@cocalc/frontend/i18n";
-import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { AdminMembershipTierPayload } from "@cocalc/conat/hub/api/purchases";
-import type { BayOpsOverview } from "@cocalc/conat/hub/api/system";
+import type {
+  AdminMembershipTierPayload,
+  MembershipTierAdminOverview,
+} from "@cocalc/conat/hub/api/purchases";
 import { currency } from "@cocalc/util/misc";
 import {
   applyMembershipTierTemplateFallbacks,
@@ -749,6 +750,8 @@ function useMembershipTiers() {
   const [data, set_data] = React.useState<{ [key: string]: Tier }>({});
   const [total_active_account_count, set_total_active_account_count] =
     React.useState<number | null>(null);
+  const [overview, set_overview] =
+    React.useState<MembershipTierAdminOverview | null>(null);
   const [editing, set_editing] = React.useState<Tier | null>(null);
   const [saving, set_saving] = React.useState<boolean>(false);
   const [loading, set_loading] = React.useState<boolean>(false);
@@ -774,70 +777,25 @@ function useMembershipTiers() {
   }
 
   async function load() {
-    let result: any;
     set_loading(true);
     try {
-      result = await query({
-        query: {
-          membership_tiers: {
-            id: "*",
-            label: null,
-            store_visible: null,
-            store_description: null,
-            store_highlights: null,
-            site_license_pool_description: null,
-            team_visible: null,
-            course_store_visible: null,
-            course_allowed_domains: null,
-            priority: null,
-            price_monthly: null,
-            price_yearly: null,
-            trial_days: null,
-            course_price: null,
-            course_duration_days: null,
-            course_grace_days: null,
-            project_defaults: null,
-            ai_limits: null,
-            features: null,
-            usage_limits: null,
-            disabled: null,
-            notes: null,
-            history: null,
-            subscription_count: null,
-            subscribed_account_count: null,
-            team_seat_count: null,
-            team_account_count: null,
-            course_account_count: null,
-            site_account_count: null,
-            admin_assigned_count: null,
-            site_license_count: null,
-            total_account_count: null,
-            total_active_account_count: null,
-            has_usage_history: null,
-            created: null,
-            updated: null,
-          },
-        },
-      });
+      const result =
+        await webapp_client.conat_client.hub.purchases.getMembershipTierAdminOverview(
+          {},
+        );
       const next = {};
-      let next_total_active_account_count: number | null = null;
-      for (const row of result.query.membership_tiers ?? []) {
+      for (const row of result.tiers ?? []) {
         const tier = applyMembershipTierTemplateFallbacks({
           ...row,
-        });
-        if (
-          next_total_active_account_count == null &&
-          typeof tier.total_active_account_count === "number"
-        ) {
-          next_total_active_account_count = tier.total_active_account_count;
-        }
+        } as Partial<Tier> & { id: string }) as Tier;
         if (tier.created) tier.created = dayjs(tier.created);
         if (tier.updated) tier.updated = dayjs(tier.updated);
         next[tier.id] = tier;
       }
       set_error("");
       set_data(next);
-      set_total_active_account_count(next_total_active_account_count);
+      set_total_active_account_count(result.total_active_account_count ?? null);
+      set_overview(result);
     } catch (err) {
       set_error(err.message ?? String(err));
     } finally {
@@ -976,6 +934,7 @@ function useMembershipTiers() {
   return {
     data,
     total_active_account_count,
+    overview,
     form,
     editing,
     saving,
@@ -1006,6 +965,7 @@ export function MembershipTiers() {
   const {
     data,
     total_active_account_count,
+    overview,
     form,
     editing,
     saving,
@@ -1033,27 +993,6 @@ export function MembershipTiers() {
   >([]);
   const [importError, setImportError] = React.useState("");
   const [importing, setImporting] = React.useState(false);
-  const [bayOpsOverview, setBayOpsOverview] =
-    React.useState<BayOpsOverview | null>(null);
-
-  React.useEffect(() => {
-    let mounted = true;
-    webapp_client.conat_client.hub.system
-      .getBayOpsOverview({})
-      .then((overview) => {
-        if (mounted) {
-          setBayOpsOverview(overview);
-        }
-      })
-      .catch(() => {
-        if (mounted) {
-          setBayOpsOverview(null);
-        }
-      });
-    return () => {
-      mounted = false;
-    };
-  }, []);
   const [jsonErrors, setJsonErrors] = React.useState<Record<string, string>>(
     {},
   );
@@ -3637,19 +3576,25 @@ export function MembershipTiers() {
       }),
       [(tier) => -prioritySortValue(tier), "id"],
     );
+    const failedBays = overview?.bays.filter((bay) => !bay.ok) ?? [];
+    const okBayCount = overview?.bays.length
+      ? overview.bays.length - failedBays.length
+      : 0;
     return (
       <Space direction="vertical" style={{ width: "100%" }}>
         {render_buttons()}
-        {bayOpsOverview != null && bayOpsOverview.bays.length > 1 && (
+        {failedBays.length > 0 && (
           <Alert
             type="warning"
             showIcon
-            message="Bay-local counts"
+            message="Partial cluster counts"
             description={
               <>
-                Membership tier counts are computed from bay{" "}
-                <Text code>{bayOpsOverview.current_bay_id}</Text>. Totals from
-                other bays are not included yet.
+                Membership tier counts include {okBayCount} of{" "}
+                {overview?.bays.length ?? 0} bays. Missing bays:{" "}
+                <Text code>
+                  {failedBays.map((bay) => bay.bay_id).join(", ")}
+                </Text>
               </>
             }
           />
