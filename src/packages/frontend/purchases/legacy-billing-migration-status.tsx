@@ -32,21 +32,6 @@ function membershipLabel(value: string | null | undefined): string {
   return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)} membership`;
 }
 
-function planPriceLabel(
-  plan: LegacyMigrationFinancialPreviewResponse["plans"][number] | undefined,
-): string | null {
-  if (plan?.price_monthly && plan.price_yearly) {
-    return `${formatMoney(plan.price_monthly)}/month or ${formatMoney(plan.price_yearly)}/year`;
-  }
-  if (plan?.price_monthly) {
-    return `${formatMoney(plan.price_monthly)}/month`;
-  }
-  if (plan?.price_yearly) {
-    return `${formatMoney(plan.price_yearly)}/year`;
-  }
-  return null;
-}
-
 function planIntervalPriceLabel(
   plan: LegacyMigrationFinancialPreviewResponse["plans"][number] | undefined,
   interval: "month" | "year",
@@ -282,10 +267,6 @@ export default function LegacyBillingMigrationStatus({
   const basicPlan = preview.plans.find((plan) => plan.id === "basic");
   const memberPlan = preview.plans.find((plan) => plan.id === "member");
   const proPlan = preview.plans.find((plan) => plan.id === "pro");
-  const suggestedPlan = preview.plans.find(
-    (plan) => plan.id === suggestedMembership,
-  );
-  const suggestedMembershipPrice = planPriceLabel(suggestedPlan);
   const basicIntervalPrice = planIntervalPriceLabel(basicPlan, renewalInterval);
   const memberIntervalPrice = planIntervalPriceLabel(
     memberPlan,
@@ -348,11 +329,9 @@ export default function LegacyBillingMigrationStatus({
           }
           description={
             pending
-              ? `Click Apply now to add positive credit, remaining paid legacy value, Stripe customer metadata, and ${
-                  suggestedMembership
-                    ? `a free ${grantDays}-day ${suggestedMembershipLabel} grant for eligible legacy billing. The grant starts when you click Apply now. It does not auto-charge; choose a paid plan later to continue.`
-                    : "legacy billing metadata."
-                } No project restore action is required.`
+              ? suggestedMembership
+                ? `Click the blue Apply now button to add positive credit including remaining paid license/subscription value, Stripe customer metadata, and a free ${grantDays}-day ${suggestedMembershipLabel} grant. The grant starts when you click Apply now. It does not auto-charge; please choose a paid plan later to continue.`
+                : "Click the blue Apply now button to add positive credit including remaining paid license/subscription value and Stripe customer metadata."
               : "Migrated legacy billing items are recorded in your CoCalc billing history and membership status."
           }
         />
@@ -490,26 +469,14 @@ export default function LegacyBillingMigrationStatus({
             <Text>{formatMoney(preview.applied_credit_amount)}</Text>
           </Space>
           <Space direction="vertical" size={0}>
-            <Text type="secondary">Legacy subscriptions</Text>
-            <Text>
-              {preview.active_subscription_count} active
-              {preview.active_subscription_count > 0
-                ? ` (${formatMoney(preview.active_subscription_annualized)}/year legacy total)`
-                : ""}
-            </Text>
-          </Space>
-          <Space direction="vertical" size={0}>
             <Text type="secondary">Membership grant</Text>
             <Text>
               {suggestedMembership ? (
                 <>
-                  {grantDays} days of{" "}
+                  Free {grantDays} days of{" "}
                   <a href="/pricing" rel="noreferrer" target="_blank">
                     {suggestedMembershipLabel}
                   </a>
-                  {suggestedMembershipPrice
-                    ? ` (${suggestedMembershipPrice})`
-                    : ""}{" "}
                   starting when you click Apply now
                 </>
               ) : preview.membership_already_applied ? (
