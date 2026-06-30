@@ -5220,7 +5220,13 @@ describe("hosts.rollbackProjectHostOverSshInternal", () => {
     expect(buildCloudInitStartupScriptMock).toHaveBeenCalled();
     expect(spawnMock).toHaveBeenCalledWith(
       "ssh",
-      expect.arrayContaining(["ubuntu@34.1.2.3", "bash", "-se"]),
+      expect.arrayContaining([
+        "HostKeyAlias=cocalc-host-host-123",
+        "CheckHostIP=no",
+        "ubuntu@34.1.2.3",
+        "bash",
+        "-se",
+      ]),
       expect.any(Object),
     );
   });

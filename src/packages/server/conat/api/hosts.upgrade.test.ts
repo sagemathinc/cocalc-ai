@@ -368,6 +368,8 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
       expect.arrayContaining([
         "-i",
         "/tmp/cocalc-owner-bay/id_ed25519",
+        "HostKeyAlias=cocalc-host-2058bae4-d049-40b9-88ba-187a7091da55",
+        "CheckHostIP=no",
         "ubuntu@34.11.143.149",
         "bash",
         "-se",
@@ -830,7 +832,13 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
     expect(upgradeHostSoftwareInternalHelperMock).toHaveBeenCalled();
     expect(spawnMock).toHaveBeenCalledWith(
       "ssh",
-      expect.arrayContaining(["ubuntu@34.11.143.149", "bash", "-se"]),
+      expect.arrayContaining([
+        "HostKeyAlias=cocalc-host-2058bae4-d049-40b9-88ba-187a7091da55",
+        "CheckHostIP=no",
+        "ubuntu@34.11.143.149",
+        "bash",
+        "-se",
+      ]),
       expect.any(Object),
     );
   });
