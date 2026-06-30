@@ -6,6 +6,12 @@
 import callHub from "@cocalc/conat/hub/call-hub";
 import { getMasterConatClient } from "./master-status";
 import { getLocalHostId } from "./sqlite/hosts";
+import { getProjectStopState } from "./sqlite/stop-policy";
+
+function formatDuration(ms: number): string {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000));
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
 
 export async function startProjectWithAdmission({
   account_id,
@@ -24,6 +30,23 @@ export async function startProjectWithAdmission({
   if (!actor) {
     throw new Error("account id is required to start a project");
   }
+  const project = `${project_id ?? ""}`.trim();
+  if (!project) {
+    throw new Error("project id is required to start a project");
+  }
+  const pressureCooldownUntilMs =
+    getProjectStopState(project)?.pressure_cooldown_until_ms;
+  const now = Date.now();
+  if (
+    pressureCooldownUntilMs != null &&
+    Number(pressureCooldownUntilMs) > now
+  ) {
+    throw new Error(
+      `Project start is temporarily blocked because this project was recently stopped after exceeding project-host resource limits. Try again in ${formatDuration(
+        Number(pressureCooldownUntilMs) - now,
+      )}. You can still browse files and delete files without starting the project. If this keeps happening, reduce the workload or contact support.`,
+    );
+  }
   const client = getMasterConatClient();
   if (!client) {
     throw new Error("master hub connection unavailable for project start");
@@ -39,7 +62,7 @@ export async function startProjectWithAdmission({
     args: [
       {
         account_id: actor,
-        project_id,
+        project_id: project,
         ...(autostart ? { autostart } : {}),
         wait,
       },

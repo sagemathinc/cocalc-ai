@@ -1,7 +1,8 @@
 # Project Host Podman Resource Hardening Plan
 
 Status: Phase 0, Phase 1, Phase 2 metrics, and gated Phase 3 direct-offender
-enforcement landed. Quarantine and account aggregate enforcement remain.
+enforcement/restart cooldown landed. Quarantine and account aggregate
+enforcement remain.
 
 Date: 2026-06-29
 
@@ -480,7 +481,7 @@ Phase 3:
   with `COCALC_PROJECT_HOST_RESOURCE_PRESSURE_MODE=enforce`.
 - Use `COCALC_PROJECT_HOST_RESOURCE_PRESSURE_MODE=signal` first when validating
   staging or production host behavior. The default remains `metrics`.
-- Add user-visible stopped reason and restart cooldown.
+- Add user-visible stopped reason and restart cooldown admission blocking.
 - Validate repeated `inotify-watches` and `inotify-instances` tests.
 
 Phase 4:
