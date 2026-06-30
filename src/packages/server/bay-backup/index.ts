@@ -284,6 +284,13 @@ type RusticSnapshotInfo = {
   paths: string[];
 };
 
+type ExecFileOptions = {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  timeout?: number;
+  maxBuffer?: number;
+};
+
 let runInFlight: Promise<BayBackupRunResult> | null = null;
 let walMaintenanceTimer: NodeJS.Timeout | undefined;
 let walMaintenanceRunning = false;
@@ -301,6 +308,9 @@ const DEFAULT_BAY_BACKUP_RESTORE_RETENTION_DAYS = 7;
 const DEFAULT_BAY_WAL_LOCAL_RETENTION_COUNT = 128;
 const DEFAULT_BAY_WAL_REMOTE_RETENTION_BACKUPS = 2;
 const BAY_BACKUP_RUN_LOCK_PREFIX = "bay-backup-full-snapshot";
+const DEFAULT_BAY_BACKUP_NICE_LEVEL = 10;
+const DEFAULT_BAY_BACKUP_IONICE_CLASS = 2;
+const DEFAULT_BAY_BACKUP_IONICE_LEVEL = 7;
 const WAL_SEGMENT_SIZE = 16n * 1024n * 1024n;
 const XLOG_SEGMENTS_PER_XLOG_ID = (1n << 32n) / WAL_SEGMENT_SIZE;
 
@@ -345,6 +355,101 @@ async function withBayBackupRunLock<T>({
       }
     }
     client.release();
+  }
+}
+
+function getBayBackupNiceLevel(): number {
+  return parsePositiveIntEnv({
+    name: "COCALC_BAY_BACKUP_NICE_LEVEL",
+    defaultValue: DEFAULT_BAY_BACKUP_NICE_LEVEL,
+    allowZero: true,
+  });
+}
+
+function getBayBackupIoniceClass(): number {
+  const n = parsePositiveIntEnv({
+    name: "COCALC_BAY_BACKUP_IONICE_CLASS",
+    defaultValue: DEFAULT_BAY_BACKUP_IONICE_CLASS,
+  });
+  return n >= 1 && n <= 3 ? n : DEFAULT_BAY_BACKUP_IONICE_CLASS;
+}
+
+function getBayBackupIoniceLevel(): number {
+  const n = parsePositiveIntEnv({
+    name: "COCALC_BAY_BACKUP_IONICE_LEVEL",
+    defaultValue: DEFAULT_BAY_BACKUP_IONICE_LEVEL,
+    allowZero: true,
+  });
+  return n >= 0 && n <= 7 ? n : DEFAULT_BAY_BACKUP_IONICE_LEVEL;
+}
+
+function isMissingCommandError(err: unknown, command: string): boolean {
+  const anyErr = err as any;
+  const details =
+    typeof err === "object" && err != null
+      ? `${anyErr.message ?? ""}\n${anyErr.stderr ?? ""}`
+      : `${err ?? ""}`;
+  return (
+    anyErr?.code === "ENOENT" ||
+    details.includes(`spawn ${command} ENOENT`) ||
+    details.includes(`failed to execute ${command}`)
+  );
+}
+
+async function execBackupNice(
+  command: string,
+  args: string[],
+  opts: ExecFileOptions,
+): Promise<{ stdout: string; stderr: string }> {
+  try {
+    return await execFile(
+      "nice",
+      ["-n", `${getBayBackupNiceLevel()}`, command, ...args],
+      opts,
+    );
+  } catch (err) {
+    if (!isMissingCommandError(err, "nice")) {
+      throw err;
+    }
+    logger.warn("nice unavailable for bay backup command; running without it", {
+      command,
+      err,
+    });
+    return await execFile(command, args, opts);
+  }
+}
+
+async function execBackupLowPriority(
+  command: string,
+  args: string[],
+  opts: ExecFileOptions,
+): Promise<{ stdout: string; stderr: string }> {
+  const niceArgs = ["-n", `${getBayBackupNiceLevel()}`, command, ...args];
+  try {
+    return await execFile(
+      "ionice",
+      [
+        "-c",
+        `${getBayBackupIoniceClass()}`,
+        "-n",
+        `${getBayBackupIoniceLevel()}`,
+        "nice",
+        ...niceArgs,
+      ],
+      opts,
+    );
+  } catch (err) {
+    if (
+      !isMissingCommandError(err, "ionice") &&
+      !isMissingCommandError(err, "nice")
+    ) {
+      throw err;
+    }
+    logger.warn("ionice unavailable for bay backup command; using nice only", {
+      command,
+      err,
+    });
+    return await execBackupNice(command, args, opts);
   }
 }
 
@@ -1235,17 +1340,20 @@ async function execRustic({
   cwd,
   timeout = 10 * 60 * 1000,
   initOnMissingRepo = false,
+  lowPriority = false,
 }: {
   repoProfilePath: string;
   args: string[];
   cwd?: string;
   timeout?: number;
   initOnMissingRepo?: boolean;
+  lowPriority?: boolean;
 }): Promise<string> {
   await installSandboxBinary("rustic");
   const commonArgs = rusticCommonArgs(repoProfilePath);
+  const runExec = lowPriority ? execBackupLowPriority : execFile;
   const run = async (): Promise<string> => {
-    const { stdout } = await execFile(rusticBinary, [...commonArgs, ...args], {
+    const { stdout } = await runExec(rusticBinary, [...commonArgs, ...args], {
       cwd,
       timeout,
       maxBuffer: 20 * 1024 * 1024,
@@ -1268,7 +1376,7 @@ async function execRustic({
       maxBuffer: 20 * 1024 * 1024,
     });
   }
-  const { stdout } = await execFile(rusticBinary, [...commonArgs, ...args], {
+  const { stdout } = await runExec(rusticBinary, [...commonArgs, ...args], {
     cwd,
     timeout,
     maxBuffer: 20 * 1024 * 1024,
@@ -1374,6 +1482,7 @@ async function backupToBayRusticRepo({
     repoProfilePath,
     cwd: sourceDir,
     initOnMissingRepo: true,
+    lowPriority: true,
     args: [
       "backup",
       "--json",
@@ -1763,7 +1872,7 @@ async function runBackupCommand({
       // snapshots. A future cleanup should consider staging an uncompressed
       // base-backup directory for rustic while keeping the current tarballs
       // only for local/offline convenience.
-      await execFile(
+      await execBackupLowPriority(
         "pg_basebackup",
         ["-D", staging_dir, "-Ft", "-z", "-X", "stream", "--checkpoint=fast"],
         {
@@ -1787,10 +1896,14 @@ async function runBackupCommand({
   }
   const sqlPath = join(staging_dir, "cluster.sql");
   const gzipPath = join(staging_dir, "cluster.sql.gz");
-  await execFile("pg_dumpall", ["--clean", "--if-exists", "--file", sqlPath], {
-    env,
-    maxBuffer: 10 * 1024 * 1024,
-  });
+  await execBackupLowPriority(
+    "pg_dumpall",
+    ["--clean", "--if-exists", "--file", sqlPath],
+    {
+      env,
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
   await gzipFile(sqlPath, gzipPath);
   await rm(sqlPath, { force: true });
   return "pg_dumpall";

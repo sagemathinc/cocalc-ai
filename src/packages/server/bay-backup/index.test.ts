@@ -213,6 +213,33 @@ describe("bay-backup runner", () => {
     };
   }
 
+  function unwrapLowPriorityCommand(cmd: string, args: string[]) {
+    if (cmd !== "ionice") {
+      return { cmd, args };
+    }
+    const niceIndex = args.indexOf("nice");
+    if (niceIndex < 0) {
+      return { cmd, args };
+    }
+    const commandIndex = niceIndex + 3;
+    return {
+      cmd: args[commandIndex] ?? cmd,
+      args: args.slice(commandIndex + 1),
+    };
+  }
+
+  function unwrappedExecCommands(): string[] {
+    return execFileMock.mock.calls.map(([cmd, args]) => {
+      return unwrapLowPriorityCommand(cmd, args).cmd;
+    });
+  }
+
+  function lowPriorityWrappedCommands(): string[] {
+    return execFileMock.mock.calls
+      .filter(([cmd]) => cmd === "ionice")
+      .map(([cmd, args]) => unwrapLowPriorityCommand(cmd, args).cmd);
+  }
+
   beforeEach(async () => {
     jest.resetModules();
     oldEnv = { ...process.env };
@@ -305,6 +332,7 @@ describe("bay-backup runner", () => {
           result?: { stdout: string; stderr: string },
         ) => void,
       ) => {
+        ({ cmd, args } = unwrapLowPriorityCommand(cmd, args));
         if (cmd === "pg_dumpall") {
           const fileFlag = args.indexOf("--file");
           const path = args[fileFlag + 1];
@@ -508,6 +536,7 @@ describe("bay-backup runner", () => {
     const result = await runBayBackup();
     expect(result.format).toBe("pg_dumpall");
     expect(result.storage_backend).toBe("local");
+    expect(lowPriorityWrappedCommands()).toContain("pg_dumpall");
     expect(result.artifact_count).toBe(5);
     expect(result.artifacts.map((artifact) => artifact.name)).toEqual([
       "RESTORE-OFFLINE.txt",
@@ -556,18 +585,8 @@ describe("bay-backup runner", () => {
     await expect(runBayBackup()).rejects.toThrow(
       "bay backup is already running for bay 'bay-0'",
     );
-    expect(execFileMock).not.toHaveBeenCalledWith(
-      "pg_dumpall",
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-    );
-    expect(execFileMock).not.toHaveBeenCalledWith(
-      "pg_basebackup",
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-    );
+    expect(unwrappedExecCommands()).not.toContain("pg_dumpall");
+    expect(unwrappedExecCommands()).not.toContain("pg_basebackup");
     expect(pool.client.release).toHaveBeenCalledTimes(1);
   });
 
@@ -586,6 +605,7 @@ describe("bay-backup runner", () => {
     expect(backup.storage_backend).toBe("rustic");
     expect(backup.remote_snapshot_id).toBe("snap-1");
     expect(backup.rustic_repo_selector).toBe("r2:bay-backups:wnam");
+    expect(lowPriorityWrappedCommands()).toContain("rustic-bin");
     expect(installSandboxBinaryMock).toHaveBeenCalledWith("rustic");
     expect(rusticInitCount).toBe(1);
 
@@ -653,6 +673,7 @@ describe("bay-backup runner", () => {
           result?: { stdout: string; stderr: string },
         ) => void,
       ) => {
+        ({ cmd, args } = unwrapLowPriorityCommand(cmd, args));
         if (cmd === "pg_basebackup") {
           cb(
             new Error(
@@ -695,8 +716,8 @@ describe("bay-backup runner", () => {
 
     const result = await runBayBackup();
     expect(result.format).toBe("pg_dumpall");
-    expect(execFileMock.mock.calls[0][0]).toBe("pg_basebackup");
-    expect(execFileMock.mock.calls[1][0]).toBe("pg_dumpall");
+    expect(unwrappedExecCommands()[0]).toBe("pg_basebackup");
+    expect(unwrappedExecCommands()[1]).toBe("pg_dumpall");
   });
 
   it("fails before starting postgres backup when sqlite backup tooling is missing", async () => {
@@ -727,18 +748,8 @@ describe("bay-backup runner", () => {
     await expect(runBayBackup()).rejects.toThrow(
       "required binary 'sqlite3' was not found in PATH",
     );
-    expect(execFileMock).not.toHaveBeenCalledWith(
-      "pg_basebackup",
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-    );
-    expect(execFileMock).not.toHaveBeenCalledWith(
-      "pg_dumpall",
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-    );
+    expect(unwrappedExecCommands()).not.toContain("pg_basebackup");
+    expect(unwrappedExecCommands()).not.toContain("pg_dumpall");
   });
 
   it("stages a fenced pg_basebackup restore workspace", async () => {
@@ -882,6 +893,7 @@ describe("bay-backup runner", () => {
           result?: { stdout: string; stderr: string },
         ) => void,
       ) => {
+        ({ cmd, args } = unwrapLowPriorityCommand(cmd, args));
         if (cmd !== "tar") {
           cb(new Error(`unexpected command '${cmd}'`));
           return;
@@ -1223,6 +1235,7 @@ describe("bay-backup runner", () => {
           result?: { stdout: string; stderr: string },
         ) => void,
       ) => {
+        ({ cmd, args } = unwrapLowPriorityCommand(cmd, args));
         if (cmd === "tar") {
           const archivePath = args[1];
           const targetDir = args[3];
@@ -1506,6 +1519,7 @@ describe("bay-backup runner", () => {
           result?: { stdout: string; stderr: string },
         ) => void,
       ) => {
+        ({ cmd, args } = unwrapLowPriorityCommand(cmd, args));
         if (cmd === "rustic-bin") {
           const subcommand =
             args.find((arg) => ["snapshots", "restore"].includes(arg)) ?? "";
