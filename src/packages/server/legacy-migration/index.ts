@@ -346,6 +346,10 @@ function normalizeLegacyPublicPathSharePath(row: Record<string, any>): string {
   return originalPath;
 }
 
+function legacyPublicPathIsFile(row: Record<string, any>): boolean {
+  return clean(row.original_path_type) === "file";
+}
+
 function legacyPublicPathVisibility(
   row: Record<string, any>,
 ): "disabled" | "listed" | "unlisted" {
@@ -404,7 +408,9 @@ async function replayLegacyPublicPathsForProject({
   for (const { legacy_id, payload } of rows) {
     const legacyPublicPathId = clean(payload.id) ?? legacy_id;
     const slug = legacyPublicPathSlug(payload);
-    if (!legacyPublicPathId || !slug) {
+    // Do not replay legacy file public paths as containing-directory shares.
+    // That broadens access beyond the originally published file.
+    if (!legacyPublicPathId || !slug || legacyPublicPathIsFile(payload)) {
       skipped += 1;
       continue;
     }
