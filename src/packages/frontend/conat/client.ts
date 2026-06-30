@@ -1362,77 +1362,80 @@ export class ConatClient extends EventEmitter {
     return this.getProjectRoutingInfo(project_id) ?? initial;
   };
 
-  private refreshHostRoutingInfo = async (
-    host_id: string,
-  ): Promise<HostRoutingInfo | undefined> => {
-    reconnectDebugLog(`refreshing routed host info for ${host_id}`, {
-      host_id,
-      ...this.reconnectDebugContext(),
-    });
-    if (isPublicDirectoryShareHost(host_id)) {
-      const routing = this.getHostRoutingInfo(host_id);
-      reconnectDebugLog(
-        `using cached public-share host info for ${host_id}`,
-        routing,
-      );
-      return routing;
-    }
-    try {
-      await withTimeout(
-        Promise.resolve(
-          redux.getActions("projects")?.ensure_host_info(host_id, true),
-        ),
-        PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS,
-      );
-      const routing = this.getHostRoutingInfo(host_id);
-      if (routing) {
-        reconnectDebugLog(`refreshed routed host info for ${host_id}`, routing);
+  private refreshHostRoutingInfo = reuseInFlight(
+    async (host_id: string): Promise<HostRoutingInfo | undefined> => {
+      reconnectDebugLog(`refreshing routed host info for ${host_id}`, {
+        host_id,
+        ...this.reconnectDebugContext(),
+      });
+      if (isPublicDirectoryShareHost(host_id)) {
+        const routing = this.getHostRoutingInfo(host_id);
+        reconnectDebugLog(
+          `using cached public-share host info for ${host_id}`,
+          routing,
+        );
         return routing;
       }
-    } catch (err) {
-      reconnectDebugWarn(
-        `cached host-info refresh for ${host_id} timed out or failed; resolving directly`,
-        err,
-      );
-    }
-    const direct = (await this.callHub({
-      name: "hosts.resolveHostConnection",
-      args: [{ host_id }],
-      timeout: PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS,
-    })) as HostConnectionInfo | undefined;
-    const routedState = this.findRoutedHubClientForHost(host_id);
-    const routeId = routedState
-      ? (this.pickTrackedProjectForHost(host_id, routedState) ?? host_id)
-      : host_id;
-    const routing = direct?.local_proxy
-      ? this.buildHostRoutingInfo(
-          host_id,
-          {
-            get: (key: string) => {
-              const values: Record<string, any> = {
-                connect_url: direct.connect_url,
-                host_session_id: direct.host_session_id,
-                local_proxy: direct.local_proxy,
-              };
-              return values[key];
-            },
-          } as ImmutableMap<string, any>,
-          routeId,
-        )
-      : direct?.connect_url
-        ? {
+      try {
+        await withTimeout(
+          Promise.resolve(
+            redux.getActions("projects")?.ensure_host_info(host_id, true),
+          ),
+          PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS,
+        );
+        const routing = this.getHostRoutingInfo(host_id);
+        if (routing) {
+          reconnectDebugLog(
+            `refreshed routed host info for ${host_id}`,
+            routing,
+          );
+          return routing;
+        }
+      } catch (err) {
+        reconnectDebugWarn(
+          `cached host-info refresh for ${host_id} timed out or failed; resolving directly`,
+          err,
+        );
+      }
+      const direct = (await this.callHub({
+        name: "hosts.resolveHostConnection",
+        args: [{ host_id }],
+        timeout: PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS,
+      })) as HostConnectionInfo | undefined;
+      const routedState = this.findRoutedHubClientForHost(host_id);
+      const routeId = routedState
+        ? (this.pickTrackedProjectForHost(host_id, routedState) ?? host_id)
+        : host_id;
+      const routing = direct?.local_proxy
+        ? this.buildHostRoutingInfo(
             host_id,
-            routing_key: host_id,
-            address: direct.connect_url,
-            host_session_id: direct.host_session_id,
-          }
-        : undefined;
-    reconnectDebugLog(`refreshed routed host info for ${host_id}`, {
-      direct: true,
-      routing,
-    });
-    return routing;
-  };
+            {
+              get: (key: string) => {
+                const values: Record<string, any> = {
+                  connect_url: direct.connect_url,
+                  host_session_id: direct.host_session_id,
+                  local_proxy: direct.local_proxy,
+                };
+                return values[key];
+              },
+            } as ImmutableMap<string, any>,
+            routeId,
+          )
+        : direct?.connect_url
+          ? {
+              host_id,
+              routing_key: host_id,
+              address: direct.connect_url,
+              host_session_id: direct.host_session_id,
+            }
+          : undefined;
+      reconnectDebugLog(`refreshed routed host info for ${host_id}`, {
+        direct: true,
+        routing,
+      });
+      return routing;
+    },
+  );
 
   private isProjectHostAuthError = (err: any): boolean => {
     const mesg = `${err?.message ?? ""}`.toLowerCase();
