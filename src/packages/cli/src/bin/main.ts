@@ -2946,6 +2946,7 @@ const migrateCommandDeps = {
   emitSuccess,
   emitError,
   waitForLro,
+  resolveProjectFromArgOrContext,
   isValidUUID,
 } satisfies MigrateCommandDeps;
 

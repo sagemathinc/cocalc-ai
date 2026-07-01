@@ -389,11 +389,29 @@ async function assertValidSnapshot({ snapshot, host, repo }) {
     throw Error("latest is not allowed");
   }
   const actualHost = await getHost({ id, repo });
-  if (actualHost != host) {
+  const allowedHosts = allowedSnapshotHosts(host);
+  if (!allowedHosts.includes(actualHost)) {
     throw Error(
       `host for snapshot with id ${id} must be '${host}' but it is ${actualHost}`,
     );
   }
+}
+
+function allowedSnapshotHosts(host: string): string[] {
+  const hosts = [host];
+  const legacyProjectHost = legacyProjectMigrationSnapshotHost(host);
+  if (legacyProjectHost) {
+    hosts.push(legacyProjectHost);
+  }
+  return hosts;
+}
+
+function legacyProjectMigrationSnapshotHost(host: string): string | undefined {
+  const match =
+    /^project-([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.exec(
+      host,
+    );
+  return match?.[1];
 }
 
 // we do not allow changing host so this is safe to cache.

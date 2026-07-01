@@ -11,11 +11,14 @@ import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import createProject from "@cocalc/server/projects/create";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import {
   getSeedProjectBackupConfig,
   recordExternalProjectBackupIndex,
 } from "@cocalc/server/project-backup";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { setProjectEntitlementOverrideLocal } from "@cocalc/server/membership/project-entitlement-overrides";
+import { deleteProjectDataOnHost } from "@cocalc/server/project-host/control";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
@@ -35,6 +38,8 @@ import type {
   BackupProjectToExternalRepositoryResponse,
   FinalizeIncomingProjectBackupMigrationOptions,
   FinalizeIncomingProjectBackupMigrationResult,
+  GetProjectSiteMigrationSourceProjectOptions,
+  GetProjectSiteMigrationSourceProjectResult,
   GetProjectSiteMigrationStatusOptions,
   PrepareIncomingProjectBackupMigrationOptions,
   PrepareIncomingProjectBackupMigrationResult,
@@ -435,6 +440,69 @@ async function loadDestinationProjectRegion(
   return rows[0]?.region ?? null;
 }
 
+async function markDestinationProjectArchivedForMigration({
+  project_id,
+}: {
+  project_id: string;
+}): Promise<void> {
+  const checkedAt = new Date();
+  const state = {
+    state: "archived",
+    time: checkedAt.toISOString(),
+  };
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `
+        UPDATE projects
+           SET state = $2::jsonb,
+               provisioned = FALSE,
+               provisioned_checked_at = $3
+         WHERE project_id = $1
+           AND deleted IS NULL
+      `,
+      [project_id, state, checkedAt],
+    );
+    if ((result.rowCount ?? 0) === 0) {
+      throw new Error(`destination project ${project_id} not found`);
+    }
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.state_changed",
+      project_id,
+      default_bay_id: getConfiguredBayId(),
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id,
+    default_bay_id: getConfiguredBayId(),
+  });
+}
+
+async function deleteDestinationProjectHostDataForMigration({
+  project_id,
+  host_id,
+}: {
+  project_id: string;
+  host_id: string | null | undefined;
+}): Promise<void> {
+  const normalizedHostId = `${host_id ?? ""}`.trim();
+  if (!normalizedHostId) {
+    return;
+  }
+  await deleteProjectDataOnHost({
+    project_id,
+    host_id: normalizedHostId,
+  });
+}
+
 function normalizeMigrationTags({
   tags,
   source_site,
@@ -516,6 +584,36 @@ async function loadMigrationRecord(
   return normalizeMigrationRow(rows[0]);
 }
 
+export async function getProjectSiteMigrationSourceProject({
+  account_id,
+  project_id,
+}: GetProjectSiteMigrationSourceProjectOptions): Promise<GetProjectSiteMigrationSourceProjectResult> {
+  await requireAdmin(account_id);
+  const projectId = normalizeSourceProjectId(project_id);
+  await assertLocalSourceProjectForMigration(projectId);
+  const { rows } = await getPool().query<{
+    project_id: string;
+    title: string | null;
+    description: string | null;
+  }>(
+    `SELECT project_id, title, description
+       FROM projects
+      WHERE project_id=$1
+        AND deleted IS NULL
+      LIMIT 1`,
+    [projectId],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`project ${projectId} not found`);
+  }
+  return {
+    project_id: row.project_id,
+    title: row.title ?? null,
+    description: row.description ?? null,
+  };
+}
+
 export async function prepareIncomingProjectBackupMigration({
   account_id,
   browser_id,
@@ -547,10 +645,9 @@ export async function prepareIncomingProjectBackupMigration({
     start: false,
     skip_project_count_limit: true,
   });
-  await getPool().query(
-    "UPDATE projects SET provisioned=FALSE WHERE project_id=$1",
-    [destinationProjectId],
-  );
+  await markDestinationProjectArchivedForMigration({
+    project_id: destinationProjectId,
+  });
   const projectRegion =
     await loadDestinationProjectRegion(destinationProjectId);
   const backupConfig = await getSeedProjectBackupConfig({
@@ -777,7 +874,8 @@ export async function finalizeIncomingProjectBackupMigration({
   }
   const { rows } = await getPool().query<{
     backup_repo_id: string | null;
-  }>("SELECT backup_repo_id FROM projects WHERE project_id=$1", [
+    host_id: string | null;
+  }>("SELECT backup_repo_id, host_id FROM projects WHERE project_id=$1", [
     destination_project_id,
   ]);
   if (!rows[0]) {
@@ -830,11 +928,18 @@ export async function finalizeIncomingProjectBackupMigration({
           : null,
     });
   }
+  await deleteDestinationProjectHostDataForMigration({
+    project_id: destination_project_id,
+    host_id: rows[0].host_id,
+  });
   if (restore) {
     warnings.push(
       "restore after finalize is not implemented yet; migration was finalized archive-only",
     );
   }
+  await markDestinationProjectArchivedForMigration({
+    project_id: destination_project_id,
+  });
   await getPool().query(
     `UPDATE project_site_migrations
         SET status='finalized',

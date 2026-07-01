@@ -467,6 +467,19 @@ async function maybeRestoreFromBackup({
         }
       }
       if (!backups.length) {
+        try {
+          backups = await fs.getBackups({ project_id, indexed_only: true });
+        } catch (err) {
+          logger.warn(
+            "start: indexed backup list failed after empty full list",
+            {
+              project_id,
+              err: `${err}`,
+            },
+          );
+        }
+      }
+      if (!backups.length) {
         cleanupStaging = true;
         if (restore === "required") {
           throw Error("no backups available for restore");

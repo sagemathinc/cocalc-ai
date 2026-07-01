@@ -3687,6 +3687,10 @@ function projectSiteMigrationStagingRoot({
   );
 }
 
+function projectRusticSnapshotHost(project_id: string): string {
+  return `project-${project_id}`;
+}
+
 async function deleteProjectSiteMigrationSnapshot(path: string): Promise<void> {
   await btrfs({
     args: ["subvolume", "delete", path],
@@ -3773,7 +3777,7 @@ async function backupProjectToExternalRepository({
               const backup = await projectRusticBackup({
                 src: snapshotPath,
                 repoProfile: profilePath,
-                host: destination_project_id,
+                host: projectRusticSnapshotHost(destination_project_id),
                 timeoutMs: PROJECT_RUSTIC_TIMEOUT_MS,
                 tags,
                 progress,

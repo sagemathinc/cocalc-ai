@@ -16,6 +16,9 @@ let triggerBackupLroWorkerMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let getConfiguredBayIdMock: jest.Mock;
 let stopProjectMock: jest.Mock;
+let deleteProjectDataOnHostMock: jest.Mock;
+let appendProjectOutboxEventForProjectMock: jest.Mock;
+let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -25,6 +28,18 @@ jest.mock("@cocalc/database/pool", () => ({
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
   default: (...args: any[]) => createProjectMock(...args),
+}));
+
+jest.mock("@cocalc/database/postgres/project-events-outbox", () => ({
+  __esModule: true,
+  appendProjectOutboxEventForProject: (...args: any[]) =>
+    appendProjectOutboxEventForProjectMock(...args),
+}));
+
+jest.mock("@cocalc/server/account/project-feed", () => ({
+  __esModule: true,
+  publishProjectAccountFeedEventsBestEffort: (...args: any[]) =>
+    publishProjectAccountFeedEventsBestEffortMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
@@ -93,6 +108,12 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   })),
 }));
 
+jest.mock("@cocalc/server/project-host/control", () => ({
+  __esModule: true,
+  deleteProjectDataOnHost: (...args: any[]) =>
+    deleteProjectDataOnHostMock(...args),
+}));
+
 describe("project site migration destination RPCs", () => {
   const ADMIN_ID = "11111111-1111-4111-8111-111111111111";
   const OWNER_ID = "22222222-2222-4222-8222-222222222222";
@@ -128,6 +149,10 @@ describe("project site migration destination RPCs", () => {
   beforeEach(() => {
     jest.resetModules();
     createProjectMock = jest.fn(async () => DESTINATION_PROJECT_ID);
+    appendProjectOutboxEventForProjectMock = jest.fn(async () => "event-id");
+    publishProjectAccountFeedEventsBestEffortMock = jest.fn(
+      async () => undefined,
+    );
     isAdminMock = jest.fn(async () => true);
     getSeedProjectBackupConfigMock = jest.fn(async () => ({
       toml: '[repository]\npassword = "secret"',
@@ -164,22 +189,51 @@ describe("project site migration destination RPCs", () => {
     }));
     getConfiguredBayIdMock = jest.fn(() => "alpha-bay");
     stopProjectMock = jest.fn(async () => undefined);
+    deleteProjectDataOnHostMock = jest.fn(async () => undefined);
     queryMock = jest.fn(async (sql: string) => {
+      if (sql.trim().startsWith("UPDATE projects")) {
+        return { rows: [], rowCount: 1 };
+      }
       if (sql.includes("FROM accounts")) {
         return { rows: [{ account_id: OWNER_ID }] };
+      }
+      if (sql.includes("SELECT project_id, title, description")) {
+        return {
+          rows: [
+            {
+              project_id: SOURCE_PROJECT_ID,
+              title: "Source title",
+              description: "Source description",
+            },
+          ],
+        };
       }
       if (sql.includes("SELECT region FROM projects")) {
         return { rows: [{ region: "WNAM" }] };
       }
-      if (sql.includes("SELECT backup_repo_id FROM projects")) {
-        return { rows: [{ backup_repo_id: BACKUP_REPO_ID }] };
+      if (sql.includes("SELECT backup_repo_id")) {
+        return {
+          rows: [
+            {
+              backup_repo_id: BACKUP_REPO_ID,
+              host_id: "host-1",
+            },
+          ],
+        };
       }
       if (sql.includes("FROM project_site_migrations")) {
         return { rows: [migrationRow] };
       }
       return { rows: [] };
     });
-    getPoolMock = jest.fn(() => ({ query: queryMock }));
+    const client = {
+      query: queryMock,
+      release: jest.fn(),
+    };
+    getPoolMock = jest.fn(() => ({
+      query: queryMock,
+      connect: jest.fn(async () => client),
+    }));
   });
 
   it("prepares an archived destination project with backup repo credentials", async () => {
@@ -232,6 +286,17 @@ describe("project site migration destination RPCs", () => {
         }),
       }),
     );
+    expect(appendProjectOutboxEventForProjectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: "project.state_changed",
+        project_id: DESTINATION_PROJECT_ID,
+        default_bay_id: "alpha-bay",
+      }),
+    );
+    expect(publishProjectAccountFeedEventsBestEffortMock).toHaveBeenCalledWith({
+      project_id: DESTINATION_PROJECT_ID,
+      default_bay_id: "alpha-bay",
+    });
     expect(result).toEqual(
       expect.objectContaining({
         destination_project_id: DESTINATION_PROJECT_ID,
@@ -242,6 +307,24 @@ describe("project site migration destination RPCs", () => {
     expect(result.migration_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
+  });
+
+  it("returns source project metadata for migration defaults", async () => {
+    const { getProjectSiteMigrationSourceProject } =
+      await import("./project-site-migration");
+
+    await expect(
+      getProjectSiteMigrationSourceProject({
+        account_id: ADMIN_ID,
+        project_id: SOURCE_PROJECT_ID,
+      }),
+    ).resolves.toEqual({
+      project_id: SOURCE_PROJECT_ID,
+      title: "Source title",
+      description: "Source description",
+    });
+
+    expect(resolveProjectBayMock).toHaveBeenCalledWith(SOURCE_PROJECT_ID);
   });
 
   it("returns migration status for admins", async () => {
@@ -406,6 +489,10 @@ describe("project site migration destination RPCs", () => {
       sqlite_bytes: 123,
       object_bytes: 45,
       sha256: "abc",
+    });
+    expect(deleteProjectDataOnHostMock).toHaveBeenCalledWith({
+      project_id: DESTINATION_PROJECT_ID,
+      host_id: "host-1",
     });
     expect(result).toEqual({
       migration_id: MIGRATION_ID,
