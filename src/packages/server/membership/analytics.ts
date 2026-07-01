@@ -38,7 +38,6 @@ export interface RecordMembershipAnalyticsEventOptions {
   period_end?: Date | null;
   trial_days?: number | null;
   trial_status?: "none" | "started" | "converted" | "canceled" | null;
-  metadata?: Record<string, unknown> | null;
   client?: PoolClient;
 }
 
@@ -51,6 +50,7 @@ export interface SnapshotMembershipAnalyticsDailyCountsOptions {
 const DEFAULT_ANALYTICS_DAYS = 90;
 const MAX_EVENT_LIMIT = 1000;
 let tablesEnsured = false;
+let metadataColumnDropAttempted = false;
 
 function pool(client?: PoolClient): Queryable {
   return client ?? getPool("medium");
@@ -82,10 +82,16 @@ export async function ensureMembershipAnalyticsTables(
       period_end TIMESTAMP,
       trial_days INTEGER,
       trial_status VARCHAR(32),
-      metadata JSONB,
       created_at TIMESTAMP NOT NULL DEFAULT NOW()
     )
   `);
+  if (!metadataColumnDropAttempted) {
+    await db.query(`
+      ALTER TABLE membership_analytics_events
+        DROP COLUMN IF EXISTS metadata
+    `);
+    metadataColumnDropAttempted = true;
+  }
   await db.query(`
     CREATE INDEX IF NOT EXISTS membership_analytics_events_time_idx
       ON membership_analytics_events (event_time)
@@ -170,7 +176,6 @@ export async function recordMembershipAnalyticsEvent({
   period_end = null,
   trial_days = null,
   trial_status = null,
-  metadata = null,
   client,
 }: RecordMembershipAnalyticsEventOptions): Promise<boolean> {
   await ensureMembershipAnalyticsTables(client);
@@ -179,8 +184,8 @@ export async function recordMembershipAnalyticsEvent({
        (event_key, event_type, event_time, bay_id, account_id,
         membership_class, previous_membership_class, source, interval,
         subscription_id, purchase_id, amount, period_start, period_end,
-        trial_days, trial_status, metadata)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        trial_days, trial_status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
      ON CONFLICT (event_key) DO NOTHING`,
     [
       event_key,
@@ -199,7 +204,6 @@ export async function recordMembershipAnalyticsEvent({
       period_end,
       trial_days,
       trial_status,
-      metadata,
     ],
   );
   return result.rowCount === 1;
@@ -430,7 +434,6 @@ export async function backfillMembershipAnalyticsPurchaseEvents({
       period_end: row.period_end ?? null,
       trial_days: description.trial_days ?? null,
       trial_status: description.trial_days ? "started" : "none",
-      metadata: { tag: "backfill" },
       client,
     });
     if (ok) {
@@ -549,7 +552,7 @@ export async function getMembershipAnalyticsEventsLocal({
     `SELECT event_key, event_type, event_time, bay_id, account_id,
             membership_class, previous_membership_class, source, interval,
             subscription_id, purchase_id, amount::float8 AS amount,
-            period_start, period_end, trial_days, trial_status, metadata
+            period_start, period_end, trial_days, trial_status
        FROM membership_analytics_events
       WHERE ${filters.join(" AND ")}
       ORDER BY event_time DESC, event_key DESC

@@ -94,10 +94,6 @@ Table({
       pg_type: "VARCHAR(32)",
       desc: "Trial classification such as none, started, converted, or canceled.",
     },
-    metadata: {
-      type: "map",
-      desc: "Additional source-specific analytics metadata.",
-    },
     created_at: {
       type: "timestamp",
       desc: "When the analytics row was inserted.",

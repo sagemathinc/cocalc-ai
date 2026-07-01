@@ -44,7 +44,6 @@ export default async function cancelSubscription({
       period_start: row.current_period_start,
       period_end: row.current_period_end,
       trial_status: row.metadata.trial === true ? "canceled" : "none",
-      metadata: { reason },
       client,
     });
   }

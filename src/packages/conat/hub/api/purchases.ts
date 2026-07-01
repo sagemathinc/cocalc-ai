@@ -356,7 +356,6 @@ export interface MembershipAnalyticsEventRow {
   period_end?: Date | string | null;
   trial_days?: number | null;
   trial_status?: "none" | "started" | "converted" | "canceled" | null;
-  metadata?: Record<string, unknown> | null;
 }
 
 export interface MembershipAnalyticsDailyCountRow {

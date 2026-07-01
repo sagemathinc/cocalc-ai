@@ -192,7 +192,6 @@ export async function applyMembershipChange({
         period_end: end,
         trial_days: isTrial ? trialDays : null,
         trial_status: isTrial ? "started" : "none",
-        metadata: { change: change.change },
         client: transaction,
       });
     }
@@ -225,7 +224,6 @@ export async function applyMembershipChange({
         period_end: end,
         trial_days: trialDays,
         trial_status: "started",
-        metadata: { trial_email: change.trial_email },
         client: transaction,
       });
       await claimMembershipTrial({
