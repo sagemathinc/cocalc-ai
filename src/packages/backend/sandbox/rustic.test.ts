@@ -5,7 +5,7 @@ https://github.com/rustic-rs/rustic
 */
 
 import rustic, { getHost, getSnapshot } from "./rustic";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseOutput } from "./exec";
@@ -122,5 +122,28 @@ password = ""
     await expect(
       getHost({ id: latestSnapshotId, repo: options.repo }),
     ).resolves.toBe("my-host");
+  });
+
+  it("can restore legacy project-migration snapshots with bare uuid host", async () => {
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    await writeFile(join(home, "legacy-migration.txt"), "legacy");
+    const { stdout } = await rustic(
+      ["backup", "--json", "legacy-migration.txt"],
+      {
+        ...options,
+        host: projectId,
+      },
+    );
+    const backup = JSON.parse(Buffer.from(stdout).toString());
+    await rustic(["restore", backup.id, "legacy-migration-restore"], {
+      ...options,
+      host: `project-${projectId}`,
+    });
+    await expect(
+      readFile(
+        join(home, "legacy-migration-restore", "legacy-migration.txt"),
+        "utf8",
+      ),
+    ).resolves.toBe("legacy");
   });
 });

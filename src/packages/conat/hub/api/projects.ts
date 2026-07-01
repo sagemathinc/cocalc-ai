@@ -862,6 +862,17 @@ export interface GetProjectSiteMigrationStatusOptions {
   migration_id: string;
 }
 
+export interface GetProjectSiteMigrationSourceProjectOptions {
+  account_id?: string;
+  project_id: string;
+}
+
+export interface GetProjectSiteMigrationSourceProjectResult {
+  project_id: string;
+  title: string | null;
+  description: string | null;
+}
+
 export interface FinalizeIncomingProjectBackupMigrationOptions {
   account_id?: string;
   browser_id?: string | null;
@@ -946,6 +957,7 @@ export const projects = {
   setAdminProjectEntitlementOverride: authFirstRequireAccount,
   clearAdminProjectEntitlementOverride: authFirstRequireAccount,
   prepareIncomingProjectBackupMigration: authFirstRequireAccount,
+  getProjectSiteMigrationSourceProject: authFirstRequireAccount,
   getProjectSiteMigrationStatus: authFirstRequireAccount,
   finalizeIncomingProjectBackupMigration: authFirstRequireAccount,
   backupProjectToExternalRepository: authFirstRequireAccount,
@@ -1232,6 +1244,10 @@ export interface Projects {
   prepareIncomingProjectBackupMigration: (
     opts: PrepareIncomingProjectBackupMigrationOptions,
   ) => Promise<PrepareIncomingProjectBackupMigrationResult>;
+
+  getProjectSiteMigrationSourceProject: (
+    opts: GetProjectSiteMigrationSourceProjectOptions,
+  ) => Promise<GetProjectSiteMigrationSourceProjectResult>;
 
   getProjectSiteMigrationStatus: (
     opts: GetProjectSiteMigrationStatusOptions,

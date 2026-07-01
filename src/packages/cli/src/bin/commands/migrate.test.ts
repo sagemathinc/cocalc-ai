@@ -93,6 +93,14 @@ function commandWithDeps(overrides: Record<string, any> = {}) {
     pollMs: 1000,
     hub: {
       projects: {
+        getProjectSiteMigrationSourceProject: async (opts: any) => {
+          state.calls.push({ ctx: "alpha", name: "source-info", opts });
+          return {
+            project_id: SOURCE_PROJECT_ID,
+            title: "Source Project",
+            description: "Source description",
+          };
+        },
         backupProjectToExternalRepository: async (opts: any) => {
           state.calls.push({ ctx: "alpha", name: "backup", opts });
           return {
@@ -218,21 +226,25 @@ test("migrate project prepares destination, backs up source, then finalizes", as
 
   assert.deepEqual(
     state.contexts.map((ctx: any) => ctx.profile),
-    ["prod", "alpha"],
+    ["alpha", "prod"],
   );
-  assert.equal(state.calls[0].name, "prepare");
+  assert.equal(state.calls[0].name, "source-info");
   assert.deepEqual(state.calls[0].opts, {
+    project_id: SOURCE_PROJECT_ID,
+  });
+  assert.equal(state.calls[1].name, "prepare");
+  assert.deepEqual(state.calls[1].opts, {
     source_site: "alpha",
     source_project_id: SOURCE_PROJECT_ID,
     owner: "wstein@example.com",
     title: "Big project",
-    description: undefined,
+    description: "Source description",
     disk_mb: 65000,
     source_usage_bytes: 60000000000,
     restore_after_finalize: true,
   });
-  assert.equal(state.calls[1].name, "backup");
-  assert.deepEqual(state.calls[1].opts, {
+  assert.equal(state.calls[2].name, "backup");
+  assert.deepEqual(state.calls[2].opts, {
     project_id: SOURCE_PROJECT_ID,
     destination_site: "prod",
     destination_project_id: DEST_PROJECT_ID,
@@ -269,6 +281,24 @@ test("migrate project prepares destination, backs up source, then finalizes", as
     ],
   });
   assert.deepEqual(state.closed.sort(), ["alpha", "prod"]);
+});
+
+test("migrate project uses source title and description by default", async () => {
+  const { program, state } = commandWithDeps();
+  await program.parseAsync([
+    "node",
+    "cocalc",
+    "migrate",
+    `alpha:${SOURCE_PROJECT_ID}`,
+    "prod",
+    "--owner",
+    "wstein@example.com",
+    "--yes",
+  ]);
+
+  const prepare = state.calls.find((call: any) => call.name === "prepare");
+  assert.equal(prepare.opts.title, "Source Project");
+  assert.equal(prepare.opts.description, "Source description");
 });
 
 test("migrate project refuses real work without --yes", async () => {

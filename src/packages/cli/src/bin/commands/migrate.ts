@@ -3,6 +3,7 @@ import { Command } from "commander";
 import type {
   BackupProjectToExternalRepositoryResponse,
   FinalizeIncomingProjectBackupMigrationResult,
+  GetProjectSiteMigrationSourceProjectResult,
   PrepareIncomingProjectBackupMigrationResult,
   ProjectSiteMigrationRecord,
 } from "@cocalc/conat/hub/api/projects";
@@ -161,6 +162,36 @@ function lroResult(summary: any): Record<string, any> {
   return {};
 }
 
+async function getSourceProjectInfo({
+  ctx,
+  project_id,
+  globals,
+}: {
+  ctx: any;
+  project_id: string;
+  globals: Record<string, any>;
+}): Promise<GetProjectSiteMigrationSourceProjectResult | null> {
+  const getInfo = ctx?.hub?.projects?.getProjectSiteMigrationSourceProject;
+  if (typeof getInfo !== "function") {
+    writeProgress(
+      globals,
+      "Source site does not support migration metadata lookup; using fallback destination title.",
+    );
+    return null;
+  }
+  try {
+    return (await getInfo({
+      project_id,
+    })) as GetProjectSiteMigrationSourceProjectResult;
+  } catch (err) {
+    writeProgress(
+      globals,
+      `Unable to read source project metadata; using fallback destination title: ${err}`,
+    );
+    return null;
+  }
+}
+
 async function runProjectMigration({
   deps,
   command,
@@ -215,6 +246,20 @@ async function runProjectMigration({
       );
     }
 
+    writeProgress(globals, "Connecting to source site...");
+    sourceCtx = await deps.contextForGlobals(
+      profileGlobals(globals, sourceSpec.profile),
+    );
+    const sourceProjectInfo = await getSourceProjectInfo({
+      ctx: sourceCtx,
+      project_id: sourceSpec.project_id,
+      globals,
+    });
+    const destinationTitle =
+      options.title ?? sourceProjectInfo?.title ?? undefined;
+    const destinationDescription =
+      options.description ?? sourceProjectInfo?.description ?? undefined;
+
     writeProgress(globals, "Connecting to destination site...");
     destinationCtx = await deps.contextForGlobals(
       profileGlobals(globals, destinationProfile),
@@ -225,17 +270,13 @@ async function runProjectMigration({
         source_site: sourceSpec.profile,
         source_project_id: sourceSpec.project_id,
         owner,
-        title: options.title,
-        description: options.description,
+        title: destinationTitle,
+        description: destinationDescription,
         disk_mb,
         source_usage_bytes,
         restore_after_finalize: !!options.restore,
       })) as PrepareIncomingProjectBackupMigrationResult;
 
-    writeProgress(globals, "Connecting to source site...");
-    sourceCtx = await deps.contextForGlobals(
-      profileGlobals(globals, sourceSpec.profile),
-    );
     writeProgress(globals, "Queueing source backup into destination repo...");
     const backupOp =
       (await sourceCtx.hub.projects.backupProjectToExternalRepository({
