@@ -88,7 +88,16 @@ function subtitleForRoute(
 ): string | undefined {
   switch (route.kind) {
     case "auth-form":
-      return undefined;
+      switch (route.view) {
+        case "sign-up":
+          return "Create an account to start projects, then compare product paths whenever your needs change.";
+        case "sign-in":
+          return "Sign in to open projects, manage your account, or continue from a product or support link.";
+        case "password-reset":
+          return `Reset your ${siteName} password.`;
+        default:
+          return siteName;
+      }
     case "sso-detail":
     case "sso-index":
       return `Single sign-on for ${siteName}`;
