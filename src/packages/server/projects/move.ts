@@ -88,6 +88,18 @@ const MOVE_SENTINEL_VERIFY_RETRY_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_SENTINEL_VERIFY_RETRY_MS) || 1000,
 );
+
+function moveBackupDedupeKey({
+  project_id,
+  move_log_id,
+  stage,
+}: {
+  project_id: string;
+  move_log_id: string;
+  stage: string;
+}): string {
+  return `project-backup:move:${project_id}:${move_log_id}:${stage}`;
+}
 const MOVE_SENTINEL_IO_TIMEOUT_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_SENTINEL_IO_TIMEOUT_MS) || 5000,
@@ -1160,11 +1172,13 @@ async function cancelChildLro({
 
 async function performBackupRegionCutover({
   context,
+  move_log_id,
   progress,
   managed_egress_override,
   shouldCancel,
 }: {
   context: MoveProjectContext;
+  move_log_id: string;
   progress: (update: MoveProjectProgressUpdate) => void;
   managed_egress_override?: ManagedBackupEgressOverride;
   shouldCancel?: () => Promise<boolean>;
@@ -1252,6 +1266,11 @@ async function performBackupRegionCutover({
               step: "cutover-backup",
             }),
           managed_egress_override,
+          dedupe_key: moveBackupDedupeKey({
+            project_id: context.project_id,
+            move_log_id,
+            stage: "cutover",
+          }),
           shouldCancel,
           cancelStage: "cutover-backup",
         }),
@@ -1363,6 +1382,7 @@ async function createFinalBackup({
   account_id,
   progress,
   managed_egress_override,
+  dedupe_key,
   shouldCancel,
   cancelStage = "backup",
 }: {
@@ -1370,6 +1390,7 @@ async function createFinalBackup({
   account_id: string;
   progress: (update: MoveProjectProgressUpdate) => void;
   managed_egress_override?: ManagedBackupEgressOverride;
+  dedupe_key?: string;
   shouldCancel?: () => Promise<boolean>;
   cancelStage?: string;
 }): Promise<{ id: string; time: string; op_id: string }> {
@@ -1382,6 +1403,7 @@ async function createFinalBackup({
       skip_collab_check: true,
       skip_rootfs_portability_check: true,
       managed_egress_override,
+      dedupe_key,
     },
   );
   progress({
@@ -1423,11 +1445,15 @@ async function createFinalBackup({
     throw new Error(summary.error ?? `backup failed: ${summary.status}`);
   }
   const backup = summary.result ?? {};
+  const backupId = `${backup.id ?? ""}`.trim();
+  if (!backupId) {
+    throw new Error(`backup operation ${backupOp.op_id} did not return an id`);
+  }
   const backupTime =
     backup.time instanceof Date
       ? backup.time.toISOString()
       : new Date(backup.time as any).toISOString();
-  return { id: backup.id, time: backupTime, op_id: backupOp.op_id };
+  return { id: backupId, time: backupTime, op_id: backupOp.op_id };
 }
 
 async function loadProjectPlacementState(project_id: string): Promise<{
@@ -1757,6 +1783,11 @@ export async function moveProjectToHost(
                 project_id: context.project_id,
                 progress,
                 managed_egress_override: input.managed_egress_override,
+                dedupe_key: moveBackupDedupeKey({
+                  project_id: context.project_id,
+                  move_log_id,
+                  stage: "final",
+                }),
                 shouldCancel,
                 cancelStage: "backup",
               }),
@@ -2042,6 +2073,7 @@ export async function moveProjectToHost(
 
         backupRegionCutoverResult = await performBackupRegionCutover({
           context,
+          move_log_id,
           progress,
           managed_egress_override: input.managed_egress_override,
           shouldCancel,

@@ -203,12 +203,14 @@ async function createBackupLro({
   tags,
   limit,
   managed_egress_override,
+  dedupe_key,
 }: {
   account_id?: string;
   project_id: string;
   tags?: string[];
   limit?: number;
   managed_egress_override?: ManagedBackupEgressOverride;
+  dedupe_key?: string;
 }): Promise<LroSummary> {
   return await createLro({
     kind: "project-backup",
@@ -218,7 +220,7 @@ async function createBackupLro({
     routing: "hub",
     input: { project_id, tags, limit, managed_egress_override },
     status: "queued",
-    dedupe_key: backupLroDedupeKey(project_id),
+    dedupe_key: dedupe_key ?? backupLroDedupeKey(project_id),
   });
 }
 
@@ -315,6 +317,7 @@ export async function createBackup(
     skip_rootfs_portability_check?: boolean;
     skip_owner_route?: boolean;
     managed_egress_override?: ManagedBackupEgressOverride;
+    dedupe_key?: string;
   },
 ): Promise<{
   op_id: string;
@@ -343,6 +346,7 @@ export async function createBackup(
         tags,
         limit,
         managed_egress_override: opts?.managed_egress_override,
+        dedupe_key: opts?.dedupe_key,
       });
       await publishQueuedLroSafe({
         op,
@@ -382,6 +386,7 @@ export async function createBackup(
     tags,
     limit,
     managed_egress_override: opts?.managed_egress_override,
+    dedupe_key: opts?.dedupe_key,
   });
   await publishQueuedLroSafe({
     op,

@@ -286,6 +286,30 @@ describe("project-backups.createBackup", () => {
     });
   });
 
+  it("allows trusted internal callers to use a specific dedupe key", async () => {
+    const { createBackup } = await import("./project-backups");
+
+    await createBackup(
+      {
+        account_id: "acct-1",
+        project_id: "proj-1",
+      },
+      {
+        skip_rootfs_portability_check: true,
+        dedupe_key: "project-backup:move:proj-1:move-1:final",
+      },
+    );
+
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "project-backup",
+        scope_type: "project",
+        scope_id: "proj-1",
+        dedupe_key: "project-backup:move:proj-1:move-1:final",
+      }),
+    );
+  });
+
   it("returns a local waitable LRO and delegates execution for remote-owner projects", async () => {
     resolveProjectBayMock.mockResolvedValue({ bay_id: "bay-1", epoch: 7 });
     const { createBackup } = await import("./project-backups");
