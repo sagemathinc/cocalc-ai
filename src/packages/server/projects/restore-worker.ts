@@ -208,6 +208,7 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
   const snapshot = input.snapshot;
   const path = input.path;
   const dest = input.dest;
+  const account_id = `${op.created_by ?? ""}`.trim();
 
   if (!project_id || (!backup_id && !snapshot)) {
     const updated = await updateLro({
@@ -287,6 +288,7 @@ async function handleRestoreOp(op: LroSummary): Promise<void> {
     const started = Date.now();
     const client = await getProjectFileServerClient({
       project_id,
+      account_id: account_id || undefined,
       timeout: RESTORE_TIMEOUT_MS,
     });
     await ensureProjectFileServerClientReady({

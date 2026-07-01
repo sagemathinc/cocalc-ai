@@ -273,7 +273,7 @@ describe("project site migration destination RPCs", () => {
         source: "project-site-migration",
         override: expect.objectContaining({
           project_defaults: {
-            disk_quota: { mode: "set", value: 1034 },
+            disk_quota: { mode: "minimum", value: 1034 },
           },
         }),
       }),
@@ -465,7 +465,7 @@ describe("project site migration destination RPCs", () => {
         source: "project-site-migration",
         override: expect.objectContaining({
           project_defaults: {
-            disk_quota: { mode: "set", value: 1074 },
+            disk_quota: { mode: "minimum", value: 1074 },
           },
         }),
       }),

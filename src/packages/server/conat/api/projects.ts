@@ -280,6 +280,40 @@ function projectStartControlTimeoutMs({
     : ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS;
 }
 
+async function resolveImplicitMigrationRestoreBackupId({
+  project_id,
+}: {
+  project_id: string;
+}): Promise<string | undefined> {
+  try {
+    const { rows } = await getPool().query<{ snapshot_id: string | null }>(
+      `
+        SELECT m.snapshot_id
+          FROM project_site_migrations m
+          JOIN projects p
+            ON p.project_id = m.destination_project_id
+         WHERE m.destination_project_id = $1
+           AND m.status IN ('finalized', 'restored')
+           AND m.snapshot_id IS NOT NULL
+           AND p.provisioned IS FALSE
+           AND COALESCE(p.state->>'state', '') = 'archived'
+         ORDER BY m.updated_at DESC
+         LIMIT 1
+      `,
+      [project_id],
+    );
+    return rows[0]?.snapshot_id ?? undefined;
+  } catch (err) {
+    if ((err as any)?.code !== "42P01") {
+      log.warn("unable to resolve implicit migration restore backup id", {
+        project_id,
+        err,
+      });
+    }
+    return undefined;
+  }
+}
+
 async function enrichRuntimeSponsorDenial({
   denial,
   account_id,
@@ -3775,6 +3809,11 @@ async function runProjectStartLikeAction({
   ) {
     throw new Error("managed egress override requires admin authorization");
   }
+  const effectiveRestoreBackupId =
+    `${restore_backup_id ?? ""}`.trim() ||
+    (kind === "start"
+      ? await resolveImplicitMigrationRestoreBackupId({ project_id })
+      : undefined);
   try {
     const ownership = await resolveProjectBay(project_id);
     if (ownership == null) {
@@ -3782,12 +3821,16 @@ async function runProjectStartLikeAction({
     }
     await getInterBayBridge()
       .projectControl(ownership.bay_id, {
-        timeout_ms: projectStartControlTimeoutMs({ restore_backup_id }),
+        timeout_ms: projectStartControlTimeoutMs({
+          restore_backup_id: effectiveRestoreBackupId,
+        }),
       })
       .checkStartAdmission({
         project_id,
         account_id,
-        ...(restore_backup_id ? { restore_backup_id } : {}),
+        ...(effectiveRestoreBackupId
+          ? { restore_backup_id: effectiveRestoreBackupId }
+          : {}),
         ...(autostart ? { autostart } : {}),
         source_bay_id: getConfiguredBayId(),
         ...(managed_egress_override ? { managed_egress_override } : {}),
@@ -3813,7 +3856,9 @@ async function runProjectStartLikeAction({
     input: {
       project_id,
       action: kind,
-      ...(restore_backup_id ? { restore_backup_id } : {}),
+      ...(effectiveRestoreBackupId
+        ? { restore_backup_id: effectiveRestoreBackupId }
+        : {}),
       ...(autostart ? { autostart } : {}),
     },
     status: "queued",
@@ -3881,13 +3926,19 @@ async function runProjectStartLikeAction({
       }
       const projectControl = getInterBayBridge().projectControl(
         ownership.bay_id,
-        { timeout_ms: projectStartControlTimeoutMs({ restore_backup_id }) },
+        {
+          timeout_ms: projectStartControlTimeoutMs({
+            restore_backup_id: effectiveRestoreBackupId,
+          }),
+        },
       );
       if (kind === "start") {
         await projectControl.start({
           project_id,
           account_id,
-          ...(restore_backup_id ? { restore_backup_id } : {}),
+          ...(effectiveRestoreBackupId
+            ? { restore_backup_id: effectiveRestoreBackupId }
+            : {}),
           ...(autostart ? { autostart } : {}),
           lro_op_id: op.op_id,
           source_bay_id: getConfiguredBayId(),

@@ -37,6 +37,11 @@ type SiteProjectSpec = {
   project_id: string;
 };
 
+type SiteOperationSpec = {
+  profile: string;
+  op_id: string;
+};
+
 const DEFAULT_MIGRATION_TIMEOUT = "12h";
 const DEFAULT_DISK_MB: "auto" = "auto";
 
@@ -74,6 +79,28 @@ function parseDestinationProfile(input: string): string {
     throw new Error("destination must be a profile name, not profile:project");
   }
   return profile;
+}
+
+function parseSiteOperationSpec(
+  input: string,
+  isValidUUID: (value: string) => boolean,
+): SiteOperationSpec {
+  const value = normalizeNonEmpty(input, "source operation");
+  const index = value.indexOf(":");
+  if (index <= 0 || index === value.length - 1) {
+    throw new Error(
+      "source operation must have the form <source-profile>:<op-id>",
+    );
+  }
+  const profile = value.slice(0, index).trim();
+  const op_id = value.slice(index + 1).trim();
+  if (!profile) {
+    throw new Error("source profile must be non-empty");
+  }
+  if (!isValidUUID(op_id)) {
+    throw new Error("source op_id must be a valid UUID");
+  }
+  return { profile, op_id };
 }
 
 function parseDestinationMigrationSpec(
@@ -221,6 +248,100 @@ async function getSourceProjectInfo({
   return null;
 }
 
+async function getSucceededSourceBackupResult({
+  deps,
+  sourceCtx,
+  sourceBackupOpId,
+  globals,
+}: {
+  deps: MigrateCommandDeps;
+  sourceCtx: any;
+  sourceBackupOpId: string;
+  globals: Record<string, any>;
+}): Promise<Record<string, any>> {
+  writeProgress(
+    globals,
+    `Waiting for source backup operation ${sourceBackupOpId}...`,
+  );
+  const backupStatus = await deps.waitForLro(sourceCtx, sourceBackupOpId, {
+    timeoutMs: sourceCtx.timeoutMs,
+    pollMs: sourceCtx.pollMs,
+    onUpdate: (update: any) => {
+      const phase = update?.progress_summary?.phase;
+      const message = update?.progress_summary?.message;
+      if (phase || message) {
+        writeProgress(
+          globals,
+          `source backup ${update.status}${phase ? ` ${phase}` : ""}${message ? `: ${message}` : ""}`,
+        );
+      }
+    },
+  });
+  if (backupStatus.timedOut) {
+    throw new Error(
+      `source backup timed out (op=${sourceBackupOpId}, last_status=${backupStatus.status})`,
+    );
+  }
+  if (backupStatus.status !== "succeeded") {
+    throw new Error(
+      `source backup failed: status=${backupStatus.status} error=${backupStatus.error ?? "unknown"}`,
+    );
+  }
+  const sourceBackupResult = lroResult(backupStatus);
+  if (!sourceBackupResult.id) {
+    const sourceLro = await sourceCtx.hub.lro.get({ op_id: sourceBackupOpId });
+    Object.assign(sourceBackupResult, lroResult(sourceLro));
+  }
+  return sourceBackupResult;
+}
+
+async function finalizeDestinationMigration({
+  destinationCtx,
+  migration_id,
+  destination_project_id,
+  source_backup_op_id,
+  source_backup_result,
+  restore,
+}: {
+  destinationCtx: any;
+  migration_id: string;
+  destination_project_id: string;
+  source_backup_op_id: string;
+  source_backup_result: Record<string, any>;
+  restore: boolean;
+}): Promise<{
+  finalized: FinalizeIncomingProjectBackupMigrationResult;
+  status: ProjectSiteMigrationRecord;
+  snapshot_id: string;
+}> {
+  const snapshotId = `${source_backup_result.id ?? ""}`.trim();
+  if (!snapshotId) {
+    throw new Error(
+      `source backup operation ${source_backup_op_id} succeeded without result.id`,
+    );
+  }
+  const finalized =
+    (await destinationCtx.hub.projects.finalizeIncomingProjectBackupMigration({
+      migration_id,
+      destination_project_id,
+      snapshot_id: snapshotId,
+      backup_index_key:
+        typeof source_backup_result.backup_index_key === "string"
+          ? source_backup_result.backup_index_key
+          : null,
+      source_backup_result: {
+        ...source_backup_result,
+        source_backup_op_id,
+      },
+      restore,
+    })) as FinalizeIncomingProjectBackupMigrationResult;
+  const status =
+    (await destinationCtx.hub.projects.getProjectSiteMigrationStatus({
+      migration_id,
+    })) as ProjectSiteMigrationRecord;
+  return { finalized, status, snapshot_id: snapshotId };
+}
+
 async function runProjectMigration({
   deps,
   command,
@@ -306,6 +427,10 @@ async function runProjectMigration({
         source_usage_bytes,
         restore_after_finalize: !!options.restore,
       })) as PrepareIncomingProjectBackupMigrationResult;
+    writeProgress(
+      globals,
+      `Prepared destination migration ${destinationProfile}:${prepare.migration_id} for project ${prepare.destination_project_id}.`,
+    );
 
     writeProgress(globals, "Queueing source backup into destination repo...");
     const backupOp =
@@ -320,66 +445,32 @@ async function runProjectMigration({
         stop_source: options.stopSource !== false,
         tags,
       })) as BackupProjectToExternalRepositoryResponse;
-
     writeProgress(
       globals,
-      `Waiting for source backup operation ${backupOp.op_id}...`,
+      `Source backup operation ${sourceSpec.profile}:${backupOp.op_id}.`,
     );
-    const backupStatus = await deps.waitForLro(sourceCtx, backupOp.op_id, {
-      timeoutMs: sourceCtx.timeoutMs,
-      pollMs: sourceCtx.pollMs,
-      onUpdate: (update: any) => {
-        const phase = update?.progress_summary?.phase;
-        const message = update?.progress_summary?.message;
-        if (phase || message) {
-          writeProgress(
-            globals,
-            `source backup ${update.status}${phase ? ` ${phase}` : ""}${message ? `: ${message}` : ""}`,
-          );
-        }
-      },
+    writeProgress(
+      globals,
+      `If interrupted after the backup succeeds, resume with: cocalc migrate finalize ${sourceSpec.profile}:${backupOp.op_id} ${destinationProfile}:${prepare.migration_id} --yes`,
+    );
+
+    const sourceBackupResult = await getSucceededSourceBackupResult({
+      deps,
+      sourceCtx,
+      sourceBackupOpId: backupOp.op_id,
+      globals,
     });
-    if (backupStatus.timedOut) {
-      throw new Error(
-        `source backup timed out (op=${backupOp.op_id}, last_status=${backupStatus.status})`,
-      );
-    }
-    if (backupStatus.status !== "succeeded") {
-      throw new Error(
-        `source backup failed: status=${backupStatus.status} error=${backupStatus.error ?? "unknown"}`,
-      );
-    }
-    const sourceLro = await sourceCtx.hub.lro.get({ op_id: backupOp.op_id });
-    const sourceBackupResult = lroResult(sourceLro);
-    const snapshotId = `${sourceBackupResult.id ?? ""}`.trim();
-    if (!snapshotId) {
-      throw new Error(
-        `source backup operation ${backupOp.op_id} succeeded without result.id`,
-      );
-    }
 
     writeProgress(globals, "Finalizing destination migration record...");
-    const finalized =
-      (await destinationCtx.hub.projects.finalizeIncomingProjectBackupMigration(
-        {
-          migration_id: prepare.migration_id,
-          destination_project_id: prepare.destination_project_id,
-          snapshot_id: snapshotId,
-          backup_index_key:
-            typeof sourceBackupResult.backup_index_key === "string"
-              ? sourceBackupResult.backup_index_key
-              : null,
-          source_backup_result: {
-            ...sourceBackupResult,
-            source_backup_op_id: backupOp.op_id,
-          },
-          restore: !!options.restore,
-        },
-      )) as FinalizeIncomingProjectBackupMigrationResult;
-    const status =
-      (await destinationCtx.hub.projects.getProjectSiteMigrationStatus({
+    const { finalized, status, snapshot_id } =
+      await finalizeDestinationMigration({
+        destinationCtx,
         migration_id: prepare.migration_id,
-      })) as ProjectSiteMigrationRecord;
+        destination_project_id: prepare.destination_project_id,
+        source_backup_op_id: backupOp.op_id,
+        source_backup_result: sourceBackupResult,
+        restore: !!options.restore,
+      });
 
     deps.emitSuccess(
       {
@@ -395,7 +486,7 @@ async function runProjectMigration({
         destination_project_id: prepare.destination_project_id,
         migration_id: prepare.migration_id,
         source_backup_op_id: backupOp.op_id,
-        snapshot_id: snapshotId,
+        snapshot_id,
         status: finalized.status,
         destination_status: status.status,
         backup_index_key: status.backup_index_key,
@@ -404,6 +495,119 @@ async function runProjectMigration({
     );
   } catch (error) {
     deps.emitError({ globals }, "migrate project", error);
+    process.exitCode = 1;
+  } finally {
+    deps.closeCommandContext(sourceCtx);
+    deps.closeCommandContext(destinationCtx);
+  }
+}
+
+async function runMigrationFinalize({
+  deps,
+  command,
+  sourceOperation,
+  destinationMigration,
+  options,
+}: {
+  deps: MigrateCommandDeps;
+  command: Command;
+  sourceOperation: string;
+  destinationMigration: string;
+  options: MigrateOptions;
+}) {
+  const globals = deps.globalsFrom(command);
+  let sourceCtx: any;
+  let destinationCtx: any;
+  try {
+    const sourceSpec = parseSiteOperationSpec(
+      sourceOperation,
+      deps.isValidUUID,
+    );
+    const destinationSpec = parseDestinationMigrationSpec(
+      destinationMigration,
+      deps.isValidUUID,
+    );
+    if (!options.yes) {
+      throw new Error(
+        "refusing to finalize migration without --yes; this mutates the destination migration record",
+      );
+    }
+
+    writeProgress(globals, "Connecting to source site...");
+    sourceCtx = await deps.contextForGlobals(
+      profileGlobals(globals, sourceSpec.profile),
+    );
+    const sourceBackupResult = await getSucceededSourceBackupResult({
+      deps,
+      sourceCtx,
+      sourceBackupOpId: sourceSpec.op_id,
+      globals,
+    });
+
+    writeProgress(globals, "Connecting to destination site...");
+    destinationCtx = await deps.contextForGlobals(
+      profileGlobals(globals, destinationSpec.profile),
+    );
+    const current =
+      (await destinationCtx.hub.projects.getProjectSiteMigrationStatus({
+        migration_id: destinationSpec.migration_id,
+      })) as ProjectSiteMigrationRecord;
+    if (current.status === "finalized" || current.status === "restored") {
+      deps.emitSuccess(
+        {
+          globals,
+          apiBaseUrl: destinationCtx.apiBaseUrl,
+          accountId: destinationCtx.accountId,
+        },
+        "migrate finalize",
+        {
+          already_finalized: true,
+          source_profile: sourceSpec.profile,
+          source_backup_op_id: sourceSpec.op_id,
+          destination_profile: destinationSpec.profile,
+          destination_project_id: current.destination_project_id,
+          migration_id: destinationSpec.migration_id,
+          snapshot_id: current.snapshot_id,
+          destination_status: current.status,
+          backup_index_key: current.backup_index_key,
+        },
+      );
+      return;
+    }
+
+    writeProgress(globals, "Finalizing destination migration record...");
+    const { finalized, status, snapshot_id } =
+      await finalizeDestinationMigration({
+        destinationCtx,
+        migration_id: destinationSpec.migration_id,
+        destination_project_id: current.destination_project_id,
+        source_backup_op_id: sourceSpec.op_id,
+        source_backup_result: sourceBackupResult,
+        restore: !!options.restore,
+      });
+    deps.emitSuccess(
+      {
+        globals,
+        apiBaseUrl: destinationCtx.apiBaseUrl,
+        accountId: destinationCtx.accountId,
+      },
+      "migrate finalize",
+      {
+        already_finalized: false,
+        source_profile: sourceSpec.profile,
+        source_backup_op_id: sourceSpec.op_id,
+        destination_profile: destinationSpec.profile,
+        destination_project_id: current.destination_project_id,
+        migration_id: destinationSpec.migration_id,
+        snapshot_id,
+        status: finalized.status,
+        destination_status: status.status,
+        backup_index_key: status.backup_index_key,
+        warnings: finalized.warnings ?? [],
+      },
+    );
+  } catch (error) {
+    deps.emitError({ globals }, "migrate finalize", error);
     process.exitCode = 1;
   } finally {
     deps.closeCommandContext(sourceCtx);
@@ -508,6 +712,28 @@ export function registerMigrateCommand(
       });
       return;
     }
+    if (normalizedArgs[0] === "finalize") {
+      if (normalizedArgs.length !== 3) {
+        const globals = deps.globalsFrom(command);
+        deps.emitError(
+          { globals },
+          "migrate finalize",
+          new Error(
+            "usage: cocalc migrate finalize <source-profile>:<source-backup-op-id> <destination-profile>:<migration-id> --yes",
+          ),
+        );
+        process.exitCode = 1;
+        return;
+      }
+      await runMigrationFinalize({
+        deps,
+        command,
+        sourceOperation: normalizedArgs[1],
+        destinationMigration: normalizedArgs[2],
+        options: opts,
+      });
+      return;
+    }
 
     const projectArgs =
       normalizedArgs[0] === "project"
@@ -540,5 +766,6 @@ export function registerMigrateCommand(
 export const testOnly = {
   parseDiskMb,
   parseSiteProjectSpec,
+  parseSiteOperationSpec,
   profileGlobals,
 };

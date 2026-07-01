@@ -23,6 +23,7 @@ function commandWithDeps(overrides: Record<string, any> = {}) {
     output: undefined,
     error: undefined,
     closed: [],
+    finalized: false,
   };
   const destinationCtx = {
     profile: "prod",
@@ -47,6 +48,7 @@ function commandWithDeps(overrides: Record<string, any> = {}) {
         },
         finalizeIncomingProjectBackupMigration: async (opts: any) => {
           state.calls.push({ ctx: "prod", name: "finalize", opts });
+          state.finalized = true;
           return {
             migration_id: MIGRATION_ID,
             destination_project_id: DEST_PROJECT_ID,
@@ -59,7 +61,9 @@ function commandWithDeps(overrides: Record<string, any> = {}) {
           state.calls.push({ ctx: "prod", name: "status", opts });
           return {
             id: MIGRATION_ID,
-            status: "finalized",
+            status: state.finalized
+              ? "finalized"
+              : (overrides.destinationMigrationStatus ?? "finalized"),
             source_site: "alpha",
             source_project_id: SOURCE_PROJECT_ID,
             destination_project_id: DEST_PROJECT_ID,
@@ -170,7 +174,18 @@ function commandWithDeps(overrides: Record<string, any> = {}) {
       }),
     waitForLro: async (_ctx: any, opId: string) => {
       state.calls.push({ ctx: "alpha", name: "waitForLro", opId });
-      return { op_id: opId, status: "succeeded" };
+      return {
+        op_id: opId,
+        status: "succeeded",
+        result: {
+          id: "snapshot-1",
+          time: "2026-06-30T00:00:00.000Z",
+          backup_index_key: "index/key.sqlite.zst",
+          backup_index: {
+            object_key: "index/key.sqlite.zst",
+          },
+        },
+      };
     },
     isValidUUID,
     ...overrides,
@@ -277,6 +292,10 @@ test("migrate project prepares destination, backs up source, then finalizes", as
     "prod",
   );
   assert.equal(
+    state.calls.find((call: any) => call.name === "lro.get"),
+    undefined,
+  );
+  assert.equal(
     state.calls.find((call: any) => call.name === "finalize").opts
       .source_backup_result.source_backup_op_id,
     SOURCE_BACKUP_OP_ID,
@@ -366,4 +385,79 @@ test("migrate project refuses real work without --yes", async () => {
   assert.match(state.error.message, /without --yes/);
   assert.equal(process.exitCode, 1);
   process.exitCode = previousExitCode;
+});
+
+test("migrate finalize resumes from source backup op and destination migration id", async () => {
+  const { program, state } = commandWithDeps({
+    destinationMigrationStatus: "prepared",
+  });
+  await program.parseAsync([
+    "node",
+    "cocalc",
+    "migrate",
+    "finalize",
+    `alpha:${SOURCE_BACKUP_OP_ID}`,
+    `prod:${MIGRATION_ID}`,
+    "--yes",
+  ]);
+
+  assert.deepEqual(
+    state.contexts.map((ctx: any) => ctx.profile),
+    ["alpha", "prod"],
+  );
+  assert.equal(state.calls[0].name, "waitForLro");
+  assert.equal(state.calls[0].opId, SOURCE_BACKUP_OP_ID);
+  assert.equal(state.calls[1].name, "status");
+  assert.equal(state.calls[2].name, "finalize");
+  assert.deepEqual(state.calls[2].opts, {
+    migration_id: MIGRATION_ID,
+    destination_project_id: DEST_PROJECT_ID,
+    snapshot_id: "snapshot-1",
+    backup_index_key: "index/key.sqlite.zst",
+    source_backup_result: {
+      id: "snapshot-1",
+      time: "2026-06-30T00:00:00.000Z",
+      backup_index_key: "index/key.sqlite.zst",
+      backup_index: {
+        object_key: "index/key.sqlite.zst",
+      },
+      source_backup_op_id: SOURCE_BACKUP_OP_ID,
+    },
+    restore: false,
+  });
+  assert.equal(state.output.commandName, "migrate finalize");
+  assert.deepEqual(state.output.data, {
+    already_finalized: false,
+    source_profile: "alpha",
+    source_backup_op_id: SOURCE_BACKUP_OP_ID,
+    destination_profile: "prod",
+    destination_project_id: DEST_PROJECT_ID,
+    migration_id: MIGRATION_ID,
+    snapshot_id: "snapshot-1",
+    status: "finalized",
+    destination_status: "finalized",
+    backup_index_key: "index/key.sqlite.zst",
+    warnings: ["restore after finalize is not implemented yet"],
+  });
+});
+
+test("migrate finalize reports already finalized migration without mutating", async () => {
+  const { program, state } = commandWithDeps();
+  await program.parseAsync([
+    "node",
+    "cocalc",
+    "migrate",
+    "finalize",
+    `alpha:${SOURCE_BACKUP_OP_ID}`,
+    `prod:${MIGRATION_ID}`,
+    "--yes",
+  ]);
+
+  assert.equal(
+    state.calls.find((call: any) => call.name === "finalize"),
+    undefined,
+  );
+  assert.equal(state.output.commandName, "migrate finalize");
+  assert.equal(state.output.data.already_finalized, true);
+  assert.equal(state.output.data.destination_project_id, DEST_PROJECT_ID);
 });

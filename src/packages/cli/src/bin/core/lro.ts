@@ -28,7 +28,11 @@ function isTransientLroPollError(err: unknown): boolean {
   return (
     message.includes("server is busy") ||
     message.includes("api server is busy") ||
-    message.includes("timeout")
+    message.includes("timeout") ||
+    message.includes("socket has been disconnected") ||
+    message.includes("socket is disconnected") ||
+    message.includes("connection closed") ||
+    /once: .* not emitted before "closed"/i.test(message)
   );
 }
 

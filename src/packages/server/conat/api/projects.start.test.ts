@@ -310,6 +310,50 @@ describe("projects.start", () => {
     });
   });
 
+  it("uses finalized migration backup id when starting archived migration destination", async () => {
+    poolQueryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_site_migrations")) {
+        return { rows: [{ snapshot_id: "backup-migrated" }] };
+      }
+      return { rows: [] };
+    });
+    const { start } = await import("./projects");
+
+    await start({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      wait: false,
+    });
+
+    await flushBackgroundStartTask();
+
+    expect(projectControlBridgeMock).toHaveBeenCalledWith("bay-0", {
+      timeout_ms: RESTORE_PROJECT_START_CONTROL_TIMEOUT_MS,
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          restore_backup_id: "backup-migrated",
+        }),
+      }),
+    );
+    expect(interBayCheckStartAdmissionMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      restore_backup_id: "backup-migrated",
+      source_bay_id: "bay-0",
+      epoch: 0,
+    });
+    expect(interBayStartMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      restore_backup_id: "backup-migrated",
+      lro_op_id: "op-1",
+      source_bay_id: "bay-0",
+      epoch: 0,
+    });
+  });
+
   it("rejects non-admin managed egress override before creating a start lro", async () => {
     const { start } = await import("./projects");
 

@@ -512,6 +512,16 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     },
   ),
 
+  ...adHocEntries(["project_site_migrations"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    source: "server project-site migration schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Cross-site project migration control state keyed by destination_project_id. The destination project's owning bay is authoritative; source_project_id and destination_owner_account_id are references only.",
+  }),
+
   ...adHocEntries(["public_project_path_site_license_grants"], {
     ownership: "project-owning",
     authority: "mixed",
