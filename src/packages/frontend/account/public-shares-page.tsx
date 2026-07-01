@@ -49,6 +49,16 @@ const WRAPPING_CELL_TEXT_STYLE = {
   wordBreak: "break-word",
 } as const;
 
+const PUBLIC_SHARES_NOTICE_STYLE = {
+  minHeight: 88,
+} as const;
+
+const PUBLIC_SHARES_NOTICE_DESCRIPTION_STYLE = {
+  alignItems: "center",
+  display: "flex",
+  minHeight: 32,
+} as const;
+
 type PublicSharesState = {
   error: string;
   loading: boolean;
@@ -354,8 +364,65 @@ function PublicSharesPage() {
           <Alert
             type="info"
             showIcon
-            message="Signed-in users can view available shares."
-            description="Shares marked not yet available were imported from legacy metadata, but the backing project files have not been restored on this site yet."
+            style={PUBLIC_SHARES_NOTICE_STYLE}
+            message={
+              selectedShares.length > 0
+                ? `${selectedShares.length.toLocaleString()} publication(s) selected`
+                : "Signed-in users can view available shares."
+            }
+            description={
+              <div style={PUBLIC_SHARES_NOTICE_DESCRIPTION_STYLE}>
+                {selectedShares.length > 0 ? (
+                  <Space wrap>
+                    <Popconfirm
+                      title={`Disable ${selectedEnabledShares.length.toLocaleString()} selected publication(s)?`}
+                      description="This stops public access but keeps the publication records visible here so they can be re-enabled later."
+                      okText="Disable selected"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => void setSelectedDisabled(true)}
+                      disabled={selectedEnabledShares.length === 0}
+                    >
+                      <Button
+                        danger
+                        loading={bulkUpdating}
+                        disabled={selectedEnabledShares.length === 0}
+                      >
+                        Disable selected
+                      </Button>
+                    </Popconfirm>
+                    <Popconfirm
+                      title={`Enable ${selectedDisabledShares.length.toLocaleString()} selected publication(s)?`}
+                      description="This restores public access for disabled publication records. Old disabled rows without saved visibility are restored as unlisted."
+                      okText="Enable selected"
+                      onConfirm={() => void setSelectedDisabled(false)}
+                      disabled={selectedDisabledShares.length === 0}
+                    >
+                      <Button
+                        loading={bulkUpdating}
+                        disabled={selectedDisabledShares.length === 0}
+                      >
+                        Enable selected
+                      </Button>
+                    </Popconfirm>
+                    <Button
+                      onClick={() => setBulkLicenseOpen(true)}
+                      loading={bulkUpdating}
+                    >
+                      Set copy license...
+                    </Button>
+                    <Button onClick={() => setSelectedShareIds([])}>
+                      Clear selection
+                    </Button>
+                  </Space>
+                ) : (
+                  <span>
+                    Shares marked not yet available were imported from legacy
+                    metadata, but the backing project files have not been
+                    restored on this site yet.
+                  </span>
+                )}
+              </div>
+            }
           />
 
           <Space wrap>
@@ -367,57 +434,6 @@ function PublicSharesPage() {
               {state.totalCount.toLocaleString()} shares.
             </Text>
           </Space>
-
-          {selectedShares.length > 0 ? (
-            <Alert
-              type="info"
-              showIcon
-              message={`${selectedShares.length.toLocaleString()} publication(s) selected`}
-              description={
-                <Space wrap>
-                  <Popconfirm
-                    title={`Disable ${selectedEnabledShares.length.toLocaleString()} selected publication(s)?`}
-                    description="This stops public access but keeps the publication records visible here so they can be re-enabled later."
-                    okText="Disable selected"
-                    okButtonProps={{ danger: true }}
-                    onConfirm={() => void setSelectedDisabled(true)}
-                    disabled={selectedEnabledShares.length === 0}
-                  >
-                    <Button
-                      danger
-                      loading={bulkUpdating}
-                      disabled={selectedEnabledShares.length === 0}
-                    >
-                      Disable selected
-                    </Button>
-                  </Popconfirm>
-                  <Popconfirm
-                    title={`Enable ${selectedDisabledShares.length.toLocaleString()} selected publication(s)?`}
-                    description="This restores public access for disabled publication records. Old disabled rows without saved visibility are restored as unlisted."
-                    okText="Enable selected"
-                    onConfirm={() => void setSelectedDisabled(false)}
-                    disabled={selectedDisabledShares.length === 0}
-                  >
-                    <Button
-                      loading={bulkUpdating}
-                      disabled={selectedDisabledShares.length === 0}
-                    >
-                      Enable selected
-                    </Button>
-                  </Popconfirm>
-                  <Button
-                    onClick={() => setBulkLicenseOpen(true)}
-                    loading={bulkUpdating}
-                  >
-                    Set copy license...
-                  </Button>
-                  <Button onClick={() => setSelectedShareIds([])}>
-                    Clear selection
-                  </Button>
-                </Space>
-              }
-            />
-          ) : null}
 
           {state.error ? (
             <Alert type="error" showIcon message={state.error} />
