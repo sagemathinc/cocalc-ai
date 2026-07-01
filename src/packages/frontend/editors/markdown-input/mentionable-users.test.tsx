@@ -26,6 +26,7 @@ jest.mock("@cocalc/frontend/project/context", () => ({
 import {
   ALL_PROJECT_COLLABORATORS_MENTION_ID,
   getMentionAllAccountIds,
+  mentionDisplayText,
 } from "./mention-all";
 import { mentionableUsers } from "./mentionable-users";
 
@@ -126,5 +127,12 @@ describe("mentionableUsers", () => {
     const items = mentionableUsers({ search: undefined, project_id });
     expect(items[0].value).toBe(ALL_PROJECT_COLLABORATORS_MENTION_ID);
     expect(items[0].search).toContain("all");
+  });
+
+  it("displays the all-collaborators sentinel as @all", () => {
+    expect(
+      mentionDisplayText(ALL_PROJECT_COLLABORATORS_MENTION_ID, "@ignored"),
+    ).toBe("@all");
+    expect(mentionDisplayText(alice, "@Ada Lovelace")).toBe("@Ada Lovelace");
   });
 });

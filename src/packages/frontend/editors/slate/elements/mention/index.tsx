@@ -11,6 +11,10 @@ because then they will be compatible with all mentions already used with chat an
 */
 
 import React from "react";
+import {
+  ALL_PROJECT_COLLABORATORS_MENTION_NAME,
+  isAllProjectCollaboratorsMention,
+} from "@cocalc/frontend/editors/markdown-input/mention-all";
 import { SlateElement, register, RenderElementProps } from "../register";
 
 export interface Mention extends SlateElement {
@@ -44,6 +48,9 @@ const StaticElement: React.FC<RenderElementProps> = ({
 };
 
 export function createMentionStatic(account_id: string, name?: string) {
+  if (isAllProjectCollaboratorsMention(account_id)) {
+    name = ALL_PROJECT_COLLABORATORS_MENTION_NAME;
+  }
   if (name == null) {
     name = "User";
   }
