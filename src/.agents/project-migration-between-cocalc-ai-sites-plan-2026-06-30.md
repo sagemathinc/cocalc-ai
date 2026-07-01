@@ -834,14 +834,14 @@ Use two staging profiles:
   for a different `project_id` using explicit external index-store config?
 - Should source projects be stopped by default? The btrfs snapshot is
   filesystem-consistent, but not necessarily application-consistent for running
-  databases.
+  databases. (ANS: yes, stop it) 
 - Should `--disk-mb auto` be default, or should the CLI require explicit
-  confirmation before creating a destination admin disk override?
+  confirmation before creating a destination admin disk override? (ANS: auto by default, since this is not a user action and it should work and is being done by an admin)
 - Should v1 use a dedicated destination migration bucket instead of the normal
   project-backup bucket, even though that loses immediate dedup with future
-  destination backups?
+  destination backups? (ANS: no -- let's just use a normal bucket so nothing is special once the migration completes. this should be ok according to rustic's docs that say multiple simultaneous writes are supported)
 - Should archive-only destination projects be visible in the normal project
-  list immediately, or only after restore?
+  list immediately, or only after restore? (ANS: it's fine if they are visible immediately; they could have a label showing status though  -- use project labels and have the frontend be aware, so it can show the project as special)
 
 ## Recommendation
 
@@ -858,3 +858,4 @@ exclude rules alone. It gives a clearer correctness boundary:
 Keep the first CLI admin-only and intentionally narrow. Once this works for our
 own large projects, we can decide whether to harden credentials and expose a
 safer user-facing variant.
+
