@@ -629,6 +629,8 @@ export const ProjectsPage: React.FC = () => {
                     onSelectionChange={setSelectedProjectIds}
                     filteredCollaborators={filteredCollaborators}
                     onClearCollaboratorFilter={handleClearCollaboratorFilter}
+                    rootfsImages={rootfsImages}
+                    rootfsImagesLoading={rootfsImagesLoading}
                   />
                 </div>
 
