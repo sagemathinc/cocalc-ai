@@ -26,7 +26,7 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { Loading, Tooltip } from "@cocalc/frontend/components";
+import { Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { load_target } from "@cocalc/frontend/history";
@@ -140,6 +140,49 @@ function projectPathTarget(share: PublicDirectoryShareSummary): string {
 
 function projectPathLabel(path: string): string {
   return path == "." ? "/home/user" : path;
+}
+
+function compareText(left: string, right: string): number {
+  return left.localeCompare(right, undefined, {
+    sensitivity: "base",
+    numeric: true,
+  });
+}
+
+function shareDisplaySortText(share: PublicDirectoryShareSummary): string {
+  return `${share.title || share.slug}\n${share.slug}`;
+}
+
+function shareStatusSortText(share: PublicDirectoryShareSummary): string {
+  return [
+    share.disabled ? "disabled" : share.availability_status,
+    share.visibility,
+    share.site_license_grant_on_copy ? "license-on-copy" : "",
+    share.site_license_membership_tier_id ?? "",
+  ].join("\n");
+}
+
+function shareActorSortText(share: PublicDirectoryShareSummary): string {
+  return share.updated_by ?? share.created_by ?? "";
+}
+
+function shareProjectPathSortText(share: PublicDirectoryShareSummary): string {
+  return `${share.project_id}\n${projectPathLabel(share.path)}`;
+}
+
+function shareMetadataUpdatedDate(
+  share: PublicDirectoryShareSummary,
+): Date | null {
+  const value = share.updated_at ?? share.created_at ?? null;
+  if (value == null) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.valueOf()) ? date : null;
+}
+
+function shareMetadataUpdatedTimestamp(
+  share: PublicDirectoryShareSummary,
+): number {
+  return shareMetadataUpdatedDate(share)?.valueOf() ?? 0;
 }
 
 function PublicSharesPage() {
@@ -451,13 +494,18 @@ function PublicSharesPage() {
                 onChange: (keys) =>
                   setSelectedShareIds(keys.map((key) => `${key}`)),
               }}
-              scroll={{ x: 1140 }}
+              scroll={{ x: 1310 }}
               tableLayout="fixed"
               columns={[
                 {
                   title: "Share",
                   dataIndex: "slug",
                   width: SHARE_COLUMN_WIDTH,
+                  sorter: (a, b) =>
+                    compareText(
+                      shareDisplaySortText(a),
+                      shareDisplaySortText(b),
+                    ),
                   render: (_value, share) => {
                     const href = shareHref(share.slug);
                     return (
@@ -521,6 +569,8 @@ function PublicSharesPage() {
                 {
                   title: "Status",
                   width: 190,
+                  sorter: (a, b) =>
+                    compareText(shareStatusSortText(a), shareStatusSortText(b)),
                   render: (_value, share) => (
                     <Space direction="vertical" size={4}>
                       {availabilityTag(share)}
@@ -540,8 +590,35 @@ function PublicSharesPage() {
                   ),
                 },
                 {
+                  title: (
+                    <Tooltip title="When the public-share metadata was last changed. This is not the last file edit time inside the shared directory.">
+                      <span>Metadata updated</span>
+                    </Tooltip>
+                  ),
+                  width: 170,
+                  defaultSortOrder: "descend",
+                  sorter: (a, b) =>
+                    shareMetadataUpdatedTimestamp(a) -
+                    shareMetadataUpdatedTimestamp(b),
+                  render: (_value, share) => {
+                    const date = shareMetadataUpdatedDate(share);
+                    return date ? (
+                      <Space direction="vertical" size={0}>
+                        <TimeAgo date={date} />
+                        <Text type="secondary">
+                          {date.toLocaleDateString()}
+                        </Text>
+                      </Space>
+                    ) : (
+                      <Text type="secondary">-</Text>
+                    );
+                  },
+                },
+                {
                   title: "Updated by",
                   width: 180,
+                  sorter: (a, b) =>
+                    compareText(shareActorSortText(a), shareActorSortText(b)),
                   render: (_value, share) => {
                     const updatedBy = share.updated_by ?? share.created_by;
                     return (
@@ -569,6 +646,11 @@ function PublicSharesPage() {
                 {
                   title: "Project path",
                   width: PROJECT_PATH_COLUMN_WIDTH,
+                  sorter: (a, b) =>
+                    compareText(
+                      shareProjectPathSortText(a),
+                      shareProjectPathSortText(b),
+                    ),
                   render: (_value, share) => {
                     const archived =
                       projectMap?.getIn?.([
