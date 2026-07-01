@@ -542,4 +542,44 @@ describe("public directory temporary viewer grants", () => {
     );
     expect(rows).toEqual([]);
   });
+
+  it("can re-enable disabled shares without losing visibility or site-license grant config", async () => {
+    const shareId = await insertShare();
+    await getPool().query(
+      `
+        UPDATE public_project_paths
+        SET visibility='listed',
+            site_license_id=$2,
+            site_license_pool_id=$3,
+            site_license_membership_tier_id='member',
+            site_license_duration_days=90,
+            site_license_grant_on_copy=TRUE,
+            site_license_copy_requires_grant=TRUE
+        WHERE id=$1
+      `,
+      [shareId, PACKAGE_ID, ASSIGNMENT_ID],
+    );
+
+    const disabled = await update({
+      account_id: OWNER_ID,
+      id: shareId,
+      disabled: true,
+    });
+    expect(disabled.disabled).toBe(true);
+    expect(disabled.visibility).toBe("disabled");
+    expect(disabled.site_license_grant_on_copy).toBe(true);
+    expect(disabled.site_license_pool_id).toBe(ASSIGNMENT_ID);
+
+    const enabled = await update({
+      account_id: OWNER_ID,
+      id: shareId,
+      disabled: false,
+    });
+    expect(enabled.disabled).toBe(false);
+    expect(enabled.visibility).toBe("listed");
+    expect(enabled.site_license_grant_on_copy).toBe(true);
+    expect(enabled.site_license_pool_id).toBe(ASSIGNMENT_ID);
+    expect(enabled.site_license_duration_days).toBe(90);
+    expect(enabled.site_license_copy_requires_grant).toBe(true);
+  });
 });

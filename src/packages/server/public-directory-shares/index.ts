@@ -95,6 +95,8 @@ import type {
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
 const DEFAULT_TEMPORARY_VIEWER_GRANT_DAYS = 7;
+const DISABLED_PREVIOUS_VISIBILITY_METADATA_KEY =
+  "public_share_previous_visibility";
 const log = getLogger("server:public-directory-shares");
 
 type PublicDirectoryShareRow = PublicDirectoryShareSummary & {
@@ -258,6 +260,41 @@ function normalizeVisibility(
     return visibility;
   }
   return "unlisted";
+}
+
+function isActiveShareVisibility(
+  visibility: unknown,
+): visibility is Exclude<PublicDirectoryShareVisibility, "disabled"> {
+  return (
+    visibility === "listed" ||
+    visibility === "unlisted" ||
+    visibility === "private"
+  );
+}
+
+function previousVisibilityFromMetadata(
+  metadata?: Record<string, unknown> | null,
+): Exclude<PublicDirectoryShareVisibility, "disabled"> {
+  const previous = metadata?.[DISABLED_PREVIOUS_VISIBILITY_METADATA_KEY];
+  return isActiveShareVisibility(previous) ? previous : "unlisted";
+}
+
+function metadataWithPreviousVisibility(
+  current: PublicDirectoryShareRow,
+): Record<string, unknown> {
+  const metadata = { ...(current.metadata ?? {}) };
+  if (isActiveShareVisibility(current.visibility)) {
+    metadata[DISABLED_PREVIOUS_VISIBILITY_METADATA_KEY] = current.visibility;
+  }
+  return metadata;
+}
+
+function metadataWithoutPreviousVisibility(
+  metadata?: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const next = { ...(metadata ?? {}) };
+  delete next[DISABLED_PREVIOUS_VISIBILITY_METADATA_KEY];
+  return next;
 }
 
 function normalizeAvailability(
@@ -1931,7 +1968,7 @@ export async function update(
     project_id: current.project_id,
   });
 
-  let siteLicenseGrant: SiteLicenseGrantConfig | undefined;
+  let siteLicenseGrant: SiteLicenseGrantConfig | null | undefined;
   if (opts.site_license_grant_on_copy === true) {
     siteLicenseGrant = await validateSiteLicenseGrantConfig({
       account_id: opts.account_id,
@@ -1944,16 +1981,32 @@ export async function update(
       site_license_pool_id: opts.site_license_pool_id ?? undefined,
       site_license_duration_days: opts.site_license_duration_days ?? undefined,
     });
+  } else if (opts.site_license_grant_on_copy === false) {
+    siteLicenseGrant = null;
   }
 
-  const disabled = opts.disabled === true;
+  let disabled = current.disabled || current.visibility === "disabled";
+  let visibility: PublicDirectoryShareVisibility = disabled
+    ? "disabled"
+    : current.visibility;
+  let metadata = current.metadata ?? {};
+  if (opts.disabled === true) {
+    disabled = true;
+    visibility = "disabled";
+    metadata = metadataWithPreviousVisibility(current);
+  } else if (opts.disabled === false) {
+    disabled = false;
+    visibility = previousVisibilityFromMetadata(current.metadata);
+    metadata = metadataWithoutPreviousVisibility(current.metadata);
+  }
+  const preserveSiteLicenseGrant = siteLicenseGrant === undefined;
   return await savePublicDirectoryShare({
     account_id: opts.account_id,
     id: current.id,
     project_id: current.project_id,
     path: current.path,
     slug: opts.slug ?? current.slug,
-    visibility: disabled ? "disabled" : current.visibility,
+    visibility,
     requires_auth: current.requires_auth,
     availability_status: current.availability_status,
     availability_message: current.availability_message ?? null,
@@ -1964,15 +2017,25 @@ export async function update(
     redirect: current.redirect ?? null,
     legacy_public_path_id: current.legacy_public_path_id ?? null,
     legacy_url: current.legacy_url ?? null,
-    site_license_id: siteLicenseGrant?.site_license_id ?? null,
-    site_license_pool_id: siteLicenseGrant?.site_license_pool_id ?? null,
-    site_license_membership_tier_id:
-      siteLicenseGrant?.site_license_membership_tier_id ?? null,
-    site_license_duration_days: siteLicenseGrant?.duration_days ?? null,
-    site_license_grant_on_copy: siteLicenseGrant != null,
-    site_license_copy_requires_grant:
-      siteLicenseGrant?.copy_requires_grant ?? false,
-    metadata: current.metadata ?? {},
+    site_license_id: preserveSiteLicenseGrant
+      ? (current.site_license_id ?? null)
+      : (siteLicenseGrant?.site_license_id ?? null),
+    site_license_pool_id: preserveSiteLicenseGrant
+      ? (current.site_license_pool_id ?? null)
+      : (siteLicenseGrant?.site_license_pool_id ?? null),
+    site_license_membership_tier_id: preserveSiteLicenseGrant
+      ? (current.site_license_membership_tier_id ?? null)
+      : (siteLicenseGrant?.site_license_membership_tier_id ?? null),
+    site_license_duration_days: preserveSiteLicenseGrant
+      ? (current.site_license_duration_days ?? null)
+      : (siteLicenseGrant?.duration_days ?? null),
+    site_license_grant_on_copy: preserveSiteLicenseGrant
+      ? current.site_license_grant_on_copy
+      : siteLicenseGrant != null,
+    site_license_copy_requires_grant: preserveSiteLicenseGrant
+      ? current.site_license_copy_requires_grant
+      : (siteLicenseGrant?.copy_requires_grant ?? false),
+    metadata,
     theme: opts.theme,
     last_edited: current.last_edited ?? null,
     disabled,

@@ -7,7 +7,9 @@ import {
   Alert,
   Button,
   Card,
-  Input,
+  Checkbox,
+  InputNumber,
+  Modal,
   Popconfirm,
   Select,
   Space,
@@ -29,12 +31,13 @@ import CopyButton from "@cocalc/frontend/components/copy-button";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { load_target } from "@cocalc/frontend/history";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
+import { listSiteLicenseOverviews } from "@cocalc/frontend/purchases/api";
 import { User } from "@cocalc/frontend/users/user";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { SiteLicenseOverview } from "@cocalc/conat/hub/api/purchases";
 import type { SettingsPageDefinition } from "./settings-page";
 
 const { Text } = Typography;
-const BULK_UNPUBLISH_CONFIRMATION = "UNPUBLISH";
 const SHARE_COLUMN_WIDTH = 420;
 const PROJECT_PATH_COLUMN_WIDTH = 340;
 
@@ -52,6 +55,26 @@ type PublicSharesState = {
   shares: PublicDirectoryShareSummary[];
   totalCount: number;
 };
+
+interface SiteLicensePoolOption {
+  value: string;
+  label: string;
+  site_license_id: string;
+  membership_class: string;
+  available_seat_count?: number | null;
+}
+
+function canManageSiteLicense(overview: SiteLicenseOverview): boolean {
+  return overview.viewer_role === "admin" || overview.viewer_role === "manager";
+}
+
+function siteLicenseName(overview: SiteLicenseOverview): string {
+  return (
+    overview.site_license.organization_name ||
+    overview.site_license.name ||
+    overview.site_license.id
+  );
+}
 
 function shareHref(slug: string): string {
   return `/share/${slug.split("/").map(encodeURIComponent).join("/")}`;
@@ -117,31 +140,52 @@ function PublicSharesPage() {
     shares: [],
     totalCount: 0,
   });
-  const [bulkActorAccountId, setBulkActorAccountId] = useState<
-    string | undefined
-  >();
-  const [bulkDisabling, setBulkDisabling] = useState(false);
-  const [bulkConfirmText, setBulkConfirmText] = useState("");
+  const [selectedShareIds, setSelectedShareIds] = useState<string[]>([]);
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [bulkLicenseOpen, setBulkLicenseOpen] = useState(false);
+  const [bulkSiteLicenseOverviews, setBulkSiteLicenseOverviews] = useState<
+    SiteLicenseOverview[]
+  >([]);
+  const [bulkSiteLicensesLoading, setBulkSiteLicensesLoading] = useState(false);
+  const [bulkSiteLicensePoolId, setBulkSiteLicensePoolId] = useState("");
+  const [bulkSiteLicenseDurationDays, setBulkSiteLicenseDurationDays] =
+    useState(30);
+  const [bulkCopyRequiresGrant, setBulkCopyRequiresGrant] = useState(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     origin: "public directory shares",
   });
-  const actorAccountIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const share of state.shares) {
-      if (share.created_by) ids.add(share.created_by);
-      if (share.updated_by) ids.add(share.updated_by);
-    }
-    return Array.from(ids).sort();
-  }, [state.shares]);
-  const selectedActorDisableCount = useMemo(() => {
-    if (!bulkActorAccountId) return 0;
-    return state.shares.filter(
-      (share) =>
-        !share.disabled &&
-        (share.created_by === bulkActorAccountId ||
-          share.updated_by === bulkActorAccountId),
-    ).length;
-  }, [bulkActorAccountId, state.shares]);
+  const selectedShares = useMemo(() => {
+    const selected = new Set(selectedShareIds);
+    return state.shares.filter((share) => selected.has(share.id));
+  }, [selectedShareIds, state.shares]);
+  const selectedEnabledShares = useMemo(
+    () => selectedShares.filter((share) => !share.disabled),
+    [selectedShares],
+  );
+  const selectedDisabledShares = useMemo(
+    () => selectedShares.filter((share) => share.disabled),
+    [selectedShares],
+  );
+  const siteLicensePoolOptions = useMemo<SiteLicensePoolOption[]>(
+    () =>
+      bulkSiteLicenseOverviews.flatMap((overview) =>
+        overview.pools.map((pool) => {
+          const poolName = pool.pool_name || pool.membership_class;
+          const seatCount =
+            pool.available_seat_count == null
+              ? "unknown seats"
+              : `${pool.available_seat_count} available`;
+          return {
+            value: pool.id,
+            label: `${siteLicenseName(overview)}: ${poolName} (${pool.membership_class}, ${seatCount})`,
+            site_license_id: overview.site_license.id,
+            membership_class: pool.membership_class,
+            available_seat_count: pool.available_seat_count,
+          };
+        }),
+      ),
+    [bulkSiteLicenseOverviews],
+  );
 
   async function loadShares() {
     setState((prev) => ({ ...prev, error: "", loading: true }));
@@ -166,20 +210,53 @@ function PublicSharesPage() {
     }
   }
 
-  async function disableSharesByActor() {
-    if (!bulkActorAccountId) return;
-    setBulkDisabling(true);
+  async function updateSelectedShares({
+    shares,
+    updateForShare,
+  }: {
+    shares: PublicDirectoryShareSummary[];
+    updateForShare: (share: PublicDirectoryShareSummary) => {
+      disabled?: boolean;
+      site_license_id?: string | null;
+      site_license_pool_id?: string | null;
+      site_license_duration_days?: number | null;
+      site_license_grant_on_copy?: boolean;
+      site_license_copy_requires_grant?: boolean;
+    };
+  }) {
+    if (shares.length === 0) return;
+    setBulkUpdating(true);
     setState((prev) => ({ ...prev, error: "" }));
+    const failures: string[] = [];
     try {
       const completed = await runFreshAuthAction(async () => {
-        await webapp_client.conat_client.hub.publicDirectoryShares.disableMineByActor(
-          {
-            actor_account_id: bulkActorAccountId,
-          },
-        );
+        for (const share of shares) {
+          try {
+            await webapp_client.conat_client.hub.publicDirectoryShares.update({
+              id: share.id,
+              ...updateForShare(share),
+            });
+          } catch (err) {
+            failures.push(
+              `${share.slug}: ${normalizeUserFacingError(err).message}`,
+            );
+          }
+        }
       });
       if (completed) {
         await loadShares();
+        if (failures.length === 0) {
+          setSelectedShareIds([]);
+        } else {
+          setState((prev) => ({
+            ...prev,
+            error: `Updated ${
+              shares.length - failures.length
+            } of ${shares.length.toLocaleString()} selected share(s). ${
+              failures.length
+            } failed. First failure: ${failures[0]}`,
+          }));
+        }
       }
     } catch (err) {
       setState((prev) => ({
@@ -187,8 +264,33 @@ function PublicSharesPage() {
         error: normalizeUserFacingError(err).message,
       }));
     } finally {
-      setBulkDisabling(false);
+      setBulkUpdating(false);
     }
+  }
+
+  async function setSelectedDisabled(disabled: boolean) {
+    await updateSelectedShares({
+      shares: disabled ? selectedEnabledShares : selectedDisabledShares,
+      updateForShare: () => ({ disabled }),
+    });
+  }
+
+  async function applyBulkSiteLicense() {
+    const selectedPool = siteLicensePoolOptions.find(
+      (option) => option.value === bulkSiteLicensePoolId,
+    );
+    if (!selectedPool) return;
+    await updateSelectedShares({
+      shares: selectedShares,
+      updateForShare: () => ({
+        site_license_grant_on_copy: true,
+        site_license_copy_requires_grant: bulkCopyRequiresGrant,
+        site_license_id: selectedPool.site_license_id,
+        site_license_pool_id: selectedPool.value,
+        site_license_duration_days: bulkSiteLicenseDurationDays,
+      }),
+    });
+    setBulkLicenseOpen(false);
   }
 
   useEffect(() => {
@@ -196,11 +298,46 @@ function PublicSharesPage() {
   }, []);
 
   useEffect(() => {
-    if (!bulkActorAccountId) return;
-    if (!actorAccountIds.includes(bulkActorAccountId)) {
-      setBulkActorAccountId(undefined);
-    }
-  }, [actorAccountIds, bulkActorAccountId]);
+    const currentShareIds = new Set(state.shares.map((share) => share.id));
+    setSelectedShareIds((current) =>
+      current.filter((shareId) => currentShareIds.has(shareId)),
+    );
+  }, [state.shares]);
+
+  useEffect(() => {
+    if (!bulkLicenseOpen) return;
+    let canceled = false;
+    setBulkSiteLicensesLoading(true);
+    listSiteLicenseOverviews()
+      .then((overviews) => {
+        if (canceled) return;
+        const manageable = overviews.filter(canManageSiteLicense);
+        setBulkSiteLicenseOverviews(manageable);
+        const poolIds = new Set(
+          manageable.flatMap((overview) =>
+            overview.pools.map((pool) => pool.id),
+          ),
+        );
+        setBulkSiteLicensePoolId((current) =>
+          current && poolIds.has(current) ? current : "",
+        );
+      })
+      .catch((err) => {
+        if (canceled) return;
+        setBulkSiteLicenseOverviews([]);
+        setBulkSiteLicensePoolId("");
+        setState((prev) => ({
+          ...prev,
+          error: normalizeUserFacingError(err).message,
+        }));
+      })
+      .finally(() => {
+        if (!canceled) setBulkSiteLicensesLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [bulkLicenseOpen]);
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -225,76 +362,62 @@ function PublicSharesPage() {
             <Button onClick={() => void loadShares()} loading={state.loading}>
               Refresh
             </Button>
-            <Select
-              allowClear
-              placeholder="User to unpublish"
-              style={{ minWidth: 240 }}
-              value={bulkActorAccountId}
-              onChange={setBulkActorAccountId}
-              options={actorAccountIds.map((actorAccountId) => ({
-                value: actorAccountId,
-                label: (
-                  <User
-                    account_id={actorAccountId}
-                    trunc={28}
-                    show_avatar
-                    avatarSize={18}
-                  />
-                ),
-              }))}
-            />
-            <Popconfirm
-              title="Unpublish all shares for this user?"
-              description={
-                bulkActorAccountId ? (
-                  <Space direction="vertical" size={8}>
-                    <Text>
-                      This disables {selectedActorDisableCount.toLocaleString()}{" "}
-                      active share(s) whose creator or last updater is the
-                      selected user. Existing copied files remain copied.
-                    </Text>
-                    <Text>
-                      Type <Text code>{BULK_UNPUBLISH_CONFIRMATION}</Text> to
-                      confirm.
-                    </Text>
-                    <Input
-                      value={bulkConfirmText}
-                      onChange={(event) =>
-                        setBulkConfirmText(event.target.value)
-                      }
-                      placeholder={BULK_UNPUBLISH_CONFIRMATION}
-                    />
-                  </Space>
-                ) : (
-                  "Select a user first."
-                )
-              }
-              okText="Unpublish all"
-              okButtonProps={{
-                danger: true,
-                disabled: bulkConfirmText !== BULK_UNPUBLISH_CONFIRMATION,
-              }}
-              onConfirm={() => void disableSharesByActor()}
-              onOpenChange={(open) => {
-                if (open) setBulkConfirmText("");
-              }}
-              disabled={!bulkActorAccountId || selectedActorDisableCount === 0}
-            >
-              <Button
-                danger
-                loading={bulkDisabling}
-                disabled={
-                  !bulkActorAccountId || selectedActorDisableCount === 0
-                }
-              >
-                Unpublish All
-              </Button>
-            </Popconfirm>
             <Text type="secondary">
               Showing {state.shares.length.toLocaleString()} of{" "}
               {state.totalCount.toLocaleString()} shares.
             </Text>
           </Space>
+
+          {selectedShares.length > 0 ? (
+            <Alert
+              type="info"
+              showIcon
+              message={`${selectedShares.length.toLocaleString()} publication(s) selected`}
+              description={
+                <Space wrap>
+                  <Popconfirm
+                    title={`Disable ${selectedEnabledShares.length.toLocaleString()} selected publication(s)?`}
+                    description="This stops public access but keeps the publication records visible here so they can be re-enabled later."
+                    okText="Disable selected"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => void setSelectedDisabled(true)}
+                    disabled={selectedEnabledShares.length === 0}
+                  >
+                    <Button
+                      danger
+                      loading={bulkUpdating}
+                      disabled={selectedEnabledShares.length === 0}
+                    >
+                      Disable selected
+                    </Button>
+                  </Popconfirm>
+                  <Popconfirm
+                    title={`Enable ${selectedDisabledShares.length.toLocaleString()} selected publication(s)?`}
+                    description="This restores public access for disabled publication records. Old disabled rows without saved visibility are restored as unlisted."
+                    okText="Enable selected"
+                    onConfirm={() => void setSelectedDisabled(false)}
+                    disabled={selectedDisabledShares.length === 0}
+                  >
+                    <Button
+                      loading={bulkUpdating}
+                      disabled={selectedDisabledShares.length === 0}
+                    >
+                      Enable selected
+                    </Button>
+                  </Popconfirm>
+                  <Button
+                    onClick={() => setBulkLicenseOpen(true)}
+                    loading={bulkUpdating}
+                  >
+                    Set copy license...
+                  </Button>
+                  <Button onClick={() => setSelectedShareIds([])}>
+                    Clear selection
+                  </Button>
+                </Space>
+              }
+            />
+          ) : null}
 
           {state.error ? (
             <Alert type="error" showIcon message={state.error} />
@@ -307,6 +430,11 @@ function PublicSharesPage() {
               rowKey="id"
               dataSource={state.shares}
               pagination={{ defaultPageSize: 25, showSizeChanger: true }}
+              rowSelection={{
+                selectedRowKeys: selectedShareIds,
+                onChange: (keys) =>
+                  setSelectedShareIds(keys.map((key) => `${key}`)),
+              }}
               scroll={{ x: 1140 }}
               tableLayout="fixed"
               columns={[
@@ -473,6 +601,69 @@ function PublicSharesPage() {
           )}
         </Space>
       </Card>
+      <Modal
+        title={`Set copy license for ${selectedShares.length.toLocaleString()} selected publication(s)`}
+        open={bulkLicenseOpen}
+        okText="Apply to selected"
+        okButtonProps={{
+          disabled:
+            !bulkSiteLicensePoolId ||
+            selectedShares.length === 0 ||
+            bulkUpdating,
+        }}
+        confirmLoading={bulkUpdating}
+        onOk={() => void applyBulkSiteLicense()}
+        onCancel={() => setBulkLicenseOpen(false)}
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            message="Selected shares will offer temporary membership on copy."
+            description="The existing share URLs and publication metadata are kept. Each selected share is validated server-side before it is updated."
+          />
+          <div>
+            <Text strong>Site-license tier</Text>
+            <Select
+              style={{ width: "100%", marginTop: 6 }}
+              loading={bulkSiteLicensesLoading}
+              value={bulkSiteLicensePoolId || undefined}
+              onChange={(value) => setBulkSiteLicensePoolId(value)}
+              placeholder="Select a managed site-license pool"
+              options={siteLicensePoolOptions.map((option) => ({
+                value: option.value,
+                label: option.label,
+              }))}
+            />
+          </div>
+          {siteLicensePoolOptions.length === 0 && !bulkSiteLicensesLoading ? (
+            <Alert
+              type="warning"
+              showIcon
+              message="No managed site-license pools are available for your account."
+            />
+          ) : null}
+          <Space>
+            <Text strong>Duration</Text>
+            <InputNumber
+              min={1}
+              max={365}
+              value={bulkSiteLicenseDurationDays}
+              onChange={(value) =>
+                setBulkSiteLicenseDurationDays(Number(value ?? 30))
+              }
+            />
+            <Text>days</Text>
+          </Space>
+          <Checkbox
+            checked={bulkCopyRequiresGrant}
+            onChange={(event) => setBulkCopyRequiresGrant(event.target.checked)}
+          >
+            Block copying if the grant fails for a reason other than the pool
+            being full
+          </Checkbox>
+        </Space>
+      </Modal>
       <FreshAuthModal {...freshAuthModalProps} />
     </Space>
   );
