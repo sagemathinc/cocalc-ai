@@ -43,19 +43,82 @@ steps:
       prefix: /opt/cocalc-jupyter
       install_bash_kernel: true
 
+  - name: Install apt-get wrapper that refreshes missing package lists
+    run: |
+      set -euo pipefail
+      if [ "$(id -u)" -eq 0 ]; then
+        SUDO=""
+      else
+        SUDO="sudo -n"
+      fi
+      $SUDO tee /usr/local/bin/apt-get >/dev/null <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      real_apt_get="/usr/bin/apt-get"
+      command="${1:-}"
+
+      has_package_lists() {
+        find /var/lib/apt/lists -maxdepth 1 -type f \
+          \( -name '*_Packages*' -o -name '*_InRelease' -o -name '*_Release' \) \
+          | grep -q .
+      }
+
+      case "$command" in
+        install|upgrade|full-upgrade|dist-upgrade)
+          if ! has_package_lists; then
+            echo "[cocalc-base] apt package lists are missing; running apt-get update first." >&2
+            "$real_apt_get" update
+          fi
+          ;;
+      esac
+
+      exec "$real_apt_get" "$@"
+      EOF
+      $SUDO sed -i 's/^      //' /usr/local/bin/apt-get
+      $SUDO chmod 755 /usr/local/bin/apt-get
+
 verify:
   - command -v latexmk
   - command -v jupyter-lab
   - command -v uv
   - test -e /usr/libexec/sftp-server
   - python3 -c 'import bash_kernel, ipykernel, jupyterlab, numpy, pandas, scipy, sklearn, sympy'
+  - test "$(python -c 'import sys; print(sys.prefix)')" = "/opt/cocalc-jupyter"
+  - python -m pip --version | grep -q /opt/cocalc-jupyter
+  - pip --version | grep -q /opt/cocalc-jupyter
+  - |
+    set -euo pipefail
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"; python -m pip uninstall -y cocalc-pip-smoke >/dev/null 2>&1 || true' EXIT
+    cat > "$tmp/setup.py" <<'PY'
+    from setuptools import setup
+    setup(name="cocalc-pip-smoke", version="0.0.0", py_modules=["cocalc_pip_smoke"])
+    PY
+    echo 'VALUE = "ok"' > "$tmp/cocalc_pip_smoke.py"
+    pip install --no-cache-dir "$tmp"
+    python -c 'import cocalc_pip_smoke; assert cocalc_pip_smoke.VALUE == "ok"'
+    python -m pip uninstall -y cocalc-pip-smoke
+  - |
+    set -euo pipefail
+    if [ "$(id -u)" -eq 0 ]; then
+      SUDO=""
+    else
+      SUDO="sudo -n"
+    fi
+    $SUDO rm -rf /var/lib/apt/lists/*
+    $SUDO apt-get install -y --no-install-recommends less
+    find /var/lib/apt/lists -maxdepth 1 -type f \
+      \( -name '*_Packages*' -o -name '*_InRelease' -o -name '*_Release' \) \
+      | grep -q .
+    $SUDO rm -rf /var/lib/apt/lists/*
   - jupyter kernelspec list | grep -q python3
   - jupyter kernelspec list | grep -q bash
 
 publish:
   label: CoCalc Minimal Base
   slug: cocalc-minimal-base
-  description: Minimal useful CoCalc site base with shell tools, basic LaTeX, Python, JupyterLab, scientific Python packages, uv, SFTP support, and Python plus bash Jupyter kernels.
+  description: Foundational CoCalc environment with shell tools, basic LaTeX, one coherent Python/pip/Jupyter environment, scientific Python packages, uv, SFTP support, Python and bash Jupyter kernels, and an apt-get wrapper that refreshes package lists automatically before installs.
   family: cocalc-base
   version: "2026.06"
   channel: stable
