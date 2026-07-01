@@ -280,29 +280,35 @@ function projectStartControlTimeoutMs({
     : ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS;
 }
 
-async function resolveImplicitMigrationRestoreBackupId({
+async function resolveImplicitMigrationRestore({
   project_id,
 }: {
   project_id: string;
-}): Promise<string | undefined> {
+}): Promise<{ migration_id: string; snapshot_id: string } | undefined> {
   try {
-    const { rows } = await getPool().query<{ snapshot_id: string | null }>(
+    const { rows } = await getPool().query<{
+      migration_id: string;
+      snapshot_id: string | null;
+    }>(
       `
-        SELECT m.snapshot_id
+        SELECT m.id AS migration_id,
+               m.snapshot_id
           FROM project_site_migrations m
           JOIN projects p
             ON p.project_id = m.destination_project_id
          WHERE m.destination_project_id = $1
-           AND m.status IN ('finalized', 'restored')
+           AND m.status = 'finalized'
            AND m.snapshot_id IS NOT NULL
-           AND p.provisioned IS FALSE
-           AND COALESCE(p.state->>'state', '') = 'archived'
+           AND p.deleted IS NULL
          ORDER BY m.updated_at DESC
          LIMIT 1
       `,
       [project_id],
     );
-    return rows[0]?.snapshot_id ?? undefined;
+    const row = rows[0];
+    return row?.snapshot_id
+      ? { migration_id: row.migration_id, snapshot_id: row.snapshot_id }
+      : undefined;
   } catch (err) {
     if ((err as any)?.code !== "42P01") {
       log.warn("unable to resolve implicit migration restore backup id", {
@@ -311,6 +317,46 @@ async function resolveImplicitMigrationRestoreBackupId({
       });
     }
     return undefined;
+  }
+}
+
+async function markImplicitMigrationRestoreSucceeded({
+  migration_id,
+  project_id,
+  snapshot_id,
+}: {
+  migration_id: string;
+  project_id: string;
+  snapshot_id: string;
+}): Promise<void> {
+  try {
+    await getPool().query(
+      `
+        UPDATE project_site_migrations
+           SET status = 'restored',
+               metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
+               updated_at = NOW()
+         WHERE id = $1
+           AND destination_project_id = $2
+           AND snapshot_id = $3
+           AND status = 'finalized'
+      `,
+      [
+        migration_id,
+        project_id,
+        snapshot_id,
+        JSON.stringify({
+          implicit_restore_completed_at: new Date().toISOString(),
+        }),
+      ],
+    );
+  } catch (err) {
+    log.warn("unable to mark implicit migration restore as restored", {
+      migration_id,
+      project_id,
+      snapshot_id,
+      err,
+    });
   }
 }
 
@@ -3809,11 +3855,13 @@ async function runProjectStartLikeAction({
   ) {
     throw new Error("managed egress override requires admin authorization");
   }
+  const explicitRestoreBackupId = `${restore_backup_id ?? ""}`.trim();
+  const implicitMigrationRestore =
+    !explicitRestoreBackupId && kind === "start"
+      ? await resolveImplicitMigrationRestore({ project_id })
+      : undefined;
   const effectiveRestoreBackupId =
-    `${restore_backup_id ?? ""}`.trim() ||
-    (kind === "start"
-      ? await resolveImplicitMigrationRestoreBackupId({ project_id })
-      : undefined);
+    explicitRestoreBackupId || implicitMigrationRestore?.snapshot_id;
   try {
     const ownership = await resolveProjectBay(project_id);
     if (ownership == null) {
@@ -3945,6 +3993,16 @@ async function runProjectStartLikeAction({
           ...(managed_egress_override ? { managed_egress_override } : {}),
           epoch: ownership.epoch,
         });
+        if (
+          implicitMigrationRestore &&
+          effectiveRestoreBackupId === implicitMigrationRestore.snapshot_id
+        ) {
+          await markImplicitMigrationRestoreSucceeded({
+            migration_id: implicitMigrationRestore.migration_id,
+            project_id,
+            snapshot_id: implicitMigrationRestore.snapshot_id,
+          });
+        }
       } else {
         await projectControl.restart({
           project_id,

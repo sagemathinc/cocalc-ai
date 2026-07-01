@@ -313,7 +313,17 @@ describe("projects.start", () => {
   it("uses finalized migration backup id when starting archived migration destination", async () => {
     poolQueryMock = jest.fn(async (sql: string) => {
       if (sql.includes("FROM project_site_migrations")) {
-        return { rows: [{ snapshot_id: "backup-migrated" }] };
+        return {
+          rows: [
+            {
+              migration_id: "migration-1",
+              snapshot_id: "backup-migrated",
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_site_migrations")) {
+        return { rows: [], rowCount: 1 };
       }
       return { rows: [] };
     });
@@ -352,6 +362,10 @@ describe("projects.start", () => {
       source_bay_id: "bay-0",
       epoch: 0,
     });
+    expect(poolQueryMock).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE project_site_migrations"),
+      expect.arrayContaining(["migration-1", "proj-1", "backup-migrated"]),
+    );
   });
 
   it("rejects non-admin managed egress override before creating a start lro", async () => {
