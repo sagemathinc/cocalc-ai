@@ -176,6 +176,48 @@ describe("notification email outbox maintenance", () => {
     expect(message.html).not.toContain("user-mention");
   });
 
+  it("renders markdown in immediate notification email html", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([
+      {
+        ...ROW,
+        summary_json: {
+          summary: {
+            body_markdown: [
+              "Dear User,",
+              "<br/>",
+              "## Your Monthly CoCalc Statement",
+              "",
+              "- **NO PAYMENT IS REQUIRED.**",
+              "",
+              "| Id | Service | Amount |",
+              "| :-- | :------ | -----: |",
+              "| 1 | Credit | $10.00 |",
+              "",
+              "[Open statements](https://cocalc.test/settings/statements)",
+            ].join("\n"),
+          },
+        },
+      },
+    ]);
+    const sender = jest.fn(async () => undefined);
+
+    await sendQueuedNotificationEmailBatch({
+      sender,
+      emailConfigured: jest.fn(async () => true),
+      sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+    });
+
+    const message = sender.mock.calls[0]?.[0];
+    expect(message.text).toContain("NO PAYMENT IS REQUIRED.");
+    expect(message.html).toContain("<h2>Your Monthly CoCalc Statement</h2>");
+    expect(message.html).toContain("<table>");
+    expect(message.html).toContain(
+      '<a href="https://cocalc.test/settings/statements">Open statements</a>',
+    );
+    expect(message.html).not.toContain("&lt;br");
+    expect(message.html).not.toContain("**NO PAYMENT");
+  });
+
   it("marks rows skipped when the lane has no backend", async () => {
     claimQueuedNotificationEmails.mockResolvedValue([ROW]);
 

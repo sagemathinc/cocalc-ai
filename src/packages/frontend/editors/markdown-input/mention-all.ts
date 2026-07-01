@@ -8,6 +8,16 @@ import { redux } from "@cocalc/frontend/app-framework";
 export const ALL_PROJECT_COLLABORATORS_MENTION_ID =
   "__cocalc_all_project_collaborators__";
 
+export const ALL_PROJECT_COLLABORATORS_MENTION_NAME = "all";
+
+export function isAllProjectCollaboratorsMention(account_id: string): boolean {
+  return account_id === ALL_PROJECT_COLLABORATORS_MENTION_ID;
+}
+
+export function mentionDisplayText(account_id: string, text: string): string {
+  return isAllProjectCollaboratorsMention(account_id) ? "@all" : text;
+}
+
 function projectUserGroup(user: any): string | undefined {
   return typeof user?.get === "function" ? user.get("group") : user?.group;
 }
