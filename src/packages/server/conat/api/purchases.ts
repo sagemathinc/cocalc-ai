@@ -52,6 +52,9 @@ import type {
   MembershipTierUsageReport,
   MembershipClass,
   MembershipUsageWindowResetTarget,
+  MembershipAnalyticsBackfillOverview,
+  MembershipAnalyticsBackfillQuery,
+  MembershipAnalyticsBackfillResult,
   MembershipAnalyticsEventRow,
   MembershipAnalyticsEventsQuery,
   MembershipAnalyticsEventSummaryRow,
@@ -134,6 +137,7 @@ import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-session
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import {
+  backfillMembershipAnalyticsPurchaseEvents,
   getMembershipAnalyticsEventsLocal,
   getMembershipAnalyticsOverviewLocal,
 } from "@cocalc/server/membership/analytics";
@@ -496,6 +500,24 @@ async function getMembershipAnalyticsEventsForBay({
     : await getInterBayBridge()
         .bayOps(bay_id, { timeout_ms: 15_000 })
         .getMembershipAnalyticsEvents({ ...query, account_id });
+}
+
+async function backfillMembershipAnalyticsPurchasesForBay({
+  account_id,
+  bay_id,
+  currentBayId,
+  query,
+}: {
+  account_id?: string;
+  bay_id: string;
+  currentBayId: string;
+  query: MembershipAnalyticsBackfillQuery;
+}): Promise<MembershipAnalyticsBackfillResult> {
+  return bay_id === currentBayId
+    ? await backfillMembershipAnalyticsPurchaseEvents({ limit: query.limit })
+    : await getInterBayBridge()
+        .bayOps(bay_id, { timeout_ms: 15_000 })
+        .backfillMembershipAnalyticsPurchases({ ...query, account_id });
 }
 
 async function getConfiguredMembershipTierUsageReports({
@@ -906,6 +928,49 @@ export async function getMembershipAnalyticsEvents(
         b.event_key.localeCompare(a.event_key),
     )
     .slice(0, limit);
+}
+
+export async function backfillMembershipAnalyticsPurchases(
+  query: MembershipAnalyticsBackfillQuery = {},
+): Promise<MembershipAnalyticsBackfillOverview> {
+  await requireAdmin(query.account_id);
+  assertMembershipTierAdminBay();
+  const currentBayId = getConfiguredBayId();
+  const seedBayId = getSeedBayId();
+  const bayIds = await getConfiguredBayIdsForMembershipTierOverview();
+  const settled = await Promise.allSettled(
+    bayIds.map((bay_id) =>
+      backfillMembershipAnalyticsPurchasesForBay({
+        account_id: query.account_id,
+        bay_id,
+        currentBayId,
+        query,
+      }),
+    ),
+  );
+  let inserted = 0;
+  let skipped = 0;
+  const bays: MembershipAnalyticsOverviewBay[] = bayIds.map((bay_id, i) => {
+    const result = settled[i];
+    if (result.status === "fulfilled") {
+      inserted += Number(result.value.inserted ?? 0) || 0;
+      skipped += Number(result.value.skipped ?? 0) || 0;
+      return { bay_id, ok: true };
+    }
+    return {
+      bay_id,
+      ok: false,
+      error: `${result.reason}`,
+    };
+  });
+  return {
+    checked_at: new Date().toISOString(),
+    current_bay_id: currentBayId,
+    seed_bay_id: seedBayId,
+    bays,
+    inserted,
+    skipped,
+  };
 }
 
 export async function createMembershipTier({

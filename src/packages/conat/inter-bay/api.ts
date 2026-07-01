@@ -28,6 +28,8 @@ import type {
   AccountEntitlementOverride,
   AccountUsageOverview,
   MembershipClass,
+  MembershipAnalyticsBackfillQuery,
+  MembershipAnalyticsBackfillResult,
   MembershipAnalyticsEventRow,
   MembershipAnalyticsEventsQuery,
   MembershipAnalyticsOverview,
@@ -2249,6 +2251,7 @@ export type BayOpsMethod =
   | "get-membership-tier-usage-report"
   | "get-membership-analytics-overview"
   | "get-membership-analytics-events"
+  | "backfill-membership-analytics-purchases"
   | "set-server-setting"
   | "set-site-settings"
   | "get-site-settings"
@@ -3499,6 +3502,9 @@ export interface InterBayBayOpsApi {
   getMembershipAnalyticsEvents: (
     opts: MembershipAnalyticsEventsQuery,
   ) => Promise<MembershipAnalyticsEventRow[]>;
+  backfillMembershipAnalyticsPurchases: (
+    opts: MembershipAnalyticsBackfillQuery,
+  ) => Promise<MembershipAnalyticsBackfillResult>;
   setServerSetting: (opts: BayOpsSetServerSettingRequest) => Promise<void>;
   setSiteSettings: (
     opts: BayOpsSetSiteSettingsRequest,
@@ -8068,6 +8074,15 @@ export function createInterBayBayOpsClient({
       method: "get-membership-analytics-events",
     }),
   });
+  const membershipAnalyticsBackfillClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "backfillMembershipAnalyticsPurchases">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "backfill-membership-analytics-purchases",
+    }),
+  });
   return {
     getLoad: async (opts) => await loadClient.getLoad(opts),
     getBackups: async (opts) => await backupsClient.getBackups(opts),
@@ -8095,6 +8110,10 @@ export function createInterBayBayOpsClient({
       ),
     getMembershipAnalyticsEvents: async (opts) =>
       await membershipAnalyticsEventsClient.getMembershipAnalyticsEvents(opts),
+    backfillMembershipAnalyticsPurchases: async (opts) =>
+      await membershipAnalyticsBackfillClient.backfillMembershipAnalyticsPurchases(
+        opts,
+      ),
     setServerSetting: async (opts) =>
       await setServerSettingClient.setServerSetting(opts),
     setSiteSettings: async (opts) =>
@@ -8281,6 +8300,20 @@ export function createInterBayBayOpsHandlers({
       impl: {
         getMembershipAnalyticsEvents: async (opts) =>
           await impl.getMembershipAnalyticsEvents(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "backfillMembershipAnalyticsPurchases">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "backfill-membership-analytics-purchases",
+      }),
+      impl: {
+        backfillMembershipAnalyticsPurchases: async (opts) =>
+          await impl.backfillMembershipAnalyticsPurchases(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getRootfsCatalog">>({

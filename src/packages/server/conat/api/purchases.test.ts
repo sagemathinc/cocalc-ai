@@ -18,6 +18,7 @@ const createMembershipTierMock = jest.fn();
 const updateMembershipTierMock = jest.fn();
 const importMembershipTiersMock = jest.fn();
 const deleteMembershipTierMock = jest.fn();
+const backfillMembershipAnalyticsPurchaseEventsMock = jest.fn();
 const getMembershipAnalyticsOverviewLocalMock = jest.fn();
 const getMembershipAnalyticsEventsLocalMock = jest.fn();
 const membershipTiersQueryMock = jest.fn();
@@ -88,6 +89,7 @@ const interBayRefreshSiteLicenseAffiliationVerificationForAccountMock =
 const interBayGetMembershipTierUsageReportMock = jest.fn();
 const interBayGetMembershipAnalyticsOverviewMock = jest.fn();
 const interBayGetMembershipAnalyticsEventsMock = jest.fn();
+const interBayBackfillMembershipAnalyticsPurchasesMock = jest.fn();
 const interBayBayOpsMock = jest.fn();
 const getInterBayBridgeMock = jest.fn();
 const getBrowserAuthSessionHashMock = jest.fn();
@@ -165,6 +167,8 @@ jest.mock("@cocalc/server/membership/tier-admin", () => ({
 }));
 
 jest.mock("@cocalc/server/membership/analytics", () => ({
+  backfillMembershipAnalyticsPurchaseEvents: (...args: any[]) =>
+    backfillMembershipAnalyticsPurchaseEventsMock(...args),
   getMembershipAnalyticsOverviewLocal: (...args: any[]) =>
     getMembershipAnalyticsOverviewLocalMock(...args),
   getMembershipAnalyticsEventsLocal: (...args: any[]) =>
@@ -365,6 +369,7 @@ beforeEach(() => {
   updateMembershipTierMock.mockReset();
   importMembershipTiersMock.mockReset();
   deleteMembershipTierMock.mockReset();
+  backfillMembershipAnalyticsPurchaseEventsMock.mockReset();
   getMembershipAnalyticsOverviewLocalMock.mockReset();
   getMembershipAnalyticsEventsLocalMock.mockReset();
   membershipTiersQueryMock.mockReset();
@@ -394,6 +399,7 @@ beforeEach(() => {
   interBayGetMembershipTierUsageReportMock.mockReset();
   interBayGetMembershipAnalyticsOverviewMock.mockReset();
   interBayGetMembershipAnalyticsEventsMock.mockReset();
+  interBayBackfillMembershipAnalyticsPurchasesMock.mockReset();
   interBayBayOpsMock.mockReset();
   getInterBayBridgeMock.mockReset();
   getConfiguredClusterSeedBayIdMock.mockReset();
@@ -421,6 +427,10 @@ beforeEach(() => {
     daily_counts: [],
   });
   getMembershipAnalyticsEventsLocalMock.mockResolvedValue([]);
+  backfillMembershipAnalyticsPurchaseEventsMock.mockResolvedValue({
+    inserted: 0,
+    skipped: 0,
+  });
   interBayBayOpsMock.mockReturnValue({
     getMembershipTierUsageReport: (...args: any[]) =>
       interBayGetMembershipTierUsageReportMock(...args),
@@ -428,6 +438,8 @@ beforeEach(() => {
       interBayGetMembershipAnalyticsOverviewMock(...args),
     getMembershipAnalyticsEvents: (...args: any[]) =>
       interBayGetMembershipAnalyticsEventsMock(...args),
+    backfillMembershipAnalyticsPurchases: (...args: any[]) =>
+      interBayBackfillMembershipAnalyticsPurchasesMock(...args),
   });
   getInterBayBridgeMock.mockReturnValue({ bayOps: interBayBayOpsMock });
   getConfiguredBayIdMock.mockReturnValue("bay-0");
@@ -3243,6 +3255,51 @@ describe("purchases membership tier admin", () => {
       "remote-newest",
       "local-new",
     ]);
+  });
+
+  it("backfills membership analytics purchases across configured bays", async () => {
+    isAdminMock.mockResolvedValue(true);
+    listConfiguredBaysMock.mockResolvedValue([
+      { bay_id: "bay-0" },
+      { bay_id: "bay-1" },
+    ]);
+    backfillMembershipAnalyticsPurchaseEventsMock.mockResolvedValue({
+      inserted: 3,
+      skipped: 1,
+    });
+    interBayBackfillMembershipAnalyticsPurchasesMock.mockResolvedValue({
+      inserted: 4,
+      skipped: 2,
+    });
+
+    const { backfillMembershipAnalyticsPurchases } =
+      await import("./purchases");
+    const result = await backfillMembershipAnalyticsPurchases({
+      account_id: "admin-1",
+      limit: 1000,
+    });
+
+    expect(backfillMembershipAnalyticsPurchaseEventsMock).toHaveBeenCalledWith({
+      limit: 1000,
+    });
+    expect(
+      interBayBackfillMembershipAnalyticsPurchasesMock,
+    ).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      limit: 1000,
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        current_bay_id: "bay-0",
+        seed_bay_id: "bay-0",
+        inserted: 7,
+        skipped: 3,
+        bays: [
+          { bay_id: "bay-0", ok: true },
+          { bay_id: "bay-1", ok: true },
+        ],
+      }),
+    );
   });
 });
 

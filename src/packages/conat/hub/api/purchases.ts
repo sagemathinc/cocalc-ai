@@ -403,6 +403,11 @@ export interface MembershipAnalyticsEventsQuery extends MembershipAnalyticsOverv
   limit?: number;
 }
 
+export interface MembershipAnalyticsBackfillQuery {
+  account_id?: string;
+  limit?: number;
+}
+
 export interface MembershipAnalyticsOverview {
   checked_at: string;
   current_bay_id: string;
@@ -418,6 +423,13 @@ export interface MembershipAnalyticsOverview {
 export interface MembershipAnalyticsBackfillResult {
   inserted: number;
   skipped: number;
+}
+
+export interface MembershipAnalyticsBackfillOverview extends MembershipAnalyticsBackfillResult {
+  checked_at: string;
+  current_bay_id: string;
+  seed_bay_id: string;
+  bays: MembershipAnalyticsOverviewBay[];
 }
 
 export interface MembershipPackageQuote {
@@ -1384,6 +1396,9 @@ export interface Purchases {
   getMembershipAnalyticsEvents: (
     opts?: MembershipAnalyticsEventsQuery,
   ) => Promise<MembershipAnalyticsEventRow[]>;
+  backfillMembershipAnalyticsPurchases: (
+    opts?: MembershipAnalyticsBackfillQuery,
+  ) => Promise<MembershipAnalyticsBackfillOverview>;
   createMembershipTier: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -1748,6 +1763,7 @@ export const purchases = {
   getMembershipTierAdminOverview: authFirst,
   getMembershipAnalyticsOverview: authFirst,
   getMembershipAnalyticsEvents: authFirst,
+  backfillMembershipAnalyticsPurchases: authFirst,
   createMembershipTier: authFirst,
   updateMembershipTier: authFirst,
   importMembershipTiers: authFirst,

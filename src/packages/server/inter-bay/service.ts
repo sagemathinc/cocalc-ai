@@ -143,6 +143,7 @@ import {
 import { getMembershipTiers } from "@cocalc/server/membership/tiers";
 import { getMembershipTierUsageReport as getMembershipTierUsageReportLocal } from "@cocalc/database/postgres/membership-tiers";
 import {
+  backfillMembershipAnalyticsPurchaseEvents,
   getMembershipAnalyticsEventsLocal,
   getMembershipAnalyticsOverviewLocal,
 } from "@cocalc/server/membership/analytics";
@@ -576,6 +577,10 @@ async function startBayOpsService(): Promise<void> {
     }),
     getMembershipAnalyticsEvents: async (opts) =>
       await getMembershipAnalyticsEventsLocal({ query: opts }),
+    backfillMembershipAnalyticsPurchases: async (opts) =>
+      await backfillMembershipAnalyticsPurchaseEvents({
+        limit: opts.limit,
+      }),
     setServerSetting: async (opts) => {
       await callback2(db().set_server_setting, opts);
     },

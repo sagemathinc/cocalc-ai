@@ -17,6 +17,7 @@ import dayjs, { type Dayjs } from "dayjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
+  MembershipAnalyticsBackfillOverview,
   MembershipAnalyticsDailyCountRow,
   MembershipAnalyticsEventSummaryRow,
   MembershipAnalyticsOverview,
@@ -58,10 +59,13 @@ function formatEventType(value: string): string {
 export function MembershipAnalyticsAdmin() {
   const [range, setRange] = useState<[Dayjs, Dayjs]>(defaultRange);
   const [loading, setLoading] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
   const [error, setError] = useState<string>("");
   const [overview, setOverview] = useState<MembershipAnalyticsOverview | null>(
     null,
   );
+  const [backfillResult, setBackfillResult] =
+    useState<MembershipAnalyticsBackfillOverview | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,6 +85,23 @@ export function MembershipAnalyticsAdmin() {
       setLoading(false);
     }
   }, [range]);
+
+  const backfill = useCallback(async () => {
+    setBackfilling(true);
+    setError("");
+    try {
+      const result =
+        await webapp_client.conat_client.hub.purchases.backfillMembershipAnalyticsPurchases(
+          { limit: 1000 },
+        );
+      setBackfillResult(result);
+      await load();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setBackfilling(false);
+    }
+  }, [load]);
 
   const failedBays = useMemo(
     () => overview?.bays.filter((bay) => !bay.ok) ?? [],
@@ -106,6 +127,9 @@ export function MembershipAnalyticsAdmin() {
         <Button onClick={() => void load()} loading={loading}>
           Refresh
         </Button>
+        <Button onClick={() => void backfill()} loading={backfilling}>
+          Backfill purchases
+        </Button>
         {overview ? (
           <Text type="secondary">
             Checked {dayjs(overview.checked_at).format("YYYY-MM-DD HH:mm:ss")}
@@ -115,6 +139,14 @@ export function MembershipAnalyticsAdmin() {
 
       {loading ? <Spin /> : null}
       {error ? <ShowError error={error} /> : null}
+      {backfillResult ? (
+        <Alert
+          type="success"
+          showIcon
+          message="Purchase backfill finished"
+          description={`${backfillResult.inserted} inserted, ${backfillResult.skipped} skipped.`}
+        />
+      ) : null}
 
       {overview ? (
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>

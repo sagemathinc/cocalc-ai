@@ -386,17 +386,30 @@ export async function snapshotMembershipAnalyticsDailyCounts({
 
 export async function backfillMembershipAnalyticsPurchaseEvents({
   client,
+  limit = 1000,
 }: {
   client?: PoolClient;
+  limit?: number;
 } = {}): Promise<MembershipAnalyticsBackfillResult> {
   await ensureMembershipAnalyticsTables(client);
   const db = pool(client);
+  const maxRows = Math.max(
+    1,
+    Math.min(10_000, Math.floor(Number(limit) || 1000)),
+  );
   const { rows } = await db.query(
     `SELECT id, time, account_id, cost, description, period_start, period_end
-       FROM purchases
+       FROM purchases p
       WHERE service='membership'
         AND description->>'type'='membership'
-      ORDER BY id ASC`,
+        AND NOT EXISTS (
+              SELECT 1
+                FROM membership_analytics_events e
+               WHERE e.event_key = 'purchase:' || p.id::text || ':membership'
+            )
+      ORDER BY id ASC
+      LIMIT $1`,
+    [maxRows],
   );
   let inserted = 0;
   let skipped = 0;
