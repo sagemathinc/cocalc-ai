@@ -15,6 +15,7 @@ export type MigrateCommandDeps = {
   emitSuccess: any;
   emitError: any;
   waitForLro: any;
+  resolveProjectFromArgOrContext?: any;
   isValidUUID: (value: string) => boolean;
 };
 
@@ -166,30 +167,58 @@ async function getSourceProjectInfo({
   ctx,
   project_id,
   globals,
+  resolveProjectFromArgOrContext,
 }: {
   ctx: any;
   project_id: string;
   globals: Record<string, any>;
+  resolveProjectFromArgOrContext?: any;
 }): Promise<GetProjectSiteMigrationSourceProjectResult | null> {
   const getInfo = ctx?.hub?.projects?.getProjectSiteMigrationSourceProject;
+  if (typeof getInfo === "function") {
+    try {
+      return (await getInfo({
+        project_id,
+      })) as GetProjectSiteMigrationSourceProjectResult;
+    } catch (err) {
+      writeProgress(
+        globals,
+        `Unable to read source project migration metadata; trying project title fallback: ${err}`,
+      );
+    }
+  } else {
+    writeProgress(
+      globals,
+      "Source site does not support migration metadata lookup; trying project title fallback.",
+    );
+  }
+
+  if (typeof resolveProjectFromArgOrContext === "function") {
+    try {
+      const project = await resolveProjectFromArgOrContext(ctx, project_id);
+      const title =
+        typeof project?.title === "string" && project.title.trim()
+          ? project.title.trim()
+          : undefined;
+      if (title) {
+        return {
+          project_id: `${project?.project_id ?? project_id}`,
+          title,
+          description: null,
+        };
+      }
+    } catch (err) {
+      writeProgress(
+        globals,
+        `Unable to read source project title; using fallback destination title: ${err}`,
+      );
+    }
+  }
+
   if (typeof getInfo !== "function") {
-    writeProgress(
-      globals,
-      "Source site does not support migration metadata lookup; using fallback destination title.",
-    );
-    return null;
+    writeProgress(globals, "Using fallback destination title.");
   }
-  try {
-    return (await getInfo({
-      project_id,
-    })) as GetProjectSiteMigrationSourceProjectResult;
-  } catch (err) {
-    writeProgress(
-      globals,
-      `Unable to read source project metadata; using fallback destination title: ${err}`,
-    );
-    return null;
-  }
+  return null;
 }
 
 async function runProjectMigration({
@@ -254,6 +283,7 @@ async function runProjectMigration({
       ctx: sourceCtx,
       project_id: sourceSpec.project_id,
       globals,
+      resolveProjectFromArgOrContext: deps.resolveProjectFromArgOrContext,
     });
     const destinationTitle =
       options.title ?? sourceProjectInfo?.title ?? undefined;

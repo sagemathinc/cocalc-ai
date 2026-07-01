@@ -84,6 +84,29 @@ function commandWithDeps(overrides: Record<string, any> = {}) {
       },
     },
   };
+  const sourceProjects: Record<string, any> = {
+    getProjectSiteMigrationSourceProject: async (opts: any) => {
+      state.calls.push({ ctx: "alpha", name: "source-info", opts });
+      return {
+        project_id: SOURCE_PROJECT_ID,
+        title: "Source Project",
+        description: "Source description",
+      };
+    },
+    backupProjectToExternalRepository: async (opts: any) => {
+      state.calls.push({ ctx: "alpha", name: "backup", opts });
+      return {
+        op_id: SOURCE_BACKUP_OP_ID,
+        scope_type: "project",
+        scope_id: SOURCE_PROJECT_ID,
+        service: "project-backup",
+        stream_name: "stream",
+      };
+    },
+  };
+  if (overrides.noSourceInfoRpc) {
+    delete sourceProjects.getProjectSiteMigrationSourceProject;
+  }
   const sourceCtx = {
     profile: "alpha",
     globals: { profile: "alpha" },
@@ -92,26 +115,7 @@ function commandWithDeps(overrides: Record<string, any> = {}) {
     timeoutMs: 12 * 60 * 60 * 1000,
     pollMs: 1000,
     hub: {
-      projects: {
-        getProjectSiteMigrationSourceProject: async (opts: any) => {
-          state.calls.push({ ctx: "alpha", name: "source-info", opts });
-          return {
-            project_id: SOURCE_PROJECT_ID,
-            title: "Source Project",
-            description: "Source description",
-          };
-        },
-        backupProjectToExternalRepository: async (opts: any) => {
-          state.calls.push({ ctx: "alpha", name: "backup", opts });
-          return {
-            op_id: SOURCE_BACKUP_OP_ID,
-            scope_type: "project",
-            scope_id: SOURCE_PROJECT_ID,
-            service: "project-backup",
-            stream_name: "stream",
-          };
-        },
-      },
+      projects: sourceProjects,
       lro: {
         get: async (opts: any) => {
           state.calls.push({ ctx: "alpha", name: "lro.get", opts });
@@ -151,6 +155,19 @@ function commandWithDeps(overrides: Record<string, any> = {}) {
         message: error instanceof Error ? error.message : `${error}`,
       };
     },
+    resolveProjectFromArgOrContext:
+      overrides.resolveProjectFromArgOrContext ??
+      (async (ctx: any, project: string) => {
+        state.calls.push({
+          ctx: ctx.profile,
+          name: "resolve-project",
+          project,
+        });
+        return {
+          project_id: project,
+          title: "Resolved Source Project",
+        };
+      }),
     waitForLro: async (_ctx: any, opId: string) => {
       state.calls.push({ ctx: "alpha", name: "waitForLro", opId });
       return { op_id: opId, status: "succeeded" };
@@ -299,6 +316,36 @@ test("migrate project uses source title and description by default", async () =>
   const prepare = state.calls.find((call: any) => call.name === "prepare");
   assert.equal(prepare.opts.title, "Source Project");
   assert.equal(prepare.opts.description, "Source description");
+});
+
+test("migrate project falls back to source project title on old source hubs", async () => {
+  const { program, state } = commandWithDeps({ noSourceInfoRpc: true });
+  await program.parseAsync([
+    "node",
+    "cocalc",
+    "migrate",
+    `alpha:${SOURCE_PROJECT_ID}`,
+    "prod",
+    "--owner",
+    "wstein@example.com",
+    "--yes",
+  ]);
+
+  assert.equal(
+    state.calls.find((call: any) => call.name === "source-info"),
+    undefined,
+  );
+  assert.deepEqual(
+    state.calls.find((call: any) => call.name === "resolve-project"),
+    {
+      ctx: "alpha",
+      name: "resolve-project",
+      project: SOURCE_PROJECT_ID,
+    },
+  );
+  const prepare = state.calls.find((call: any) => call.name === "prepare");
+  assert.equal(prepare.opts.title, "Resolved Source Project");
+  assert.equal(prepare.opts.description, undefined);
 });
 
 test("migrate project refuses real work without --yes", async () => {
