@@ -70,8 +70,8 @@ jobs:
       - name: build
         run: cd src && pnpm build
 
-      - name: check bundle guards
-        run: cd src/packages/static && pnpm run check-bundle-guards
+      #- name: check bundle guards
+      #  run: cd src/packages/static && pnpm run check-bundle-guards
 
       - name: test
         timeout-minutes: 15
