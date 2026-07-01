@@ -2977,7 +2977,7 @@ test("software deploy project-host publishes compatibility object and sets fleet
       .toString("utf8"),
   );
   assert.equal(versions.versions[0].version, artifactId);
-  assert.equal(runs.length, 1);
+  assert.equal(runs.length, 2);
   assert.deepEqual(runs[0].args, [
     "--profile",
     "staging",
@@ -2989,6 +2989,22 @@ test("software deploy project-host publishes compatibility object and sets fleet
     "project-host",
     "--desired-version",
     artifactId,
+    "--reason",
+    "software-deploy-project-host",
+  ]);
+  assert.deepEqual(runs[1].args, [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--component",
+    "project-host",
+    "--desired-version",
+    artifactId,
+    "--policy",
+    "restart_now",
     "--reason",
     "software-deploy-project-host",
   ]);
@@ -3134,7 +3150,7 @@ test("software deploy project-host --rollout sets fleet default and upgrades onl
   ]);
 
   const artifactId = "20260614T235912Z-e882d124-host-rollout";
-  assert.equal(runs.length, 2);
+  assert.equal(runs.length, 4);
   assert.deepEqual(runs[0].args.slice(-12), [
     "--profile",
     "staging",
@@ -3149,7 +3165,23 @@ test("software deploy project-host --rollout sets fleet default and upgrades onl
     "--reason",
     "software-deploy-project-host",
   ]);
-  assert.deepEqual(runs[1].args.slice(-12), [
+  assert.deepEqual(runs[1].args.slice(-14), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--component",
+    "project-host",
+    "--desired-version",
+    artifactId,
+    "--policy",
+    "restart_now",
+    "--reason",
+    "software-deploy-project-host",
+  ]);
+  assert.deepEqual(runs[2].args.slice(-12), [
     "--profile",
     "staging",
     "host",
@@ -3161,6 +3193,19 @@ test("software deploy project-host --rollout sets fleet default and upgrades onl
     artifactId,
     "--base-url",
     "https://software.example.test/software",
+    "--wait",
+  ]);
+  assert.deepEqual(runs[3].args.slice(-11), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "reconcile",
+    "--all-online",
+    "--component",
+    "project-host",
+    "--reason",
+    "software-deploy-project-host",
     "--wait",
   ]);
   const history = JSON.parse(
@@ -3549,6 +3594,146 @@ test("software deploy host-conat-router --rollout reconciles one online componen
   );
   assert.equal(history.deployments[0].artifact_component, "project-host");
   assert.equal(history.deployments[0].target.kind, "project-host-fleet");
+});
+
+test("software deploy host-acp-worker uses drain replacement policy", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-host-acp-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "bundle-linux.tar.xz");
+  writeFileSync(source, "project host bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "project-host",
+    "host-acp-deploy",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "host-acp-worker",
+    "host-acp-deploy",
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const artifactId = JSON.parse(
+    r2.objects.get("software/indexes/project-host.json")!.toString("utf8"),
+  ).artifacts[0].artifact_id;
+
+  assert.equal(runs.length, 2);
+  assert.deepEqual(runs[0].args.slice(-12), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--artifact",
+    "project-host",
+    "--desired-version",
+    artifactId,
+    "--reason",
+    "software-deploy-host-acp-worker",
+  ]);
+  assert.deepEqual(runs[1].args.slice(-14), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--component",
+    "acp-worker",
+    "--desired-version",
+    artifactId,
+    "--policy",
+    "drain_then_replace",
+    "--reason",
+    "software-deploy-host-acp-worker",
+  ]);
+});
+
+test("software deploy host-runtime-stack sets all managed component defaults", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "software-deploy-host-stack-"));
+  const localStore = join(dir, "store");
+  const source = join(dir, "bundle-linux.tar.xz");
+  writeFileSync(source, "project host bundle");
+  const runs: CapturedRun[] = [];
+  const r2 = makeR2Client();
+  const program = createProgram(
+    makeDeps({ localStore, runs, env: r2Env, r2Client: r2.client }),
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "build",
+    "project-host",
+    "host-stack-deploy",
+    "--from-file",
+    source,
+  ]);
+  await program.parseAsync([
+    "node",
+    "test",
+    "--quiet",
+    "software",
+    "deploy",
+    "host-runtime-stack",
+    "host-stack-deploy",
+    "staging",
+    "--env-file",
+    join(dir, "missing.env"),
+  ]);
+
+  const artifactId = JSON.parse(
+    r2.objects.get("software/indexes/project-host.json")!.toString("utf8"),
+  ).artifacts[0].artifact_id;
+
+  assert.equal(runs.length, 5);
+  assert.deepEqual(runs[0].args.slice(-12), [
+    "--profile",
+    "staging",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--artifact",
+    "project-host",
+    "--desired-version",
+    artifactId,
+    "--reason",
+    "software-deploy-host-runtime-stack",
+  ]);
+  assert.deepEqual(
+    runs.slice(1).map((run) => ({
+      component: run.args[run.args.indexOf("--component") + 1],
+      policy: run.args[run.args.indexOf("--policy") + 1],
+    })),
+    [
+      { component: "project-host", policy: "restart_now" },
+      { component: "conat-router", policy: "restart_now" },
+      { component: "conat-persist", policy: "restart_now" },
+      { component: "acp-worker", policy: "drain_then_replace" },
+    ],
+  );
 });
 
 test("software smoke static runs HTTP checks against the profile API", async () => {

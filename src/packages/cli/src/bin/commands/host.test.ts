@@ -61,6 +61,7 @@ type Capture = {
     id?: string;
     deployments: any[];
     replace?: boolean;
+    align_runtime_stack?: boolean;
   }>;
   hostRuntimeLogRequests?: Array<{
     id: string;
@@ -537,12 +538,14 @@ function makeDeps(
               id,
               deployments,
               replace,
+              align_runtime_stack,
             }) => {
               capture.runtimeDeploymentSetRequests.push({
                 scope_type,
                 id,
                 deployments,
                 replace,
+                ...(align_runtime_stack == null ? {} : { align_runtime_stack }),
               });
               return deployments.map((deployment) => ({
                 scope_type,
@@ -2747,6 +2750,52 @@ test("host deploy set upserts host-scoped desired state", async () => {
   assert.equal(capture.data.scope_type, "host");
   assert.equal(capture.data.host_id, "host-1");
   assert.equal(capture.data.deployments[0].desired_version, "bundle-v2");
+});
+
+test("host deploy set can explicitly align the project-host runtime stack", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "deploy",
+    "set",
+    "--global",
+    "--artifact",
+    "project-host",
+    "--desired-version",
+    "bundle-v2",
+    "--align-runtime-stack",
+  ]);
+
+  assert.deepEqual(capture.runtimeDeploymentSetRequests, [
+    {
+      scope_type: "global",
+      id: undefined,
+      replace: false,
+      align_runtime_stack: true,
+      deployments: [
+        {
+          target_type: "artifact",
+          target: "project-host",
+          desired_version: "bundle-v2",
+          rollout_policy: undefined,
+          drain_deadline_seconds: undefined,
+          rollout_reason: undefined,
+        },
+      ],
+    },
+  ]);
 });
 
 test("host deploy resume-default removes one host-scoped override", async () => {

@@ -3549,6 +3549,10 @@ automatic reconcile or artifact upgrade work.
       "--replace",
       "replace the entire selected scope instead of upserting",
     )
+    .option(
+      "--align-runtime-stack",
+      "when setting --artifact project-host, also set all host-managed components to that version",
+    )
     .addHelpText(
       "after",
       `
@@ -3563,6 +3567,11 @@ hosts. A host created after:
 
 will bootstrap with project-host artifact version \`X\`, even if a newer build
 has already been published to the software bucket.
+
+Setting a project-host artifact does not automatically restart every managed
+host service. Use \`--align-runtime-stack\` only when project-host,
+conat-router, conat-persist, and acp-worker should all move to the same
+project-host artifact version.
 
 Use \`--desired-version\`, not \`--version\`. The CLI reserves \`--version\`
 globally for printing the CLI version.
@@ -3584,6 +3593,7 @@ Examples:
           drainDeadlineSeconds?: string;
           reason?: string;
           replace?: boolean;
+          alignRuntimeStack?: boolean;
         },
         command: Command,
       ) => {
@@ -3593,6 +3603,15 @@ Examples:
             throw new Error("specify exactly one of --host or --global");
           }
           const target = parseRuntimeDeploymentTarget(opts);
+          if (
+            opts.alignRuntimeStack &&
+            (target.target_type !== "artifact" ||
+              target.target !== "project-host")
+          ) {
+            throw new Error(
+              "--align-runtime-stack can only be used with --artifact project-host",
+            );
+          }
           const policy = parseRuntimeDeploymentPolicy(opts.policy);
           const drain_deadline_seconds =
             opts.drainDeadlineSeconds == null
@@ -3617,6 +3636,7 @@ Examples:
               },
             ],
             replace: !!opts.replace,
+            align_runtime_stack: opts.alignRuntimeStack ? true : undefined,
           });
           return {
             scope_type,

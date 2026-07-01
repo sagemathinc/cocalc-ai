@@ -3573,33 +3573,13 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       account_id: ACCOUNT_ID,
       scope_type: "host",
       id: HOST_ID,
-      deployments: expect.arrayContaining([
+      deployments: [
         expect.objectContaining({
           target_type: "artifact",
           target: "project-host",
           desired_version: "ph-remote",
         }),
-        expect.objectContaining({
-          target_type: "component",
-          target: "project-host",
-          desired_version: "ph-remote",
-        }),
-        expect.objectContaining({
-          target_type: "component",
-          target: "conat-router",
-          desired_version: "ph-remote",
-        }),
-        expect.objectContaining({
-          target_type: "component",
-          target: "conat-persist",
-          desired_version: "ph-remote",
-        }),
-        expect.objectContaining({
-          target_type: "component",
-          target: "acp-worker",
-          desired_version: "ph-remote",
-        }),
-      ]),
+      ],
       replace: true,
     });
     expect(deployments).toEqual([
@@ -4255,7 +4235,7 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
     );
   });
 
-  it("expands project-host artifact defaults and queues runtime reconcile for already-installed drifted stacks", async () => {
+  it("explicitly expands project-host artifact defaults and queues runtime reconcile for already-installed drifted stacks", async () => {
     const projectHostDefault = [
       {
         scope_type: "global",
@@ -4322,6 +4302,7 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
     await setHostRuntimeDeployments({
       account_id: ACCOUNT_ID,
       scope_type: "global",
+      align_runtime_stack: true,
       deployments: [
         {
           target_type: "artifact",
@@ -4569,7 +4550,7 @@ describe("hosts.setHostRuntimeDeployments automatic artifact reconcile", () => {
           id: HOST_ID,
           account_id: ACCOUNT_ID,
           targets: [{ artifact: "project-host", version: "ph-v3" }],
-          align_runtime_stack: true,
+          align_runtime_stack: false,
           record_runtime_deployments: false,
         }),
       }),

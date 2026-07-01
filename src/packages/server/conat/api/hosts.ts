@@ -7300,15 +7300,18 @@ export async function setHostRuntimeDeployments({
   id,
   deployments,
   replace,
+  align_runtime_stack,
 }: {
   account_id?: string;
   scope_type: HostRuntimeDeploymentScopeType;
   id?: string;
   deployments: HostRuntimeDeploymentUpsert[];
   replace?: boolean;
+  align_runtime_stack?: boolean;
 }): Promise<HostRuntimeDeploymentRecord[]> {
   const expandedDeployments = (deployments ?? []).flatMap((deployment) => {
     if (
+      align_runtime_stack &&
       deployment?.target_type === "artifact" &&
       normalizeRuntimeArtifactTarget(
         deployment.target as HostRuntimeArtifact,
@@ -7346,6 +7349,7 @@ export async function setHostRuntimeDeployments({
         id,
         deployments: normalized,
         replace,
+        ...(align_runtime_stack == null ? {} : { align_runtime_stack }),
       });
   }
   const row = await loadHostForRootfsManagement(id ?? "", account_id);
