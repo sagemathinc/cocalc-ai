@@ -12,6 +12,7 @@ because then they will be compatible with all mentions already used with chat an
 
 import { trunc_middle as truncMiddle } from "@cocalc/util/misc";
 import { redux } from "@cocalc/frontend/app-framework";
+import { mentionDisplayText } from "@cocalc/frontend/editors/markdown-input/mention-all";
 import { FOCUSED_COLOR } from "../../util";
 import { register, RenderElementProps } from "../register";
 import { useFocused, useSelected } from "../hooks";
@@ -64,5 +65,8 @@ register({
   Element,
 
   fromSlate: ({ node }) =>
-    `<span class="user-mention" account-id=${node.account_id}>@${node.name}</span>`,
+    `<span class="user-mention" account-id=${node.account_id}>${mentionDisplayText(
+      node.account_id,
+      `@${node.name}`,
+    )}</span>`,
 });

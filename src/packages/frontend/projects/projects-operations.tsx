@@ -10,7 +10,7 @@
 
 // cSpell:ignore undoable
 
-import { Alert, Button, Modal, Progress, Space, Typography } from "antd";
+import { Alert, Button, Modal, Progress, Space, Table, Typography } from "antd";
 import { Map, Set as ImmutableSet } from "immutable";
 import { useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -23,9 +23,16 @@ import {
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
+import { setProjectRootfsImage } from "@cocalc/frontend/rootfs/manifest";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 import { COLORS } from "@cocalc/util/theme";
 
+import {
+  buildBulkRootfsUpgradePlan,
+  rootfsUpgradeEntryLabel,
+  type BulkRootfsUpgradePlanItem,
+} from "./bulk-rootfs-upgrade";
 import {
   LeaveOrDeleteProjectsModal,
   type LeaveOrDeleteProjectsPlan,
@@ -56,10 +63,13 @@ interface Props {
   onSelectionChange: (project_ids: string[]) => void;
   filteredCollaborators?: string[] | null;
   onClearCollaboratorFilter?: () => void;
+  rootfsImages: RootfsImageEntry[];
+  rootfsImagesLoading?: boolean;
 }
 
 const { Text } = Typography;
 const BULK_PROJECT_CONTROL_CONCURRENCY = 5;
+const BULK_ROOTFS_UPGRADE_CONCURRENCY = 3;
 
 async function mapWithConcurrency<T, R>(
   items: readonly T[],
@@ -122,6 +132,8 @@ export function ProjectsOperations({
   onSelectionChange,
   filteredCollaborators,
   onClearCollaboratorFilter,
+  rootfsImages,
+  rootfsImagesLoading,
 }: Props) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
@@ -132,6 +144,8 @@ export function ProjectsOperations({
   const host_info = useTypedRedux("projects", "host_info");
   const [leaveDeleteModalOpen, setLeaveDeleteModalOpen] = useState(false);
   const [archiveModalOpen, setArchiveModalOpen] = useState(false);
+  const [bulkRootfsUpgradeRunning, setBulkRootfsUpgradeRunning] =
+    useState(false);
   const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
@@ -269,6 +283,16 @@ export function ProjectsOperations({
     [selectedArchiveIds, project_map, account_id, isAdmin],
   );
 
+  const selectedRootfsUpgradePlan = useMemo(
+    () =>
+      buildBulkRootfsUpgradePlan({
+        projectIds: selected_project_ids,
+        projectMap: project_map,
+        rootfsImages,
+      }),
+    [project_map, rootfsImages, selected_project_ids],
+  );
+
   function selectedTitle(project_id: string): string {
     return project_map?.get(project_id)?.get("title") ?? project_id;
   }
@@ -319,6 +343,145 @@ export function ProjectsOperations({
         void startSelectedProjects(projectIds);
       },
     });
+  }
+
+  function confirmSelectedRootfsUpgrade() {
+    const plan = selectedRootfsUpgradePlan;
+    if (plan.length === 0) {
+      Modal.warning({
+        title: "No selected projects can be upgraded",
+        content:
+          "Select projects that show the Upgrade tag on their image row.",
+      });
+      return;
+    }
+    const runningCount = plan.filter((item) => item.restart).length;
+    Modal.confirm({
+      title: "Upgrade selected project images",
+      width: 760,
+      okText: "Upgrade",
+      content: (
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Text>
+            Upgrade {plan.length} selected project image
+            {plan.length === 1 ? "" : "s"} to the latest available version in
+            the same series.
+          </Text>
+          {runningCount > 0 ? (
+            <Text type="secondary">
+              {runningCount} running project{runningCount === 1 ? "" : "s"} will
+              be restarted after the image changes.
+            </Text>
+          ) : null}
+          <Table<BulkRootfsUpgradePlanItem>
+            columns={[
+              {
+                title: "Project",
+                dataIndex: "title",
+                key: "title",
+                render: (title: string) => (
+                  <Text ellipsis style={{ maxWidth: 220 }}>
+                    {title}
+                  </Text>
+                ),
+              },
+              {
+                title: "Current",
+                key: "current",
+                render: (_, item) => rootfsUpgradeEntryLabel(item.current),
+              },
+              {
+                title: "Upgrade to",
+                key: "next",
+                render: (_, item) => (
+                  <Text strong>{rootfsUpgradeEntryLabel(item.next)}</Text>
+                ),
+              },
+              {
+                title: "After upgrade",
+                key: "restart",
+                render: (_, item) =>
+                  item.restart ? "Restart project" : "No restart needed",
+              },
+            ]}
+            dataSource={plan}
+            pagination={false}
+            rowKey="project_id"
+            scroll={{ y: 280 }}
+            size="small"
+          />
+        </Space>
+      ),
+      onOk: () => upgradeSelectedProjectRootfs(plan),
+    });
+  }
+
+  async function upgradeSelectedProjectRootfs(
+    plan: BulkRootfsUpgradePlanItem[],
+  ) {
+    setBulkRootfsUpgradeRunning(true);
+    try {
+      const results = await mapWithConcurrency(
+        plan,
+        BULK_ROOTFS_UPGRADE_CONCURRENCY,
+        async (item) => {
+          try {
+            await setProjectRootfsImage({
+              project_id: item.project_id,
+              image: item.next.image,
+              image_id: item.next.id,
+            });
+            if (item.restart) {
+              await actions.restart_project(item.project_id);
+            }
+            return { project_id: item.project_id, ok: true as const };
+          } catch (err) {
+            return {
+              project_id: item.project_id,
+              ok: false as const,
+              error: `${err}`,
+            };
+          }
+        },
+      );
+      const succeeded = results
+        .filter((result) => result.ok)
+        .map((result) => result.project_id);
+      const errors: Array<{ project_id: string; error: string }> =
+        results.flatMap((result) =>
+          result.ok
+            ? []
+            : [{ project_id: result.project_id, error: result.error }],
+        );
+      if (succeeded.length > 0) {
+        onSelectionChange(
+          selected_project_ids.filter((id) => !succeeded.includes(id)),
+        );
+      }
+      alert_message({
+        type: errors.length > 0 ? "warning" : "success",
+        message:
+          errors.length > 0
+            ? `Upgraded ${succeeded.length} project(s); ${errors.length} failed.`
+            : `Upgraded ${succeeded.length} selected project(s).`,
+      });
+      if (errors.length > 0) {
+        Modal.error({
+          title: "Some project images could not be upgraded",
+          content: (
+            <ul>
+              {errors.map((result) => (
+                <li key={result.project_id}>
+                  {selectedTitle(result.project_id)}: {result.error}
+                </li>
+              ))}
+            </ul>
+          ),
+        });
+      }
+    } finally {
+      setBulkRootfsUpgradeRunning(false);
+    }
   }
 
   async function startSelectedProjects(projectIds: string[]) {
@@ -703,6 +866,17 @@ export function ProjectsOperations({
               onClick={confirmSelectedStop}
             >
               Stop
+            </Button>
+            <Button
+              size="small"
+              icon={<Icon name="arrow-circle-up" />}
+              disabled={
+                rootfsImagesLoading || selectedRootfsUpgradePlan.length === 0
+              }
+              loading={bulkRootfsUpgradeRunning}
+              onClick={confirmSelectedRootfsUpgrade}
+            >
+              Upgrade
             </Button>
             <Button
               size="small"

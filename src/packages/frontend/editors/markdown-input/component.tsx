@@ -33,7 +33,10 @@ import { effectiveImmutableEditorSettings } from "@cocalc/frontend/project/works
 import { useWorkspaceRecordForPath } from "@cocalc/frontend/project/workspaces/use-workspace-record";
 import { len, trunc, trunc_middle } from "@cocalc/util/misc";
 import { Complete, Item } from "./complete";
-import { ALL_PROJECT_COLLABORATORS_MENTION_ID } from "./mention-all";
+import {
+  ALL_PROJECT_COLLABORATORS_MENTION_ID,
+  mentionDisplayText,
+} from "./mention-all";
 import { useMentionableUsers } from "./mentionable-users";
 import { normalizeMentionSearch } from "./mention-search";
 import { submit_mentions } from "./mentions";
@@ -881,10 +884,11 @@ export function MarkdownInput(props: Props) {
             } else {
               from = to = loc;
             }
-            const text = `<span class="user-mention" account-id=${account_id} >${cm.current.getRange(
-              from,
-              to,
-            )}</span>`;
+            const mentionText = mentionDisplayText(
+              account_id,
+              cm.current.getRange(from, to),
+            );
+            const text = `<span class="user-mention" account-id=${account_id} >${mentionText}</span>`;
             const description = trunc(
               cm.current.getLine(from.line).trim(),
               160,
