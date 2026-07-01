@@ -414,7 +414,7 @@ async function maybeSetFinalizeDiskOverride({
     source: "project-site-migration",
     override: {
       project_defaults: {
-        disk_quota: { mode: "set", value: diskOverrideMb },
+        disk_quota: { mode: "minimum", value: diskOverrideMb },
       },
       metadata: {
         migration_id: migration.id,
@@ -673,7 +673,7 @@ export async function prepareIncomingProjectBackupMigration({
       source: "project-site-migration",
       override: {
         project_defaults: {
-          disk_quota: { mode: "set", value: diskOverrideMb },
+          disk_quota: { mode: "minimum", value: diskOverrideMb },
         },
         metadata: {
           migration_id: migrationId,
