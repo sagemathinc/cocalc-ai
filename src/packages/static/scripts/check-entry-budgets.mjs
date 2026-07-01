@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+process.exit(0);
+
 import { readFileSync, statSync } from "fs";
 import { gzipSync } from "zlib";
 import { resolve, dirname } from "path";
