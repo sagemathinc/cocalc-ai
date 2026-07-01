@@ -412,9 +412,19 @@ async function maybeRestoreFromBackup({
   restore_backup_id?: string;
   lro_op_id?: string;
 }): Promise<void> {
-  if (!restore || restore === "none") return;
+  const explicitBackupId = `${restore_backup_id ?? ""}`.trim();
+  const effectiveRestore: RestoreMode | undefined = explicitBackupId
+    ? restore === "auto"
+      ? "auto"
+      : "required"
+    : restore;
+  if (!effectiveRestore || effectiveRestore === "none") return;
   const fs = fileServerClient({ timeout: RESTORE_RPC_TIMEOUT_MS });
-  const handle = await fs.beginRestoreStaging({ project_id, home, restore });
+  const handle = await fs.beginRestoreStaging({
+    project_id,
+    home,
+    restore: effectiveRestore,
+  });
   if (!handle) return;
 
   let cleanupStaging = false;
@@ -430,7 +440,7 @@ async function maybeRestoreFromBackup({
     );
   };
   try {
-    let backupId = `${restore_backup_id ?? ""}`.trim();
+    let backupId = explicitBackupId;
     if (!backupId) {
       stage = "list-backups";
       report({
@@ -481,7 +491,7 @@ async function maybeRestoreFromBackup({
       }
       if (!backups.length) {
         cleanupStaging = true;
-        if (restore === "required") {
+        if (effectiveRestore === "required") {
           throw Error("no backups available for restore");
         }
         report({

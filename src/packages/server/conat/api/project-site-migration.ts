@@ -584,6 +584,34 @@ async function loadMigrationRecord(
   return normalizeMigrationRow(rows[0]);
 }
 
+async function loadReusablePreparedMigration({
+  sourceSite,
+  sourceProjectId,
+  ownerAccountId,
+}: {
+  sourceSite: string;
+  sourceProjectId: string;
+  ownerAccountId: string;
+}): Promise<ProjectSiteMigrationRecord | null> {
+  await ensureProjectSiteMigrationSchema();
+  const { rows } = await getPool().query(
+    `SELECT m.*
+       FROM project_site_migrations m
+       JOIN projects p
+         ON p.project_id = m.destination_project_id
+      WHERE m.source_site = $1
+        AND m.source_project_id = $2
+        AND m.destination_owner_account_id = $3
+        AND m.status = 'prepared'
+        AND m.snapshot_id IS NULL
+        AND p.deleted IS NULL
+      ORDER BY m.updated_at DESC
+      LIMIT 1`,
+    [sourceSite, sourceProjectId, ownerAccountId],
+  );
+  return rows[0] ? normalizeMigrationRow(rows[0]) : null;
+}
+
 export async function getProjectSiteMigrationSourceProject({
   account_id,
   project_id,
@@ -636,6 +664,52 @@ export async function prepareIncomingProjectBackupMigration({
   const sourceProjectId = normalizeSourceProjectId(source_project_id);
   const ownerAccountId = await resolveDestinationOwner(owner);
   const warnings: string[] = [];
+  const reusable = await loadReusablePreparedMigration({
+    sourceSite,
+    sourceProjectId,
+    ownerAccountId,
+  });
+  if (reusable) {
+    const destinationProjectId = reusable.destination_project_id;
+    warnings.push(`reusing prepared migration ${reusable.id}`);
+    await markDestinationProjectArchivedForMigration({
+      project_id: destinationProjectId,
+    });
+    const projectRegion =
+      await loadDestinationProjectRegion(destinationProjectId);
+    const backupConfig = await getSeedProjectBackupConfig({
+      project_id: destinationProjectId,
+      project_region: projectRegion,
+    });
+    if (!backupConfig.backup_repo_id || !backupConfig.toml) {
+      throw new Error("unable to assign destination project backup repository");
+    }
+    try {
+      await setProjectLabels({
+        project_id: destinationProjectId,
+        account_id: actorAccountId,
+        labels: {
+          [MIGRATION_LABEL_STATUS]: "prepared",
+          [MIGRATION_LABEL_ID]: reusable.id,
+        },
+      });
+    } catch (err) {
+      warnings.push(`unable to set project migration labels: ${err}`);
+    }
+    const ttlSeconds =
+      backupConfig.ttl_seconds > 0
+        ? backupConfig.ttl_seconds
+        : DEFAULT_CONFIG_TTL_SECONDS;
+    return {
+      migration_id: reusable.id,
+      destination_project_id: destinationProjectId,
+      destination_backup_repo_id: backupConfig.backup_repo_id,
+      rustic_repo_toml: backupConfig.toml,
+      backup_index_store: backupConfig.index_store ?? null,
+      expires_at: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+      warnings,
+    };
+  }
   const destinationProjectId = await createProject({
     account_id: ownerAccountId,
     title:

@@ -871,20 +871,21 @@ describe("project-runner podman orphan fallback", () => {
     expect(status).toMatchObject({ state: "running" });
   });
 
-  it("restores an explicit backup id without listing backups", async () => {
+  it("restores an explicit backup id without requiring restore mode", async () => {
     mockProjectStartPodman(project1);
     const getBackups = jest.fn();
     const restoreBackup = jest.fn(async () => undefined);
+    const beginRestoreStaging = jest.fn(async () => ({
+      project_id: project1,
+      home: `/tmp/project-${project1}`,
+      restore: "required",
+      homeExists: true,
+      stagingRoot: `/tmp/project-${project1}/.restore-staging`,
+      stagingPath: `/tmp/project-${project1}/.restore-staging/project-${project1}`,
+      markerPath: `/tmp/project-${project1}/.restore-staging/project-${project1}.json`,
+    }));
     mockFileServerClient.mockReturnValue({
-      beginRestoreStaging: jest.fn(async () => ({
-        project_id: project1,
-        home: `/tmp/project-${project1}`,
-        restore: "required",
-        homeExists: true,
-        stagingRoot: `/tmp/project-${project1}/.restore-staging`,
-        stagingPath: `/tmp/project-${project1}/.restore-staging/project-${project1}`,
-        markerPath: `/tmp/project-${project1}/.restore-staging/project-${project1}.json`,
-      })),
+      beginRestoreStaging,
       getBackups,
       ensureRestoreStaging: jest.fn(async () => undefined),
       restoreBackup,
@@ -899,12 +900,17 @@ describe("project-runner podman orphan fallback", () => {
       }),
       config: {
         image: "docker.io/library/ubuntu:latest",
-        restore: "required",
         restore_backup_id: "backup-explicit",
       },
     });
 
     expect(getBackups).not.toHaveBeenCalled();
+    expect(beginRestoreStaging).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: project1,
+        restore: "required",
+      }),
+    );
     expect(restoreBackup).toHaveBeenCalledWith(
       expect.objectContaining({
         project_id: project1,

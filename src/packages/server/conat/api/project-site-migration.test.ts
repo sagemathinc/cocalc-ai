@@ -221,6 +221,12 @@ describe("project site migration destination RPCs", () => {
           ],
         };
       }
+      if (
+        sql.includes("FROM project_site_migrations") &&
+        sql.includes("JOIN projects p")
+      ) {
+        return { rows: [] };
+      }
       if (sql.includes("FROM project_site_migrations")) {
         return { rows: [migrationRow] };
       }
@@ -306,6 +312,69 @@ describe("project site migration destination RPCs", () => {
     );
     expect(result.migration_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it("reuses an existing prepared destination migration", async () => {
+    const { prepareIncomingProjectBackupMigration } =
+      await import("./project-site-migration");
+
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.trim().startsWith("UPDATE projects")) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes("FROM accounts")) {
+        return { rows: [{ account_id: OWNER_ID }] };
+      }
+      if (sql.includes("SELECT region FROM projects")) {
+        return { rows: [{ region: "WNAM" }] };
+      }
+      if (
+        sql.includes("FROM project_site_migrations") &&
+        sql.includes("JOIN projects p")
+      ) {
+        return { rows: [migrationRow] };
+      }
+      return { rows: [] };
+    });
+
+    const result = await prepareIncomingProjectBackupMigration({
+      account_id: ADMIN_ID,
+      browser_id: "browser-1",
+      session_hash: "session-1",
+      source_site: "alpha",
+      source_project_id: SOURCE_PROJECT_ID,
+      owner: "owner@example.com",
+      title: "Example",
+      description: "Migrated example",
+      disk_mb: "auto",
+      source_usage_bytes: 10 * 1024 * 1024,
+    });
+
+    expect(createProjectMock).not.toHaveBeenCalled();
+    expect(getSeedProjectBackupConfigMock).toHaveBeenCalledWith({
+      project_id: DESTINATION_PROJECT_ID,
+      project_region: "WNAM",
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        migration_id: MIGRATION_ID,
+        destination_project_id: DESTINATION_PROJECT_ID,
+        destination_backup_repo_id: BACKUP_REPO_ID,
+        rustic_repo_toml: '[repository]\npassword = "secret"',
+        warnings: expect.arrayContaining([
+          `reusing prepared migration ${MIGRATION_ID}`,
+        ]),
+      }),
+    );
+    expect(setProjectLabelsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: DESTINATION_PROJECT_ID,
+        labels: expect.objectContaining({
+          "cocalc.ai/project-site-migration": "prepared",
+          "cocalc.ai/project-site-migration/id": MIGRATION_ID,
+        }),
+      }),
     );
   });
 
