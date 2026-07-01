@@ -227,10 +227,22 @@ test("migrate project dry-run does not connect to either site", async () => {
       "This migrates project HOME files only.",
       "Root filesystem state and .local/share/cocalc/rootfs are excluded.",
       "The destination project will use the destination site's default rootfs.",
+      "Current caveat: migrations create a destination project backup. If the destination starts blank, restore the migrated backup from the project Backups UI or with `cocalc project backup restore`.",
       "Site B issues backup-write credentials that site A can use for this migration.",
       "Use this only between sites you administer and trust.",
     ],
   });
+});
+
+test("migrate help includes the archive-only restore caveat", () => {
+  const { program } = commandWithDeps();
+  const help = program.commands
+    .find((command) => command.name() === "migrate")!
+    .helpInformation();
+
+  assert.match(help, /This migrates project HOME files only/);
+  assert.match(help, /If the\s+destination starts blank/);
+  assert.match(help, /cocalc project backup restore/);
 });
 
 test("migrate project prepares destination, backs up source, then finalizes", async () => {

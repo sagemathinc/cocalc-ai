@@ -45,6 +45,8 @@ type SiteOperationSpec = {
 const DEFAULT_MIGRATION_TIMEOUT = "12h";
 const GLOBAL_DEFAULT_TIMEOUT = "600s";
 const DEFAULT_DISK_MB: "auto" = "auto";
+const ARCHIVE_ONLY_RESTORE_CAVEAT =
+  "Current caveat: migrations create a destination project backup. If the destination starts blank, restore the migrated backup from the project Backups UI or with `cocalc project backup restore`.";
 
 function normalizeNonEmpty(value: string | undefined, label: string): string {
   const normalized = `${value ?? ""}`.trim();
@@ -174,6 +176,7 @@ function migrationWarning() {
     "This migrates project HOME files only.",
     "Root filesystem state and .local/share/cocalc/rootfs are excluded.",
     "The destination project will use the destination site's default rootfs.",
+    ARCHIVE_ONLY_RESTORE_CAVEAT,
     "Site B issues backup-write credentials that site A can use for this migration.",
     "Use this only between sites you administer and trust.",
   ];
@@ -687,7 +690,14 @@ export function registerMigrateCommand(
   const migrate = addProjectMigrationOptions(
     program
       .command("migrate")
-      .description("admin project migration between CoCalc-AI sites")
+      .description(
+        [
+          "admin project migration between CoCalc-AI sites",
+          "",
+          "This migrates project HOME files only. Root filesystem state and .local/share/cocalc/rootfs are excluded.",
+          ARCHIVE_ONLY_RESTORE_CAVEAT,
+        ].join("\n"),
+      )
       .argument(
         "[args...]",
         "A:<project_id> B, project A:<project_id> B, or status B:<migration_id>",
