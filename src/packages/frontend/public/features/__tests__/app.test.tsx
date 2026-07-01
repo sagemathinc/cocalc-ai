@@ -203,12 +203,14 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText("Teach in the same environment where students work"),
+      screen.getByText("Teach where students compute, write, and collaborate"),
     ).not.toBeNull();
-    expect(screen.getByText("Assign, collect, grade, return")).not.toBeNull();
     expect(
-      screen.getByText("Grade in the same environment students used"),
+      screen.getByText(
+        "Run coursework in shared projects while the LMS keeps rosters and calendars.",
+      ),
     ).not.toBeNull();
+    expect(screen.getByText("Start with course projects")).not.toBeNull();
   });
 
   it("uses projects as the teaching CTA for authenticated users", () => {
@@ -228,7 +230,7 @@ describe("PublicFeaturesApp", () => {
     for (const link of projectLinks) {
       expect(link.getAttribute("href")).toBe("/projects");
     }
-    expect(screen.queryByText("Start teaching with CoCalc")).toBeNull();
+    expect(screen.queryByText("Start a course in CoCalc")).toBeNull();
   });
 
   it("renders the richer terminal feature page", () => {
@@ -414,7 +416,7 @@ describe("PublicFeaturesApp", () => {
     },
   );
 
-  it.each(["julia", "r-statistical-software"])(
+  it.each(["julia", "r-statistical-software", "teaching"])(
     "renders the configured support link on the %s feature page",
     (slug) => {
       render(
