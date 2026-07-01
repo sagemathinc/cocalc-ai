@@ -749,7 +749,11 @@ export async function runUxLatencyAlertCheck(): Promise<number> {
   for (const alert of alerts) {
     await adminAlert({
       subject: `UX latency: ${alert.subject}`,
-      body: `${alert.body}\n\nWindow: ${summary.window_minutes} minutes\nChecked: ${summary.checked_at}`,
+      // Keep this body stable across adjacent maintenance ticks so adminAlert's
+      // message dedupe can suppress repeated alerts for the same retained slow
+      // samples. The changing check timestamp belongs in logs, not in the
+      // dedupe key.
+      body: `${alert.body}\n\nWindow: ${summary.window_minutes} minutes`,
       dedupMinutes: 60,
       to_ids,
     });

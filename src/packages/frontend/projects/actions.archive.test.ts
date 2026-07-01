@@ -56,6 +56,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
             scope_type: "project",
             scope_id: "project-1",
           })),
+          getProjectState: jest.fn(async () => undefined),
           restart: jest.fn(async () => ({
             op_id: "restart-op-1",
             scope_type: "project",
@@ -232,6 +233,9 @@ describe("ProjectsActions archive flow", () => {
       [] as any,
     );
     mockedWebappClient.conat_client.hub.lro.get.mockResolvedValue(
+      undefined as any,
+    );
+    mockedWebappClient.conat_client.hub.projects.getProjectState.mockResolvedValue(
       undefined as any,
     );
     selectHostForProjectStartMock.mockResolvedValue(undefined);
@@ -1015,6 +1019,54 @@ describe("ProjectsActions archive flow", () => {
         ([event]) => event?.metric === "project_start_running_stuck",
       );
       expect(stuckCalls).toHaveLength(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("records stale project stream instead of stuck when authoritative project state is running", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "opened",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      mockedWebappClient.conat_client.hub.projects.getProjectState.mockResolvedValue(
+        { state: "running" } as any,
+      );
+      const { actions } = makeActions();
+      jest
+        .spyOn(actions, "ensure_host_info" as any)
+        .mockResolvedValue(undefined as any);
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+
+      await expect(actions.start_project(project_id)).resolves.toBe(true);
+      await jest.advanceTimersByTimeAsync(60_000);
+
+      expect(mockRecordUxLatencyEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event_type: "project_start",
+          metric: "project_start_running_stream_stale",
+          project_id,
+          details: expect.objectContaining({
+            observed_state: "opened",
+            authoritative_state: "running",
+            state_source: "authoritative_probe",
+          }),
+        }),
+      );
+      expect(mockRecordUxLatencyEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ metric: "project_start_running" }),
+      );
+      expect(mockRecordUxLatencyEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ metric: "project_start_running_stuck" }),
+      );
+      expect(
+        mockedWebappClient.conat_client.hub.projects.getProjectState,
+      ).toHaveBeenCalledWith({ project_id });
     } finally {
       jest.useRealTimers();
     }

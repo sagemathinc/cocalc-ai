@@ -28,6 +28,7 @@ import {
 } from "@cocalc/conat/hub/api/account-feed";
 import type {
   ProjectTheme,
+  ProjectState,
   StudentProjectFunctionality,
 } from "@cocalc/util/db-schema/projects";
 import type {
@@ -3690,6 +3691,79 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }): void {
     const started = Date.now();
     let stuckReported = false;
+    const localProjectState = (): string | undefined =>
+      store.getIn(["project_map", project_id, "state", "state"]) as
+        | string
+        | undefined;
+    const authoritativeProjectState = async (): Promise<
+      ProjectState | undefined
+    > => {
+      try {
+        return (await withTimeout(
+          webapp_client.conat_client.hub.projects.getProjectState({
+            project_id,
+          }),
+          3000,
+        )) as ProjectState | undefined;
+      } catch {
+        // This probe is only to avoid false UX alerts when the project stream
+        // is stale. If the control-plane read fails, preserve existing telemetry.
+        return undefined;
+      }
+    };
+    const recordRunning = ({ observed_state }: { observed_state?: string }) => {
+      const duration_ms = elapsedUxMs(timer);
+      recordUxLatencyEvent({
+        event_type: "project_start",
+        metric: "project_start_running",
+        duration_ms,
+        project_id,
+        client_event_id,
+        segment,
+        details: {
+          ...details,
+          observed_state,
+          state_source: "project_stream",
+        },
+      });
+      void this.project_log(project_id, {
+        event: "project_started",
+        duration_ms,
+        op_id,
+        stage: segment,
+        ...store.classify_project(project_id),
+      });
+    };
+    const recordProjectStreamStale = ({
+      observed_state,
+    }: {
+      observed_state?: string;
+    }) => {
+      recordUxLatencyEvent({
+        event_type: "project_start",
+        metric: "project_start_running_stream_stale",
+        duration_ms: elapsedUxMs(timer),
+        project_id,
+        client_event_id,
+        segment,
+        details: {
+          ...details,
+          observed_state,
+          authoritative_state: "running",
+          state_source: "authoritative_probe",
+        },
+      });
+    };
+    const suppressFalseStuckIfRunning = async (
+      observed_state?: string,
+    ): Promise<boolean> => {
+      const authoritative = await authoritativeProjectState();
+      if (authoritative?.state !== "running") {
+        return false;
+      }
+      recordProjectStreamStale({ observed_state });
+      return true;
+    };
     const terminalBlockedStart = async (): Promise<LroSummary | undefined> => {
       if (!op_id) {
         return undefined;
@@ -3712,37 +3786,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return undefined;
     };
     const poll = async () => {
-      const state = store.getIn([
-        "project_map",
-        project_id,
-        "state",
-        "state",
-      ]) as string | undefined;
+      const state = localProjectState();
       if (state === "running") {
-        const duration_ms = elapsedUxMs(timer);
-        recordUxLatencyEvent({
-          event_type: "project_start",
-          metric: "project_start_running",
-          duration_ms,
-          project_id,
-          client_event_id,
-          segment,
-          details: {
-            ...details,
-            observed_state: state,
-          },
-        });
-        void this.project_log(project_id, {
-          event: "project_started",
-          duration_ms,
-          op_id,
-          stage: segment,
-          ...store.classify_project(project_id),
+        recordRunning({
+          observed_state: state,
         });
         return;
       }
       const elapsedMs = Date.now() - started;
       if (!stuckReported && elapsedMs >= stuck_after_ms) {
+        if (await suppressFalseStuckIfRunning(state)) {
+          return;
+        }
         const blocked = await terminalBlockedStart();
         if (blocked) {
           recordUxLatencyEvent({
@@ -3780,6 +3835,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
         });
       }
       if (elapsedMs >= deadline_ms) {
+        if (await suppressFalseStuckIfRunning(state)) {
+          return;
+        }
         recordUxLatencyEvent({
           event_type: "project_start",
           metric: "project_start_running_timeout",
