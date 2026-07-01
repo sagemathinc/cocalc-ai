@@ -14,6 +14,10 @@ import { hoursInInterval } from "@cocalc/util/stripe/timecalcs";
 import createPurchase from "./create-purchase";
 import { toDecimal } from "@cocalc/util/money";
 import { assertPurchaseAllowed } from "./is-purchase-allowed";
+import {
+  recordMembershipAnalyticsEvent,
+  recordMembershipPurchaseCompleted,
+} from "@cocalc/server/membership/analytics";
 
 const logger = getLogger("purchases:renew-subscription");
 
@@ -35,8 +39,14 @@ export default async function renewSubscription({
     if (subscription.account_id != account_id) {
       throw Error("you must be signed in as the owner of the subscription");
     }
-    const { metadata, interval, current_period_end, cost, status } =
-      subscription;
+    const {
+      metadata,
+      interval,
+      current_period_end,
+      cost,
+      status,
+      latest_purchase_id,
+    } = subscription;
     if (metadata?.type != "membership") {
       throw Error("subscription must be a membership");
     }
@@ -87,6 +97,52 @@ export default async function renewSubscription({
     );
     if (update.rowCount != 1) {
       throw Error("subscription is no longer due for renewal");
+    }
+    const isTrialConversion =
+      metadata.trial === true && latest_purchase_id == null;
+    await recordMembershipAnalyticsEvent({
+      event_key: `subscription:${subscription_id}:renewed:${purchase_id}`,
+      event_type: "membership_renewed",
+      account_id,
+      membership_class: metadata.class,
+      source: "subscription",
+      interval,
+      subscription_id,
+      purchase_id,
+      amount: cost,
+      period_start: subtractInterval(end, interval),
+      period_end: end,
+      trial_status: isTrialConversion ? "converted" : "none",
+      client,
+    });
+    await recordMembershipPurchaseCompleted({
+      account_id,
+      subscription_id,
+      purchase_id,
+      membership_class: metadata.class,
+      interval,
+      amount: cost,
+      period_start: subtractInterval(end, interval),
+      period_end: end,
+      trial_status: isTrialConversion ? "converted" : "none",
+      client,
+    });
+    if (isTrialConversion) {
+      await recordMembershipAnalyticsEvent({
+        event_key: `subscription:${subscription_id}:trial-converted:${purchase_id}`,
+        event_type: "trial_converted",
+        account_id,
+        membership_class: metadata.class,
+        source: "trial",
+        interval,
+        subscription_id,
+        purchase_id,
+        period_start: subtractInterval(end, interval),
+        period_end: end,
+        trial_days: metadata.trial_days ?? null,
+        trial_status: "converted",
+        client,
+      });
     }
     await client.query("COMMIT");
     return purchase_id;
@@ -154,10 +210,11 @@ export async function getSubscription(
   interval: "month" | "year";
   current_period_end: Date;
   status: Status; // used externally (not in this file)
+  latest_purchase_id?: number | null;
 }> {
   const pool = client ?? getPool();
   const { rows } = await pool.query(
-    `SELECT id, account_id, metadata, cost, interval, current_period_end, status FROM subscriptions WHERE id=$1${forUpdate ? " FOR UPDATE" : ""}`,
+    `SELECT id, account_id, metadata, cost, interval, current_period_end, status, latest_purchase_id FROM subscriptions WHERE id=$1${forUpdate ? " FOR UPDATE" : ""}`,
     [subscription_id],
   );
   if (rows.length == 0) {

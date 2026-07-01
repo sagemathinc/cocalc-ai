@@ -51,6 +51,8 @@ import "./lti";
 import "./mentions";
 import "./account-entitlement-overrides";
 import "./admin-assigned-memberships";
+import "./membership-analytics-daily-counts";
+import "./membership-analytics-events";
 import "./membership-grants";
 import "./membership-claim-identities";
 import "./membership-side-effects-outbox";

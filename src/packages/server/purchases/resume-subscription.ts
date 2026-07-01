@@ -17,6 +17,10 @@ import createPurchase from "./create-purchase";
 import { toDecimal } from "@cocalc/util/money";
 import { formatRenewalDate } from "./subscription-renewal-notice";
 import { assertPurchaseAllowed } from "./is-purchase-allowed";
+import {
+  recordMembershipAnalyticsEvent,
+  recordMembershipPurchaseCompleted,
+} from "@cocalc/server/membership/analytics";
 
 interface Options {
   account_id: string;
@@ -43,8 +47,15 @@ export default async function resumeSubscription({
       client,
       forUpdate: true,
     });
-    const { metadata, start, end, current_period_end, periodicCost, interval } =
-      renewalData;
+    const {
+      metadata,
+      start,
+      end,
+      current_period_end,
+      periodicCost,
+      interval,
+      latest_purchase_id,
+    } = renewalData;
     subscriptionType = metadata.type;
     renewalEnd = end;
     if (current_period_end <= new Date()) {
@@ -103,6 +114,61 @@ export default async function resumeSubscription({
         throw Error(
           `You do not have a subscription with id ${subscription_id}.`,
         );
+      }
+    }
+
+    const isUnconvertedTrial =
+      metadata.trial === true && latest_purchase_id == null;
+    const isTrialConversion = isUnconvertedTrial && purchase_id != null;
+    const resumeTrialStatus = isTrialConversion
+      ? "converted"
+      : isUnconvertedTrial
+        ? "started"
+        : "none";
+    await recordMembershipAnalyticsEvent({
+      event_key: `subscription:${subscription_id}:resumed:${purchase_id ?? "no-purchase"}`,
+      event_type: "membership_resumed",
+      account_id,
+      membership_class: metadata.class,
+      source: "subscription",
+      interval,
+      subscription_id,
+      purchase_id,
+      amount: purchase_id == null ? 0 : periodicCost,
+      period_start: start,
+      period_end: end,
+      trial_status: resumeTrialStatus,
+      client,
+    });
+    if (purchase_id != null) {
+      await recordMembershipPurchaseCompleted({
+        account_id,
+        subscription_id,
+        purchase_id,
+        membership_class: metadata.class,
+        interval,
+        amount: periodicCost,
+        period_start: start,
+        period_end: end,
+        trial_status: isTrialConversion ? "converted" : "none",
+        client,
+      });
+      if (isTrialConversion) {
+        await recordMembershipAnalyticsEvent({
+          event_key: `subscription:${subscription_id}:trial-converted:${purchase_id}`,
+          event_type: "trial_converted",
+          account_id,
+          membership_class: metadata.class,
+          source: "trial",
+          interval,
+          subscription_id,
+          purchase_id,
+          period_start: start,
+          period_end: end,
+          trial_days: metadata.trial_days ?? null,
+          trial_status: "converted",
+          client,
+        });
       }
     }
 
@@ -175,12 +241,18 @@ async function getSubscriptionRenewalData({
   client?: PoolClient;
   forUpdate?: boolean;
 }): Promise<{
-  metadata: { type: "membership"; class: MembershipClass };
+  metadata: {
+    type: "membership";
+    class: MembershipClass;
+    trial?: boolean;
+    trial_days?: number | null;
+  };
   start: Date;
   end: Date;
   periodicCost: number;
   current_period_end: Date;
   interval: "month" | "year";
+  latest_purchase_id?: number | null;
 }> {
   const subscription = await getSubscription(
     subscription_id,
@@ -216,6 +288,7 @@ async function getSubscriptionRenewalData({
     periodicCost: periodicCostValue.toNumber(),
     current_period_end,
     interval,
+    latest_purchase_id: subscription.latest_purchase_id ?? null,
   };
 }
 

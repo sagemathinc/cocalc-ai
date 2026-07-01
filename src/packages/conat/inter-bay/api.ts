@@ -28,6 +28,10 @@ import type {
   AccountEntitlementOverride,
   AccountUsageOverview,
   MembershipClass,
+  MembershipAnalyticsEventRow,
+  MembershipAnalyticsEventsQuery,
+  MembershipAnalyticsOverview,
+  MembershipAnalyticsOverviewQuery,
   MembershipDetails,
   MembershipEffectiveLimits,
   MembershipTierUsageReport,
@@ -2243,6 +2247,8 @@ export type BayOpsMethod =
   | "get-project-runtime-slot-report"
   | "get-membership-tiers"
   | "get-membership-tier-usage-report"
+  | "get-membership-analytics-overview"
+  | "get-membership-analytics-events"
   | "set-server-setting"
   | "set-site-settings"
   | "get-site-settings"
@@ -3487,6 +3493,12 @@ export interface InterBayBayOpsApi {
   getMembershipTierUsageReport: (
     opts: BayOpsMembershipTierUsageReportRequest,
   ) => Promise<MembershipTierUsageReport>;
+  getMembershipAnalyticsOverview: (
+    opts: MembershipAnalyticsOverviewQuery,
+  ) => Promise<MembershipAnalyticsOverview>;
+  getMembershipAnalyticsEvents: (
+    opts: MembershipAnalyticsEventsQuery,
+  ) => Promise<MembershipAnalyticsEventRow[]>;
   setServerSetting: (opts: BayOpsSetServerSettingRequest) => Promise<void>;
   setSiteSettings: (
     opts: BayOpsSetSiteSettingsRequest,
@@ -8038,6 +8050,24 @@ export function createInterBayBayOpsClient({
       method: "get-membership-tier-usage-report",
     }),
   });
+  const membershipAnalyticsOverviewClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getMembershipAnalyticsOverview">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-membership-analytics-overview",
+    }),
+  });
+  const membershipAnalyticsEventsClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getMembershipAnalyticsEvents">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-membership-analytics-events",
+    }),
+  });
   return {
     getLoad: async (opts) => await loadClient.getLoad(opts),
     getBackups: async (opts) => await backupsClient.getBackups(opts),
@@ -8059,6 +8089,12 @@ export function createInterBayBayOpsClient({
       await membershipTiersClient.getMembershipTiers(opts),
     getMembershipTierUsageReport: async (opts) =>
       await membershipTierUsageReportClient.getMembershipTierUsageReport(opts),
+    getMembershipAnalyticsOverview: async (opts) =>
+      await membershipAnalyticsOverviewClient.getMembershipAnalyticsOverview(
+        opts,
+      ),
+    getMembershipAnalyticsEvents: async (opts) =>
+      await membershipAnalyticsEventsClient.getMembershipAnalyticsEvents(opts),
     setServerSetting: async (opts) =>
       await setServerSettingClient.setServerSetting(opts),
     setSiteSettings: async (opts) =>
@@ -8217,6 +8253,34 @@ export function createInterBayBayOpsHandlers({
       impl: {
         getMembershipTierUsageReport: async (opts) =>
           await impl.getMembershipTierUsageReport(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "getMembershipAnalyticsOverview">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-membership-analytics-overview",
+      }),
+      impl: {
+        getMembershipAnalyticsOverview: async (opts) =>
+          await impl.getMembershipAnalyticsOverview(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "getMembershipAnalyticsEvents">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-membership-analytics-events",
+      }),
+      impl: {
+        getMembershipAnalyticsEvents: async (opts) =>
+          await impl.getMembershipAnalyticsEvents(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getRootfsCatalog">>({

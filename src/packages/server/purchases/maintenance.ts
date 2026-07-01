@@ -7,6 +7,7 @@ import maintainAutomaticPayments from "./maintain-automatic-payments";
 import maintainAutoBalance from "./maintain-auto-balance";
 import { maintainPaymentIntents } from "./stripe/process-payment-intents";
 import { hasStripeBillingConfiguration } from "@cocalc/util/stripe/billing";
+import maintainMembershipAnalytics from "./maintain-membership-analytics";
 
 const logger = getLogger("purchases:maintenance");
 
@@ -51,6 +52,10 @@ const FUNCTIONS: MaintenanceDescription[] = [
     f: maintainAutoBalance,
     desc: "maintain auto balance",
     requiresStripe: true,
+  },
+  {
+    f: maintainMembershipAnalytics,
+    desc: "maintain membership analytics",
   },
 ];
 

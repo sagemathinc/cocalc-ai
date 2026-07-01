@@ -15,6 +15,10 @@ import { toDecimal, type MoneyValue } from "@cocalc/util/money";
 import { assertPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 import { claimMembershipTrial } from "@cocalc/server/membership/trials";
 import { assertBillingReady } from "@cocalc/server/purchases/stripe/billing-readiness";
+import {
+  recordMembershipAnalyticsEvent,
+  recordMembershipPurchaseCompleted,
+} from "@cocalc/server/membership/analytics";
 
 interface MembershipChangeOptions {
   account_id: string;
@@ -171,7 +175,59 @@ export async function applyMembershipChange({
       }
     }
 
+    if (subscription_id != null) {
+      await recordMembershipAnalyticsEvent({
+        event_key: `subscription:${subscription_id}:created`,
+        event_type:
+          change.change == "new" ? "membership_created" : "membership_changed",
+        account_id,
+        membership_class: targetClass,
+        previous_membership_class: change.existing_class ?? null,
+        source: "subscription",
+        interval,
+        subscription_id,
+        purchase_id,
+        amount: change.charge,
+        period_start: start,
+        period_end: end,
+        trial_days: isTrial ? trialDays : null,
+        trial_status: isTrial ? "started" : "none",
+        metadata: { change: change.change },
+        client: transaction,
+      });
+    }
+
+    if (purchase_id != null) {
+      await recordMembershipPurchaseCompleted({
+        account_id,
+        subscription_id,
+        purchase_id,
+        membership_class: targetClass,
+        interval,
+        amount: change.charge,
+        period_start: start,
+        period_end: end,
+        client: transaction,
+      });
+    }
+
     if (isTrial && subscription_id != null) {
+      await recordMembershipAnalyticsEvent({
+        event_key: `subscription:${subscription_id}:trial-started`,
+        event_type: "trial_started",
+        account_id,
+        membership_class: targetClass,
+        source: "trial",
+        interval,
+        subscription_id,
+        purchase_id,
+        period_start: start,
+        period_end: end,
+        trial_days: trialDays,
+        trial_status: "started",
+        metadata: { trial_email: change.trial_email },
+        client: transaction,
+      });
       await claimMembershipTrial({
         account_id,
         email_address: change.trial_email ?? "",

@@ -18,6 +18,8 @@ const createMembershipTierMock = jest.fn();
 const updateMembershipTierMock = jest.fn();
 const importMembershipTiersMock = jest.fn();
 const deleteMembershipTierMock = jest.fn();
+const getMembershipAnalyticsOverviewLocalMock = jest.fn();
+const getMembershipAnalyticsEventsLocalMock = jest.fn();
 const membershipTiersQueryMock = jest.fn();
 const getMembershipTierRowsMock = jest.fn();
 const getMembershipTierUsageReportMock = jest.fn();
@@ -84,6 +86,8 @@ const interBayRefreshSiteLicenseAffiliationVerificationMock = jest.fn();
 const interBayRefreshSiteLicenseAffiliationVerificationForAccountMock =
   jest.fn();
 const interBayGetMembershipTierUsageReportMock = jest.fn();
+const interBayGetMembershipAnalyticsOverviewMock = jest.fn();
+const interBayGetMembershipAnalyticsEventsMock = jest.fn();
 const interBayBayOpsMock = jest.fn();
 const getInterBayBridgeMock = jest.fn();
 const getBrowserAuthSessionHashMock = jest.fn();
@@ -158,6 +162,13 @@ jest.mock("@cocalc/server/membership/tier-admin", () => ({
   updateMembershipTier: (...args: any[]) => updateMembershipTierMock(...args),
   importMembershipTiers: (...args: any[]) => importMembershipTiersMock(...args),
   deleteMembershipTier: (...args: any[]) => deleteMembershipTierMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/analytics", () => ({
+  getMembershipAnalyticsOverviewLocal: (...args: any[]) =>
+    getMembershipAnalyticsOverviewLocalMock(...args),
+  getMembershipAnalyticsEventsLocal: (...args: any[]) =>
+    getMembershipAnalyticsEventsLocalMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/account-usage-overview", () => ({
@@ -354,6 +365,8 @@ beforeEach(() => {
   updateMembershipTierMock.mockReset();
   importMembershipTiersMock.mockReset();
   deleteMembershipTierMock.mockReset();
+  getMembershipAnalyticsOverviewLocalMock.mockReset();
+  getMembershipAnalyticsEventsLocalMock.mockReset();
   membershipTiersQueryMock.mockReset();
   getMembershipTierRowsMock.mockReset();
   getMembershipTierUsageReportMock.mockReset();
@@ -379,6 +392,8 @@ beforeEach(() => {
   interBaySetSiteLicenseManagerMock.mockReset();
   interBayRemoveSiteLicenseManagerMock.mockReset();
   interBayGetMembershipTierUsageReportMock.mockReset();
+  interBayGetMembershipAnalyticsOverviewMock.mockReset();
+  interBayGetMembershipAnalyticsEventsMock.mockReset();
   interBayBayOpsMock.mockReset();
   getInterBayBridgeMock.mockReset();
   getConfiguredClusterSeedBayIdMock.mockReset();
@@ -397,9 +412,22 @@ beforeEach(() => {
     total_active_account_count: 0,
     tiers: [],
   });
+  getMembershipAnalyticsOverviewLocalMock.mockResolvedValue({
+    checked_at: "2026-06-01T00:00:00.000Z",
+    start: "2026-05-01T00:00:00.000Z",
+    end: "2026-06-01T00:00:00.000Z",
+    revenue: [],
+    events: [],
+    daily_counts: [],
+  });
+  getMembershipAnalyticsEventsLocalMock.mockResolvedValue([]);
   interBayBayOpsMock.mockReturnValue({
     getMembershipTierUsageReport: (...args: any[]) =>
       interBayGetMembershipTierUsageReportMock(...args),
+    getMembershipAnalyticsOverview: (...args: any[]) =>
+      interBayGetMembershipAnalyticsOverviewMock(...args),
+    getMembershipAnalyticsEvents: (...args: any[]) =>
+      interBayGetMembershipAnalyticsEventsMock(...args),
   });
   getInterBayBridgeMock.mockReturnValue({ bayOps: interBayBayOpsMock });
   getConfiguredBayIdMock.mockReturnValue("bay-0");
@@ -2996,6 +3024,224 @@ describe("purchases membership tier admin", () => {
         total_active_account_count: 10,
         has_usage_history: undefined,
       }),
+    ]);
+  });
+
+  it("aggregates membership analytics overview across configured bays", async () => {
+    isAdminMock.mockResolvedValue(true);
+    listConfiguredBaysMock.mockResolvedValue([
+      { bay_id: "bay-1" },
+      { bay_id: "bay-0" },
+    ]);
+    getMembershipAnalyticsOverviewLocalMock.mockResolvedValue({
+      checked_at: "2026-06-02T00:00:00.000Z",
+      start: "2026-06-01T00:00:00.000Z",
+      end: "2026-06-03T00:00:00.000Z",
+      revenue: [
+        {
+          membership_class: "standard",
+          interval: "month",
+          gross_revenue: 10,
+          purchase_count: 1,
+        },
+      ],
+      events: [
+        {
+          day: "2026-06-01T00:00:00.000Z",
+          event_type: "purchase_completed",
+          count: 1,
+          amount: 10,
+        },
+      ],
+      daily_counts: [
+        {
+          snapshot_date: "2026-06-01",
+          bay_id: "bay-0",
+          membership_class: "standard",
+          source: "subscription",
+          interval: "month",
+          trial_status: "none",
+          active_account_count: 2,
+          subscription_count: 1,
+        },
+      ],
+    });
+    interBayGetMembershipAnalyticsOverviewMock.mockResolvedValue({
+      checked_at: "2026-06-02T00:00:01.000Z",
+      current_bay_id: "bay-1",
+      seed_bay_id: "bay-0",
+      start: "2026-06-01T00:00:00.000Z",
+      end: "2026-06-03T00:00:00.000Z",
+      bays: [{ bay_id: "bay-1", ok: true }],
+      revenue: [
+        {
+          membership_class: "standard",
+          interval: "month",
+          gross_revenue: 20,
+          purchase_count: 2,
+        },
+        {
+          membership_class: "basic",
+          interval: "year",
+          gross_revenue: 72,
+          purchase_count: 1,
+        },
+      ],
+      events: [
+        {
+          day: "2026-06-01T00:00:00.000Z",
+          event_type: "purchase_completed",
+          count: 2,
+          amount: 20,
+        },
+        {
+          day: "2026-06-02T00:00:00.000Z",
+          event_type: "membership_canceled",
+          count: 1,
+          amount: 0,
+        },
+      ],
+      daily_counts: [
+        {
+          snapshot_date: "2026-06-01",
+          bay_id: "bay-1",
+          membership_class: "standard",
+          source: "subscription",
+          interval: "month",
+          trial_status: "none",
+          active_account_count: 3,
+          subscription_count: 2,
+        },
+      ],
+    });
+
+    const { getMembershipAnalyticsOverview } = await import("./purchases");
+    const result = await getMembershipAnalyticsOverview({
+      account_id: "admin-1",
+      start: "2026-06-01T00:00:00.000Z",
+      end: "2026-06-03T00:00:00.000Z",
+    });
+
+    expect(getMembershipAnalyticsOverviewLocalMock).toHaveBeenCalledWith({
+      bay_id: "bay-0",
+      query: expect.objectContaining({
+        account_id: "admin-1",
+        start: expect.any(Date),
+        end: expect.any(Date),
+      }),
+    });
+    expect(interBayBayOpsMock).toHaveBeenCalledWith("bay-1", {
+      timeout_ms: 15_000,
+    });
+    expect(interBayGetMembershipAnalyticsOverviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "admin-1",
+        start: expect.any(Date),
+        end: expect.any(Date),
+      }),
+    );
+    expect(result.bays).toEqual([
+      { bay_id: "bay-0", ok: true },
+      { bay_id: "bay-1", ok: true },
+    ]);
+    expect(result.revenue).toEqual([
+      {
+        membership_class: "basic",
+        interval: "year",
+        gross_revenue: 72,
+        purchase_count: 1,
+      },
+      {
+        membership_class: "standard",
+        interval: "month",
+        gross_revenue: 30,
+        purchase_count: 3,
+      },
+    ]);
+    expect(result.events).toEqual([
+      {
+        day: "2026-06-01",
+        event_type: "purchase_completed",
+        count: 3,
+        amount: 30,
+      },
+      {
+        day: "2026-06-02",
+        event_type: "membership_canceled",
+        count: 1,
+        amount: 0,
+      },
+    ]);
+    expect(result.daily_counts).toEqual([
+      {
+        snapshot_date: "2026-06-01",
+        bay_id: "all",
+        membership_class: "standard",
+        source: "subscription",
+        interval: "month",
+        trial_status: "none",
+        active_account_count: 5,
+        subscription_count: 3,
+      },
+    ]);
+  });
+
+  it("sorts membership analytics events across bays before applying the limit", async () => {
+    isAdminMock.mockResolvedValue(true);
+    listConfiguredBaysMock.mockResolvedValue([
+      { bay_id: "bay-0" },
+      { bay_id: "bay-1" },
+    ]);
+    getMembershipAnalyticsEventsLocalMock.mockResolvedValue([
+      {
+        event_key: "local-old",
+        event_type: "membership_created",
+        event_time: "2026-06-01T12:00:00.000Z",
+        bay_id: "bay-0",
+      },
+      {
+        event_key: "local-new",
+        event_type: "purchase_completed",
+        event_time: "2026-06-03T12:00:00.000Z",
+        bay_id: "bay-0",
+      },
+    ]);
+    interBayGetMembershipAnalyticsEventsMock.mockResolvedValue([
+      {
+        event_key: "remote-newest",
+        event_type: "membership_renewed",
+        event_time: "2026-06-04T12:00:00.000Z",
+        bay_id: "bay-1",
+      },
+    ]);
+
+    const { getMembershipAnalyticsEvents } = await import("./purchases");
+    const result = await getMembershipAnalyticsEvents({
+      account_id: "admin-1",
+      start: "2026-06-01T00:00:00.000Z",
+      end: "2026-06-05T00:00:00.000Z",
+      limit: 2,
+    });
+
+    expect(getMembershipAnalyticsEventsLocalMock).toHaveBeenCalledWith({
+      query: expect.objectContaining({
+        account_id: "admin-1",
+        limit: 2,
+        start: expect.any(Date),
+        end: expect.any(Date),
+      }),
+    });
+    expect(interBayGetMembershipAnalyticsEventsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "admin-1",
+        limit: 2,
+        start: expect.any(Date),
+        end: expect.any(Date),
+      }),
+    );
+    expect(result.map((row) => row.event_key)).toEqual([
+      "remote-newest",
+      "local-new",
     ]);
   });
 });
