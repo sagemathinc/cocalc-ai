@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { PUBLIC_COLORS } from "../theme";
 import SupportTicketsView from "./tickets-view";
 
 const mockApi = jest.fn();
@@ -42,11 +43,67 @@ describe("SupportTicketsView", () => {
 
     render(<SupportTicketsView config={{ zendesk: true }} />);
 
-    expect(await screen.findByText("First ticket")).not.toBeNull();
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+        name: "First ticket",
+      }),
+    ).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
     await waitFor(() => expect(mockApi).toHaveBeenCalledTimes(2));
     expect(mockApi).toHaveBeenCalledTimes(2);
     expect(mockApi).toHaveBeenNthCalledWith(1, "support/tickets");
     expect(mockApi).toHaveBeenNthCalledWith(2, "support/tickets");
+  });
+
+  it("renders status metadata with accessible contrast and target sizing", async () => {
+    mockApi.mockResolvedValueOnce({
+      tickets: [
+        {
+          created_at: "2026-06-20T10:00:00Z",
+          description: "Waiting on a reply.",
+          id: 2,
+          status: "pending",
+          subject: "Pending ticket",
+          type: "problem",
+          updated_at: "2026-06-20T11:00:00Z",
+        },
+      ],
+    });
+
+    render(<SupportTicketsView config={{ zendesk: true }} />);
+
+    const status = await screen.findByText("PENDING");
+    expect(status.style.color).not.toBe("white");
+    expect(status.style.minHeight).toBe("24px");
+    expect(status.style.border).toContain("1px solid");
+
+    const type = screen.getByText("problem");
+    expect(type.style.minHeight).toBe("24px");
+    expect(type.style.color).not.toBe("white");
+
+    const dates = screen.getByText(/Created .* updated/i);
+    expect(dates.style.color).not.toBe("rgb(128, 128, 128)");
+  });
+
+  it("uses public color tokens for ticket alert states", () => {
+    render(<SupportTicketsView config={{ zendesk: false }} />);
+
+    expect(screen.getByText("Support tickets are not configured.")).toHaveStyle(
+      {
+        background: PUBLIC_COLORS.errorTint,
+        border: `1px solid ${PUBLIC_COLORS.errorBorder}`,
+        color: PUBLIC_COLORS.error,
+      },
+    );
+
+    mockApi.mockReturnValue(new Promise(() => {}));
+    render(<SupportTicketsView config={{ zendesk: true }} />);
+
+    expect(screen.getByText("Loading support tickets...")).toHaveStyle({
+      background: PUBLIC_COLORS.infoTint,
+      border: `1px solid ${PUBLIC_COLORS.infoBorder}`,
+      color: PUBLIC_COLORS.info,
+    });
   });
 });
