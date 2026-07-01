@@ -43,6 +43,7 @@ type SiteOperationSpec = {
 };
 
 const DEFAULT_MIGRATION_TIMEOUT = "12h";
+const GLOBAL_DEFAULT_TIMEOUT = "600s";
 const DEFAULT_DISK_MB: "auto" = "auto";
 
 function normalizeNonEmpty(value: string | undefined, label: string): string {
@@ -161,7 +162,10 @@ function profileGlobals(base: Record<string, any>, profile: string) {
   return {
     ...next,
     profile,
-    timeout: next.timeout ?? DEFAULT_MIGRATION_TIMEOUT,
+    timeout:
+      next.timeout == null || next.timeout === GLOBAL_DEFAULT_TIMEOUT
+        ? DEFAULT_MIGRATION_TIMEOUT
+        : next.timeout,
   };
 }
 

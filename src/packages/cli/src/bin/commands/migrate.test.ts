@@ -319,6 +319,33 @@ test("migrate project prepares destination, backs up source, then finalizes", as
   assert.deepEqual(state.closed.sort(), ["alpha", "prod"]);
 });
 
+test("migrate project replaces the global default timeout with the migration timeout", async () => {
+  const { program, state } = commandWithDeps({
+    globals: { timeout: "600s" },
+  });
+  await program.parseAsync([
+    "node",
+    "cocalc",
+    "migrate",
+    `alpha:${SOURCE_PROJECT_ID}`,
+    "prod",
+    "--owner",
+    "wstein@example.com",
+    "--yes",
+  ]);
+
+  assert.deepEqual(
+    state.contexts.map((ctx: any) => ({
+      profile: ctx.profile,
+      timeout: ctx.timeout,
+    })),
+    [
+      { profile: "alpha", timeout: "12h" },
+      { profile: "prod", timeout: "12h" },
+    ],
+  );
+});
+
 test("migrate project uses source title and description by default", async () => {
   const { program, state } = commandWithDeps();
   await program.parseAsync([
