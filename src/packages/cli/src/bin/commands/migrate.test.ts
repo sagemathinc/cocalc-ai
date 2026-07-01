@@ -170,7 +170,18 @@ function commandWithDeps(overrides: Record<string, any> = {}) {
       }),
     waitForLro: async (_ctx: any, opId: string) => {
       state.calls.push({ ctx: "alpha", name: "waitForLro", opId });
-      return { op_id: opId, status: "succeeded" };
+      return {
+        op_id: opId,
+        status: "succeeded",
+        result: {
+          id: "snapshot-1",
+          time: "2026-06-30T00:00:00.000Z",
+          backup_index_key: "index/key.sqlite.zst",
+          backup_index: {
+            object_key: "index/key.sqlite.zst",
+          },
+        },
+      };
     },
     isValidUUID,
     ...overrides,
@@ -275,6 +286,10 @@ test("migrate project prepares destination, backs up source, then finalizes", as
   assert.equal(
     state.calls.find((call: any) => call.name === "finalize").ctx,
     "prod",
+  );
+  assert.equal(
+    state.calls.find((call: any) => call.name === "lro.get"),
+    undefined,
   );
   assert.equal(
     state.calls.find((call: any) => call.name === "finalize").opts

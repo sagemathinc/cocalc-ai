@@ -349,8 +349,11 @@ async function runProjectMigration({
         `source backup failed: status=${backupStatus.status} error=${backupStatus.error ?? "unknown"}`,
       );
     }
-    const sourceLro = await sourceCtx.hub.lro.get({ op_id: backupOp.op_id });
-    const sourceBackupResult = lroResult(sourceLro);
+    const sourceBackupResult = lroResult(backupStatus);
+    if (!sourceBackupResult.id) {
+      const sourceLro = await sourceCtx.hub.lro.get({ op_id: backupOp.op_id });
+      Object.assign(sourceBackupResult, lroResult(sourceLro));
+    }
     const snapshotId = `${sourceBackupResult.id ?? ""}`.trim();
     if (!snapshotId) {
       throw new Error(
