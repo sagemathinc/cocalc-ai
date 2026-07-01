@@ -6,6 +6,8 @@
 const queryMock = jest.fn();
 const listActiveAbuseReviewAnnotationsMock = jest.fn();
 const getAdminAccountMembershipStatusMapMock = jest.fn();
+const ensureAccountUsageWindowsForEventMock = jest.fn();
+const getActiveAccountUsageWindowsMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -24,26 +26,38 @@ jest.mock("./admin-account-status", () => ({
     getAdminAccountMembershipStatusMapMock(...args),
 }));
 
+jest.mock("./usage-windows", () => ({
+  ensureAccountUsageWindowsForEvent: (...args: any[]) =>
+    ensureAccountUsageWindowsForEventMock(...args),
+  getActiveAccountUsageWindows: (...args: any[]) =>
+    getActiveAccountUsageWindowsMock(...args),
+}));
+
+function isSchemaQuery(sql: string): boolean {
+  return (
+    sql.includes("CREATE TABLE IF NOT EXISTS account_managed_egress_events") ||
+    sql.includes(
+      "ALTER TABLE account_managed_egress_events ALTER COLUMN project_id DROP NOT NULL",
+    ) ||
+    sql.includes("CREATE INDEX IF NOT EXISTS account_managed_egress_events_") ||
+    sql.includes("CREATE TABLE IF NOT EXISTS account_managed_egress_rollups") ||
+    sql.includes("CREATE INDEX IF NOT EXISTS account_managed_egress_rollups_")
+  );
+}
+
 describe("managed egress history", () => {
   beforeEach(() => {
     jest.resetModules();
     queryMock.mockReset();
     listActiveAbuseReviewAnnotationsMock.mockReset();
     getAdminAccountMembershipStatusMapMock.mockReset();
+    ensureAccountUsageWindowsForEventMock.mockReset();
+    getActiveAccountUsageWindowsMock.mockReset();
     listActiveAbuseReviewAnnotationsMock.mockResolvedValue([]);
     getAdminAccountMembershipStatusMapMock.mockResolvedValue(new Map());
+    getActiveAccountUsageWindowsMock.mockResolvedValue({});
     queryMock.mockImplementation(async (sql: string) => {
-      if (
-        sql.includes(
-          "CREATE TABLE IF NOT EXISTS account_managed_egress_events",
-        ) ||
-        sql.includes(
-          "ALTER TABLE account_managed_egress_events ALTER COLUMN project_id DROP NOT NULL",
-        ) ||
-        sql.includes(
-          "CREATE INDEX IF NOT EXISTS account_managed_egress_events_",
-        )
-      ) {
+      if (isSchemaQuery(sql)) {
         return { rows: [] };
       }
       throw new Error(`unhandled query: ${sql}`);
@@ -52,17 +66,7 @@ describe("managed egress history", () => {
 
   it("aggregates account history into bounded time buckets", async () => {
     queryMock.mockImplementation(async (sql: string) => {
-      if (
-        sql.includes(
-          "CREATE TABLE IF NOT EXISTS account_managed_egress_events",
-        ) ||
-        sql.includes(
-          "ALTER TABLE account_managed_egress_events ALTER COLUMN project_id DROP NOT NULL",
-        ) ||
-        sql.includes(
-          "CREATE INDEX IF NOT EXISTS account_managed_egress_events_",
-        )
-      ) {
+      if (isSchemaQuery(sql)) {
         return { rows: [] };
       }
       if (
@@ -109,7 +113,7 @@ describe("managed egress history", () => {
           ],
         };
       }
-      if (sql.includes("ORDER BY events.occurred_at DESC, events.id DESC")) {
+      if (sql.includes("ORDER BY events.last_occurred_at DESC")) {
         return {
           rows: [
             {
@@ -198,19 +202,60 @@ describe("managed egress history", () => {
     ).rejects.toThrow("history query is too granular");
   });
 
+  it("computes quota usage from rollups and excludes interactive conat", async () => {
+    const starts5h = new Date("2026-04-28T07:00:00.000Z");
+    const resets5h = new Date("2026-04-28T12:00:00.000Z");
+    const starts7d = new Date("2026-04-21T12:00:00.000Z");
+    const resets7d = new Date("2026-04-28T12:00:00.000Z");
+    getActiveAccountUsageWindowsMock.mockResolvedValue({
+      "5h": { starts_at: starts5h, resets_at: resets5h },
+      "7d": { starts_at: starts7d, resets_at: resets7d },
+    });
+    queryMock.mockImplementation(async (sql: string, params?: any[]) => {
+      if (isSchemaQuery(sql)) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes("FROM account_managed_egress_rollups") &&
+        sql.includes("bytes_5h")
+      ) {
+        expect(params).toEqual([
+          "account-1",
+          starts5h,
+          resets5h,
+          starts7d,
+          resets7d,
+          ["interactive-conat"],
+        ]);
+        expect(sql).toContain("category <> ALL($6::text[])");
+        return {
+          rows: [{ category: "raw-network", bytes_5h: "200", bytes_7d: "500" }],
+        };
+      }
+      throw new Error(`unhandled query: ${sql}`);
+    });
+
+    const { getManagedEgressUsageForAccount } =
+      await import("./managed-egress");
+    const result = await getManagedEgressUsageForAccount({
+      account_id: "account-1",
+      limit5h: 1000,
+      limit7d: 2000,
+    });
+
+    expect(result.managed_egress_5h_bytes).toBe(200);
+    expect(result.managed_egress_7d_bytes).toBe(500);
+    expect(result.managed_egress_categories_5h_bytes).toEqual({
+      "raw-network": 200,
+    });
+    expect(result.managed_egress_categories_7d_bytes).toEqual({
+      "raw-network": 500,
+    });
+  });
+
   it("aggregates admin-wide top accounts and projects", async () => {
     queryMock.mockImplementation(async (sql: string) => {
-      if (
-        sql.includes(
-          "CREATE TABLE IF NOT EXISTS account_managed_egress_events",
-        ) ||
-        sql.includes(
-          "ALTER TABLE account_managed_egress_events ALTER COLUMN project_id DROP NOT NULL",
-        ) ||
-        sql.includes(
-          "CREATE INDEX IF NOT EXISTS account_managed_egress_events_",
-        )
-      ) {
+      if (isSchemaQuery(sql)) {
         return { rows: [] };
       }
       if (
@@ -271,7 +316,7 @@ describe("managed egress history", () => {
           ],
         };
       }
-      if (sql.includes("ORDER BY events.occurred_at DESC, events.id DESC")) {
+      if (sql.includes("ORDER BY events.last_occurred_at DESC")) {
         return {
           rows: [
             {
@@ -383,17 +428,7 @@ describe("managed egress history", () => {
 
   it("aggregates admin-wide history into bounded time buckets", async () => {
     queryMock.mockImplementation(async (sql: string) => {
-      if (
-        sql.includes(
-          "CREATE TABLE IF NOT EXISTS account_managed_egress_events",
-        ) ||
-        sql.includes(
-          "ALTER TABLE account_managed_egress_events ALTER COLUMN project_id DROP NOT NULL",
-        ) ||
-        sql.includes(
-          "CREATE INDEX IF NOT EXISTS account_managed_egress_events_",
-        )
-      ) {
+      if (isSchemaQuery(sql)) {
         return { rows: [] };
       }
       if (
@@ -464,7 +499,7 @@ describe("managed egress history", () => {
           ],
         };
       }
-      if (sql.includes("ORDER BY events.occurred_at DESC, events.id DESC")) {
+      if (sql.includes("ORDER BY events.last_occurred_at DESC")) {
         return {
           rows: [
             {

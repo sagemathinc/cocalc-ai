@@ -32,6 +32,13 @@ export {
 } from "./project-usage";
 
 const TABLE = "account_managed_egress_events";
+const ROLLUP_TABLE = "account_managed_egress_rollups";
+const NO_PROJECT_ID = "00000000-0000-0000-0000-000000000000";
+const ROLLUP_FLUSH_INTERVAL_MS = 60_000;
+const ROLLUP_FLUSH_MAX_PENDING = 1000;
+const QUOTA_EXCLUDED_CATEGORIES = new Set<ManagedProjectEgressCategory>([
+  "interactive-conat",
+]);
 
 export type ManagedProjectEgressCategory =
   | "file-download"
@@ -68,6 +75,8 @@ const logger = getLogger("server:membership:managed-egress");
 
 let ensuredSchema: Promise<void> | undefined;
 let adminTimeIndexReady: Promise<void> | undefined;
+let rollupFlushTimer: ReturnType<typeof setTimeout> | undefined;
+let rollupFlushPromise: Promise<void> | undefined;
 
 type ManagedEgressAdminOverviewBase = {
   total_bytes: number;
@@ -76,6 +85,20 @@ type ManagedEgressAdminOverviewBase = {
   top_projects: ManagedEgressAdminProjectSummary[];
   recent_events: ManagedEgressEventSummary[];
 };
+
+type PendingManagedEgressRollup = {
+  bucket_start: Date;
+  account_id: string;
+  project_id?: string;
+  category: ManagedProjectEgressCategory;
+  bytes: number;
+  event_count: number;
+  first_occurred_at: Date;
+  last_occurred_at: Date;
+  metadata_sample?: Record<string, unknown>;
+};
+
+const pendingRollups = new Map<string, PendingManagedEgressRollup>();
 
 const adminOverviewCache = new LRU<
   string,
@@ -136,6 +159,92 @@ function ensureAdminTimeIndexBestEffort(): void {
   adminTimeIndexReady.catch(() => undefined);
 }
 
+function rollupProjectIdSql(alias = "events"): string {
+  return `NULLIF(${alias}.project_id, '${NO_PROJECT_ID}'::uuid)`;
+}
+
+function rollupBucketStart(occurred_at?: Date): Date {
+  const at = occurred_at ?? new Date();
+  return new Date(Math.floor(at.getTime() / 60000) * 60000);
+}
+
+function rollupKey({
+  bucket_start,
+  account_id,
+  project_id,
+  category,
+}: {
+  bucket_start: Date;
+  account_id: string;
+  project_id?: string;
+  category: ManagedProjectEgressCategory;
+}): string {
+  return [
+    bucket_start.toISOString(),
+    account_id,
+    `${project_id ?? ""}`.trim() || NO_PROJECT_ID,
+    category,
+  ].join(":");
+}
+
+function mergePendingRollup(entry: PendingManagedEgressRollup): void {
+  const key = rollupKey(entry);
+  const existing = pendingRollups.get(key);
+  if (existing == null) {
+    pendingRollups.set(key, entry);
+    return;
+  }
+  existing.bytes += entry.bytes;
+  existing.event_count += entry.event_count;
+  if (entry.first_occurred_at < existing.first_occurred_at) {
+    existing.first_occurred_at = entry.first_occurred_at;
+  }
+  if (entry.last_occurred_at > existing.last_occurred_at) {
+    existing.last_occurred_at = entry.last_occurred_at;
+  }
+  existing.metadata_sample ??= entry.metadata_sample;
+}
+
+function scheduleManagedEgressRollupFlush(): void {
+  if (rollupFlushTimer != null) return;
+  rollupFlushTimer = setTimeout(() => {
+    rollupFlushTimer = undefined;
+    flushManagedEgressRollups().catch(() => undefined);
+  }, ROLLUP_FLUSH_INTERVAL_MS);
+  rollupFlushTimer.unref?.();
+}
+
+async function flushManagedEgressRollups(): Promise<void> {
+  if (rollupFlushPromise != null) {
+    return await rollupFlushPromise;
+  }
+  if (rollupFlushTimer != null) {
+    clearTimeout(rollupFlushTimer);
+    rollupFlushTimer = undefined;
+  }
+  const batch = [...pendingRollups.values()];
+  pendingRollups.clear();
+  if (batch.length === 0) return;
+  rollupFlushPromise = flushManagedEgressRollupBatch(batch)
+    .catch((err) => {
+      logger.warn("failed to flush managed egress rollups", {
+        count: batch.length,
+        err: `${err}`,
+      });
+      for (const entry of batch) {
+        mergePendingRollup(entry);
+      }
+      scheduleManagedEgressRollupFlush();
+    })
+    .finally(() => {
+      rollupFlushPromise = undefined;
+      if (pendingRollups.size > 0) {
+        scheduleManagedEgressRollupFlush();
+      }
+    });
+  return await rollupFlushPromise;
+}
+
 async function ensureSchema(): Promise<void> {
   if (!ensuredSchema) {
     ensuredSchema = (async () => {
@@ -167,10 +276,139 @@ async function ensureSchema(): Promise<void> {
       await getPool().query(
         `CREATE INDEX IF NOT EXISTS ${TABLE}_account_project_time_idx ON ${TABLE}(account_id, project_id, occurred_at DESC)`,
       );
+      await getPool().query(`
+        CREATE TABLE IF NOT EXISTS ${ROLLUP_TABLE} (
+          bucket_start TIMESTAMPTZ NOT NULL,
+          account_id UUID NOT NULL,
+          project_id UUID NOT NULL DEFAULT '${NO_PROJECT_ID}'::uuid,
+          category TEXT NOT NULL,
+          bytes BIGINT NOT NULL DEFAULT 0,
+          event_count INTEGER NOT NULL DEFAULT 0,
+          first_occurred_at TIMESTAMPTZ NOT NULL,
+          last_occurred_at TIMESTAMPTZ NOT NULL,
+          metadata_sample JSONB,
+          PRIMARY KEY (bucket_start, account_id, project_id, category)
+        )
+      `);
+      await getPool().query(
+        `CREATE INDEX IF NOT EXISTS ${ROLLUP_TABLE}_account_time_idx ON ${ROLLUP_TABLE}(account_id, bucket_start DESC)`,
+      );
+      await getPool().query(
+        `CREATE INDEX IF NOT EXISTS ${ROLLUP_TABLE}_project_time_idx ON ${ROLLUP_TABLE}(project_id, bucket_start DESC)`,
+      );
+      await getPool().query(
+        `CREATE INDEX IF NOT EXISTS ${ROLLUP_TABLE}_category_time_idx ON ${ROLLUP_TABLE}(category, bucket_start DESC)`,
+      );
+      await getPool().query(
+        `CREATE INDEX IF NOT EXISTS ${ROLLUP_TABLE}_time_idx ON ${ROLLUP_TABLE}(bucket_start DESC)`,
+      );
       ensureAdminTimeIndexBestEffort();
     })();
   }
   await ensuredSchema;
+}
+
+async function recordManagedProjectEgressRollup({
+  account_id,
+  project_id,
+  category,
+  bytes,
+  metadata,
+  occurred_at,
+}: {
+  account_id: string;
+  project_id?: string;
+  category: ManagedProjectEgressCategory;
+  bytes: number;
+  metadata?: Record<string, unknown>;
+  occurred_at?: Date;
+}): Promise<void> {
+  const bucket_start = rollupBucketStart(occurred_at);
+  const eventTime = occurred_at ?? new Date();
+  mergePendingRollup({
+    bucket_start,
+    account_id,
+    project_id: `${project_id ?? ""}`.trim() || undefined,
+    category,
+    bytes,
+    event_count: 1,
+    first_occurred_at: eventTime,
+    last_occurred_at: eventTime,
+    metadata_sample: metadata,
+  });
+  if (pendingRollups.size >= ROLLUP_FLUSH_MAX_PENDING) {
+    await flushManagedEgressRollups();
+  } else {
+    scheduleManagedEgressRollupFlush();
+  }
+}
+
+async function flushManagedEgressRollupBatch(
+  batch: PendingManagedEgressRollup[],
+): Promise<void> {
+  await getPool("medium").query(
+    `
+      WITH input AS (
+        SELECT *
+        FROM jsonb_to_recordset($1::jsonb) AS entry(
+          bucket_start timestamptz,
+          account_id uuid,
+          project_id uuid,
+          category text,
+          bytes bigint,
+          event_count integer,
+          first_occurred_at timestamptz,
+          last_occurred_at timestamptz,
+          metadata_sample jsonb
+        )
+      )
+      INSERT INTO ${ROLLUP_TABLE}
+        (
+          bucket_start,
+          account_id,
+          project_id,
+          category,
+          bytes,
+          event_count,
+          first_occurred_at,
+          last_occurred_at,
+          metadata_sample
+        )
+      SELECT
+        bucket_start,
+        account_id,
+        COALESCE(project_id, '${NO_PROJECT_ID}'::uuid),
+        category,
+        bytes,
+        event_count,
+        first_occurred_at,
+        last_occurred_at,
+        metadata_sample
+      FROM input
+      ON CONFLICT (bucket_start, account_id, project_id, category)
+      DO UPDATE SET
+        bytes = ${ROLLUP_TABLE}.bytes + EXCLUDED.bytes,
+        event_count = ${ROLLUP_TABLE}.event_count + EXCLUDED.event_count,
+        first_occurred_at = LEAST(${ROLLUP_TABLE}.first_occurred_at, EXCLUDED.first_occurred_at),
+        last_occurred_at = GREATEST(${ROLLUP_TABLE}.last_occurred_at, EXCLUDED.last_occurred_at),
+        metadata_sample = COALESCE(${ROLLUP_TABLE}.metadata_sample, EXCLUDED.metadata_sample)
+    `,
+    [
+      JSON.stringify(
+        batch.map((entry) => ({
+          bucket_start: entry.bucket_start.toISOString(),
+          account_id: entry.account_id,
+          project_id: entry.project_id ?? null,
+          category: entry.category,
+          bytes: entry.bytes,
+          event_count: entry.event_count,
+          first_occurred_at: entry.first_occurred_at.toISOString(),
+          last_occurred_at: entry.last_occurred_at.toISOString(),
+          metadata_sample: entry.metadata_sample ?? null,
+        })),
+      ),
+    ],
+  );
 }
 
 export async function recordManagedProjectEgress(opts: {
@@ -194,26 +432,20 @@ export async function recordManagedProjectEgress(opts: {
   if (!account_id) {
     return { recorded: false };
   }
-  await ensureAccountUsageWindowsForEvent({
+  if (!QUOTA_EXCLUDED_CATEGORIES.has(opts.category)) {
+    await ensureAccountUsageWindowsForEvent({
+      account_id,
+      occurred_at: opts.occurred_at,
+    });
+  }
+  await recordManagedProjectEgressRollup({
     account_id,
+    project_id: opts.project_id,
+    category: opts.category,
+    bytes,
+    metadata: opts.metadata,
     occurred_at: opts.occurred_at,
   });
-  await getPool("medium").query(
-    `
-      INSERT INTO ${TABLE}
-        (id, account_id, project_id, category, bytes, metadata, occurred_at)
-      VALUES
-        (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, COALESCE($6, now()))
-    `,
-    [
-      account_id,
-      `${opts.project_id ?? ""}`.trim() || null,
-      opts.category,
-      bytes,
-      opts.metadata ?? null,
-      opts.occurred_at ?? null,
-    ],
-  );
   return { recorded: true, account_id };
 }
 
@@ -240,8 +472,8 @@ export async function getManagedEgressUsageForAccount(opts: {
           SUM(
             CASE
               WHEN $2::timestamptz IS NOT NULL
-               AND occurred_at >= $2::timestamptz
-               AND occurred_at < $3::timestamptz THEN bytes
+               AND bucket_start >= $2::timestamptz
+               AND bucket_start < $3::timestamptz THEN bytes
               ELSE 0
             END
           ),
@@ -251,18 +483,19 @@ export async function getManagedEgressUsageForAccount(opts: {
           SUM(
             CASE
               WHEN $4::timestamptz IS NOT NULL
-               AND occurred_at >= $4::timestamptz
-               AND occurred_at < $5::timestamptz THEN bytes
+               AND bucket_start >= $4::timestamptz
+               AND bucket_start < $5::timestamptz THEN bytes
               ELSE 0
             END
           ),
           0
         ) AS bytes_7d
-      FROM ${TABLE}
+      FROM ${ROLLUP_TABLE}
       WHERE account_id = $1
+        AND category <> ALL($6::text[])
         AND (
-          ($2::timestamptz IS NOT NULL AND occurred_at >= $2::timestamptz AND occurred_at < $3::timestamptz)
-          OR ($4::timestamptz IS NOT NULL AND occurred_at >= $4::timestamptz AND occurred_at < $5::timestamptz)
+          ($2::timestamptz IS NOT NULL AND bucket_start >= $2::timestamptz AND bucket_start < $3::timestamptz)
+          OR ($4::timestamptz IS NOT NULL AND bucket_start >= $4::timestamptz AND bucket_start < $5::timestamptz)
         )
       GROUP BY category
       ORDER BY category
@@ -273,6 +506,7 @@ export async function getManagedEgressUsageForAccount(opts: {
       window5h?.resets_at ?? null,
       window7d?.starts_at ?? null,
       window7d?.resets_at ?? null,
+      [...QUOTA_EXCLUDED_CATEGORIES],
     ],
   );
 
@@ -359,7 +593,9 @@ export async function getRecentManagedEgressEventsForAccount(opts: {
     typeof opts.limit === "number" && Number.isFinite(opts.limit)
       ? Math.max(1, Math.min(50, Math.floor(opts.limit)))
       : 20;
-  const params: Array<string | number | Date | null> = [opts.account_id];
+  const params: Array<string | number | Date | string[] | null> = [
+    opts.account_id,
+  ];
   const where: string[] = ["events.account_id = $1"];
   if (`${opts.project_id ?? ""}`.trim()) {
     params.push(`${opts.project_id}`.trim());
@@ -368,28 +604,30 @@ export async function getRecentManagedEgressEventsForAccount(opts: {
   const start = parseOptionalTimestamp(opts.start);
   if (start) {
     params.push(start);
-    where.push(`events.occurred_at >= $${params.length}`);
+    where.push(`events.bucket_start >= $${params.length}`);
   }
   const end = parseOptionalTimestamp(opts.end);
   if (end) {
     params.push(end);
-    where.push(`events.occurred_at < $${params.length}`);
+    where.push(`events.bucket_start < $${params.length}`);
   }
+  params.push([...QUOTA_EXCLUDED_CATEGORIES]);
+  where.push(`events.category <> ALL($${params.length}::text[])`);
   params.push(limit);
   const { rows } = await getPool("medium").query<RawManagedEgressEventRow>(
     `
       SELECT
         events.account_id,
-        events.project_id,
+        ${rollupProjectIdSql("events")} AS project_id,
         projects.title AS project_title,
         events.category,
         events.bytes,
-        events.occurred_at,
-        events.metadata
-      FROM ${TABLE} AS events
-      LEFT JOIN projects ON projects.project_id = events.project_id
+        events.last_occurred_at AS occurred_at,
+        events.metadata_sample AS metadata
+      FROM ${ROLLUP_TABLE} AS events
+      LEFT JOIN projects ON projects.project_id = ${rollupProjectIdSql("events")}
       WHERE ${where.join(" AND ")}
-      ORDER BY events.occurred_at DESC, events.id DESC
+      ORDER BY events.last_occurred_at DESC, events.bucket_start DESC
       LIMIT $${params.length}
     `,
     params,
@@ -430,8 +668,13 @@ async function getManagedEgressAdminOverviewBase(
 async function getManagedEgressAdminOverviewBaseUncached(
   query: ReturnType<typeof normalizeOverviewQuery>,
 ): Promise<ManagedEgressAdminOverviewBase> {
-  const whereSql = "events.occurred_at >= $1 AND events.occurred_at < $2";
-  const params: Array<Date> = [query.startDate, query.endDate];
+  const whereSql =
+    "events.bucket_start >= $1 AND events.bucket_start < $2 AND events.category <> ALL($3::text[])";
+  const params: Array<Date | string[]> = [
+    query.startDate,
+    query.endDate,
+    [...QUOTA_EXCLUDED_CATEGORIES],
+  ];
 
   const [
     categoryRowsResult,
@@ -445,7 +688,7 @@ async function getManagedEgressAdminOverviewBaseUncached(
     }>(
       `
         SELECT events.category, COALESCE(SUM(events.bytes), 0) AS bytes
-        FROM ${TABLE} AS events
+        FROM ${ROLLUP_TABLE} AS events
         WHERE ${whereSql}
         GROUP BY events.category
         ORDER BY events.category
@@ -470,7 +713,7 @@ async function getManagedEgressAdminOverviewBaseUncached(
           accounts.last_name,
           accounts.banned,
           COALESCE(SUM(events.bytes), 0) AS bytes
-        FROM ${TABLE} AS events
+        FROM ${ROLLUP_TABLE} AS events
         LEFT JOIN accounts ON accounts.account_id = events.account_id
         WHERE ${whereSql}
         GROUP BY
@@ -504,12 +747,12 @@ async function getManagedEgressAdminOverviewBaseUncached(
           accounts.first_name,
           accounts.last_name,
           accounts.banned,
-          events.project_id,
+          ${rollupProjectIdSql("events")} AS project_id,
           projects.title AS project_title,
           COALESCE(SUM(events.bytes), 0) AS bytes
-        FROM ${TABLE} AS events
+        FROM ${ROLLUP_TABLE} AS events
         LEFT JOIN accounts ON accounts.account_id = events.account_id
-        LEFT JOIN projects ON projects.project_id = events.project_id
+        LEFT JOIN projects ON projects.project_id = ${rollupProjectIdSql("events")}
         WHERE ${whereSql}
         GROUP BY
           events.account_id,
@@ -520,7 +763,7 @@ async function getManagedEgressAdminOverviewBaseUncached(
           accounts.banned,
           events.project_id,
           projects.title
-        ORDER BY bytes DESC, projects.title ASC NULLS LAST, events.project_id ASC NULLS LAST
+        ORDER BY bytes DESC, projects.title ASC NULLS LAST, project_id ASC NULLS LAST
         LIMIT ${Math.max(1, Math.min(query.top_project_limit, 50))}
       `,
       params,
@@ -529,16 +772,16 @@ async function getManagedEgressAdminOverviewBaseUncached(
       `
         SELECT
           events.account_id,
-          events.project_id,
+          ${rollupProjectIdSql("events")} AS project_id,
           projects.title AS project_title,
           events.category,
           events.bytes,
-          events.occurred_at,
-          events.metadata
-        FROM ${TABLE} AS events
-        LEFT JOIN projects ON projects.project_id = events.project_id
+          events.last_occurred_at AS occurred_at,
+          events.metadata_sample AS metadata
+        FROM ${ROLLUP_TABLE} AS events
+        LEFT JOIN projects ON projects.project_id = ${rollupProjectIdSql("events")}
         WHERE ${whereSql}
-        ORDER BY events.occurred_at DESC, events.id DESC
+        ORDER BY events.last_occurred_at DESC, events.bucket_start DESC
         LIMIT ${Math.max(1, Math.min(query.recent_event_limit, 100))}
       `,
       params,
@@ -640,9 +883,14 @@ export async function getManagedEgressAdminHistory(opts: {
 }): Promise<ManagedEgressAdminHistory> {
   await ensureSchema();
   const query = normalizeAdminHistoryQuery(opts);
-  const whereSql = "events.occurred_at >= $1 AND events.occurred_at < $2";
-  const params: Array<Date> = [query.startDate, query.endDate];
-  const bucketExpr = getBucketSql(query.bucket);
+  const whereSql =
+    "events.bucket_start >= $1 AND events.bucket_start < $2 AND events.category <> ALL($3::text[])";
+  const params: Array<Date | string[]> = [
+    query.startDate,
+    query.endDate,
+    [...QUOTA_EXCLUDED_CATEGORIES],
+  ];
+  const bucketExpr = getBucketSql(query.bucket, "events.bucket_start");
 
   const [
     categoryRowsResult,
@@ -657,7 +905,7 @@ export async function getManagedEgressAdminHistory(opts: {
     }>(
       `
         SELECT events.category, COALESCE(SUM(events.bytes), 0) AS bytes
-        FROM ${TABLE} AS events
+        FROM ${ROLLUP_TABLE} AS events
         WHERE ${whereSql}
         GROUP BY events.category
         ORDER BY events.category
@@ -674,7 +922,7 @@ export async function getManagedEgressAdminHistory(opts: {
           ${bucketExpr} AS bucket_start,
           events.category,
           COALESCE(SUM(events.bytes), 0) AS bytes
-        FROM ${TABLE} AS events
+        FROM ${ROLLUP_TABLE} AS events
         WHERE ${whereSql}
         GROUP BY bucket_start, events.category
         ORDER BY bucket_start ASC, events.category ASC
@@ -699,7 +947,7 @@ export async function getManagedEgressAdminHistory(opts: {
           accounts.last_name,
           accounts.banned,
           COALESCE(SUM(events.bytes), 0) AS bytes
-        FROM ${TABLE} AS events
+        FROM ${ROLLUP_TABLE} AS events
         LEFT JOIN accounts ON accounts.account_id = events.account_id
         WHERE ${whereSql}
         GROUP BY
@@ -733,12 +981,12 @@ export async function getManagedEgressAdminHistory(opts: {
           accounts.first_name,
           accounts.last_name,
           accounts.banned,
-          events.project_id,
+          ${rollupProjectIdSql("events")} AS project_id,
           projects.title AS project_title,
           COALESCE(SUM(events.bytes), 0) AS bytes
-        FROM ${TABLE} AS events
+        FROM ${ROLLUP_TABLE} AS events
         LEFT JOIN accounts ON accounts.account_id = events.account_id
-        LEFT JOIN projects ON projects.project_id = events.project_id
+        LEFT JOIN projects ON projects.project_id = ${rollupProjectIdSql("events")}
         WHERE ${whereSql}
         GROUP BY
           events.account_id,
@@ -749,7 +997,7 @@ export async function getManagedEgressAdminHistory(opts: {
           accounts.banned,
           events.project_id,
           projects.title
-        ORDER BY bytes DESC, projects.title ASC NULLS LAST, events.project_id ASC NULLS LAST
+        ORDER BY bytes DESC, projects.title ASC NULLS LAST, project_id ASC NULLS LAST
         LIMIT ${Math.max(1, Math.min(query.top_project_limit, 50))}
       `,
       params,
@@ -758,16 +1006,16 @@ export async function getManagedEgressAdminHistory(opts: {
       `
         SELECT
           events.account_id,
-          events.project_id,
+          ${rollupProjectIdSql("events")} AS project_id,
           projects.title AS project_title,
           events.category,
           events.bytes,
-          events.occurred_at,
-          events.metadata
-        FROM ${TABLE} AS events
-        LEFT JOIN projects ON projects.project_id = events.project_id
+          events.last_occurred_at AS occurred_at,
+          events.metadata_sample AS metadata
+        FROM ${ROLLUP_TABLE} AS events
+        LEFT JOIN projects ON projects.project_id = ${rollupProjectIdSql("events")}
         WHERE ${whereSql}
-        ORDER BY events.occurred_at DESC, events.id DESC
+        ORDER BY events.last_occurred_at DESC, events.bucket_start DESC
         LIMIT ${Math.max(1, Math.min(query.recent_event_limit, 100))}
       `,
       params,
@@ -869,10 +1117,10 @@ export async function getManagedEgressHistoryForAccount(opts: {
   const query = normalizeHistoryQuery(opts);
   const where: string[] = [
     "events.account_id = $1",
-    "events.occurred_at >= $2",
-    "events.occurred_at < $3",
+    "events.bucket_start >= $2",
+    "events.bucket_start < $3",
   ];
-  const params: Array<string | Date> = [
+  const params: Array<string | Date | string[]> = [
     opts.account_id,
     query.startDate,
     query.endDate,
@@ -881,8 +1129,10 @@ export async function getManagedEgressHistoryForAccount(opts: {
     params.push(query.project_id);
     where.push(`events.project_id = $${params.length}`);
   }
+  params.push([...QUOTA_EXCLUDED_CATEGORIES]);
+  where.push(`events.category <> ALL($${params.length}::text[])`);
   const whereSql = where.join(" AND ");
-  const bucketExpr = getBucketSql(query.bucket);
+  const bucketExpr = getBucketSql(query.bucket, "events.bucket_start");
 
   const [
     categoryRowsResult,
@@ -896,7 +1146,7 @@ export async function getManagedEgressHistoryForAccount(opts: {
     }>(
       `
           SELECT events.category, COALESCE(SUM(events.bytes), 0) AS bytes
-          FROM ${TABLE} AS events
+          FROM ${ROLLUP_TABLE} AS events
           WHERE ${whereSql}
           GROUP BY events.category
           ORDER BY events.category
@@ -913,7 +1163,7 @@ export async function getManagedEgressHistoryForAccount(opts: {
             ${bucketExpr} AS bucket_start,
             events.category,
             COALESCE(SUM(events.bytes), 0) AS bytes
-          FROM ${TABLE} AS events
+          FROM ${ROLLUP_TABLE} AS events
           WHERE ${whereSql}
           GROUP BY bucket_start, events.category
           ORDER BY bucket_start ASC, events.category ASC
@@ -927,14 +1177,14 @@ export async function getManagedEgressHistoryForAccount(opts: {
     }>(
       `
           SELECT
-            events.project_id,
+            ${rollupProjectIdSql("events")} AS project_id,
             projects.title AS project_title,
             COALESCE(SUM(events.bytes), 0) AS bytes
-          FROM ${TABLE} AS events
-          LEFT JOIN projects ON projects.project_id = events.project_id
+          FROM ${ROLLUP_TABLE} AS events
+          LEFT JOIN projects ON projects.project_id = ${rollupProjectIdSql("events")}
           WHERE ${whereSql}
           GROUP BY events.project_id, projects.title
-          ORDER BY bytes DESC, events.project_id ASC NULLS LAST
+          ORDER BY bytes DESC, project_id ASC NULLS LAST
           LIMIT ${Math.max(1, Math.min(query.top_project_limit, 50))}
         `,
       params,
@@ -1248,14 +1498,17 @@ function getBucketMs(bucket: ManagedEgressHistoryBucketSize): number {
   }
 }
 
-function getBucketSql(bucket: ManagedEgressHistoryBucketSize): string {
+function getBucketSql(
+  bucket: ManagedEgressHistoryBucketSize,
+  column = "events.occurred_at",
+): string {
   switch (bucket) {
     case "5m":
-      return "to_timestamp(floor(extract(epoch from events.occurred_at) / 300) * 300)";
+      return `to_timestamp(floor(extract(epoch from ${column}) / 300) * 300)`;
     case "1h":
-      return "to_timestamp(floor(extract(epoch from events.occurred_at) / 3600) * 3600)";
+      return `to_timestamp(floor(extract(epoch from ${column}) / 3600) * 3600)`;
     case "1d":
-      return "date_trunc('day', events.occurred_at)";
+      return `date_trunc('day', ${column})`;
   }
 }
 
