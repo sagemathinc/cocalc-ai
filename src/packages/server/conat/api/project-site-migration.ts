@@ -18,6 +18,7 @@ import {
 } from "@cocalc/server/project-backup";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { setProjectEntitlementOverrideLocal } from "@cocalc/server/membership/project-entitlement-overrides";
+import { deleteProjectDataOnHost } from "@cocalc/server/project-host/control";
 import { setProjectLabels } from "@cocalc/server/projects/labels";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
@@ -485,6 +486,23 @@ async function markDestinationProjectArchivedForMigration({
   });
 }
 
+async function deleteDestinationProjectHostDataForMigration({
+  project_id,
+  host_id,
+}: {
+  project_id: string;
+  host_id: string | null | undefined;
+}): Promise<void> {
+  const normalizedHostId = `${host_id ?? ""}`.trim();
+  if (!normalizedHostId) {
+    return;
+  }
+  await deleteProjectDataOnHost({
+    project_id,
+    host_id: normalizedHostId,
+  });
+}
+
 function normalizeMigrationTags({
   tags,
   source_site,
@@ -856,7 +874,8 @@ export async function finalizeIncomingProjectBackupMigration({
   }
   const { rows } = await getPool().query<{
     backup_repo_id: string | null;
-  }>("SELECT backup_repo_id FROM projects WHERE project_id=$1", [
+    host_id: string | null;
+  }>("SELECT backup_repo_id, host_id FROM projects WHERE project_id=$1", [
     destination_project_id,
   ]);
   if (!rows[0]) {
@@ -909,6 +928,10 @@ export async function finalizeIncomingProjectBackupMigration({
           : null,
     });
   }
+  await deleteDestinationProjectHostDataForMigration({
+    project_id: destination_project_id,
+    host_id: rows[0].host_id,
+  });
   if (restore) {
     warnings.push(
       "restore after finalize is not implemented yet; migration was finalized archive-only",

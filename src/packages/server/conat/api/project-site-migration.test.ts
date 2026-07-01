@@ -16,6 +16,7 @@ let triggerBackupLroWorkerMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let getConfiguredBayIdMock: jest.Mock;
 let stopProjectMock: jest.Mock;
+let deleteProjectDataOnHostMock: jest.Mock;
 let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 
@@ -107,6 +108,12 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   })),
 }));
 
+jest.mock("@cocalc/server/project-host/control", () => ({
+  __esModule: true,
+  deleteProjectDataOnHost: (...args: any[]) =>
+    deleteProjectDataOnHostMock(...args),
+}));
+
 describe("project site migration destination RPCs", () => {
   const ADMIN_ID = "11111111-1111-4111-8111-111111111111";
   const OWNER_ID = "22222222-2222-4222-8222-222222222222";
@@ -182,6 +189,7 @@ describe("project site migration destination RPCs", () => {
     }));
     getConfiguredBayIdMock = jest.fn(() => "alpha-bay");
     stopProjectMock = jest.fn(async () => undefined);
+    deleteProjectDataOnHostMock = jest.fn(async () => undefined);
     queryMock = jest.fn(async (sql: string) => {
       if (sql.trim().startsWith("UPDATE projects")) {
         return { rows: [], rowCount: 1 };
@@ -203,8 +211,15 @@ describe("project site migration destination RPCs", () => {
       if (sql.includes("SELECT region FROM projects")) {
         return { rows: [{ region: "WNAM" }] };
       }
-      if (sql.includes("SELECT backup_repo_id FROM projects")) {
-        return { rows: [{ backup_repo_id: BACKUP_REPO_ID }] };
+      if (sql.includes("SELECT backup_repo_id")) {
+        return {
+          rows: [
+            {
+              backup_repo_id: BACKUP_REPO_ID,
+              host_id: "host-1",
+            },
+          ],
+        };
       }
       if (sql.includes("FROM project_site_migrations")) {
         return { rows: [migrationRow] };
@@ -474,6 +489,10 @@ describe("project site migration destination RPCs", () => {
       sqlite_bytes: 123,
       object_bytes: 45,
       sha256: "abc",
+    });
+    expect(deleteProjectDataOnHostMock).toHaveBeenCalledWith({
+      project_id: DESTINATION_PROJECT_ID,
+      host_id: "host-1",
     });
     expect(result).toEqual({
       migration_id: MIGRATION_ID,
