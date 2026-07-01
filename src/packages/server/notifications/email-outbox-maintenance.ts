@@ -20,7 +20,8 @@ import type { Message } from "@cocalc/server/email/message";
 import { checkNotificationEmailSendLimitForAccount } from "@cocalc/server/membership/notification-email-limits";
 import {
   escapeNotificationEmailHtml,
-  normalizeNotificationEmailText,
+  renderNotificationEmailMarkdownHtml,
+  renderNotificationEmailMarkdownText,
 } from "./email-format";
 
 const logger = getLogger("server:notifications:email-outbox");
@@ -82,13 +83,14 @@ function firstNonEmpty(...values: unknown[]): string {
 function notificationBodyText(row: NotificationEmailOutboxRow): string {
   const summary = row.summary_json?.summary ?? {};
   const eventPayload = row.summary_json?.event_payload ?? {};
-  const body = normalizeNotificationEmailText(
-    firstNonEmpty(
-      summary.body_markdown,
-      eventPayload.body_markdown,
-      summary.description,
-      eventPayload.description,
-    ),
+  const bodyMarkdown = firstNonEmpty(
+    summary.body_markdown,
+    eventPayload.body_markdown,
+    summary.description,
+    eventPayload.description,
+  );
+  const body = renderNotificationEmailMarkdownText(
+    bodyMarkdown || "You have a CoCalc notification.",
   );
   const path = firstNonEmpty(
     summary.display_path,
@@ -96,6 +98,30 @@ function notificationBodyText(row: NotificationEmailOutboxRow): string {
     row.summary_json?.source_path,
   );
   return [body, path ? `Path: ${path}` : ""].filter(Boolean).join("\n\n");
+}
+
+function notificationBodyHtml(row: NotificationEmailOutboxRow): string {
+  const summary = row.summary_json?.summary ?? {};
+  const eventPayload = row.summary_json?.event_payload ?? {};
+  const bodyMarkdown = firstNonEmpty(
+    summary.body_markdown,
+    eventPayload.body_markdown,
+    summary.description,
+    eventPayload.description,
+  );
+  return renderNotificationEmailMarkdownHtml(
+    bodyMarkdown || "You have a CoCalc notification.",
+  );
+}
+
+function notificationPathText(row: NotificationEmailOutboxRow): string {
+  const summary = row.summary_json?.summary ?? {};
+  const path = firstNonEmpty(
+    summary.display_path,
+    summary.path,
+    row.summary_json?.source_path,
+  );
+  return path ? `Path: ${path}` : "";
 }
 
 function requireHelpEmail(help_email: string | undefined | null): string {
@@ -113,13 +139,16 @@ async function buildMessage(row: NotificationEmailOutboxRow): Promise<Message> {
   const from = requireHelpEmail(help_email);
   const notificationsUrl = await siteUrl("notifications");
   const body = notificationBodyText(row);
+  const bodyHtml = notificationBodyHtml(row);
+  const path = notificationPathText(row);
   const text = [
     body || "You have a CoCalc notification.",
     "",
     `Open notifications: ${notificationsUrl}`,
   ].join("\n");
   const html = `
-<p>${escapeNotificationEmailHtml(body || "You have a CoCalc notification.")}</p>
+${bodyHtml}
+${path ? `<p>${escapeNotificationEmailHtml(path)}</p>` : ""}
 <p><a href="${escapeNotificationEmailHtml(notificationsUrl)}">Open notifications in ${escapeNotificationEmailHtml(
     site_name,
   )}</a>.</p>
@@ -147,6 +176,7 @@ async function buildDigestMessage(
   const items = rows.map((row) => ({
     subject: row.subject,
     body: notificationBodyText(row),
+    bodyHtml: notificationBodyHtml(row),
   }));
   const count = items.length;
   const subject = `Daily ${site_name} notification digest (${count})`;
@@ -163,9 +193,9 @@ async function buildDigestMessage(
   ].join("\n");
   const htmlItems = items
     .map(
-      ({ subject, body }) =>
+      ({ subject, bodyHtml }) =>
         `<li><strong>${escapeNotificationEmailHtml(subject)}</strong>${
-          body ? `<p>${escapeNotificationEmailHtml(body)}</p>` : ""
+          bodyHtml ? `<div>${bodyHtml}</div>` : ""
         }</li>`,
     )
     .join("");

@@ -6,6 +6,8 @@
 import {
   escapeNotificationEmailHtml,
   normalizeNotificationEmailText,
+  renderNotificationEmailMarkdownHtml,
+  renderNotificationEmailMarkdownText,
 } from "./email-format";
 
 describe("notification email formatting", () => {
@@ -31,5 +33,38 @@ describe("notification email formatting", () => {
     expect(escapeNotificationEmailHtml(text)).toBe(
       "Use &lt;b&gt;bold&lt;/b&gt; literally.",
     );
+  });
+
+  it("renders markdown email bodies as HTML instead of escaped markdown", () => {
+    const html = renderNotificationEmailMarkdownHtml(
+      [
+        "Dear User,",
+        "<br/>",
+        "## Statement",
+        "",
+        "- **NO PAYMENT IS REQUIRED.**",
+        "",
+        "| Id | Amount |",
+        "| :-- | -----: |",
+        "| 1 | $10.00 |",
+        "",
+        "[Open statements](https://cocalc.test/settings/statements)",
+      ].join("\n"),
+    );
+
+    expect(html).toContain("<h2>Statement</h2>");
+    expect(html).toContain("<strong>NO PAYMENT IS REQUIRED.</strong>");
+    expect(html).toContain("<table>");
+    expect(html).toContain(
+      '<a href="https://cocalc.test/settings/statements">Open statements</a>',
+    );
+    expect(html).not.toContain("&lt;br");
+    expect(html).not.toContain("**NO PAYMENT");
+  });
+
+  it("renders markdown email bodies as readable plaintext", () => {
+    expect(
+      renderNotificationEmailMarkdownText("**NO PAYMENT IS REQUIRED.**"),
+    ).toBe("NO PAYMENT IS REQUIRED.");
   });
 });
