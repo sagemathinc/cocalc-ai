@@ -24,6 +24,7 @@ environments.
 import { callback2, until } from "@cocalc/util/async-utils";
 import { db } from "@cocalc/database";
 import { EventEmitter } from "events";
+import { setTimeout as delay } from "timers/promises";
 import { isEqual } from "lodash";
 import { ProjectState, ProjectStatus } from "@cocalc/util/db-schema/projects";
 import { Quota, quota } from "@cocalc/util/upgrades/quota";
@@ -76,8 +77,18 @@ export type Action = "open" | "start" | "stop" | "restart";
 const projectCache: { [project_id: string]: WeakRef<BaseProject> } = {};
 const ROOTFS_SEAL_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const FILE_SERVER_READY_TIMEOUT_MS = 60_000;
+const DEFAULT_PROJECT_RESTART_SETTLE_MS = 1500;
 const DISABLE_ROOTFS_PORTABILITY_SEAL_ENV =
   "COCALC_DISABLE_ROOTFS_PORTABILITY_SEAL";
+const PROJECT_RESTART_SETTLE_MS_ENV = "COCALC_PROJECT_RESTART_SETTLE_MS";
+
+function getProjectRestartSettleMs(): number {
+  const configured = Number(process.env[PROJECT_RESTART_SETTLE_MS_ENV]);
+  if (Number.isFinite(configured) && configured >= 0) {
+    return configured;
+  }
+  return DEFAULT_PROJECT_RESTART_SETTLE_MS;
+}
 
 function isActiveProjectState(state?: string | null): boolean {
   return state === "running" || state === "starting" || state === "pending";
@@ -419,6 +430,14 @@ export class BaseProject extends EventEmitter {
   }): Promise<void> => {
     this.dbg("restart")();
     await this.stop();
+    const settleMs = getProjectRestartSettleMs();
+    if (settleMs > 0) {
+      logger.debug("restart settling after stop", {
+        project_id: this.project_id,
+        settle_ms: settleMs,
+      });
+      await delay(settleMs);
+    }
     await this.start(opts);
   };
 
