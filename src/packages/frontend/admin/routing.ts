@@ -9,6 +9,7 @@ export type AdminSection =
   | "bay-ops"
   | "managed-cpu"
   | "managed-egress"
+  | "membership-analytics"
   | "membership-tiers"
   | "project-backup-shards"
   | "retention"
@@ -29,6 +30,7 @@ const ADMIN_SECTIONS = new Set<AdminSection>([
   "bay-ops",
   "managed-cpu",
   "managed-egress",
+  "membership-analytics",
   "membership-tiers",
   "project-backup-shards",
   "retention",

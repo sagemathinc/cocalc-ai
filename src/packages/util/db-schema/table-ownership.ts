@@ -109,6 +109,22 @@ export const TABLE_OWNERSHIP = {
       "Account-home admin membership assignment. The assigned_by field is only an admin actor reference. Admin UI reads/writes route to the target account home bay, and account rehome copies this table.",
   }),
 
+  ...entries(["membership_analytics_events"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    notes:
+      "Bay-local immutable membership analytics event ledger. Rows are written alongside account-home billing and membership lifecycle actions and are aggregated across bays for admin analytics.",
+  }),
+
+  ...entries(["membership_analytics_daily_counts"], {
+    ownership: "projection",
+    authority: "local",
+    portability: "rebuildable",
+    notes:
+      "Bay-local daily membership count snapshots. These are derived from account-home membership state and aggregated across bays for admin analytics.",
+  }),
+
   ...entries(["purchases"], {
     ownership: "account-home",
     authority: "account_id",

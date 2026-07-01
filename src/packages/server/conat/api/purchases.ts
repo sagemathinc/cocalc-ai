@@ -52,6 +52,16 @@ import type {
   MembershipTierUsageReport,
   MembershipClass,
   MembershipUsageWindowResetTarget,
+  MembershipAnalyticsBackfillOverview,
+  MembershipAnalyticsBackfillQuery,
+  MembershipAnalyticsBackfillResult,
+  MembershipAnalyticsEventRow,
+  MembershipAnalyticsEventsQuery,
+  MembershipAnalyticsEventSummaryRow,
+  MembershipAnalyticsOverview,
+  MembershipAnalyticsOverviewBay,
+  MembershipAnalyticsOverviewQuery,
+  MembershipAnalyticsRevenueRow,
 } from "@cocalc/conat/hub/api/purchases";
 import {
   resolveMembershipDetailsForAccount,
@@ -126,6 +136,11 @@ import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
+import {
+  backfillMembershipAnalyticsPurchaseEvents,
+  getMembershipAnalyticsEventsLocal,
+  getMembershipAnalyticsOverviewLocal,
+} from "@cocalc/server/membership/analytics";
 import type {
   MembershipPackageDetails,
   SiteLicenseAffiliationReverificationSeat,
@@ -320,6 +335,119 @@ function aggregateMembershipTierUsageReports(
   return { countsByTier, totalActiveAccountCount };
 }
 
+function analyticsRange(query: MembershipAnalyticsOverviewQuery = {}): {
+  start: Date;
+  end: Date;
+} {
+  const end = query.end == null ? new Date() : new Date(query.end);
+  const start =
+    query.start == null
+      ? new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000)
+      : new Date(query.start);
+  return { start, end };
+}
+
+function numberValue(value: unknown): number {
+  return Number(value ?? 0) || 0;
+}
+
+function dateKey(value: Date | string): string {
+  return new Date(value).toISOString().slice(0, 10);
+}
+
+function aggregateMembershipAnalyticsOverviews(
+  reports: Array<
+    Omit<MembershipAnalyticsOverview, "current_bay_id" | "seed_bay_id" | "bays">
+  >,
+): Pick<MembershipAnalyticsOverview, "revenue" | "events" | "daily_counts"> {
+  const revenueByKey = new Map<string, MembershipAnalyticsRevenueRow>();
+  const eventsByKey = new Map<string, MembershipAnalyticsEventSummaryRow>();
+  const countsByKey = new Map<
+    string,
+    MembershipAnalyticsOverview["daily_counts"][number]
+  >();
+
+  for (const report of reports) {
+    for (const row of report.revenue) {
+      const membership_class = `${row.membership_class ?? "unknown"}`;
+      const interval = row.interval ?? "none";
+      const key = `${membership_class}\0${interval}`;
+      const aggregate =
+        revenueByKey.get(key) ??
+        ({
+          membership_class,
+          interval,
+          gross_revenue: 0,
+          purchase_count: 0,
+        } satisfies MembershipAnalyticsRevenueRow);
+      aggregate.gross_revenue += numberValue(row.gross_revenue);
+      aggregate.purchase_count += numberValue(row.purchase_count);
+      revenueByKey.set(key, aggregate);
+    }
+    for (const row of report.events) {
+      const day = dateKey(row.day);
+      const key = `${day}\0${row.event_type}`;
+      const aggregate =
+        eventsByKey.get(key) ??
+        ({
+          day,
+          event_type: row.event_type,
+          count: 0,
+          amount: 0,
+        } satisfies MembershipAnalyticsEventSummaryRow);
+      aggregate.count += numberValue(row.count);
+      aggregate.amount += numberValue(row.amount);
+      eventsByKey.set(key, aggregate);
+    }
+    for (const row of report.daily_counts) {
+      const snapshot_date = dateKey(row.snapshot_date);
+      const key = [
+        snapshot_date,
+        row.membership_class,
+        row.source,
+        row.interval,
+        row.trial_status,
+      ].join("\0");
+      const aggregate =
+        countsByKey.get(key) ??
+        ({
+          snapshot_date,
+          bay_id: "all",
+          membership_class: row.membership_class,
+          source: row.source,
+          interval: row.interval,
+          trial_status: row.trial_status,
+          active_account_count: 0,
+          subscription_count: 0,
+        } satisfies MembershipAnalyticsOverview["daily_counts"][number]);
+      aggregate.active_account_count += numberValue(row.active_account_count);
+      aggregate.subscription_count += numberValue(row.subscription_count);
+      countsByKey.set(key, aggregate);
+    }
+  }
+
+  return {
+    revenue: [...revenueByKey.values()].sort(
+      (a, b) =>
+        a.membership_class.localeCompare(b.membership_class) ||
+        a.interval.localeCompare(b.interval),
+    ),
+    events: [...eventsByKey.values()].sort(
+      (a, b) =>
+        `${a.day}`.localeCompare(`${b.day}`) ||
+        a.event_type.localeCompare(b.event_type),
+    ),
+    daily_counts: [...countsByKey.values()].sort(
+      (a, b) =>
+        `${a.snapshot_date}`.localeCompare(`${b.snapshot_date}`) ||
+        a.membership_class.localeCompare(b.membership_class) ||
+        a.source.localeCompare(b.source) ||
+        a.interval.localeCompare(b.interval) ||
+        a.trial_status.localeCompare(b.trial_status),
+    ),
+  };
+}
+
 async function getMembershipTierUsageReportForBay({
   account_id,
   bay_id,
@@ -334,6 +462,62 @@ async function getMembershipTierUsageReportForBay({
     : await getInterBayBridge()
         .bayOps(bay_id, { timeout_ms: 15_000 })
         .getMembershipTierUsageReport({ account_id });
+}
+
+async function getMembershipAnalyticsOverviewForBay({
+  account_id,
+  bay_id,
+  currentBayId,
+  query,
+}: {
+  account_id?: string;
+  bay_id: string;
+  currentBayId: string;
+  query: MembershipAnalyticsOverviewQuery;
+}): Promise<
+  Omit<MembershipAnalyticsOverview, "current_bay_id" | "seed_bay_id" | "bays">
+> {
+  return bay_id === currentBayId
+    ? await getMembershipAnalyticsOverviewLocal({ bay_id, query })
+    : await getInterBayBridge()
+        .bayOps(bay_id, { timeout_ms: 15_000 })
+        .getMembershipAnalyticsOverview({ ...query, account_id });
+}
+
+async function getMembershipAnalyticsEventsForBay({
+  account_id,
+  bay_id,
+  currentBayId,
+  query,
+}: {
+  account_id?: string;
+  bay_id: string;
+  currentBayId: string;
+  query: MembershipAnalyticsEventsQuery;
+}): Promise<MembershipAnalyticsEventRow[]> {
+  return bay_id === currentBayId
+    ? await getMembershipAnalyticsEventsLocal({ query })
+    : await getInterBayBridge()
+        .bayOps(bay_id, { timeout_ms: 15_000 })
+        .getMembershipAnalyticsEvents({ ...query, account_id });
+}
+
+async function backfillMembershipAnalyticsPurchasesForBay({
+  account_id,
+  bay_id,
+  currentBayId,
+  query,
+}: {
+  account_id?: string;
+  bay_id: string;
+  currentBayId: string;
+  query: MembershipAnalyticsBackfillQuery;
+}): Promise<MembershipAnalyticsBackfillResult> {
+  return bay_id === currentBayId
+    ? await backfillMembershipAnalyticsPurchaseEvents({ limit: query.limit })
+    : await getInterBayBridge()
+        .bayOps(bay_id, { timeout_ms: 15_000 })
+        .backfillMembershipAnalyticsPurchases({ ...query, account_id });
 }
 
 async function getConfiguredMembershipTierUsageReports({
@@ -358,6 +542,49 @@ async function getConfiguredMembershipTierUsageReports({
   );
   const reports: MembershipTierUsageReport[] = [];
   const bays: MembershipTierAdminOverviewBay[] = bayIds.map((bay_id, i) => {
+    const result = settled[i];
+    if (result.status === "fulfilled") {
+      reports.push(result.value);
+      return { bay_id, ok: true };
+    }
+    return {
+      bay_id,
+      ok: false,
+      error: `${result.reason}`,
+    };
+  });
+  return { reports, bays };
+}
+
+async function getConfiguredMembershipAnalyticsOverviews({
+  account_id,
+  currentBayId,
+  query,
+}: {
+  account_id?: string;
+  currentBayId: string;
+  query: MembershipAnalyticsOverviewQuery;
+}): Promise<{
+  reports: Array<
+    Omit<MembershipAnalyticsOverview, "current_bay_id" | "seed_bay_id" | "bays">
+  >;
+  bays: MembershipAnalyticsOverviewBay[];
+}> {
+  const bayIds = await getConfiguredBayIdsForMembershipTierOverview();
+  const settled = await Promise.allSettled(
+    bayIds.map(async (bay_id) =>
+      getMembershipAnalyticsOverviewForBay({
+        account_id,
+        bay_id,
+        currentBayId,
+        query,
+      }),
+    ),
+  );
+  const reports: Array<
+    Omit<MembershipAnalyticsOverview, "current_bay_id" | "seed_bay_id" | "bays">
+  > = [];
+  const bays: MembershipAnalyticsOverviewBay[] = bayIds.map((bay_id, i) => {
     const result = settled[i];
     if (result.status === "fulfilled") {
       reports.push(result.value);
@@ -632,6 +859,117 @@ export async function getMembershipTierAdminOverview({
     tiers,
     total_active_account_count: totalActiveAccountCount,
     bays,
+  };
+}
+
+export async function getMembershipAnalyticsOverview(
+  query: MembershipAnalyticsOverviewQuery = {},
+): Promise<MembershipAnalyticsOverview> {
+  await requireAdmin(query.account_id);
+  assertMembershipTierAdminBay();
+  const currentBayId = getConfiguredBayId();
+  const seedBayId = getSeedBayId();
+  const { start, end } = analyticsRange(query);
+  const overviewQuery: MembershipAnalyticsOverviewQuery = {
+    ...query,
+    start,
+    end,
+  };
+  const { reports, bays } = await getConfiguredMembershipAnalyticsOverviews({
+    account_id: query.account_id,
+    currentBayId,
+    query: overviewQuery,
+  });
+  const aggregate = aggregateMembershipAnalyticsOverviews(reports);
+  return {
+    checked_at: new Date().toISOString(),
+    current_bay_id: currentBayId,
+    seed_bay_id: seedBayId,
+    start: start.toISOString(),
+    end: end.toISOString(),
+    bays,
+    ...aggregate,
+  };
+}
+
+export async function getMembershipAnalyticsEvents(
+  query: MembershipAnalyticsEventsQuery = {},
+): Promise<MembershipAnalyticsEventRow[]> {
+  await requireAdmin(query.account_id);
+  assertMembershipTierAdminBay();
+  const currentBayId = getConfiguredBayId();
+  const { start, end } = analyticsRange(query);
+  const limit = Math.max(
+    1,
+    Math.min(1000, Math.floor(Number(query.limit ?? 100) || 100)),
+  );
+  const eventsQuery: MembershipAnalyticsEventsQuery = {
+    ...query,
+    start,
+    end,
+    limit,
+  };
+  const bayIds = await getConfiguredBayIdsForMembershipTierOverview();
+  const settled = await Promise.allSettled(
+    bayIds.map((bay_id) =>
+      getMembershipAnalyticsEventsForBay({
+        account_id: query.account_id,
+        bay_id,
+        currentBayId,
+        query: eventsQuery,
+      }),
+    ),
+  );
+  return settled
+    .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+    .sort(
+      (a, b) =>
+        new Date(b.event_time).getTime() - new Date(a.event_time).getTime() ||
+        b.event_key.localeCompare(a.event_key),
+    )
+    .slice(0, limit);
+}
+
+export async function backfillMembershipAnalyticsPurchases(
+  query: MembershipAnalyticsBackfillQuery = {},
+): Promise<MembershipAnalyticsBackfillOverview> {
+  await requireAdmin(query.account_id);
+  assertMembershipTierAdminBay();
+  const currentBayId = getConfiguredBayId();
+  const seedBayId = getSeedBayId();
+  const bayIds = await getConfiguredBayIdsForMembershipTierOverview();
+  const settled = await Promise.allSettled(
+    bayIds.map((bay_id) =>
+      backfillMembershipAnalyticsPurchasesForBay({
+        account_id: query.account_id,
+        bay_id,
+        currentBayId,
+        query,
+      }),
+    ),
+  );
+  let inserted = 0;
+  let skipped = 0;
+  const bays: MembershipAnalyticsOverviewBay[] = bayIds.map((bay_id, i) => {
+    const result = settled[i];
+    if (result.status === "fulfilled") {
+      inserted += Number(result.value.inserted ?? 0) || 0;
+      skipped += Number(result.value.skipped ?? 0) || 0;
+      return { bay_id, ok: true };
+    }
+    return {
+      bay_id,
+      ok: false,
+      error: `${result.reason}`,
+    };
+  });
+  return {
+    checked_at: new Date().toISOString(),
+    current_bay_id: currentBayId,
+    seed_bay_id: seedBayId,
+    bays,
+    inserted,
+    skipped,
   };
 }
 

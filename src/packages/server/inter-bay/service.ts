@@ -142,6 +142,11 @@ import {
 } from "@cocalc/server/membership/grants";
 import { getMembershipTiers } from "@cocalc/server/membership/tiers";
 import { getMembershipTierUsageReport as getMembershipTierUsageReportLocal } from "@cocalc/database/postgres/membership-tiers";
+import {
+  backfillMembershipAnalyticsPurchaseEvents,
+  getMembershipAnalyticsEventsLocal,
+  getMembershipAnalyticsOverviewLocal,
+} from "@cocalc/server/membership/analytics";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
 import { getAccountIdFromRememberMe as getLocalAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import { verifyFreshAuthCredentials } from "@cocalc/server/auth/two-factor";
@@ -561,6 +566,21 @@ async function startBayOpsService(): Promise<void> {
       }),
     getMembershipTierUsageReport: async () =>
       await getMembershipTierUsageReportLocal(db(), bay_id),
+    getMembershipAnalyticsOverview: async (opts) => ({
+      ...(await getMembershipAnalyticsOverviewLocal({
+        bay_id,
+        query: opts,
+      })),
+      current_bay_id: bay_id,
+      seed_bay_id: getConfiguredClusterSeedBayId(),
+      bays: [{ bay_id, ok: true }],
+    }),
+    getMembershipAnalyticsEvents: async (opts) =>
+      await getMembershipAnalyticsEventsLocal({ query: opts }),
+    backfillMembershipAnalyticsPurchases: async (opts) =>
+      await backfillMembershipAnalyticsPurchaseEvents({
+        limit: opts.limit,
+      }),
     setServerSetting: async (opts) => {
       await callback2(db().set_server_setting, opts);
     },

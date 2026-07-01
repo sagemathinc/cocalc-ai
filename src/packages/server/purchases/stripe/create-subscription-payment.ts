@@ -21,6 +21,10 @@ import { sendCancelNotification } from "../cancel-subscription";
 import getConn from "@cocalc/server/stripe/connection";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import { useBalanceTowardSubscriptions } from "../subscription-renewal-notice";
+import {
+  recordMembershipAnalyticsEvent,
+  recordMembershipPurchaseCompleted,
+} from "@cocalc/server/membership/analytics";
 
 // nothing should ever be this small, but just in case:
 const MIN_SUBSCRIPTION_AMOUNT = 1;
@@ -47,7 +51,7 @@ export default async function createSubscriptionPayment({
   logger.debug("createSubscriptionPayment -- ", { customer });
   const pool = getPool();
   const { rows: subscriptions } = await pool.query(
-    "SELECT payment, cost, metadata, interval, current_period_end FROM subscriptions WHERE account_id=$1 AND id=$2",
+    "SELECT payment, cost, metadata, interval, current_period_end, latest_purchase_id FROM subscriptions WHERE account_id=$1 AND id=$2",
     [account_id, subscription_id],
   );
   if (subscriptions.length == 0) {
@@ -221,13 +225,13 @@ export async function processSubscriptionRenewal({
   const useTransaction = client == null;
   try {
     const { rows: subscriptions } = await transaction.query(
-      "SELECT payment, cost, metadata, interval FROM subscriptions WHERE account_id=$1 AND id=$2 FOR UPDATE",
+      "SELECT payment, cost, metadata, interval, latest_purchase_id FROM subscriptions WHERE account_id=$1 AND id=$2 FOR UPDATE",
       [account_id, subscriptionId],
     );
     if (subscriptions.length == 0) {
       throw Error(`You do not have a subscription with id ${subscription_id}.`);
     }
-    const { cost, metadata, interval } = subscriptions[0];
+    const { cost, metadata, interval, latest_purchase_id } = subscriptions[0];
     const costValue = toDecimal(cost);
     let { payment } = subscriptions[0];
     logger.debug("processSubscriptionRenewal", {
@@ -310,6 +314,52 @@ export async function processSubscriptionRenewal({
     );
     if (update.rowCount != 1) {
       throw Error(`You do not have a subscription with id ${subscription_id}.`);
+    }
+    const isTrialConversion =
+      metadata.trial === true && latest_purchase_id == null;
+    await recordMembershipAnalyticsEvent({
+      event_key: `subscription:${subscriptionId}:renewed:${purchase_id}`,
+      event_type: "membership_renewed",
+      account_id,
+      membership_class: metadata.class,
+      source: "subscription",
+      interval,
+      subscription_id: subscriptionId,
+      purchase_id,
+      amount: costValue,
+      period_start: subtractInterval(end, interval),
+      period_end: end,
+      trial_status: isTrialConversion ? "converted" : "none",
+      client: transaction,
+    });
+    await recordMembershipPurchaseCompleted({
+      account_id,
+      subscription_id: subscriptionId,
+      purchase_id,
+      membership_class: metadata.class,
+      interval,
+      amount: costValue,
+      period_start: subtractInterval(end, interval),
+      period_end: end,
+      trial_status: isTrialConversion ? "converted" : "none",
+      client: transaction,
+    });
+    if (isTrialConversion) {
+      await recordMembershipAnalyticsEvent({
+        event_key: `subscription:${subscriptionId}:trial-converted:${purchase_id}`,
+        event_type: "trial_converted",
+        account_id,
+        membership_class: metadata.class,
+        source: "trial",
+        interval,
+        subscription_id: subscriptionId,
+        purchase_id,
+        period_start: subtractInterval(end, interval),
+        period_end: end,
+        trial_days: metadata.trial_days ?? null,
+        trial_status: "converted",
+        client: transaction,
+      });
     }
     if (useTransaction) {
       await transaction.query("COMMIT");

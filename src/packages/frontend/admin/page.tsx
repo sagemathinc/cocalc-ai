@@ -21,6 +21,7 @@ import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { set_url_with_search } from "@cocalc/frontend/history";
 import { COLORS } from "@cocalc/util/theme";
 import { RegistrationToken } from "./registration-token";
+import { MembershipAnalyticsAdmin } from "./membership-analytics";
 import { MembershipTiers } from "./membership-tiers";
 import SiteSettings from "./site-settings";
 import { UserSearch } from "./users/user-search";
@@ -461,6 +462,14 @@ function getAdminSections({
       icon: "user",
       group: "commercial",
       component: () => <MembershipTiers />,
+    },
+    {
+      key: "membership-analytics",
+      title: "Membership Analytics",
+      description: "Review membership counts, purchases, and lifecycle events.",
+      icon: "line-chart",
+      group: "commercial",
+      component: () => <MembershipAnalyticsAdmin />,
     },
     {
       key: "software-licenses",

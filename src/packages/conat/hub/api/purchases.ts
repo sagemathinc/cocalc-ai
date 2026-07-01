@@ -327,6 +327,110 @@ export interface MembershipTierAdminOverview {
   bays: MembershipTierAdminOverviewBay[];
 }
 
+export type MembershipAnalyticsEventType =
+  | "membership_created"
+  | "membership_changed"
+  | "membership_renewed"
+  | "membership_resumed"
+  | "membership_canceled"
+  | "trial_started"
+  | "trial_converted"
+  | "purchase_completed"
+  | "refund_recorded"
+  | "backfilled_purchase";
+
+export interface MembershipAnalyticsEventRow {
+  event_key: string;
+  event_type: MembershipAnalyticsEventType;
+  event_time: Date | string;
+  bay_id: string;
+  account_id?: string | null;
+  membership_class?: MembershipClass | null;
+  previous_membership_class?: MembershipClass | null;
+  source?: string | null;
+  interval?: "month" | "year" | null;
+  subscription_id?: number | null;
+  purchase_id?: number | null;
+  amount?: number | null;
+  period_start?: Date | string | null;
+  period_end?: Date | string | null;
+  trial_days?: number | null;
+  trial_status?: "none" | "started" | "converted" | "canceled" | null;
+}
+
+export interface MembershipAnalyticsDailyCountRow {
+  snapshot_date: Date | string;
+  bay_id: string;
+  membership_class: MembershipClass;
+  source: string;
+  interval: "month" | "year" | "none";
+  trial_status: "none" | "trial";
+  active_account_count: number;
+  subscription_count: number;
+}
+
+export interface MembershipAnalyticsRevenueRow {
+  membership_class: MembershipClass;
+  interval: "month" | "year" | "none";
+  gross_revenue: number;
+  purchase_count: number;
+}
+
+export interface MembershipAnalyticsEventSummaryRow {
+  day: Date | string;
+  event_type: MembershipAnalyticsEventType;
+  count: number;
+  amount: number;
+}
+
+export interface MembershipAnalyticsOverviewBay {
+  bay_id: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface MembershipAnalyticsOverviewQuery {
+  account_id?: string;
+  start?: Date | string;
+  end?: Date | string;
+  bucket?: "day";
+}
+
+export interface MembershipAnalyticsEventsQuery extends MembershipAnalyticsOverviewQuery {
+  event_type?: MembershipAnalyticsEventType;
+  membership_class?: MembershipClass;
+  limit?: number;
+}
+
+export interface MembershipAnalyticsBackfillQuery {
+  account_id?: string;
+  limit?: number;
+}
+
+export interface MembershipAnalyticsOverview {
+  checked_at: string;
+  current_bay_id: string;
+  seed_bay_id: string;
+  start: Date | string;
+  end: Date | string;
+  bays: MembershipAnalyticsOverviewBay[];
+  revenue: MembershipAnalyticsRevenueRow[];
+  events: MembershipAnalyticsEventSummaryRow[];
+  daily_counts: MembershipAnalyticsDailyCountRow[];
+}
+
+export interface MembershipAnalyticsBackfillResult {
+  inserted: number;
+  skipped: number;
+}
+
+export interface MembershipAnalyticsBackfillOverview extends MembershipAnalyticsBackfillResult {
+  checked_at: string;
+  current_bay_id: string;
+  seed_bay_id: string;
+  bays: MembershipAnalyticsOverviewBay[];
+}
+
 export interface MembershipPackageQuote {
   package_id?: string;
   kind: MembershipPackageKind;
@@ -1285,6 +1389,15 @@ export interface Purchases {
   getMembershipTierAdminOverview: (opts?: {
     account_id?: string;
   }) => Promise<MembershipTierAdminOverview>;
+  getMembershipAnalyticsOverview: (
+    opts?: MembershipAnalyticsOverviewQuery,
+  ) => Promise<MembershipAnalyticsOverview>;
+  getMembershipAnalyticsEvents: (
+    opts?: MembershipAnalyticsEventsQuery,
+  ) => Promise<MembershipAnalyticsEventRow[]>;
+  backfillMembershipAnalyticsPurchases: (
+    opts?: MembershipAnalyticsBackfillQuery,
+  ) => Promise<MembershipAnalyticsBackfillOverview>;
   createMembershipTier: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -1647,6 +1760,9 @@ export const purchases = {
   getMembership: authFirst,
   getMembershipDetails: authFirst,
   getMembershipTierAdminOverview: authFirst,
+  getMembershipAnalyticsOverview: authFirst,
+  getMembershipAnalyticsEvents: authFirst,
+  backfillMembershipAnalyticsPurchases: authFirst,
   createMembershipTier: authFirst,
   updateMembershipTier: authFirst,
   importMembershipTiers: authFirst,
