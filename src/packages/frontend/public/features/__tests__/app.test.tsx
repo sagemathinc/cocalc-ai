@@ -120,17 +120,13 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
-    expect(screen.getByText("Durable execution")).not.toBeNull();
     expect(
-      screen.getByText(
-        "Let the agent work with the notebook you actually have open",
-      ),
+      screen.getByText("Jupyter notebooks for work that needs to keep going"),
     ).not.toBeNull();
     expect(
-      screen.getByText(
-        "Put notebook cells on a whiteboard when the idea is a graph",
-      ),
+      screen.getByText("When the notebook depends on more than cells"),
     ).not.toBeNull();
+    expect(screen.getByText("Ready to use Jupyter in CoCalc?")).not.toBeNull();
   });
 
   it("uses projects as the jupyter CTA for authenticated users", () => {
@@ -150,7 +146,7 @@ describe("PublicFeaturesApp", () => {
     for (const link of projectLinks) {
       expect(link.getAttribute("href")).toBe("/projects");
     }
-    expect(screen.queryByText("Start using Jupyter on CoCalc")).toBeNull();
+    expect(screen.queryByText("Start using Jupyter in CoCalc")).toBeNull();
   });
 
   it("renders the richer latex feature page", () => {
