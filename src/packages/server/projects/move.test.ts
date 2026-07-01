@@ -2578,6 +2578,15 @@ describe("moveProjectToHost", () => {
           id === "project-move:move-op-1:project_move_requested",
       ),
     ).toHaveLength(1);
+    expect(createBackupLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "account-id",
+        project_id: PROJECT_ID,
+      }),
+      expect.objectContaining({
+        dedupe_key: `project-backup:move:${PROJECT_ID}:move-op-1:final`,
+      }),
+    );
     expect(getExplicitProjectRoutedClientMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
       fresh: true,
