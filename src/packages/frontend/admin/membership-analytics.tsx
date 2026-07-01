@@ -41,6 +41,13 @@ function defaultRange(): [Dayjs, Dayjs] {
   return [dayjs(end.valueOf() - 90 * DAY_MS), end];
 }
 
+function queryRange(range: [Dayjs, Dayjs]): { start: Date; end: Date } {
+  return {
+    start: range[0].startOf("day").toDate(),
+    end: range[1].add(1, "day").startOf("day").toDate(),
+  };
+}
+
 function formatDate(value: Date | string): string {
   return dayjs(value).format("YYYY-MM-DD");
 }
@@ -71,12 +78,10 @@ export function MembershipAnalyticsAdmin() {
     setLoading(true);
     setError("");
     try {
+      const { start, end } = queryRange(range);
       const result =
         await webapp_client.conat_client.hub.purchases.getMembershipAnalyticsOverview(
-          {
-            start: range[0].toDate(),
-            end: range[1].toDate(),
-          },
+          { start, end },
         );
       setOverview(result);
     } catch (err) {

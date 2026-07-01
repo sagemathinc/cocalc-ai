@@ -33,7 +33,7 @@ export default async function cancelSubscription({
   const row = update.rows[0];
   if (row?.metadata?.type === "membership") {
     await recordMembershipAnalyticsEvent({
-      event_key: `subscription:${subscription_id}:canceled`,
+      event_key: `subscription:${subscription_id}:canceled:${now.toISOString()}`,
       event_type: "membership_canceled",
       event_time: now,
       account_id,
