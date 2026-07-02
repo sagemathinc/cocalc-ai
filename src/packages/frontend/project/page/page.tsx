@@ -692,7 +692,10 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
         }}
       >
         {isVisible && !FIXED_PROJECT_TABS[tab].noFullPage ? (
-          <OpenFixedTabAsFlyoutButton tab={tab} />
+          <OpenFixedTabAsFlyoutButton
+            tab={tab}
+            top={tab === "files" ? 58 : 12}
+          />
         ) : null}
         <Content is_visible={isVisible} tab_name={tab} />
       </div>
@@ -1078,7 +1081,13 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   );
 };
 
-function OpenFixedTabAsFlyoutButton({ tab }: { tab: FixedTab }) {
+function OpenFixedTabAsFlyoutButton({
+  tab,
+  top,
+}: {
+  tab: FixedTab;
+  top: number;
+}) {
   const { actions } = useProjectContext();
   return (
     <Button
@@ -1098,7 +1107,7 @@ function OpenFixedTabAsFlyoutButton({ tab }: { tab: FixedTab }) {
         boxShadow: "0 2px 10px rgba(0,0,0,0.08)",
         position: "absolute",
         right: 12,
-        top: 12,
+        top,
         zIndex: 10,
       }}
     />
