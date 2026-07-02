@@ -7,7 +7,11 @@ import { Alert, Button, Input, Modal, Space, Tag, Typography } from "antd";
 import { useState } from "react";
 
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
-import type { ResolvedPublicDirectoryShare } from "@cocalc/conat/hub/api/public-directory-shares";
+import type {
+  CopyPublicDirectoryShareToNewProjectConflictResponse,
+  CopyPublicDirectoryShareToNewProjectResult,
+  ResolvedPublicDirectoryShare,
+} from "@cocalc/conat/hub/api/public-directory-shares";
 import { useActions } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { blobImageUrl } from "@cocalc/frontend/components/theme-image-input";
@@ -18,6 +22,16 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS, DOMAIN_URL } from "@cocalc/util/theme";
 
 const { Text } = Typography;
+
+type CopyConflict = CopyPublicDirectoryShareToNewProjectConflictResponse & {
+  destination_project_id: string;
+};
+
+function isCopyConflict(
+  response: CopyPublicDirectoryShareToNewProjectResult,
+): response is CopyPublicDirectoryShareToNewProjectConflictResponse {
+  return "conflict" in response;
+}
 
 function formatMembershipGrantDescription(
   share: ResolvedPublicDirectoryShare,
@@ -188,6 +202,7 @@ export function PublicDirectoryShareBanner({
   const [copyError, setCopyError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const [copyProgress, setCopyProgress] = useState("");
+  const [copyConflict, setCopyConflict] = useState<CopyConflict | null>(null);
   const [placementMessage, setPlacementMessage] = useState("");
   const [compact, setCompact] = useState(() => initialCompactBanner(share));
   const title = shareTitle(share);
@@ -204,6 +219,7 @@ export function PublicDirectoryShareBanner({
     setCopyError("");
     setCopyMessage("");
     setCopyProgress("");
+    setCopyConflict(null);
     setPlacementMessage("");
     setOpen(true);
   }
@@ -213,20 +229,35 @@ export function PublicDirectoryShareBanner({
     setCompactBannerPreference(share, next);
   }
 
-  async function copyToNewProject() {
+  function openDestinationProject(project_id: string) {
+    projectActions.open_project({
+      project_id,
+      switch_to: true,
+      target: "files",
+    });
+  }
+
+  async function copyToNewProject(overwriteExisting = false) {
     setCopying(true);
     setCopyError("");
     setCopyMessage("");
-    setCopyProgress("Creating project...");
+    setCopyConflict(null);
+    setCopyProgress("Preparing copy...");
     setPlacementMessage("");
     try {
       const result =
         await webapp_client.conat_client.hub.publicDirectoryShares.copyToNewProject(
           {
             slug: share.slug,
+            reuse_existing: true,
+            overwrite_existing: overwriteExisting,
             options: { recursive: true },
           },
         );
+      if (isCopyConflict(result)) {
+        setCopyConflict(result);
+        return;
+      }
       if (
         result.requested_host_id &&
         result.placed_on_requested_host === false
@@ -254,17 +285,16 @@ export function PublicDirectoryShareBanner({
       const canOpen = await waitForProjectReadable(
         result.destination_project_id,
       );
+      const successPrefix = result.reused_project
+        ? "Copied to a compatible existing project."
+        : "New project created and copied.";
       setCopyMessage(
         canOpen
-          ? `New project created and copied.${grantMessage ? ` ${grantMessage}` : ""}`
-          : `New project created and copied, but it is not yet available in your project list. Try opening it again in a moment.${grantMessage ? ` ${grantMessage}` : ""}`,
+          ? `${successPrefix}${grantMessage ? ` ${grantMessage}` : ""}`
+          : `${successPrefix} It is not yet available in your project list. Try opening it again in a moment.${grantMessage ? ` ${grantMessage}` : ""}`,
       );
       if (canOpen) {
-        projectActions.open_project({
-          project_id: result.destination_project_id,
-          switch_to: true,
-          target: "files",
-        });
+        openDestinationProject(result.destination_project_id);
       }
     } catch (err) {
       setCopyError(normalizeUserFacingError(err).message);
@@ -450,9 +480,7 @@ export function PublicDirectoryShareBanner({
                     : copyToProject())
                 }
               >
-                {copyMode === "new"
-                  ? "Create project and copy"
-                  : "Copy to project"}
+                {copyMode === "new" ? "Copy" : "Copy to project"}
               </Button>
             </Space>
           </div>
@@ -462,8 +490,7 @@ export function PublicDirectoryShareBanner({
           {description ? <ShareDescription value={description} /> : null}
           {copyMode === "new" ? (
             <Text>
-              CoCalc will create a new project and copy this published folder
-              into it.
+              Copy this published folder to your own project so you can edit it.
             </Text>
           ) : null}
           {share.site_license_grant_on_copy ? (
@@ -479,6 +506,35 @@ export function PublicDirectoryShareBanner({
           ) : null}
           {placementMessage ? (
             <Alert type="warning" showIcon title={placementMessage} />
+          ) : null}
+          {copyConflict ? (
+            <Alert
+              type="warning"
+              showIcon
+              title={copyConflict.conflict.message}
+              description={
+                <Space>
+                  <Button
+                    onClick={() =>
+                      openDestinationProject(
+                        copyConflict.destination_project_id,
+                      )
+                    }
+                  >
+                    Open existing copy
+                  </Button>
+                  {copyConflict.conflict.can_overwrite ? (
+                    <Button
+                      danger
+                      loading={copying}
+                      onClick={() => void copyToNewProject(true)}
+                    >
+                      Overwrite
+                    </Button>
+                  ) : null}
+                </Space>
+              }
+            />
           ) : null}
           {copyMode === "existing" ? (
             <>

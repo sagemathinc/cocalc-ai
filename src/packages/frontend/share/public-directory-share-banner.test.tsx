@@ -159,6 +159,9 @@ describe("PublicDirectoryShareBanner", () => {
       scope_id: "new-project",
       scope_type: "project",
       site_license_grant: null,
+      created_project: true,
+      reused_project: false,
+      placed_on_requested_host: true,
     });
     lroWait.mockResolvedValue({ status: "succeeded" });
     getProjectRegion.mockResolvedValue("wnam");
@@ -243,11 +246,16 @@ describe("PublicDirectoryShareBanner", () => {
     expect(screen.getByText("Collapse")).toBeTruthy();
   });
 
-  it("waits for create-project copy success before opening the new project", async () => {
+  function clickModalCopyButton() {
+    const buttons = screen.getAllByText("Copy");
+    fireEvent.click(buttons[buttons.length - 1]);
+  }
+
+  it("waits for default copy success before opening the target project", async () => {
     render(<PublicDirectoryShareBanner share={share()} />);
 
     fireEvent.click(screen.getByText("Copy"));
-    fireEvent.click(screen.getByText("Create project and copy"));
+    clickModalCopyButton();
 
     await waitFor(() => {
       expect(openProject).toHaveBeenCalledWith({
@@ -258,6 +266,8 @@ describe("PublicDirectoryShareBanner", () => {
     });
     expect(copyToNewProject).toHaveBeenCalledWith({
       slug: "test2",
+      reuse_existing: true,
+      overwrite_existing: false,
       options: { recursive: true },
     });
     expect(lroWait).toHaveBeenCalledWith(
@@ -281,7 +291,7 @@ describe("PublicDirectoryShareBanner", () => {
     render(<PublicDirectoryShareBanner share={share()} />);
 
     fireEvent.click(screen.getByText("Copy"));
-    fireEvent.click(screen.getByText("Create project and copy"));
+    clickModalCopyButton();
 
     await waitFor(() => {
       expect(lroWait).toHaveBeenCalled();
@@ -307,7 +317,7 @@ describe("PublicDirectoryShareBanner", () => {
     render(<PublicDirectoryShareBanner share={share()} />);
 
     fireEvent.click(screen.getByText("Copy"));
-    fireEvent.click(screen.getByText("Create project and copy"));
+    clickModalCopyButton();
 
     await waitFor(() => {
       expect(screen.getByText("copy failed")).toBeTruthy();
@@ -322,8 +332,10 @@ describe("PublicDirectoryShareBanner", () => {
       scope_id: "new-project",
       scope_type: "project",
       site_license_grant: null,
-      requested_host_id: "source-host",
+      created_project: true,
+      reused_project: false,
       placed_on_requested_host: false,
+      requested_host_id: "source-host",
       host_placement_message: "host source-host is unavailable",
     });
     lroWait.mockImplementationOnce(async ({ onProgress }) => {
@@ -339,7 +351,7 @@ describe("PublicDirectoryShareBanner", () => {
     render(<PublicDirectoryShareBanner share={share()} />);
 
     fireEvent.click(screen.getByText("Copy"));
-    fireEvent.click(screen.getByText("Create project and copy"));
+    clickModalCopyButton();
 
     await waitFor(() => {
       expect(screen.getByText(/source host was not available/)).toBeTruthy();
@@ -347,6 +359,60 @@ describe("PublicDirectoryShareBanner", () => {
     expect(screen.getByText(/host source-host is unavailable/)).toBeTruthy();
     await waitFor(() => {
       expect(openProject).toHaveBeenCalled();
+    });
+  });
+
+  it("offers to open or overwrite a reused project conflict", async () => {
+    copyToNewProject.mockResolvedValueOnce({
+      destination_project_id: "existing-project",
+      created_project: false,
+      reused_project: true,
+      placed_on_requested_host: true,
+      conflict: {
+        reason: "already_copied",
+        message:
+          "This published folder was already copied to the compatible project.",
+        destination_path: null,
+        can_overwrite: true,
+      },
+    });
+    copyToNewProject.mockResolvedValueOnce({
+      destination_project_id: "existing-project",
+      op_id: "op-2",
+      scope_id: "existing-project",
+      scope_type: "project",
+      site_license_grant: null,
+      created_project: false,
+      reused_project: true,
+      placed_on_requested_host: true,
+    });
+    render(<PublicDirectoryShareBanner share={share()} />);
+
+    fireEvent.click(screen.getByText("Copy"));
+    clickModalCopyButton();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "This published folder was already copied to the compatible project.",
+        ),
+      ).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText("Open existing copy"));
+    expect(openProject).toHaveBeenCalledWith({
+      project_id: "existing-project",
+      switch_to: true,
+      target: "files",
+    });
+
+    fireEvent.click(screen.getByText("Overwrite"));
+    await waitFor(() => {
+      expect(copyToNewProject).toHaveBeenLastCalledWith({
+        slug: "test2",
+        reuse_existing: true,
+        overwrite_existing: true,
+        options: { recursive: true },
+      });
     });
   });
 });
