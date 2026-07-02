@@ -127,12 +127,14 @@ export function ensureViewerStyles(): void {
 function PublicViewerApp({
   config,
   renderContent,
+  needsContent,
 }: {
   config: PublicViewerConfig;
   renderContent: (opts: {
     config: PublicViewerConfig;
     content: string;
   }) => ReactNode;
+  needsContent?: (opts: { config: PublicViewerConfig }) => boolean;
 }): JSX.Element {
   const [content, setContent] = useState<string>();
   const [error, setError] = useState<string>();
@@ -155,6 +157,11 @@ function PublicViewerApp({
     setLoading(true);
     setError(undefined);
     setContent(undefined);
+    if (needsContent?.({ config }) === false) {
+      setContent("");
+      setLoading(false);
+      return;
+    }
     const load = async () => {
       try {
         const response = await fetch(config.rawUrl, {
@@ -190,7 +197,7 @@ function PublicViewerApp({
         window.clearInterval(refreshTimer);
       }
     };
-  }, [config]);
+  }, [config, needsContent]);
 
   return (
     <div
@@ -273,6 +280,9 @@ export function mountPublicViewer(
     config: PublicViewerConfig;
     content: string;
   }) => ReactNode,
+  opts?: {
+    needsContent?: (opts: { config: PublicViewerConfig }) => boolean;
+  },
 ): void {
   const container = document.getElementById("cocalc-webapp-container");
   if (container == null) {
@@ -281,6 +291,10 @@ export function mountPublicViewer(
   ensureViewerStyles();
   const config = parseConfig();
   createRoot(container).render(
-    <PublicViewerApp config={config} renderContent={renderContent} />,
+    <PublicViewerApp
+      config={config}
+      renderContent={renderContent}
+      needsContent={opts?.needsContent}
+    />,
   );
 }

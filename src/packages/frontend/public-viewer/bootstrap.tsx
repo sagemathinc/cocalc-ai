@@ -4,7 +4,9 @@
  */
 
 import type { JSX } from "react";
-import PublicViewerFileContents from "./file-contents";
+import PublicViewerFileContents, {
+  publicViewerFileNeedsContent,
+} from "./file-contents";
 import { mountPublicViewer } from "./shared";
 
 export function init(): void {
@@ -22,5 +24,6 @@ export function init(): void {
         }}
       />
     ),
+    { needsContent: ({ config }) => publicViewerFileNeedsContent(config.path) },
   );
 }
