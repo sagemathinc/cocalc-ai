@@ -81,6 +81,16 @@ describe("create basic mocked file server and test it out", () => {
         options?;
       }): Promise<void> => {},
 
+      createPathCopyArchive: async (_opts: any): Promise<any> => {
+        throw new Error("not implemented in test stub");
+      },
+
+      applyPathCopyArchive: async (
+        _opts: any,
+      ): Promise<{ applied: number }> => {
+        return { applied: 0 };
+      },
+
       createBackup: async (_opts: {
         project_id: string;
         lro?: { op_id: string; scope_type: any; scope_id: string };

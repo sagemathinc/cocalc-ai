@@ -25,6 +25,8 @@ const BoardRenderer = lazy(() => import("./renderers/board"));
 const SlidesRenderer = lazy(() => import("./renderers/slides"));
 const ChatRenderer = lazy(() => import("./renderers/chat"));
 const TasksRenderer = lazy(() => import("./renderers/tasks"));
+const HTML_IFRAME_SANDBOX =
+  "allow-scripts allow-forms allow-popups allow-downloads";
 
 export interface PublicViewerFileContentsProps {
   content?: string;
@@ -34,6 +36,17 @@ export interface PublicViewerFileContentsProps {
   fontSize?: number;
   lineNumbers?: boolean;
   style?: CSSProperties;
+}
+
+export function publicViewerFileNeedsContent(path: string): boolean {
+  const ext = filename_extension(path).toLowerCase();
+  return (
+    ext !== "pdf" &&
+    !isHTML(ext) &&
+    !isImage(ext) &&
+    !isVideo(ext) &&
+    !isAudio(ext)
+  );
 }
 
 export default function PublicViewerFileContents({
@@ -90,6 +103,20 @@ export default function PublicViewerFileContents({
     );
   }
 
+  if (isHTML(ext)) {
+    if (!rawUrl) {
+      return <LoadingRenderer />;
+    }
+    return (
+      <iframe
+        title={path}
+        src={rawUrl}
+        style={{ width: "100%", height: "100vh", border: 0, ...style }}
+        sandbox={HTML_IFRAME_SANDBOX}
+      />
+    );
+  }
+
   if (content == null) {
     return <OpenRawFile rawUrl={rawUrl} label={"Open or Download..."} />;
   }
@@ -141,16 +168,6 @@ export default function PublicViewerFileContents({
           mode={codemirrorMode(ext)?.name}
         />
       </Suspense>
-    );
-  }
-
-  if (isHTML(ext)) {
-    return (
-      <iframe
-        srcDoc={content}
-        style={{ width: "100%", height: "100vh", border: 0, ...style }}
-        sandbox="allow-scripts"
-      />
     );
   }
 

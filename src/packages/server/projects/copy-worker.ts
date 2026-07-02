@@ -25,8 +25,10 @@ const WORKER_ID = randomUUID();
 
 const progressSteps: Record<string, number> = {
   validate: 5,
+  archive: 35,
   backup: 40,
   queue: 70,
+  "copy-remote": 85,
   "copy-local": 90,
   done: 100,
 };
@@ -201,6 +203,7 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
       });
     }
 
+    const completed = result.local + (result.fast_remote ?? 0);
     const hasRemote = result.queued > 0 || existing.length > 0;
     if (hasRemote) {
       const current = await getLro(op_id);
@@ -225,7 +228,8 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
                 phase: "queued",
                 queued: result.queued,
                 local: result.local,
-                total: result.queued + result.local,
+                fast_remote: result.fast_remote ?? 0,
+                total: result.queued + completed,
                 snapshot_id: result.snapshot_id,
               }
             : undefined,
@@ -237,10 +241,11 @@ async function handleCopyOp(op: LroSummary): Promise<void> {
       });
     } else {
       const progress_summary = {
-        done: result.local,
-        total: result.local,
+        done: completed,
+        total: completed,
         failed: 0,
         queued: 0,
+        fast_remote: result.fast_remote ?? 0,
         expired: 0,
         applying: 0,
         canceled: 0,

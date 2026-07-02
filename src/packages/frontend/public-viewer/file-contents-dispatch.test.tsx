@@ -1,6 +1,8 @@
 import { render, screen } from "@testing-library/react";
 
-import PublicViewerFileContents from "./file-contents";
+import PublicViewerFileContents, {
+  publicViewerFileNeedsContent,
+} from "./file-contents";
 
 jest.mock("./renderers/markdown", () => ({
   __esModule: true,
@@ -49,4 +51,30 @@ test("dispatches chat files to the chat viewer", async () => {
 
   expect(await screen.findByTestId("chat-renderer")).toBeTruthy();
   expect(screen.queryByTestId("codemirror-renderer")).toBeNull();
+});
+
+test("dispatches html files to a sandboxed raw-url iframe", () => {
+  render(
+    <PublicViewerFileContents
+      content={
+        "<html><body><script>window.rendered = true;</script></body></html>"
+      }
+      path="Figure4.html"
+      rawUrl="https://example.com/Figure4.html"
+      fileContext={{ noSanitize: false }}
+    />,
+  );
+
+  const iframe = screen.getByTitle("Figure4.html");
+  expect(iframe.getAttribute("src")).toBe("https://example.com/Figure4.html");
+  expect(iframe.getAttribute("srcdoc")).toBeNull();
+  expect(iframe.getAttribute("sandbox")).toBe(
+    "allow-scripts allow-forms allow-popups allow-downloads",
+  );
+  expect(screen.queryByTestId("codemirror-renderer")).toBeNull();
+});
+
+test("does not require fetched content for html previews", () => {
+  expect(publicViewerFileNeedsContent("Figure4.html")).toBe(false);
+  expect(publicViewerFileNeedsContent("notes.txt")).toBe(true);
 });
