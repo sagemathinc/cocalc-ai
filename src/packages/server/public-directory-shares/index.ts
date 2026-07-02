@@ -56,6 +56,7 @@ import {
   type ProjectViewerReadPolicy,
 } from "@cocalc/util/project-access";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
+import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import type {
   HostConnectionInfo,
@@ -74,7 +75,7 @@ import type {
   PublicDirectoryShareTheme,
   PublicDirectoryShareVisibility,
   CopyPublicDirectoryShareToNewProjectOptions,
-  CopyPublicDirectoryShareToNewProjectResponse,
+  CopyPublicDirectoryShareToNewProjectResult,
   CopyPublicDirectoryShareToProjectOptions,
   CopyPublicDirectoryShareToProjectResponse,
   DisableMyPublicDirectorySharesByActorOptions,
@@ -97,6 +98,8 @@ const MAX_LIMIT = 1000;
 const DEFAULT_TEMPORARY_VIEWER_GRANT_DAYS = 7;
 const DISABLED_PREVIOUS_VISIBILITY_METADATA_KEY =
   "public_share_previous_visibility";
+const PUBLIC_SHARE_COPY_TARGET_LABEL = "system/public-share-copy-target/v1";
+const PUBLIC_SHARE_COPY_LABEL_PREFIX = "system/public-share-copy/v1/";
 const log = getLogger("server:public-directory-shares");
 
 type PublicDirectoryShareRow = PublicDirectoryShareSummary & {
@@ -504,6 +507,77 @@ function joinProjectSharePath(rootPath: string, relativePath: string): string {
 
 function childRelativePath(parent: string, name: string): string {
   return parent === "." ? name : `${parent}/${name}`;
+}
+
+function shortLabelString(
+  value: unknown,
+  maxLength: number,
+): string | undefined {
+  const str = `${value ?? ""}`.trim();
+  if (!str) return undefined;
+  return str.length <= maxLength ? str : str.slice(0, maxLength);
+}
+
+function publicShareCopyProvenanceLabelKey({
+  share_id,
+  relativePath,
+}: {
+  share_id: string;
+  relativePath: string;
+}): string {
+  const hash = createHash("sha256")
+    .update(relativePath || ".")
+    .digest("hex")
+    .slice(0, 16);
+  return `${PUBLIC_SHARE_COPY_LABEL_PREFIX}${share_id}/${hash}`;
+}
+
+function publicShareCopyProvenanceLabelValue({
+  share,
+  relativePath,
+  destinationPath,
+}: {
+  share: ResolvedPublicDirectoryShare;
+  relativePath: string;
+  destinationPath: string;
+}): string {
+  return JSON.stringify({
+    v: 1,
+    s: shortLabelString(share.slug, 120),
+    p: shortLabelString(relativePath, 160),
+    d: shortLabelString(destinationPath, 160),
+    t: new Date().toISOString(),
+  });
+}
+
+async function recordDefaultPublicShareCopyLabels({
+  account_id,
+  destination_project_id,
+  share,
+  relativePath,
+  destinationPath,
+}: {
+  account_id: string;
+  destination_project_id: string;
+  share: ResolvedPublicDirectoryShare;
+  relativePath: string;
+  destinationPath: string;
+}): Promise<void> {
+  await setProjectLabels({
+    project_id: destination_project_id,
+    account_id,
+    labels: {
+      [PUBLIC_SHARE_COPY_TARGET_LABEL]: JSON.stringify({ v: 1 }),
+      [publicShareCopyProvenanceLabelKey({
+        share_id: share.id,
+        relativePath,
+      })]: publicShareCopyProvenanceLabelValue({
+        share,
+        relativePath,
+        destinationPath,
+      }),
+    },
+  });
 }
 
 function entryAllowed({
@@ -2231,23 +2305,16 @@ export async function copyToProject({
   };
 }
 
-export async function copyToNewProject({
-  account_id,
-  slug,
-  path,
-  title,
-  options,
-}: CopyPublicDirectoryShareToNewProjectOptions): Promise<CopyPublicDirectoryShareToNewProjectResponse> {
-  if (!account_id) {
-    throw Error("user must be signed in");
-  }
-  const { share } = await resolveRow({ account_id, slug });
-  if (!share.available) {
-    throw Error(
-      share.availability_message ||
-        "This shared directory is not available for copying yet.",
-    );
-  }
+type PublicShareSourceRuntime = {
+  host_id: string | null;
+  region: string | null;
+  rootfs_image: string | null;
+  rootfs_image_id: string | null;
+};
+
+async function getPublicShareSourceRuntime(
+  project_id: string,
+): Promise<PublicShareSourceRuntime> {
   const { rows } = await getPool().query<{
     host_id: string | null;
     region: string | null;
@@ -2260,7 +2327,7 @@ export async function copyToNewProject({
       WHERE project_id=$1
       LIMIT 1
     `,
-    [share.project_id],
+    [project_id],
   );
   const sourceProject = rows[0];
   const currentRootfsRows = await getPool().query<{
@@ -2273,48 +2340,296 @@ export async function copyToNewProject({
       WHERE project_id=$1 AND state_role='current'
       LIMIT 1
     `,
-    [share.project_id],
+    [project_id],
   );
   const sourceRootfs = currentRootfsRows.rows[0];
+  return {
+    host_id: sourceProject?.host_id ?? null,
+    region: sourceProject?.region ?? null,
+    rootfs_image: sourceRootfs?.image ?? sourceProject?.rootfs_image ?? null,
+    rootfs_image_id:
+      sourceRootfs?.image_id ?? sourceProject?.rootfs_image_id ?? null,
+  };
+}
+
+async function findReusablePublicShareCopyProject({
+  account_id,
+  source,
+}: {
+  account_id: string;
+  source: PublicShareSourceRuntime;
+}): Promise<string | undefined> {
+  if (!source.host_id) {
+    return;
+  }
+  if (!source.rootfs_image_id && !source.rootfs_image) {
+    return;
+  }
+  const { rows } = await getPool().query<{ project_id: string }>(
+    `
+      SELECT p.project_id
+      FROM projects p
+      JOIN project_labels target_label
+        ON target_label.project_id=p.project_id
+       AND target_label.key=$2
+      LEFT JOIN project_rootfs_states current_rootfs
+        ON current_rootfs.project_id=p.project_id
+       AND current_rootfs.state_role='current'
+      WHERE p.deleted IS NOT TRUE
+        AND p.host_id=$3::UUID
+        AND COALESCE((p.users -> $1::text) ->> 'group', '') IN ('owner', 'collaborator')
+        AND (
+          ($4::text IS NOT NULL AND COALESCE(current_rootfs.image_id, p.rootfs_image_id)=$4::text)
+          OR
+          ($4::text IS NULL AND $5::text IS NOT NULL AND COALESCE(current_rootfs.runtime_image, p.rootfs_image)=$5::text)
+        )
+      ORDER BY GREATEST(
+        COALESCE(target_label.updated_at, 'epoch'::timestamptz),
+        COALESCE(p.last_edited, p.created, 'epoch'::timestamptz)
+      ) DESC
+      LIMIT 1
+    `,
+    [
+      account_id,
+      PUBLIC_SHARE_COPY_TARGET_LABEL,
+      source.host_id,
+      source.rootfs_image_id,
+      source.rootfs_image,
+    ],
+  );
+  return rows[0]?.project_id;
+}
+
+function copySourceDestinationPaths({
+  copySource,
+  destinationPath,
+}: {
+  copySource: {
+    path: string | string[];
+    base_path?: string;
+  };
+  destinationPath: string;
+}): string[] {
+  const destRoot = destinationPath === "." ? "" : destinationPath;
+  const srcPaths = Array.isArray(copySource.path)
+    ? copySource.path
+    : [copySource.path];
+  const basePath = copySource.base_path;
+  if (basePath != null) {
+    const base = basePath === "." ? "" : basePath.replace(/^\/+|\/+$/g, "");
+    return srcPaths.map((srcPath) => {
+      const normalizedSrc = srcPath.replace(/^\/+|\/+$/g, "");
+      const relative = base
+        ? posix.relative(base, normalizedSrc)
+        : normalizedSrc;
+      return normalizePublicDirectorySharePath(posix.join(destRoot, relative));
+    });
+  }
+  return srcPaths.map((srcPath) => {
+    const leaf = posix.basename(srcPath.replace(/\/+$/g, ""));
+    return normalizePublicDirectorySharePath(posix.join(destRoot, leaf));
+  });
+}
+
+function isMissingPathError(err: unknown): boolean {
+  const value = `${(err as any)?.code ?? ""} ${(err as Error)?.message ?? err}`;
+  return /\bENOENT\b|no such file or directory|not found/i.test(value);
+}
+
+async function pathExistsInProject({
+  account_id,
+  project_id,
+  path,
+}: {
+  account_id: string;
+  project_id: string;
+  path: string;
+}): Promise<boolean> {
+  const fs = await getProjectFsClient({ account_id, project_id });
+  try {
+    await fs.stat(path);
+    return true;
+  } catch (err) {
+    if (isMissingPathError(err)) {
+      return false;
+    }
+    throw err;
+  }
+}
+
+async function publicShareCopyConflict({
+  account_id,
+  destination_project_id,
+  share,
+  relativePath,
+  destinationPath,
+  copySource,
+}: {
+  account_id: string;
+  destination_project_id: string;
+  share: ResolvedPublicDirectoryShare;
+  relativePath: string;
+  destinationPath: string;
+  copySource: Awaited<ReturnType<typeof copySourceForPublicDirectoryShare>>;
+}): Promise<
+  | {
+      reason: "already_copied" | "path_exists";
+      message: string;
+      destination_path?: string | null;
+      can_overwrite: boolean;
+    }
+  | undefined
+> {
+  const labels = await getProjectLabels({ project_id: destination_project_id });
+  const provenanceKey = publicShareCopyProvenanceLabelKey({
+    share_id: share.id,
+    relativePath,
+  });
+  if (labels[provenanceKey]) {
+    return {
+      reason: "already_copied",
+      message:
+        "This published folder was already copied to the compatible project.",
+      destination_path: null,
+      can_overwrite: true,
+    };
+  }
+  for (const destPath of copySourceDestinationPaths({
+    copySource,
+    destinationPath,
+  })) {
+    if (
+      await pathExistsInProject({
+        account_id,
+        project_id: destination_project_id,
+        path: destPath,
+      })
+    ) {
+      return {
+        reason: "path_exists",
+        message: `The destination path "${destPath}" already exists in the compatible project.`,
+        destination_path: destPath,
+        can_overwrite: true,
+      };
+    }
+  }
+}
+
+export async function copyToNewProject({
+  account_id,
+  slug,
+  path,
+  title,
+  options,
+  reuse_existing,
+  overwrite_existing,
+}: CopyPublicDirectoryShareToNewProjectOptions): Promise<CopyPublicDirectoryShareToNewProjectResult> {
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  const { share } = await resolveRow({ account_id, slug });
+  if (!share.available) {
+    throw Error(
+      share.availability_message ||
+        "This shared directory is not available for copying yet.",
+    );
+  }
+  const relativePath = normalizePublicDirectorySharePath(path ?? ".");
+  if (!entryAllowed({ share, relativePath })) {
+    throw Error("path is not part of this shared directory");
+  }
+  const destinationPath = normalizePublicDirectorySharePath(share.slug);
+  const sourceRuntime = await getPublicShareSourceRuntime(share.project_id);
+  let destinationProjectId =
+    reuse_existing === true
+      ? await findReusablePublicShareCopyProject({
+          account_id,
+          source: sourceRuntime,
+        })
+      : undefined;
+  const reusedProject = !!destinationProjectId;
   const createOpts = {
     account_id,
     title: title?.trim() || defaultCopiedProjectTitle(share),
     description: `Copied from published folder ${share.slug}.`,
-    rootfs_image:
-      sourceRootfs?.image ?? sourceProject?.rootfs_image ?? undefined,
-    rootfs_image_id:
-      sourceRootfs?.image_id ?? sourceProject?.rootfs_image_id ?? undefined,
-    host_id: sourceProject?.host_id ?? undefined,
-    region: sourceProject?.region ?? undefined,
+    rootfs_image: sourceRuntime.rootfs_image ?? undefined,
+    rootfs_image_id: sourceRuntime.rootfs_image_id ?? undefined,
+    host_id: sourceRuntime.host_id ?? undefined,
+    region: sourceRuntime.region ?? undefined,
     start: false,
   };
-  let destinationProjectId: string;
   let placedOnRequestedHost = !!createOpts.host_id;
   let hostPlacementMessage: string | null = null;
-  try {
-    destinationProjectId = await createProject(createOpts);
-  } catch (err) {
-    if (!createOpts.host_id || !isHostPlacementFailure(err)) {
-      throw err;
+  if (!destinationProjectId) {
+    try {
+      destinationProjectId = await createProject(createOpts);
+    } catch (err) {
+      if (!createOpts.host_id || !isHostPlacementFailure(err)) {
+        throw err;
+      }
+      hostPlacementMessage = `${(err as Error).message ?? err}`;
+      placedOnRequestedHost = false;
+      destinationProjectId = await createProject({
+        ...createOpts,
+        host_id: undefined,
+      });
     }
-    hostPlacementMessage = `${(err as Error).message ?? err}`;
-    placedOnRequestedHost = false;
-    destinationProjectId = await createProject({
-      ...createOpts,
-      host_id: undefined,
-    });
   }
+  if (!destinationProjectId) {
+    throw Error("failed to resolve destination project for copy");
+  }
+  const finalDestinationProjectId = destinationProjectId;
+  const copySource = await copySourceForPublicDirectoryShare({
+    account_id,
+    share,
+    relativePath,
+  });
+  if (reusedProject && overwrite_existing !== true) {
+    const conflict = await publicShareCopyConflict({
+      account_id,
+      destination_project_id: finalDestinationProjectId,
+      share,
+      relativePath,
+      destinationPath,
+      copySource,
+    });
+    if (conflict) {
+      return {
+        destination_project_id: finalDestinationProjectId,
+        created_project: false,
+        reused_project: true,
+        requested_host_id: createOpts.host_id ?? null,
+        placed_on_requested_host: true,
+        host_placement_message: null,
+        conflict,
+      };
+    }
+  }
+  await recordDefaultPublicShareCopyLabels({
+    account_id,
+    destination_project_id: finalDestinationProjectId,
+    share,
+    relativePath,
+    destinationPath,
+  });
   const copy = await copyToProject({
     account_id,
     slug,
     path,
-    destination_project_id: destinationProjectId,
-    destination_path: ".",
-    options: { recursive: true, ...options },
+    destination_project_id: finalDestinationProjectId,
+    destination_path: destinationPath,
+    options: {
+      recursive: true,
+      ...options,
+      ...(overwrite_existing === true
+        ? { errorOnExist: false, force: true }
+        : {}),
+    },
   });
   return {
     ...copy,
-    created_project: true,
+    created_project: !reusedProject,
+    reused_project: reusedProject,
     requested_host_id: createOpts.host_id ?? null,
     placed_on_requested_host: placedOnRequestedHost,
     host_placement_message: hostPlacementMessage,

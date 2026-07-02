@@ -194,6 +194,8 @@ export interface CopyPublicDirectoryShareToNewProjectOptions {
   path?: string;
   title?: string;
   options?: CopyOptions;
+  reuse_existing?: boolean;
+  overwrite_existing?: boolean;
 }
 
 export interface AuthorizePublicDirectoryShareReadOptions {
@@ -286,11 +288,38 @@ export interface CopyPublicDirectoryShareToProjectResponse {
   };
 }
 
-export interface CopyPublicDirectoryShareToNewProjectResponse extends CopyPublicDirectoryShareToProjectResponse {
-  created_project: true;
+export interface CopyPublicDirectoryShareToNewProjectConflictResponse {
+  destination_project_id: string;
+  created_project: false;
+  reused_project: true;
   requested_host_id?: string | null;
-  placed_on_requested_host: boolean;
+  placed_on_requested_host: true;
   host_placement_message?: string | null;
+  conflict: {
+    reason: "already_copied" | "path_exists";
+    message: string;
+    destination_path?: string | null;
+    can_overwrite: boolean;
+  };
+}
+
+export type CopyPublicDirectoryShareToNewProjectResponse =
+  CopyPublicDirectoryShareToProjectResponse & {
+    created_project: boolean;
+    reused_project?: boolean;
+    requested_host_id?: string | null;
+    placed_on_requested_host: boolean;
+    host_placement_message?: string | null;
+  };
+
+export type CopyPublicDirectoryShareToNewProjectResult =
+  | CopyPublicDirectoryShareToNewProjectResponse
+  | CopyPublicDirectoryShareToNewProjectConflictResponse;
+
+export function isCopyPublicDirectoryShareToNewProjectConflict(
+  response: CopyPublicDirectoryShareToNewProjectResult,
+): response is CopyPublicDirectoryShareToNewProjectConflictResponse {
+  return "conflict" in response;
 }
 
 export interface PublicDirectoryShares {
@@ -326,7 +355,7 @@ export interface PublicDirectoryShares {
   ) => Promise<CopyPublicDirectoryShareToProjectResponse>;
   copyToNewProject: (
     opts: CopyPublicDirectoryShareToNewProjectOptions,
-  ) => Promise<CopyPublicDirectoryShareToNewProjectResponse>;
+  ) => Promise<CopyPublicDirectoryShareToNewProjectResult>;
   authorizeRead: (
     opts: AuthorizePublicDirectoryShareReadOptions,
   ) => Promise<AuthorizePublicDirectoryShareReadResponse>;

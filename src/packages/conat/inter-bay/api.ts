@@ -53,7 +53,7 @@ import type {
   AuthorizePublicDirectoryShareReadOptions,
   AuthorizePublicDirectoryShareReadResponse,
   CopyPublicDirectoryShareToNewProjectOptions,
-  CopyPublicDirectoryShareToNewProjectResponse,
+  CopyPublicDirectoryShareToNewProjectResult,
   CopyPublicDirectoryShareToProjectOptions,
   CopyPublicDirectoryShareToProjectResponse,
   CreatePublicDirectoryShareOptions,
@@ -3444,7 +3444,7 @@ export interface InterBayAccountLocalApi {
   ) => Promise<CopyPublicDirectoryShareToProjectResponse>;
   publicDirectoryShareCopyToNewProject: (
     opts: CopyPublicDirectoryShareToNewProjectOptions,
-  ) => Promise<CopyPublicDirectoryShareToNewProjectResponse>;
+  ) => Promise<CopyPublicDirectoryShareToNewProjectResult>;
   publicDirectoryShareGrantTemporaryViewerAccess: (
     opts: GrantTemporaryViewerAccessOptions,
   ) => Promise<GrantTemporaryViewerAccessResponse>;
