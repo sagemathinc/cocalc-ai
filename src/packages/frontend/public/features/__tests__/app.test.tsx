@@ -465,22 +465,34 @@ describe("PublicFeaturesApp", () => {
   );
 
   it("renders the compare feature page", () => {
-    render(
+    const { container } = render(
       <PublicFeaturesApp
         config={{ help_email: "help@example.com", site_name: "Launchpad" }}
         initialRoute={{ slug: "compare", view: "detail" }}
       />,
     );
 
+    expect(screen.getByText("When is CoCalc the right fit?")).not.toBeNull();
+    expect(screen.getByText("Decision checklist")).not.toBeNull();
+    expect(screen.getByText("Where to go next")).not.toBeNull();
     expect(
-      screen.getByText("Compare CoCalc by workflow, not by one checkbox"),
-    ).not.toBeNull();
-    expect(screen.getByText("How CoCalc compares by category")).not.toBeNull();
-    expect(
-      screen.getByText("Google Colab and quick notebook hosts"),
+      screen.getByText(
+        "Hosted by CoCalc, run it yourself, or a private deployment your organization operates.",
+      ),
     ).not.toBeNull();
     expect(
-      screen.getByText("AI agents now change the comparison"),
-    ).not.toBeNull();
+      screen
+        .getByRole("link", { name: "Contact support" })
+        .getAttribute("href"),
+    ).toBe("mailto:help@example.com");
+    expect(
+      container.querySelectorAll(".cocalc-compare-route-row"),
+    ).toHaveLength(3);
+    expect(
+      screen.queryByRole("link", { name: "Review pricing options" }),
+    ).toBeNull();
+    expect(
+      screen.queryByText("Google Colab and quick notebook hosts"),
+    ).toBeNull();
   });
 });
