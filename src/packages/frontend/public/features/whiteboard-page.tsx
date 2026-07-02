@@ -3,22 +3,27 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Col, Flex, Row, Tag, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
+import {
+  PUBLIC_ELEVATION,
+  PUBLIC_COLORS,
+  PUBLIC_RADIUS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import { BulletList, featureAppPath as appPath } from "./page-components";
-import { IconBadge, StartCard, StoryCard } from "./feature-visuals";
+import { FeatureFinalBand, IconBadge } from "./feature-visuals";
 
 const { Paragraph, Text, Title } = Typography;
 
 function WhiteboardMock() {
   const inputs = [
     ["markdown", "Markdown note", "Proof idea + checklist", "#d4380d"],
-    ["tex", "KaTeX math", "∫ sin(x²) dx", "#2f6fda"],
+    ["tex", "LaTeX math", "∫ sin(x²) dx", "#2f6fda"],
     ["jupyter", "Jupyter cell", "run after prerequisites", "#389e0d"],
+    ["layout", "Connected page", "lecture page 2", "#d4380d"],
   ] satisfies [IconName, string, string, string][];
 
   return (
@@ -26,11 +31,10 @@ function WhiteboardMock() {
       aria-label="Illustration of a CoCalc whiteboard with markdown, math, and Jupyter cells"
       role="img"
       style={{
-        background:
-          "linear-gradient(145deg, #ffffff 0%, #f4f9ff 54%, #fff8e8 100%)",
+        background: `linear-gradient(145deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.surfaceMuted} 54%, ${PUBLIC_COLORS.brandTint} 100%)`,
         border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: 28,
-        boxShadow: "0 24px 70px rgba(33, 49, 57, 0.12)",
+        borderRadius: PUBLIC_RADIUS.panel,
+        boxShadow: PUBLIC_ELEVATION.lg,
         padding: 20,
       }}
     >
@@ -45,119 +49,59 @@ function WhiteboardMock() {
               </div>
             </div>
           </Flex>
-          <Tag color="orange" style={{ marginInlineEnd: 0 }}>
-            JSONL document
-          </Tag>
         </Flex>
 
-        <div
-          style={{
-            background: "#fff",
-            border: `1px dashed ${PUBLIC_COLORS.border}`,
-            borderRadius: 22,
-            padding: 18,
-          }}
-        >
-          <Row align="middle" gutter={[14, 14]}>
-            <Col xs={24} md={10}>
-              <Flex vertical gap={10}>
-                {inputs.map(([icon, title, body, accent]) => (
-                  <div
-                    key={title}
-                    style={{
-                      background: "#fff",
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 16,
-                      boxShadow: "0 10px 24px rgba(33, 49, 57, 0.07)",
-                      padding: 12,
-                    }}
-                  >
-                    <Flex align="center" gap={10}>
-                      <IconBadge accent={accent} icon={icon} />
-                      <div>
-                        <Text strong>{title}</Text>
-                        <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                          {body}
-                        </div>
-                      </div>
-                    </Flex>
-                  </div>
-                ))}
-              </Flex>
-            </Col>
-            <Col xs={24} md={3}>
-              <Flex align="center" justify="center">
-                <div
-                  aria-hidden="true"
-                  style={{
-                    alignItems: "center",
-                    background: "#fff7e6",
-                    border: "1px solid #ffd591",
-                    borderRadius: 999,
-                    color: "#ad6800",
-                    display: "flex",
-                    height: 46,
-                    justifyContent: "center",
-                    width: 46,
-                  }}
-                >
-                  <Icon name="arrow-right" />
-                </div>
-              </Flex>
-            </Col>
-            <Col xs={24} md={11}>
+        <Row gutter={[12, 12]}>
+          {inputs.map(([icon, title, body, accent]) => (
+            <Col key={title} xs={24} sm={12}>
               <div
                 style={{
-                  background:
-                    "linear-gradient(145deg, #f7fbff 0%, #ffffff 58%, #fff8e8 100%)",
+                  background: PUBLIC_COLORS.surface,
                   border: `1px solid ${PUBLIC_COLORS.border}`,
-                  borderRadius: 20,
-                  boxShadow: "0 12px 30px rgba(33, 49, 57, 0.08)",
-                  minHeight: 224,
-                  padding: 16,
+                  borderRadius: PUBLIC_RADIUS.panel,
+                  boxShadow: PUBLIC_ELEVATION.card,
+                  height: "100%",
+                  padding: 14,
                 }}
               >
-                <Flex vertical gap={12}>
-                  <Flex align="center" gap={10}>
-                    <IconBadge accent="#d4380d" icon="layout" />
-                    <div>
-                      <Text strong>lecture page 2</Text>
-                      <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                        one canvas frame
-                      </div>
-                    </div>
-                  </Flex>
-                  <div
-                    style={{
-                      background: "#fff",
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 14,
-                      padding: 12,
-                    }}
-                  >
-                    <Text strong>Connected explanation</Text>
-                    <Paragraph
-                      style={{
-                        color: PUBLIC_COLORS.mutedText,
-                        margin: "4px 0 0",
-                      }}
-                    >
-                      Text, math, and executable cells stay editable on the
-                      board.
-                    </Paragraph>
+                <Flex align="center" gap={12}>
+                  <IconBadge accent={accent} icon={icon} />
+                  <div>
+                    <Text strong>{title}</Text>
+                    <div style={{ color: PUBLIC_COLORS.mutedText }}>{body}</div>
                   </div>
-                  <Flex gap={8} wrap>
-                    {["page", "frame", "jsonl"].map((label) => (
-                      <Tag key={label} style={{ marginInlineEnd: 0 }}>
-                        {label}
-                      </Tag>
-                    ))}
-                  </Flex>
                 </Flex>
               </div>
             </Col>
-          </Row>
-        </div>
+          ))}
+        </Row>
+      </Flex>
+    </div>
+  );
+}
+
+function GraphNode({
+  accent,
+  icon,
+  label,
+}: {
+  accent: string;
+  icon: IconName;
+  label: string;
+}) {
+  return (
+    <div
+      style={{
+        background: PUBLIC_COLORS.surface,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: PUBLIC_RADIUS.panel,
+        boxShadow: PUBLIC_ELEVATION.compact,
+        padding: 12,
+      }}
+    >
+      <Flex vertical gap={8} align="center">
+        <IconBadge accent={accent} icon={icon} />
+        <Text strong>{label}</Text>
       </Flex>
     </div>
   );
@@ -169,16 +113,6 @@ function ExecutionGraph() {
       <Row gutter={[24, 24]} align="middle">
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
-            <Tag
-              color="blue"
-              style={{
-                alignSelf: "flex-start",
-                background: COLORS.ANTD_BG_BLUE_L,
-                color: COLORS.BLUE_D,
-              }}
-            >
-              Computational canvas
-            </Tag>
             <Title level={3} style={{ margin: 0 }}>
               Put Jupyter cells in a directed graph.
             </Title>
@@ -191,10 +125,9 @@ function ExecutionGraph() {
             </Paragraph>
             <BulletList
               items={[
-                "Use markdown and Slate-based rich text for explanations.",
-                "Write precise mathematics with KaTeX.",
-                "Mix sketches, notes, frames, and executable cells.",
-                "Organize large topics with an infinite canvas and multiple pages.",
+                "Connect Jupyter cells so the board runs them in dependency order, not file order.",
+                "Lay out branching analyses that are not a single linear column.",
+                "Keep each cell's code, output, and the math that explains it together in one frame.",
               ]}
             />
           </Flex>
@@ -202,41 +135,55 @@ function ExecutionGraph() {
         <Col xs={24} lg={12}>
           <div
             style={{
-              background: "#fff",
+              background: PUBLIC_COLORS.surface,
               border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: 26,
-              boxShadow: "0 18px 52px rgba(33, 49, 57, 0.08)",
-              padding: 22,
+              borderRadius: PUBLIC_RADIUS.panel,
+              boxShadow: PUBLIC_ELEVATION.panel,
+              padding: 18,
             }}
           >
-            <Flex align="center" justify="space-between" gap={12}>
-              {["data", "clean", "fit", "plot"].map((label, index) => (
-                <Flex align="center" gap={10} key={label}>
-                  <div
-                    style={{
-                      background: index === 3 ? "#fff7e6" : "#f7fbff",
-                      border: `1px solid ${PUBLIC_COLORS.border}`,
-                      borderRadius: 16,
-                      padding: 14,
-                    }}
-                  >
-                    <Flex vertical gap={8} align="center">
-                      <IconBadge
-                        accent={index === 3 ? "#ad6800" : "#2f6fda"}
-                        icon={index === 3 ? "line-chart" : "jupyter"}
-                      />
-                      <Text strong>{label}</Text>
-                    </Flex>
-                  </div>
-                  {index < 3 ? (
-                    <Icon name="arrow-right" style={{ color: "#d29c3c" }} />
-                  ) : null}
-                </Flex>
-              ))}
+            <Flex align="center" gap={8} justify="center" wrap>
+              <GraphNode accent="#2f6fda" icon="jupyter" label="data" />
+              <Icon
+                name="arrow-right"
+                style={{ color: PUBLIC_COLORS.warning }}
+              />
+              <GraphNode accent="#2f6fda" icon="jupyter" label="clean" />
+              <Icon
+                name="arrow-right"
+                style={{ color: PUBLIC_COLORS.warning }}
+              />
+              <Flex vertical gap={12}>
+                <GraphNode accent="#2f6fda" icon="jupyter" label="fit" />
+                <GraphNode accent="#ad6800" icon="line-chart" label="plot" />
+              </Flex>
             </Flex>
           </div>
         </Col>
       </Row>
+    </PublicSection>
+  );
+}
+
+function SlideDeckSection() {
+  return (
+    <PublicSection ariaLabel="Slide deck workflows">
+      <Flex vertical gap={12} style={{ maxWidth: 820 }}>
+        <Title level={3} style={{ margin: 0 }}>
+          Move board work into a slide deck when it is ready.
+        </Title>
+        <Paragraph style={{ margin: 0 }}>
+          For ordered presentations, use the dedicated slide decks workflow. It
+          keeps slide-sized pages close to the same editable math, diagrams,
+          Jupyter cells, files, and explanations.
+        </Paragraph>
+        <Flex wrap gap={12}>
+          <Button href={appPath("features/slides")}>
+            More about slide decks
+          </Button>
+          <Button href={appPath("features/teaching")}>Teaching</Button>
+        </Flex>
+      </Flex>
     </PublicSection>
   );
 }
@@ -252,9 +199,6 @@ export default function WhiteboardFeaturePage({
     ? appPath("projects")
     : appPath("auth/sign-up");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
-  const finalLabel = isAuthenticated
-    ? "Open projects"
-    : "Start using CoCalc whiteboards";
 
   return (
     <Flex vertical gap={22}>
@@ -262,28 +206,19 @@ export default function WhiteboardFeaturePage({
         <Row gutter={[28, 28]} align="middle">
           <Col xs={24} lg={11}>
             <Flex vertical gap={14}>
-              <Tag color="orange" style={{ alignSelf: "flex-start" }}>
-                Collaborative technical canvas
-              </Tag>
               <Title level={2} style={{ margin: 0 }}>
-                A Miro-like whiteboard rebuilt for computational work.
+                Whiteboards and slides that keep the code, math, and
+                explanations together.
               </Title>
-              <Paragraph style={{ fontSize: 18, margin: 0 }}>
-                CoCalc whiteboards cover the essential collaborative canvas
-                workflow, but are shaped around technical material: rich
-                markdown, KaTeX math, Jupyter cells, pages, frames, drawings,
-                and a simple transparent JSONL document format.
-              </Paragraph>
-              <Paragraph style={{ margin: 0 }}>
-                They are useful for teaching, office hours, research sketches,
-                live support, and diagrams where code and math should be part of
-                the board instead of pasted screenshots.
+              <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
+                Work through the problem together, then replay every change with
+                TimeTravel.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
                   {primaryLabel}
                 </Button>
-                <Button href={appPath("features/slides")}>Slides</Button>
+                <Button href={appPath("features/slides")}>Slide decks</Button>
                 <Button href={appPath("features/jupyter-notebook")}>
                   Jupyter notebooks
                 </Button>
@@ -296,76 +231,39 @@ export default function WhiteboardFeaturePage({
         </Row>
       </PublicSection>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#d4380d" icon="markdown" title="Markdown native">
-            Whiteboard content is based around rich markdown and Slate editing,
-            so explanations stay editable, structured, and readable.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#2f6fda" icon="tex" title="Math first">
-            KaTeX support makes formulas first-class board content, not blurry
-            images copied from another tool.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={8}>
-          <StoryCard accent="#389e0d" icon="jupyter" title="Executable cells">
-            Put Jupyter cells on the board and connect them in a graph when the
-            idea is a computation rather than a static sketch.
-          </StoryCard>
-        </Col>
-      </Row>
+      <div id="slide-decks">
+        <SlideDeckSection />
+      </div>
 
       <ExecutionGraph />
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12}>
-          <StoryCard accent="#7c3aed" icon="users" title="Realtime by default">
-            Collaborators can work on the same board, use side chat, and keep
-            the explanation in the same project as the notebooks and files it
-            references.
-          </StoryCard>
-        </Col>
-        <Col xs={24} lg={12}>
-          <StoryCard accent="#278c83" icon="file" title="Transparent format">
-            The whiteboard is stored as a simple JSONL document, which keeps the
-            format inspectable and friendly to project tooling.
-          </StoryCard>
-        </Col>
-      </Row>
-
       <PublicSection>
-        <Row gutter={[24, 24]} align="middle">
-          <Col xs={24} lg={13}>
-            <Title level={3}>
-              Why use whiteboards in CoCalc
-            </Title>
-            <BulletList
-              items={[
-                "Explain ideas with text, math, sketches, and live code together.",
-                "Use an infinite canvas with multiple pages for large technical topics.",
-                "Keep board work close to notebooks, terminals, files, and chat.",
-                "Turn a whiteboard into slides when the same material becomes a presentation.",
-              ]}
-            />
-            <Flex wrap gap={12}>
-              <Button href={appPath("features/slides")}>Slides</Button>
-              <Button href={appPath("features/teaching")}>Teaching</Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
-            </Flex>
-          </Col>
-          <Col xs={24} lg={11}>
-            <StartCard
-              body="Open a project and create a board for technical diagrams, lecture notes, research sketches, or computational workflows."
-              href={primaryHref}
-              label={finalLabel}
-              title="Start with a board"
-            />
-          </Col>
-        </Row>
+        <FeatureFinalBand
+          action={{
+            body: "Open a project and create a board or slide deck for technical diagrams, lecture notes, research sketches, presentations, or computational workflows.",
+            href: primaryHref,
+            label: primaryLabel,
+            title: "Start with a board or deck",
+          }}
+          relatedLinks={[
+            { href: appPath("features/slides"), label: "Slide decks" },
+            { href: appPath("features/teaching"), label: "Teaching" },
+            { href: appPath("products"), label: "Compare operating models" },
+            ...(helpEmail
+              ? [{ href: `mailto:${helpEmail}`, label: "Contact support" }]
+              : []),
+          ]}
+          title="When a board or deck belongs in CoCalc"
+        >
+          <BulletList
+            items={[
+              "Choose a board when a research or engineering team needs to work through a method, not just store the final result.",
+              "Review a collaborator's work in place with TimeTravel — replay how the board evolved and recover earlier versions, with the code, output, and math all there to inspect.",
+              "Run office hours or a live support session on a shared board everyone can edit.",
+              "Choose a deck when the explanation needs an ordered presentation path, not a static export.",
+            ]}
+          />
+        </FeatureFinalBand>
       </PublicSection>
     </Flex>
   );
