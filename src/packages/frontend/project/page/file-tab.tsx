@@ -307,7 +307,6 @@ export function FileTab(props: Readonly<Props>) {
     path != null ? workspaces.resolveWorkspaceForPath(path) : null;
   const userMap = useTypedRedux("users", "user_map");
   const currentAccountId = useTypedRedux("account", "account_id");
-  const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
 
   // True if there is activity (e.g., active output) in this tab
   const has_activity = useRedux(
@@ -351,11 +350,7 @@ export function FileTab(props: Readonly<Props>) {
           setActiveTab(name);
           return;
         }
-        if (
-          canOpenFullPage &&
-          getActivityBarPanelMode(flyout) === "full" &&
-          activeProjectTab !== name
-        ) {
+        if (canOpenFullPage && getActivityBarPanelMode(flyout) === "full") {
           actions?.setFlyoutExpanded?.(flyout, false, false);
           setActiveTab(name);
           return;

@@ -197,7 +197,7 @@ describe("FileTab fixed-tab behavior", () => {
     expect(mockToggleFlyout).not.toHaveBeenCalled();
   });
 
-  it("returns remembered active full page to flyout on ordinary click", () => {
+  it("keeps remembered full page behavior even when already active", () => {
     mockActiveProjectTab = "agents";
     setActivityBarPanelMode("agents", "full");
     const { container } = render(
@@ -211,9 +211,10 @@ describe("FileTab fixed-tab behavior", () => {
     );
     const tab = container.querySelector('[cocalc-test="Agents"]') as Element;
     fireEvent.click(tab);
-    expect(mockToggleFlyout).toHaveBeenCalledWith("agents");
-    expect(mockSetActiveTab).not.toHaveBeenCalled();
-    expect(getActivityBarPanelMode("agents")).toBe("flyout");
+    expect(mockSetActiveTab).toHaveBeenCalledWith("agents");
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("agents", false, false);
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
+    expect(getActivityBarPanelMode("agents")).toBe("full");
   });
 
   it("keeps opening the flyout on double click", () => {

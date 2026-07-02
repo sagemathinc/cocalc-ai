@@ -317,16 +317,17 @@ describe("VerticalFixedTabs overflow actions", () => {
     expect(mockToggleFlyout).not.toHaveBeenCalled();
   });
 
-  it("returns a remembered active full page to flyout from More", () => {
+  it("keeps remembered full page behavior even when already active", () => {
     mockActiveProjectTab = "log";
     setActivityBarPanelMode("log", "full");
     render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
 
     fireEvent.click(screen.getByTestId("menu-overflow:log"));
 
-    expect(mockToggleFlyout).toHaveBeenCalledWith("log");
-    expect(mockSetActiveTab).not.toHaveBeenCalled();
-    expect(getActivityBarPanelMode("log")).toBe("flyout");
+    expect(mockSetActiveTab).toHaveBeenCalledWith("log");
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("log", false, false);
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
+    expect(getActivityBarPanelMode("log")).toBe("full");
   });
 
   it("shows no rail buttons until account settings are ready", () => {

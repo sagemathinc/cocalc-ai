@@ -440,7 +440,6 @@ export function VerticalFixedTabs({
   ): void {
     openRailMenuTab({
       actions,
-      activeTab,
       domEvent,
       name,
       project_id,
@@ -638,13 +637,8 @@ export function VerticalFixedTabs({
 
 export function HiddenActivityBarLauncher() {
   const intl = useIntl();
-  const {
-    actions,
-    agentAIEnabled,
-    project_id,
-    projectAccess,
-    active_project_tab: activeTab,
-  } = useProjectContext();
+  const { actions, agentAIEnabled, project_id, projectAccess } =
+    useProjectContext();
   const accountStoreReady = useAccountStoreReady();
   const { showActBarLabels } = useAppContext();
   const account_id = useTypedRedux("account", "account_id");
@@ -676,7 +670,6 @@ export function HiddenActivityBarLauncher() {
     onTabClick: (name, domEvent) => {
       openRailMenuTab({
         actions,
-        activeTab,
         domEvent,
         name,
         project_id,
@@ -778,13 +771,12 @@ export function HiddenActivityBarLauncher() {
 
 function openRailMenuTab(opts: {
   actions: any;
-  activeTab?: string;
   domEvent?: Pick<MouseEvent, "ctrlKey" | "shiftKey" | "metaKey"> | null;
   name: FixedTab;
   project_id: string;
   source: "overflow" | "hidden-launcher";
 }): void {
-  const { actions, activeTab, domEvent, name } = opts;
+  const { actions, domEvent, name } = opts;
   const canOpenFullPage = !FIXED_PROJECT_TABS[name].noFullPage;
   if (canOpenFullPage && hasModifierKey(domEvent)) {
     setActivityBarPanelMode(name, "full");
@@ -792,11 +784,7 @@ function openRailMenuTab(opts: {
     actions?.set_active_tab(name);
     return;
   }
-  if (
-    canOpenFullPage &&
-    getActivityBarPanelMode(name) === "full" &&
-    activeTab !== name
-  ) {
+  if (canOpenFullPage && getActivityBarPanelMode(name) === "full") {
     actions?.setFlyoutExpanded?.(name, false, false);
     actions?.set_active_tab(name);
     return;

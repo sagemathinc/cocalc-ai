@@ -70,7 +70,10 @@ import ProjectTabs, {
   HiddenActivityBarLauncher,
   VerticalFixedTabs,
 } from "./activity-bar-tabs";
-import { useActivityBarPreferences } from "./activity-bar-storage";
+import {
+  setActivityBarPanelMode,
+  useActivityBarPreferences,
+} from "./activity-bar-storage";
 import { throttle } from "lodash";
 import { StartButton } from "@cocalc/frontend/project/start-button";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
@@ -678,6 +681,24 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     return v;
   }
 
+  function renderFixedFullPageContent(tab: FixedTab, isVisible: boolean) {
+    return (
+      <div
+        key={tab}
+        style={{
+          display: isVisible ? "block" : "none",
+          height: "100%",
+          position: "relative",
+        }}
+      >
+        {isVisible && !FIXED_PROJECT_TABS[tab].noFullPage ? (
+          <OpenFixedTabAsFlyoutButton tab={tab} />
+        ) : null}
+        <Content is_visible={isVisible} tab_name={tab} />
+      </div>
+    );
+  }
+
   // fixed tab -- not an editor
   function render_project_content() {
     if (hardDeleteBlocked) {
@@ -701,17 +722,13 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
       const fixedTabsToRender = retainedFixedTabs.includes(activeFixedTab)
         ? retainedFixedTabs
         : [...retainedFixedTabs, activeFixedTab];
-      return fixedTabsToRender.map((tab) => (
-        <Content
-          key={tab}
-          is_visible={displayProjectTab === tab}
-          tab_name={tab}
-        />
-      ));
+      return fixedTabsToRender.map((tab) =>
+        renderFixedFullPageContent(tab, displayProjectTab === tab),
+      );
     }
-    const retainedFixedContent = retainedFixedTabs.map((tab) => (
-      <Content key={tab} is_visible={false} tab_name={tab} />
-    ));
+    const retainedFixedContent = retainedFixedTabs.map((tab) =>
+      renderFixedFullPageContent(tab, false),
+    );
     if (!displayProjectTab || displayProjectTab.slice(0, 7) === EDITOR_PREFIX) {
       return retainedFixedContent;
     }
@@ -1060,6 +1077,33 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     </ProjectContext.Provider>
   );
 };
+
+function OpenFixedTabAsFlyoutButton({ tab }: { tab: FixedTab }) {
+  const { actions } = useProjectContext();
+  return (
+    <Button
+      aria-label="Open as flyout"
+      icon={<Icon name="compress" />}
+      onClick={() => {
+        setActivityBarPanelMode(tab, "flyout");
+        actions?.set_active_tab("files", { change_history: false });
+        actions?.setFlyoutExpanded?.(tab, true);
+      }}
+      size="small"
+      title="Open as flyout"
+      type="text"
+      style={{
+        background: "rgba(255,255,255,0.88)",
+        border: `1px solid ${COLORS.GRAY_LLL}`,
+        boxShadow: "0 2px 10px rgba(0,0,0,0.08)",
+        position: "absolute",
+        right: 12,
+        top: 12,
+        zIndex: 10,
+      }}
+    />
+  );
+}
 
 function ViewerReadOnlyTag({ project_id }: { project_id: string }) {
   const [open, setOpen] = useState(false);
