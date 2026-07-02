@@ -1548,11 +1548,16 @@ ${details}
       });
       let failed_count = 0;
       for (const dest of courseCopyDests) {
-        if (result[dest.student_id]) {
+        const error = result[dest.student_id] ?? "";
+        this.finish_copy(
+          assignment_id,
+          dest.student_id,
+          "last_assignment",
+          error,
+        );
+        if (error) {
           failed_count += 1;
-          errors += `\n ${store.get_student_name(dest.student_id)}: ${
-            result[dest.student_id]
-          }`;
+          errors += `\n ${store.get_student_name(dest.student_id)}: ${error}`;
         }
       }
       const success_count = courseCopyDests.length - failed_count;
