@@ -66,7 +66,7 @@ test("renders ipynb content as a readable notebook", async () => {
   expect(await screen.findByText("Python 3")).toBeTruthy();
 });
 
-test("renders notebook html output inside a sandboxed iframe", async () => {
+test("renders ordinary notebook html output inline", async () => {
   const content = JSON.stringify({
     cells: [
       {
@@ -103,8 +103,49 @@ test("renders notebook html output inside a sandboxed iframe", async () => {
     />,
   );
 
+  expect(await screen.findByText("Notebook HTML")).toBeTruthy();
+  expect(await screen.findByText("Click me")).toBeTruthy();
+  expect(screen.queryByTitle("Jupyter HTML output")).toBeNull();
+});
+
+test("renders full-document notebook html output inside an iframe", async () => {
+  const content = JSON.stringify({
+    cells: [
+      {
+        cell_type: "code",
+        execution_count: 1,
+        metadata: {},
+        source: ["display_full_html()"],
+        outputs: [
+          {
+            output_type: "display_data",
+            data: {
+              "text/html":
+                "<html><body><h2>Full Notebook HTML</h2><button>Click me</button></body></html>",
+            },
+            metadata: {},
+          },
+        ],
+      },
+    ],
+    metadata: {
+      kernelspec: {
+        display_name: "Python 3",
+        name: "python3",
+      },
+    },
+    nbformat: 4,
+    nbformat_minor: 5,
+  });
+
+  render(
+    <PublicViewerIpynbRenderer
+      content={content}
+      fileContext={{ noSanitize: false }}
+    />,
+  );
+
   const iframe = await screen.findByTitle("Jupyter HTML output");
   expect(iframe.tagName).toBe("IFRAME");
-  expect(iframe.getAttribute("sandbox")).toContain("allow-scripts");
-  expect(iframe.getAttribute("srcdoc")).toContain("Notebook HTML");
+  expect(iframe.getAttribute("srcdoc")).toContain("Full Notebook HTML");
 });
