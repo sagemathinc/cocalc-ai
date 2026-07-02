@@ -356,13 +356,13 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByText(
-        "A Miro-like whiteboard rebuilt for computational work.",
+        "Whiteboards and slides that keep the code, math, and explanations together.",
       ),
     ).not.toBeNull();
     expect(
-      screen.getByText("Put Jupyter cells in a directed graph."),
+      screen.getByText("Move board work into a slide deck when it is ready."),
     ).not.toBeNull();
-    expect(screen.getByText("Transparent format")).not.toBeNull();
+    expect(screen.getByText("Start with a board or deck")).not.toBeNull();
   });
 
   it.each([
