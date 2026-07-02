@@ -3,11 +3,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
   getActivityBarCollapsed,
+  getActivityBarPanelMode,
+  setActivityBarPanelMode,
   setActivityBarHiddenTabs,
 } from "./activity-bar-storage";
 
 const mockSetActiveTab = jest.fn();
 const mockToggleFlyout = jest.fn();
+const mockSetFlyoutExpanded = jest.fn();
 const mockToggleActionButtons = jest.fn();
 const mockSetOtherSettings = jest.fn();
 const mockConfirmRemoveMyselfFromProject = jest.fn();
@@ -20,6 +23,7 @@ let mockPageState: Record<string, any> = {};
 let mockProjectAccessRole: "owner" | "collaborator" | "viewer" = "collaborator";
 let mockAgentAIEnabled = true;
 let mockRootfsImages: any[] = [];
+let mockActiveProjectTab = "files";
 
 const mockPageStore = {
   get: (key: string) => mockPageState[key],
@@ -142,6 +146,7 @@ jest.mock("@cocalc/frontend/project/context", () => ({
     actions: {
       set_active_tab: mockSetActiveTab,
       toggleFlyout: mockToggleFlyout,
+      setFlyoutExpanded: mockSetFlyoutExpanded,
       toggleActionButtons: mockToggleActionButtons,
     },
     agentAIEnabled: mockAgentAIEnabled,
@@ -152,7 +157,7 @@ jest.mock("@cocalc/frontend/project/context", () => ({
         return undefined;
       },
     },
-    active_project_tab: "files",
+    active_project_tab: mockActiveProjectTab,
     projectAccess: {
       role: mockProjectAccessRole,
       capabilities: {
@@ -257,6 +262,7 @@ describe("VerticalFixedTabs overflow actions", () => {
   beforeEach(() => {
     mockSetActiveTab.mockReset();
     mockToggleFlyout.mockReset();
+    mockSetFlyoutExpanded.mockReset();
     mockToggleActionButtons.mockReset();
     mockSetOtherSettings.mockReset();
     mockConfirmRemoveMyselfFromProject.mockReset();
@@ -270,6 +276,7 @@ describe("VerticalFixedTabs overflow actions", () => {
     mockProjectAccessRole = "collaborator";
     mockAgentAIEnabled = true;
     mockRootfsImages = [];
+    mockActiveProjectTab = "files";
     window.localStorage.clear();
     (global as any).ResizeObserver = class {
       observe() {}
@@ -285,6 +292,7 @@ describe("VerticalFixedTabs overflow actions", () => {
     });
 
     expect(mockSetActiveTab).toHaveBeenCalledWith("log");
+    expect(getActivityBarPanelMode("log")).toBe("full");
     expect(mockToggleFlyout).not.toHaveBeenCalled();
   });
 
@@ -295,6 +303,30 @@ describe("VerticalFixedTabs overflow actions", () => {
 
     expect(mockToggleFlyout).toHaveBeenCalledWith("log");
     expect(mockSetActiveTab).not.toHaveBeenCalled();
+    expect(getActivityBarPanelMode("log")).toBe("flyout");
+  });
+
+  it("opens a remembered full page from More on ordinary click", () => {
+    setActivityBarPanelMode("log", "full");
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    fireEvent.click(screen.getByTestId("menu-overflow:log"));
+
+    expect(mockSetActiveTab).toHaveBeenCalledWith("log");
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("log", false, false);
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
+  });
+
+  it("returns a remembered active full page to flyout from More", () => {
+    mockActiveProjectTab = "log";
+    setActivityBarPanelMode("log", "full");
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    fireEvent.click(screen.getByTestId("menu-overflow:log"));
+
+    expect(mockToggleFlyout).toHaveBeenCalledWith("log");
+    expect(mockSetActiveTab).not.toHaveBeenCalled();
+    expect(getActivityBarPanelMode("log")).toBe("flyout");
   });
 
   it("shows no rail buttons until account settings are ready", () => {
@@ -457,6 +489,7 @@ describe("HiddenActivityBarLauncher", () => {
   beforeEach(() => {
     mockSetActiveTab.mockReset();
     mockToggleFlyout.mockReset();
+    mockSetFlyoutExpanded.mockReset();
     mockToggleActionButtons.mockReset();
     mockSetOtherSettings.mockReset();
     mockConfirmRemoveMyselfFromProject.mockReset();
@@ -468,6 +501,8 @@ describe("HiddenActivityBarLauncher", () => {
     mockPageState = {};
     mockProjectAccessRole = "collaborator";
     mockAgentAIEnabled = true;
+    mockActiveProjectTab = "files";
+    window.localStorage.clear();
   });
 
   it("opens a flyout from the hidden launcher on ordinary click", () => {
@@ -487,6 +522,18 @@ describe("HiddenActivityBarLauncher", () => {
     });
 
     expect(mockSetActiveTab).toHaveBeenCalledWith("log");
+    expect(getActivityBarPanelMode("log")).toBe("full");
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
+  });
+
+  it("opens a remembered full page from the hidden launcher on ordinary click", () => {
+    setActivityBarPanelMode("log", "full");
+    render(<HiddenActivityBarLauncher />);
+
+    fireEvent.click(screen.getByTestId("menu-launcher:log"));
+
+    expect(mockSetActiveTab).toHaveBeenCalledWith("log");
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("log", false, false);
     expect(mockToggleFlyout).not.toHaveBeenCalled();
   });
 

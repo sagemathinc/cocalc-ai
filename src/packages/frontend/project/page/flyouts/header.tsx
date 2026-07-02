@@ -14,6 +14,7 @@ import { capitalize } from "@cocalc/util/misc";
 import { FIX_BORDER } from "../common";
 import { FixedProjectTabIcon, FIXED_PROJECT_TABS, FixedTab } from "../file-tab";
 import { FIXED_TABS_BG_COLOR } from "../activity-bar-tabs";
+import { setActivityBarPanelMode } from "../activity-bar-storage";
 import { ActiveHeader } from "./active-header";
 import { FLYOUT_PADDING } from "./consts";
 import { LogHeader } from "./log-header";
@@ -99,6 +100,8 @@ export function FlyoutHeader(_: Readonly<Props>) {
             className="cc-project-fixedtab-fullpage"
             style={style}
             onClick={() => {
+              setActivityBarPanelMode(flyout, "full");
+
               // flyouts and full pages share the same internal name
               actions?.set_active_tab(flyout);
 

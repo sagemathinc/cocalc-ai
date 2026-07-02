@@ -39,6 +39,10 @@ import { COLORS } from "@cocalc/util/theme";
 import { useProjectContext } from "../context";
 import { generatedWorkspaceChatLabel } from "../workspaces/chat-display";
 import {
+  getActivityBarPanelMode,
+  setActivityBarPanelMode,
+} from "./activity-bar-storage";
+import {
   AgentsFlyout,
   DocsFlyout,
   FilesFlyout,
@@ -303,6 +307,7 @@ export function FileTab(props: Readonly<Props>) {
     path != null ? workspaces.resolveWorkspaceForPath(path) : null;
   const userMap = useTypedRedux("users", "user_map");
   const currentAccountId = useTypedRedux("account", "account_id");
+  const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
 
   // True if there is activity (e.g., active output) in this tab
   const has_activity = useRedux(
@@ -341,9 +346,21 @@ export function FileTab(props: Readonly<Props>) {
       if (flyout != null) {
         const canOpenFullPage = !FIXED_PROJECT_TABS[flyout].noFullPage;
         if (canOpenFullPage && hasModifierKey(e)) {
+          setActivityBarPanelMode(flyout, "full");
+          actions?.setFlyoutExpanded?.(flyout, false, false);
           setActiveTab(name);
           return;
         }
+        if (
+          canOpenFullPage &&
+          getActivityBarPanelMode(flyout) === "full" &&
+          activeProjectTab !== name
+        ) {
+          actions?.setFlyoutExpanded?.(flyout, false, false);
+          setActiveTab(name);
+          return;
+        }
+        setActivityBarPanelMode(flyout, "flyout");
         actions?.toggleFlyout(flyout);
       } else {
         setActiveTab(name);

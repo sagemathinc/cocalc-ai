@@ -11,6 +11,7 @@ import {
   ACTIVITY_BAR_HIDDEN_TABS,
   ACTIVITY_BAR_LABELS,
   ACTIVITY_BAR_LABELS_DEFAULT,
+  ACTIVITY_BAR_PANEL_MODES,
   ACTIVITY_BAR_TAB_ORDER,
 } from "./activity-bar-consts";
 import {
@@ -25,9 +26,11 @@ const STORAGE_KEYS = {
   labels: new LS.CustomKey(ACTIVITY_BAR_LABELS),
   order: new LS.CustomKey(ACTIVITY_BAR_TAB_ORDER),
   hidden: new LS.CustomKey(ACTIVITY_BAR_HIDDEN_TABS),
+  panelModes: new LS.CustomKey(ACTIVITY_BAR_PANEL_MODES),
 } as const;
 
-type ActivityBarStorageKey = keyof typeof STORAGE_KEYS;
+type ActivityBarStorageKey = Exclude<keyof typeof STORAGE_KEYS, "panelModes">;
+export type ActivityBarPanelMode = "flyout" | "full";
 
 export interface ActivityBarPreferences {
   collapsed: boolean;
@@ -118,6 +121,36 @@ export function setActivityBarHiddenTabs(
   });
   LS.set(STORAGE_KEYS.hidden, next);
   setPagePreferenceState({ activity_bar_hidden: next });
+}
+
+function normalizePanelModes(
+  value: any,
+): Partial<Record<FixedTab, ActivityBarPanelMode>> {
+  if (value == null || typeof value !== "object") {
+    return {};
+  }
+  const next: Partial<Record<FixedTab, ActivityBarPanelMode>> = {};
+  for (const [name, mode] of Object.entries(value)) {
+    if (mode !== "flyout" && mode !== "full") {
+      continue;
+    }
+    next[name as FixedTab] = mode;
+  }
+  return next;
+}
+
+export function getActivityBarPanelMode(
+  name: FixedTab,
+): ActivityBarPanelMode | undefined {
+  return normalizePanelModes(LS.get(STORAGE_KEYS.panelModes))[name];
+}
+
+export function setActivityBarPanelMode(
+  name: FixedTab,
+  mode: ActivityBarPanelMode,
+): void {
+  const current = normalizePanelModes(LS.get(STORAGE_KEYS.panelModes));
+  LS.set(STORAGE_KEYS.panelModes, { ...current, [name]: mode });
 }
 
 export function useActivityBarPreferences(opts?: {
