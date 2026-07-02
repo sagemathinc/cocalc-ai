@@ -8,6 +8,7 @@ export const VIEWER_FILE_EDITOR_EXTENSION = "cocalc-viewer";
 const PUBLIC_VIEWER_EXTENSIONS = new Set([
   "board",
   "chat",
+  "html",
   "ipynb",
   "markdown",
   "md",
