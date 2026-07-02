@@ -17,7 +17,9 @@ import {
   STDOUT_STYLE,
   TRACEBACK_STYLE,
 } from "@cocalc/frontend/jupyter/output-messages/style";
+import AutosizedIframe from "@cocalc/frontend/jupyter/output-messages/autosized-iframe";
 import type { KernelSpec } from "@cocalc/jupyter/ipynb/parse";
+import { shouldIsolateHtmlOutput } from "@cocalc/jupyter/util/iframe";
 
 interface Props {
   cell: { [key: string]: any };
@@ -238,6 +240,9 @@ function getPriority(type: string): number {
 
 function renderHtml(value: unknown): JSX.Element {
   const content = `${value ?? ""}`;
+  if (shouldIsolateHtmlOutput(content)) {
+    return <AutosizedIframe srcDoc={content} title="Jupyter HTML output" />;
+  }
   return (
     // Public notebook viewers render on a dedicated raw subdomain with no
     // authenticated CoCalc state, so we intentionally avoid sanitization and

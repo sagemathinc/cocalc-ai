@@ -16,6 +16,7 @@ import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import HTML from "./mime-types/html";
 import ShowError from "@cocalc/frontend/components/error";
 import AutosizedIframe from "./autosized-iframe";
+import { shouldIsolateHtmlOutput } from "@cocalc/jupyter/util/iframe";
 // This impact loading the iframe data from the backend project (via the sha1 hash).
 // Doing retries is useful, e.g., since the project might not be running.
 const MAX_ATTEMPTS = 10;
@@ -43,7 +44,7 @@ export default function IFrame(props: Props) {
         // never leave as string when not trusted -- iframes are safer.
         return false;
       }
-      return !isLikelyIframe(content);
+      return !shouldIsolateHtmlOutput(content);
     },
   });
 
@@ -72,11 +73,10 @@ export default function IFrame(props: Props) {
       />
     );
   }
-  if (props.cacheid == null || !props.trust) {
-    return <NonCachedIFrame src={src} />;
-  } else {
+  if (props.trust && !shouldIsolateHtmlOutput(src)) {
     // Trusted HTML that does not require iframe isolation is rendered inline so
-    // it gets normal notebook output sizing and state preservation.
+    // it gets normal notebook output sizing and avoids wrapping top-level
+    // iframe snippets in an extra iframe.
     return (
       <HTML
         id={props.cacheid}
@@ -86,6 +86,7 @@ export default function IFrame(props: Props) {
       />
     );
   }
+  return <NonCachedIFrame src={src} />;
 }
 
 function NonCachedIFrame({ src }) {
@@ -133,31 +134,6 @@ function NonCachedIFrame({ src }) {
   );
 }
 
-// see https://github.com/sagemathinc/cocalc/issues/4322
-const MAX_HTML_SIZE = 10 ** 6;
-
 export function isLikelyIframe(content: string): boolean {
-  if (!content) {
-    return false;
-  }
-  content = content.toLowerCase();
-  if (
-    content.includes("https://bokeh.org") &&
-    content.includes("bk-notebook-logo")
-  ) {
-    // Do NOT use an iframe for bokeh no matter what, since this won't work properly.
-    // Hopefully the above heuristic is sufficiently robust to detect but not overdetect.
-    return false;
-  }
-  if (content.includes("<!doctype html>") || content.includes("<html>")) {
-    // plotly wraps its output in <html>, which strongly suggests it wants to
-    // be in an iframe.  It's not valid to put <html> as a child of a div, so really
-    // the only valid way to render an <html> string is as an iframe.
-    return true;
-  }
-  if (content.length >= MAX_HTML_SIZE) {
-    // it'll just break anyways if we don't use an iframe -- if we do, there is hope.
-    return true;
-  }
-  return content.startsWith("<iframe");
+  return shouldIsolateHtmlOutput(content);
 }

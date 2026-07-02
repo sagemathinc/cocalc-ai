@@ -12,8 +12,10 @@ we also use sanitized html.
 
 import register from "./register";
 import AutosizedIframe from "../autosized-iframe";
+import HTML from "@cocalc/frontend/components/html-ssr";
+import { shouldIsolateHtmlOutput } from "@cocalc/jupyter/util/iframe";
 
-const IframeHtml = ({ value }) => {
+export const IframeHtml = ({ value }) => {
   let src: undefined | string = undefined;
   let srcDoc: undefined | string = undefined;
   if (
@@ -35,6 +37,18 @@ const IframeHtml = ({ value }) => {
   );
 };
 
+export const Html = ({ value }) => {
+  const content = `${value ?? ""}`;
+  if (shouldIsolateHtmlOutput(content)) {
+    return <IframeHtml value={content} />;
+  }
+  return (
+    <div style={{ margin: "5px 0" }}>
+      <HTML value={content} />
+    </div>
+  );
+};
+
 register("text/html", 5, ({ value }) => {
-  return <IframeHtml value={value} />;
+  return <Html value={value} />;
 });

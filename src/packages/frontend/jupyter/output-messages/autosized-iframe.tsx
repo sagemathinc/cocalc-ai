@@ -9,6 +9,7 @@ import type { CSSProperties, SyntheticEvent } from "react";
 const RESIZE_MESSAGE_TYPE = "cocalc-jupyter-iframe-height";
 const DEFAULT_HEIGHT = 320;
 const MIN_HEIGHT = 20;
+const HEIGHT_SLACK = 8;
 
 interface Props {
   src?: string;
@@ -159,7 +160,7 @@ function resizeAccessibleChildIframes(doc: Document, depth: number): void {
 
 function normalizeHeight(height: number): number {
   if (!Number.isFinite(height)) return DEFAULT_HEIGHT;
-  return Math.max(MIN_HEIGHT, Math.ceil(height));
+  return Math.max(MIN_HEIGHT, Math.ceil(height) + HEIGHT_SLACK);
 }
 
 function injectResizeBridge(srcDoc: string, resizeId: string): string {
