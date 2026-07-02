@@ -84,4 +84,37 @@ System,DUP: Size:8388608, Used:16384 (0.20%)
     expect(parsed.disk_device_used_bytes).toBe(48979247104);
     expect(parsed.disk_available_conservative_bytes).toBe(248127594496);
   });
+
+  it("uses effective device headroom for admission when btrfs conservative headroom is low", () => {
+    const gib = 1024 ** 3;
+    const available = _test.computeDiskAdmissionAvailableBytes(
+      {
+        disk_device_total_bytes: 250 * gib,
+        disk_device_used_bytes: 134 * gib,
+        disk_available_conservative_bytes: 4 * gib,
+      },
+      2 * gib,
+    );
+
+    expect(available).toBe(114 * gib);
+  });
+
+  it("can force conservative disk admission headroom via env", () => {
+    const gib = 1024 ** 3;
+    process.env.COCALC_STORAGE_ADMISSION_HEADROOM_MODE = "conservative";
+    try {
+      const available = _test.computeDiskAdmissionAvailableBytes(
+        {
+          disk_device_total_bytes: 250 * gib,
+          disk_device_used_bytes: 134 * gib,
+          disk_available_conservative_bytes: 4 * gib,
+        },
+        2 * gib,
+      );
+
+      expect(available).toBe(2 * gib);
+    } finally {
+      delete process.env.COCALC_STORAGE_ADMISSION_HEADROOM_MODE;
+    }
+  });
 });

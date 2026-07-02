@@ -42,6 +42,7 @@ describe("storage reservations", () => {
     delete process.env.COCALC_LITE_SQLITE_FILENAME;
     delete process.env.COCALC_PODMAN_RUNTIME_DIR;
     delete process.env.COCALC_STORAGE_ORPHANED_PULL_GRACE_MS;
+    delete process.env.COCALC_STORAGE_ADMISSION_HEADROOM_MODE;
   });
 
   it("acquires and releases reservations against conservative free space", async () => {
@@ -70,6 +71,40 @@ describe("storage reservations", () => {
           disk_available_conservative_bytes: 24 * 1024 ** 3,
         },
         min_free_bytes: 8 * 1024 ** 3,
+      }),
+    ).rejects.toThrow(StorageReservationError);
+  });
+
+  it("allows reservations when effective device headroom is ample", async () => {
+    const gib = 1024 ** 3;
+    const reservation = await acquireStorageReservation({
+      kind: "rootfs-pull",
+      estimated_bytes: 8 * gib,
+      current_storage: {
+        disk_device_total_bytes: 250 * gib,
+        disk_device_used_bytes: 134 * gib,
+        disk_available_conservative_bytes: 4 * gib,
+      },
+      min_free_bytes: 8 * gib,
+    });
+
+    expect(reservation.kind).toBe("rootfs-pull");
+  });
+
+  it("can still block reservations using the conservative headroom mode", async () => {
+    process.env.COCALC_STORAGE_ADMISSION_HEADROOM_MODE = "conservative";
+    const gib = 1024 ** 3;
+
+    await expect(
+      acquireStorageReservation({
+        kind: "rootfs-pull",
+        estimated_bytes: 8 * gib,
+        current_storage: {
+          disk_device_total_bytes: 250 * gib,
+          disk_device_used_bytes: 134 * gib,
+          disk_available_conservative_bytes: 4 * gib,
+        },
+        min_free_bytes: 8 * gib,
       }),
     ).rejects.toThrow(StorageReservationError);
   });

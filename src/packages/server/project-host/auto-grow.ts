@@ -156,13 +156,32 @@ function reservationErrorText(err: unknown): string {
   return `${err ?? ""}`;
 }
 
+function diskAvailableForPressure(
+  point: HostMetricsHistoryPoint,
+): number | undefined {
+  const deviceAvailable =
+    point.disk_device_total_bytes != null &&
+    point.disk_device_used_bytes != null &&
+    Number.isFinite(point.disk_device_total_bytes) &&
+    Number.isFinite(point.disk_device_used_bytes) &&
+    point.disk_device_total_bytes >= point.disk_device_used_bytes
+      ? point.disk_device_total_bytes - point.disk_device_used_bytes
+      : undefined;
+  const candidates = [
+    point.disk_available_for_admission_bytes,
+    point.disk_available_conservative_bytes,
+    deviceAvailable,
+  ].filter((value): value is number => value != null && Number.isFinite(value));
+  if (candidates.length === 0) return undefined;
+  return Math.max(...candidates);
+}
+
 function pointAtOrAboveWarningPressure(
   point: HostMetricsHistoryPoint,
 ): boolean {
+  const available = diskAvailableForPressure(point);
   return (
-    (point.disk_available_conservative_bytes != null &&
-      point.disk_available_conservative_bytes <=
-        BACKGROUND_WARNING_AVAILABLE_BYTES) ||
+    (available != null && available <= BACKGROUND_WARNING_AVAILABLE_BYTES) ||
     (point.disk_used_percent != null &&
       point.disk_used_percent >= BACKGROUND_WARNING_USED_PERCENT)
   );
@@ -171,10 +190,9 @@ function pointAtOrAboveWarningPressure(
 function pointAtOrAboveCriticalPressure(
   point: HostMetricsHistoryPoint,
 ): boolean {
+  const available = diskAvailableForPressure(point);
   return (
-    (point.disk_available_conservative_bytes != null &&
-      point.disk_available_conservative_bytes <=
-        BACKGROUND_CRITICAL_AVAILABLE_BYTES) ||
+    (available != null && available <= BACKGROUND_CRITICAL_AVAILABLE_BYTES) ||
     (point.disk_used_percent != null &&
       point.disk_used_percent >= BACKGROUND_CRITICAL_USED_PERCENT)
   );

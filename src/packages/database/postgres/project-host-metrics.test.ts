@@ -134,7 +134,7 @@ describe("project host metrics history", () => {
     expect(entry?.points).toHaveLength(1);
     expect(entry?.points[0].btrfs_metadata_total_bytes).toBeUndefined();
     expect(entry?.points[0].btrfs_metadata_used_bytes).toBeUndefined();
-    expect(entry?.points[0].disk_used_percent).toBeCloseTo(25.1, 1);
+    expect(entry?.points[0].disk_used_percent).toBeCloseTo(24.7, 1);
     expect(entry?.derived?.metadata.level).toBe("healthy");
     expect(entry?.derived?.metadata.available_bytes).toBe(160854908928);
     expect(entry?.derived?.admission_allowed).toBe(true);
@@ -167,6 +167,35 @@ describe("project host metrics history", () => {
     expect(entry).toBeDefined();
     expect(entry?.points[0].shared_scratch_used_percent).toBe(0);
     expect(entry?.derived?.shared_scratch?.level).toBe("healthy");
+    expect(entry?.derived?.admission_allowed).toBe(true);
+  });
+
+  it("uses effective disk headroom for admission when btrfs conservative free is low", async () => {
+    const host_id = uuid();
+    await insertProjectHost(host_id);
+    const gib = 1024 ** 3;
+
+    await recordProjectHostMetricsSample({
+      host_id,
+      metrics: {
+        collected_at: new Date().toISOString(),
+        disk_device_total_bytes: 250 * gib,
+        disk_device_used_bytes: 134 * gib,
+        disk_available_conservative_bytes: 4 * gib,
+        disk_available_for_admission_bytes: 116 * gib,
+      },
+    });
+
+    const history = await loadProjectHostMetricsHistory({
+      host_ids: [host_id],
+      window_minutes: 60,
+      max_points: 60,
+    });
+    const entry = history.get(host_id);
+    expect(entry).toBeDefined();
+    expect(entry?.points[0].disk_used_percent).toBeCloseTo(53.6, 1);
+    expect(entry?.derived?.disk.level).toBe("healthy");
+    expect(entry?.derived?.disk.available_bytes).toBe(116 * gib);
     expect(entry?.derived?.admission_allowed).toBe(true);
   });
 
