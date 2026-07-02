@@ -287,6 +287,185 @@ describe("projects.copyProjectFiles", () => {
     );
   });
 
+  it("uses a bounded archive fast path for small cross-host copies", async () => {
+    queryMock = makeProjectQuery({ src: "h1", dest: "h2" });
+    const archive = {
+      format: "cocalc-path-copy-tar-gzip-v1",
+      archive: Buffer.from("tar"),
+      sha256: "sha",
+      bytes: 3,
+      uncompressed_bytes: 12,
+      file_count: 1,
+      roots: [{ archive_path: "a.txt", source_path: "a.txt" }],
+    };
+    const createPathCopyArchiveMock = jest.fn(async () => archive);
+    const applyPathCopyArchiveMock = jest.fn(async () => ({ applied: 1 }));
+    getProjectFileServerClientMock = jest.fn(async ({ project_id }) => {
+      if (project_id === "src") {
+        return {
+          cp: (...args: any[]) => cpMock(...args),
+          createPathCopyArchive: (...args: any[]) =>
+            createPathCopyArchiveMock(...args),
+          getBackupFiles: (...args: any[]) => getBackupFilesMock(...args),
+          deleteBackup: (...args: any[]) => deleteBackupMock(...args),
+          getBackups: jest.fn(async () => []),
+        };
+      }
+      return {
+        applyPathCopyArchive: (...args: any[]) =>
+          applyPathCopyArchiveMock(...args),
+      };
+    });
+
+    const progress = jest.fn();
+    const { copyProjectFiles } = await import("./copy");
+    const result = await copyProjectFiles({
+      account_id: "acct",
+      timeout_ms: 0,
+      progress,
+      src: { project_id: "src", path: "/root/a.txt" },
+      dests: [{ project_id: "dest", path: "/root/b.txt" }],
+    });
+
+    expect(result).toEqual({
+      queued: 0,
+      local: 0,
+      fast_remote: 1,
+      snapshot_id: undefined,
+    });
+    expect(createPathCopyArchiveMock).toHaveBeenCalledWith({
+      project_id: "src",
+      roots: [{ archive_path: "a.txt", source_path: "a.txt" }],
+      options: undefined,
+      max_archive_bytes: 64 * 1024 * 1024,
+      max_uncompressed_bytes: 256 * 1024 * 1024,
+      max_files: 20_000,
+    });
+    expect(applyPathCopyArchiveMock).toHaveBeenCalledWith({
+      archive,
+      dests: [
+        {
+          project_id: "dest",
+          roots: [{ archive_path: "a.txt", dest_path: "b.txt" }],
+        },
+      ],
+      options: undefined,
+    });
+    expect(progress).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "archive" }),
+    );
+    expect(progress).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "copy-remote" }),
+    );
+    expect(upsertMock).not.toHaveBeenCalled();
+    expect(createBackupMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the queued backup path when the bounded archive is too large", async () => {
+    queryMock = makeProjectQuery({ src: "h1", dest: "h2" });
+    getBackupFilesMock.mockResolvedValue([{ name: "a.txt" }]);
+    const createPathCopyArchiveMock = jest.fn(async () => {
+      throw new Error("PATH_COPY_ARCHIVE_LIMIT: compressed archive too large");
+    });
+    getProjectFileServerClientMock = jest.fn(async ({ project_id }) => {
+      if (project_id === "src") {
+        return {
+          cp: (...args: any[]) => cpMock(...args),
+          createPathCopyArchive: (...args: any[]) =>
+            createPathCopyArchiveMock(...args),
+          getBackupFiles: (...args: any[]) => getBackupFilesMock(...args),
+          deleteBackup: (...args: any[]) => deleteBackupMock(...args),
+          getBackups: jest.fn(async () => []),
+        };
+      }
+      return {
+        applyPathCopyArchive: jest.fn(async () => ({ applied: 1 })),
+      };
+    });
+
+    const { copyProjectFiles } = await import("./copy");
+    const result = await copyProjectFiles({
+      account_id: "acct",
+      timeout_ms: 0,
+      src: { project_id: "src", path: "/root/a.txt" },
+      dests: [{ project_id: "dest", path: "/root/b.txt" }],
+    });
+
+    expect(result).toEqual({
+      queued: 1,
+      local: 0,
+      snapshot_id: "snap-1",
+    });
+    expect(createPathCopyArchiveMock).toHaveBeenCalledTimes(1);
+    expect(createBackupMock).toHaveBeenCalledTimes(1);
+    expect(upsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        src_path: "a.txt",
+        dest_path: "b.txt",
+        snapshot_id: "snap-1",
+      }),
+    );
+  });
+
+  it("falls back before archiving when the destination host lacks the archive RPC", async () => {
+    queryMock = makeProjectQuery({ src: "h1", dest: "h2" });
+    getBackupFilesMock.mockResolvedValue([{ name: "a.txt" }]);
+    const createPathCopyArchiveMock = jest.fn(async () => ({
+      format: "cocalc-path-copy-tar-gzip-v1",
+      archive: Buffer.from("tar"),
+      sha256: "sha",
+      bytes: 3,
+      uncompressed_bytes: 12,
+      file_count: 1,
+      roots: [{ archive_path: "a.txt", source_path: "a.txt" }],
+    }));
+    const applyPathCopyArchiveMock = jest.fn(async () => {
+      throw new Error(
+        "calling remote function 'applyPathCopyArchive': unknown service method 'applyPathCopyArchive'",
+      );
+    });
+    getProjectFileServerClientMock = jest.fn(async ({ project_id }) => {
+      if (project_id === "src") {
+        return {
+          cp: (...args: any[]) => cpMock(...args),
+          createPathCopyArchive: (...args: any[]) =>
+            createPathCopyArchiveMock(...args),
+          getBackupFiles: (...args: any[]) => getBackupFilesMock(...args),
+          deleteBackup: (...args: any[]) => deleteBackupMock(...args),
+          getBackups: jest.fn(async () => []),
+        };
+      }
+      return {
+        applyPathCopyArchive: (...args: any[]) =>
+          applyPathCopyArchiveMock(...args),
+      };
+    });
+
+    const { copyProjectFiles } = await import("./copy");
+    const result = await copyProjectFiles({
+      account_id: "acct",
+      timeout_ms: 0,
+      src: { project_id: "src", path: "/root/a.txt" },
+      dests: [{ project_id: "dest", path: "/root/b.txt" }],
+    });
+
+    expect(result).toEqual({
+      queued: 1,
+      local: 0,
+      snapshot_id: "snap-1",
+    });
+    expect(applyPathCopyArchiveMock).toHaveBeenCalledTimes(1);
+    expect(createPathCopyArchiveMock).not.toHaveBeenCalled();
+    expect(createBackupMock).toHaveBeenCalledTimes(1);
+    expect(upsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        src_path: "a.txt",
+        dest_path: "b.txt",
+        snapshot_id: "snap-1",
+      }),
+    );
+  });
+
   it("expands multi-source queue destinations using source basenames", async () => {
     queryMock = makeProjectQuery({ src: "h1", dest: "h2" });
     getBackupFilesMock.mockResolvedValue([

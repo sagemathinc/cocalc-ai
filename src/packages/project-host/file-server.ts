@@ -2,9 +2,10 @@
 // This allows users to browse and generally use the filesystem of any project,
 // without having to run that project.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   chmod,
   lstat,
@@ -29,6 +30,9 @@ import {
   type ExternalProjectBackupResult,
   type LroRef,
   type ManagedBackupEgressOverride,
+  type PathCopyArchive,
+  type PathCopyArchiveDestination,
+  type PathCopyArchiveRoot,
   type RestoreMode,
   type RestoreStagingHandle,
   type SnapshotRestoreMode,
@@ -112,7 +116,7 @@ import {
 } from "@cocalc/conat/files/fs";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import cpExec from "@cocalc/backend/sandbox/cp";
-import { parseOutput } from "@cocalc/backend/sandbox/exec";
+import execSandbox, { parseOutput } from "@cocalc/backend/sandbox/exec";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -201,6 +205,9 @@ const DEFAULT_ADMIN_DIRECTORY_SUMMARY_ROOT = DEFAULT_PROJECT_RUNTIME_HOME;
 const DEFAULT_ADMIN_DIRECTORY_SUMMARY_DEPTH = 2;
 const DEFAULT_ADMIN_DIRECTORY_SUMMARY_LIMIT = 80;
 const ROOTFS_PUBLISH_TIMEOUT_S = 60 * 60;
+const PATH_COPY_ARCHIVE_FORMAT = "cocalc-path-copy-tar-gzip-v1";
+const PATH_COPY_ARCHIVE_LIMIT_PREFIX = "PATH_COPY_ARCHIVE_LIMIT:";
+const PATH_COPY_ARCHIVE_TIMEOUT_MS = 5 * 60 * 1000;
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 const PROJECT_RUSTIC_TIMEOUT_MS = 30 * 60 * 1000;
 const PROJECT_ROOTS_CACHE = join(data, "cache", "project-roots");
@@ -2138,6 +2145,387 @@ async function cp({
     );
   }
   void touchProjectLastEdited(dest.project_id, "cp");
+}
+
+function pathCopyArchiveLimitError(message: string): Error {
+  return new Error(`${PATH_COPY_ARCHIVE_LIMIT_PREFIX} ${message}`);
+}
+
+function normalizePathCopyArchivePath(raw: string, label: string): string {
+  const normalized = normalizeArchivePath(raw);
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.includes("/../") ||
+    path.posix.isAbsolute(normalized)
+  ) {
+    throw new Error(`${label} must be a non-empty project-relative path`);
+  }
+  if (normalized === ".snapshots" || normalized.startsWith(".snapshots/")) {
+    throw new Error(`${label} must not include .snapshots`);
+  }
+  return normalized;
+}
+
+function assertPathCopyArchiveRoots(roots: PathCopyArchiveRoot[]): void {
+  if (!Array.isArray(roots) || roots.length === 0) {
+    throw new Error("at least one archive root is required");
+  }
+  const seen = new Set<string>();
+  for (const root of roots) {
+    root.archive_path = normalizePathCopyArchivePath(
+      root.archive_path,
+      "archive root",
+    );
+    root.source_path = normalizePathCopyArchivePath(
+      root.source_path,
+      "source path",
+    );
+    if (root.archive_path.startsWith("-")) {
+      throw new Error("archive root must not start with '-'");
+    }
+    if (seen.has(root.archive_path)) {
+      throw new Error(`duplicate archive root: ${root.archive_path}`);
+    }
+    seen.add(root.archive_path);
+  }
+}
+
+async function lstatIfExists(pathToStat: string) {
+  try {
+    return await lstat(pathToStat);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+async function collectPathCopyArchiveStats({
+  rootPath,
+  maxFiles,
+  maxUncompressedBytes,
+}: {
+  rootPath: string;
+  maxFiles: number;
+  maxUncompressedBytes: number;
+}): Promise<{ file_count: number; uncompressed_bytes: number }> {
+  let file_count = 0;
+  let uncompressed_bytes = 0;
+  const visit = async (pathToVisit: string): Promise<void> => {
+    const info = await lstat(pathToVisit);
+    file_count += 1;
+    if (file_count > maxFiles) {
+      throw pathCopyArchiveLimitError(
+        `copy contains more than ${maxFiles} filesystem entries`,
+      );
+    }
+    if (info.isFile() || info.isSymbolicLink()) {
+      uncompressed_bytes += info.size;
+      if (uncompressed_bytes > maxUncompressedBytes) {
+        throw pathCopyArchiveLimitError(
+          `copy is larger than ${maxUncompressedBytes} uncompressed bytes`,
+        );
+      }
+    }
+    if (!info.isDirectory()) {
+      return;
+    }
+    const entries = await readdir(pathToVisit, { withFileTypes: true });
+    for (const entry of entries) {
+      await visit(path.join(pathToVisit, entry.name));
+    }
+  };
+  await visit(rootPath);
+  return { file_count, uncompressed_bytes };
+}
+
+async function createPathCopyArchive({
+  project_id,
+  roots,
+  options,
+  max_archive_bytes,
+  max_uncompressed_bytes,
+  max_files,
+}: {
+  project_id: string;
+  roots: PathCopyArchiveRoot[];
+  options?: Pick<CopyOptions, "dereference">;
+  max_archive_bytes: number;
+  max_uncompressed_bytes: number;
+  max_files: number;
+}): Promise<PathCopyArchive> {
+  if (options?.dereference) {
+    throw pathCopyArchiveLimitError(
+      "dereference copies use the backup path instead",
+    );
+  }
+  assertPathCopyArchiveRoots(roots);
+  const maxArchiveBytes = Math.max(1, Math.floor(max_archive_bytes));
+  const maxUncompressedBytes = Math.max(1, Math.floor(max_uncompressed_bytes));
+  const maxFiles = Math.max(1, Math.floor(max_files));
+  const volume = await getVolume(project_id);
+  const snapshot = `path-copy-${randomUUID()}`;
+  const tmpRoot = await mkdtemp(join(tmpdir(), "cocalc-path-copy-"));
+  const stagingRoot = join(tmpRoot, "archive-root");
+  await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+
+  let file_count = 0;
+  let uncompressed_bytes = 0;
+  let snapshotCreated = false;
+  try {
+    await volume.snapshots.create(snapshot, { quotaMode: "skip" });
+    snapshotCreated = true;
+    const snapshotRoot = join(volume.path, volume.snapshots.path(snapshot));
+    for (const root of roots) {
+      const sourceAbs = join(snapshotRoot, root.source_path);
+      if (!(await exists(sourceAbs))) {
+        throw new Error(`copy source path does not exist: ${root.source_path}`);
+      }
+      const stats = await collectPathCopyArchiveStats({
+        rootPath: sourceAbs,
+        maxFiles: maxFiles - file_count,
+        maxUncompressedBytes: maxUncompressedBytes - uncompressed_bytes,
+      });
+      file_count += stats.file_count;
+      uncompressed_bytes += stats.uncompressed_bytes;
+      const stagedAbs = join(stagingRoot, root.archive_path);
+      await mkdir(dirname(stagedAbs), { recursive: true });
+      await cpExec(sourceAbs, stagedAbs, {
+        recursive: true,
+        preserveTimestamps: true,
+        reflink: true,
+      });
+    }
+
+    const result = await execSandbox({
+      cmd: "/usr/bin/tar",
+      safety: [
+        "-czf",
+        "-",
+        "-C",
+        stagingRoot,
+        "--",
+        ...roots.map((root) => root.archive_path),
+      ],
+      maxSize: maxArchiveBytes + 1,
+      timeout: PATH_COPY_ARCHIVE_TIMEOUT_MS,
+    });
+    if (result.truncated) {
+      throw pathCopyArchiveLimitError(
+        `compressed archive exceeded ${maxArchiveBytes} bytes`,
+      );
+    }
+    if (result.code) {
+      throw new Error(result.stderr.toString() || "tar archive failed");
+    }
+    const archive = Buffer.from(result.stdout);
+    if (archive.length > maxArchiveBytes) {
+      throw pathCopyArchiveLimitError(
+        `compressed archive exceeded ${maxArchiveBytes} bytes`,
+      );
+    }
+    return {
+      format: PATH_COPY_ARCHIVE_FORMAT,
+      archive,
+      sha256: createHash("sha256").update(archive).digest("hex"),
+      bytes: archive.length,
+      uncompressed_bytes,
+      file_count,
+      roots: roots.map((root) => ({ ...root })),
+    };
+  } finally {
+    if (snapshotCreated) {
+      await volume.snapshots.delete(snapshot).catch((err) =>
+        logger.warn("path copy snapshot cleanup failed", {
+          project_id,
+          snapshot,
+          err: `${err}`,
+        }),
+      );
+    }
+    await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+function archivePathIsAllowed({
+  entry,
+  allowedRoots,
+}: {
+  entry: string;
+  allowedRoots: Set<string>;
+}): boolean {
+  const normalized = path.posix.normalize(entry.replace(/\\/g, "/"));
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.includes("/../") ||
+    path.posix.isAbsolute(normalized)
+  ) {
+    return false;
+  }
+  for (const root of allowedRoots) {
+    if (normalized === root || normalized.startsWith(`${root}/`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function validatePathCopyArchiveListing({
+  archivePath,
+  roots,
+}: {
+  archivePath: string;
+  roots: PathCopyArchiveRoot[];
+}): Promise<void> {
+  const allowedRoots = new Set(roots.map((root) => root.archive_path));
+  const result = await execSandbox({
+    cmd: "/usr/bin/tar",
+    safety: ["-tzf", archivePath],
+    maxSize: Math.max(1_000_000, allowedRoots.size * 1000),
+    timeout: PATH_COPY_ARCHIVE_TIMEOUT_MS,
+  });
+  if (result.code || result.truncated) {
+    throw new Error(result.stderr.toString() || "unable to list archive");
+  }
+  const entries = result.stdout
+    .toString("utf8")
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (const entry of entries) {
+    if (!archivePathIsAllowed({ entry, allowedRoots })) {
+      throw new Error(`archive contains unsafe path: ${entry}`);
+    }
+  }
+}
+
+async function applyPathCopyArchive({
+  archive,
+  dests,
+  options,
+}: {
+  archive: PathCopyArchive;
+  dests: PathCopyArchiveDestination[];
+  options?: CopyOptions;
+}): Promise<{ applied: number }> {
+  if (archive?.format !== PATH_COPY_ARCHIVE_FORMAT) {
+    throw new Error("unsupported path copy archive format");
+  }
+  assertPathCopyArchiveRoots(archive.roots);
+  if (!Array.isArray(dests) || !dests.length) {
+    throw new Error("at least one archive destination is required");
+  }
+  const archiveBuffer = Buffer.from(archive.archive);
+  const actualSha256 = createHash("sha256").update(archiveBuffer).digest("hex");
+  if (actualSha256 !== archive.sha256) {
+    throw new Error("path copy archive sha256 mismatch");
+  }
+  if (archive.bytes !== archiveBuffer.length) {
+    throw new Error("path copy archive byte count mismatch");
+  }
+
+  const tmpRoot = await mkdtemp(join(tmpdir(), "cocalc-path-copy-apply-"));
+  const archivePath = join(tmpRoot, "copy.tar.gz");
+  const stagingRoot = join(tmpRoot, "staging");
+  await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+  try {
+    await writeFile(archivePath, archiveBuffer);
+    await validatePathCopyArchiveListing({ archivePath, roots: archive.roots });
+    const extract = await execSandbox({
+      cmd: "/usr/bin/tar",
+      safety: ["--no-same-owner", "-xzf", archivePath, "-C", stagingRoot],
+      timeout: PATH_COPY_ARCHIVE_TIMEOUT_MS,
+    });
+    if (extract.code) {
+      throw new Error(extract.stderr.toString() || "archive extract failed");
+    }
+
+    let applied = 0;
+    const rootsByPath = new Map(
+      archive.roots.map((root) => [root.archive_path, root]),
+    );
+    for (const dest of dests) {
+      await ensureVolume(dest.project_id);
+      const volume = await getVolume(dest.project_id);
+      const projectRoot = volume.path;
+      const destFs = createProjectSandboxFilesystem({
+        project_id: dest.project_id,
+        home: projectRoot,
+        rootfs: getRootfsMountpoint(dest.project_id),
+        scratch: getScratchMountpoint(dest.project_id),
+      });
+      for (const rootDest of dest.roots) {
+        const archiveRootPath = normalizePathCopyArchivePath(
+          rootDest.archive_path,
+          "archive destination root",
+        );
+        const root = rootsByPath.get(archiveRootPath);
+        if (!root) {
+          throw new Error(`archive root not found: ${archiveRootPath}`);
+        }
+        const sourceAbs = join(stagingRoot, archiveRootPath);
+        if (!(await exists(sourceAbs))) {
+          throw new Error(`archive did not extract ${archiveRootPath}`);
+        }
+        let destPath = normalizePathCopyArchivePath(
+          rootDest.dest_path,
+          "destination path",
+        );
+        let destAbs = await destFs.safeAbsPath(destPath);
+        if (destAbs === projectRoot) {
+          throw new Error("dest_path cannot be project root");
+        }
+
+        let destStat = await lstatIfExists(destAbs);
+        if (destStat?.isDirectory() && root.source_path) {
+          destPath = normalizePathCopyArchivePath(
+            path.posix.join(destPath, path.posix.basename(root.source_path)),
+            "destination path",
+          );
+          destAbs = await destFs.safeAbsPath(destPath);
+          if (destAbs === projectRoot) {
+            throw new Error("dest_path cannot be project root");
+          }
+          destStat = await lstatIfExists(destAbs);
+        }
+
+        const force = options?.force ?? true;
+        if (destStat && !force) {
+          if (options?.errorOnExist) {
+            const err = new Error(
+              "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
+            );
+            // @ts-ignore
+            err.code = "ERR_FS_CP_EEXIST";
+            throw err;
+          }
+          applied += 1;
+          continue;
+        }
+        if (destStat && force) {
+          await rm(destAbs, { recursive: true, force: true });
+        }
+        await mkdir(dirname(destAbs), { recursive: true });
+        await cpExec(sourceAbs, destAbs, {
+          ...options,
+          recursive: options?.recursive ?? true,
+          reflink: true,
+        });
+        applied += 1;
+        void touchProjectLastEdited(dest.project_id, "path-copy-archive");
+      }
+    }
+    return { applied };
+  } finally {
+    await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 // Snapshots
@@ -4998,6 +5386,8 @@ export async function initFileServer({
     getQuota: reuseInFlight(getQuota),
     setQuota,
     cp,
+    createPathCopyArchive: reuseInFlight(createPathCopyArchive),
+    applyPathCopyArchive: reuseInFlight(applyPathCopyArchive),
     // backups
     createBackup: reuseInFlight(createBackup),
     backupProjectToExternalRepository: reuseInFlight(

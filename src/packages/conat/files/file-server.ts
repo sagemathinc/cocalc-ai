@@ -98,6 +98,29 @@ export interface ProjectArchiveEntry {
   mtime?: string;
 }
 
+export interface PathCopyArchiveRoot {
+  archive_path: string;
+  source_path: string;
+}
+
+export interface PathCopyArchive {
+  format: "cocalc-path-copy-tar-gzip-v1";
+  archive: Buffer;
+  sha256: string;
+  bytes: number;
+  uncompressed_bytes: number;
+  file_count: number;
+  roots: PathCopyArchiveRoot[];
+}
+
+export interface PathCopyArchiveDestination {
+  project_id: string;
+  roots: {
+    archive_path: string;
+    dest_path: string;
+  }[];
+}
+
 export interface ExternalProjectBackupIndexResult {
   object_key: string;
   compression: "gzip";
@@ -188,6 +211,24 @@ export interface Fileserver {
     dest: { project_id: string; path: string };
     options?: CopyOptions;
   }) => Promise<void>;
+
+  // Bounded cross-host copy fast path. The source host creates a compressed
+  // archive from a read-only snapshot, the hub forwards it, and the destination
+  // host extracts it into one or more projects on the same host. Large copies
+  // should use the durable backup/restore path instead.
+  createPathCopyArchive: (opts: {
+    project_id: string;
+    roots: PathCopyArchiveRoot[];
+    options?: Pick<CopyOptions, "dereference">;
+    max_archive_bytes: number;
+    max_uncompressed_bytes: number;
+    max_files: number;
+  }) => Promise<PathCopyArchive>;
+  applyPathCopyArchive: (opts: {
+    archive: PathCopyArchive;
+    dests: PathCopyArchiveDestination[];
+    options?: CopyOptions;
+  }) => Promise<{ applied: number }>;
   /////////////
   // BACKUPS
   /////////////

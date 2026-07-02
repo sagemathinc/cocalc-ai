@@ -2,7 +2,11 @@ import path from "node:path";
 import { conat } from "@cocalc/backend/conat";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
-import { type Fileserver } from "@cocalc/conat/files/file-server";
+import {
+  type Fileserver,
+  type PathCopyArchiveDestination,
+  type PathCopyArchiveRoot,
+} from "@cocalc/conat/files/file-server";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 import type { FilesystemClient } from "@cocalc/conat/files/fs";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
@@ -22,6 +26,10 @@ const logger = getLogger("server:projects:copy");
 
 const COPY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const COPY_FILES_TIMEOUT_MS = 30 * 60 * 1000;
+const FAST_PATH_LIMIT_PREFIX = "PATH_COPY_ARCHIVE_LIMIT:";
+const FAST_PATH_DEFAULT_MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
+const FAST_PATH_DEFAULT_MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
+const FAST_PATH_DEFAULT_MAX_FILES = 20_000;
 
 type CopyStep = {
   step: string;
@@ -44,6 +52,9 @@ type SourcePlan = {
   backupSrcPath: string;
   relativePath?: string;
 };
+type ArchiveRootPlan = SourcePlan & {
+  archivePath: string;
+};
 
 export const COPY_CANCELED_CODE = "copy-canceled";
 
@@ -56,6 +67,14 @@ function copyCanceledError(): Error {
 
 function report(progress: CopyProgress | undefined, update: CopyStep) {
   progress?.(update);
+}
+
+function positiveIntegerEnv(name: string, fallback: number): number {
+  const value = Number.parseInt(`${process.env[name] ?? ""}`, 10);
+  if (Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  return fallback;
 }
 
 async function createBackupAndWait({
@@ -410,6 +429,264 @@ function resolveRemoteSingleDestPath({
   return normalizeCopyPath(path.posix.basename(srcPath), "dest.path");
 }
 
+function normalizeArchivePathForFastCopy(raw: string): string | undefined {
+  const normalized = normalizeCopyPath(raw, "archive path");
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.includes("/../") ||
+    path.posix.isAbsolute(normalized) ||
+    normalized === ".snapshots" ||
+    normalized.startsWith(".snapshots/")
+  ) {
+    return;
+  }
+  return normalized;
+}
+
+function buildArchiveRootPlans(
+  sourcePlans: SourcePlan[],
+): ArchiveRootPlan[] | undefined {
+  const seen = new Set<string>();
+  const plans: ArchiveRootPlan[] = [];
+  for (const sourcePlan of sourcePlans) {
+    const archivePath = normalizeArchivePathForFastCopy(
+      sourcePlan.relativePath ?? path.posix.basename(sourcePlan.backupSrcPath),
+    );
+    const sourcePath = normalizeArchivePathForFastCopy(
+      sourcePlan.backupSrcPath,
+    );
+    if (!archivePath || !sourcePath || seen.has(archivePath)) {
+      return;
+    }
+    seen.add(archivePath);
+    plans.push({ ...sourcePlan, archivePath });
+  }
+  return plans;
+}
+
+function fastCopyLimits() {
+  return {
+    max_archive_bytes: positiveIntegerEnv(
+      "COCALC_COPY_FAST_PATH_MAX_ARCHIVE_BYTES",
+      FAST_PATH_DEFAULT_MAX_ARCHIVE_BYTES,
+    ),
+    max_uncompressed_bytes: positiveIntegerEnv(
+      "COCALC_COPY_FAST_PATH_MAX_UNCOMPRESSED_BYTES",
+      FAST_PATH_DEFAULT_MAX_UNCOMPRESSED_BYTES,
+    ),
+    max_files: positiveIntegerEnv(
+      "COCALC_COPY_FAST_PATH_MAX_FILES",
+      FAST_PATH_DEFAULT_MAX_FILES,
+    ),
+  };
+}
+
+function isFastPathLimitError(err: unknown): boolean {
+  return `${(err as any)?.message ?? err}`.includes(FAST_PATH_LIMIT_PREFIX);
+}
+
+function isUnknownServiceMethodError(err: unknown, method: string): boolean {
+  return `${(err as any)?.message ?? err}`.includes(
+    `unknown service method '${method}'`,
+  );
+}
+
+function isExpectedApplyProbeError(err: unknown): boolean {
+  return `${(err as any)?.message ?? err}`.includes(
+    "unsupported path copy archive format",
+  );
+}
+
+async function probeApplyPathCopyArchive({
+  client,
+  host_id,
+}: {
+  client: Fileserver;
+  host_id: string;
+}): Promise<boolean> {
+  if (typeof client.applyPathCopyArchive !== "function") {
+    return false;
+  }
+  try {
+    await client.applyPathCopyArchive({
+      archive: {
+        format: "cocalc-path-copy-probe" as any,
+        archive: Buffer.alloc(0),
+        sha256: "",
+        bytes: 0,
+        uncompressed_bytes: 0,
+        file_count: 0,
+        roots: [],
+      },
+      dests: [],
+    });
+    return true;
+  } catch (err) {
+    if (isExpectedApplyProbeError(err)) {
+      return true;
+    }
+    if (isUnknownServiceMethodError(err, "applyPathCopyArchive")) {
+      logger.info("copyProjectFiles: fast archive path unavailable on host", {
+        host_id,
+      });
+      return false;
+    }
+    logger.info("copyProjectFiles: fast archive probe failed on host", {
+      host_id,
+      err: `${err}`,
+    });
+    return false;
+  }
+}
+
+function buildFastArchiveDestinations({
+  dests,
+  rootPlans,
+  singleExactDest,
+}: {
+  dests: CopyDestWithHost[];
+  rootPlans: ArchiveRootPlan[];
+  singleExactDest: boolean;
+}): PathCopyArchiveDestination[] {
+  return dests.map((dest) => ({
+    project_id: dest.project_id,
+    roots: rootPlans.map((root) => ({
+      archive_path: root.archivePath,
+      dest_path: singleExactDest
+        ? resolveRemoteSingleDestPath({
+            srcPath: root.backupSrcPath,
+            destPath: dest.path,
+          })
+        : normalizeCopyPath(
+            path.posix.join(dest.path, root.archivePath),
+            "dest.path",
+          ),
+    })),
+  }));
+}
+
+async function tryFastRemoteCopyArchive({
+  srcProjectClient,
+  src_project_id,
+  rootPlans,
+  remoteDests,
+  options,
+  timeout_ms,
+  progress,
+  shouldAbort,
+}: {
+  srcProjectClient: Fileserver;
+  src_project_id: string;
+  rootPlans: ArchiveRootPlan[] | undefined;
+  remoteDests: CopyDestWithHost[];
+  options?: CopyOptions;
+  timeout_ms: number;
+  progress?: CopyProgress;
+  shouldAbort?: () => Promise<boolean>;
+}): Promise<{ used: false } | { used: true; applied: number }> {
+  if (
+    !rootPlans?.length ||
+    options?.dereference ||
+    typeof srcProjectClient.createPathCopyArchive !== "function"
+  ) {
+    return { used: false };
+  }
+  const destsByHost = new Map<string, CopyDestWithHost[]>();
+  for (const dest of remoteDests) {
+    const group = destsByHost.get(dest.host_id) ?? [];
+    group.push(dest);
+    destsByHost.set(dest.host_id, group);
+  }
+  const destClients = new Map<string, Fileserver>();
+  for (const [host_id, group] of destsByHost.entries()) {
+    const client = await getProjectFileServerClient({
+      project_id: group[0].project_id,
+      timeout: timeout_ms,
+    });
+    if (!(await probeApplyPathCopyArchive({ client, host_id }))) {
+      return { used: false };
+    }
+    destClients.set(host_id, client);
+  }
+  if (shouldAbort && (await shouldAbort())) {
+    throw copyCanceledError();
+  }
+  const limits = fastCopyLimits();
+  report(progress, {
+    step: "archive",
+    message: "creating bounded copy archive",
+    detail: {
+      paths: rootPlans.length,
+      destinations: remoteDests.length,
+      ...limits,
+    },
+  });
+  let archive;
+  try {
+    archive = await srcProjectClient.createPathCopyArchive({
+      project_id: src_project_id,
+      roots: rootPlans.map(
+        (root): PathCopyArchiveRoot => ({
+          archive_path: root.archivePath,
+          source_path: root.backupSrcPath,
+        }),
+      ),
+      options: options?.dereference
+        ? { dereference: options.dereference }
+        : undefined,
+      ...limits,
+    });
+  } catch (err) {
+    if (
+      isFastPathLimitError(err) ||
+      isUnknownServiceMethodError(err, "createPathCopyArchive")
+    ) {
+      report(progress, {
+        step: "archive",
+        message: isFastPathLimitError(err)
+          ? "bounded archive too large; falling back to backup"
+          : "bounded archive unavailable; falling back to backup",
+        detail: { error: `${err}` },
+      });
+      return { used: false };
+    }
+    throw err;
+  }
+
+  report(progress, {
+    step: "copy-remote",
+    message: "applying bounded copy archive",
+    detail: {
+      archive_bytes: archive.bytes,
+      uncompressed_bytes: archive.uncompressed_bytes,
+      file_count: archive.file_count,
+      destinations: remoteDests.length,
+    },
+  });
+  const singleExactDest = rootPlans.length === 1 && !rootPlans[0].relativePath;
+  let applied = 0;
+  for (const [host_id, group] of destsByHost.entries()) {
+    if (shouldAbort && (await shouldAbort())) {
+      throw copyCanceledError();
+    }
+    const client = destClients.get(host_id)!;
+    const result = await client.applyPathCopyArchive({
+      archive,
+      dests: buildFastArchiveDestinations({
+        dests: group,
+        rootPlans,
+        singleExactDest,
+      }),
+      options,
+    });
+    applied += result.applied;
+  }
+  return { used: true, applied };
+}
+
 async function getHostIds(project_ids: string[]): Promise<Map<string, string>> {
   const { rows } = await getPool().query<{
     project_id: string;
@@ -688,7 +965,12 @@ export async function copyProjectFiles({
   queue_mode?: QueueMode;
   timeout_ms?: number;
   shouldAbort?: () => Promise<boolean>;
-}): Promise<{ queued: number; local: number; snapshot_id?: string }> {
+}): Promise<{
+  queued: number;
+  local: number;
+  fast_remote?: number;
+  snapshot_id?: string;
+}> {
   if (!account_id) {
     throw new Error("account_id is required");
   }
@@ -778,6 +1060,7 @@ export async function copyProjectFiles({
 
   let queuedCount = 0;
   let localCount = 0;
+  let fastRemoteCount = 0;
 
   if (remoteDests.length && !skip_queue) {
     if (srcPaths.some((p) => p === "/scratch" || p.startsWith("/scratch/"))) {
@@ -791,6 +1074,33 @@ export async function copyProjectFiles({
     if (shouldAbort && (await shouldAbort())) {
       throw copyCanceledError();
     }
+    if (!snapshot_id && queue_mode === "upsert") {
+      const fastCopy = await tryFastRemoteCopyArchive({
+        srcProjectClient,
+        src_project_id: src.project_id,
+        rootPlans: buildArchiveRootPlans(sourcePlans),
+        remoteDests,
+        options,
+        timeout_ms,
+        progress,
+        shouldAbort,
+      });
+      if (fastCopy.used) {
+        fastRemoteCount += fastCopy.applied;
+        report(progress, {
+          step: "copy-remote",
+          message: `copied ${fastCopy.applied} remote path(s) with bounded archive`,
+          detail: {
+            copied: fastCopy.applied,
+            local: localCount,
+            total: fastCopy.applied + localCount,
+          },
+        });
+      }
+    }
+  }
+
+  if (remoteDests.length && !skip_queue && fastRemoteCount === 0) {
     report(progress, {
       step: "backup",
       detail: { paths: srcPaths.length, destinations: remoteDests.length },
@@ -1032,5 +1342,10 @@ export async function copyProjectFiles({
   }
 
   report(progress, { step: "done" });
-  return { queued: queuedCount, local: localCount, snapshot_id };
+  return {
+    queued: queuedCount,
+    local: localCount,
+    ...(fastRemoteCount ? { fast_remote: fastRemoteCount } : {}),
+    snapshot_id,
+  };
 }
