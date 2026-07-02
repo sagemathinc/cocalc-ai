@@ -162,16 +162,10 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText(
-        "Write the paper where the code, figures, and review live",
-      ),
+      screen.getByText("LaTeX project with source, PDF preview, and build log"),
     ).not.toBeNull();
-    expect(screen.getByText("When the paper becomes a project")).not.toBeNull();
-    expect(
-      screen.getByText(
-        "Use Codex as an editor and build assistant, not an author",
-      ),
-    ).not.toBeNull();
+    expect(screen.getByText("Keep the working tree together")).not.toBeNull();
+    expect(screen.getByText("Ready to write LaTeX in CoCalc?")).not.toBeNull();
   });
 
   it("uses projects as the latex CTA for authenticated users", () => {
