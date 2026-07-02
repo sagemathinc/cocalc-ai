@@ -318,6 +318,48 @@ describe("project-host HTTP session cookie", () => {
     expect(res.end).not.toHaveBeenCalled();
   });
 
+  it("authorizes inline public share file previews for signed-in non-collaborators", async () => {
+    const share_id = "00000000-1000-4000-8000-000000000042";
+    const visitor_id = "00000000-1000-4000-8000-000000000043";
+    getRowMock.mockReturnValue({ users: {} });
+    mockCallHub.mockResolvedValue({
+      project_id,
+      share_id,
+      read_policy: { rules: [{ action: "include", path: "public/**" }] },
+    });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const browserSession = createProjectHostBrowserSessionToken({
+      account_id: visitor_id,
+      now_ms: Date.now(),
+    });
+    const req = {
+      headers: {
+        cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        "x-forwarded-proto": "https",
+      },
+      method: "GET",
+      socket: {},
+      url: `/${project_id}/files/home/user/public/Figure4.html?viewer=1&share=${share_id}`,
+    } as any;
+    const res = createResponse();
+    res.end = jest.fn();
+    res.statusCode = 200;
+
+    await auth.authorizeHttpRequest(req, res, project_id);
+
+    expect(mockCallHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        client: { id: "master-client" },
+        name: "publicDirectoryShares.authorizeRead",
+        args: [{ account_id: visitor_id, project_id, share_id }],
+      }),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.end).not.toHaveBeenCalled();
+  });
+
   it("does not let public share visitors access non-download project URLs", async () => {
     const visitor_id = "00000000-1000-4000-8000-000000000043";
     getRowMock.mockReturnValue({ users: {} });

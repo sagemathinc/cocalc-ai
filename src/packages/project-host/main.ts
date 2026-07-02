@@ -604,15 +604,13 @@ export async function main(
     try {
       const parsed = new URL(req.url ?? "/", "http://project-host.local");
       if (!parsed.pathname.includes(`/${project_id}/files/`)) return;
-      if (!parsed.searchParams.has("download")) return;
+      if (parsed.searchParams.get("viewer") !== "1") return;
       const share_id = `${parsed.searchParams.get("share") ?? ""}`.trim();
       if (share_id) {
         if (!isValidUUID(share_id)) return;
         return { type: "share", account_id, share_id };
       }
-      if (parsed.searchParams.get("viewer") === "1") {
-        return { type: "viewer", account_id };
-      }
+      return { type: "viewer", account_id };
     } catch {
       return;
     }

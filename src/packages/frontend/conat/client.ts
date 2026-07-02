@@ -2457,8 +2457,10 @@ export class ConatClient extends EventEmitter {
 
   public ensureProjectHostBrowserSessionForProject = async ({
     project_id,
+    public_directory_share_id,
   }: {
     project_id: string;
+    public_directory_share_id?: string;
   }): Promise<void> => {
     const routing = await this.ensureProjectRoutingInfo(project_id);
     if (!routing) return;
@@ -2467,6 +2469,7 @@ export class ConatClient extends EventEmitter {
       routing_key: routing.routing_key,
       address: routing.address,
       project_id,
+      public_directory_share_id,
     });
   };
 
