@@ -282,11 +282,11 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("A Linux workspace you can actually administer."),
     ).not.toBeNull();
     expect(
-      screen.getByText("Learn and use Linux without risking your own machine"),
+      screen.getByText(
+        "Install at the right layer, verify, and document what changed",
+      ),
     ).not.toBeNull();
-    expect(
-      screen.getByText("RootFS images make setup reusable"),
-    ).not.toBeNull();
+    expect(screen.getByText("Ready to use Linux in CoCalc?")).not.toBeNull();
   });
 
   it("uses projects as the linux CTA for authenticated users", () => {
