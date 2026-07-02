@@ -161,7 +161,26 @@ describe("FileTab fixed-tab behavior", () => {
     expect(mockSetActiveTab).not.toHaveBeenCalled();
   });
 
-  it("opens the full page on modifier click", () => {
+  it("opens the full page on shift-click", () => {
+    const { container } = render(
+      <FileTab
+        project_id="project-1"
+        name="agents"
+        flyout="agents"
+        isFixedTab
+        showLabel
+      />,
+    );
+    const tab = container.querySelector('[cocalc-test="Agents"]') as Element;
+    fireEvent.click(tab, { shiftKey: true });
+    expect(mockSetActiveTab).toHaveBeenCalledWith("agents");
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("agents", false, false);
+    expect(getActivityBarPanelMode("agents")).toBe("full");
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
+  });
+
+  it("forces the flyout on control-click even when full page is remembered", () => {
+    setActivityBarPanelMode("agents", "full");
     const { container } = render(
       <FileTab
         project_id="project-1"
@@ -173,9 +192,9 @@ describe("FileTab fixed-tab behavior", () => {
     );
     const tab = container.querySelector('[cocalc-test="Agents"]') as Element;
     fireEvent.click(tab, { ctrlKey: true });
-    expect(mockSetActiveTab).toHaveBeenCalledWith("agents");
-    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("agents", false, false);
-    expect(getActivityBarPanelMode("agents")).toBe("full");
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("agents", true);
+    expect(getActivityBarPanelMode("agents")).toBe("flyout");
+    expect(mockSetActiveTab).not.toHaveBeenCalled();
     expect(mockToggleFlyout).not.toHaveBeenCalled();
   });
 

@@ -931,6 +931,7 @@ You can either wait for this host to become available again, or move this ${proj
               justifyContent: "space-between",
               alignItems: "stretch",
               marginBottom: "15px",
+              paddingRight: "40px",
             }}
           >
             <div

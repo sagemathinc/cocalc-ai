@@ -56,7 +56,11 @@ import {
   WorkspacesFlyout,
 } from "./flyouts";
 import { ActiveFlyout } from "./flyouts/active";
-import { hasModifierKey, shouldOpenFileInNewWindow } from "./utils";
+import {
+  shouldForceFixedTabFlyout,
+  shouldForceFixedTabFullPage,
+  shouldOpenFileInNewWindow,
+} from "./utils";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 
 export type FixedTab =
@@ -344,7 +348,12 @@ export function FileTab(props: Readonly<Props>) {
     } else if (name != null) {
       if (flyout != null) {
         const canOpenFullPage = !FIXED_PROJECT_TABS[flyout].noFullPage;
-        if (canOpenFullPage && hasModifierKey(e)) {
+        if (shouldForceFixedTabFlyout(e)) {
+          setActivityBarPanelMode(flyout, "flyout");
+          actions?.setFlyoutExpanded?.(flyout, true);
+          return;
+        }
+        if (canOpenFullPage && shouldForceFixedTabFullPage(e)) {
           setActivityBarPanelMode(flyout, "full");
           actions?.setFlyoutExpanded?.(flyout, false, false);
           setActiveTab(name);

@@ -284,15 +284,29 @@ describe("VerticalFixedTabs overflow actions", () => {
     };
   });
 
-  it("opens a full page from More on modifier click", () => {
+  it("opens a full page from More on shift-click", () => {
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    fireEvent.click(screen.getByTestId("menu-overflow:log"), {
+      shiftKey: true,
+    });
+
+    expect(mockSetActiveTab).toHaveBeenCalledWith("log");
+    expect(getActivityBarPanelMode("log")).toBe("full");
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
+  });
+
+  it("forces a flyout from More on control-click even when full page is remembered", () => {
+    setActivityBarPanelMode("log", "full");
     render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
 
     fireEvent.click(screen.getByTestId("menu-overflow:log"), {
       ctrlKey: true,
     });
 
-    expect(mockSetActiveTab).toHaveBeenCalledWith("log");
-    expect(getActivityBarPanelMode("log")).toBe("full");
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("log", true);
+    expect(getActivityBarPanelMode("log")).toBe("flyout");
+    expect(mockSetActiveTab).not.toHaveBeenCalled();
     expect(mockToggleFlyout).not.toHaveBeenCalled();
   });
 
@@ -515,15 +529,29 @@ describe("HiddenActivityBarLauncher", () => {
     expect(mockSetActiveTab).not.toHaveBeenCalled();
   });
 
-  it("opens a full page from the hidden launcher on modifier click", () => {
+  it("opens a full page from the hidden launcher on shift-click", () => {
+    render(<HiddenActivityBarLauncher />);
+
+    fireEvent.click(screen.getByTestId("menu-launcher:log"), {
+      shiftKey: true,
+    });
+
+    expect(mockSetActiveTab).toHaveBeenCalledWith("log");
+    expect(getActivityBarPanelMode("log")).toBe("full");
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
+  });
+
+  it("forces a flyout from the hidden launcher on control-click even when full page is remembered", () => {
+    setActivityBarPanelMode("log", "full");
     render(<HiddenActivityBarLauncher />);
 
     fireEvent.click(screen.getByTestId("menu-launcher:log"), {
       ctrlKey: true,
     });
 
-    expect(mockSetActiveTab).toHaveBeenCalledWith("log");
-    expect(getActivityBarPanelMode("log")).toBe("full");
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("log", true);
+    expect(getActivityBarPanelMode("log")).toBe("flyout");
+    expect(mockSetActiveTab).not.toHaveBeenCalled();
     expect(mockToggleFlyout).not.toHaveBeenCalled();
   });
 

@@ -72,7 +72,10 @@ import {
   useActivityBarPreferences,
   getActivityBarPanelMode,
 } from "./activity-bar-storage";
-import { hasModifierKey } from "./utils";
+import {
+  shouldForceFixedTabFlyout,
+  shouldForceFixedTabFullPage,
+} from "./utils";
 
 const INDICATOR_STYLE: React.CSSProperties = {
   overflow: "hidden",
@@ -778,7 +781,12 @@ function openRailMenuTab(opts: {
 }): void {
   const { actions, domEvent, name } = opts;
   const canOpenFullPage = !FIXED_PROJECT_TABS[name].noFullPage;
-  if (canOpenFullPage && hasModifierKey(domEvent)) {
+  if (shouldForceFixedTabFlyout(domEvent)) {
+    setActivityBarPanelMode(name, "flyout");
+    actions?.setFlyoutExpanded?.(name, true);
+    return;
+  }
+  if (canOpenFullPage && shouldForceFixedTabFullPage(domEvent)) {
     setActivityBarPanelMode(name, "full");
     actions?.setFlyoutExpanded?.(name, false, false);
     actions?.set_active_tab(name);

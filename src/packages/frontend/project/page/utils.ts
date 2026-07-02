@@ -14,6 +14,16 @@ export function hasModifierKey(e?: ModifierKeyEvent | null) {
   return !!(e.ctrlKey || e.shiftKey || e.metaKey);
 }
 
+export function shouldForceFixedTabFlyout(e?: ModifierKeyEvent | null) {
+  if (e == null) return false;
+  return !!(e.ctrlKey || e.metaKey);
+}
+
+export function shouldForceFixedTabFullPage(e?: ModifierKeyEvent | null) {
+  if (e == null) return false;
+  return !!e.shiftKey && !shouldForceFixedTabFlyout(e);
+}
+
 export function shouldOpenFileInNewWindow(e?: ModifierKeyEvent | null) {
   if (e == null) return false;
   return hasModifierKey(e);
