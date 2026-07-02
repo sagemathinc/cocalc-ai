@@ -2538,7 +2538,7 @@ export async function copyToNewProject({
   if (!entryAllowed({ share, relativePath })) {
     throw Error("path is not part of this shared directory");
   }
-  const destinationPath = ".";
+  const destinationPath = normalizePublicDirectorySharePath(share.slug);
   const sourceRuntime = await getPublicShareSourceRuntime(share.project_id);
   let destinationProjectId =
     reuse_existing === true
