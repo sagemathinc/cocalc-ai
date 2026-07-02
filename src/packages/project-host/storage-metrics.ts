@@ -17,6 +17,44 @@ function parseNonNegativeNumber(value: unknown): number | undefined {
   return parsed;
 }
 
+function storageAdmissionHeadroomMode(): "effective" | "conservative" {
+  const value = `${process.env.COCALC_STORAGE_ADMISSION_HEADROOM_MODE ?? ""}`
+    .trim()
+    .toLowerCase();
+  return value === "conservative" ? "conservative" : "effective";
+}
+
+export function computeDiskDeviceAvailableBytes(
+  storage: Partial<HostCurrentMetrics>,
+): number | undefined {
+  const total = parseNonNegativeNumber(storage.disk_device_total_bytes);
+  const used = parseNonNegativeNumber(storage.disk_device_used_bytes);
+  if (total == null || used == null || total < used) return undefined;
+  return total - used;
+}
+
+export function computeDiskAdmissionAvailableBytes(
+  storage: Partial<HostCurrentMetrics>,
+  reservationBytes = 0,
+): number | undefined {
+  const conservative = parseNonNegativeNumber(
+    storage.disk_available_conservative_bytes,
+  );
+  const explicitAdmission = parseNonNegativeNumber(
+    storage.disk_available_for_admission_bytes,
+  );
+  const deviceAvailable = computeDiskDeviceAvailableBytes(storage);
+  const candidates =
+    storageAdmissionHeadroomMode() === "conservative"
+      ? [explicitAdmission, conservative]
+      : [explicitAdmission, conservative, deviceAvailable];
+  const available = candidates.filter(
+    (value): value is number => value != null && Number.isFinite(value),
+  );
+  if (available.length === 0) return undefined;
+  return Math.max(0, Math.max(...available) - Math.max(0, reservationBytes));
+}
+
 export function resolveStorageMount(): string {
   const explicit = `${process.env.COCALC_FILE_SERVER_MOUNTPOINT ?? ""}`.trim();
   if (explicit) return explicit;

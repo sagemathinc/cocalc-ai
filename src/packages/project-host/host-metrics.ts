@@ -4,6 +4,7 @@ import { cpus, loadavg, totalmem } from "node:os";
 import { readFile } from "node:fs/promises";
 import { listProjects } from "./sqlite/projects";
 import {
+  computeDiskAdmissionAvailableBytes,
   parseBtrfsUsageOutput,
   parseDfOutput,
   readDiskMetrics,
@@ -164,10 +165,10 @@ async function collectSnapshot(
     ]);
   const projects = readProjectCounts();
   const reservation_bytes = getActiveStorageReservationSummary().total_bytes;
-  const disk_available_for_admission_bytes =
-    disk.disk_available_conservative_bytes != null
-      ? Math.max(0, disk.disk_available_conservative_bytes - reservation_bytes)
-      : undefined;
+  const disk_available_for_admission_bytes = computeDiskAdmissionAvailableBytes(
+    disk,
+    reservation_bytes,
+  );
   return {
     cpuSample,
     snapshot: {
@@ -226,6 +227,7 @@ export function startHostMetricsCollector(): HostMetricsCollector {
 }
 
 export const _test = {
+  computeDiskAdmissionAvailableBytes,
   parseBtrfsUsageOutput,
   parseDfOutput,
 };

@@ -14,10 +14,22 @@ const SAMPLE_INTERVAL_MS = 60_000;
 const DEFAULT_WINDOW_MINUTES = 60;
 const DEFAULT_MAX_POINTS = 60;
 const GIB = 1024 * 1024 * 1024;
-const DISK_WARNING_AVAILABLE_BYTES = 25 * GIB;
-const DISK_CRITICAL_AVAILABLE_BYTES = 10 * GIB;
-const DISK_WARNING_PERCENT = 85;
-const DISK_CRITICAL_PERCENT = 93;
+const DISK_WARNING_AVAILABLE_BYTES = bytesEnv(
+  "COCALC_PROJECT_HOST_METRICS_DISK_WARNING_AVAILABLE_BYTES",
+  25 * GIB,
+);
+const DISK_CRITICAL_AVAILABLE_BYTES = bytesEnv(
+  "COCALC_PROJECT_HOST_METRICS_DISK_CRITICAL_AVAILABLE_BYTES",
+  10 * GIB,
+);
+const DISK_WARNING_PERCENT = percentEnv(
+  "COCALC_PROJECT_HOST_METRICS_DISK_WARNING_PERCENT",
+  85,
+);
+const DISK_CRITICAL_PERCENT = percentEnv(
+  "COCALC_PROJECT_HOST_METRICS_DISK_CRITICAL_PERCENT",
+  93,
+);
 const SHARED_SCRATCH_MIN_USED_PERCENT_FOR_HEADROOM = 60;
 const METADATA_WARNING_PERCENT = 80;
 const METADATA_CRITICAL_PERCENT = 90;
@@ -70,6 +82,18 @@ type ProjectHostMetricsSampleRow = {
 
 function pool(): Pool {
   return getPool();
+}
+
+function bytesEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value) || value < 0) return fallback;
+  return Math.floor(value);
+}
+
+function percentEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(100, value));
 }
 
 function toFloat(value: unknown): number | undefined {
@@ -129,9 +153,50 @@ function computePercent(
   return Math.max(0, Math.min(100, (numerator / denominator) * 100));
 }
 
+function computeDiskDeviceAvailableBytes(
+  point: HostCurrentMetrics,
+): number | undefined {
+  const total = point.disk_device_total_bytes;
+  const used = point.disk_device_used_bytes;
+  if (
+    total == null ||
+    used == null ||
+    !Number.isFinite(total) ||
+    !Number.isFinite(used) ||
+    total <= 0 ||
+    used < 0 ||
+    used > total
+  ) {
+    return undefined;
+  }
+  return total - used;
+}
+
+function computeDiskAdmissionAvailableBytes(
+  point: HostCurrentMetrics,
+): number | undefined {
+  const candidates = [
+    point.disk_available_for_admission_bytes,
+    point.disk_available_conservative_bytes,
+    computeDiskDeviceAvailableBytes(point),
+  ].filter((value): value is number => value != null && Number.isFinite(value));
+  if (candidates.length === 0) return undefined;
+  return Math.max(0, Math.max(...candidates));
+}
+
 function computeDiskUsedPercent(point: HostCurrentMetrics): number | undefined {
   const total = point.disk_device_total_bytes;
-  const available = point.disk_available_conservative_bytes;
+  const used = point.disk_device_used_bytes;
+  if (total != null && !Number.isFinite(total)) {
+    return undefined;
+  }
+  if (used != null && !Number.isFinite(used)) {
+    return undefined;
+  }
+  if (total != null && used != null && total > 0 && used >= 0) {
+    return Math.max(0, Math.min(100, (used / total) * 100));
+  }
+  const available = computeDiskAdmissionAvailableBytes(point);
   if (
     total == null ||
     available == null ||
@@ -540,14 +605,15 @@ function computeDerived(
 ): HostMetricsDerived | undefined {
   const current = points[points.length - 1];
   if (!current) return undefined;
+  const diskAvailableBytes = computeDiskAdmissionAvailableBytes(current);
   const diskHoursToExhaustion = computeHoursToExhaustion(
-    current.disk_available_conservative_bytes,
+    diskAvailableBytes,
     growth?.disk_used_bytes_per_hour,
   );
   const disk = riskState({
     label: "Disk",
     used_percent: current.disk_used_percent,
-    available_bytes: current.disk_available_conservative_bytes,
+    available_bytes: diskAvailableBytes,
     hours_to_exhaustion: diskHoursToExhaustion,
     warning_percent: DISK_WARNING_PERCENT,
     critical_percent: DISK_CRITICAL_PERCENT,

@@ -10,7 +10,11 @@ import {
 } from "@cocalc/project-runner/run/rootfs-base";
 import type { RootfsReleaseArtifactAccess } from "@cocalc/util/rootfs-images";
 import { humanSize, uuid } from "@cocalc/util/misc";
-import { readDiskMetrics, resolveStorageMount } from "./storage-metrics";
+import {
+  computeDiskAdmissionAvailableBytes,
+  readDiskMetrics,
+  resolveStorageMount,
+} from "./storage-metrics";
 
 const logger = getLogger("project-host:storage-reservations");
 
@@ -375,12 +379,12 @@ export async function acquireStorageReservation({
   }
   const storage =
     current_storage ?? (await readDiskMetrics(resolveStorageMount()));
-  const available = storage.disk_available_conservative_bytes;
+  const available = computeDiskAdmissionAvailableBytes(storage);
   if (available == null || !Number.isFinite(available)) {
     throw new StorageReservationError({
       kind,
       estimated_bytes: estimated,
-      message: `host storage reservation denied for ${kindLabel(kind)}: unable to determine conservative free space on ${resolveStorageMount()}`,
+      message: `host storage reservation denied for ${kindLabel(kind)}: unable to determine admission free space on ${resolveStorageMount()}`,
     });
   }
   const metadataPercent = metadataUsedPercent(storage);
