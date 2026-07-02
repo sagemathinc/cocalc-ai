@@ -4,9 +4,11 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 export function useProjectHostAuthedUrl({
   project_id,
   url,
+  public_directory_share_id,
 }: {
   project_id: string;
   url?: string;
+  public_directory_share_id?: string;
 }): string | undefined {
   const [authedUrl, setAuthedUrl] = React.useState<string | undefined>(
     undefined,
@@ -24,6 +26,7 @@ export function useProjectHostAuthedUrl({
         await webapp_client.conat_client.ensureProjectHostBrowserSessionForProject(
           {
             project_id,
+            public_directory_share_id,
           },
         );
         const next = await webapp_client.conat_client.routeProjectHostHttpUrl({
@@ -42,7 +45,7 @@ export function useProjectHostAuthedUrl({
     return () => {
       canceled = true;
     };
-  }, [project_id, url]);
+  }, [project_id, public_directory_share_id, url]);
 
   return authedUrl;
 }

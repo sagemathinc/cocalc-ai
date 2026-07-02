@@ -320,15 +320,13 @@ function parseReadOnlyDownloadRequest({
   try {
     const parsed = new URL(req.url ?? "/", "http://project-host.local");
     if (!parsed.pathname.includes(`/${project_id}/files/`)) return;
-    if (!parsed.searchParams.has("download")) return;
+    if (parsed.searchParams.get("viewer") !== "1") return;
     const share_id = `${parsed.searchParams.get("share") ?? ""}`.trim();
     if (share_id) {
       if (!isValidUUID(share_id)) return;
       return { type: "share", share_id };
     }
-    if (parsed.searchParams.get("viewer") === "1") {
-      return { type: "viewer" };
-    }
+    return { type: "viewer" };
   } catch {
     return;
   }

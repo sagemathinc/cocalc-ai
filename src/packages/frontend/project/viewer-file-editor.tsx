@@ -14,7 +14,7 @@ import PublicViewerFileContents, {
 } from "@cocalc/frontend/public-viewer/file-contents";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { url_href } from "./utils";
 
 interface ViewerFileEditorProps {
   project_id: string;
@@ -28,17 +28,22 @@ export default function ViewerFileEditor({
   is_visible,
 }: ViewerFileEditorProps) {
   const fileContext = useContext(FileContext);
-  const { actions } = useProjectContext();
+  const { actions, projectAccess, publicDirectoryShare } = useProjectContext();
   const [content, setContent] = useState<string | undefined>();
   const [error, setError] = useState<unknown>();
   const [reloadId, setReloadId] = useState(0);
   const needsContent = publicViewerFileNeedsContent(path);
+  const shareId = publicDirectoryShare?.id;
+  const rawFileUrl = viewerRawFileUrl({
+    project_id,
+    path,
+    share_id: shareId,
+    viewer: !shareId && projectAccess.role === "viewer",
+  });
   const rawUrl = useProjectHostAuthedUrl({
     project_id,
-    url: webapp_client.project_client.read_file({
-      project_id,
-      path,
-    }),
+    url: rawFileUrl,
+    public_directory_share_id: shareId,
   });
 
   const reload = useCallback(() => setReloadId(Date.now()), []);
@@ -121,4 +126,26 @@ export default function ViewerFileEditor({
       />
     </div>
   );
+}
+
+export function viewerRawFileUrl({
+  project_id,
+  path,
+  share_id,
+  viewer,
+}: {
+  project_id: string;
+  path: string;
+  share_id?: string;
+  viewer?: boolean;
+}): string {
+  const url = url_href(project_id, path);
+  const params: string[] = [];
+  if (viewer || share_id) {
+    params.push("viewer=1");
+  }
+  if (share_id) {
+    params.push(`share=${encodeURIComponent(share_id)}`);
+  }
+  return params.length > 0 ? `${url}?${params.join("&")}` : url;
 }
