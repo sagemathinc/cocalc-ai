@@ -444,6 +444,7 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "account_abuse_review_annotations",
       "account_cpu_usage_events",
       "account_managed_egress_events",
+      "account_managed_egress_rollups",
       "account_revocations",
       "account_security_state",
       "account_usage_windows",
