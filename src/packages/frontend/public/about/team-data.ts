@@ -106,7 +106,7 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
     slug: "blaec-bejarano",
     name: "Blaec Bejarano",
     title: "CSO",
-    email: "blaec@cocalc.com",
+    email: "blaec@cocalc.ai",
     imageSrc: "/public/about/blaec-bejarano.png",
     imageAlt: "A portrait of Blaec Bejarano.",
     bioTopText: [
@@ -224,7 +224,7 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
     slug: "andrey-novoseltsev",
     name: "Andrey Novoseltsev",
     title: "COO",
-    email: "andrey@cocalc.com",
+    email: "andrey@cocalc.ai",
     imageSrc: "/public/about/andrey-novoseltsev.jpeg",
     imageAlt: "A portrait of Andrey Novoseltsev smiling.",
     bioTopText: [
