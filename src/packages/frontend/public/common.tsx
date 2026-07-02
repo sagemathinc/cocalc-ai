@@ -9,6 +9,7 @@ import { Suspense, lazy } from "react";
 import { Button, Empty, Flex, Spin, Typography } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
+  getPublicMarketingSiteName,
   getSiteName,
   publicPoliciesUseBuiltin,
   type PublicConfig,
@@ -28,6 +29,7 @@ const StaticMarkdown = lazy(
 );
 const { Text } = Typography;
 
+export { getPublicMarketingSiteName };
 export { getSiteName };
 export type { PublicConfig };
 
@@ -136,6 +138,32 @@ function maxBacktickRun(text: string): number {
     }
   }
   return max;
+}
+
+// Shared conversion footer so trust/supporting pages route back into the
+// funnel instead of dead-ending. Mirrors the home page PathSection so the
+// "next step" is identical across the site.
+export function PublicNextStep({
+  authenticated,
+  heading = "Ready to choose how CoCalc runs for your team?",
+}: {
+  authenticated?: boolean;
+  heading?: ReactNode;
+}) {
+  return (
+    <PublicSection ariaLabel="Next step" title={heading}>
+      <Flex gap={12} wrap>
+        <Button
+          href={appPath(authenticated ? "projects" : "auth/sign-up")}
+          type="primary"
+        >
+          {authenticated ? "Open projects" : "Start on CoCalc.ai"}
+        </Button>
+        <Button href={appPath("products")}>Compare operating models</Button>
+        <Button href={appPath("support")}>Talk with CoCalc</Button>
+      </Flex>
+    </PublicSection>
+  );
 }
 
 export function PublicSectionShell({
