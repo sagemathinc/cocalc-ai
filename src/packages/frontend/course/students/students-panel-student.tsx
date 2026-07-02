@@ -32,7 +32,10 @@ import { ProjectMap, UserMap } from "@cocalc/frontend/todo-types";
 import { User } from "@cocalc/frontend/users";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { MembershipPackageDetails } from "@cocalc/conat/hub/api/purchases";
-import type { ProjectCollabInviteRow } from "@cocalc/conat/hub/api/projects";
+import type {
+  ProjectCollabInviteRow,
+  ProjectInviteEmailBlockedReason,
+} from "@cocalc/conat/hub/api/projects";
 import { search_match, search_split, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { CourseActions } from "../actions";
@@ -53,6 +56,23 @@ import DeletedAccount from "./deleted-account";
 export interface StudentNameDescription {
   full: string;
   display: string;
+}
+
+function inviteBlockedReasonText(
+  reason?: ProjectInviteEmailBlockedReason | null,
+): string {
+  switch (reason) {
+    case "email_not_configured":
+      return "email is not configured for this site";
+    case "tier_disallows_email":
+      return "email sending is not enabled for this account or site";
+    case "cooldown":
+      return "a recent email invitation was already sent";
+    case "send_disabled_by_request":
+      return "email sending was disabled for this request";
+    default:
+      return "email delivery was not confirmed";
+  }
 }
 
 /*
@@ -632,8 +652,9 @@ export function Student({
       if (result?.email_sent) {
         void antdMessage.success("Invitation created and emailed.");
       } else if (result?.manual_delivery_required) {
+        const reason = inviteBlockedReasonText(result.email_blocked_reason);
         void antdMessage.warning(
-          "Invitation link created, but email was not sent. Copy the invite link and send it manually.",
+          `Invitation link created, but email was not sent because ${reason}. Copy the invite link and send it manually.`,
           8,
         );
       } else {
