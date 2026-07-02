@@ -9,11 +9,12 @@ import { Alert } from "antd";
 import { Loading } from "@cocalc/frontend/components";
 import { useReloadFileWhenVisible } from "@cocalc/frontend/editors/viewer-file-hooks";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
-import PublicViewerFileContents from "@cocalc/frontend/public-viewer/file-contents";
+import PublicViewerFileContents, {
+  publicViewerFileNeedsContent,
+} from "@cocalc/frontend/public-viewer/file-contents";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { filename_extension } from "@cocalc/util/misc";
 
 interface ViewerFileEditorProps {
   project_id: string;
@@ -31,8 +32,7 @@ export default function ViewerFileEditor({
   const [content, setContent] = useState<string | undefined>();
   const [error, setError] = useState<unknown>();
   const [reloadId, setReloadId] = useState(0);
-  const ext = filename_extension(path).toLowerCase();
-  const needsContent = ext !== "pdf";
+  const needsContent = publicViewerFileNeedsContent(path);
   const rawUrl = useProjectHostAuthedUrl({
     project_id,
     url: webapp_client.project_client.read_file({
