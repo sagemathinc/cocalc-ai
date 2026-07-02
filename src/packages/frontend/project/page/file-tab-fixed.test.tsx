@@ -145,7 +145,7 @@ describe("FileTab fixed-tab behavior", () => {
     window.localStorage.clear();
   });
 
-  it("opens the flyout on ordinary click", () => {
+  it("opens the full page on ordinary click by default", () => {
     const { container } = render(
       <FileTab
         project_id="project-1"
@@ -157,8 +157,10 @@ describe("FileTab fixed-tab behavior", () => {
     );
     const tab = container.querySelector('[cocalc-test="Agents"]') as Element;
     fireEvent.click(tab);
-    expect(mockToggleFlyout).toHaveBeenCalledWith("agents");
-    expect(mockSetActiveTab).not.toHaveBeenCalled();
+    expect(mockSetActiveTab).toHaveBeenCalledWith("agents");
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("agents", false, false);
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
+    expect(getActivityBarPanelMode("agents")).toBeUndefined();
   });
 
   it("opens the full page on shift-click", () => {
@@ -216,6 +218,24 @@ describe("FileTab fixed-tab behavior", () => {
     expect(mockToggleFlyout).not.toHaveBeenCalled();
   });
 
+  it("opens remembered flyout on ordinary click", () => {
+    setActivityBarPanelMode("agents", "flyout");
+    const { container } = render(
+      <FileTab
+        project_id="project-1"
+        name="agents"
+        flyout="agents"
+        isFixedTab
+        showLabel
+      />,
+    );
+    const tab = container.querySelector('[cocalc-test="Agents"]') as Element;
+    fireEvent.click(tab);
+    expect(mockToggleFlyout).toHaveBeenCalledWith("agents");
+    expect(mockSetActiveTab).not.toHaveBeenCalled();
+    expect(getActivityBarPanelMode("agents")).toBe("flyout");
+  });
+
   it("keeps remembered full page behavior even when already active", () => {
     mockActiveProjectTab = "agents";
     setActivityBarPanelMode("agents", "full");
@@ -236,7 +256,7 @@ describe("FileTab fixed-tab behavior", () => {
     expect(getActivityBarPanelMode("agents")).toBe("full");
   });
 
-  it("keeps opening the flyout on double click", () => {
+  it("keeps opening the full page on double click by default", () => {
     const { container } = render(
       <FileTab
         project_id="project-1"
@@ -248,8 +268,9 @@ describe("FileTab fixed-tab behavior", () => {
     );
     const tab = container.querySelector('[cocalc-test="Agents"]') as Element;
     fireEvent.click(tab, { detail: 2 });
-    expect(mockToggleFlyout).toHaveBeenCalledWith("agents");
-    expect(mockSetActiveTab).not.toHaveBeenCalled();
+    expect(mockSetActiveTab).toHaveBeenCalledWith("agents");
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("agents", false, false);
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
   });
 
   it("does not show stale cgroup CPU alerts on the info fixed tab", () => {

@@ -359,7 +359,7 @@ export function FileTab(props: Readonly<Props>) {
           setActiveTab(name);
           return;
         }
-        if (canOpenFullPage && getActivityBarPanelMode(flyout) === "full") {
+        if (canOpenFullPage && getActivityBarPanelMode(flyout) !== "flyout") {
           actions?.setFlyoutExpanded?.(flyout, false, false);
           setActiveTab(name);
           return;

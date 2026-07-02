@@ -310,14 +310,15 @@ describe("VerticalFixedTabs overflow actions", () => {
     expect(mockToggleFlyout).not.toHaveBeenCalled();
   });
 
-  it("opens a flyout from More on ordinary click", () => {
+  it("opens a full page from More on ordinary click by default", () => {
     render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
 
     fireEvent.click(screen.getByTestId("menu-overflow:log"));
 
-    expect(mockToggleFlyout).toHaveBeenCalledWith("log");
-    expect(mockSetActiveTab).not.toHaveBeenCalled();
-    expect(getActivityBarPanelMode("log")).toBe("flyout");
+    expect(mockSetActiveTab).toHaveBeenCalledWith("log");
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("log", false, false);
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
+    expect(getActivityBarPanelMode("log")).toBeUndefined();
   });
 
   it("opens a remembered full page from More on ordinary click", () => {
@@ -329,6 +330,17 @@ describe("VerticalFixedTabs overflow actions", () => {
     expect(mockSetActiveTab).toHaveBeenCalledWith("log");
     expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("log", false, false);
     expect(mockToggleFlyout).not.toHaveBeenCalled();
+  });
+
+  it("opens a remembered flyout from More on ordinary click", () => {
+    setActivityBarPanelMode("log", "flyout");
+    render(<VerticalFixedTabs setHomePageButtonWidth={() => {}} />);
+
+    fireEvent.click(screen.getByTestId("menu-overflow:log"));
+
+    expect(mockToggleFlyout).toHaveBeenCalledWith("log");
+    expect(mockSetActiveTab).not.toHaveBeenCalled();
+    expect(getActivityBarPanelMode("log")).toBe("flyout");
   });
 
   it("keeps remembered full page behavior even when already active", () => {
@@ -520,13 +532,15 @@ describe("HiddenActivityBarLauncher", () => {
     window.localStorage.clear();
   });
 
-  it("opens a flyout from the hidden launcher on ordinary click", () => {
+  it("opens a full page from the hidden launcher on ordinary click by default", () => {
     render(<HiddenActivityBarLauncher />);
 
     fireEvent.click(screen.getByTestId("menu-launcher:log"));
 
-    expect(mockToggleFlyout).toHaveBeenCalledWith("log");
-    expect(mockSetActiveTab).not.toHaveBeenCalled();
+    expect(mockSetActiveTab).toHaveBeenCalledWith("log");
+    expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("log", false, false);
+    expect(mockToggleFlyout).not.toHaveBeenCalled();
+    expect(getActivityBarPanelMode("log")).toBeUndefined();
   });
 
   it("opens a full page from the hidden launcher on shift-click", () => {
@@ -564,6 +578,17 @@ describe("HiddenActivityBarLauncher", () => {
     expect(mockSetActiveTab).toHaveBeenCalledWith("log");
     expect(mockSetFlyoutExpanded).toHaveBeenCalledWith("log", false, false);
     expect(mockToggleFlyout).not.toHaveBeenCalled();
+  });
+
+  it("opens a remembered flyout from the hidden launcher on ordinary click", () => {
+    setActivityBarPanelMode("log", "flyout");
+    render(<HiddenActivityBarLauncher />);
+
+    fireEvent.click(screen.getByTestId("menu-launcher:log"));
+
+    expect(mockToggleFlyout).toHaveBeenCalledWith("log");
+    expect(mockSetActiveTab).not.toHaveBeenCalled();
+    expect(getActivityBarPanelMode("log")).toBe("flyout");
   });
 
   it("shows the activity bar from the hidden launcher menu", () => {

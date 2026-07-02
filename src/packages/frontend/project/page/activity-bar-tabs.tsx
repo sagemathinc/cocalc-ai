@@ -792,7 +792,7 @@ function openRailMenuTab(opts: {
     actions?.set_active_tab(name);
     return;
   }
-  if (canOpenFullPage && getActivityBarPanelMode(name) === "full") {
+  if (canOpenFullPage && getActivityBarPanelMode(name) !== "flyout") {
     actions?.setFlyoutExpanded?.(name, false, false);
     actions?.set_active_tab(name);
     return;
