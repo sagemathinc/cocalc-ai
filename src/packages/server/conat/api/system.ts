@@ -4471,9 +4471,9 @@ export async function getSiteSetupStatus({
       summary: has2fa
         ? "Your admin account has an active second factor."
         : "Enable 2FA before continuing; many admin operations require it.",
-      details: [
-        "The first account is the site admin. Do not open normal signups before setup is complete.",
-      ],
+      details: has2fa
+        ? []
+        : ["Enable 2FA before opening signups or inviting users."],
     }),
     setupStep({
       id: "domain-cloudflare",
