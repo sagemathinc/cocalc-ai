@@ -3,18 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  Alert,
-  Button,
-  Card,
-  Col,
-  Divider,
-  Progress,
-  Row,
-  Space,
-  Tag,
-  Typography,
-} from "antd";
+import { Alert, Button, Card, Col, Row, Space, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
@@ -241,139 +230,21 @@ function nextRequiredStep(status: SiteSetupStatus): SiteSetupStep | undefined {
 }
 
 function SetupHero({ status }: { status?: SiteSetupStatus }) {
-  const nextStep = status ? nextRequiredStep(status) : undefined;
   const isStar = status?.profile === "star";
   return (
     <Card style={heroStyle}>
-      <Row gutter={[24, 24]} align="middle">
-        <Col xs={24} lg={15}>
-          <Space direction="vertical" size="middle">
-            <Tag color={status?.ready ? "green" : "gold"}>
-              {isStar ? "CoCalc Star setup" : "Launchpad/Rocket cloud setup"}
-            </Tag>
-            <Title level={2} style={{ color: "white", margin: 0 }}>
-              {isStar
-                ? "Get this single-VM CoCalc appliance usable with almost no configuration."
-                : "Bring this CoCalc site online without guessing the sequence."}
-            </Title>
-            <Paragraph
-              style={{ color: "white", fontSize: 16, marginBottom: 0 }}
-            >
-              {isStar
-                ? "CoCalc Star runs the control plane and project execution on one dedicated VM. Setup requires only the first admin account and a working smoke-test path; email, TLS, backups, license entry, and custom images are supported follow-ups."
-                : "You need a Cloudflare account with a domain you control, plus a GCP project or Nebius account with CLI access. This setup will validate the public URL, provider credentials, first host, official RootFS, and smoke-test path."}
-            </Paragraph>
-            {nextStep ? (
-              <Alert
-                type={status?.ready ? "success" : "warning"}
-                showIcon
-                message={
-                  status?.ready
-                    ? "All hard gates are complete."
-                    : `Next required action: ${nextStep.title}`
-                }
-                description={nextStep.summary}
-              />
-            ) : null}
-          </Space>
-        </Col>
-        <Col xs={24} lg={9}>
-          <Card
-            size="small"
-            style={{
-              background: "rgba(255, 255, 255, 0.92)",
-              border: 0,
-            }}
-          >
-            <Space direction="vertical" style={{ width: "100%" }}>
-              <Text strong>
-                {isStar ? "Star assumes:" : "Before you start, have:"}
-              </Text>
-              {isStar ? (
-                <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
-                  <li>Create the first admin account.</li>
-                  <li>Run one project smoke test.</li>
-                  <li>
-                    No domain, email, cloud account, or provider setup required.
-                  </li>
-                  <li>
-                    Add TLS, backups, email, and custom images when needed.
-                  </li>
-                </ul>
-              ) : (
-                <ul style={{ marginBottom: 0, paddingLeft: 20 }}>
-                  <li>Cloudflare account and domain.</li>
-                  <li>GCP project or Nebius account.</li>
-                  <li>CLI access on your workstation.</li>
-                  <li>A decision about whether email can be skipped.</li>
-                </ul>
-              )}
-              <Divider style={{ margin: "8px 0" }} />
-              <Text type="secondary">
-                {isStar
-                  ? "Cloudflare and cloud-provider project hosts are Launchpad/Rocket upgrades, not Star setup requirements."
-                  : "Single-VM appliance setup is a different mode and should not require Cloudflare or cloud providers."}
-              </Text>
-            </Space>
-          </Card>
-        </Col>
-      </Row>
-    </Card>
-  );
-}
-
-function ProgressSummary({ status }: { status: SiteSetupStatus }) {
-  const isStar = status.profile === "star";
-  return (
-    <Card size="small" style={subtlePanelStyle}>
-      <Row gutter={[16, 16]} align="middle">
-        <Col xs={24} md={10}>
-          <Progress
-            percent={Math.round(
-              (100 * status.hard_gates_done) /
-                Math.max(1, status.hard_gates_total),
-            )}
-          />
-          <Text>
-            Hard gates: {status.hard_gates_done} / {status.hard_gates_total}
-          </Text>
-        </Col>
-        <Col xs={24} md={14}>
-          <Space wrap>
-            {isStar ? (
-              <>
-                <Tag>{status.counts.healthy_project_hosts} local hosts</Tag>
-                <Tag>
-                  {status.steps.find((step) => step.id === "rootfs")?.state ===
-                  "done"
-                    ? "default image ready"
-                    : "default image pending"}
-                </Tag>
-                <Tag>
-                  {status.ready ? "usable appliance" : "smoke path pending"}
-                </Tag>
-              </>
-            ) : (
-              <>
-                <Tag>{status.counts.configured_providers} providers</Tag>
-                <Tag>
-                  {status.counts.cached_provider_catalogs} cached catalogs
-                </Tag>
-                <Tag>{status.counts.healthy_project_hosts} healthy hosts</Tag>
-                <Tag>
-                  {status.counts.official_rootfs_images} official RootFS
-                </Tag>
-                <Tag>{status.counts.prepull_rootfs_images} prepull RootFS</Tag>
-              </>
-            )}
-          </Space>
-          <div style={{ marginTop: 8 }}>
-            <Text type="secondary">
-              Last checked: {new Date(status.checked_at).toLocaleString()}
-            </Text>
-          </div>
-        </Col>
-      </Row>
+      <Space direction="vertical" size="middle">
+        <Title level={2} style={{ color: "white", margin: 0 }}>
+          {isStar
+            ? "Get this single-VM CoCalc appliance usable with almost no configuration."
+            : "Bring this CoCalc site online without guessing the sequence."}
+        </Title>
+        <Paragraph style={{ color: "white", fontSize: 16, marginBottom: 0 }}>
+          {isStar
+            ? "CoCalc Star runs the control plane and project execution on one dedicated VM. Setup requires only the first admin account and a working smoke-test path; email, TLS, backups, license entry, and custom images are supported follow-ups."
+            : "You need a Cloudflare account with a domain you control, plus a GCP project or Nebius account with CLI access. This setup will validate the public URL, provider credentials, first host, official RootFS, and smoke-test path."}
+        </Paragraph>
+      </Space>
     </Card>
   );
 }
@@ -610,26 +481,9 @@ export function SiteSetupAdmin({
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <SetupHero status={status} />
-      <Alert
-        type={status?.ready ? "success" : "info"}
-        showIcon
-        message={
-          status?.ready
-            ? "All derived hard gates are satisfied."
-            : isStar
-              ? "Finish the short Star checklist, then use the appliance. Everything else here is optional hardening or customization."
-              : "Follow these gates in order before treating this cloud-backed Launchpad/Rocket site as ready."
-        }
-        description={
-          isStar
-            ? "Required: admin account and smoke test. Supported but optional: email, TLS via Caddy/Let's Encrypt, backups, license entry, and custom RootFS images."
-            : "This setup profile assumes Cloudflare plus GCP or Nebius. CoCalc Star uses a separate, much shorter single-VM path."
-        }
-      />
       {error ? <ErrorDisplay error={error} /> : null}
       {status ? (
         <>
-          <ProgressSummary status={status} />
           {isStar ? <StarInviteCard inviteUrl={status.invite_url} /> : null}
           {isStar ? <StarAboutCard info={starInfo} /> : null}
           <Title level={4} style={{ marginBottom: 0 }}>
