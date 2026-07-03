@@ -154,12 +154,10 @@ function stepIcon(step: SiteSetupStep): ReactNode {
 function StepCard({
   index,
   onNavigateAdminSection,
-  onRefresh,
   step,
 }: {
   index: number;
   onNavigateAdminSection?: (section: AdminSection) => void;
-  onRefresh: () => void;
   step: SiteSetupStep;
 }) {
   const action = actionForStep(step);
@@ -174,9 +172,8 @@ function StepCard({
         <Space wrap>
           <Text strong>{index}.</Text>
           {stepIcon(step)}
-          {stateTag(step.state)}
           <span>{step.title}</span>
-          {step.hard_gate ? <Tag>hard gate</Tag> : null}
+          {stateTag(step.state)}
         </Space>
       }
     >
@@ -217,9 +214,6 @@ function StepCard({
             {action.label}
           </Button>
         ) : null}
-        <Button size="small" onClick={onRefresh}>
-          Recheck
-        </Button>
       </Space>
     </Card>
   );
@@ -486,16 +480,23 @@ export function SiteSetupAdmin({
         <>
           {isStar ? <StarInviteCard inviteUrl={status.invite_url} /> : null}
           {isStar ? <StarAboutCard info={starInfo} /> : null}
-          <Title level={4} style={{ marginBottom: 0 }}>
-            Required Setup Gates
-          </Title>
+          <Space
+            align="center"
+            style={{ justifyContent: "space-between", width: "100%" }}
+          >
+            <Title level={4} style={{ marginBottom: 0 }}>
+              Required Setup Gates
+            </Title>
+            <Button onClick={() => void load()} loading={loading}>
+              Refresh setup status
+            </Button>
+          </Space>
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
             {hardGateSteps.map((step, i) => (
               <StepCard
                 index={i + 1}
                 key={step.id}
                 onNavigateAdminSection={onNavigateAdminSection}
-                onRefresh={() => void load()}
                 step={step}
               />
             ))}
@@ -515,7 +516,6 @@ export function SiteSetupAdmin({
                     index={hardGateSteps.length + i + 1}
                     key={step.id}
                     onNavigateAdminSection={onNavigateAdminSection}
-                    onRefresh={() => void load()}
                     step={step}
                   />
                 ))}
@@ -524,9 +524,6 @@ export function SiteSetupAdmin({
           ) : null}
         </>
       ) : null}
-      <Button onClick={() => void load()} loading={loading}>
-        Refresh setup status
-      </Button>
     </Space>
   );
 }
