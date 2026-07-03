@@ -18,10 +18,17 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 
 const { Paragraph, Text, Title } = Typography;
 
+export const COCALC_TRUST_CENTER_URL = "https://trust.cocalc.ai/";
+
 const POLICY_DOCUMENT_CSS = `
   .cocalc-public-policy-article p,
   .cocalc-public-policy-article li {
     line-height: 1.75;
+  }
+
+  .cocalc-public-policy-article a {
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .cocalc-public-policy-article table {
@@ -113,7 +120,7 @@ export function A(props: Record<string, any>) {
 
 export function PolicySection({ children, id, title }: PolicyHeadingProps) {
   return (
-    <section id={id}>
+    <section id={id} tabIndex={-1}>
       <Title level={2}>{title}</Title>
       {children}
     </section>
@@ -122,7 +129,7 @@ export function PolicySection({ children, id, title }: PolicyHeadingProps) {
 
 export function PolicySubsection({ children, id, title }: PolicyHeadingProps) {
   return (
-    <section id={id}>
+    <section id={id} tabIndex={-1}>
       <Title level={3}>{title}</Title>
       {children}
     </section>
@@ -236,10 +243,12 @@ export function preparePolicyContent(
 }
 
 export function PolicyDocument({
+  beforeContent,
   content,
   policy,
   siteName,
 }: {
+  beforeContent?: ReactNode;
   content?: ReactNode;
   policy: PublicPolicy;
   siteName: string;
@@ -261,6 +270,7 @@ export function PolicyDocument({
         <Paragraph>
           <Text type="secondary">{metadata}</Text>
         </Paragraph>
+        {beforeContent}
         {content ?? policy.content}
       </article>
     </>
