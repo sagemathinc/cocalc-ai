@@ -92,7 +92,7 @@ function actionForStep(step: SiteSetupStep):
       };
     case "email":
       return {
-        label: "Configure or skip email",
+        label: "Configure email",
         adminSection: "site-settings",
       };
     case "project-host":
@@ -134,6 +134,8 @@ function stepIcon(step: SiteSetupStep): ReactNode {
     case "cloud-provider":
     case "provider-catalog":
       return <Icon name="cloud-upload" />;
+    case "email":
+      return <Icon name="envelope" />;
     case "project-host":
       return <Icon name="server" />;
     case "rootfs":
@@ -164,6 +166,8 @@ function StepCard({
 }) {
   const action = actionForStep(step);
   const adminSection = action?.adminSection;
+  const actionType =
+    step.hard_gate && step.state !== "done" ? "primary" : "default";
   return (
     <Card
       size="small"
@@ -192,8 +196,7 @@ function StepCard({
       <Space wrap style={{ marginTop: 12 }}>
         {adminSection ? (
           <Button
-            size="small"
-            type={step.state === "done" ? "default" : "primary"}
+            type={actionType}
             href={
               onNavigateAdminSection == null
                 ? `/admin/${adminSection}`
@@ -208,11 +211,7 @@ function StepCard({
             {action.label}
           </Button>
         ) : action?.href ? (
-          <Button
-            size="small"
-            type={step.state === "done" ? "default" : "primary"}
-            href={action.href}
-          >
+          <Button type={actionType} href={action.href}>
             {action.label}
           </Button>
         ) : null}
