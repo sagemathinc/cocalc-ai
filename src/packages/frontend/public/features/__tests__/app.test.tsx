@@ -357,6 +357,24 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Start with a board or deck")).not.toBeNull();
   });
 
+  it("renders the richer api feature page", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        initialRoute={{ slug: "api", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Drive your projects, notebooks, and terminals from your own code",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("A documented route, not fragile UI scripts"),
+    ).not.toBeNull();
+  });
+
   it.each([
     {
       slug: "sage",
