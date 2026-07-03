@@ -26,6 +26,9 @@ const originalFetch = global.fetch;
 
 beforeEach(() => {
   window.localStorage.clear();
+  document.head
+    .querySelectorAll("[data-cocalc-public-route-meta]")
+    .forEach((element) => element.remove());
   global.fetch = jest.fn(
     () => new Promise<Response>(() => undefined),
   ) as typeof fetch;
@@ -68,6 +71,18 @@ const productsRoute = (route: PublicProductsRoute) => ({
   section: "products" as const,
 });
 const pricingRoute = { section: "pricing" as const };
+
+function headMeta(selector: string): string | null {
+  return document.head.querySelector(selector)?.getAttribute("content") ?? null;
+}
+
+function canonicalHref(): string | null {
+  return (
+    document.head
+      .querySelector('link[data-cocalc-public-route-meta="canonical"]')
+      ?.getAttribute("href") ?? null
+  );
+}
 
 async function renderPublicApp(ui: React.ReactElement) {
   render(ui);
@@ -238,6 +253,34 @@ describe("PublicApp", () => {
       screen.getByText(/Get to know the math prodigy behind CoCalc/),
     ).not.toBeNull();
     expect(screen.queryByText("Team")).toBeNull();
+  });
+
+  it("renders and updates managed public-route head metadata", async () => {
+    const { rerender } = render(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={productsRoute({ view: "products-cocalc-star" })}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(canonicalHref()).toBe("http://localhost/products/cocalc-star"),
+    );
+    expect(headMeta('meta[name="description"]')).toContain(
+      "single-VM appliance",
+    );
+
+    rerender(
+      <PublicApp
+        config={{ site_name: "CoCalc" }}
+        initialRoute={aboutRoute({ view: "about" })}
+      />,
+    );
+
+    await waitFor(() => expect(canonicalHref()).toBe("http://localhost/about"));
+    expect(headMeta('meta[name="description"]')).toContain(
+      "people and company behind CoCalc",
+    );
   });
 
   it("shows Projects and Settings in the shared nav when authenticated", async () => {
