@@ -41,13 +41,13 @@ function stateTag(state: SiteSetupStepState): ReactNode {
     case "done":
       return <Tag color="green">Done</Tag>;
     case "blocked":
-      return <Tag color="red">Blocked</Tag>;
+      return <Tag color="red">Setup needed</Tag>;
     case "warning":
-      return <Tag color="orange">Warning</Tag>;
+      return <Tag color="orange">Review</Tag>;
     case "optional":
       return <Tag color="blue">Optional</Tag>;
     case "manual":
-      return <Tag color="purple">Manual</Tag>;
+      return <Tag color="purple">Manual check</Tag>;
   }
 }
 
@@ -62,7 +62,7 @@ function stateBorderColor(state: SiteSetupStepState): string {
     case "optional":
       return COLORS.BLUE;
     case "manual":
-      return COLORS.COCALC_ORANGE;
+      return COLORS.FEATURE_JULIA_PURPLE;
   }
 }
 
@@ -154,10 +154,12 @@ function stepIcon(step: SiteSetupStep): ReactNode {
 function StepCard({
   index,
   onNavigateAdminSection,
+  showStateTag = true,
   step,
 }: {
   index: number;
   onNavigateAdminSection?: (section: AdminSection) => void;
+  showStateTag?: boolean;
   step: SiteSetupStep;
 }) {
   const action = actionForStep(step);
@@ -173,7 +175,7 @@ function StepCard({
           <Text strong>{index}.</Text>
           {stepIcon(step)}
           <span>{step.title}</span>
-          {stateTag(step.state)}
+          {showStateTag ? stateTag(step.state) : null}
         </Space>
       }
     >
@@ -485,7 +487,7 @@ export function SiteSetupAdmin({
             style={{ justifyContent: "space-between", width: "100%" }}
           >
             <Title level={4} style={{ marginBottom: 0 }}>
-              Required Setup Gates
+              Required Steps
             </Title>
             <Button onClick={() => void load()} loading={loading}>
               Refresh setup status
@@ -504,7 +506,7 @@ export function SiteSetupAdmin({
           {optionalSteps.length ? (
             <>
               <Title level={4} style={{ marginBottom: 0 }}>
-                Optional Or Deferred
+                Optional Steps
               </Title>
               <Space
                 direction="vertical"
@@ -516,6 +518,7 @@ export function SiteSetupAdmin({
                     index={hardGateSteps.length + i + 1}
                     key={step.id}
                     onNavigateAdminSection={onNavigateAdminSection}
+                    showStateTag={step.state !== "optional"}
                     step={step}
                   />
                 ))}
