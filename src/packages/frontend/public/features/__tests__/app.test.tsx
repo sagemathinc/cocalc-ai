@@ -85,11 +85,9 @@ describe("PublicFeaturesApp", () => {
         level: 1,
       }),
     ).not.toBeNull();
-    expect(
-      screen.getByText("Codex agent chat where the project already lives."),
-    ).not.toBeNull();
-    expect(screen.getByText("One AI path")).not.toBeNull();
-    expect(screen.getByText("Create account")).not.toBeNull();
+    expect(screen.getByText("Codex where the work happens.")).not.toBeNull();
+    expect(screen.getByText("Run an agent turn in order.")).not.toBeNull();
+    expect(screen.getAllByText("Create account").length).toBeGreaterThan(0);
   });
 
   it("uses projects as the ai CTA for authenticated users", () => {
