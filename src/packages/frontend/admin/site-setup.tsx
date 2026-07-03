@@ -419,10 +419,7 @@ export function SiteSetupBanner({ onOpenSetup }: { onOpenSetup: () => void }) {
               : "Open the setup shell to finish the remaining checks."}
           </Text>
           <Space wrap>
-            <Button type="primary" onClick={onOpenSetup}>
-              {isStar ? "Continue Star setup" : "Continue site setup"}
-            </Button>
-            <Button onClick={onOpenSetup}>Open focused setup page</Button>
+            <Button onClick={onOpenSetup}>Review all setup steps</Button>
           </Space>
         </Space>
       }
