@@ -375,8 +375,9 @@ describe("PublicFeaturesApp", () => {
     },
     {
       slug: "octave",
-      title: "Run Octave in notebooks, scripts, and terminals.",
-      section: "A browser-based path for MATLAB-style teaching and scripts.",
+      title:
+        "Run GNU Octave with notebooks, .m files, and shared numerical work.",
+      section: "Run reproducible Octave work without local setup drift.",
     },
     {
       slug: "slides",
