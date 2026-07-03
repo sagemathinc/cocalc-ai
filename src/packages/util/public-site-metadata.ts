@@ -141,6 +141,7 @@ export const PUBLIC_SITEMAP_PATHS = uniquePublicPaths([
   publicPath(""),
   publicPath("about"),
   publicPath("about/events"),
+  publicPath("about/team"),
   ...TEAM_MEMBER_SITEMAP_SLUGS.map((slug) => publicPath(`about/team/${slug}`)),
   publicPath("docs"),
   publicPath("features"),
@@ -153,9 +154,9 @@ export const PUBLIC_SITEMAP_PATHS = uniquePublicPaths([
   publicPath("news"),
   publicPath("policies"),
   ...POLICY_SITEMAP_SLUGS.map((slug) => publicPath(`policies/${slug}`)),
-  publicPath("policies/imprint"),
   publicPath("pricing"),
   ...PRODUCT_SITEMAP_PATHS.map((path) => publicPath(path)),
+  publicPath("rootfs"),
   publicPath("support"),
   publicPath("support/community"),
 ]);

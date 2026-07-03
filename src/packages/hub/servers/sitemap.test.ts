@@ -63,6 +63,9 @@ describe("public sitemap", () => {
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/auth");
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/support/new");
     expect(PUBLIC_SITEMAP_PATHS).toContain("/products/cocalc-star");
+    expect(PUBLIC_SITEMAP_PATHS).toContain("/about/team");
+    expect(PUBLIC_SITEMAP_PATHS).toContain("/rootfs");
+    expect(PUBLIC_SITEMAP_PATHS).not.toContain("/policies/imprint");
     expect(
       PUBLIC_SITEMAP_PATHS.filter((path) => path.startsWith("/features/")),
     ).toEqual(

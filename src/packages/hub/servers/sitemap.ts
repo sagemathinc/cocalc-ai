@@ -7,67 +7,12 @@ import type { Request, Response } from "express";
 
 import basePath from "@cocalc/backend/base-path";
 import { getLogger } from "@cocalc/hub/logger";
-import { getPublicFeatureIndexPages } from "@cocalc/util/public-feature-pages";
+import { PUBLIC_SITEMAP_PATHS } from "@cocalc/util/public-site-metadata";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
+export { PUBLIC_SITEMAP_PATHS } from "@cocalc/util/public-site-metadata";
+
 const logger = getLogger("hub:servers:sitemap");
-
-const FEATURE_SITEMAP_PATHS = getPublicFeatureIndexPages().map(
-  ({ slug }) => `/features/${slug}`,
-);
-
-export const PUBLIC_SITEMAP_PATHS = [
-  "/",
-  "/about",
-  "/about/events",
-  "/about/team",
-  "/about/team/william-stein",
-  "/about/team/blaec-bejarano",
-  "/about/team/harald-schilly",
-  "/about/team/andrey-novoseltsev",
-  "/docs",
-  "/features",
-  ...FEATURE_SITEMAP_PATHS,
-  "/guides",
-  "/lang",
-  "/en",
-  "/es",
-  "/de",
-  "/zh",
-  "/ru",
-  "/fr",
-  "/it",
-  "/nl",
-  "/ja",
-  "/hi",
-  "/pt",
-  "/ko",
-  "/pl",
-  "/tr",
-  "/he",
-  "/hu",
-  "/ar",
-  "/br",
-  "/eu",
-  "/news",
-  "/policies",
-  "/policies/terms",
-  "/policies/privacy",
-  "/policies/dpa",
-  "/policies/trust",
-  "/policies/accessibility",
-  "/policies/copyright",
-  "/policies/ferpa",
-  "/pricing",
-  "/products",
-  "/products/cocalc-star",
-  "/products/cocalc-launchpad",
-  "/products/cocalc-plus",
-  "/products/cocalc-rocket",
-  "/rootfs",
-  "/support",
-  "/support/community",
-] as const;
 
 function xmlEscape(value: string): string {
   return value
