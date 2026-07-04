@@ -364,7 +364,7 @@ load_config() {
       HUB_SOFTWARE_BASE_URL_FORCE="${HUB_SELF_HOST_PAIR_URL%/}/software"
     elif [ "$HUB_BIND_HOST" = "localhost" ] || [ "$HUB_BIND_HOST" = "127.0.0.1" ] || [ "$HUB_BIND_HOST" = "::1" ]; then
       # Hub is loopback-only, so local software URLs must also be loopback.
-      HUB_SOFTWARE_BASE_URL_FORCE="http://127.0.0.1:$HUB_PORT/software"
+      HUB_SOFTWARE_BASE_URL_FORCE="$(local_hub_url "$HUB_BIND_HOST" "$HUB_PORT")/software"
     else
       if [ -z "$HUB_HOST_IP" ]; then
         HUB_HOST_IP="$(detect_host_ip || true)"
@@ -402,6 +402,9 @@ local_hub_url() {
   local host="$bind_host"
   if [ "$host" = "0.0.0.0" ] || [ -z "$host" ]; then
     host="127.0.0.1"
+  fi
+  if [[ "$host" == *:* && "$host" != \[*\] ]]; then
+    host="[$host]"
   fi
   echo "http://$host:$port"
 }
@@ -965,7 +968,7 @@ start_daemon() {
       if [ -n "$HUB_SELF_HOST_PAIR_URL" ]; then
         export COCALC_SELF_HOST_PAIR_URL="$HUB_SELF_HOST_PAIR_URL"
       else
-        export COCALC_SELF_HOST_PAIR_URL="http://127.0.0.1:$HUB_PORT"
+        export COCALC_SELF_HOST_PAIR_URL="$(local_hub_url "$HUB_BIND_HOST" "$HUB_PORT")"
       fi
       export COCALC_LAUNCHPAD_CLOUDFLARED_PID_FILE="$HUB_CLOUDFLARED_PID_FILE"
       if command -v setsid >/dev/null 2>&1; then

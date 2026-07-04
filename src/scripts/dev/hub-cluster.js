@@ -23,7 +23,10 @@ function resolveMaybeRelative(root, value) {
 
 function localHubUrl(host, port) {
   const bindHost = trim(host) || "localhost";
-  const urlHost = bindHost === "0.0.0.0" ? "127.0.0.1" : bindHost;
+  let urlHost = bindHost === "0.0.0.0" ? "127.0.0.1" : bindHost;
+  if (urlHost.includes(":") && !urlHost.startsWith("[")) {
+    urlHost = `[${urlHost}]`;
+  }
   return `http://${urlHost}:${toNumber(port, 9100)}`;
 }
 
@@ -232,7 +235,7 @@ function normalizeBay(rawBay, idx, context) {
       trim(rawBay.self_host_pair_url || rawBay.selfHostPairUrl) ||
       (isPrimary
         ? trim(globalDefaults.primarySelfHostPairUrl) ||
-          `http://127.0.0.1:${globalDefaults.primaryPort}`
+          localHubUrl(globalDefaults.bindHost, globalDefaults.primaryPort)
         : localHubUrl(bindHost, port)),
     publicUrl: trim(rawBay.public_url || rawBay.publicUrl),
   };

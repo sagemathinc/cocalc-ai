@@ -89,6 +89,14 @@ function parsePort(value: unknown): number | undefined {
   return Number.isInteger(port) && port > 0 && port <= 65535 ? port : undefined;
 }
 
+function localOriginHost(value: unknown): string {
+  const host = clean(value);
+  if (!host || host === "0.0.0.0") return "127.0.0.1";
+  if (host === "::") return "[::1]";
+  if (host.includes(":") && !host.startsWith("[")) return `[${host}]`;
+  return host;
+}
+
 function normalizeCloudflareMode(
   value: unknown,
 ): "none" | "self" | "managed" | undefined {
@@ -267,7 +275,7 @@ async function resolveCloudflaredBinary(): Promise<string | null> {
 function resolveCloudflaredOrigin(): { origin: string; noTLSVerify: boolean } {
   const frontdoorPort = parsePort(process.env.COCALC_BAY_FRONTDOOR_PORT);
   if (frontdoorPort != null) {
-    const host = clean(process.env.COCALC_BAY_FRONTDOOR_HOST) ?? "127.0.0.1";
+    const host = localOriginHost(process.env.COCALC_BAY_FRONTDOOR_HOST);
     return { origin: `http://${host}:${frontdoorPort}`, noTLSVerify: false };
   }
   const port =
@@ -275,13 +283,14 @@ function resolveCloudflaredOrigin(): { origin: string; noTLSVerify: boolean } {
     parsePort(process.env.COCALC_BAY_WORKER_PORT) ??
     parsePort(process.env.PORT);
   if (port != null) {
-    const host = clean(process.env.COCALC_BAY_HUB_BIND_HOST) ?? "127.0.0.1";
+    const host = localOriginHost(process.env.COCALC_BAY_HUB_BIND_HOST);
     return { origin: `http://${host}:${port}`, noTLSVerify: false };
   }
   const config = getLaunchpadLocalConfig("local");
   const httpPort = config.http_port;
   const fallbackPort = httpPort ?? 9001;
-  return { origin: `http://127.0.0.1:${fallbackPort}`, noTLSVerify: false };
+  const host = localOriginHost(process.env.HOST);
+  return { origin: `http://${host}:${fallbackPort}`, noTLSVerify: false };
 }
 
 async function writeCloudflaredCredentials(
