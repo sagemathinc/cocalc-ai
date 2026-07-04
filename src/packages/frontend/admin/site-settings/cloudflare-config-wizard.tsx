@@ -537,7 +537,7 @@ If the link above does not work, search in Cloudflare for **Managed Transforms**
               />
             </div>
             <div>
-              <strong>Step 6 - R2 backups (required)</strong>
+              <strong>Step 6 - R2 backups</strong>
               <div style={{ marginTop: "6px", color: "#666" }}>
                 R2 is required for Launchpad backups. You must create a separate
                 R2 API token with full Admin Read &amp; Write access.
@@ -645,20 +645,12 @@ Required R2 token permissions:
                   onChange={(e) => setR2BucketPrefix(e.target.value)}
                 />
               </div>
-              <div style={{ marginTop: "12px" }}>
-                <Alert
-                  type="info"
-                  showIcon
-                  title="Test R2 only after saving the configuration."
-                  description="The R2 diagnostic is at the bottom of this wizard. It uses saved server settings, not unsaved values in this form."
-                />
-              </div>
             </div>
             <div>
-              <strong>Step 7 - Tunnel settings (optional)</strong>
+              <strong>Step 7 - Tunnel settings</strong>
               <div style={{ marginTop: "6px", color: "#666" }}>
                 These control how CoCalc names Cloudflare tunnel resources for
-                project hosts. Defaults are fine.
+                project hosts.
               </div>
               <div
                 style={{
