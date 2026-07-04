@@ -131,6 +131,8 @@ function stepIcon(step: SiteSetupStep): ReactNode {
       return <Icon name="lock" />;
     case "domain-cloudflare":
       return <Icon name="cloud" />;
+    case "project-backups":
+      return <Icon name="disk-snapshot" />;
     case "cloud-provider":
     case "provider-catalog":
       return <Icon name="cloud-upload" />;
