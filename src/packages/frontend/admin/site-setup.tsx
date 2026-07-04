@@ -167,6 +167,8 @@ function StepCard({
   step: SiteSetupStep;
 }) {
   const action = actionForStep(step);
+  const details = step.details ?? [];
+  const showDetails = step.state !== "done" && details.length > 0;
   const adminSection = action?.adminSection;
   const actionType =
     step.hard_gate && step.state !== "done" ? "primary" : "default";
@@ -185,12 +187,12 @@ function StepCard({
         </Space>
       }
     >
-      <Paragraph style={{ marginBottom: step.details?.length ? 8 : 0 }}>
+      <Paragraph style={{ marginBottom: showDetails ? 8 : 0 }}>
         {step.summary}
       </Paragraph>
-      {step.details?.length ? (
+      {showDetails ? (
         <ul style={{ marginBottom: 0 }}>
-          {step.details.map((detail) => (
+          {details.map((detail) => (
             <li key={detail}>{detail}</li>
           ))}
         </ul>

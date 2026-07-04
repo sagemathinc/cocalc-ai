@@ -235,6 +235,9 @@ export default function CloudflareConfigWizard({
         !!normalizedDraftValue(r2SecretKey) ||
         (normalizedDraftValue(data.r2_bucket_prefix) ||
           DEFAULT_CLOUDFLARE_PREFIX) !== normalizedDraftValue(r2BucketPrefix)));
+  const buttonDisabledReason = hasUnsavedDraft
+    ? undefined
+    : "No unapplied changes.";
 
   function renderSecretNote(settingName: string) {
     if (!isSet?.[settingName]) return null;
@@ -271,7 +274,7 @@ export default function CloudflareConfigWizard({
   }
 
   const missing = missingLabel();
-  const applyDisabled = mode === "self" && !!missing;
+  const applyDisabled = !hasUnsavedDraft || (mode === "self" && !!missing);
 
   async function applySettings() {
     setApplying(true);
@@ -398,6 +401,7 @@ export default function CloudflareConfigWizard({
           onClick={applySettings}
           disabled={applyDisabled}
           loading={applying}
+          title={buttonDisabledReason}
         >
           Apply Settings
         </Button>,
@@ -702,13 +706,13 @@ Required R2 token permissions:
                 style={{ marginTop: "8px" }}
                 title={
                   hasUnsavedDraft
-                    ? "Apply settings before running diagnostics."
-                    : "These tests use the saved, currently running configuration."
+                    ? "Apply settings before testing."
+                    : "Diagnostics use saved settings."
                 }
                 description={
                   hasUnsavedDraft
-                    ? "You have unsaved Cloudflare settings in this wizard. Apply settings, then apply the Cloudflare tunnel settings to the running service before running diagnostics."
-                    : "Run these after settings are saved, Cloudflare tunnel settings are applied to the running service, and DNS is routing through Cloudflare."
+                    ? "The tests below ignore unsaved fields."
+                    : "If Cloudflare routing changed, restart the hub before relying on visitor-location results."
                 }
               />
               <Space
@@ -720,15 +724,10 @@ Required R2 token permissions:
                   <Button
                     onClick={testSavedR2Credentials}
                     loading={r2Testing}
-                    icon={<Icon name="check" />}
                     disabled={hasUnsavedDraft}
                   >
                     Test Saved R2 Credentials
                   </Button>
-                  <div style={{ color: "#666", marginTop: "6px" }}>
-                    Uses saved server settings only; unsaved edits in this
-                    wizard are ignored.
-                  </div>
                   {r2TestError ? (
                     <Alert
                       type="error"
@@ -798,17 +797,10 @@ Required R2 token permissions:
                   <Button
                     onClick={testVisitorLocationHeaders}
                     loading={locationHeadersTesting}
-                    icon={<Icon name="check" />}
                     disabled={hasUnsavedDraft}
                   >
                     Test Current Visitor Location Headers
                   </Button>
-                  <div style={{ color: "#666", marginTop: "6px" }}>
-                    Checks <code>/customize</code> on the currently running
-                    server. It does not reflect draft or newly saved Cloudflare
-                    tunnel settings until they are applied to the running
-                    service.
-                  </div>
                   {hasPendingRuntimeDraft ? (
                     <Alert
                       type="warning"

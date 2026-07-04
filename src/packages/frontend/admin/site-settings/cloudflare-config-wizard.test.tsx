@@ -59,7 +59,7 @@ describe("CloudflareConfigWizard", () => {
     (window.getComputedStyle as jest.Mock).mockRestore();
   });
 
-  it("explains that visitor-header checks use the current running server config", () => {
+  it("explains that diagnostics use saved settings", () => {
     render(
       <CloudflareConfigWizard
         open
@@ -74,9 +74,7 @@ describe("CloudflareConfigWizard", () => {
       screen.getByText("Step 8 - Post-save diagnostics"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "These tests use the saved, currently running configuration.",
-      ),
+      screen.getByText("Diagnostics use saved settings."),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
@@ -85,9 +83,33 @@ describe("CloudflareConfigWizard", () => {
     ).toBeEnabled();
     expect(
       screen.getByText(
-        "Run these after settings are saved, Cloudflare tunnel settings are applied to the running service, and DNS is routing through Cloudflare.",
+        "If Cloudflare routing changed, restart the hub before relying on visitor-location results.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("disables apply when there are no draft changes", () => {
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={{
+          ...baseData,
+          r2_access_key_id: "r2-access-key",
+          r2_bucket_prefix: "cocalc",
+        }}
+        isSet={{
+          project_hosts_cloudflare_tunnel_api_token: true,
+          r2_api_token: true,
+          r2_secret_access_key: true,
+        }}
+        onApply={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Apply Settings" }),
+    ).toBeDisabled();
   });
 
   it("disables the visitor-header check while Cloudflare runtime changes are only in draft", () => {
