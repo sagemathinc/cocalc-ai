@@ -4291,6 +4291,12 @@ export async function getSiteSetupStatus({
     boolSetting((settings as any).project_hosts_cloudflare_tunnel_enabled) &&
     !!clean((settings as any).project_hosts_cloudflare_tunnel_account_id) &&
     !!clean((settings as any).project_hosts_cloudflare_tunnel_api_token);
+  const projectBackupsConfigured =
+    !!clean((settings as any).r2_account_id) &&
+    !!clean((settings as any).r2_api_token) &&
+    !!clean((settings as any).r2_access_key_id) &&
+    !!clean((settings as any).r2_secret_access_key) &&
+    !!clean((settings as any).r2_bucket_prefix);
   const { providers, details: providerDetails } =
     configuredProvidersFromSettings(settings);
   const [has2fa, cachedProviderCatalogs, healthyProjectHosts, rootfs] =
@@ -4487,6 +4493,20 @@ export async function getSiteSetupStatus({
         "You can use an existing domain managed in Cloudflare, or register a new domain through Cloudflare.",
         "Cloudflare Tunnel gives the hub and project hosts stable public hostnames without opening inbound firewall ports.",
         "The current setup path expects Cloudflare to manage the DNS records used by the tunnels.",
+      ],
+    }),
+    setupStep({
+      id: "project-backups",
+      title: "Project Backups",
+      state: projectBackupsConfigured ? "done" : "blocked",
+      admin_section: "site-settings",
+      summary: projectBackupsConfigured
+        ? "Project backup storage is configured."
+        : "Configure off-host storage for project backups.",
+      details: [
+        "Project backups are required for project moves, archiving, site migration, and recovery.",
+        "The current cloud setup path uses Cloudflare R2 buckets as rustic backup repositories.",
+        "CoCalc assigns projects to regional backup repositories automatically after backup storage is configured.",
       ],
     }),
     setupStep({
