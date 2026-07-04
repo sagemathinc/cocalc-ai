@@ -325,6 +325,7 @@ load_config() {
   HUB_USE_LOCAL_SOFTWARE="${HUB_USE_LOCAL_SOFTWARE:-1}"
   HUB_SOFTWARE_ENDPOINT_MODE="${HUB_SOFTWARE_ENDPOINT_MODE:-}"
   HUB_AUTO_BUILD_LOCAL_SOFTWARE="${HUB_AUTO_BUILD_LOCAL_SOFTWARE:-1}"
+  HUB_START_TIMEOUT="${HUB_START_TIMEOUT:-180}"
   HUB_HOST_IP="${HUB_HOST_IP:-}"
   HUB_SOFTWARE_BASE_URL_FORCE="${HUB_SOFTWARE_BASE_URL_FORCE:-}"
   HUB_NODE_BIN="${HUB_NODE_BIN:-}"
@@ -674,7 +675,7 @@ start_cluster_bay() {
   )
 
   local i running_pid
-  for i in $(seq 1 30); do
+  for i in $(seq 1 "$HUB_START_TIMEOUT"); do
     running_pid="$(find_hub_pid_on_port "$port" | tail -n 1 || true)"
     if [ -n "$running_pid" ]; then
       echo "$running_pid" >"$pid_file"
@@ -977,7 +978,7 @@ start_daemon() {
 
     local running_pid=""
     local i
-    for i in $(seq 1 30); do
+    for i in $(seq 1 "$HUB_START_TIMEOUT"); do
       running_pid="$(find_primary_hub_pid || true)"
       if [ -n "$running_pid" ]; then
         echo "$running_pid" >"$PID_FILE"
@@ -1103,6 +1104,7 @@ show_status() {
   echo "state:  $STATE_DIR"
   echo "stdout: $HUB_STDOUT_LOG"
   echo "debug:  $HUB_DEBUG_FILE"
+  echo "start timeout: ${HUB_START_TIMEOUT}s"
   echo "bay id: $COCALC_BAY_ID"
   echo "cluster role: $COCALC_CLUSTER_ROLE"
   if [ -n "$COCALC_CLUSTER_SEED_BAY_ID" ]; then
@@ -1179,6 +1181,7 @@ HUB_SOFTWARE_PACKAGES_ROOT=$HUB_SOFTWARE_PACKAGES_ROOT
 HUB_USE_LOCAL_SOFTWARE=$HUB_USE_LOCAL_SOFTWARE
 HUB_SOFTWARE_ENDPOINT_MODE=$HUB_SOFTWARE_ENDPOINT_MODE
 HUB_AUTO_BUILD_LOCAL_SOFTWARE=$HUB_AUTO_BUILD_LOCAL_SOFTWARE
+HUB_START_TIMEOUT=$HUB_START_TIMEOUT
 HUB_HOST_IP=$HUB_HOST_IP
 HUB_SOFTWARE_BASE_URL_FORCE=$HUB_SOFTWARE_BASE_URL_FORCE
 HUB_NODE_BIN=$HUB_NODE_BIN
