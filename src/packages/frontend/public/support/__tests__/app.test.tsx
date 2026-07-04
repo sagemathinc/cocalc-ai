@@ -29,6 +29,10 @@ describe("PublicSupportApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("New support ticket")).not.toBeNull();
     expect(screen.getByText("Ticket status")).not.toBeNull();
+    expect(screen.getByText("Pricing and licensing")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Review pricing" }),
+    ).toHaveAttribute("href", "/pricing");
     expect(screen.queryByText("System status")).toBeNull();
   });
 

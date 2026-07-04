@@ -187,6 +187,14 @@ function SupportIndex({
             {helpEmail}
           </a>
         </SupportCard>
+        <SupportCard
+          description="Review pricing and licensing options."
+          title="Pricing and licensing"
+        >
+          <a href={appPath("/pricing")} style={{ color: COLORS.BLUE_D }}>
+            Review pricing
+          </a>
+        </SupportCard>
       </PublicGrid>
     </div>
   );
