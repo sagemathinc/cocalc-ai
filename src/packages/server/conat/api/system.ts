@@ -4477,16 +4477,16 @@ export async function getSiteSetupStatus({
     }),
     setupStep({
       id: "domain-cloudflare",
-      title: "Domain And Cloudflare",
+      title: "Domain And Tunnels",
       state: cloudflareConfigured ? "done" : "blocked",
       admin_section: "site-settings",
       summary: cloudflareConfigured
-        ? `Cloudflare tunnel settings are configured for ${siteDns}.`
-        : "Configure a domain on Cloudflare and save the tunnel settings.",
+        ? `Domain and Cloudflare Tunnel settings are configured for ${siteDns}.`
+        : "Configure your domain and Cloudflare Tunnel settings.",
       details: [
-        "You need a domain before project-host providers are useful.",
-        "Cloudflare can host existing domains, and can also be used as a registrar.",
-        "Free Cloudflare domains should work for the required DNS/tunnel flow, but the setup wizard should still make tier limitations explicit.",
+        "You can use an existing domain managed in Cloudflare, or register a new domain through Cloudflare.",
+        "Cloudflare Tunnel gives the hub and project hosts stable public hostnames without opening inbound firewall ports.",
+        "The current setup path expects Cloudflare to manage the DNS records used by the tunnels.",
       ],
     }),
     setupStep({
