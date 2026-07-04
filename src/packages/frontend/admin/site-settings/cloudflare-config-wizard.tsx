@@ -301,8 +301,7 @@ export default function CloudflareConfigWizard({
         updates.project_hosts_cloudflare_tunnel_api_token = "";
       }
       await onApply(updates);
-      setNotice("Settings applied and saved.");
-      onClose();
+      setNotice("Settings applied and saved. You can now run diagnostics.");
     } finally {
       setApplying(false);
     }

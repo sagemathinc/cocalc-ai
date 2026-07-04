@@ -84,9 +84,10 @@ describe("CloudflareConfigWizard", () => {
       }),
     ).toBeEnabled();
     expect(
-      screen.getAllByText(/cloudflared has successfully set up the tunnel/i)
-        .length,
-    ).toBeGreaterThanOrEqual(1);
+      screen.getByText(
+        "Run these after settings are saved, Cloudflare tunnel settings are applied to the running service, and DNS is routing through Cloudflare.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("disables the visitor-header check while Cloudflare runtime changes are only in draft", () => {
@@ -118,10 +119,11 @@ describe("CloudflareConfigWizard", () => {
 
   it("saves the external domain as the canonical public DNS setting", async () => {
     const onApply = jest.fn(async () => {});
+    const onClose = jest.fn();
     render(
       <CloudflareConfigWizard
         open
-        onClose={() => {}}
+        onClose={onClose}
         data={baseData}
         isSet={{
           project_hosts_cloudflare_tunnel_api_token: true,
@@ -144,5 +146,11 @@ describe("CloudflareConfigWizard", () => {
         dns: "cocalc.example.edu",
       }),
     );
+    expect(onClose).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(
+        "Settings applied and saved. You can now run diagnostics.",
+      ),
+    ).toBeInTheDocument();
   });
 });
