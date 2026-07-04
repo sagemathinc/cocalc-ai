@@ -104,6 +104,11 @@ describe("ensureCloudflareTunnelForHost", () => {
       await import("./cloudflare-tunnel");
     await ensureCloudflareTunnelForHost({ host_id: "abc" });
 
+    const tokenFetch = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("/token"),
+    );
+    expect(tokenFetch?.[1]?.signal).toBeInstanceOf(AbortSignal);
+
     const recordNames = fetchMock.mock.calls
       .map(([, init]) => init?.body)
       .filter(Boolean)

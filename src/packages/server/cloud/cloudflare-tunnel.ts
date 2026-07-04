@@ -9,6 +9,7 @@ import {
 
 const logger = getLogger("server:cloud:cloudflare-tunnel");
 const TTL = 120;
+const CLOUDFLARE_API_TIMEOUT_MS = 15_000;
 
 export type CloudflareTunnel = {
   id: string;
@@ -166,6 +167,7 @@ async function cloudflareRequest<T>(
       "Content-Type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(CLOUDFLARE_API_TIMEOUT_MS),
   });
   if (!response.ok) {
     let details = "";
@@ -230,6 +232,7 @@ async function getZoneId(token: string, dns: string) {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(CLOUDFLARE_API_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(
@@ -457,6 +460,7 @@ async function fetchTunnel(
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
+      signal: AbortSignal.timeout(CLOUDFLARE_API_TIMEOUT_MS),
     },
   );
   if (response.status === 404) {
