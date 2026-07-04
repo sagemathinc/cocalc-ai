@@ -203,7 +203,7 @@ const AUDIENCE_ROUTES = [
   },
   {
     accent: COLORS.GRAY_D,
-    body: "Choose source-available, customer-operated deployments where your data stays in your environment — matched to your infrastructure, governance, and support needs.",
+    body: "Choose customer-operated deployments where your data stays in your environment — matched to your infrastructure, governance, and support needs.",
     button: "Review product paths",
     href: "products",
     icon: "servers",
@@ -244,7 +244,7 @@ const PRODUCT_OPTIONS = [
   },
   {
     accent: COLORS.RUN,
-    body: "Free source-available local runtime for self-directed technical work and evaluation.",
+    body: "Free local runtime for self-directed technical work and evaluation.",
     href: "products/cocalc-plus",
     icon: "laptop",
     label: "Local",
@@ -252,7 +252,7 @@ const PRODUCT_OPTIONS = [
   },
   {
     accent: COLORS.AI_ASSISTANT_FONT,
-    body: "Run one shared CoCalc instance on a single Ubuntu VM, either in the cloud or locally with Lima.",
+    body: "Run one shared CoCalc instance on a single Ubuntu VM, either in the cloud or locally.",
     href: "products/cocalc-star",
     icon: "star",
     label: "One VM",
