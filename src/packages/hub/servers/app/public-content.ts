@@ -220,6 +220,8 @@ export default function initPublicContent(router: Router): void {
     "/about/team/:slug/",
     "/guides",
     "/guides/",
+    "/guides/rstudio-project",
+    "/guides/rstudio-project/",
     "/pricing",
     "/pricing/",
     "/pricing/:slug",

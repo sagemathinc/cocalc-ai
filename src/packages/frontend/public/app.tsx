@@ -100,7 +100,9 @@ function PublicRouteBody({
   }
 
   if (initialRoute.section === "guides") {
-    return <PublicGuidesApp config={config} />;
+    return (
+      <PublicGuidesApp config={config} initialRoute={initialRoute.route} />
+    );
   }
 
   if (initialRoute.section === "lang") {

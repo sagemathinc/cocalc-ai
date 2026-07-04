@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { ReactNode } from "react";
 import { useEffect } from "react";
 
 import { Button, Col, Flex, Row, Typography } from "antd";
@@ -10,6 +11,7 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import {
   appPath,
+  CodeBlock,
   getPublicMarketingSiteName,
   PublicNextStep,
   type PublicConfig,
@@ -26,6 +28,7 @@ import {
   PUBLIC_RADIUS,
 } from "@cocalc/frontend/public/theme";
 import { FIELD_GUIDES_URL } from "@cocalc/util/theme";
+import type { PublicGuidesRoute } from "./routes";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -139,6 +142,12 @@ const GUIDE_GROUPS = [
   {
     guides: [
       {
+        body: "Create a CoCalc AI project with the RStudio and Jupyter image, then launch RStudio Server from the project.",
+        href: appPath("guides/rstudio-project"),
+        icon: "r",
+        title: "RStudio project setup",
+      },
+      {
         body: "Install packages and make a project environment work from the terminal.",
         href: guidePath("software-install"),
         icon: "download",
@@ -224,14 +233,16 @@ function GuideLink({
   icon,
   title,
 }: GuideCardSpec & { featured?: boolean }) {
+  const external = /^https?:\/\//.test(href);
+
   return (
     <a
       className={`cocalc-guide-link ${
         featured ? "cocalc-guide-link-featured" : "cocalc-guide-link-compact"
       }`}
       href={href}
-      rel="noreferrer"
-      target="_blank"
+      rel={external ? "noreferrer" : undefined}
+      target={external ? "_blank" : undefined}
     >
       <IconBadge icon={icon} size={featured ? "md" : "sm"} />
       <span>
@@ -336,9 +347,254 @@ function GuideDirectory() {
   );
 }
 
-export default function PublicGuidesApp({ config }: { config?: PublicConfig }) {
+const RSTUDIO_SETUP_STEPS = [
+  {
+    body: "Open CoCalc AI, sign in, and start from the Projects page. This is where new projects are created and existing projects are reopened.",
+    title: "Open the Projects page",
+  },
+  {
+    body: "Use the Create Project button in the upper-left area of the projects list. The dialog shows project limits, running projects, and available storage before the project is created.",
+    title: "Create a new project",
+  },
+  {
+    body: 'Give the project a clear name, such as "R project" or the name of the analysis. A descriptive name makes the project easier to find later.',
+    title: "Name the project",
+  },
+  {
+    body: "Choose the RStudio and Jupyter software image. That image gives the project an R-centered workspace while keeping notebooks and standard CoCalc project tools available.",
+    title: "Select the RStudio and Jupyter image",
+  },
+  {
+    body: "Open the project and wait for the project runtime to start. A new project begins with an empty file system, ready for scripts, notebooks, data files, and reports.",
+    title: "Open and start the project",
+  },
+  {
+    body: "Use the R image or server control in the project interface to launch RStudio Server. When the server is ready, RStudio opens inside the CoCalc project context.",
+    title: "Launch RStudio Server",
+  },
+] satisfies { body: string; title: string }[];
+
+const RSTUDIO_CONTEXT_CARDS = [
+  {
+    body: "The selected software image controls the starting runtime. It can include RStudio, Jupyter, terminals, LaTeX, and libraries for the kind of work the project needs.",
+    icon: "r",
+    title: "Image first",
+  },
+  {
+    body: "Project files stay together: R scripts, notebooks, data, rendered output, and notes all live in one collaborative workspace.",
+    icon: "files",
+    title: "Shared files",
+  },
+  {
+    body: "When extra packages or OS libraries are needed, install them from R or from a terminal inside the project environment.",
+    icon: "terminal",
+    title: "Custom setup",
+  },
+] satisfies { body: string; icon: IconName; title: string }[];
+
+function GuidePanel({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        background: PUBLIC_COLORS.surface,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
+        borderRadius: PUBLIC_RADIUS.panel,
+        boxShadow: PUBLIC_ELEVATION.sm,
+        height: "100%",
+        padding: 18,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function RStudioContextCard({
+  body,
+  icon,
+  title,
+}: (typeof RSTUDIO_CONTEXT_CARDS)[number]) {
+  return (
+    <GuidePanel>
+      <Flex vertical gap={12}>
+        <IconBadge icon={icon} />
+        <Text strong>{title}</Text>
+        <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+          {body}
+        </Paragraph>
+      </Flex>
+    </GuidePanel>
+  );
+}
+
+function RStudioSetupSteps() {
+  return (
+    <PublicSection>
+      <Flex vertical gap={18}>
+        <Title level={2} style={{ margin: 0 }}>
+          Create the project
+        </Title>
+        <Row gutter={[16, 16]}>
+          {RSTUDIO_SETUP_STEPS.map((step, index) => (
+            <Col key={step.title} xs={24} md={12}>
+              <GuidePanel>
+                <Flex gap={14} align="flex-start">
+                  <div
+                    aria-hidden
+                    style={{
+                      alignItems: "center",
+                      background: PUBLIC_COLORS.brandTint,
+                      border: `1px solid ${PUBLIC_COLORS.brandSubtle}`,
+                      borderRadius: 8,
+                      color: PUBLIC_COLORS.brand,
+                      display: "flex",
+                      flex: "0 0 34px",
+                      fontWeight: 700,
+                      height: 34,
+                      justifyContent: "center",
+                      width: 34,
+                    }}
+                  >
+                    {index + 1}
+                  </div>
+                  <Flex vertical gap={6}>
+                    <Text strong>{step.title}</Text>
+                    <Paragraph
+                      style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}
+                    >
+                      {step.body}
+                    </Paragraph>
+                  </Flex>
+                </Flex>
+              </GuidePanel>
+            </Col>
+          ))}
+        </Row>
+      </Flex>
+    </PublicSection>
+  );
+}
+
+function RStudioEnvironmentNotes() {
+  return (
+    <PublicSection>
+      <Row gutter={[24, 24]} align="top">
+        <Col xs={24} lg={11}>
+          <Flex vertical gap={12}>
+            <Title level={2} style={{ margin: 0 }}>
+              Customize the environment when the project needs more
+            </Title>
+            <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
+              CoCalc AI projects run from selected software images. The public
+              repository documents how project root filesystem images are
+              resolved, started, and paired with writable overlays so runtime
+              changes can persist with the project.
+            </Paragraph>
+            <Flex gap={10} wrap>
+              <Button href={appPath("rootfs")}>Browse runtime images</Button>
+              <Button
+                href="https://github.com/sagemathinc/cocalc-ai/blob/main/docs/project-rootfs.md"
+                rel="noreferrer"
+                target="_blank"
+              >
+                Read rootfs notes
+              </Button>
+            </Flex>
+          </Flex>
+        </Col>
+        <Col xs={24} lg={13}>
+          <GuidePanel>
+            <Flex vertical gap={16}>
+              <div>
+                <Text strong>
+                  Install R packages from RStudio or an R shell.
+                </Text>
+                <CodeBlock
+                  ariaLabel="R command for installing an R package"
+                  code={'install.packages("tidyverse")'}
+                  language="r"
+                />
+              </div>
+              <div>
+                <Text strong>
+                  Install system libraries from a project terminal when needed.
+                </Text>
+                <CodeBlock
+                  ariaLabel="Shell commands for installing a system package"
+                  code={`sudo apt-get update
+sudo apt-get install -y libcurl4-openssl-dev`}
+                  language="bash"
+                />
+              </div>
+            </Flex>
+          </GuidePanel>
+        </Col>
+      </Row>
+    </PublicSection>
+  );
+}
+
+function RStudioProjectGuidePage({
+  authenticated,
+}: {
+  authenticated?: boolean;
+}) {
+  return (
+    <>
+      <PublicHero
+        actions={
+          <Flex gap={12} wrap>
+            <Button
+              href={appPath(authenticated ? "projects" : "auth/sign-up")}
+              type="primary"
+            >
+              {authenticated ? "Open projects" : "Create account"}
+            </Button>
+            <Button href={appPath("guides")}>Back to guides</Button>
+          </Flex>
+        }
+        subtitle={
+          <>
+            Start a fresh CoCalc AI project, choose the RStudio and Jupyter
+            image, and launch RStudio Server inside the project.
+          </>
+        }
+        title="Create a CoCalc AI project with RStudio"
+      />
+
+      <PublicSection>
+        <Row gutter={[16, 16]}>
+          {RSTUDIO_CONTEXT_CARDS.map((card) => (
+            <Col key={card.title} xs={24} md={8}>
+              <RStudioContextCard {...card} />
+            </Col>
+          ))}
+        </Row>
+      </PublicSection>
+
+      <RStudioSetupSteps />
+      <RStudioEnvironmentNotes />
+
+      <PublicNextStep
+        authenticated={authenticated}
+        heading="Ready to keep working in the project?"
+      />
+    </>
+  );
+}
+
+export default function PublicGuidesApp({
+  config,
+  initialRoute,
+}: {
+  config?: PublicConfig;
+  initialRoute: PublicGuidesRoute;
+}) {
   const siteName = getPublicMarketingSiteName(config);
-  const title = `Guides - ${siteName}`;
+  const title =
+    initialRoute.view === "rstudio-project"
+      ? `Create an RStudio project - ${siteName}`
+      : `Guides - ${siteName}`;
 
   useEffect(() => {
     document.title = title;
@@ -348,30 +604,36 @@ export default function PublicGuidesApp({ config }: { config?: PublicConfig }) {
     <>
       <style>{GUIDES_PAGE_CSS}</style>
       <PublicSectionShell active="guides" config={config}>
-        <PublicHero
-          actions={
-            <Flex gap={12} wrap>
-              <Button
-                href={FIELD_GUIDES_URL}
-                rel="noreferrer"
-                target="_blank"
-                type="primary"
-              >
-                Open all guides
-              </Button>
-              <Button href={appPath("docs")}>Browse docs</Button>
-            </Flex>
-          }
-          subtitle={
-            <>
-              Plan setup, notebooks, terminals, code review, and deployment
-              paths around durable CoCalc projects.
-            </>
-          }
-          title="Guides"
-        />
-        <GuideDirectory />
-        <PublicNextStep authenticated={!!config?.is_authenticated} />
+        {initialRoute.view === "rstudio-project" ? (
+          <RStudioProjectGuidePage authenticated={!!config?.is_authenticated} />
+        ) : (
+          <>
+            <PublicHero
+              actions={
+                <Flex gap={12} wrap>
+                  <Button
+                    href={FIELD_GUIDES_URL}
+                    rel="noreferrer"
+                    target="_blank"
+                    type="primary"
+                  >
+                    Open all guides
+                  </Button>
+                  <Button href={appPath("docs")}>Browse docs</Button>
+                </Flex>
+              }
+              subtitle={
+                <>
+                  Plan setup, notebooks, terminals, code review, and deployment
+                  paths around durable CoCalc projects.
+                </>
+              }
+              title="Guides"
+            />
+            <GuideDirectory />
+            <PublicNextStep authenticated={!!config?.is_authenticated} />
+          </>
+        )}
       </PublicSectionShell>
     </>
   );

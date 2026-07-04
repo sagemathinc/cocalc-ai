@@ -42,4 +42,15 @@ describe("public content routes", () => {
     const redirected = new URL(`http://host${location}`);
     expect(redirected.searchParams.get("target")).toBe("/guides?topic=jupyter");
   });
+
+  it("redirects the RStudio guide page into the public shell", async () => {
+    const response = await request("/guides/rstudio-project");
+    expect(response.status).toBe(302);
+    const location = response.headers.get("location");
+    expect(location).toContain("/static/public.html?target=");
+    const redirected = new URL(`http://host${location}`);
+    expect(redirected.searchParams.get("target")).toBe(
+      "/guides/rstudio-project",
+    );
+  });
 });

@@ -15,6 +15,8 @@ import type { PublicDocsRoute } from "./docs/routes";
 import { getDocsRouteFromPath } from "./docs/routes";
 import type { PublicFeaturesRoute } from "./features/routes";
 import { getFeaturesRouteFromPath } from "./features/routes";
+import type { PublicGuidesRoute } from "./guides/routes";
+import { getGuidesRouteFromPath } from "./guides/routes";
 import type { PublicLangRoute } from "./lang/routes";
 import { getLangRouteFromPath, parsePublicLangTarget } from "./lang/routes";
 import type { PublicNewsRoute } from "./news/routes";
@@ -34,7 +36,7 @@ export type PublicRoute =
   | { route: PublicAuthRoute; section: "auth" }
   | { route: PublicDocsRoute; section: "docs" }
   | { route: PublicFeaturesRoute; section: "features" }
-  | { section: "guides" }
+  | { route: PublicGuidesRoute; section: "guides" }
   | { route: PublicLangRoute; section: "lang" }
   | { route: PublicNewsRoute; section: "news" }
   | { section: "not-found" }
@@ -90,7 +92,11 @@ export function getPublicRouteFromPath(
   }
 
   if (routeParts[0] === "guides") {
-    return { section: "guides" };
+    const route = getGuidesRouteFromPath(pathname);
+    if (route == null) {
+      return { section: "not-found" };
+    }
+    return { route, section: "guides" };
   }
 
   if (routeParts[0] === "lang" || parsePublicLangTarget(pathname) != null) {

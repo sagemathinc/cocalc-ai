@@ -63,6 +63,7 @@ describe("public sitemap", () => {
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/auth");
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/support/new");
     expect(PUBLIC_SITEMAP_PATHS).toContain("/products/cocalc-star");
+    expect(PUBLIC_SITEMAP_PATHS).toContain("/guides/rstudio-project");
     expect(
       PUBLIC_SITEMAP_PATHS.filter((path) => path.startsWith("/features/")),
     ).toEqual(

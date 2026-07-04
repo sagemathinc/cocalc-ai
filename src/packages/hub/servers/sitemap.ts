@@ -29,6 +29,7 @@ export const PUBLIC_SITEMAP_PATHS = [
   "/features",
   ...FEATURE_SITEMAP_PATHS,
   "/guides",
+  "/guides/rstudio-project",
   "/lang",
   "/en",
   "/es",
