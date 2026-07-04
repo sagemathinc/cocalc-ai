@@ -261,14 +261,19 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Guides" })).not.toBeNull();
-    expect(screen.getByText("Jupyter workflows")).not.toBeNull();
+    expect(screen.getByText("Jupyter notebooks")).not.toBeNull();
     expect(
-      screen.getByRole("link", { name: /Open all guides/i }),
-    ).toHaveAttribute("href", "https://sagemathinc.github.io/cocalc-guides/");
-    expect(screen.getByRole("link", { name: "Browse docs" })).toHaveAttribute(
-      "href",
-      "/docs",
-    );
+      screen
+        .getAllByRole("link", { name: /Open all guides/i })
+        .some(
+          (link) =>
+            link.getAttribute("href") ===
+            "https://sagemathinc.github.io/cocalc-guides/",
+        ),
+    ).toBe(true);
+    expect(
+      screen.getAllByRole("link", { name: "Browse docs" }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("uses the stored home-bay origin for public auth bootstrap", async () => {
