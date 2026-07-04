@@ -32,9 +32,7 @@ describe("public-site overpromise canary", () => {
     const heldSlugs = ["automations", "more-languages", "dedicated-compute"];
 
     for (const slug of heldSlugs) {
-      expect(catalog).not.toMatch(
-        new RegExp(`slug:\\s*["']${slug}["']`, "i"),
-      );
+      expect(catalog).not.toMatch(new RegExp(`slug:\\s*["']${slug}["']`, "i"));
     }
   });
 
@@ -76,7 +74,8 @@ describe("public-site overpromise canary", () => {
       },
       {
         label: "preinstalled Octave kernel",
-        pattern: /\b(?:preinstalled\s+Octave\s+kernel|Octave\s+kernel\s+is\s+preinstalled)\b/i,
+        pattern:
+          /\b(?:preinstalled\s+Octave\s+kernel|Octave\s+kernel\s+is\s+preinstalled)\b/i,
       },
     ];
 
