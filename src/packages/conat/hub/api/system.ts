@@ -145,6 +145,7 @@ export const system = {
   setProjectRootfsImage: authFirstRequireAccount,
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
+  testCloudflareVisitorLocationHeaders: authFirst,
   applyCloudflareTunnelSettings: authFirst,
   bootstrapCloudflareConfiguration: authFirst,
   createCloudflareTeardownPlan: authFirst,
@@ -226,6 +227,22 @@ export interface CloudflareBootstrapResult {
   r2: { ok: boolean; message?: string };
   values: Record<string, string>;
   notes: string[];
+}
+
+export interface VisitorLocationHeaderTestResult {
+  ok: boolean;
+  url: string;
+  missing: string[];
+  details: {
+    country: string;
+    region: string;
+    regionCode: string;
+    city: string;
+    continent: string;
+    timezone: string;
+    latitude: string;
+    longitude: string;
+  };
 }
 
 export type UxLatencyEventType = "project_start" | "file_open" | string;
@@ -2548,6 +2565,10 @@ export interface System {
       r2_endpoint?: string;
     };
   }) => Promise<R2CredentialsTestResult>;
+
+  testCloudflareVisitorLocationHeaders: (opts: {
+    account_id?: string;
+  }) => Promise<VisitorLocationHeaderTestResult>;
 
   applyCloudflareTunnelSettings: (opts: {
     account_id?: string;

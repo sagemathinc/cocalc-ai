@@ -2,6 +2,7 @@
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 jest.mock(
   "./assets/cloudflare-api-token.png",
@@ -27,6 +28,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
       hub: {
         system: {
           testR2Credentials: jest.fn(),
+          testCloudflareVisitorLocationHeaders: jest.fn(),
         },
       },
     },
@@ -59,6 +61,10 @@ describe("CloudflareConfigWizard", () => {
     (window.getComputedStyle as jest.Mock).mockRestore();
   });
 
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   it("explains that diagnostics use saved settings", () => {
     render(
       <CloudflareConfigWizard
@@ -78,12 +84,12 @@ describe("CloudflareConfigWizard", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "Test Current Visitor Location Headers",
+        name: "Test Public Domain Location Headers",
       }),
     ).toBeEnabled();
     expect(
       screen.getByText(
-        "If Cloudflare routing changed, restart the hub before relying on visitor-location results.",
+        "The location-header test checks the saved external domain, not the local admin page.",
       ),
     ).toBeInTheDocument();
   });
@@ -129,7 +135,7 @@ describe("CloudflareConfigWizard", () => {
 
     expect(
       screen.getByRole("button", {
-        name: "Test Current Visitor Location Headers",
+        name: "Test Public Domain Location Headers",
       }),
     ).toBeDisabled();
     expect(
@@ -173,6 +179,51 @@ describe("CloudflareConfigWizard", () => {
       screen.getByText(
         "Settings applied and saved. You can now run diagnostics.",
       ),
+    ).toBeInTheDocument();
+  });
+
+  it("tests visitor location headers through the saved public domain diagnostic", async () => {
+    const testLocationHeaders = webapp_client.conat_client.hub.system
+      .testCloudflareVisitorLocationHeaders as jest.Mock;
+    testLocationHeaders.mockResolvedValue({
+      ok: true,
+      url: "https://cocalc.example.edu/customize",
+      missing: [],
+      details: {
+        country: "US",
+        region: "California",
+        regionCode: "CA",
+        city: "San Francisco",
+        continent: "NA",
+        timezone: "America/Los_Angeles",
+        latitude: "37.7749",
+        longitude: "-122.4194",
+      },
+    });
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={baseData}
+        isSet={{ project_hosts_cloudflare_tunnel_api_token: true }}
+        onApply={() => {}}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Test Public Domain Location Headers",
+        }),
+      );
+    });
+
+    expect(testLocationHeaders).toHaveBeenCalledWith({});
+    expect(
+      screen.getByText("Public domain location headers are present"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("https://cocalc.example.edu/customize"),
     ).toBeInTheDocument();
   });
 });

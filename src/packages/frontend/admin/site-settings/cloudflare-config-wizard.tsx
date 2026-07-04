@@ -8,7 +8,10 @@ import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { R2CredentialsTestResult } from "@cocalc/conat/hub/api/system";
+import type {
+  R2CredentialsTestResult,
+  VisitorLocationHeaderTestResult,
+} from "@cocalc/conat/hub/api/system";
 import cloudflareApiTokenImg from "./assets/cloudflare-api-token.png";
 import cloudflareManagedTransformImg from "./assets/cloudflare-managed-transform-location-headers.png";
 
@@ -112,21 +115,6 @@ function inferCloudflareZone(domain: string | undefined): string {
   return labels.slice(-2).join(".");
 }
 
-interface VisitorLocationHeaderResult {
-  ok: boolean;
-  missing: string[];
-  details: {
-    country: string;
-    region: string;
-    regionCode: string;
-    city: string;
-    continent: string;
-    timezone: string;
-    latitude: string;
-    longitude: string;
-  };
-}
-
 export default function CloudflareConfigWizard({
   open,
   onClose,
@@ -153,7 +141,7 @@ export default function CloudflareConfigWizard({
   const [locationHeadersTesting, setLocationHeadersTesting] = useState(false);
   const [locationHeadersTestError, setLocationHeadersTestError] = useState("");
   const [locationHeadersResult, setLocationHeadersResult] =
-    useState<VisitorLocationHeaderResult | null>(null);
+    useState<VisitorLocationHeaderTestResult | null>(null);
   const [notice, setNotice] = useState("");
   const [applying, setApplying] = useState(false);
 
@@ -346,38 +334,10 @@ export default function CloudflareConfigWizard({
     setLocationHeadersTestError("");
     setLocationHeadersResult(null);
     try {
-      const response = await fetch("/customize", {
-        cache: "no-store",
-        credentials: "same-origin",
-      });
-      if (!response.ok) {
-        throw new Error(
-          `GET /customize failed: ${response.status} ${response.statusText}`,
+      const result =
+        await webapp_client.conat_client.hub.system.testCloudflareVisitorLocationHeaders(
+          {},
         );
-      }
-      const payload = await response.json();
-      const configuration = payload?.configuration ?? {};
-      const details = {
-        country: trimOrEmpty(configuration.country),
-        region: trimOrEmpty(configuration.cloudflare_region),
-        regionCode: trimOrEmpty(configuration.cloudflare_region_code),
-        city: trimOrEmpty(configuration.cloudflare_city),
-        continent: trimOrEmpty(configuration.cloudflare_continent),
-        timezone: trimOrEmpty(configuration.cloudflare_timezone),
-        latitude: trimOrEmpty(configuration.cloudflare_latitude),
-        longitude: trimOrEmpty(configuration.cloudflare_longitude),
-      };
-      const missing: string[] = [];
-      if (!details.country) missing.push("country");
-      if (!details.city) missing.push("city");
-      if (!details.continent) missing.push("continent");
-      if (!details.latitude) missing.push("latitude");
-      if (!details.longitude) missing.push("longitude");
-      const result = {
-        ok: missing.length === 0,
-        missing,
-        details,
-      };
       setLocationHeadersResult(result);
     } catch (err) {
       setLocationHeadersTestError(`${err}`);
@@ -712,7 +672,7 @@ Required R2 token permissions:
                 description={
                   hasUnsavedDraft
                     ? "The tests below ignore unsaved fields."
-                    : "If Cloudflare routing changed, restart the hub before relying on visitor-location results."
+                    : "The location-header test checks the saved external domain, not the local admin page."
                 }
               />
               <Space
@@ -799,7 +759,7 @@ Required R2 token permissions:
                     loading={locationHeadersTesting}
                     disabled={hasUnsavedDraft}
                   >
-                    Test Current Visitor Location Headers
+                    Test Public Domain Location Headers
                   </Button>
                   {hasPendingRuntimeDraft ? (
                     <Alert
@@ -825,11 +785,15 @@ Required R2 token permissions:
                       style={{ marginTop: "8px" }}
                       title={
                         locationHeadersResult.ok
-                          ? "Visitor location headers are present"
+                          ? "Public domain location headers are present"
                           : "Location headers are incomplete"
                       }
                       description={
                         <div style={{ display: "grid", rowGap: "4px" }}>
+                          <div>
+                            <b>Tested URL:</b>{" "}
+                            <code>{locationHeadersResult.url}</code>
+                          </div>
                           <div>
                             <b>Country:</b>{" "}
                             <code>

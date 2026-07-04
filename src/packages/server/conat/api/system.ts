@@ -137,6 +137,7 @@ import type {
   SiteSettingsReadResult,
   UxLatencyEventInput,
   UxLatencySummary,
+  VisitorLocationHeaderTestResult,
 } from "@cocalc/conat/hub/api/system";
 import {
   bootstrapCloudflareConfiguration as bootstrapCloudflareConfiguration0,
@@ -7025,6 +7026,68 @@ export async function testR2Credentials({
       clean(overrides?.r2_bucket_prefix) ?? clean(settings.r2_bucket_prefix),
     endpoint,
   });
+}
+
+function customizeUrlFromPublicSiteUrl(publicSiteUrl: string): string {
+  return `${publicSiteUrl.replace(/\/+$/, "")}/customize`;
+}
+
+function trimString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export async function testCloudflareVisitorLocationHeaders({
+  account_id,
+}: {
+  account_id?: string;
+}): Promise<VisitorLocationHeaderTestResult> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const { url: publicSiteUrl } = await getPublicSiteUrl({ account_id });
+  const url = customizeUrlFromPublicSiteUrl(publicSiteUrl);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: "application/json", "Cache-Control": "no-store" },
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw Error(
+        `GET ${url} failed: ${response.status} ${response.statusText}`,
+      );
+    }
+    const payload = (await response.json()) as {
+      configuration?: Record<string, unknown>;
+    };
+    const configuration = payload?.configuration ?? {};
+    const details = {
+      country: trimString(configuration.country),
+      region: trimString(configuration.cloudflare_region),
+      regionCode: trimString(configuration.cloudflare_region_code),
+      city: trimString(configuration.cloudflare_city),
+      continent: trimString(configuration.cloudflare_continent),
+      timezone: trimString(configuration.cloudflare_timezone),
+      latitude: trimString(configuration.cloudflare_latitude),
+      longitude: trimString(configuration.cloudflare_longitude),
+    };
+    const missing: string[] = [];
+    if (!details.country) missing.push("country");
+    if (!details.city) missing.push("city");
+    if (!details.continent) missing.push("continent");
+    if (!details.latitude) missing.push("latitude");
+    if (!details.longitude) missing.push("longitude");
+    return { ok: missing.length === 0, url, missing, details };
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw Error(`GET ${url} timed out after 10 seconds`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function bootstrapCloudflareConfiguration({
