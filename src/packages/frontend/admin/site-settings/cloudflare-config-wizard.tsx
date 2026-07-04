@@ -32,6 +32,15 @@ function normalizedDraftValue(val: string | undefined): string {
   return trimOrEmpty(val);
 }
 
+function savedCloudflareMode(data: Record<string, string>): string {
+  const rawMode = trimOrEmpty(data.cloudflare_mode).toLowerCase();
+  if (rawMode === "self" || rawMode === "none") return rawMode;
+  if (rawMode === "managed") return "self";
+  return trimOrEmpty(data.project_hosts_cloudflare_tunnel_enabled) !== "no"
+    ? "self"
+    : "none";
+}
+
 function hasPendingCloudflareRuntimeDraft(args: {
   data: Record<string, string>;
   mode: string;
@@ -41,7 +50,7 @@ function hasPendingCloudflareRuntimeDraft(args: {
   tunnelPrefix: string;
   hostSuffix: string;
 }): boolean {
-  const savedMode = trimOrEmpty(args.data.cloudflare_mode).toLowerCase();
+  const savedMode = savedCloudflareMode(args.data);
   if (savedMode !== trimOrEmpty(args.mode).toLowerCase()) return true;
   if (
     normalizedDomain(args.data.dns) !== normalizedDomain(args.externalDomain)
@@ -141,6 +150,7 @@ export default function CloudflareConfigWizard({
   const [locationHeadersResult, setLocationHeadersResult] =
     useState<VisitorLocationHeaderResult | null>(null);
   const [notice, setNotice] = useState("");
+  const [applying, setApplying] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -161,6 +171,7 @@ export default function CloudflareConfigWizard({
       setLocationHeadersTestError("");
       setLocationHeadersResult(null);
       setNotice("");
+      setApplying(false);
       return;
     }
     setAccountId(trimOrEmpty(data.project_hosts_cloudflare_tunnel_account_id));
@@ -172,16 +183,7 @@ export default function CloudflareConfigWizard({
     setTunnelPrefix(
       trimOrEmpty(data.project_hosts_cloudflare_tunnel_prefix) || "cocalc",
     );
-    const rawMode = trimOrEmpty(data.cloudflare_mode).toLowerCase();
-    const inferredMode =
-      rawMode === "self" || rawMode === "none"
-        ? rawMode
-        : rawMode === "managed"
-          ? "self"
-          : trimOrEmpty(data.project_hosts_cloudflare_tunnel_enabled) !== "no"
-            ? "self"
-            : "none";
-    setMode(inferredMode);
+    setMode(savedCloudflareMode(data));
     setR2ApiToken(trimOrEmpty(data.r2_api_token));
     setR2AccessKey(trimOrEmpty(data.r2_access_key_id));
     setR2SecretKey(trimOrEmpty(data.r2_secret_access_key));
@@ -192,6 +194,7 @@ export default function CloudflareConfigWizard({
     setLocationHeadersTesting(false);
     setLocationHeadersTestError("");
     setLocationHeadersResult(null);
+    setApplying(false);
   }, [open, data]);
 
   const showSelfConfig = mode === "self";
@@ -215,6 +218,15 @@ export default function CloudflareConfigWizard({
     tunnelPrefix,
     hostSuffix,
   });
+  const hasUnsavedDraft =
+    hasPendingRuntimeDraft ||
+    (mode === "self" &&
+      (!!normalizedDraftValue(r2ApiToken) ||
+        normalizedDraftValue(data.r2_access_key_id) !==
+          normalizedDraftValue(r2AccessKey) ||
+        !!normalizedDraftValue(r2SecretKey) ||
+        normalizedDraftValue(data.r2_bucket_prefix) !==
+          normalizedDraftValue(r2BucketPrefix)));
 
   function renderSecretNote(settingName: string) {
     if (!isSet?.[settingName]) return null;
@@ -246,6 +258,7 @@ export default function CloudflareConfigWizard({
     if (!r2AccessKey) return "R2 Access Key ID";
     if (!r2SecretKey && !isSet?.r2_secret_access_key)
       return "R2 Secret Access Key";
+    if (!r2BucketPrefix) return "R2 bucket prefix";
     return null;
   }
 
@@ -253,33 +266,54 @@ export default function CloudflareConfigWizard({
   const applyDisabled = mode === "self" && !!missing;
 
   async function applySettings() {
+    setApplying(true);
     const updates: Record<string, string> = {};
-    updates.cloudflare_mode = mode;
-    updates.project_hosts_cloudflare_tunnel_enabled =
-      mode === "self" ? "yes" : "no";
-    if (mode === "self") {
-      if (accountId)
-        updates.project_hosts_cloudflare_tunnel_account_id = accountId;
-      if (apiToken)
-        updates.project_hosts_cloudflare_tunnel_api_token = apiToken;
-      if (tunnelPrefix)
-        updates.project_hosts_cloudflare_tunnel_prefix = tunnelPrefix;
-      if (hostSuffix)
-        updates.project_hosts_cloudflare_tunnel_host_suffix = hostSuffix;
-      if (externalDomain) {
-        updates.dns = externalDomain;
+    try {
+      updates.cloudflare_mode = mode;
+      updates.project_hosts_cloudflare_tunnel_enabled =
+        mode === "self" ? "yes" : "no";
+      if (mode === "self") {
+        if (accountId)
+          updates.project_hosts_cloudflare_tunnel_account_id = accountId;
+        if (apiToken)
+          updates.project_hosts_cloudflare_tunnel_api_token = apiToken;
+        if (tunnelPrefix)
+          updates.project_hosts_cloudflare_tunnel_prefix = tunnelPrefix;
+        if (hostSuffix)
+          updates.project_hosts_cloudflare_tunnel_host_suffix = hostSuffix;
+        if (externalDomain) {
+          updates.dns = externalDomain;
+        }
+        if (accountId) updates.r2_account_id = accountId;
+        if (r2ApiToken) updates.r2_api_token = r2ApiToken;
+        if (r2AccessKey) updates.r2_access_key_id = r2AccessKey;
+        if (r2SecretKey) updates.r2_secret_access_key = r2SecretKey;
+        if (r2BucketPrefix) updates.r2_bucket_prefix = r2BucketPrefix;
+      } else {
+        updates.project_hosts_cloudflare_tunnel_api_token = "";
       }
-      if (accountId) updates.r2_account_id = accountId;
-      if (r2ApiToken) updates.r2_api_token = r2ApiToken;
-      if (r2AccessKey) updates.r2_access_key_id = r2AccessKey;
-      if (r2SecretKey) updates.r2_secret_access_key = r2SecretKey;
-      if (r2BucketPrefix) updates.r2_bucket_prefix = r2BucketPrefix;
-    } else {
-      updates.project_hosts_cloudflare_tunnel_api_token = "";
+      await onApply(updates);
+      setNotice("Settings applied and saved.");
+      onClose();
+    } finally {
+      setApplying(false);
     }
-    await onApply(updates);
-    setNotice("Settings applied and saved.");
-    onClose();
+  }
+
+  function requestClose() {
+    if (!hasUnsavedDraft) {
+      onClose();
+      return;
+    }
+    Modal.confirm({
+      title: "Discard unsaved Cloudflare settings?",
+      content:
+        "Closing this wizard will discard unsaved values, including tokens that cannot be shown again after you leave the page.",
+      okText: "Discard changes",
+      cancelText: "Keep editing",
+      okButtonProps: { danger: true },
+      onOk: onClose,
+    });
   }
 
   async function testSavedR2Credentials() {
@@ -345,9 +379,22 @@ export default function CloudflareConfigWizard({
   return (
     <Modal
       open={open}
-      onCancel={onClose}
-      onOk={onClose}
-      okText="Close"
+      onCancel={requestClose}
+      footer={[
+        <Button key="close" onClick={requestClose} disabled={applying}>
+          Close
+        </Button>,
+        <Button
+          key="apply"
+          type="primary"
+          icon={<Icon name="save" />}
+          onClick={applySettings}
+          disabled={applyDisabled}
+          loading={applying}
+        >
+          Apply Settings
+        </Button>,
+      ]}
       title="Cloudflare Configuration Wizard"
       width={920}
     >
@@ -458,17 +505,6 @@ export default function CloudflareConfigWizard({
                 good default regions for users and sort host regions by
                 distance.
               </div>
-              <Alert
-                type="warning"
-                showIcon
-                style={{ marginTop: "10px" }}
-                title="Test this only after saving and applying the running tunnel"
-                description={
-                  hasPendingRuntimeDraft
-                    ? "You have draft Cloudflare changes in this wizard. Save them, then use Apply Cloudflare tunnel settings now before expecting visitor-location headers to work."
-                    : "The visitor-location diagnostic is at the bottom of this wizard. It only makes sense after the configuration is saved, cloudflared has successfully set up the tunnel, and DNS is routing through Cloudflare."
-                }
-              />
               <div style={{ marginTop: "8px" }}>
                 <StaticMarkdown
                   value={`Open this Cloudflare page:
@@ -588,13 +624,14 @@ Required R2 token permissions:
                 }}
               >
                 <div>
-                  <b>R2 bucket prefix (optional)</b>
+                  <b>R2 bucket prefix</b>
                   <div style={{ color: "#666" }}>
-                    Optional. Leave blank unless you want to namespace buckets.
+                    Required. CoCalc uses this to create regional backup
+                    buckets.
                   </div>
                 </div>
                 <Input
-                  placeholder="R2 bucket prefix (optional)"
+                  placeholder="R2 bucket prefix"
                   value={r2BucketPrefix}
                   onChange={(e) => setR2BucketPrefix(e.target.value)}
                 />
@@ -660,11 +697,19 @@ Required R2 token permissions:
             <div>
               <strong>Step 8 - Post-save diagnostics</strong>
               <Alert
-                type="warning"
+                type={hasUnsavedDraft ? "warning" : "info"}
                 showIcon
                 style={{ marginTop: "8px" }}
-                title="These tests use the saved, currently running configuration."
-                description="Run these only after you have applied settings, saved the site configuration, clicked Apply Cloudflare tunnel settings now, and confirmed cloudflared has successfully set up the tunnel and DNS."
+                title={
+                  hasUnsavedDraft
+                    ? "Apply settings before running diagnostics."
+                    : "These tests use the saved, currently running configuration."
+                }
+                description={
+                  hasUnsavedDraft
+                    ? "You have unsaved Cloudflare settings in this wizard. Apply settings, then apply the Cloudflare tunnel settings to the running service before running diagnostics."
+                    : "Run these after settings are saved, Cloudflare tunnel settings are applied to the running service, and DNS is routing through Cloudflare."
+                }
               />
               <Space
                 orientation="vertical"
@@ -676,6 +721,7 @@ Required R2 token permissions:
                     onClick={testSavedR2Credentials}
                     loading={r2Testing}
                     icon={<Icon name="check" />}
+                    disabled={hasUnsavedDraft}
                   >
                     Test Saved R2 Credentials
                   </Button>
@@ -753,7 +799,7 @@ Required R2 token permissions:
                     onClick={testVisitorLocationHeaders}
                     loading={locationHeadersTesting}
                     icon={<Icon name="check" />}
-                    disabled={hasPendingRuntimeDraft}
+                    disabled={hasUnsavedDraft}
                   >
                     Test Current Visitor Location Headers
                   </Button>
@@ -867,14 +913,6 @@ Required R2 token permissions:
             </div>
           </>
         )}
-        <Button
-          type="primary"
-          icon={<Icon name="save" />}
-          onClick={applySettings}
-          disabled={applyDisabled}
-        >
-          Apply Settings
-        </Button>
         {applyDisabled && missing ? (
           <Alert
             type="warning"
