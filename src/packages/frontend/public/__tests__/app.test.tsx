@@ -1003,7 +1003,9 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByText("Install CoCalc Plus")).not.toBeNull();
-    expect(screen.getByText("What CoCalc Plus is")).not.toBeNull();
+    expect(
+      screen.getByText("Need local CoCalc before choosing a shared path?"),
+    ).not.toBeNull();
   });
 
   it("renders the software overview page", async () => {
@@ -1017,7 +1019,7 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("heading", { name: "Ways to Run CoCalc" }),
     ).not.toBeNull();
-    expect(screen.getByText("Hosted CoCalc")).not.toBeNull();
+    expect(screen.getByText("Which path fits?")).not.toBeNull();
   });
 
   it("renders the cocalc launchpad page", async () => {
@@ -1029,7 +1031,9 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByText("Install CoCalc Launchpad")).not.toBeNull();
-    expect(screen.getByText("What the installer does")).not.toBeNull();
+    expect(
+      screen.getByText("Need a bounded private CoCalc deployment?"),
+    ).not.toBeNull();
   });
 
   it("renders the cocalc star page", async () => {
@@ -1040,8 +1044,10 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByText("Install CoCalc Star")).not.toBeNull();
-    expect(screen.getByText("What CoCalc Star is")).not.toBeNull();
+    expect(screen.getAllByText("Install CoCalc Star")).toHaveLength(2);
+    expect(
+      screen.getByText("Run a shared CoCalc site on one Ubuntu VM."),
+    ).not.toBeNull();
   });
 
   it("renders the cocalc rocket page", async () => {
@@ -1052,7 +1058,9 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(screen.getByText("What CoCalc Rocket is")).not.toBeNull();
-    expect(screen.getByText("Talk with us")).not.toBeNull();
+    expect(
+      screen.getByText("Planning an institutional private CoCalc deployment?"),
+    ).not.toBeNull();
+    expect(screen.getByText("Talk with CoCalc about Rocket")).not.toBeNull();
   });
 });
