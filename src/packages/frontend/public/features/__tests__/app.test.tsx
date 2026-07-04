@@ -485,15 +485,17 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("Decision checklist")).not.toBeNull();
     expect(screen.getByText("Where to go next")).not.toBeNull();
     expect(
-      screen.getByText(
-        "Hosted by CoCalc, run it yourself, or a private deployment your organization operates.",
-      ),
+      screen.getByText("Hosted, local, single-VM, and private deployment."),
     ).not.toBeNull();
-    expect(
+    const supportHref =
       screen
-        .getByRole("link", { name: "Contact support" })
-        .getAttribute("href"),
-    ).toBe("mailto:help@example.com");
+        .getByRole("link", { name: "Talk with CoCalc" })
+        .getAttribute("href") ?? "";
+    expect(supportHref).toContain("/support/new?");
+    expect(supportHref).toContain("type=question");
+    expect(supportHref).toContain("context=feature-compare");
+    expect(supportHref).not.toContain("type=purchase");
+    expect(supportHref.startsWith("mailto:")).toBe(false);
     expect(
       container.querySelectorAll(".cocalc-compare-route-row"),
     ).toHaveLength(3);
@@ -503,5 +505,26 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.queryByText("Google Colab and quick notebook hosts"),
     ).toBeNull();
+  });
+
+  it("adds the trust route on the compare feature page when built-in policies are enabled", () => {
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
+        initialRoute={{ slug: "compare", view: "detail" }}
+      />,
+    );
+
+    expect(
+      container.querySelectorAll(".cocalc-compare-route-row"),
+    ).toHaveLength(4);
+    expect(
+      screen.getByText("Security and privacy context for evaluating CoCalc."),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: "Review trust and compliance" })
+        .getAttribute("href"),
+    ).toBe("/policies/trust");
   });
 });

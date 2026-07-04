@@ -14,7 +14,12 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import { LinkButton, featureAppPath } from "./page-components";
+import { builtinPolicyPath, type PublicConfig } from "../common";
+import {
+  LinkButton,
+  featureAppPath,
+  featureSupportPath,
+} from "./page-components";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -46,16 +51,15 @@ const DECISION_ROWS = [
   },
   {
     cocalc:
-      "The same user model can start hosted and later move to CoCalc Plus, CoCalc Star, Launchpad, Rocket, or custom deployment.",
-    other:
-      "The product is optimized around a single hosted or self-assembled deployment model.",
+      "Teams need hosted, local, single-VM, and private deployment choices.",
+    other: "Hosting and operations are already decided.",
     question: "Who operates it?",
   },
 ] as const;
 
 const NEXT_ROUTES = [
   {
-    body: "Hosted by CoCalc, run it yourself, or a private deployment your organization operates.",
+    body: "Hosted, local, single-VM, and private deployment.",
     href: "products",
     label: "Compare operating models",
     title: "Choosing how CoCalc runs",
@@ -297,10 +301,30 @@ const HERO_ACTION_STYLE = {
 } satisfies CSSProperties;
 
 export default function CompareFeaturePage({
-  helpEmail,
+  config,
 }: {
+  config?: PublicConfig;
   helpEmail?: string;
 }) {
+  const supportHref = featureSupportPath({
+    body: "I want to talk with CoCalc about fit and operating model. Helpful context: workflow, collaborators, operating model, timeline, and security or privacy questions.",
+    context: "compare",
+    subject: "CoCalc fit evaluation",
+    title: "Talk with CoCalc about fit",
+  });
+  const trustHref = builtinPolicyPath(config, "trust");
+  const nextRoutes = trustHref
+    ? [
+        ...NEXT_ROUTES,
+        {
+          body: "Security and privacy context for evaluating CoCalc.",
+          href: trustHref,
+          label: "Review trust and compliance",
+          title: "Trust and compliance",
+        },
+      ]
+    : NEXT_ROUTES;
+
   return (
     <Flex vertical gap={30}>
       <style>{COMPARE_PAGE_CSS}</style>
@@ -335,9 +359,7 @@ export default function CompareFeaturePage({
               <Button type="primary" href={featureAppPath("products")}>
                 Compare operating models
               </Button>
-              {helpEmail ? (
-                <Button href={`mailto:${helpEmail}`}>Contact support</Button>
-              ) : null}
+              <Button href={supportHref}>Talk with CoCalc</Button>
             </Flex>
           </Flex>
           <div className="cocalc-compare-quick-read">
@@ -402,7 +424,7 @@ export default function CompareFeaturePage({
           Pick the next evaluation question.
         </Paragraph>
         <div className="cocalc-compare-route-panel">
-          {NEXT_ROUTES.map((route) => (
+          {nextRoutes.map((route) => (
             <RouteRow key={route.href} {...route} />
           ))}
         </div>

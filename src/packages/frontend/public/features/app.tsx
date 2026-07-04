@@ -8,6 +8,7 @@ import { useEffect } from "react";
 import { Button, Col, Empty, Flex, Row, Tag, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import type { PublicPolicyPages } from "@cocalc/frontend/public/config";
 import {
   PublicPage,
   PublicSection,
@@ -44,6 +45,7 @@ interface FeaturesConfig {
   help_email?: string;
   is_authenticated?: boolean;
   logo_square?: string;
+  policy_pages?: PublicPolicyPages;
   site_name?: string;
 }
 
@@ -587,10 +589,12 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
 }
 
 function FeatureDetail({
+  config,
   helpEmail,
   isAuthenticated,
   slug,
 }: {
+  config?: FeaturesConfig;
   helpEmail?: string;
   isAuthenticated?: boolean;
   slug: string;
@@ -607,6 +611,10 @@ function FeatureDetail({
         </div>
       </PublicSection>
     );
+  }
+
+  if (slug === "compare") {
+    return <CompareFeaturePage config={config} />;
   }
 
   const CustomPage =
@@ -816,6 +824,7 @@ export default function PublicFeaturesApp({
     >
       {initialRoute.view === "detail" && initialRoute.slug ? (
         <FeatureDetail
+          config={config}
           helpEmail={config?.help_email}
           isAuthenticated={!!config?.is_authenticated}
           slug={initialRoute.slug}
