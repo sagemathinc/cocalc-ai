@@ -63,4 +63,6 @@ It is not a `codex-acp` tool-call runtime in the current architecture.
 - ACP hub: [src/packages/lite/hub/acp/index.ts](../src/packages/lite/hub/acp/index.ts)
 - Codex app-server agent: [src/packages/ai/acp/codex-app-server.ts](../src/packages/ai/acp/codex-app-server.ts)
 - Project-host codex spawner: [src/packages/project-host/codex/codex-project.ts](../src/packages/project-host/codex/codex-project.ts)
+- Built-in CoCalc skill: [src/.skills/cocalc/SKILL.md](../src/.skills/cocalc/SKILL.md)
+- Agent-supported science images: [docs/agent-supported-science-images.md](./agent-supported-science-images.md)
 - ACP Conat bridge/types: [src/packages/conat/ai/acp](../src/packages/conat/ai/acp)

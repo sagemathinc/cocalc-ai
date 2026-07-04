@@ -184,6 +184,8 @@ src/.local/
 
 sea-prep.blob
 cocalc
+!src/.skills/cocalc/
+!src/.skills/cocalc/**
 !src/packages/rootfs-recipes/cocalc/
 !src/packages/rootfs-recipes/cocalc/**
 cocalc-lite.tar.*

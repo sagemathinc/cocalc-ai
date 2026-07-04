@@ -1,0 +1,4 @@
+interface:
+  display_name: "CoCalc"
+  short_description: "Operate CoCalc projects, notebooks, RootFS images"
+  default_prompt: "Use $cocalc to inspect this CoCalc project, make the requested change, and validate it with the right project tools."
