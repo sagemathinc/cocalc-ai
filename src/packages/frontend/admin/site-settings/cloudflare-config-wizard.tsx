@@ -671,8 +671,8 @@ Required R2 token permissions:
                 }
                 description={
                   hasUnsavedDraft
-                    ? "The tests below ignore unsaved fields."
-                    : "The location-header test checks the saved external domain, not the local admin page."
+                    ? "These diagnostics use saved settings and ignore unsaved fields."
+                    : "R2 checks the saved backup credentials. Public domain headers checks the saved external domain through Cloudflare."
                 }
               />
               <Space

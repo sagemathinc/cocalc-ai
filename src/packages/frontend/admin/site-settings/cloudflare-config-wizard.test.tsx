@@ -89,7 +89,7 @@ describe("CloudflareConfigWizard", () => {
     ).toBeEnabled();
     expect(
       screen.getByText(
-        "The location-header test checks the saved external domain, not the local admin page.",
+        "R2 checks the saved backup credentials. Public domain headers checks the saved external domain through Cloudflare.",
       ),
     ).toBeInTheDocument();
   });
