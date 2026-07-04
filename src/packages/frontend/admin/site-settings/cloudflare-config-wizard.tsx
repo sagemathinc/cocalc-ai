@@ -12,6 +12,8 @@ import type { R2CredentialsTestResult } from "@cocalc/conat/hub/api/system";
 import cloudflareApiTokenImg from "./assets/cloudflare-api-token.png";
 import cloudflareManagedTransformImg from "./assets/cloudflare-managed-transform-location-headers.png";
 
+const DEFAULT_CLOUDFLARE_PREFIX = "cocalc";
+
 interface WizardProps {
   open: boolean;
   onClose: () => void;
@@ -69,8 +71,9 @@ function hasPendingCloudflareRuntimeDraft(args: {
   }
   const savedPrefix =
     normalizedDraftValue(args.data.project_hosts_cloudflare_tunnel_prefix) ||
-    "cocalc";
-  const draftPrefix = normalizedDraftValue(args.tunnelPrefix) || "cocalc";
+    DEFAULT_CLOUDFLARE_PREFIX;
+  const draftPrefix =
+    normalizedDraftValue(args.tunnelPrefix) || DEFAULT_CLOUDFLARE_PREFIX;
   if (savedPrefix !== draftPrefix) return true;
   if (
     normalizedDraftValue(
@@ -135,12 +138,14 @@ export default function CloudflareConfigWizard({
   const [apiToken, setApiToken] = useState("");
   const [externalDomain, setExternalDomain] = useState("");
   const [hostSuffix, setHostSuffix] = useState("");
-  const [tunnelPrefix, setTunnelPrefix] = useState("cocalc");
+  const [tunnelPrefix, setTunnelPrefix] = useState(DEFAULT_CLOUDFLARE_PREFIX);
   const [mode, setMode] = useState("none");
   const [r2ApiToken, setR2ApiToken] = useState("");
   const [r2AccessKey, setR2AccessKey] = useState("");
   const [r2SecretKey, setR2SecretKey] = useState("");
-  const [r2BucketPrefix, setR2BucketPrefix] = useState("");
+  const [r2BucketPrefix, setR2BucketPrefix] = useState(
+    DEFAULT_CLOUDFLARE_PREFIX,
+  );
   const [r2Testing, setR2Testing] = useState(false);
   const [r2TestError, setR2TestError] = useState("");
   const [r2TestResult, setR2TestResult] =
@@ -158,12 +163,12 @@ export default function CloudflareConfigWizard({
       setApiToken("");
       setExternalDomain("");
       setHostSuffix("");
-      setTunnelPrefix("cocalc");
+      setTunnelPrefix(DEFAULT_CLOUDFLARE_PREFIX);
       setMode("none");
       setR2ApiToken("");
       setR2AccessKey("");
       setR2SecretKey("");
-      setR2BucketPrefix("");
+      setR2BucketPrefix(DEFAULT_CLOUDFLARE_PREFIX);
       setR2Testing(false);
       setR2TestError("");
       setR2TestResult(null);
@@ -181,13 +186,16 @@ export default function CloudflareConfigWizard({
       trimOrEmpty(data.project_hosts_cloudflare_tunnel_host_suffix),
     );
     setTunnelPrefix(
-      trimOrEmpty(data.project_hosts_cloudflare_tunnel_prefix) || "cocalc",
+      trimOrEmpty(data.project_hosts_cloudflare_tunnel_prefix) ||
+        DEFAULT_CLOUDFLARE_PREFIX,
     );
     setMode(savedCloudflareMode(data));
     setR2ApiToken(trimOrEmpty(data.r2_api_token));
     setR2AccessKey(trimOrEmpty(data.r2_access_key_id));
     setR2SecretKey(trimOrEmpty(data.r2_secret_access_key));
-    setR2BucketPrefix(trimOrEmpty(data.r2_bucket_prefix));
+    setR2BucketPrefix(
+      trimOrEmpty(data.r2_bucket_prefix) || DEFAULT_CLOUDFLARE_PREFIX,
+    );
     setR2Testing(false);
     setR2TestError("");
     setR2TestResult(null);
@@ -225,8 +233,8 @@ export default function CloudflareConfigWizard({
         normalizedDraftValue(data.r2_access_key_id) !==
           normalizedDraftValue(r2AccessKey) ||
         !!normalizedDraftValue(r2SecretKey) ||
-        normalizedDraftValue(data.r2_bucket_prefix) !==
-          normalizedDraftValue(r2BucketPrefix)));
+        (normalizedDraftValue(data.r2_bucket_prefix) ||
+          DEFAULT_CLOUDFLARE_PREFIX) !== normalizedDraftValue(r2BucketPrefix)));
 
   function renderSecretNote(settingName: string) {
     if (!isSet?.[settingName]) return null;
@@ -626,12 +634,13 @@ Required R2 token permissions:
                 <div>
                   <b>R2 bucket prefix</b>
                   <div style={{ color: "#666" }}>
-                    Required. CoCalc uses this to create regional backup
-                    buckets.
+                    Prefix for regional backup bucket names, such as
+                    cocalc-wnam. The default is fine for one CoCalc site; use a
+                    different prefix for each site in this Cloudflare account.
                   </div>
                 </div>
                 <Input
-                  placeholder="R2 bucket prefix"
+                  placeholder={DEFAULT_CLOUDFLARE_PREFIX}
                   value={r2BucketPrefix}
                   onChange={(e) => setR2BucketPrefix(e.target.value)}
                 />
