@@ -290,8 +290,8 @@ export default function CloudflareConfigWizard({
         normalizedDraftValue(data.r2_access_key_id) !==
           normalizedDraftValue(r2AccessKey) ||
         !!normalizedDraftValue(r2SecretKey) ||
-        (normalizedDraftValue(data.r2_bucket_prefix) ||
-          DEFAULT_CLOUDFLARE_PREFIX) !== normalizedDraftValue(r2BucketPrefix)));
+        normalizedDraftValue(data.r2_bucket_prefix) !==
+          normalizedDraftValue(r2BucketPrefix)));
   const buttonDisabledReason = hasUnsavedDraft
     ? undefined
     : "No unapplied changes.";

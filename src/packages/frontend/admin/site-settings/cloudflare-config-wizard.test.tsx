@@ -65,7 +65,7 @@ describe("CloudflareConfigWizard", () => {
       <CloudflareConfigWizard
         open
         onClose={() => {}}
-        data={baseData}
+        data={{ ...baseData, r2_bucket_prefix: "cocalc" }}
         isSet={{ project_hosts_cloudflare_tunnel_api_token: true }}
         onApply={() => {}}
       />,
@@ -114,12 +114,46 @@ describe("CloudflareConfigWizard", () => {
     ).toBeDisabled();
   });
 
+  it("enables apply when an existing install needs the default R2 bucket prefix saved", async () => {
+    const onApply = jest.fn(async () => {});
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={{
+          ...baseData,
+          r2_access_key_id: "r2-access-key",
+          r2_bucket_prefix: "",
+        }}
+        isSet={{
+          project_hosts_cloudflare_tunnel_api_token: true,
+          r2_api_token: true,
+          r2_secret_access_key: true,
+        }}
+        onApply={onApply}
+      />,
+    );
+
+    const apply = screen.getByRole("button", { name: "Apply Settings" });
+    expect(apply).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(apply);
+    });
+
+    expect(onApply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        r2_bucket_prefix: "cocalc",
+      }),
+    );
+  });
+
   it("disables the visitor-header check while Cloudflare runtime changes are only in draft", () => {
     render(
       <CloudflareConfigWizard
         open
         onClose={() => {}}
-        data={baseData}
+        data={{ ...baseData, r2_bucket_prefix: "cocalc" }}
         isSet={{ project_hosts_cloudflare_tunnel_api_token: true }}
         onApply={() => {}}
       />,
@@ -203,7 +237,7 @@ describe("CloudflareConfigWizard", () => {
       <CloudflareConfigWizard
         open
         onClose={() => {}}
-        data={baseData}
+        data={{ ...baseData, r2_bucket_prefix: "cocalc" }}
         isSet={{ project_hosts_cloudflare_tunnel_api_token: true }}
         onApply={() => {}}
       />,
