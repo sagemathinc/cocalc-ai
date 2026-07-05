@@ -64,6 +64,7 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - For direct DB access in hub/backend, use `getPool()` from `@cocalc/database/pool`.
 - Keep dependency versions aligned across packages; update matching `@types/*` packages when applicable.
 - Redux store values are deep-converted with Immutable.js at runtime. Do not assume nested values returned by `useTypedRedux` are plain objects just because the TypeScript type says so; normalize or use `.get(...)`/`.toJS()` before nested property access.
+- For admin site-settings secret/password configuration fields, use `src/packages/frontend/admin/site-settings/secret-setting-input.tsx` instead of raw password inputs or custom stored-secret notes.
 
 ## Multibay Architecture Rule
 

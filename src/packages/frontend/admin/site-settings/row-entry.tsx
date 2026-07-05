@@ -4,7 +4,7 @@
  */
 
 import humanizeList from "humanize-list";
-import { Button, Select } from "antd";
+import { Select } from "antd";
 import { useMemo } from "react";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
 import { SERVER_SETTINGS_ENV_PREFIX } from "@cocalc/util/consts";
@@ -36,6 +36,7 @@ export interface RowEntryInnerProps {
   onChangeEntry: (name: string, value: string) => void;
   clearable?: boolean;
   update: () => void;
+  onClearSecret?: (name: string) => void;
 }
 
 interface RowEntryProps extends RowEntryInnerProps {
@@ -44,7 +45,6 @@ interface RowEntryProps extends RowEntryInnerProps {
   rowType?: RowType;
   onJsonEntryChange: (name: string, value?: string) => void;
   onChangeEntry: (name: string, value: string) => void;
-  onClearSecret?: (name: string) => void;
   rootfsManifestUrls?: string[];
 }
 
@@ -131,44 +131,13 @@ export function RowEntry({
               isReadonly={isReadonly}
               clearable={clearable}
               update={update}
+              onClearSecret={onClearSecret}
             />
             <div style={{ fontSize: "90%", display: "inlineBlock" }}>
               {!Array.isArray(value) &&
               name === "version_recommended_browser" ? (
                 <VersionHint value={value} />
               ) : undefined}
-              {password && isSet && !value && !isClearing && (
-                <div
-                  style={{
-                    marginTop: "4px",
-                    color: "#666",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  <span>Stored (not shown).</span>
-                  {password &&
-                    isSet &&
-                    !isReadonly[name] &&
-                    onClearSecret &&
-                    !isClearing && (
-                      <Button
-                        size="small"
-                        danger
-                        onClick={() => onClearSecret(name)}
-                      >
-                        Clear
-                      </Button>
-                    )}
-                </div>
-              )}
-              {password && isClearing && (
-                <div style={{ marginTop: "4px", color: "#666" }}>
-                  Will clear on save.
-                </div>
-              )}
               {hint}
               <ReadOnly readonly={isReadonly[name]} />
               {displayed_val != null && !password && (

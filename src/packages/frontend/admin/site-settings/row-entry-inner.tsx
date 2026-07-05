@@ -6,9 +6,6 @@
 import { Input, Select, Switch } from "antd";
 import { CSSProperties } from "react";
 import { isEqual } from "lodash";
-import Password, {
-  PasswordTextArea,
-} from "@cocalc/frontend/components/password";
 import { LOCALIZATIONS } from "@cocalc/frontend/i18n";
 import { LOCALE } from "@cocalc/util/consts/locale";
 import {
@@ -16,6 +13,7 @@ import {
   to_list_of_locale,
 } from "@cocalc/util/db-schema/site-defaults";
 import { RowEntryInnerProps } from "./row-entry";
+import SecretSettingInput from "./secret-setting-input";
 
 export function testIsInvalid(value, valid?: ConfigValid): boolean {
   return (
@@ -44,10 +42,10 @@ export function RowEntryInner({
   isReadonly,
   clearable,
   update,
+  onClearSecret,
 }: RowEntryInnerProps) {
   if (isReadonly == null) return null; // typescript
   const disabled = isReadonly[name] == true;
-  const isStored = password && isSet && !value && !isClearing;
 
   if (name === "i18n") {
     return (
@@ -106,44 +104,20 @@ export function RowEntryInner({
     );
   } else {
     if (password) {
-      const placeholder =
-        isClearing && !value
-          ? "Will clear on save"
-          : isSet && !value
-            ? "Stored (enter to replace)"
-            : undefined;
-      const style = isStored ? {} : rowEntryStyle(value, valid);
-      const visibilityToggle = !isStored;
-      if (multiline != null) {
-        const rows = isStored ? 1 : multiline;
-        return (
-          <PasswordTextArea
-            rows={rows}
-            autoComplete="off"
-            style={{
-              ...style,
-              ...(isStored ? { resize: "vertical" } : {}),
-            }}
-            value={value}
-            placeholder={placeholder}
-            visibilityToggle={visibilityToggle}
-            disabled={disabled}
-            onChange={(e) => onChangeEntry(name, e.target.value)}
-          />
-        );
-      } else {
-        return (
-          <Password
-            autoComplete="off"
-            style={style}
-            value={value}
-            placeholder={placeholder}
-            visibilityToggle={visibilityToggle}
-            disabled={disabled}
-            onChange={(e) => onChangeEntry(name, e.target.value)}
-          />
-        );
-      }
+      return (
+        <SecretSettingInput
+          value={value}
+          isSet={isSet}
+          isClearing={isClearing}
+          multiline={multiline}
+          disabled={disabled}
+          inputStyle={rowEntryStyle(value, valid)}
+          onClear={
+            !disabled && onClearSecret ? () => onClearSecret(name) : undefined
+          }
+          onChange={(value) => onChangeEntry(name, value)}
+        />
+      );
     } else {
       if (multiline != null) {
         const style = {
