@@ -1358,12 +1358,7 @@ export default function SiteSettings({ close }) {
           text="Loading site configuration..."
         />
       )}
-      <Well
-        style={{
-          margin: "auto",
-          maxWidth: "80%",
-        }}
-      >
+      <Well>
         <Warning />
         <ShowError
           error={error}
