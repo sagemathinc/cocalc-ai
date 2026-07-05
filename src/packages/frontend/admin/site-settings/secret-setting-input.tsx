@@ -78,29 +78,23 @@ export default function SecretSettingInput({
     );
 
   return (
-    <>
+    <Space vertical style={{ width: "100%" }}>
       {input}
       {isStored ? (
-        <div>
-          <Space>
-            <Typography.Text type="secondary">
-              Saved. Leave blank to keep the current value.
-            </Typography.Text>
-            {onClear ? (
-              <Button size="small" danger onClick={onClear}>
-                Clear
-              </Button>
-            ) : null}
-          </Space>
-        </div>
+        <Space>
+          <Typography.Text type="secondary">
+            Saved. Leave blank to keep the current value.
+          </Typography.Text>
+          {onClear ? (
+            <Button size="small" danger onClick={onClear}>
+              Clear
+            </Button>
+          ) : null}
+        </Space>
       ) : null}
       {isClearing ? (
-        <div>
-          <Typography.Text type="secondary">
-            Will clear on save.
-          </Typography.Text>
-        </div>
+        <Typography.Text type="secondary">Will clear on save.</Typography.Text>
       ) : null}
-    </>
+    </Space>
   );
 }
