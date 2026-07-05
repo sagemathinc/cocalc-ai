@@ -4542,13 +4542,7 @@ export async function getSiteSetupStatus({
         "Catalog refresh can take long enough that the UI must wait on the backend result instead of prompting repeated clicks.",
       ],
     }),
-    setupStep({
-      id: "email",
-      title: "Email Provider",
-      state: "optional",
-      hard_gate: false,
-      summary: "Email is optional for small sites.",
-    }),
+    emailSetupState(settings),
     setupStep({
       id: "project-host",
       title: "First Project Host",
@@ -4586,7 +4580,6 @@ export async function getSiteSetupStatus({
     //       : "Smoke testing is blocked until a host and official RootFS exist.",
     // }),
   ];
-  steps[4] = emailSetupState(settings);
   // TODO: restore this when explicit completion is persisted with fresh auth.
   // steps.push(
   //   setupStep({
