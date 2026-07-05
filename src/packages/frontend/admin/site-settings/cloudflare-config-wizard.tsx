@@ -303,7 +303,7 @@ export default function CloudflareConfigWizard({
     if (invalidAccountId) return "Valid Cloudflare Account ID";
     if (!apiToken && !isSet?.project_hosts_cloudflare_tunnel_api_token)
       return "Cloudflare API Token";
-    if (!r2ApiToken && !isSet?.r2_api_token) return "Cloudflare R2 API Token";
+    if (!r2ApiToken && !isSet?.r2_api_token) return "R2 API Token";
     if (!r2AccessKey) return "R2 Access Key ID";
     if (!r2SecretKey && !isSet?.r2_secret_access_key)
       return "R2 Secret Access Key";
@@ -630,13 +630,6 @@ export default function CloudflareConfigWizard({
                     >
                       Test Visitor Location Headers
                     </Button>
-                    {hasPendingRuntimeDraft ? (
-                      <Alert
-                        type="warning"
-                        showIcon
-                        title="Save and apply Cloudflare tunnel settings before testing visitor headers."
-                      />
-                    ) : null}
                     {locationHeadersTestError ? (
                       <Alert
                         type="error"

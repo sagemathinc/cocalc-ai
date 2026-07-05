@@ -135,9 +135,12 @@ describe("CloudflareConfigWizard", () => {
       }),
     ).toBeDisabled();
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Save and apply Cloudflare tunnel settings before testing visitor headers.",
       ),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Apply settings before testing."),
     ).toBeInTheDocument();
   });
 
