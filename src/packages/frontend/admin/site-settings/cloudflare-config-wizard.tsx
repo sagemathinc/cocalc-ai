@@ -14,6 +14,7 @@ import type {
 } from "@cocalc/conat/hub/api/system";
 import cloudflareApiTokenImg from "./assets/cloudflare-api-token.png";
 import cloudflareManagedTransformImg from "./assets/cloudflare-managed-transform-location-headers.png";
+import SecretSettingInput from "./secret-setting-input";
 
 const DEFAULT_CLOUDFLARE_PREFIX = "cocalc";
 
@@ -226,25 +227,6 @@ export default function CloudflareConfigWizard({
   const buttonDisabledReason = hasUnsavedDraft
     ? undefined
     : "No unapplied changes.";
-
-  function renderSecretNote(settingName: string) {
-    if (!isSet?.[settingName]) return null;
-    return (
-      <div
-        style={{
-          marginTop: "6px",
-          color: "#237804",
-          display: "flex",
-          alignItems: "center",
-          gap: "6px",
-          fontWeight: 500,
-        }}
-      >
-        <Icon name="check" />
-        Saved in the database already. Leave blank to keep the current value.
-      </div>
-    );
-  }
 
   function missingLabel(): string | null {
     if (mode !== "self") return null;
@@ -461,13 +443,13 @@ export default function CloudflareConfigWizard({
                   borderRadius: "6px",
                 }}
               />
-              <Input.Password
-                style={{ marginTop: "8px" }}
+              <SecretSettingInput
+                inputStyle={{ marginTop: "8px" }}
                 placeholder="Cloudflare API Token"
                 value={apiToken}
-                onChange={(e) => setApiToken(e.target.value)}
+                isSet={isSet?.project_hosts_cloudflare_tunnel_api_token}
+                onChange={setApiToken}
               />
-              {renderSecretNote("project_hosts_cloudflare_tunnel_api_token")}
             </div>
             <div>
               <strong>Step 5 - Enable Visitor Location Headers</strong>
@@ -532,12 +514,12 @@ Required R2 token permissions:
                   </div>
                 </div>
                 <div>
-                  <Input.Password
+                  <SecretSettingInput
                     placeholder="Cloudflare R2 API Token"
                     value={r2ApiToken}
-                    onChange={(e) => setR2ApiToken(e.target.value)}
+                    isSet={isSet?.r2_api_token}
+                    onChange={setR2ApiToken}
                   />
-                  {renderSecretNote("r2_api_token")}
                 </div>
               </div>
               <div
@@ -577,12 +559,12 @@ Required R2 token permissions:
                   </div>
                 </div>
                 <div>
-                  <Input.Password
+                  <SecretSettingInput
                     placeholder="R2 Secret Access Key"
                     value={r2SecretKey}
-                    onChange={(e) => setR2SecretKey(e.target.value)}
+                    isSet={isSet?.r2_secret_access_key}
+                    onChange={setR2SecretKey}
                   />
-                  {renderSecretNote("r2_secret_access_key")}
                 </div>
               </div>
               <div
