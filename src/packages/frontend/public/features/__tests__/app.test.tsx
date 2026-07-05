@@ -3,6 +3,7 @@
 import { render, screen } from "@testing-library/react";
 
 import PublicFeaturesApp from "../app";
+import { getFeatureIndexPages } from "../catalog";
 import { featurePath, getFeaturesRouteFromPath } from "../routes";
 
 beforeAll(() => {
@@ -57,6 +58,31 @@ describe("PublicFeaturesApp", () => {
         .getAllByRole("link", { name: /Jupyter Notebooks/i })[0]
         .getAttribute("href"),
     ).toBe("/features/jupyter-notebook");
+  });
+
+  it("renders every indexed feature page on the index", () => {
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={{ view: "index" }}
+      />,
+    );
+
+    for (const page of getFeatureIndexPages()) {
+      expect(screen.getAllByText(page.title).length).toBeGreaterThan(0);
+      expect(
+        container.querySelector(`a[href="${featurePath(page.slug)}"]`),
+      ).not.toBeNull();
+    }
+
+    expect(screen.queryByText("Feature Assets")).toBeNull();
+    expect(screen.queryByText("Internationalization")).toBeNull();
+    expect(
+      container.querySelector(`a[href="${featurePath("icons")}"]`),
+    ).toBeNull();
+    expect(
+      container.querySelector(`a[href="${featurePath("i18n")}"]`),
+    ).toBeNull();
   });
 
   it("shows Projects and Settings in the shared nav when authenticated", () => {
