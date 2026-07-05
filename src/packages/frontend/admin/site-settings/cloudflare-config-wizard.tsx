@@ -18,6 +18,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { COLORS } from "@cocalc/util/theme";
 import type {
   R2CredentialsTestResult,
   VisitorLocationHeaderTestResult,
@@ -159,6 +160,29 @@ function WizardStep({
   );
 }
 
+function Screenshot({
+  src,
+  alt,
+  maxWidth,
+}: {
+  src: string;
+  alt: string;
+  maxWidth: number;
+}) {
+  return (
+    <div
+      style={{
+        background: COLORS.ANTD_BG_BLUE_L,
+        display: "flex",
+        justifyContent: "center",
+        padding: 12,
+      }}
+    >
+      <img src={src} alt={alt} style={{ width: "100%", maxWidth }} />
+    </div>
+  );
+}
+
 export default function CloudflareConfigWizard({
   open,
   onClose,
@@ -249,6 +273,7 @@ export default function CloudflareConfigWizard({
     accountIdTrimmed && zoneGuess
       ? `https://dash.cloudflare.com/${accountIdTrimmed}/${zoneGuess}/rules/settings/managed-transforms`
       : "https://dash.cloudflare.com/<account_id>/<zone>/rules/settings/managed-transforms";
+  const defaultHostSuffix = `-${normalizedDomain(externalDomain) || "<external domain name>"}`;
   const hasPendingRuntimeDraft = hasPendingCloudflareRuntimeDraft({
     data,
     mode,
@@ -394,7 +419,7 @@ export default function CloudflareConfigWizard({
       title="Cloudflare Configuration Wizard"
       width={920}
     >
-      <Form layout="vertical" component={false}>
+      <Form component="div">
         <Space vertical style={{ width: "100%" }}>
           <Alert
             type="info"
@@ -402,7 +427,7 @@ export default function CloudflareConfigWizard({
             title="Configure Cloudflare Tunnel + R2 in one pass."
             description="This wizard fills in the Cloudflare settings for Launchpad. Advanced users can edit fields manually."
           />
-          <WizardStep title="Step 1 - Choose Cloudflare mode">
+          <WizardStep title="Step 1 - Cloudflare mode">
             <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)}>
               <Space vertical>
                 <Radio value="none">No Cloudflare (self-hosted only)</Radio>
@@ -413,10 +438,11 @@ export default function CloudflareConfigWizard({
           {showSelfConfig && (
             <>
               <WizardStep title="Step 2 - External domain">
-                <FormItem
-                  label="External domain"
-                  extra="This domain must be under a DNS zone managed by Cloudflare in your account. It is used by the hub and project hosts."
-                >
+                <Paragraph type="secondary">
+                  This domain must be under a DNS zone managed by Cloudflare in
+                  your account. It is used by the hub and project hosts.
+                </Paragraph>
+                <FormItem label="Domain name">
                   <Input
                     placeholder="cocalc.example.edu"
                     value={externalDomain}
@@ -425,17 +451,20 @@ export default function CloudflareConfigWizard({
                 </FormItem>
               </WizardStep>
               <WizardStep title="Step 3 - Cloudflare account ID">
-                <Paragraph type="secondary">
-                  Open{" "}
+                <Paragraph>
+                  Go to{" "}
                   <Link
                     href="https://dash.cloudflare.com/"
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Cloudflare
-                  </Link>{" "}
-                  and use the left sidebar Quick search to find "account id".
-                  Click the result to copy it.
+                    https://dash.cloudflare.com/
+                  </Link>
+                  .
+                  <br />
+                  Use the left sidebar Quick search to find "account id".
+                  <br />
+                  Click the result to copy it and paste into the box below.
                 </Paragraph>
                 {invalidAccountId ? (
                   <Alert
@@ -444,10 +473,7 @@ export default function CloudflareConfigWizard({
                     title="Account IDs are 32 lowercase hex characters."
                   />
                 ) : null}
-                <FormItem
-                  label="Cloudflare Account ID"
-                  extra="Paste the Account ID here."
-                >
+                <FormItem label="Cloudflare Account ID">
                   <Input
                     placeholder="Cloudflare Account ID"
                     value={accountId}
@@ -456,22 +482,28 @@ export default function CloudflareConfigWizard({
                 </FormItem>
               </WizardStep>
               <WizardStep title="Step 4 - Cloudflare API token">
-                <Paragraph type="secondary">
-                  Create a token at{" "}
+                <Paragraph>
+                  Go to{" "}
                   <Link
                     href="https://dash.cloudflare.com/profile/api-tokens"
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Cloudflare API Tokens
+                    https://dash.cloudflare.com/profile/api-tokens
                   </Link>
-                  , then match this configuration, except with your Cloudflare
-                  zone instead of cocalc.ai.
+                  .
+                  <br />
+                  Create an API Token with configuration matching the screenshot
+                  below.
+                  <br />
+                  Use your Cloudflare zone instead of cocalc.ai.
+                  <br />
+                  Paste the token into the input box here.
                 </Paragraph>
-                <img
+                <Screenshot
                   src={cloudflareApiTokenImg}
                   alt="Cloudflare API token configuration"
-                  style={{ width: "100%", maxWidth: 760 }}
+                  maxWidth={760}
                 />
                 <FormItem label="Cloudflare API Token">
                   <SecretSettingInput
@@ -482,14 +514,13 @@ export default function CloudflareConfigWizard({
                   />
                 </FormItem>
               </WizardStep>
-              <WizardStep title="Step 5 - Enable Visitor Location Headers">
+              <WizardStep title="Step 5 - Visitor Location Headers">
                 <Paragraph type="secondary">
-                  Enable this managed transform in Cloudflare so CoCalc can pick
-                  good default regions for users and sort host regions by
-                  distance.
+                  CoCalc can pick good default regions for users and sort host
+                  regions by distance.
                 </Paragraph>
                 <Paragraph>
-                  Open{" "}
+                  Go to{" "}
                   <Link
                     href={managedTransformsUrl}
                     target="_blank"
@@ -498,63 +529,52 @@ export default function CloudflareConfigWizard({
                     {managedTransformsUrl}
                   </Link>
                   .
-                </Paragraph>
-                <Paragraph>
-                  Enable: <Text strong>Add visitor location headers</Text>.
-                </Paragraph>
-                <Paragraph type="secondary">
+                  <br />
                   If the link above does not work, search in Cloudflare for
                   Managed Transforms and select your domain.
+                  <br />
+                  Enable: <Text strong>Add visitor location headers</Text>.
                 </Paragraph>
-                <img
+                <Screenshot
                   src={cloudflareManagedTransformImg}
                   alt='Cloudflare managed transform "Add visitor location headers"'
-                  style={{ width: "100%", maxWidth: 900 }}
+                  maxWidth={900}
                 />
               </WizardStep>
               <WizardStep title="Step 6 - R2 backups">
                 <Paragraph type="secondary">
-                  R2 is required for Launchpad backups. You must create a
-                  separate R2 API token with full Admin Read &amp; Write access.
+                  R2 is required for backups. Create a separate R2 API token
+                  with full Admin Read &amp; Write access so CoCalc can create
+                  and manage regional backup buckets and read and write backup
+                  objects.
                 </Paragraph>
                 <Paragraph>
-                  R2 token link uses your Account ID:{" "}
+                  Go to{" "}
                   <Link href={r2TokenUrl} target="_blank" rel="noreferrer">
                     {r2TokenUrl}
                   </Link>
+                  .
+                  <br />
+                  Choose <Text strong>Admin Read &amp; Write</Text>.
+                  <br />
+                  Once the token is created, fill in the fields below.
                 </Paragraph>
-                <Paragraph type="secondary">
-                  Required R2 token permission:{" "}
-                  <Text strong>Admin Read &amp; Write</Text>. Allows the ability
-                  to create, list, and delete buckets, edit bucket
-                  configuration, read, write, and list objects, and read and
-                  write access to data catalog tables and associated metadata.
-                </Paragraph>
-                <FormItem
-                  label="Cloudflare R2 API Token"
-                  extra="Token with Admin Read & Write permissions."
-                >
+                <FormItem label="R2 API Token">
                   <SecretSettingInput
-                    placeholder="Cloudflare R2 API Token"
+                    placeholder="R2 API Token"
                     value={r2ApiToken}
                     isSet={isSet?.r2_api_token}
                     onChange={setR2ApiToken}
                   />
                 </FormItem>
-                <FormItem
-                  label="R2 Access Key ID"
-                  extra="From the R2 API token you created."
-                >
+                <FormItem label="R2 Access Key ID">
                   <Input
                     placeholder="R2 Access Key ID"
                     value={r2AccessKey}
                     onChange={(e) => setR2AccessKey(e.target.value)}
                   />
                 </FormItem>
-                <FormItem
-                  label="R2 Secret Access Key"
-                  extra="From the R2 API token you created."
-                >
+                <FormItem label="R2 Secret Access Key">
                   <SecretSettingInput
                     placeholder="R2 Secret Access Key"
                     value={r2SecretKey}
@@ -562,128 +582,53 @@ export default function CloudflareConfigWizard({
                     onChange={setR2SecretKey}
                   />
                 </FormItem>
-                <FormItem
-                  label="R2 bucket prefix"
-                  extra="Prefix for regional backup bucket names, such as cocalc-wnam. The default is fine for one CoCalc site; use a different prefix for each site in this Cloudflare account."
-                >
+              </WizardStep>
+              <WizardStep title="Step 7 - Resource names">
+                <Paragraph type="secondary">
+                  These names are used for Cloudflare and backup resources
+                  created by CoCalc. The defaults are suitable for one CoCalc
+                  site in this Cloudflare account.
+                </Paragraph>
+                <FormItem label="R2 bucket prefix">
                   <Input
                     placeholder={DEFAULT_CLOUDFLARE_PREFIX}
                     value={r2BucketPrefix}
                     onChange={(e) => setR2BucketPrefix(e.target.value)}
                   />
                 </FormItem>
-              </WizardStep>
-              <WizardStep title="Step 7 - Tunnel settings">
-                <Paragraph type="secondary">
-                  These control how CoCalc names Cloudflare tunnel resources for
-                  project hosts.
-                </Paragraph>
-                <FormItem
-                  label="Tunnel name prefix"
-                  extra="Prefix for tunnel names (e.g., cocalc-...)."
-                >
+                <FormItem label="Tunnel name prefix">
                   <Input
-                    placeholder="Tunnel name prefix (e.g., cocalc)"
+                    placeholder={DEFAULT_CLOUDFLARE_PREFIX}
                     value={tunnelPrefix}
                     onChange={(e) => setTunnelPrefix(e.target.value)}
                   />
                 </FormItem>
-                <FormItem
-                  label="Project-host hostname suffix"
-                  extra='Leave blank for the default "-<External Domain Name>".'
-                >
+                <FormItem label="Project-host hostname suffix">
                   <Input
-                    placeholder="Project-host hostname suffix (optional, e.g., -hosts.cocalc.ai)"
+                    placeholder={`Leave blank for default ${defaultHostSuffix}`}
                     value={hostSuffix}
                     onChange={(e) => setHostSuffix(e.target.value)}
                   />
                 </FormItem>
               </WizardStep>
-              <WizardStep title="Step 8 - Post-save diagnostics">
+              <WizardStep title="Step 8 - Diagnostics">
                 <Alert
                   type={hasUnsavedDraft ? "warning" : "info"}
                   showIcon
                   title={
                     hasUnsavedDraft
                       ? "Apply settings before testing."
-                      : "Diagnostics use saved settings."
-                  }
-                  description={
-                    hasUnsavedDraft
-                      ? "These diagnostics use saved settings and ignore unsaved fields."
-                      : "R2 checks the saved backup credentials. Public domain headers checks the saved external domain through Cloudflare."
+                      : "Settings saved. Test visitor location headers and R2 backup credentials."
                   }
                 />
                 <Space vertical style={{ width: "100%" }}>
-                  <Space vertical style={{ width: "100%" }}>
-                    <Button
-                      onClick={testSavedR2Credentials}
-                      loading={r2Testing}
-                      disabled={hasUnsavedDraft}
-                    >
-                      Test Saved R2 Credentials
-                    </Button>
-                    {r2TestError ? (
-                      <Alert
-                        type="error"
-                        showIcon
-                        title="R2 test failed"
-                        description={r2TestError}
-                      />
-                    ) : null}
-                    {r2TestResult ? (
-                      <Alert
-                        type={r2TestResult.ok ? "success" : "error"}
-                        showIcon
-                        title={
-                          r2TestResult.ok
-                            ? "R2 credentials look good"
-                            : "R2 credential test found problems"
-                        }
-                        description={
-                          <Descriptions size="small" column={1}>
-                            {codeItem("Account", r2TestResult.account_id)}
-                            {codeItem("Endpoint", r2TestResult.endpoint)}
-                            <Item label="Cloudflare API token">
-                              {r2TestResult.api_token.ok
-                                ? `OK (visible buckets: ${r2TestResult.api_token.bucket_count ?? 0})`
-                                : `Failed (${r2TestResult.api_token.error ?? "unknown error"})`}
-                            </Item>
-                            <Item label="R2 S3 keys">
-                              {r2TestResult.s3.ok
-                                ? `OK (visible buckets: ${r2TestResult.s3.bucket_count ?? 0})`
-                                : `Failed (${r2TestResult.s3.error ?? "unknown error"})`}
-                            </Item>
-                            {r2TestResult.bucket_prefix
-                              ? codeItem(
-                                  "Bucket prefix",
-                                  r2TestResult.bucket_prefix,
-                                )
-                              : null}
-                            {r2TestResult.bucket_prefix ? (
-                              <Item label="Matching buckets">
-                                {r2TestResult.matched_buckets.length > 0
-                                  ? r2TestResult.matched_buckets.join(", ")
-                                  : "(none yet)"}
-                              </Item>
-                            ) : null}
-                            {r2TestResult.notes?.length ? (
-                              <Item label="Notes">
-                                {r2TestResult.notes.join(" ")}
-                              </Item>
-                            ) : null}
-                          </Descriptions>
-                        }
-                      />
-                    ) : null}
-                  </Space>
                   <Space vertical style={{ width: "100%" }}>
                     <Button
                       onClick={testVisitorLocationHeaders}
                       loading={locationHeadersTesting}
                       disabled={hasUnsavedDraft}
                     >
-                      Test Public Domain Location Headers
+                      Test Visitor Location Headers
                     </Button>
                     {hasPendingRuntimeDraft ? (
                       <Alert
@@ -754,6 +699,68 @@ export default function CloudflareConfigWizard({
                                 All required location fields are present.
                               </Item>
                             )}
+                          </Descriptions>
+                        }
+                      />
+                    ) : null}
+                  </Space>
+                  <Space vertical style={{ width: "100%" }}>
+                    <Button
+                      onClick={testSavedR2Credentials}
+                      loading={r2Testing}
+                      disabled={hasUnsavedDraft}
+                    >
+                      Test R2 Backup Credentials
+                    </Button>
+                    {r2TestError ? (
+                      <Alert
+                        type="error"
+                        showIcon
+                        title="R2 test failed"
+                        description={r2TestError}
+                      />
+                    ) : null}
+                    {r2TestResult ? (
+                      <Alert
+                        type={r2TestResult.ok ? "success" : "error"}
+                        showIcon
+                        title={
+                          r2TestResult.ok
+                            ? "R2 credentials look good"
+                            : "R2 credential test found problems"
+                        }
+                        description={
+                          <Descriptions size="small" column={1}>
+                            {codeItem("Account", r2TestResult.account_id)}
+                            {codeItem("Endpoint", r2TestResult.endpoint)}
+                            <Item label="Cloudflare API token">
+                              {r2TestResult.api_token.ok
+                                ? `OK (visible buckets: ${r2TestResult.api_token.bucket_count ?? 0})`
+                                : `Failed (${r2TestResult.api_token.error ?? "unknown error"})`}
+                            </Item>
+                            <Item label="R2 S3 keys">
+                              {r2TestResult.s3.ok
+                                ? `OK (visible buckets: ${r2TestResult.s3.bucket_count ?? 0})`
+                                : `Failed (${r2TestResult.s3.error ?? "unknown error"})`}
+                            </Item>
+                            {r2TestResult.bucket_prefix
+                              ? codeItem(
+                                  "Bucket prefix",
+                                  r2TestResult.bucket_prefix,
+                                )
+                              : null}
+                            {r2TestResult.bucket_prefix ? (
+                              <Item label="Matching buckets">
+                                {r2TestResult.matched_buckets.length > 0
+                                  ? r2TestResult.matched_buckets.join(", ")
+                                  : "(none yet)"}
+                              </Item>
+                            ) : null}
+                            {r2TestResult.notes?.length ? (
+                              <Item label="Notes">
+                                {r2TestResult.notes.join(" ")}
+                              </Item>
+                            ) : null}
                           </Descriptions>
                         }
                       />

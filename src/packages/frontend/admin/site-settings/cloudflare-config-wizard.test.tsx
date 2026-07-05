@@ -71,22 +71,23 @@ describe("CloudflareConfigWizard", () => {
       />,
     );
 
+    expect(screen.getByText("Step 8 - Diagnostics")).toBeInTheDocument();
     expect(
-      screen.getByText("Step 8 - Post-save diagnostics"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Diagnostics use saved settings."),
+      screen.getByText(
+        "Settings saved. Test visitor location headers and R2 backup credentials.",
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "Test Public Domain Location Headers",
+        name: "Test Visitor Location Headers",
       }),
     ).toBeEnabled();
-    expect(
-      screen.getByText(
-        "R2 checks the saved backup credentials. Public domain headers checks the saved external domain through Cloudflare.",
-      ),
-    ).toBeInTheDocument();
+    const buttons = screen
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    expect(buttons.indexOf("Test Visitor Location Headers")).toBeLessThan(
+      buttons.indexOf("Test R2 Backup Credentials"),
+    );
   });
 
   it("disables apply when there are no draft changes", () => {
@@ -130,7 +131,7 @@ describe("CloudflareConfigWizard", () => {
 
     expect(
       screen.getByRole("button", {
-        name: "Test Public Domain Location Headers",
+        name: "Test Visitor Location Headers",
       }),
     ).toBeDisabled();
     expect(
@@ -208,7 +209,7 @@ describe("CloudflareConfigWizard", () => {
     await act(async () => {
       fireEvent.click(
         screen.getByRole("button", {
-          name: "Test Public Domain Location Headers",
+          name: "Test Visitor Location Headers",
         }),
       );
     });

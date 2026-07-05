@@ -8,6 +8,7 @@ import type { ChangeEvent, CSSProperties } from "react";
 import Password, {
   PasswordTextArea,
 } from "@cocalc/frontend/components/password";
+import { COLORS } from "@cocalc/util/theme";
 
 export interface SecretSettingInputProps {
   value: string;
@@ -82,7 +83,7 @@ export default function SecretSettingInput({
       {input}
       {isStored ? (
         <Space>
-          <Typography.Text type="secondary">
+          <Typography.Text italic style={{ color: COLORS.ANTD_GREEN_D }}>
             Saved. Leave blank to keep the current value.
           </Typography.Text>
           {onClear ? (
