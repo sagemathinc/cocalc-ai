@@ -17,11 +17,6 @@ jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
 }));
 
-jest.mock("@cocalc/frontend/editors/slate/static-markdown", () => ({
-  __esModule: true,
-  default: ({ value }) => <div>{value}</div>,
-}));
-
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
@@ -222,8 +217,8 @@ describe("CloudflareConfigWizard", () => {
     expect(
       screen.getByText("Public domain location headers are present"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("https://cocalc.example.edu/customize"),
-    ).toBeInTheDocument();
+    expect(document.body).toHaveTextContent(
+      "https://cocalc.example.edu/customize",
+    );
   });
 });
