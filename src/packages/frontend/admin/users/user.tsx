@@ -33,18 +33,6 @@ import {
 import { AccountStatusTags } from "../account-status-tags";
 import { LegacyMigrationAdmin } from "./legacy-migration";
 
-interface State {
-  projects: boolean;
-  purchases: boolean;
-  egress: boolean;
-  activity: boolean;
-  impersonate: boolean;
-  password: boolean;
-  ban: boolean;
-  membership: boolean;
-  migration: boolean;
-}
-
 type More =
   | "projects"
   | "purchases"
@@ -77,17 +65,7 @@ export function UserResult({
     email_address ||
     account_id;
   const [details, setDetails] = useState<boolean>(false);
-  const [state, setState] = useState<State>({
-    projects: false,
-    purchases: false,
-    egress: false,
-    activity: false,
-    impersonate: false,
-    password: false,
-    ban: false,
-    membership: false,
-    migration: false,
-  });
+  const [activeMore, setActiveMore] = useState<More | undefined>(undefined);
 
   const renderCreated = () => {
     if (!created) {
@@ -108,8 +86,8 @@ export function UserResult({
     return (
       <Tag.CheckableTag
         style={{ fontSize: "11pt" }}
-        checked={state[name]}
-        onChange={() => setState({ ...state, [name]: !state[name] })}
+        checked={activeMore === name}
+        onChange={() => setActiveMore(activeMore === name ? undefined : name)}
       >
         {capitalize(label)}
       </Tag.CheckableTag>
@@ -203,10 +181,10 @@ export function UserResult({
             {renderMoreLink("membership")}
             {renderMoreLink("migration")}
           </Space>
-          {state.impersonate && (
+          {activeMore === "impersonate" && (
             <Impersonate account_id={account_id} display_name={userName} />
           )}
-          {state.password && (
+          {activeMore === "password" && (
             <Card title="Profile">
               <PasswordReset
                 account_id={account_id}
@@ -222,7 +200,7 @@ export function UserResult({
               </div>
             </Card>
           )}
-          {state.ban && (
+          {activeMore === "ban" && (
             <Card
               title={
                 <>
@@ -237,13 +215,13 @@ export function UserResult({
               />
             </Card>
           )}
-          {state.projects && (
+          {activeMore === "projects" && (
             <Projects
               account_id={account_id}
               title={`Recently active projects that ${userName} collaborates on`}
             />
           )}
-          {state.purchases && (
+          {activeMore === "purchases" && (
             <Card title="Purchases">
               <div style={{ margin: "15px 0" }}>
                 <Money account_id={account_id} />
@@ -258,7 +236,7 @@ export function UserResult({
               </div>
             </Card>
           )}
-          {state.egress && (
+          {activeMore === "egress" && (
             <Card title="Network Egress">
               <Space
                 direction="vertical"
@@ -274,12 +252,14 @@ export function UserResult({
               </Space>
             </Card>
           )}
-          {state.membership && (
+          {activeMore === "membership" && (
             <Card title="Membership">
               <AdminMembership account_id={account_id} />
             </Card>
           )}
-          {state.migration && <LegacyMigrationAdmin account_id={account_id} />}
+          {activeMore === "migration" && (
+            <LegacyMigrationAdmin account_id={account_id} />
+          )}
         </div>
       )}
     </Card>
