@@ -178,4 +178,31 @@ describe("UserResult egress entry points", () => {
 
     expect(screen.getByText("password-reset-email-status:true")).toBeTruthy();
   });
+
+  it("opens at most one expandable admin section", () => {
+    render(
+      <UserResult
+        first_name="Ada"
+        last_name="Lovelace"
+        email_address="ada@example.com"
+        account_id="acct-1"
+        banned={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByText(/Ada Lovelace/));
+    fireEvent.click(screen.getByText("Profile"));
+    expect(
+      screen.getByText("password-reset-email-status:unknown"),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Egress"));
+    expect(
+      screen.queryByText("password-reset-email-status:unknown"),
+    ).toBeNull();
+    expect(screen.getByText("recent-egress-summary:acct-1")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Egress"));
+    expect(screen.queryByText("recent-egress-summary:acct-1")).toBeNull();
+  });
 });
