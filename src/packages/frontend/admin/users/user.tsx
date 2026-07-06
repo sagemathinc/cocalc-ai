@@ -58,6 +58,7 @@ export function UserResult({
   first_name,
   last_name,
   email_address,
+  email_address_verified,
   created,
   last_active,
   account_id,
@@ -205,6 +206,7 @@ export function UserResult({
               <PasswordReset
                 account_id={account_id}
                 email_address={email_address ?? ""}
+                email_address_verified={email_address_verified}
               />
               <div style={{ marginTop: "20px" }}>
                 <AdminRole
