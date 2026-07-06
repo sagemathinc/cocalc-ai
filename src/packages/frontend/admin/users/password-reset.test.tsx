@@ -12,6 +12,12 @@ const mockRunFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
 
 jest.mock("antd", () => ({
   Alert: ({ message }: any) => <div>{message}</div>,
+  Button: ({ children, icon, onClick, disabled }: any) => (
+    <button type="button" disabled={disabled} onClick={onClick}>
+      {icon}
+      {children}
+    </button>
+  ),
   Popconfirm: ({ children, onConfirm }: any) => {
     const React = require("react");
     return React.cloneElement(children, { onClick: onConfirm });
@@ -21,14 +27,6 @@ jest.mock("antd", () => ({
   Typography: {
     Title: ({ children }: any) => <div>{children}</div>,
   },
-}));
-
-jest.mock("@cocalc/frontend/antd-bootstrap", () => ({
-  Button: ({ children, onClick, disabled }: any) => (
-    <button type="button" disabled={disabled} onClick={onClick}>
-      {children}
-    </button>
-  ),
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({

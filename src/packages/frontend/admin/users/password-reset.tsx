@@ -4,10 +4,9 @@
  */
 
 import type { ReactNode } from "react";
-import { Alert, Popconfirm, Space, Tag, Typography } from "antd";
+import { Alert, Button, Popconfirm, Space, Tag, Typography } from "antd";
 
 import { useState } from "@cocalc/frontend/app-framework";
-import { Button } from "@cocalc/frontend/antd-bootstrap";
 import {
   CopyToClipBoard,
   Icon,
@@ -163,11 +162,13 @@ export function PasswordReset({
           <>
             <Button
               disabled={running}
+              icon={
+                <Icon name={running ? "sync" : "lock-open"} spin={running} />
+              }
               onClick={() => {
                 void requestPasswordReset();
               }}
             >
-              <Icon name={running ? "sync" : "lock-open"} spin={running} />{" "}
               Request Password Reset Link...
             </Button>
             {link && (
@@ -194,11 +195,13 @@ export function PasswordReset({
             </Tag>
             <Button
               disabled={verifying || emailVerified}
+              icon={
+                <Icon name={verifying ? "sync" : "check"} spin={verifying} />
+              }
               onClick={() => {
                 void verifyEmailAddress();
               }}
             >
-              <Icon name={verifying ? "sync" : "check"} spin={verifying} />{" "}
               Admin-verify email address
             </Button>
           </Space>
@@ -222,11 +225,16 @@ export function PasswordReset({
             void disableTwoFactor();
           }}
         >
-          <Button bsStyle="danger" disabled={disablingTwoFactor}>
-            <Icon
-              name={disablingTwoFactor ? "sync" : "lock-open"}
-              spin={disablingTwoFactor}
-            />{" "}
+          <Button
+            danger
+            disabled={disablingTwoFactor}
+            icon={
+              <Icon
+                name={disablingTwoFactor ? "sync" : "lock-open"}
+                spin={disablingTwoFactor}
+              />
+            }
+          >
             Remove 2FA from account...
           </Button>
         </Popconfirm>
