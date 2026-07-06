@@ -149,6 +149,48 @@ describe("accounts.cluster-directory", () => {
     ]);
   });
 
+  it("preserves directory email verification status for remote account search results", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("CREATE TABLE") || sql.includes("CREATE INDEX")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("FROM cluster_account_directory")) {
+        return {
+          rows: [
+            {
+              account_id: "11111111-1111-4111-8111-111111111111",
+              email_address: "qa@example.com",
+              display_name: "QA Directory",
+              first_name: "QA",
+              last_name: "Directory",
+              home_bay_id: "bay-2",
+              created: null,
+              last_active: null,
+              banned: false,
+              email_address_verified: true,
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM accounts")) {
+        return { rows: [] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    const { searchClusterAccountsDirect } = await import("./cluster-directory");
+    const [account] = await searchClusterAccountsDirect({
+      query: "qa",
+      admin: true,
+    });
+
+    expect(account).toMatchObject({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      email_address_verified: true,
+      home_bay_id: "bay-2",
+    });
+  });
+
   it("does not add is_admin to non-admin cluster searches", async () => {
     const { searchClusterAccountsDirect } = await import("./cluster-directory");
     const [account] = await searchClusterAccountsDirect({

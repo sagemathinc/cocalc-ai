@@ -334,6 +334,10 @@ function canonicalDirectoryEntry(row: any): AccountDirectoryEntry {
         ? row.last_active.valueOf()
         : (row.last_active ?? undefined),
     banned: row.banned == null ? undefined : !!row.banned,
+    email_address_verified:
+      row.email_address_verified == null
+        ? undefined
+        : !!row.email_address_verified,
   };
 }
 
