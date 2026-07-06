@@ -17,6 +17,10 @@ jest.mock("antd", () => ({
     return React.cloneElement(children, { onClick: onConfirm });
   },
   Space: ({ children }: any) => <div>{children}</div>,
+  Tag: ({ children }: any) => <span>{children}</span>,
+  Typography: {
+    Title: ({ children }: any) => <div>{children}</div>,
+  },
 }));
 
 jest.mock("@cocalc/frontend/antd-bootstrap", () => ({
@@ -140,6 +144,33 @@ describe("PasswordReset profile actions", () => {
       });
     });
     expect(screen.getByText("ada@example.com is now verified.")).toBeTruthy();
+    expect(screen.getByText("Verified")).toBeTruthy();
+  });
+
+  it("shows the current email verification status", () => {
+    render(
+      <PasswordReset
+        account_id="acct-1"
+        email_address="ada@example.com"
+        email_address_verified={false}
+      />,
+    );
+
+    expect(screen.getByText("Not verified")).toBeTruthy();
+    expect(screen.getByText("Admin-verify email address")).toBeEnabled();
+  });
+
+  it("disables admin email verification when the address is already verified", () => {
+    render(
+      <PasswordReset
+        account_id="acct-1"
+        email_address="ada@example.com"
+        email_address_verified={true}
+      />,
+    );
+
+    expect(screen.getByText("Verified")).toBeTruthy();
+    expect(screen.getByText("Admin-verify email address")).toBeDisabled();
   });
 
   it("fresh-auth wraps admin two-factor removal", async () => {

@@ -42,7 +42,12 @@ jest.mock("./impersonate", () => ({
 }));
 
 jest.mock("./password-reset", () => ({
-  PasswordReset: () => null,
+  PasswordReset: ({ email_address_verified }: any) => (
+    <div>
+      password-reset-email-status:
+      {email_address_verified == null ? "unknown" : `${email_address_verified}`}
+    </div>
+  ),
 }));
 
 jest.mock("./admin-role", () => ({
@@ -71,6 +76,14 @@ jest.mock("./money", () => () => null);
 jest.mock("./admin-membership", () => ({
   AdminMembership: () => null,
 }));
+
+jest.mock(
+  "./legacy-migration",
+  () => ({
+    LegacyMigrationAdmin: () => null,
+  }),
+  { virtual: true },
+);
 
 jest.mock("@cocalc/frontend/purchases/managed-egress-history", () => ({
   ManagedEgressHistoryButton: ({ buttonText, user_account_id }: any) => (
@@ -146,5 +159,23 @@ describe("UserResult egress entry points", () => {
     fireEvent.click(screen.getByText(/Grace Hopper/));
     fireEvent.click(screen.getByText("Profile"));
     expect(screen.getByText("admin-role-current")).toBeTruthy();
+  });
+
+  it("passes email verification status to profile actions", () => {
+    render(
+      <UserResult
+        first_name="Ada"
+        last_name="Lovelace"
+        email_address="ada@example.com"
+        email_address_verified={true}
+        account_id="acct-1"
+        banned={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByText(/Ada Lovelace/));
+    fireEvent.click(screen.getByText("Profile"));
+
+    expect(screen.getByText("password-reset-email-status:true")).toBeTruthy();
   });
 });
