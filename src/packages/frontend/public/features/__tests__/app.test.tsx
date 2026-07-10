@@ -43,13 +43,13 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Everything starts in a project.",
+        name: "Collaborate using your favorite software and AI agents.",
       }),
     ).not.toBeNull();
-    expect(screen.getByText("Durable collaborative projects")).not.toBeNull();
+    expect(screen.queryByText("Durable collaborative projects")).toBeNull();
+    expect(screen.getByText("Runtime")).not.toBeNull();
     expect(screen.getByText("Documents")).not.toBeNull();
-    expect(screen.getByText("Compute")).not.toBeNull();
-    expect(screen.getByText("AI and automation")).not.toBeNull();
+    expect(screen.getByText("AI workflows")).not.toBeNull();
     expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linux Terminal").length).toBeGreaterThan(0);
     expect(screen.queryByText("Open page")).toBeNull();
