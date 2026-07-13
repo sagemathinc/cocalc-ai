@@ -7,7 +7,7 @@ import getBalance from "./get-balance";
 import createPurchase from "./create-purchase";
 import { uuid } from "@cocalc/util/misc";
 import dayjs from "dayjs";
-import { before, after } from "@cocalc/server/test";
+import { before, after, getPool } from "@cocalc/server/test";
 import { toDecimal } from "@cocalc/util/money";
 
 beforeAll(async () => {
@@ -48,6 +48,53 @@ describe("test computing balance under various conditions", () => {
       -3.89 + 5,
       2,
     );
+  });
+
+  it("force saves the cached account row even inside the update throttle", async () => {
+    const account_id = uuid();
+    await getPool().query(
+      "INSERT INTO accounts (account_id, email_address, balance) VALUES ($1, $2, $3)",
+      [account_id, `${account_id}@example.com`, 999],
+    );
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      await createPurchase({
+        account_id,
+        service: "student-pay",
+        description: {} as any,
+        client: null,
+        cost: 1.25,
+      });
+      await getBalance({ account_id });
+
+      await createPurchase({
+        account_id,
+        service: "student-pay",
+        description: {} as any,
+        client: null,
+        cost: 2,
+      });
+      nowSpy.mockReturnValue(1_000_500);
+      expect(
+        toDecimal(await getBalance({ account_id })).toNumber(),
+      ).toBeCloseTo(-3.25, 2);
+      let { rows } = await getPool().query(
+        "SELECT balance FROM accounts WHERE account_id=$1",
+        [account_id],
+      );
+      expect(toDecimal(rows[0].balance).toNumber()).toBeCloseTo(-1.25, 2);
+
+      await getBalance({ account_id, forceSave: true });
+      rows = (
+        await getPool().query(
+          "SELECT balance FROM accounts WHERE account_id=$1",
+          [account_id],
+        )
+      ).rows;
+      expect(toDecimal(rows[0].balance).toNumber()).toBeCloseTo(-3.25, 2);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("with a different account that has a purchase, which shouldn't impact anything", async () => {

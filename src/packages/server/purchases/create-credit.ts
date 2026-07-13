@@ -81,7 +81,11 @@ export default async function createCredit({
   );
 
   // call getbalance to trigger update of the balance field in the accounts table.
-  const balance = await getBalance({ account_id, client });
+  const balance = await getBalance({
+    account_id,
+    client,
+    forceSave: client == null,
+  });
   if (client == null) {
     await publishAccountBalanceUpdateBestEffort({ account_id, balance });
   }

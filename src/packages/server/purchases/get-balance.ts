@@ -26,10 +26,13 @@ const lastUpdate: { [account_id: string]: number } = {};
 export default async function getBalance({
   account_id,
   client,
+  forceSave,
   noSave,
 }: {
   account_id: string;
   client?: PoolClient;
+  // Save the computed balance even if this process recently updated it.
+  forceSave?: boolean;
   // do not save the computed balance to the accounts table.
   noSave?: boolean;
 }): Promise<MoneyValue> {
@@ -47,7 +50,10 @@ export default async function getBalance({
   const balance = toDecimal(rows[0]?.balance ?? 0);
   if (!noSave) {
     const now = Date.now();
-    if (now - (lastUpdate[account_id] ?? 0) >= MIN_BALANCE_UPDATE_MS) {
+    if (
+      forceSave ||
+      now - (lastUpdate[account_id] ?? 0) >= MIN_BALANCE_UPDATE_MS
+    ) {
       lastUpdate[account_id] = now;
       await pool.query("UPDATE accounts SET balance=$2 WHERE account_id=$1", [
         account_id,

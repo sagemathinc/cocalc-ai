@@ -178,7 +178,8 @@ export default async function createSubscriptionPayment({
         client,
       });
       // it worked -- so commit it
-      client.query("COMMIT");
+      await client.query("COMMIT");
+      await refreshAccountBalanceAndPublishBestEffort({ account_id });
     } catch (err) {
       logger.debug("error renewing subscription", err);
       await client.query("ROLLBACK");

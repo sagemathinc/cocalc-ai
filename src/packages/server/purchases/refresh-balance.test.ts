@@ -36,7 +36,10 @@ describe("refreshAccountBalanceAndPublishBestEffort", () => {
       account_id: "acct-1",
     });
 
-    expect(getBalanceMock).toHaveBeenCalledWith({ account_id: "acct-1" });
+    expect(getBalanceMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      forceSave: true,
+    });
     expect(publishAccountRowFeedEventsBestEffortMock).toHaveBeenCalledWith({
       account_id: "acct-1",
       patch: { balance: 12.34 },

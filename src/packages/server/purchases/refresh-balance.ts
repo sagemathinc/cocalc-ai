@@ -45,7 +45,10 @@ export async function refreshAccountBalanceAndPublishBestEffort({
     return;
   }
   try {
-    const balance = await getBalance({ account_id: accountId });
+    const balance = await getBalance({
+      account_id: accountId,
+      forceSave: true,
+    });
     await publishAccountBalanceUpdateBestEffort({
       account_id: accountId,
       balance,
