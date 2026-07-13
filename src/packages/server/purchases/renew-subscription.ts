@@ -18,6 +18,7 @@ import {
   recordMembershipAnalyticsEvent,
   recordMembershipPurchaseCompleted,
 } from "@cocalc/server/membership/analytics";
+import { refreshAccountBalanceAndPublishBestEffort } from "./refresh-balance";
 
 const logger = getLogger("purchases:renew-subscription");
 
@@ -145,6 +146,7 @@ export default async function renewSubscription({
       });
     }
     await client.query("COMMIT");
+    await refreshAccountBalanceAndPublishBestEffort({ account_id });
     return purchase_id;
   } catch (err) {
     await client.query("ROLLBACK");

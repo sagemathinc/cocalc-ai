@@ -140,7 +140,10 @@ export interface AccountFeedAccountUpsertEvent {
   ts: number;
   account_id: string;
   account: AccountFeedAccountRow;
-  reason: "user_query_set" | "messages_unread_count_updated";
+  reason:
+    | "balance_updated"
+    | "user_query_set"
+    | "messages_unread_count_updated";
 }
 
 export interface AccountFeedProjectUpsertEvent {

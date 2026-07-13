@@ -396,7 +396,10 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
   declare publishAccountRowFeedEventsBestEffort?: (opts: {
     account_id: string;
     patch: Record<string, any>;
-    reason?: "user_query_set" | "messages_unread_count_updated";
+    reason?:
+      | "balance_updated"
+      | "user_query_set"
+      | "messages_unread_count_updated";
   }) => Promise<void>;
   declare publishCollaboratorAccountFeedEventsBestEffort?: (opts: {
     collaborator_account_id: string;

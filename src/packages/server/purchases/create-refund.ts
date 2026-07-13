@@ -10,6 +10,7 @@ import createPurchase from "./create-purchase";
 import type { Reason, Refund } from "@cocalc/util/db-schema/purchases";
 import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import send, { support, url } from "@cocalc/server/messages/send";
+import { refreshAccountBalanceAndPublishBestEffort } from "./refresh-balance";
 
 const logger = getLogger("purchase:create-refund");
 
@@ -185,6 +186,7 @@ async function refundCredit({
     ]);
 
     await client.query("COMMIT");
+    await refreshAccountBalanceAndPublishBestEffort({ account_id });
   } catch (err) {
     logger.debug("error creating refund", { account_id, invoice_id }, err);
     await client.query("ROLLBACK");

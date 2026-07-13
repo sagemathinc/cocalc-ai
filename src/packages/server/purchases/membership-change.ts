@@ -19,6 +19,7 @@ import {
   recordMembershipAnalyticsEvent,
   recordMembershipPurchaseCompleted,
 } from "@cocalc/server/membership/analytics";
+import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 
 interface MembershipChangeOptions {
   account_id: string;
@@ -272,6 +273,9 @@ export async function applyMembershipChange({
 
     if (useTransaction) {
       await transaction.query("COMMIT");
+      if (purchase_id != null) {
+        await refreshAccountBalanceAndPublishBestEffort({ account_id });
+      }
     }
 
     return { ...change, subscription_id, purchase_id };

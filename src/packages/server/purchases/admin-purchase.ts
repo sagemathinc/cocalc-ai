@@ -15,6 +15,7 @@ import {
 import createCredit from "@cocalc/server/purchases/create-credit";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import getBalance from "@cocalc/server/purchases/get-balance";
+import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 import { isPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 import { MAX_COST } from "@cocalc/util/db-schema/purchases";
 import { moneyRound2Up, moneyToCurrency, toDecimal } from "@cocalc/util/money";
@@ -242,6 +243,9 @@ export default async function adminPurchase({
         await getBalance({ account_id: user_account_id, client });
       }
       await client.query("COMMIT");
+      await refreshAccountBalanceAndPublishBestEffort({
+        account_id: user_account_id,
+      });
       return {
         adjustment_amount: adjustmentAmount.toNumber(),
         credit_id: adjustmentAmount.gt(0) ? purchase_id : undefined,
@@ -319,6 +323,9 @@ export default async function adminPurchase({
       });
 
       await client.query("COMMIT");
+      await refreshAccountBalanceAndPublishBestEffort({
+        account_id: user_account_id,
+      });
       return { credit_id, expires_at, purchase_id };
     }
 

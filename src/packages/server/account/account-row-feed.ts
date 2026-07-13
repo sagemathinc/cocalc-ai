@@ -24,7 +24,10 @@ export function enableDbAccountRowFeedPublishing() {
 export async function publishAccountRowFeedEventsBestEffort(opts: {
   account_id: string;
   patch: Record<string, any>;
-  reason?: "user_query_set" | "messages_unread_count_updated";
+  reason?:
+    | "balance_updated"
+    | "user_query_set"
+    | "messages_unread_count_updated";
 }): Promise<void> {
   const account_id = `${opts.account_id ?? ""}`.trim();
   if (!account_id) {

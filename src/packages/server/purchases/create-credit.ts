@@ -17,6 +17,7 @@ import {
   toDecimal,
   type MoneyValue,
 } from "@cocalc/util/money";
+import { publishAccountBalanceUpdateBestEffort } from "./refresh-balance";
 
 const logger = getLogger("purchases:create-credit");
 
@@ -80,7 +81,10 @@ export default async function createCredit({
   );
 
   // call getbalance to trigger update of the balance field in the accounts table.
-  await getBalance({ account_id, client });
+  const balance = await getBalance({ account_id, client });
+  if (client == null) {
+    await publishAccountBalanceUpdateBestEffort({ account_id, balance });
+  }
 
   return rows[0].id;
 }

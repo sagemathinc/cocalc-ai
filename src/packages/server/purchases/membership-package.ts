@@ -24,6 +24,7 @@ import {
   resolveMembershipPackageQuote,
   setMembershipPackagePurchaseId,
 } from "@cocalc/server/membership/packages";
+import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 
 const logger = getLogger("purchases:membership-package");
 
@@ -191,6 +192,7 @@ export default async function purchaseMembershipPackage({
       client,
     );
     await client.query("COMMIT");
+    await refreshAccountBalanceAndPublishBestEffort({ account_id });
     return result;
   } catch (err) {
     await client.query("ROLLBACK");
@@ -272,6 +274,7 @@ export async function purchaseMembershipPackages({
       );
     }
     await client.query("COMMIT");
+    await refreshAccountBalanceAndPublishBestEffort({ account_id });
     return results;
   } catch (err) {
     await client.query("ROLLBACK");

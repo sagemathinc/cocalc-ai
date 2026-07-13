@@ -35,6 +35,7 @@ import {
 import type { MoneyValue } from "@cocalc/util/money";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getBalance from "@cocalc/server/purchases/get-balance";
+import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 import getPool, { getPoolClient } from "@cocalc/database/pool";
 import { recordPaymentIntent } from "./create-payment-intent";
 import purchaseMembershipPackage, {
@@ -1187,6 +1188,7 @@ ${await support()}
   await stripe.paymentIntents.update(paymentIntent.id, {
     metadata: paymentIntent.metadata,
   });
+  await refreshAccountBalanceAndPublishBestEffort({ account_id });
 
   try {
     const receipt = {

@@ -30,6 +30,7 @@ import {
   markTeamLicensePastDue,
   resolveTeamLicenseQuote,
 } from "@cocalc/server/membership/team-licenses";
+import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 
 const logger = getLogger("purchases:team-license");
 const ALLOWED_SLACK = 0.01;
@@ -106,6 +107,7 @@ export async function purchaseTeamLicenseChange({
       client,
     });
     await client.query("COMMIT");
+    await refreshAccountBalanceAndPublishBestEffort({ account_id });
     return overview;
   } catch (err) {
     await client.query("ROLLBACK");
@@ -321,6 +323,7 @@ export async function processTeamLicenseRenewal({
     if (ownedClient) {
       await ownedClient.query("COMMIT");
       committed = true;
+      await refreshAccountBalanceAndPublishBestEffort({ account_id });
     }
     await sendTeamLicenseRenewedNotification({
       account_id,

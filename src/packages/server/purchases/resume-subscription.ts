@@ -12,7 +12,6 @@ import dayjs from "dayjs";
 import send, { support, url, name } from "@cocalc/server/messages/send";
 import type { MembershipClass } from "@cocalc/util/db-schema/subscriptions";
 import adminAlert from "@cocalc/server/messages/admin-alert";
-import getBalance from "./get-balance";
 import createPurchase from "./create-purchase";
 import { toDecimal } from "@cocalc/util/money";
 import { formatRenewalDate } from "./subscription-renewal-notice";
@@ -21,6 +20,7 @@ import {
   recordMembershipAnalyticsEvent,
   recordMembershipPurchaseCompleted,
 } from "@cocalc/server/membership/analytics";
+import { refreshAccountBalanceAndPublishBestEffort } from "./refresh-balance";
 
 interface Options {
   account_id: string;
@@ -196,8 +196,9 @@ has manually resumed their canceled subscription id=${subscription_id}.
 You might want to check in with them.`,
     });
 
-    // update user's displayed balance
-    await getBalance({ account_id });
+    if (purchase_id != null) {
+      await refreshAccountBalanceAndPublishBestEffort({ account_id });
+    }
 
     return purchase_id;
   } catch (err) {
