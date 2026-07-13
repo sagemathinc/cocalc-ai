@@ -5,15 +5,15 @@
 
 let getBalanceMock: jest.Mock;
 let publishAccountRowFeedEventsBestEffortMock: jest.Mock;
+let dbMock: { publishAccountRowFeedEventsBestEffort?: jest.Mock };
 let warnMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => () => ({
   warn: (...args: any[]) => warnMock(...args),
 }));
 
-jest.mock("@cocalc/server/account/account-row-feed", () => ({
-  publishAccountRowFeedEventsBestEffort: (...args: any[]) =>
-    publishAccountRowFeedEventsBestEffortMock(...args),
+jest.mock("@cocalc/database", () => ({
+  db: () => dbMock,
 }));
 
 jest.mock("./get-balance", () => ({
@@ -25,6 +25,10 @@ describe("refreshAccountBalanceAndPublishBestEffort", () => {
   beforeEach(() => {
     getBalanceMock = jest.fn(async () => "12.3400000000");
     publishAccountRowFeedEventsBestEffortMock = jest.fn(async () => undefined);
+    dbMock = {
+      publishAccountRowFeedEventsBestEffort:
+        publishAccountRowFeedEventsBestEffortMock,
+    };
     warnMock = jest.fn();
   });
 
@@ -45,6 +49,22 @@ describe("refreshAccountBalanceAndPublishBestEffort", () => {
       patch: { balance: 12.34 },
       reason: "balance_updated",
     });
+  });
+
+  it("refreshes the cached balance without publishing when no feed hook is installed", async () => {
+    dbMock = {};
+    const { refreshAccountBalanceAndPublishBestEffort } =
+      await import("./refresh-balance");
+
+    await refreshAccountBalanceAndPublishBestEffort({
+      account_id: "acct-1",
+    });
+
+    expect(getBalanceMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      forceSave: true,
+    });
+    expect(publishAccountRowFeedEventsBestEffortMock).not.toHaveBeenCalled();
   });
 
   it("does not fail the caller when publishing fails", async () => {

@@ -4,7 +4,7 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
-import { publishAccountRowFeedEventsBestEffort } from "@cocalc/server/account/account-row-feed";
+import { db } from "@cocalc/database";
 import { toDecimal, type MoneyValue } from "@cocalc/util/money";
 import getBalance from "./get-balance";
 
@@ -21,8 +21,12 @@ export async function publishAccountBalanceUpdateBestEffort({
   if (!accountId) {
     return;
   }
+  const publisher = db().publishAccountRowFeedEventsBestEffort;
+  if (publisher == null) {
+    return;
+  }
   try {
-    await publishAccountRowFeedEventsBestEffort({
+    await publisher({
       account_id: accountId,
       patch: { balance: toDecimal(balance).toNumber() },
       reason: "balance_updated",
