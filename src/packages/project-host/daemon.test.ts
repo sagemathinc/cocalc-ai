@@ -79,7 +79,7 @@ describe("project-host daemon stop", () => {
     const logPath = path.join(dataDir, "log");
     fs.writeFileSync(logPath, "last line before crash\n", { mode: 0o600 });
 
-    const archived = __test__.archivePreviousDaemonLog(dataDir, logPath);
+    const archived = __test__.archivePreviousComponentLog(dataDir, logPath);
 
     expect(archived).toBeDefined();
     expect(fs.existsSync(logPath)).toBe(false);
@@ -93,7 +93,7 @@ describe("project-host daemon stop", () => {
     process.env.COCALC_PROJECT_HOST_LOG_HISTORY_LIMIT = "2";
     for (let i = 0; i < 4; i += 1) {
       fs.writeFileSync(logPath, `log ${i}\n`, { mode: 0o600 });
-      __test__.archivePreviousDaemonLog(dataDir, logPath);
+      __test__.archivePreviousComponentLog(dataDir, logPath);
     }
 
     expect(
@@ -101,6 +101,31 @@ describe("project-host daemon stop", () => {
         .readdirSync(path.join(dataDir, "log-history"))
         .filter((name) => name.endsWith(".log")),
     ).toHaveLength(2);
+  });
+
+  it("retains persist logs separately from project-host logs", () => {
+    const dataDir = mkTempDir("cocalc-project-host-daemon-");
+    const projectHostLog = path.join(dataDir, "log");
+    const persistLog = path.join(dataDir, "conat-persist.log");
+    process.env.COCALC_PROJECT_HOST_LOG_HISTORY_LIMIT = "1";
+    fs.writeFileSync(projectHostLog, "project host log\n", { mode: 0o600 });
+    fs.writeFileSync(persistLog, "persist log\n", { mode: 0o600 });
+
+    const projectHostArchive = __test__.archivePreviousComponentLog(
+      dataDir,
+      projectHostLog,
+    );
+    const persistArchive = __test__.archivePreviousComponentLog(
+      dataDir,
+      persistLog,
+      "conat-persist-",
+    );
+
+    expect(fs.readFileSync(projectHostArchive!, "utf8")).toBe(
+      "project host log\n",
+    );
+    expect(fs.readFileSync(persistArchive!, "utf8")).toBe("persist log\n");
+    expect(path.basename(persistArchive!)).toMatch(/^conat-persist-/);
   });
 
   it("records an immediate project-host spawn failure", () => {
@@ -1171,7 +1196,9 @@ describe("project-host daemon stop", () => {
     const bundleRoot = mkTempDir("cocalc-project-host-bundle-");
     const runtimeRoot = path.join(bundleRoot, "1776319000000");
     fs.mkdirSync(path.join(runtimeRoot, "main"), { recursive: true });
+    fs.mkdirSync(path.join(runtimeRoot, "supervisor"), { recursive: true });
     fs.writeFileSync(path.join(runtimeRoot, "main", "index.js"), "");
+    fs.writeFileSync(path.join(runtimeRoot, "supervisor", "index.js"), "");
     const currentLink = path.join(bundleRoot, "current");
     fs.symlinkSync(runtimeRoot, currentLink);
 
@@ -1207,9 +1234,27 @@ describe("project-host daemon stop", () => {
     startDaemon(0);
 
     expect(spawnSpy).toHaveBeenCalledTimes(3);
-    for (const call of spawnSpy.mock.calls) {
-      expect(call[1]).toContain(path.join(runtimeRoot, "main", "index.js"));
-    }
+    expect(spawnSpy.mock.calls[0]?.[1]).toContain(
+      path.join(runtimeRoot, "main", "index.js"),
+    );
+    expect(spawnSpy.mock.calls[1]?.[1]).toEqual([
+      path.join(runtimeRoot, "supervisor", "index.js"),
+    ]);
+    expect((spawnSpy.mock.calls[1]?.[2] as any)?.env).toMatchObject({
+      COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON: "1",
+      COCALC_PROJECT_HOST_SUPERVISED_COMMAND: process.execPath,
+      COCALC_PROJECT_HOST_SUPERVISED_ARGS: JSON.stringify([
+        path.join(runtimeRoot, "main", "index.js"),
+      ]),
+      COCALC_PROJECT_HOST_SUPERVISED_COMPONENT: "conat-persist",
+      COCALC_PROJECT_HOST_SUPERVISED_PID_PATH: path.join(
+        dataDir,
+        "conat-persist-app.pid",
+      ),
+    });
+    expect(spawnSpy.mock.calls[2]?.[1]).toEqual([
+      path.join(runtimeRoot, "supervisor", "index.js"),
+    ]);
   });
 
   it("defaults project-host bootstrap to the managed local router daemon and persist", () => {

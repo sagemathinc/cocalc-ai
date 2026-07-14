@@ -12,8 +12,12 @@ const COMMAND_ENV = "COCALC_PROJECT_HOST_SUPERVISED_COMMAND";
 const ARGS_ENV = "COCALC_PROJECT_HOST_SUPERVISED_ARGS";
 const CWD_ENV = "COCALC_PROJECT_HOST_SUPERVISED_CWD";
 const VERSION_ENV = "COCALC_PROJECT_HOST_SUPERVISED_VERSION";
+const COMPONENT_ENV = "COCALC_PROJECT_HOST_SUPERVISED_COMPONENT";
+const CHILD_PID_PATH_ENV = "COCALC_PROJECT_HOST_SUPERVISED_PID_PATH";
 const APP_PID_PATH_ENV = "COCALC_PROJECT_HOST_APP_PID_PATH";
 const SUPERVISOR_PID_ENV = "COCALC_PROJECT_HOST_SUPERVISOR_PID";
+
+type SupervisedComponent = "project-host" | "conat-persist";
 
 const FORWARDED_SIGNALS: NodeJS.Signals[] = [
   "SIGTERM",
@@ -45,16 +49,33 @@ function childEnvironment(): NodeJS.ProcessEnv {
   delete env[ARGS_ENV];
   delete env[CWD_ENV];
   delete env[VERSION_ENV];
+  delete env[COMPONENT_ENV];
+  delete env[CHILD_PID_PATH_ENV];
   delete env[APP_PID_PATH_ENV];
   env[SUPERVISOR_PID_ENV] = String(process.pid);
   return env;
 }
 
-function removeAppPidFile(appPidPath: string | undefined, pid?: number): void {
-  if (!appPidPath || !pid) return;
+function supervisedComponent(): SupervisedComponent {
+  return process.env[COMPONENT_ENV] === "conat-persist"
+    ? "conat-persist"
+    : "project-host";
+}
+
+function supervisedProcessTitle(component: SupervisedComponent): string {
+  return component === "conat-persist"
+    ? "project-host:conat-persist"
+    : "project-host:app";
+}
+
+function removeChildPidFile(
+  childPidPath: string | undefined,
+  pid?: number,
+): void {
+  if (!childPidPath || !pid) return;
   try {
-    if (`${fs.readFileSync(appPidPath, "utf8")}`.trim() === String(pid)) {
-      fs.rmSync(appPidPath, { force: true });
+    if (`${fs.readFileSync(childPidPath, "utf8")}`.trim() === String(pid)) {
+      fs.rmSync(childPidPath, { force: true });
     }
   } catch {
     // best effort
@@ -63,6 +84,7 @@ function removeAppPidFile(appPidPath: string | undefined, pid?: number): void {
 
 function recordResult(
   dataDir: string,
+  component: SupervisedComponent,
   selectedVersion: string | undefined,
   result: SupervisedAppResult,
 ): void {
@@ -70,9 +92,9 @@ function recordResult(
     if (result.spawnError) {
       appendSupervisionEvent(dataDir, {
         source: "daemon",
-        component: "project-host",
+        component,
         action: "spawn_failed",
-        message: `project-host child process error: ${result.spawnError.message}`,
+        message: `${component} child process error: ${result.spawnError.message}`,
         pid: result.childPid,
         selected_version: selectedVersion,
         metadata: {
@@ -88,9 +110,9 @@ function recordResult(
       : `exit code ${result.code ?? "unknown"}`;
     appendSupervisionEvent(dataDir, {
       source: "daemon",
-      component: "project-host",
+      component,
       action: "process_exit",
-      message: `project-host child exited with ${outcome}`,
+      message: `${component} child exited with ${outcome}`,
       pid: result.childPid,
       selected_version: selectedVersion,
       metadata: {
@@ -118,8 +140,10 @@ export async function superviseApp(): Promise<SupervisedAppResult> {
   }
   const selectedVersion =
     `${process.env[VERSION_ENV] ?? ""}`.trim() || undefined;
-  const appPidPath =
-    `${process.env[APP_PID_PATH_ENV] ?? ""}`.trim() || undefined;
+  const component = supervisedComponent();
+  const childPidPath =
+    `${process.env[CHILD_PID_PATH_ENV] ?? process.env[APP_PID_PATH_ENV] ?? ""}`.trim() ||
+    undefined;
 
   let forwardedSignal: NodeJS.Signals | undefined;
   let child: ReturnType<typeof spawn>;
@@ -127,7 +151,7 @@ export async function superviseApp(): Promise<SupervisedAppResult> {
     child = spawn(command, args, {
       cwd,
       env: childEnvironment(),
-      argv0: "project-host:app",
+      argv0: supervisedProcessTitle(component),
       detached: false,
       stdio: "inherit",
     });
@@ -137,13 +161,13 @@ export async function superviseApp(): Promise<SupervisedAppResult> {
       signal: null,
       spawnError: err instanceof Error ? err : new Error(`${err}`),
     };
-    recordResult(dataDir, selectedVersion, result);
+    recordResult(dataDir, component, selectedVersion, result);
     return result;
   }
 
-  if (appPidPath && child.pid) {
+  if (childPidPath && child.pid) {
     try {
-      fs.writeFileSync(appPidPath, String(child.pid), { mode: 0o600 });
+      fs.writeFileSync(childPidPath, String(child.pid), { mode: 0o600 });
     } catch {
       // best effort
     }
@@ -193,8 +217,8 @@ export async function superviseApp(): Promise<SupervisedAppResult> {
     const handler = signalHandlers.get(signal);
     if (handler) process.off(signal, handler);
   }
-  removeAppPidFile(appPidPath, result.childPid);
-  recordResult(dataDir, selectedVersion, result);
+  removeChildPidFile(childPidPath, result.childPid);
+  recordResult(dataDir, component, selectedVersion, result);
   return result;
 }
 

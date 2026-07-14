@@ -55,6 +55,7 @@ const PODMAN_RUNTIME_NAMESPACE_ERROR_PATTERNS = [
 const FORENSICS_DIR = "forensics";
 const PROJECT_HOST_LOG_HISTORY_DIR = "log-history";
 const PROJECT_HOST_LOG_HISTORY_PREFIX = "project-host-";
+const CONAT_PERSIST_LOG_HISTORY_PREFIX = "conat-persist-";
 const DEFAULT_PROJECT_HOST_ROOTCTL =
   "/usr/local/sbin/cocalc-project-host-rootctl";
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -999,9 +1000,10 @@ function getPositiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback;
 }
 
-function archivePreviousDaemonLog(
+function archivePreviousComponentLog(
   dataDir: string,
   logPath: string,
+  prefix = PROJECT_HOST_LOG_HISTORY_PREFIX,
 ): string | undefined {
   if (!fs.existsSync(logPath)) {
     return;
@@ -1009,7 +1011,7 @@ function archivePreviousDaemonLog(
   const historyDir = path.join(dataDir, PROJECT_HOST_LOG_HISTORY_DIR);
   fs.mkdirSync(historyDir, { recursive: true, mode: 0o700 });
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const base = `${PROJECT_HOST_LOG_HISTORY_PREFIX}${timestamp}`;
+  const base = `${prefix}${timestamp}`;
   let archivePath = path.join(historyDir, `${base}.log`);
   for (let suffix = 1; fs.existsSync(archivePath); suffix += 1) {
     archivePath = path.join(historyDir, `${base}-${suffix}.log`);
@@ -1027,11 +1029,7 @@ function archivePreviousDaemonLog(
   );
   const archived = fs
     .readdirSync(historyDir)
-    .filter(
-      (name) =>
-        name.startsWith(PROJECT_HOST_LOG_HISTORY_PREFIX) &&
-        name.endsWith(".log"),
-    )
+    .filter((name) => name.startsWith(prefix) && name.endsWith(".log"))
     .sort()
     .reverse();
   for (const name of archived.slice(keep)) {
@@ -1971,12 +1969,18 @@ function startManagedConatPersist(opts: {
     }
     fs.rmSync(persistPidPath, { force: true });
   }
+  let previousLogPath: string | undefined;
   try {
-    if (fs.existsSync(persistLogPath)) {
-      fs.unlinkSync(persistLogPath);
-    }
+    previousLogPath = archivePreviousComponentLog(
+      dataDir,
+      persistLogPath,
+      CONAT_PERSIST_LOG_HISTORY_PREFIX,
+    );
   } catch (err) {
-    console.error(`warning: unable to truncate log at ${persistLogPath}:`, err);
+    console.error(
+      `warning: unable to archive existing log at ${persistLogPath}; preserving it by appending:`,
+      err,
+    );
   }
   const stdout = fs.openSync(persistLogPath, "a");
   const stderr = fs.openSync(persistLogPath, "a");
@@ -1986,23 +1990,41 @@ function startManagedConatPersist(opts: {
     // best effort
   }
   const root = projectHostRuntimeRoot(env);
-  const { command, args } = resolveExec(root);
+  const selectedVersion = selectedProjectHostVersion(env);
+  const persistExec = resolveExec(root);
+  const { command, args, supervised } = resolveSupervisedProjectHostExec({
+    root,
+    ...persistExec,
+  });
   const childEnv = withoutHostAgentEnv(env);
+  const persistDaemonEnv = {
+    ...childEnv,
+    HOST: persistHealthHost,
+    PORT: String(persistHealthPort),
+    DEBUG_FILE: persistLogPath,
+    COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON: "1",
+  };
   const child = processRuntime.spawn(command, args, {
     cwd: root,
     env: {
-      ...childEnv,
-      HOST: persistHealthHost,
-      PORT: String(persistHealthPort),
-      DEBUG_FILE: persistLogPath,
-      COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON: "1",
+      ...persistDaemonEnv,
+      ...(supervised
+        ? {
+            COCALC_PROJECT_HOST_SUPERVISED_COMMAND: persistExec.command,
+            COCALC_PROJECT_HOST_SUPERVISED_ARGS: JSON.stringify(
+              persistExec.args,
+            ),
+            COCALC_PROJECT_HOST_SUPERVISED_CWD: root,
+            COCALC_PROJECT_HOST_SUPERVISED_VERSION: selectedVersion ?? "",
+            COCALC_PROJECT_HOST_SUPERVISED_COMPONENT: "conat-persist",
+            COCALC_PROJECT_HOST_SUPERVISED_PID_PATH: path.join(
+              dataDir,
+              "conat-persist-app.pid",
+            ),
+          }
+        : {}),
     },
-    argv0: getProjectHostProcessTitle({
-      env: {
-        ...childEnv,
-        COCALC_PROJECT_HOST_CONAT_PERSIST_DAEMON: "1",
-      },
-    }),
+    argv0: getProjectHostProcessTitle({ env: persistDaemonEnv }),
     detached: true,
     stdio: ["ignore", stdout, stderr],
   });
@@ -2018,9 +2040,13 @@ function startManagedConatPersist(opts: {
     action: "started",
     message: "started managed conat-persist",
     pid: child.pid,
+    selected_version: selectedVersion,
     metadata: {
       health_host: persistHealthHost,
       health_port: persistHealthPort,
+      supervised,
+      log_path: persistLogPath,
+      previous_log_path: previousLogPath,
     },
   });
   try {
@@ -2410,7 +2436,7 @@ export function startDaemon(index = 0): void {
   }
   let previousLogPath: string | undefined;
   try {
-    previousLogPath = archivePreviousDaemonLog(dataDir, logPath);
+    previousLogPath = archivePreviousComponentLog(dataDir, logPath);
   } catch (err) {
     console.error(
       `warning: unable to archive existing log at ${logPath}; preserving it by appending:`,
@@ -3040,7 +3066,7 @@ export function handleDaemonCli(argv: string[]): boolean {
 }
 
 export const __test__ = {
-  archivePreviousDaemonLog,
+  archivePreviousComponentLog,
   captureProcessForensics,
   checkHealthSync,
   cleanupStrayProcesses,

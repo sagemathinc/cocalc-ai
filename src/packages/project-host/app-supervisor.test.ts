@@ -91,6 +91,33 @@ describe("project-host app supervisor", () => {
     });
   });
 
+  it("attributes persist child exits to conat-persist", async () => {
+    const childPidPath = path.join(dataDir, "conat-persist-app.pid");
+    process.env.COCALC_PROJECT_HOST_SUPERVISED_COMPONENT = "conat-persist";
+    process.env.COCALC_PROJECT_HOST_SUPERVISED_PID_PATH = childPidPath;
+    delete process.env.COCALC_PROJECT_HOST_APP_PID_PATH;
+    process.env.COCALC_PROJECT_HOST_SUPERVISED_ARGS = JSON.stringify([
+      "-e",
+      "process.exit(23)",
+    ]);
+
+    const result = await superviseApp();
+
+    expect(result).toMatchObject({ code: 23, signal: null });
+    expect(fs.existsSync(childPidPath)).toBe(false);
+    expect(events().at(-1)).toMatchObject({
+      source: "daemon",
+      component: "conat-persist",
+      action: "process_exit",
+      selected_version: "test-version",
+      metadata: {
+        exit_code: 23,
+        signal: null,
+        supervisor_pid: process.pid,
+      },
+    });
+  });
+
   it("attributes app activity to the durable supervisor pid", () => {
     process.env.COCALC_PROJECT_HOST_SUPERVISOR_PID = "4242";
 
