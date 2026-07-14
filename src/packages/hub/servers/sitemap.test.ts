@@ -13,8 +13,25 @@ import { docsPath, listDocsEntries } from "@cocalc/docs";
 
 jest.mock("@cocalc/database/postgres/news", () => ({
   getFeedData: jest.fn(async () => [
-    { id: "42", title: "Test post", text: "Hello world" },
+    {
+      channel: "feature",
+      date: 1750000000,
+      id: "42",
+      title: "Test post",
+      text: "Hello world",
+    },
   ]),
+  getNewsItem: jest.fn(async (id: number) =>
+    id === 42
+      ? {
+          channel: "feature",
+          date: 1750000000,
+          id: "42",
+          title: "Test post",
+          text: "Hello world",
+        }
+      : null,
+  ),
 }));
 
 jest.mock("@cocalc/database/settings/customize", () => ({

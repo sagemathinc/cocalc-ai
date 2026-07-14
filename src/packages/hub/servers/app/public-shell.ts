@@ -12,7 +12,6 @@ import basePath from "@cocalc/backend/base-path";
 import { getNewsItem } from "@cocalc/database/postgres/news";
 import getCustomize from "@cocalc/database/settings/customize";
 import { getLogger } from "@cocalc/hub/logger";
-import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
 import { slugURL } from "@cocalc/util/news";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { path as STATIC_PATH } from "@cocalc/static";
@@ -220,6 +219,11 @@ const anonymousRootfsImages = reuseInFlight(
     ) {
       return anonymousRootfsCatalog.images;
     }
+    // The catalog module pulls in the full RootFS/control-plane dependency
+    // graph. Load it only for RootFS detail resolution so unrelated public
+    // shell routes and their Jest suites do not initialize that graph.
+    const { listVisibleRootfsImages } =
+      await import("@cocalc/server/rootfs/catalog");
     const { images } = await listVisibleRootfsImages(undefined);
     anonymousRootfsCatalog = { at: Date.now(), images };
     return images;
