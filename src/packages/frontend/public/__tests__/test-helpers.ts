@@ -47,6 +47,9 @@ export const STALE_REPETITIVE_HOME_LINES =
 export const DARK_FEATURE_CARD_STYLE =
   /#10213f|#0b1522|#0b1f47|#111827|rgb\(16,\s*33,\s*63\)|rgb\(11,\s*21,\s*34\)|rgb\(11,\s*31,\s*71\)|rgb\(17,\s*24,\s*39\)/i;
 
+export const OVERPROMISE_TERMS =
+  /with Lima|source[- ]available|multi[- ]?VM|broader deployment rights|FedRAMP|\bATO\b|SOC 2 certified|HIPAA compliant|FERPA compliant|\bunlimited\b|\bguarantee(d|s)?\b/i;
+
 // Combine the shared leakage floor with surface-unique terms into one regex.
 export function combineLeak(...sources: Array<RegExp | string>): RegExp {
   const source = sources
