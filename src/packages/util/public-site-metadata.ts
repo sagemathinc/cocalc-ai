@@ -318,7 +318,7 @@ export function getPublicImageDimensions(
   return PUBLIC_IMAGE_DIMENSIONS[normalizePublicImagePath(imagePath)];
 }
 
-function pageTitle(title: string, siteName: string): string {
+export function pageTitle(title: string, siteName: string): string {
   return title === siteName ? title : `${title} | ${siteName}`;
 }
 
@@ -336,7 +336,7 @@ function usesDefaultLaunchpadPublicBrand(
   );
 }
 
-function getPublicMarketingSiteName(
+export function getPublicMarketingSiteName(
   config?: PublicRouteMetadataConfig,
 ): string {
   if (usesDefaultLaunchpadPublicBrand(config)) return SITE_NAME;
@@ -353,13 +353,48 @@ function routeParts(
   return parts.slice(base.length);
 }
 
+// Reduce markdown-ish body text to a short plain-text summary suitable for
+// description/og meta tags. Shared by the hub's server-side resolvers and
+// the client-side head updates so both produce the same head.
+export function stripMarkdownSummary(text?: string): string {
+  return `${text ?? ""}`
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[`*_>#-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
+
+// Percent-encoded path segments must compare decoded (a malformed encoding
+// falls back to the raw segment instead of throwing).
+export function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+// News ids are SERIAL (int4) in the database; anything beyond that range is
+// certainly not a real post, and passing it to a `WHERE id = $1` query would
+// make Postgres throw instead of returning no rows. Routing deliberately
+// stays unbounded (hasNewsIdSuffix below): an overflow id must still be a
+// news-detail route so it resolves to a 404, not to index metadata.
+const MAX_NEWS_ID = 2_147_483_647;
+
 // News URLs look like /news/<slugified-title>-<id>; mirror the parsing in
 // @cocalc/frontend/public/news/routes.ts.
-function parseNewsIdFromSlug(segment?: string): number | undefined {
+export function parseNewsIdFromSlug(segment?: string): number | undefined {
   if (!segment) return;
   const value = Number(segment.split("-").pop());
-  if (!Number.isInteger(value) || value < 0) return;
+  if (!Number.isInteger(value) || value < 0 || value > MAX_NEWS_ID) return;
   return value;
+}
+
+function hasNewsIdSuffix(segment: string): boolean {
+  const value = Number(segment.split("-").pop());
+  return Number.isInteger(value) && value >= 0;
 }
 
 function authRoute(parts: string[]): PublicMetadataRoute {
@@ -440,7 +475,7 @@ export function getPublicMetadataRouteFromPath(
       parts[1] &&
       parts[1] !== "rss.xml" &&
       parts[1] !== "feed.json" &&
-      parseNewsIdFromSlug(parts[1]) != null
+      hasNewsIdSuffix(parts[1])
     ) {
       // Covers both /news/<slug>-<id> and /news/<slug>-<id>/<timestamp>;
       // the canonical for a history view is the current post.
@@ -472,14 +507,19 @@ export function getPublicMetadataRouteFromPath(
     return { route: { view: detail }, section: "products" };
   }
   if (section === "rootfs") {
+    // Mirror the decoding in @cocalc/frontend/public/rootfs/routes.ts, so
+    // e.g. /rootfs/id/sha256%3Aabc matches the same image as the client.
     if (parts[1] === "id" && parts[2]) {
       return {
-        route: { imageId: parts[2], view: "image-id" },
+        route: { imageId: safeDecodeURIComponent(parts[2]), view: "image-id" },
         section: "rootfs",
       };
     }
     if (parts[1]) {
-      return { route: { slug: parts[1], view: "slug" }, section: "rootfs" };
+      return {
+        route: { slug: safeDecodeURIComponent(parts[1]), view: "slug" },
+        section: "rootfs",
+      };
     }
     return { route: { view: "index" }, section: "rootfs" };
   }
@@ -616,7 +656,10 @@ function rootfsRouteMetadata(
 ): PublicRouteMetadata {
   if (route?.view === "slug" && route.slug) {
     return {
-      canonicalPath: publicPath(`rootfs/${route.slug}`, options),
+      canonicalPath: publicPath(
+        `rootfs/${encodeURIComponent(route.slug)}`,
+        options,
+      ),
       description:
         "Details of a CoCalc runtime image for project environments, including software, versions, and deployment options.",
       imagePath: publicPath(WORKFLOW_SOCIAL_IMAGE, options),
@@ -625,7 +668,10 @@ function rootfsRouteMetadata(
   }
   if (route?.view === "image-id" && route.imageId) {
     return {
-      canonicalPath: publicPath(`rootfs/id/${route.imageId}`, options),
+      canonicalPath: publicPath(
+        `rootfs/id/${encodeURIComponent(route.imageId)}`,
+        options,
+      ),
       description:
         "Details of a CoCalc runtime image for project environments, including software, versions, and deployment options.",
       imagePath: publicPath(WORKFLOW_SOCIAL_IMAGE, options),

@@ -154,6 +154,18 @@ export function PublicRouteHeadMetadata({
       // metadata now would emit generic docs metadata instead.
       return undefined;
     }
+    if (
+      route.section === "rootfs" &&
+      (route.route.view === "slug" || route.route.view === "image-id")
+    ) {
+      // The rootfs app owns detail-route heads: the server shell resolved
+      // the image's metadata from the runtime-image catalog (real
+      // title/description, slug-preferred canonical), and after SPA
+      // navigation PublicRootfsApp re-applies entry metadata once its
+      // catalog loads. The generic route-echo values here would clobber
+      // both.
+      return undefined;
+    }
     const dns =
       config?.dns ??
       (typeof window === "undefined" ? undefined : window.location.host);

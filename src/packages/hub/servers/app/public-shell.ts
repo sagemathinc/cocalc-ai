@@ -9,19 +9,32 @@ import { readFile, stat } from "fs/promises";
 import { join } from "path";
 
 import basePath from "@cocalc/backend/base-path";
-import { getFeedData } from "@cocalc/database/postgres/news";
+import { getNewsItem } from "@cocalc/database/postgres/news";
 import getCustomize from "@cocalc/database/settings/customize";
 import { getLogger } from "@cocalc/hub/logger";
+import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
 import { slugURL } from "@cocalc/util/news";
+import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { path as STATIC_PATH } from "@cocalc/static";
 import {
   getPublicImageDimensions,
+  getPublicMarketingSiteName,
   getPublicMetadataRouteFromPath,
   getPublicRouteMetadata,
+  pageTitle,
+  parseNewsIdFromSlug,
   PUBLIC_HEAD_PLACEHOLDER,
   PUBLIC_STATIC_BASE_PLACEHOLDER,
   type PublicRouteMetadataConfig,
+  stripMarkdownSummary,
 } from "@cocalc/util/public-site-metadata";
+import {
+  rootfsEntryDisplayDescription,
+  rootfsEntryDisplayTitle,
+  rootfsEntryMatchesImageTarget,
+  type RootfsImageEntry,
+} from "@cocalc/util/rootfs-images";
+import { EVENT_CHANNEL, SYSTEM_CHANNEL } from "@cocalc/util/types/news";
 import { initPublicDocsMetadata } from "@cocalc/util/public-site-metadata-docs";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import {
@@ -118,26 +131,34 @@ function metaTag(attrs: Record<string, string>): string {
   return `<meta ${rendered}>`;
 }
 
-function stripMarkdownSummary(text?: string): string {
-  return `${text ?? ""}`
-    .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/[`*_>#-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 200);
+// Extra flag the shell resolvers attach to the route metadata: it steers
+// the HTTP status and cache policy, not the rendered head.
+type ShellRouteMetadata = ReturnType<typeof getPublicRouteMetadata> & {
+  // The catalog could not be read: neither 200 (indexable soft-404 for a
+  // bogus URL) nor 404 (drops real pages from the index) is trustworthy.
+  serviceUnavailable?: boolean;
+};
+
+// The registry maps the default Launchpad brand to the canonical marketing
+// site name; the DB-backed resolvers must title pages the same way.
+function marketingSiteName(req: Request): string {
+  return getPublicMarketingSiteName(publicMetadataConfig(req));
 }
 
 // News detail metadata cannot come from the shared registry-based helper:
 // the post lives in the database. Resolve it here so /news/<slug>-<id>
 // canonicalizes to the post's real slug URL (a mistyped slug still resolves
 // by id and canonicalizes to the correct URL), gets the actual title and a
-// summary, and a nonexistent or unpublished id is a real 404.
+// summary, and a nonexistent or unpublished id is a real 404. The by-id
+// lookup (instead of scanning the LIMIT-100 recent feed) keeps old posts
+// resolvable regardless of news volume; the visibility checks below mirror
+// the feed query's WHERE clause (null/future date, expired, hidden, and
+// event/system-channel posts are not public).
 async function resolveNewsMetadata(
   req: Request,
   route: ReturnType<typeof getPublicMetadataRouteFromPath>,
-  metadata: ReturnType<typeof getPublicRouteMetadata>,
-): Promise<typeof metadata> {
+  metadata: ShellRouteMetadata,
+): Promise<ShellRouteMetadata> {
   if (
     route.section !== "news" ||
     (route.route?.view !== "news-detail" &&
@@ -145,37 +166,175 @@ async function resolveNewsMetadata(
   ) {
     return metadata;
   }
-  const newsId = `${route.route.newsSlug}`.split("-").pop();
-  const item = (await getFeedData()).find((it) => `${it.id}` === newsId);
-  if (item == null) {
+  const newsId = parseNewsIdFromSlug(`${route.route.newsSlug}`);
+  const item = newsId != null ? await getNewsItem(newsId) : null;
+  const now = Date.now() / 1000;
+  const date = epochSeconds(item?.date);
+  const until = epochSeconds(item?.until);
+  if (
+    item == null ||
+    item.hide ||
+    item.channel === EVENT_CHANNEL ||
+    item.channel === SYSTEM_CHANNEL ||
+    date == null ||
+    date > now ||
+    (until != null && until <= now)
+  ) {
     return { ...metadata, notFound: true };
   }
-  const customize = (req as any).cocalcPublicCustomize;
-  const siteName = customize?.siteName ?? "CoCalc";
   const description = stripMarkdownSummary(item.text);
   return {
     ...metadata,
     canonicalPath: joinUrlPath(basePath, slugURL(item)),
     ...(description ? { description } : {}),
     notFound: false,
-    title: item.title === siteName ? item.title : `${item.title} | ${siteName}`,
+    title: pageTitle(item.title, marketingSiteName(req)),
   };
 }
 
-async function buildHead(
+function epochSeconds(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value instanceof Date) return value.valueOf() / 1000;
+  return undefined;
+}
+
+// Anonymous catalog visibility is what crawlers see, and it is what every
+// requester gets: the public shell is a shared, cacheable, auth-independent
+// surface, and metadata that varied by cookie could be replayed across
+// users by a shared cache. A privately-visible image therefore 404s here
+// even for its owner — the client still renders the real page from its
+// authenticated catalog RPC; only the status code and pre-hydration head
+// are generic. The short TTL keeps bogus-slug crawls from becoming a
+// catalog query per request; reuseInFlight coalesces concurrent fills, and
+// failures are never cached.
+const ANONYMOUS_ROOTFS_CATALOG_TTL_MS = 60_000;
+let anonymousRootfsCatalog:
+  | { at: number; images: RootfsImageEntry[] }
+  | undefined;
+
+const anonymousRootfsImages = reuseInFlight(
+  async (): Promise<RootfsImageEntry[]> => {
+    if (
+      anonymousRootfsCatalog != null &&
+      Date.now() - anonymousRootfsCatalog.at <= ANONYMOUS_ROOTFS_CATALOG_TTL_MS
+    ) {
+      return anonymousRootfsCatalog.images;
+    }
+    const { images } = await listVisibleRootfsImages(undefined);
+    anonymousRootfsCatalog = { at: Date.now(), images };
+    return images;
+  },
+);
+
+// Rootfs detail metadata mirrors resolveNewsMetadata: the runtime-image
+// catalog lives in the database, so resolve the image server-side. An
+// unknown slug/id becomes a real 404 instead of echoing the requested path
+// into canonical/og tags (a soft-404 crawlers would index); a known image
+// gets its real title/description and canonicalizes to its slug URL when it
+// has one.
+async function resolveRootfsMetadata(
   req: Request,
-): Promise<{ head: string; notFound: boolean }> {
+  route: ReturnType<typeof getPublicMetadataRouteFromPath>,
+  metadata: ShellRouteMetadata,
+): Promise<ShellRouteMetadata> {
+  if (
+    route.section !== "rootfs" ||
+    (route.route?.view !== "slug" && route.route?.view !== "image-id")
+  ) {
+    return metadata;
+  }
+  let images: RootfsImageEntry[];
+  try {
+    images = await anonymousRootfsImages();
+  } catch (err) {
+    // A transient catalog error must not 404 real image pages out of the
+    // search index, and a 200 with fabricated metadata would recreate the
+    // indexable soft-404. Serve 503 so crawlers retry later; the shell
+    // still renders and the client loads the catalog itself.
+    logger.warn("resolving rootfs metadata failed", { err: `${err}` });
+    return { ...metadata, serviceUnavailable: true };
+  }
+  const target = route.route;
+  // Matching mirrors useSelectedRootfsImage in
+  // @cocalc/frontend/public/rootfs/app.tsx, so server and client agree on
+  // which entry (if any) a URL denotes.
+  const entry =
+    target.view === "slug"
+      ? images.find((it) => it.slug === target.slug)
+      : images.find((it) => rootfsEntryMatchesImageTarget(it, target.imageId));
+  if (entry == null) {
+    return { ...metadata, notFound: true };
+  }
+  const slug = entry.slug?.trim();
+  const canonicalPath = joinUrlPath(
+    basePath,
+    slug
+      ? `rootfs/${encodeURIComponent(slug)}`
+      : `rootfs/id/${encodeURIComponent(entry.id)}`,
+  );
+  const description = stripMarkdownSummary(
+    rootfsEntryDisplayDescription(entry),
+  );
+  return {
+    ...metadata,
+    canonicalPath,
+    ...(description ? { description } : {}),
+    notFound: false,
+    title: pageTitle(rootfsEntryDisplayTitle(entry), marketingSiteName(req)),
+  };
+}
+
+// A news detail URL that is not the post's canonical slug URL (bare id
+// /news/<id>, mistyped or outdated slug) permanently redirects instead of
+// serving duplicate content. Only news-detail: a history view intentionally
+// canonicalizes to the current post while still serving the history page,
+// and /rootfs/id/<id> stays a stable alias consolidated via its canonical
+// tag. Static-shell requests (?target=...) are exempt — their serving URL
+// legitimately differs from the canonical clean URL.
+function newsRedirectPath(
+  req: Request,
+  route: ReturnType<typeof getPublicMetadataRouteFromPath>,
+  metadata: ShellRouteMetadata,
+  path: string,
+): string | undefined {
+  if (
+    route.section !== "news" ||
+    route.route?.view !== "news-detail" ||
+    metadata.notFound ||
+    !metadata.canonicalPath.startsWith("/") ||
+    metadata.canonicalPath === path ||
+    targetFromStaticShell(req) != null
+  ) {
+    return undefined;
+  }
+  // The route parser maps /news/<slug>-<id>/<timestamp> history views to
+  // news-detail as well; only a plain /news/<segment> path is a detail
+  // alias that may redirect.
+  const base = basePath.split("/").filter(Boolean).length;
+  if (path.split("/").filter(Boolean).length - base !== 2) {
+    return undefined;
+  }
+  return metadata.canonicalPath;
+}
+
+async function buildHead(req: Request): Promise<{
+  head: string;
+  notFound: boolean;
+  redirectTo?: string;
+  serviceUnavailable: boolean;
+}> {
   const { path, search } = metadataPathAndSearch(req);
   const route = getPublicMetadataRouteFromPath(path, search, {
     basePath,
   });
-  const metadata = await resolveNewsMetadata(
-    req,
+  let metadata: ShellRouteMetadata = getPublicRouteMetadata(
     route,
-    getPublicRouteMetadata(route, publicMetadataConfig(req), {
-      basePath,
-    }),
+    publicMetadataConfig(req),
+    { basePath },
   );
+  metadata = await resolveNewsMetadata(req, route, metadata);
+  metadata = await resolveRootfsMetadata(req, route, metadata);
+  const redirectPath = newsRedirectPath(req, route, metadata, path);
   const canonicalUrl = absolutePublicUrl(req, metadata.canonicalPath);
   const imageUrl = absolutePublicUrl(req, metadata.imagePath);
   const imageDimensions = getPublicImageDimensions(metadata.imagePath);
@@ -263,6 +422,8 @@ async function buildHead(
       metadata.title,
     )}</title>\n  ${socialTags}`,
     notFound: !!metadata.notFound,
+    ...(redirectPath ? { redirectTo: `${redirectPath}${search}` } : {}),
+    serviceUnavailable: !!metadata.serviceUnavailable,
   };
 }
 
@@ -397,21 +558,40 @@ function injectHead(html: string, head: string): string {
   );
 }
 
-export async function renderPublicShell(
-  req: Request,
-): Promise<{ html: string; status: 200 | 404 }> {
+export async function renderPublicShell(req: Request): Promise<{
+  html: string;
+  redirectTo?: string;
+  status: 200 | 404 | 503;
+}> {
   const customize = await getCustomize();
   (req as any).cocalcPublicCustomize = customize;
   const html = await publicHtml();
-  const { head, notFound } = await buildHead(req);
-  return { html: injectHead(html, head), status: notFound ? 404 : 200 };
+  const { head, notFound, redirectTo, serviceUnavailable } =
+    await buildHead(req);
+  return {
+    html: injectHead(html, head),
+    redirectTo,
+    status: serviceUnavailable ? 503 : notFound ? 404 : 200,
+  };
 }
 
 export function servePublicShell(req: Request, res: Response): void {
   void renderPublicShell(req)
-    .then(({ html, status }) => {
+    .then(({ html, redirectTo, status }) => {
+      if (redirectTo) {
+        res.setHeader("Cache-Control", "public, max-age=300");
+        res.vary("Host");
+        res.redirect(301, redirectTo);
+        return;
+      }
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.setHeader("Cache-Control", "public, max-age=10, must-revalidate");
+      if (status === 503) {
+        // An outage response must not be stored by any cache.
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Retry-After", "60");
+      } else {
+        res.setHeader("Cache-Control", "public, max-age=10, must-revalidate");
+      }
       // The body embeds host-derived canonical/og URLs and host-dependent
       // policy, so shared caches must key on the host.
       res.vary("Host");

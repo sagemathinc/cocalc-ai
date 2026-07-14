@@ -276,6 +276,11 @@ export default async function init(opts: Options): Promise<{
   initLanding(router);
   initPublicAuth(router);
   initPublicContent(router);
+  // The manifest JSON endpoints (/rootfs/catalog.json etc.) must register
+  // before the public shell's /rootfs/:slug route, which would otherwise
+  // swallow them as (nonexistent) image slugs — breaking the anonymous
+  // catalog fetch.
+  initRootfsManifest(router);
   initPublicFeatures(router);
   initPublicLang(router);
   initPublicSupport(router);
@@ -285,7 +290,6 @@ export default async function init(opts: Options): Promise<{
   initAppRedirect(router, { includeAuth: false });
   initProjectHostBootstrap(router);
   initProjectHostSoftware(router);
-  initRootfsManifest(router);
   initSelfHostConnector(router);
   initStripeWebhook(router);
   router.use("/api/conat", createConatRouter());

@@ -20,7 +20,15 @@ import {
 } from "antd";
 
 import { Icon, isIconName, type IconName } from "@cocalc/frontend/components";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { pathForAuthView } from "@cocalc/frontend/public/auth/routes";
+import { applyPublicRouteMetadata } from "@cocalc/frontend/public/metadata";
+import {
+  getPublicMarketingSiteName,
+  getPublicRouteMetadata,
+  pageTitle,
+  stripMarkdownSummary,
+} from "@cocalc/frontend/public/metadata-data";
 import {
   PublicGrid,
   PublicPage,
@@ -33,9 +41,11 @@ import {
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type {
-  RootfsContentAction,
-  RootfsImageEntry,
+import {
+  type RootfsContentAction,
+  type RootfsImageEntry,
+  rootfsEntryDisplayDescription as displayDescription,
+  rootfsEntryDisplayTitle as displayTitle,
 } from "@cocalc/util/rootfs-images";
 import { appPath, type PublicConfig } from "../common";
 import type { PublicRootfsRoute } from "./routes";
@@ -50,25 +60,6 @@ interface PublicRootfsAppProps {
 
 function trim(value?: string): string {
   return `${value ?? ""}`.trim();
-}
-
-function displayTitle(entry: RootfsImageEntry): string {
-  return (
-    trim(entry.content?.title) ||
-    trim(entry.theme?.title) ||
-    trim(entry.label) ||
-    trim(entry.image) ||
-    "Runtime image"
-  );
-}
-
-function displayDescription(entry: RootfsImageEntry): string | undefined {
-  return (
-    trim(entry.content?.description) ||
-    trim(entry.theme?.description) ||
-    trim(entry.description) ||
-    undefined
-  );
 }
 
 function rootfsIconName(entry: RootfsImageEntry): IconName {
@@ -361,10 +352,6 @@ function RootfsLandingPage({
   const publisher = entry.content?.publisher;
   const license = entry.content?.license;
 
-  useEffect(() => {
-    document.title = `${title} - Rootfs image`;
-  }, [title]);
-
   return (
     <PublicPage config={config}>
       <section>
@@ -576,6 +563,43 @@ export default function PublicRootfsApp({
 }: PublicRootfsAppProps) {
   const { error, images, loading, selected } =
     useSelectedRootfsImage(initialRoute);
+
+  // SPA navigation renders detail pages without a server round-trip, and
+  // PublicRouteHeadMetadata leaves rootfs detail routes alone (the shared
+  // registry only knows generic route-echo values). Apply the resolved
+  // entry's metadata here instead, mirroring the hub's server-side
+  // resolution so direct loads and SPA navigations end up with the same
+  // head.
+  useEffect(() => {
+    if (initialRoute.view === "index" || loading) return;
+    const dns =
+      config?.dns ??
+      (typeof window === "undefined" ? undefined : window.location.host);
+    const metadataConfig = { ...config, dns };
+    const metadata = getPublicRouteMetadata(
+      { route: initialRoute, section: "rootfs" },
+      metadataConfig,
+      { basePath: appBasePath },
+    );
+    if (selected == null) {
+      // Not found: the generic registry metadata is correct; the not-found
+      // view manages document.title itself.
+      applyPublicRouteMetadata(metadata);
+      return;
+    }
+    const description = stripMarkdownSummary(displayDescription(selected));
+    const title = pageTitle(
+      displayTitle(selected),
+      getPublicMarketingSiteName(metadataConfig),
+    );
+    document.title = title;
+    applyPublicRouteMetadata({
+      ...metadata,
+      canonicalPath: rootfsPath(selected),
+      ...(description ? { description } : {}),
+      title,
+    });
+  }, [config, initialRoute, loading, selected]);
 
   if (initialRoute.view === "index") {
     return (

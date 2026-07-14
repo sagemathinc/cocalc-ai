@@ -18,10 +18,42 @@ import getCustomize from "@cocalc/database/settings/customize";
 const mockedCustomize = jest.mocked(getCustomize);
 
 jest.mock("@cocalc/database/postgres/news", () => ({
-  getFeedData: jest.fn(async () => [
-    { id: "42", title: "Test post", text: "Hello **world** body" },
-  ]),
+  getNewsItem: jest.fn(async (id: number) =>
+    id === 42
+      ? {
+          id: "42",
+          channel: "feature",
+          date: 1750000000,
+          title: "Test post",
+          text: "Hello **world** body",
+        }
+      : null,
+  ),
 }));
+
+jest.mock("@cocalc/server/rootfs/catalog", () => ({
+  listVisibleRootfsImages: jest.fn(async () => ({
+    version: 1,
+    images: [
+      {
+        id: "abc123",
+        slug: "ubuntu-24.04",
+        label: "Ubuntu 24.04",
+        image: "docker.io/library/ubuntu:24.04",
+        content: { version: 1, description: "A **classic** LTS base image." },
+      },
+      {
+        id: "no-slug-image",
+        label: "No Slug",
+        image: "registry.example.com/cocalc/no-slug-image",
+      },
+    ],
+  })),
+}));
+
+import { listVisibleRootfsImages } from "@cocalc/server/rootfs/catalog";
+
+const mockedListVisibleRootfsImages = jest.mocked(listVisibleRootfsImages);
 
 // Serve a synthetic shell instead of whatever packages/static/dist currently
 // holds, so these tests do not depend on the state of the last static build.
@@ -150,45 +182,120 @@ describe("public shell rendering", () => {
     expect(body).toContain('content="Hello world body"');
   });
 
-  it("canonicalizes mistyped news slugs to the real post URL by id", async () => {
-    const { html: body, status } = await renderPublicShell(
+  it("permanently redirects non-canonical news detail URLs to the slug URL", async () => {
+    // Mistyped or outdated slug: resolves by id, redirects to the real slug.
+    const mistyped = await renderPublicShell(
       request("/news/totally-wrong-slug-42"),
     );
-
-    expect(status).toBe(200);
-    expect(body).toContain(
+    expect(mistyped.redirectTo).toBe("/news/test-post-42");
+    expect(mistyped.html).toContain(
       'href="https://cocalc.ai/news/test-post-42" rel="canonical"',
     );
+
+    // Bare id URL, preserving the query string.
+    const bareId = await renderPublicShell(request("/news/42", { x: "1" }));
+    expect(bareId.redirectTo).toBe("/news/test-post-42?x=1");
+
+    // The canonical URL itself serves the page.
+    const canonical = await renderPublicShell(request("/news/test-post-42"));
+    expect(canonical.redirectTo).toBeUndefined();
+    expect(canonical.status).toBe(200);
   });
 
-  it("canonicalizes news history views to the current post", async () => {
-    const { html: body } = await renderPublicShell(
+  it("canonicalizes news history views to the current post without redirecting", async () => {
+    const { html: body, redirectTo } = await renderPublicShell(
       request("/news/test-post-42/1751000000"),
     );
 
+    expect(redirectTo).toBeUndefined();
     expect(body).toContain(
       'href="https://cocalc.ai/news/test-post-42" rel="canonical"',
     );
   });
 
   it("responds 404 for news ids that do not exist", async () => {
-    const { status } = await renderPublicShell(
-      request("/news/no-such-post-99"),
-    );
-    expect(status).toBe(404);
+    for (const path of [
+      "/news/no-such-post-99",
+      // Beyond int4: must 404 without reaching the DB (would throw there)
+      // and without falling back to 200 index metadata.
+      "/news/foo-9999999999",
+    ]) {
+      const { status } = await renderPublicShell(request(path));
+      expect({ path, status }).toEqual({ path, status: 404 });
+    }
   });
 
-  it("gives rootfs detail pages per-image canonicals", async () => {
+  it("resolves rootfs detail pages from the catalog for canonical, title, summary", async () => {
     const bySlug = await renderPublicShell(request("/rootfs/ubuntu-24.04"));
     expect(bySlug.status).toBe(200);
     expect(bySlug.html).toContain(
       'href="https://cocalc.ai/rootfs/ubuntu-24.04" rel="canonical"',
     );
+    expect(bySlug.html).toContain("<title>Ubuntu 24.04 | CoCalc</title>");
+    expect(bySlug.html).toContain('content="A classic LTS base image."');
 
+    // A by-id URL for an image with a slug canonicalizes to the slug URL.
     const byId = await renderPublicShell(request("/rootfs/id/abc123"));
+    expect(byId.status).toBe(200);
     expect(byId.html).toContain(
-      'href="https://cocalc.ai/rootfs/id/abc123" rel="canonical"',
+      'href="https://cocalc.ai/rootfs/ubuntu-24.04" rel="canonical"',
     );
+
+    // The bare image name is a valid by-id target as well.
+    const byImageName = await renderPublicShell(
+      request("/rootfs/id/no-slug-image"),
+    );
+    expect(byImageName.status).toBe(200);
+    expect(byImageName.html).toContain(
+      'href="https://cocalc.ai/rootfs/id/no-slug-image" rel="canonical"',
+    );
+    expect(byImageName.html).toContain("<title>No Slug | CoCalc</title>");
+
+    // Percent-encoded targets match decoded, like the client does:
+    // ubuntu%3A24.04 → ubuntu:24.04, the bare image name of the entry.
+    const encoded = await renderPublicShell(
+      request("/rootfs/id/ubuntu%3A24.04"),
+    );
+    expect(encoded.status).toBe(200);
+    expect(encoded.html).toContain(
+      'href="https://cocalc.ai/rootfs/ubuntu-24.04" rel="canonical"',
+    );
+  });
+
+  it("responds 404 for rootfs slugs and ids that are not in the catalog", async () => {
+    for (const path of [
+      "/rootfs/this-does-not-exist",
+      "/rootfs/id/no-such-image",
+    ]) {
+      const { status } = await renderPublicShell(request(path));
+      expect({ path, status }).toEqual({ path, status: 404 });
+    }
+  });
+
+  it("responds 503 when the rootfs catalog cannot be read", async () => {
+    // Jump past the 60s anonymous-catalog TTL so this request refills the
+    // cache and deterministically hits the rejected lookup.
+    const future = Date.now() + 61_000;
+    const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => future);
+    try {
+      mockedListVisibleRootfsImages.mockRejectedValueOnce(
+        new Error("catalog down"),
+      );
+      const { status } = await renderPublicShell(
+        request("/rootfs/ubuntu-24.04"),
+      );
+      // Neither a fabricated 200 (indexable soft-404) nor a 404 (drops real
+      // pages from the index) is safe during an outage.
+      expect(status).toBe(503);
+
+      // Failures are not cached: the next request resolves normally.
+      const recovered = await renderPublicShell(
+        request("/rootfs/ubuntu-24.04"),
+      );
+      expect(recovered.status).toBe(200);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("canonicalizes duplicated marketing pages to cocalc.ai on branded hosts", async () => {

@@ -250,6 +250,57 @@ export type RootfsImageManifest = {
   images: RootfsImageEntry[];
 };
 
+function trimmed(value?: string | null): string {
+  return `${value ?? ""}`.trim();
+}
+
+// A /rootfs/id/<target> URL may reference an entry by catalog id, release id,
+// full image reference, digest, or the bare image name (the last path segment
+// of the image reference). Shared between the public rootfs pages and the
+// hub's server-side metadata resolution so both agree on what exists.
+export function rootfsEntryMatchesImageTarget(
+  entry: Pick<RootfsImageEntry, "digest" | "id" | "image" | "release_id">,
+  target?: string,
+): boolean {
+  const value = trimmed(target);
+  if (!value) return false;
+  const imageParts = trimmed(entry.image)
+    .replace(/\/+$/, "")
+    .split("/")
+    .filter(Boolean);
+  const candidates = [
+    entry.id,
+    entry.release_id,
+    entry.image,
+    entry.digest,
+    imageParts[imageParts.length - 1],
+  ]
+    .map(trimmed)
+    .filter(Boolean);
+  return candidates.includes(value);
+}
+
+export function rootfsEntryDisplayTitle(entry: RootfsImageEntry): string {
+  return (
+    trimmed(entry.content?.title) ||
+    trimmed(entry.theme?.title) ||
+    trimmed(entry.label) ||
+    trimmed(entry.image) ||
+    "Runtime image"
+  );
+}
+
+export function rootfsEntryDisplayDescription(
+  entry: RootfsImageEntry,
+): string | undefined {
+  return (
+    trimmed(entry.content?.description) ||
+    trimmed(entry.theme?.description) ||
+    trimmed(entry.description) ||
+    undefined
+  );
+}
+
 export type RootfsCatalogSortField =
   | "updated"
   | "created"

@@ -4,6 +4,7 @@
  */
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { safeDecodeURIComponent } from "@cocalc/util/public-site-metadata";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 
 export type PublicRootfsRoute =
@@ -32,10 +33,13 @@ export function getRootfsRouteFromPath(pathname: string): PublicRootfsRoute {
     return { view: "index" };
   }
   if (routeParts[1] === "id" && routeParts[2]) {
-    return { imageId: decodeURIComponent(routeParts[2]), view: "image-id" };
+    return {
+      imageId: safeDecodeURIComponent(routeParts[2]),
+      view: "image-id",
+    };
   }
   if (routeParts[1]) {
-    return { slug: decodeURIComponent(routeParts[1]), view: "slug" };
+    return { slug: safeDecodeURIComponent(routeParts[1]), view: "slug" };
   }
   return { view: "index" };
 }
@@ -53,20 +57,4 @@ export function rootfsPath(entry?: Pick<RootfsImageEntry, "id" | "slug">) {
   return `${base}/rootfs`;
 }
 
-export function rootfsEntryMatchesImageTarget(
-  entry: Pick<RootfsImageEntry, "digest" | "id" | "image" | "release_id">,
-  target?: string,
-): boolean {
-  const value = `${target ?? ""}`.trim();
-  if (!value) return false;
-  const candidates = [
-    entry.id,
-    entry.release_id,
-    entry.image,
-    entry.digest,
-    entry.image?.replace(/\/+$/, "").split("/").filter(Boolean).at(-1),
-  ]
-    .map((candidate) => `${candidate ?? ""}`.trim())
-    .filter(Boolean);
-  return candidates.includes(value);
-}
+export { rootfsEntryMatchesImageTarget } from "@cocalc/util/rootfs-images";

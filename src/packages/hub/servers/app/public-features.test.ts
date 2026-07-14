@@ -8,7 +8,25 @@ jest.mock("@cocalc/database/settings/customize", () => ({
 }));
 
 jest.mock("@cocalc/database/postgres/news", () => ({
-  getFeedData: jest.fn(async () => []),
+  getNewsItem: jest.fn(async () => null),
+}));
+
+jest.mock("@cocalc/server/auth/get-account", () => ({
+  __esModule: true,
+  default: jest.fn(async () => undefined),
+}));
+
+jest.mock("@cocalc/server/rootfs/catalog", () => ({
+  listVisibleRootfsImages: jest.fn(async () => ({
+    version: 1,
+    images: [
+      {
+        id: "rootfs-image-1",
+        label: "Test Image",
+        image: "registry.example.com/cocalc/rootfs-image-1",
+      },
+    ],
+  })),
 }));
 
 describe("public feature and docs routes", () => {
@@ -64,5 +82,10 @@ describe("public feature and docs routes", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("location")).toBeNull();
     expect(body).toContain('/rootfs/id/rootfs-image-1" rel="canonical"');
+  });
+
+  it("responds 404 for rootfs images that are not in the catalog", async () => {
+    const response = await request("/rootfs/id/this-does-not-exist");
+    expect(response.status).toBe(404);
   });
 });
