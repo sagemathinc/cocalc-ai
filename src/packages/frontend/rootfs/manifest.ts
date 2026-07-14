@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { publishProjectDetailInvalidation } from "@cocalc/frontend/project/use-project-field";
 import {
@@ -17,6 +18,7 @@ import {
   mergeRootfsManifests,
 } from "@cocalc/util/rootfs-images";
 import type { RootfsProjectPreflightScanResult } from "@cocalc/util/rootfs-scan";
+import { joinUrlPath } from "@cocalc/util/url-path";
 
 type ManifestLoadState = {
   images: RootfsImageEntry[];
@@ -118,7 +120,14 @@ function rootfsCatalogScopeKey(): string {
 }
 
 function isManagedCatalogUrl(url: string): boolean {
-  return url.trim().split("?")[0] === DEFAULT_ROOTFS_CATALOG_URL;
+  const path = url.trim().split("?")[0];
+  return (
+    path === managedRootfsCatalogPath() || path === DEFAULT_ROOTFS_CATALOG_URL
+  );
+}
+
+function managedRootfsCatalogPath(): string {
+  return joinUrlPath(appBasePath, DEFAULT_ROOTFS_CATALOG_URL);
 }
 
 async function loadManagedCatalogManifest(
@@ -340,10 +349,9 @@ export async function scanProjectRootfs(
 }
 
 export function managedRootfsCatalogUrl(refresh?: number | string): string {
+  const path = managedRootfsCatalogPath();
   if (refresh == null) {
-    return DEFAULT_ROOTFS_CATALOG_URL;
+    return path;
   }
-  return `${DEFAULT_ROOTFS_CATALOG_URL}?refresh=${encodeURIComponent(
-    `${refresh}`,
-  )}`;
+  return `${path}?refresh=${encodeURIComponent(`${refresh}`)}`;
 }
