@@ -71,20 +71,18 @@ type AdminMenuKey =
 interface AdminSectionDefinition {
   component: () => ReactNode;
   description: string;
-  group: AdminGroupKey;
+  group?: AdminGroupKey;
   icon: IconName;
   key: AdminSection;
   title: string;
-  topLevel?: boolean;
 }
 
 interface AdminNavigationItem {
   description: string;
-  group: AdminGroupKey;
+  group?: AdminGroupKey;
   icon: IconName;
   key: AdminMenuKey;
   title: string;
-  topLevel?: boolean;
 }
 
 type AdminGroupKey =
@@ -143,9 +141,7 @@ export function AdminPage({
   const navItemByKey = new Map(navigationItems.map((item) => [item.key, item]));
   const activeMenuKey = getActiveMenuKey(route);
   const activeNavItem = navItemByKey.get(activeMenuKey);
-  const activeGroupKey = activeNavItem?.topLevel
-    ? undefined
-    : activeNavItem?.group;
+  const activeGroupKey = activeNavItem?.group;
   const menuOpenKeys =
     manualOpenKeys ?? (activeGroupKey == null ? [] : [activeGroupKey]);
   const title =
@@ -171,10 +167,12 @@ export function AdminPage({
   }
 
   function renderMenuItems(): MenuProps["items"] {
-    const topLevelItems = navigationItems.filter((item) => item.topLevel);
+    const topLevelItems = navigationItems.filter(
+      (item) => item.key !== OVERVIEW_MENU_KEY && item.group == null,
+    );
     const groupedItems = ADMIN_GROUP_KEYS.map((groupKey) => {
       const children = navigationItems
-        .filter((item) => item.group === groupKey && !item.topLevel)
+        .filter((item) => item.group === groupKey)
         .map((item) => ({
           key: item.key,
           label: renderMenuLabel(item.icon, item.title),
@@ -210,9 +208,10 @@ export function AdminPage({
         .filter((item) => item.key !== OVERVIEW_MENU_KEY)
         .map((item) => ({
           value: item.key,
-          label: item.topLevel
-            ? item.title
-            : `${ADMIN_GROUPS[item.group].title}: ${item.title}`,
+          label:
+            item.group == null
+              ? item.title
+              : `${ADMIN_GROUPS[item.group].title}: ${item.title}`,
         })),
     ];
   }
@@ -406,8 +405,6 @@ function getAdminSections({
       title: "User Search",
       description: "Find users and access account support tools.",
       icon: "users",
-      group: "operations",
-      topLevel: true,
       component: () => <UserSearch />,
     },
     {
@@ -571,8 +568,30 @@ function AdminOverview({
   const primarySections = sections.filter(
     (section) => section.key !== OVERVIEW_MENU_KEY,
   );
+  const topLevelSections = primarySections.filter(
+    (section) => section.group == null,
+  );
   return (
     <div style={{ padding: "6px 0 24px 0" }}>
+      {topLevelSections.length > 0 ? (
+        <Flex wrap gap="middle" style={{ marginBottom: "28px" }}>
+          {topLevelSections.map((section) => (
+            <Card
+              key={section.key}
+              hoverable
+              size="small"
+              style={{ minWidth: 260, width: 320 }}
+              onClick={() => onNavigate(section.key)}
+            >
+              <Card.Meta
+                avatar={<Icon name={section.icon} />}
+                title={section.title}
+                description={section.description}
+              />
+            </Card>
+          ))}
+        </Flex>
+      ) : null}
       {Object.entries(ADMIN_GROUPS).map(([groupKey, group]) => {
         const groupSections = primarySections.filter(
           (section) => section.group === groupKey,
