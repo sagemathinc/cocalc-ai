@@ -75,6 +75,7 @@ interface AdminSectionDefinition {
   icon: IconName;
   key: AdminSection;
   title: string;
+  topLevel?: boolean;
 }
 
 interface AdminNavigationItem {
@@ -83,6 +84,7 @@ interface AdminNavigationItem {
   icon: IconName;
   key: AdminMenuKey;
   title: string;
+  topLevel?: boolean;
 }
 
 type AdminGroupKey =
@@ -141,7 +143,9 @@ export function AdminPage({
   const navItemByKey = new Map(navigationItems.map((item) => [item.key, item]));
   const activeMenuKey = getActiveMenuKey(route);
   const activeNavItem = navItemByKey.get(activeMenuKey);
-  const activeGroupKey = activeNavItem?.group;
+  const activeGroupKey = activeNavItem?.topLevel
+    ? undefined
+    : activeNavItem?.group;
   const menuOpenKeys =
     manualOpenKeys ?? (activeGroupKey == null ? [] : [activeGroupKey]);
   const title =
@@ -167,19 +171,33 @@ export function AdminPage({
   }
 
   function renderMenuItems(): MenuProps["items"] {
-    return ADMIN_GROUP_KEYS.map((groupKey) => ({
-      key: groupKey,
-      label: renderMenuLabel(
-        ADMIN_GROUPS[groupKey].icon,
-        ADMIN_GROUPS[groupKey].title,
-      ),
-      children: navigationItems
-        .filter((item) => item.group === groupKey)
+    const topLevelItems = navigationItems.filter((item) => item.topLevel);
+    const groupedItems = ADMIN_GROUP_KEYS.map((groupKey) => {
+      const children = navigationItems
+        .filter((item) => item.group === groupKey && !item.topLevel)
         .map((item) => ({
           key: item.key,
           label: renderMenuLabel(item.icon, item.title),
-        })),
-    }));
+        }));
+      if (children.length === 0) {
+        return null;
+      }
+      return {
+        key: groupKey,
+        label: renderMenuLabel(
+          ADMIN_GROUPS[groupKey].icon,
+          ADMIN_GROUPS[groupKey].title,
+        ),
+        children,
+      };
+    }).filter((item) => item != null);
+    return [
+      ...topLevelItems.map((item) => ({
+        key: item.key,
+        label: renderMenuLabel(item.icon, item.title),
+      })),
+      ...groupedItems,
+    ];
   }
 
   function renderMobileOptions() {
@@ -192,7 +210,9 @@ export function AdminPage({
         .filter((item) => item.key !== OVERVIEW_MENU_KEY)
         .map((item) => ({
           value: item.key,
-          label: `${ADMIN_GROUPS[item.group].title}: ${item.title}`,
+          label: item.topLevel
+            ? item.title
+            : `${ADMIN_GROUPS[item.group].title}: ${item.title}`,
         })),
     ];
   }
@@ -387,6 +407,7 @@ function getAdminSections({
       description: "Find users and access account support tools.",
       icon: "users",
       group: "operations",
+      topLevel: true,
       component: () => <UserSearch />,
     },
     {
