@@ -100,6 +100,15 @@ const ADMIN_GROUPS: Record<AdminGroupKey, { icon: IconName; title: string }> = {
   commercial: { icon: "shopping-cart", title: "Commercial" },
 };
 const ADMIN_GROUP_KEYS = Object.keys(ADMIN_GROUPS) as AdminGroupKey[];
+const ADMIN_GROUP_KEY_SET = new Set<string>(ADMIN_GROUP_KEYS);
+const ADMIN_MENU_ORDER: readonly (AdminMenuKey | AdminGroupKey)[] = [
+  "user-search",
+  "launch",
+  "operations",
+  "access",
+  "content",
+  "commercial",
+];
 
 export function AdminPage({
   route = { kind: "index" },
@@ -141,7 +150,8 @@ export function AdminPage({
   const navItemByKey = new Map(navigationItems.map((item) => [item.key, item]));
   const activeMenuKey = getActiveMenuKey(route);
   const activeNavItem = navItemByKey.get(activeMenuKey);
-  const activeGroupKey = activeNavItem?.group;
+  const activeGroupKey =
+    activeNavItem?.group == null ? undefined : activeNavItem.group;
   const menuOpenKeys =
     manualOpenKeys ?? (activeGroupKey == null ? [] : [activeGroupKey]);
   const title =
@@ -167,16 +177,27 @@ export function AdminPage({
   }
 
   function renderMenuItems(): MenuProps["items"] {
-    const topLevelItems = navigationItems.filter(
-      (item) => item.key !== OVERVIEW_MENU_KEY && item.group == null,
+    const renderedItemKeys = new Set<string>();
+    const renderedGroupKeys = new Set<string>();
+    const topLevelItemByKey = new Map(
+      navigationItems
+        .filter((item) => item.key !== OVERVIEW_MENU_KEY && item.group == null)
+        .map((item) => [item.key, item]),
     );
-    const groupedItems = ADMIN_GROUP_KEYS.map((groupKey) => {
+
+    function renderLeafMenuItem(item: AdminNavigationItem) {
+      renderedItemKeys.add(item.key);
+      return {
+        key: item.key,
+        label: renderMenuLabel(item.icon, item.title),
+      };
+    }
+
+    function renderGroupItem(groupKey: AdminGroupKey) {
+      renderedGroupKeys.add(groupKey);
       const children = navigationItems
         .filter((item) => item.group === groupKey)
-        .map((item) => ({
-          key: item.key,
-          label: renderMenuLabel(item.icon, item.title),
-        }));
+        .map(renderLeafMenuItem);
       if (children.length === 0) {
         return null;
       }
@@ -188,14 +209,40 @@ export function AdminPage({
         ),
         children,
       };
-    }).filter((item) => item != null);
-    return [
-      ...topLevelItems.map((item) => ({
-        key: item.key,
-        label: renderMenuLabel(item.icon, item.title),
-      })),
-      ...groupedItems,
-    ];
+    }
+
+    const items: MenuProps["items"] = [];
+    for (const key of ADMIN_MENU_ORDER) {
+      if (isAdminGroupKey(key)) {
+        const groupItem = renderGroupItem(key);
+        if (groupItem != null) {
+          items.push(groupItem);
+        }
+        continue;
+      }
+      const item = topLevelItemByKey.get(key);
+      if (item != null) {
+        items.push(renderLeafMenuItem(item));
+      }
+    }
+    for (const item of navigationItems) {
+      if (
+        item.key !== OVERVIEW_MENU_KEY &&
+        item.group == null &&
+        !renderedItemKeys.has(item.key)
+      ) {
+        items.push(renderLeafMenuItem(item));
+      }
+    }
+    for (const groupKey of ADMIN_GROUP_KEYS) {
+      if (!renderedGroupKeys.has(groupKey)) {
+        const groupItem = renderGroupItem(groupKey);
+        if (groupItem != null) {
+          items.push(groupItem);
+        }
+      }
+    }
+    return items;
   }
 
   function renderMobileOptions() {
@@ -204,15 +251,13 @@ export function AdminPage({
         value: OVERVIEW_MENU_KEY,
         label: "Overview",
       },
-      ...navigationItems
-        .filter((item) => item.key !== OVERVIEW_MENU_KEY)
-        .map((item) => ({
-          value: item.key,
-          label:
-            item.group == null
-              ? item.title
-              : `${ADMIN_GROUPS[item.group].title}: ${item.title}`,
-        })),
+      ...getOrderedNavigationItems(navigationItems).map((item) => ({
+        value: item.key,
+        label:
+          item.group == null
+            ? item.title
+            : `${ADMIN_GROUPS[item.group].title}: ${item.title}`,
+      })),
     ];
   }
 
@@ -551,6 +596,51 @@ function getNavigationItems(
     group: "content",
   });
   return items;
+}
+
+function isAdminGroupKey(key: string): key is AdminGroupKey {
+  return ADMIN_GROUP_KEY_SET.has(key);
+}
+
+function getOrderedNavigationItems(
+  navigationItems: AdminNavigationItem[],
+): AdminNavigationItem[] {
+  const itemByKey = new Map(navigationItems.map((item) => [item.key, item]));
+  const orderedItems: AdminNavigationItem[] = [];
+  const seenKeys = new Set<string>();
+
+  function addItem(item: AdminNavigationItem | undefined) {
+    if (
+      item == null ||
+      item.key === OVERVIEW_MENU_KEY ||
+      seenKeys.has(item.key)
+    ) {
+      return;
+    }
+    seenKeys.add(item.key);
+    orderedItems.push(item);
+  }
+
+  function addGroup(groupKey: AdminGroupKey) {
+    for (const item of navigationItems) {
+      if (item.group === groupKey) {
+        addItem(item);
+      }
+    }
+  }
+
+  for (const key of ADMIN_MENU_ORDER) {
+    if (isAdminGroupKey(key)) {
+      addGroup(key);
+    } else {
+      addItem(itemByKey.get(key));
+    }
+  }
+  for (const item of navigationItems) {
+    addItem(item);
+  }
+
+  return orderedItems;
 }
 
 function getActiveMenuKey(route: AdminRoute): AdminMenuKey {
