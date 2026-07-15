@@ -272,6 +272,17 @@ $$\
         right: "}",
       },
     },
+    // Scoped font-size declarations used by the LaTeX rich-edit toolbar.
+    font_size_tiny: { wrap: { left: "{\\tiny ", right: "}" } },
+    font_size_scriptsize: { wrap: { left: "{\\scriptsize ", right: "}" } },
+    font_size_footnotesize: { wrap: { left: "{\\footnotesize ", right: "}" } },
+    font_size_small: { wrap: { left: "{\\small ", right: "}" } },
+    font_size_normalsize: { wrap: { left: "{\\normalsize ", right: "}" } },
+    font_size_large: { wrap: { left: "{\\large ", right: "}" } },
+    font_size_Large: { wrap: { left: "{\\Large ", right: "}" } },
+    font_size_LARGE: { wrap: { left: "{\\LARGE ", right: "}" } },
+    font_size_huge: { wrap: { left: "{\\huge ", right: "}" } },
+    font_size_Huge: { wrap: { left: "{\\Huge ", right: "}" } },
     strikethrough: {
       // requires the soul package
       wrap: {
@@ -364,6 +375,13 @@ $$\
       wrap: {
         left: "\n\\begin{center}\\begin{tabular}{|c|c|}\n\\hline\ncell1 & cell2 \\\\\ncell3 & cell4 \\\\\n\\hline",
         right: "\n\\end{tabular}\\end{center}\n",
+      },
+    },
+    table_3x3: {
+      wrap: {
+        left: "\n\\begin{tabular}{|c|c|c|}\n\\hline\n",
+        right:
+          " &  &  \\\\\n\\hline\n &  &  \\\\\n\\hline\n &  &  \\\\\n\\hline\n\\end{tabular}\n",
       },
     },
     subscript: {

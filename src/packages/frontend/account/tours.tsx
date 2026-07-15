@@ -15,6 +15,7 @@ const TOUR_KEYS = [
   "explorer",
   "frame-terminal",
   "flyout-fullpage",
+  "latex-rich-edit",
 ] as const;
 
 export type TourName = (typeof TOUR_KEYS)[number];
@@ -28,6 +29,7 @@ export default function Tours() {
     explorer: "File Explorer",
     "frame-terminal": "Linux Terminal",
     "flyout-fullpage": "Fullpage Flyout",
+    "latex-rich-edit": "LaTeX Rich Preview",
   };
   const v: ReactNode[] = [];
   for (const name of TOUR_KEYS) {

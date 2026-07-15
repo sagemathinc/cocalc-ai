@@ -11,7 +11,6 @@ import { IS_IOS, IS_IPAD } from "@cocalc/frontend/feature";
 import { editor, labels } from "@cocalc/frontend/i18n";
 import { set } from "@cocalc/util/misc";
 import { WORD_COUNT_ICON } from "./constants";
-import { CodemirrorEditor } from "../code-editor/codemirror-editor";
 import { createEditor } from "../frame-tree/editor";
 import { EditorDescription } from "../frame-tree/types";
 import { TableOfContents } from "../markdown-editor/table-of-contents";
@@ -23,6 +22,7 @@ import { LatexWordCount } from "./latex-word-count";
 import { Output } from "./output";
 import { PDFEmbed } from "./pdf-embed";
 import { PDFJS } from "./pdfjs";
+import { LatexCodemirrorEditor } from "./rich-edit";
 
 export const pdfjsCommands = set([
   "print",
@@ -40,7 +40,7 @@ const cm: EditorDescription = {
   short: editor.latex_source_code_label_short,
   name: editor.latex_source_code_label_name,
   icon: "code",
-  component: CodemirrorEditor,
+  component: LatexCodemirrorEditor,
   commands: set([
     "format_action",
     "build",

@@ -13,6 +13,7 @@ const KATEX_MATHML_INLINE_HIDE_STYLE =
 export default function mathToHtml(
   math: string, // latex expression
   isInline: boolean,
+  documentMacros?: Record<string, string>,
   _ignore: Set<string> | undefined = undefined, // used internally to avoid infinite recursion.
 ): { __html: string; err?: string } {
   if (!math.trim()) {
@@ -29,7 +30,7 @@ export default function mathToHtml(
     html = hideKatexMathMl(
       katex.renderToString(math, {
         displayMode: !isInline,
-        macros,
+        macros: { ...macros, ...documentMacros },
         globalGroup: true, // See https://github.com/sagemathinc/cocalc/issues/5750
       }),
     );
@@ -56,6 +57,7 @@ export default function mathToHtml(
         return mathToHtml(
           math,
           isInline,
+          documentMacros,
           _ignore != null ? _ignore.add(name) : new Set([name]),
         );
       }
