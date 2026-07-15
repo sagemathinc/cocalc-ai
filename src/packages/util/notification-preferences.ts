@@ -112,7 +112,7 @@ export const NOTIFICATION_CATEGORIES: NotificationCategoryDefinition[] = [
   {
     key: "product",
     label: "Product news",
-    description: "Product updates, feature announcements, and onboarding tips.",
+    description: "Product updates and feature announcements.",
     defaultEmailMode: "off",
   },
 ];

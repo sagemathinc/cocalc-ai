@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Select, Space, Table } from "antd";
+import { Alert, Select, Space, Switch, Table } from "antd";
 import type { TableColumnsType } from "antd";
 import { defineMessage } from "react-intl";
 
@@ -58,6 +58,8 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
   const notificationPreferences = normalizeNotificationPreferences(
     rawNotificationPreferences(),
   );
+  const marketingConsent =
+    other_settings?.get?.(MARKETING_CONSENT_OTHER_SETTINGS_KEY) === true;
 
   function setNotificationEmailMode(
     category: NotificationCategory,
@@ -66,9 +68,10 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
     const next = normalizeNotificationPreferences(notificationPreferences);
     next.email[category] = mode;
     on_change(OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY, next);
-    if (category === "product") {
-      on_change(MARKETING_CONSENT_OTHER_SETTINGS_KEY, mode !== "off");
-    }
+  }
+
+  function setMarketingConsent(enabled: boolean): void {
+    on_change(MARKETING_CONSENT_OTHER_SETTINGS_KEY, enabled);
   }
 
   function deliveryOptions(category: NotificationCategoryRow) {
@@ -131,11 +134,29 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
     );
   }
 
+  function render_marketing_email_preferences() {
+    return (
+      <SettingsCard title="Onboarding and marketing emails">
+        <Space>
+          <Switch
+            aria-label="Allow optional onboarding and marketing emails"
+            checked={marketingConsent}
+            onChange={setMarketingConsent}
+          />
+          <span>
+            Allow optional onboarding help, product tips, and marketing emails.
+          </span>
+        </Space>
+      </SettingsCard>
+    );
+  }
+
   return (
     <Space vertical size="middle" style={{ width: "100%" }}>
       <SettingsCard title="Notifications">
         {render_notification_email_preferences()}
       </SettingsCard>
+      {render_marketing_email_preferences()}
       <CookieConsentSettings />
     </Space>
   );

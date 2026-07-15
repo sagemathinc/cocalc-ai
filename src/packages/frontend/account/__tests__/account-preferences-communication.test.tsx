@@ -7,6 +7,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { AccountPreferencesCommunication } from "../account-preferences-communication";
 import {
+  MARKETING_CONSENT_OTHER_SETTINGS_KEY,
   OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
   type NotificationEmailMode,
 } from "@cocalc/util/notification-preferences";
@@ -80,6 +81,22 @@ jest.mock("antd", () => ({
     </select>
   ),
   Space: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Switch: ({
+    checked,
+    onChange,
+    ...props
+  }: {
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+    "aria-label"?: string;
+  }) => (
+    <input
+      aria-label={props["aria-label"]}
+      checked={checked}
+      onChange={(event) => onChange(event.currentTarget.checked)}
+      type="checkbox"
+    />
+  ),
   Table: ({ columns, dataSource, rowKey }: any) => (
     <table>
       <thead>
@@ -157,6 +174,7 @@ describe("AccountPreferencesCommunication", () => {
     expect(screen.getByText("Billing")).toBeTruthy();
     expect(screen.getByText("Security")).toBeTruthy();
     expect(screen.getByText("AI activity")).toBeTruthy();
+    expect(screen.getByText("Onboarding and marketing emails")).toBeTruthy();
     expect(screen.queryByText("Required immediate email")).toBeNull();
     expect(screen.queryByText("Show Announcement Banner")).toBeNull();
     expect(screen.queryByText("Hide free warnings")).toBeNull();
@@ -223,7 +241,7 @@ describe("AccountPreferencesCommunication", () => {
     );
   });
 
-  it("persists marketing consent and product email preference together", () => {
+  it("persists product email preference independently of marketing consent", () => {
     render(<AccountPreferencesCommunication />);
 
     fireEvent.change(
@@ -233,7 +251,6 @@ describe("AccountPreferencesCommunication", () => {
       { target: { value: "digest" } },
     );
 
-    expect(setOtherSettings).toHaveBeenCalledWith("newsletter", true);
     expect(setOtherSettings).toHaveBeenCalledWith(
       OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
       expect.objectContaining({
@@ -241,6 +258,23 @@ describe("AccountPreferencesCommunication", () => {
           product: "digest",
         }),
       }),
+    );
+    expect(setOtherSettings).not.toHaveBeenCalledWith(
+      MARKETING_CONSENT_OTHER_SETTINGS_KEY,
+      expect.anything(),
+    );
+  });
+
+  it("persists onboarding and marketing email consent separately", () => {
+    render(<AccountPreferencesCommunication />);
+
+    fireEvent.click(
+      screen.getByLabelText("Allow optional onboarding and marketing emails"),
+    );
+
+    expect(setOtherSettings).toHaveBeenCalledWith(
+      MARKETING_CONSENT_OTHER_SETTINGS_KEY,
+      true,
     );
   });
 });
