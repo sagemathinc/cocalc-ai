@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Card, Space, Tag, Typography } from "antd";
+import { Alert, Button, Space, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -14,6 +14,7 @@ import {
   showPreferences,
   type ConsentSnapshot,
 } from "@cocalc/frontend/cookie-consent";
+import { SettingsCard } from "./settings-card";
 
 const { Text } = Typography;
 
@@ -54,7 +55,7 @@ export function CookieConsentSettings(): React.JSX.Element | null {
   if (!cookieBannerEnabled) return null;
 
   return (
-    <Card title="Cookie preferences">
+    <SettingsCard title="Cookie preferences">
       <Space vertical style={{ width: "100%" }}>
         {snap == null ? (
           <Alert
@@ -78,6 +79,6 @@ export function CookieConsentSettings(): React.JSX.Element | null {
           </Text>
         )}
       </Space>
-    </Card>
+    </SettingsCard>
   );
 }

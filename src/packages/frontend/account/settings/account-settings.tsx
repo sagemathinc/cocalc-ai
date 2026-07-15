@@ -23,12 +23,7 @@ import {
   redux,
   useState,
 } from "@cocalc/frontend/app-framework";
-import {
-  Icon,
-  LabeledRow,
-  SettingBox,
-  TimeAgo,
-} from "@cocalc/frontend/components";
+import { Icon, LabeledRow, TimeAgo } from "@cocalc/frontend/components";
 import GoogleLogo from "@cocalc/frontend/components/google-logo";
 import { SiteName } from "@cocalc/frontend/customize";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -54,6 +49,7 @@ import { EmailAddressSetting } from "./email-address-setting";
 import { EmailVerification } from "./email-verification";
 import { TextSetting } from "./text-setting";
 import { lite } from "@cocalc/frontend/lite";
+import { SettingsCard } from "../settings-card";
 
 type ImmutablePassportStrategy = TypedMap<PassportStrategyFrontend>;
 type PublicSsoStrategy = {
@@ -522,7 +518,7 @@ export function AccountSettings(props: Readonly<Props>) {
   }
 
   return (
-    <SettingBox title={intl.formatMessage(labels.account)} icon="address-card">
+    <SettingsCard title={intl.formatMessage(labels.account)}>
       <Space vertical>
         {render_account_id()}
         {render_name()}
@@ -534,7 +530,7 @@ export function AccountSettings(props: Readonly<Props>) {
         {render_available_to_link()}
       </Space>
       <FreshAuthModal {...freshAuthModalProps} />
-    </SettingBox>
+    </SettingsCard>
   );
 }
 

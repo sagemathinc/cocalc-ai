@@ -4,6 +4,7 @@
  */
 
 import { labels } from "@cocalc/frontend/i18n";
+import { Space } from "antd";
 import { defineMessage } from "react-intl";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -43,7 +44,7 @@ export function AccountPreferencesProfile() {
   const verify_emails = useTypedRedux("customize", "verify_emails");
 
   return (
-    <>
+    <Space vertical size="middle" style={{ width: "100%" }}>
       <AccountSettings
         account_id={account_id}
         display_name={display_name}
@@ -65,6 +66,6 @@ export function AccountPreferencesProfile() {
         last_name={last_name}
       />
       <AvatarSettings email_address={email_address} />
-    </>
+    </Space>
   );
 }

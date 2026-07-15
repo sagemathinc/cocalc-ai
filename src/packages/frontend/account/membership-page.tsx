@@ -3,16 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  Alert,
-  Button,
-  Card,
-  Modal,
-  Space,
-  Tag,
-  Table,
-  Typography,
-} from "antd";
+import { Alert, Button, Modal, Space, Tag, Table, Typography } from "antd";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { defineMessage } from "react-intl";
 
@@ -39,6 +30,7 @@ import {
   useMembershipSettingsData,
 } from "./membership-settings-data";
 import MembershipPurchaseModal from "./membership-purchase-modal";
+import { SettingsCard } from "./settings-card";
 import type { SettingsPageDefinition } from "./settings-page";
 import { openAccountSettings } from "./settings-routing";
 import { UseBalance } from "./balance-toward-subs";
@@ -235,7 +227,7 @@ function MembershipSettingsContent() {
 
   return (
     <Space vertical size="middle" style={{ width: "100%" }}>
-      <Card size="small" title={`Effective: ${effectiveSummary}`}>
+      <SettingsCard title={`Effective: ${effectiveSummary}`}>
         <Space vertical style={{ width: "100%" }}>
           <EffectiveMembershipDescription
             membership={membership}
@@ -270,10 +262,10 @@ function MembershipSettingsContent() {
             />
           ) : null}
         </Space>
-      </Card>
+      </SettingsCard>
 
       {isPaidPersonalMembership(personalMembership) ? (
-        <Card size="small" title="Personal membership billing">
+        <SettingsCard title="Personal membership billing">
           <PersonalMembershipDetails
             effective={selectedSourceRow?.sourceKind === "subscription"}
             membership={personalMembership}
@@ -283,10 +275,10 @@ function MembershipSettingsContent() {
             }
             tier={tierById[personalMembership.class]}
           />
-        </Card>
+        </SettingsCard>
       ) : null}
 
-      <Card size="small" title="Memberships">
+      <SettingsCard title="Memberships">
         <Space vertical style={{ width: "100%" }}>
           {candidateRows.length === 0 ? (
             <Text type="secondary">No active memberships.</Text>
@@ -376,7 +368,7 @@ function MembershipSettingsContent() {
             <Alert type="error" title={reverificationError} />
           ) : null}
         </Space>
-      </Card>
+      </SettingsCard>
 
       <Modal
         open={siteLicenseManageOpen}

@@ -10,11 +10,11 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { SettingBox } from "@cocalc/frontend/components";
 import { lite } from "@cocalc/frontend/lite";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 import { DeleteAccountButton } from "./delete-account";
+import { SettingsCard } from "./settings-card";
 import { PasswordSetting } from "./settings/password-setting";
 import TwoFactorAuthSetting from "./settings/two-factor-auth";
 import { ugly_error } from "./util";
@@ -47,7 +47,7 @@ export function SecuritySettings({
 
   return (
     <div id="security">
-      <SettingBox title="Security" icon="lock">
+      <SettingsCard title="Security">
         <Flex vertical gap="middle">
           <Flex align="flex-start" justify="space-between" gap="small" wrap>
             <Flex flex={1}>
@@ -74,7 +74,7 @@ export function SecuritySettings({
           <TwoFactorAuthSetting showHeader={false} />
         </Flex>
         <FreshAuthModal {...freshAuthModalProps} />
-      </SettingBox>
+      </SettingsCard>
     </div>
   );
 }

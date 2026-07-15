@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Card, Radio, Space, Table } from "antd";
+import { Alert, Radio, Space, Table } from "antd";
 import type { TableColumnsType } from "antd";
 import { defineMessage } from "react-intl";
 
@@ -19,6 +19,7 @@ import {
   type NotificationEmailMode,
 } from "@cocalc/util/notification-preferences";
 import { CookieConsentSettings } from "./cookie-consent-settings";
+import { SettingsCard } from "./settings-card";
 import type { SettingsPageDefinition } from "./settings-page";
 
 type NotificationCategoryRow = (typeof NOTIFICATION_CATEGORIES)[number];
@@ -130,10 +131,10 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
   }
 
   return (
-    <Space vertical style={{ width: "100%" }}>
-      <Card title="Notifications">
+    <Space vertical size="middle" style={{ width: "100%" }}>
+      <SettingsCard title="Notifications">
         {render_notification_email_preferences()}
-      </Card>
+      </SettingsCard>
       <CookieConsentSettings />
     </Space>
   );

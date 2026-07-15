@@ -7,10 +7,11 @@ import { type CSSProperties, useEffect, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
-import { Loading, SettingBox } from "@cocalc/frontend/components";
+import { Loading } from "@cocalc/frontend/components";
 import { DEFAULT_COLOR } from "@cocalc/frontend/users/store";
 import { avatar_fontcolor } from "./avatar/font-color";
 import { ProfileImageSelector, setProfile } from "./profile-image";
+import { SettingsCard } from "./settings-card";
 
 interface Props {
   email_address?: string;
@@ -94,7 +95,7 @@ export function AvatarSettings({ email_address }: Props) {
   }
 
   return (
-    <SettingBox title="Avatar">
+    <SettingsCard title="Avatar">
       <ProfileImageSelector
         account_id={account_id}
         avatarPreview={
@@ -117,6 +118,6 @@ export function AvatarSettings({ email_address }: Props) {
         email_address={email_address}
         onImageChange={(src) => setPreviewImage(src || undefined)}
       />
-    </SettingBox>
+    </SettingsCard>
   );
 }
