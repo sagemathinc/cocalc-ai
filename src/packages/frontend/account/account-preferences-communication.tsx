@@ -120,12 +120,14 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
             message="Verify your email address to receive notification email."
           />
         )}
-        <Table
-          columns={notificationColumns}
-          dataSource={NOTIFICATION_CATEGORIES}
-          pagination={false}
-          rowKey="key"
-        />
+        <div style={{ maxWidth: "100%", width: "fit-content" }}>
+          <Table
+            columns={notificationColumns}
+            dataSource={NOTIFICATION_CATEGORIES}
+            pagination={false}
+            rowKey="key"
+          />
+        </div>
       </Space>
     );
   }
