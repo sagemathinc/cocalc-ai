@@ -3,12 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Space, Typography } from "antd";
+import { Alert, Button, Card, Space, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
-import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
 import {
   COOKIE_CATEGORIES,
   getConsentSnapshot,
@@ -16,7 +14,6 @@ import {
   showPreferences,
   type ConsentSnapshot,
 } from "@cocalc/frontend/cookie-consent";
-import { COLORS } from "@cocalc/util/theme";
 
 const { Text } = Typography;
 
@@ -34,13 +31,12 @@ function CategoryStatus({
   label: string;
 }) {
   return (
-    <div>
-      <Icon
-        name={accepted ? "check-square" : "minus-square"}
-        style={{ color: accepted ? COLORS.BS_GREEN_D : COLORS.BS_RED }}
-      />{" "}
-      {label}
-    </div>
+    <Space>
+      <Text>{label}</Text>
+      <Tag color={accepted ? "green" : undefined}>
+        {accepted ? "Accepted" : "Off"}
+      </Tag>
+    </Space>
   );
 }
 
@@ -58,15 +54,8 @@ export function CookieConsentSettings(): React.JSX.Element | null {
   if (!cookieBannerEnabled) return null;
 
   return (
-    <div style={{ marginTop: 16 }}>
-      <Panel
-        size="small"
-        header={
-          <>
-            <Icon name="lock" /> Cookie preferences
-          </>
-        }
-      >
+    <Card title="Cookie preferences">
+      <Space vertical style={{ width: "100%" }}>
         {snap == null ? (
           <Alert
             type="warning"
@@ -74,27 +63,21 @@ export function CookieConsentSettings(): React.JSX.Element | null {
             message="You have not yet acknowledged the cookie banner."
           />
         ) : (
-          <Space vertical size="small" style={{ width: "100%" }}>
-            {COOKIE_CATEGORIES.map((category) => (
-              <CategoryStatus
-                key={category.key}
-                accepted={!!snap[category.key]}
-                label={category.label}
-              />
-            ))}
-            {snap.timestamp && (
-              <Text type="secondary">
-                Last updated: {formatTimestamp(snap.timestamp)}
-              </Text>
-            )}
-          </Space>
+          COOKIE_CATEGORIES.map((category) => (
+            <CategoryStatus
+              key={category.key}
+              accepted={!!snap[category.key]}
+              label={category.label}
+            />
+          ))
         )}
-        <div style={{ marginTop: 12 }}>
-          <Button onClick={() => showPreferences()}>
-            <Icon name="cog" /> Manage cookie preferences
-          </Button>
-        </div>
-      </Panel>
-    </div>
+        <Button onClick={() => showPreferences()}>Manage</Button>
+        {snap?.timestamp && (
+          <Text type="secondary">
+            Last updated: {formatTimestamp(snap.timestamp)}
+          </Text>
+        )}
+      </Space>
+    </Card>
   );
 }
