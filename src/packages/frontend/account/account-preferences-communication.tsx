@@ -99,6 +99,7 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
           value={notificationPreferences.email[category.key]}
           onChange={(mode) => setNotificationEmailMode(category.key, mode)}
           options={deliveryOptions(category)}
+          popupMatchSelectWidth={false}
         />
       ),
       title: "Delivery",
