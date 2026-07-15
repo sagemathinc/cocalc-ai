@@ -14,6 +14,7 @@ import {
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_EMAIL_MODES,
   OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
+  notificationModeSendsEmail,
   normalizeNotificationPreferences,
   type NotificationCategory,
   type NotificationEmailMode,
@@ -110,8 +111,8 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
   ];
 
   function render_notification_email_preferences() {
-    const hasEmailDelivery = NOTIFICATION_CATEGORIES.some(
-      (category) => notificationPreferences.email[category.key] !== "off",
+    const hasEmailDelivery = NOTIFICATION_CATEGORIES.some((category) =>
+      notificationModeSendsEmail(notificationPreferences.email[category.key]),
     );
     return (
       <Space vertical style={{ width: "100%" }}>

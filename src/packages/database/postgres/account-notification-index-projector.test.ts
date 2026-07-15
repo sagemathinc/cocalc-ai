@@ -103,6 +103,24 @@ describe("account_notification_index projector", () => {
     });
   }
 
+  async function setNotificationEmailMode(
+    category: string,
+    mode: string,
+  ): Promise<void> {
+    await getPool().query(
+      `UPDATE accounts
+          SET other_settings = jsonb_build_object(
+                'notification_preferences',
+                jsonb_build_object(
+                  'email',
+                  jsonb_build_object($2::TEXT, $3::TEXT)
+                )
+              )
+        WHERE account_id = $1::UUID`,
+      [LOCAL_ACCOUNT_ID, category, mode],
+    );
+  }
+
   it("supports dry-run drains without mutating projection or outbox state", async () => {
     await seedAccounts();
     await appendMentionOutboxRow();
@@ -295,6 +313,88 @@ describe("account_notification_index projector", () => {
       [NOTIFICATION_ID],
     );
     expect(emailRows.rows).toHaveLength(1);
+  });
+
+  it("keeps in-app notifications when email delivery is off", async () => {
+    await seedAccounts();
+    await setNotificationEmailMode("collaboration", "off");
+    await appendMentionOutboxRow();
+
+    await drainAccountNotificationIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      limit: 10,
+      dry_run: false,
+    });
+
+    await expect(
+      listProjectedNotificationsForAccount({
+        account_id: LOCAL_ACCOUNT_ID,
+        limit: 10,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        notification_id: NOTIFICATION_ID,
+      }),
+    ]);
+    await expect(
+      getPool().query(
+        `SELECT delivery_mode, status
+           FROM notification_email_outbox
+          WHERE notification_id = $1`,
+        [NOTIFICATION_ID],
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          delivery_mode: "off",
+          status: "skipped_preference",
+        },
+      ],
+    });
+  });
+
+  it("skips in-app notifications and email when delivery is none", async () => {
+    await seedAccounts();
+    await setNotificationEmailMode("collaboration", "none");
+    await appendMentionOutboxRow();
+
+    await expect(
+      drainAccountNotificationIndexProjection({
+        bay_id: LOCAL_BAY_ID,
+        limit: 10,
+        dry_run: false,
+      }),
+    ).resolves.toMatchObject({
+      applied_events: 1,
+      inserted_rows: 0,
+      affected_account_ids: [],
+      affected_notifications: [],
+    });
+
+    await expect(
+      getPool().query(
+        `SELECT notification_id
+           FROM account_notification_index
+          WHERE account_id = $1`,
+        [LOCAL_ACCOUNT_ID],
+      ),
+    ).resolves.toMatchObject({ rows: [] });
+    await expect(
+      getPool().query(
+        `SELECT email_id
+           FROM notification_email_outbox
+          WHERE notification_id = $1`,
+        [NOTIFICATION_ID],
+      ),
+    ).resolves.toMatchObject({ rows: [] });
+    await expect(
+      getPool().query(
+        `SELECT published_at IS NOT NULL AS published
+           FROM notification_target_outbox
+          WHERE notification_id = $1`,
+        [NOTIFICATION_ID],
+      ),
+    ).resolves.toMatchObject({ rows: [{ published: true }] });
   });
 
   it("uses display_path for queued mention email subjects", async () => {

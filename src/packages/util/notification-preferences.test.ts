@@ -35,6 +35,7 @@ describe("notification preferences", () => {
         email: {
           collaboration: "digest",
           ai: "immediate",
+          course: "none",
           product: "off",
           maintenance: "bad",
         },
@@ -49,7 +50,7 @@ describe("notification preferences", () => {
         ai: "immediate",
         product: "off",
         maintenance: "digest",
-        course: "immediate",
+        course: "none",
       },
       digest: {
         time: "08:00",
@@ -62,7 +63,7 @@ describe("notification preferences", () => {
     expect(
       normalizeNotificationPreferences({
         email: {
-          billing: "off",
+          billing: "none",
           security: "digest",
         },
       }).email,

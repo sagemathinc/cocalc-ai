@@ -215,6 +215,7 @@ describe("AccountPreferencesCommunication", () => {
       },
       { disabled: true, text: "Digest email and in-app", value: "digest" },
       { disabled: true, text: "In-app only", value: "off" },
+      { disabled: true, text: "None", value: "none" },
     ]);
   });
 
@@ -275,6 +276,26 @@ describe("AccountPreferencesCommunication", () => {
     expect(setOtherSettings).toHaveBeenCalledWith(
       MARKETING_CONSENT_OTHER_SETTINGS_KEY,
       true,
+    );
+  });
+
+  it("persists none delivery mode for optional notification categories", () => {
+    render(<AccountPreferencesCommunication />);
+
+    fireEvent.change(
+      within(screen.getByTestId("notification-row-collaboration")).getByTestId(
+        "delivery-mode",
+      ),
+      { target: { value: "none" } },
+    );
+
+    expect(setOtherSettings).toHaveBeenCalledWith(
+      OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
+      expect.objectContaining({
+        email: expect.objectContaining({
+          collaboration: "none",
+        }),
+      }),
     );
   });
 });

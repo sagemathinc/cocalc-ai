@@ -43,6 +43,25 @@ describe("notification delivery policy", () => {
     });
   });
 
+  it("allows optional notification categories to disable all delivery", () => {
+    expect(
+      resolveNotificationDeliveryPolicy({
+        kind: "mention",
+        actor_account_id: "actor",
+        target_account_id: "target",
+        preferences: {
+          email: {
+            collaboration: "none",
+          },
+        },
+      }),
+    ).toMatchObject({
+      category: "collaboration",
+      delivery_mode: "none",
+      required: false,
+    });
+  });
+
   it("forces billing notices to critical immediate without user charge", () => {
     expect(
       resolveNotificationDeliveryPolicy({

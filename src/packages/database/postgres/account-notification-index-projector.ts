@@ -11,6 +11,12 @@ import type {
   NotificationTransportEventType,
 } from "./notifications-core";
 import { resolveNotificationDeliveryPolicy } from "@cocalc/util/notification-delivery-policy";
+import type { NotificationDeliveryPolicy } from "@cocalc/util/notification-delivery-policy";
+import {
+  notificationModeCreatesInApp,
+  notificationModeSendsEmail,
+  type NotificationInAppMode,
+} from "@cocalc/util/notification-preferences";
 
 const DEFAULT_SINGLE_BAY_ID = "bay-0";
 const RELEVANT_EVENT_TYPES: NotificationTransportEventType[] = [
@@ -29,6 +35,19 @@ type NotificationTargetOutboxPayload = {
   summary?: Record<string, any>;
   event_payload?: Record<string, any>;
   created_at?: string | null;
+};
+
+type LocalHomeAccount = {
+  email_address: string | null;
+  email_address_verified: Record<string, any> | null;
+  other_settings: Record<string, any> | null;
+};
+
+type InAppNotificationDeliveryPolicy = Omit<
+  NotificationDeliveryPolicy,
+  "delivery_mode"
+> & {
+  delivery_mode: NotificationInAppMode;
 };
 
 export interface DrainAccountNotificationIndexProjectionResult {
@@ -76,12 +95,12 @@ function ageMs(now: Date, when: Date | null): number | null {
   return Math.max(0, now.getTime() - when.getTime());
 }
 
-async function isLocalHomeAccount(
+async function loadLocalHomeAccount(
   db: PoolClient,
   opts: { bay_id: string; account_id: string },
-): Promise<boolean> {
-  const { rows } = await db.query<{ account_id: string }>(
-    `SELECT account_id
+): Promise<LocalHomeAccount | undefined> {
+  const { rows } = await db.query<LocalHomeAccount>(
+    `SELECT email_address, email_address_verified, other_settings
        FROM accounts
       WHERE account_id = $1::UUID
         AND (deleted IS NULL OR deleted = FALSE)
@@ -89,7 +108,7 @@ async function isLocalHomeAccount(
       LIMIT 1`,
     [opts.account_id, opts.bay_id],
   );
-  return !!rows[0]?.account_id;
+  return rows[0] as LocalHomeAccount | undefined;
 }
 
 async function applyNotificationEventToAccountNotificationIndex(opts: {
@@ -104,12 +123,11 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
   affected_notification_id?: string;
 }> {
   const { db, bay_id, event } = opts;
-  if (
-    !(await isLocalHomeAccount(db, {
-      bay_id,
-      account_id: event.target_account_id,
-    }))
-  ) {
+  const account = await loadLocalHomeAccount(db, {
+    bay_id,
+    account_id: event.target_account_id,
+  });
+  if (account == null) {
     if (opts.require_local_account === true) {
       throw Error(
         `notification target account '${event.target_account_id}' is not local to ${bay_id}`,
@@ -123,6 +141,24 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
     };
   }
   const payload = (event.payload_json ?? {}) as NotificationTargetOutboxPayload;
+  const policy = resolveNotificationDeliveryPolicy({
+    kind: event.kind,
+    origin_kind: payload.origin_kind,
+    actor_account_id: payload.actor_account_id,
+    target_account_id: event.target_account_id,
+    summary: payload.summary,
+    event_payload: payload.event_payload,
+    preferences: account.other_settings?.notification_preferences,
+  });
+  const delivery_mode = policy.delivery_mode;
+  if (!notificationModeCreatesInApp(delivery_mode)) {
+    return {
+      inserted_rows: 0,
+      deleted_rows: 0,
+      affected_account_id: undefined,
+      affected_notification_id: undefined,
+    };
+  }
   await db.query(
     `INSERT INTO account_notification_index
        (account_id, notification_id, kind, project_id, summary, read_state,
@@ -150,6 +186,8 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
     db,
     event,
     payload,
+    account,
+    policy: { ...policy, delivery_mode },
   });
   return {
     inserted_rows: 1,
@@ -193,37 +231,16 @@ async function enqueueProjectedNotificationEmail(opts: {
   db: PoolClient;
   event: NotificationTargetOutboxRow;
   payload: NotificationTargetOutboxPayload;
+  account: LocalHomeAccount;
+  policy: InAppNotificationDeliveryPolicy;
 }): Promise<void> {
-  const { db, event, payload } = opts;
-  const { rows } = await db.query<{
-    email_address: string | null;
-    email_address_verified: Record<string, any> | null;
-    other_settings: Record<string, any> | null;
-  }>(
-    `SELECT email_address, email_address_verified, other_settings
-       FROM accounts
-      WHERE account_id = $1::UUID
-      LIMIT 1`,
-    [event.target_account_id],
-  );
-  const account = rows[0];
-  const other_settings = account?.other_settings ?? {};
-  const policy = resolveNotificationDeliveryPolicy({
-    kind: event.kind,
-    origin_kind: payload.origin_kind,
-    actor_account_id: payload.actor_account_id,
-    target_account_id: event.target_account_id,
-    summary: payload.summary,
-    event_payload: payload.event_payload,
-    preferences: other_settings.notification_preferences,
-  });
+  const { db, event, payload, account, policy } = opts;
   const recipient_email = resolveRecipientEmail(account);
-  const status =
-    policy.delivery_mode === "off"
-      ? "skipped_preference"
-      : recipient_email
-        ? "queued"
-        : "skipped_no_recipient";
+  const status = notificationModeSendsEmail(policy.delivery_mode)
+    ? recipient_email
+      ? "queued"
+      : "skipped_no_recipient"
+    : "skipped_preference";
   await enqueueNotificationEmail({
     db,
     notification_id: event.notification_id,

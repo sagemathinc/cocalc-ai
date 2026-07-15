@@ -6,7 +6,9 @@
 export const OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY =
   "notification_preferences";
 
-export type NotificationEmailMode = "immediate" | "digest" | "off";
+export type NotificationEmailMode = "immediate" | "digest" | "off" | "none";
+export type NotificationEmailSendingMode = "immediate" | "digest";
+export type NotificationInAppMode = Exclude<NotificationEmailMode, "none">;
 
 export type NotificationCategory =
   | "billing"
@@ -56,6 +58,11 @@ export const NOTIFICATION_EMAIL_MODES: {
     key: "off",
     label: "In-app only",
     description: "Show an in-app notification, but do not send email.",
+  },
+  {
+    key: "none",
+    label: "None",
+    description: "Do not send email or show an in-app notification.",
   },
 ];
 
@@ -141,6 +148,18 @@ function isNotificationEmailMode(
   value: unknown,
 ): value is NotificationEmailMode {
   return typeof value === "string" && VALID_EMAIL_MODES.has(value as any);
+}
+
+export function notificationModeSendsEmail(
+  mode: NotificationEmailMode,
+): mode is NotificationEmailSendingMode {
+  return mode === "immediate" || mode === "digest";
+}
+
+export function notificationModeCreatesInApp(
+  mode: NotificationEmailMode,
+): mode is NotificationInAppMode {
+  return mode !== "none";
 }
 
 export function normalizeNotificationPreferences(
