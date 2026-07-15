@@ -150,13 +150,30 @@ describe("AccountPreferencesCommunication", () => {
     render(<AccountPreferencesCommunication />);
 
     expect(screen.getByText("Notifications")).toBeTruthy();
-    expect(screen.getByText("Billing and spend")).toBeTruthy();
-    expect(screen.getByText("Security and access")).toBeTruthy();
-    expect(screen.getByText("AI and Codex")).toBeTruthy();
+    expect(screen.getByText("Billing")).toBeTruthy();
+    expect(screen.getByText("Security")).toBeTruthy();
+    expect(screen.getByText("AI activity")).toBeTruthy();
     expect(screen.queryByText("Required immediate email")).toBeNull();
     expect(screen.queryByText("Show Announcement Banner")).toBeNull();
     expect(screen.queryByText("Hide free warnings")).toBeNull();
     expect(screen.queryByText(/Do NOT send email/i)).toBeNull();
+
+    expect(
+      screen
+        .getAllByTestId(/^notification-row-/)
+        .map((row) =>
+          row.getAttribute("data-testid")?.replace("notification-row-", ""),
+        ),
+    ).toEqual([
+      "security",
+      "billing",
+      "collaboration",
+      "course",
+      "support",
+      "ai",
+      "maintenance",
+      "product",
+    ]);
 
     const billingRow = screen.getByTestId("notification-row-billing");
     expect(

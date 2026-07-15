@@ -59,26 +59,20 @@ export const NOTIFICATION_EMAIL_MODES: {
 
 export const NOTIFICATION_CATEGORIES: NotificationCategoryDefinition[] = [
   {
-    key: "billing",
-    label: "Billing and spend",
-    description:
-      "Payments, receipts requiring action, spend limits, and dedicated-host enforcement.",
-    defaultEmailMode: "immediate",
-    requiredEmailMode: "immediate",
-  },
-  {
     key: "security",
-    label: "Security and access",
+    label: "Security",
     description:
-      "Password resets, email verification, 2FA, and account access changes.",
+      "Password resets, email verification, two-factor authentication, and account access changes.",
     defaultEmailMode: "immediate",
     requiredEmailMode: "immediate",
   },
   {
-    key: "support",
-    label: "Support and admin",
-    description: "Support replies and account notices from CoCalc staff.",
+    key: "billing",
+    label: "Billing",
+    description:
+      "Payments, receipts requiring action, spend limits, and paid resource enforcement.",
     defaultEmailMode: "immediate",
+    requiredEmailMode: "immediate",
   },
   {
     key: "collaboration",
@@ -88,15 +82,23 @@ export const NOTIFICATION_CATEGORIES: NotificationCategoryDefinition[] = [
     defaultEmailMode: "immediate",
   },
   {
-    key: "ai",
-    label: "AI and Codex",
-    description: "Long-running AI or Codex work completed.",
-    defaultEmailMode: "off",
+    key: "course",
+    label: "Course",
+    description:
+      "Course announcements, assignment updates, grading notices, and other course activity.",
+    defaultEmailMode: "immediate",
   },
   {
-    key: "product",
-    label: "Product news",
-    description: "Product updates and announcements.",
+    key: "support",
+    label: "Support",
+    description:
+      "Replies and notices from support staff or site administrators.",
+    defaultEmailMode: "immediate",
+  },
+  {
+    key: "ai",
+    label: "AI activity",
+    description: "Long-running AI tasks completed or requiring attention.",
     defaultEmailMode: "off",
   },
   {
@@ -106,11 +108,10 @@ export const NOTIFICATION_CATEGORIES: NotificationCategoryDefinition[] = [
     defaultEmailMode: "digest",
   },
   {
-    key: "course",
-    label: "Course announcements",
-    description:
-      "Instructor announcements and future course broadcast messages.",
-    defaultEmailMode: "immediate",
+    key: "product",
+    label: "Product news",
+    description: "Product updates, feature announcements, and onboarding tips.",
+    defaultEmailMode: "off",
   },
 ];
 
