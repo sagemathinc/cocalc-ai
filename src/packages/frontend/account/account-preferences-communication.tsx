@@ -90,7 +90,7 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
     {
       dataIndex: "description",
       key: "description",
-      title: "What it includes",
+      title: "Scope",
     },
     {
       key: "delivery",
