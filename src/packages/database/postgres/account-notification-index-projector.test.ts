@@ -254,7 +254,7 @@ describe("account_notification_index projector", () => {
           target_account_id: LOCAL_ACCOUNT_ID,
           actor_account_id: SOURCE_ACCOUNT_ID,
           responsible_account_id: SOURCE_ACCOUNT_ID,
-          category: "collaboration",
+          category: "mentions",
           lane: "notification",
           delivery_mode: "immediate",
           recipient_email: "local@example.com",
@@ -317,7 +317,7 @@ describe("account_notification_index projector", () => {
 
   it("keeps in-app notifications when email delivery is off", async () => {
     await seedAccounts();
-    await setNotificationEmailMode("collaboration", "off");
+    await setNotificationEmailMode("mentions", "off");
     await appendMentionOutboxRow();
 
     await drainAccountNotificationIndexProjection({
@@ -355,7 +355,7 @@ describe("account_notification_index projector", () => {
 
   it("skips in-app notifications and email when delivery is none", async () => {
     await seedAccounts();
-    await setNotificationEmailMode("collaboration", "none");
+    await setNotificationEmailMode("mentions", "none");
     await appendMentionOutboxRow();
 
     await expect(

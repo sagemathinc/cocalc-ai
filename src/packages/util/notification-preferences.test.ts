@@ -15,12 +15,15 @@ describe("notification preferences", () => {
       email: {
         billing: "immediate",
         security: "immediate",
+        membership_requests: "immediate",
+        access_requests: "immediate",
+        mentions: "immediate",
+        chat_replies: "immediate",
         support: "immediate",
-        collaboration: "immediate",
         ai: "off",
-        product: "off",
-        maintenance: "digest",
         course: "immediate",
+        maintenance: "digest",
+        product: "off",
       },
       digest: {
         time: "08:00",
@@ -34,6 +37,8 @@ describe("notification preferences", () => {
       normalizeNotificationPreferences({
         email: {
           collaboration: "digest",
+          access_requests: "none",
+          membership_requests: "off",
           ai: "immediate",
           course: "none",
           product: "off",
@@ -45,12 +50,15 @@ describe("notification preferences", () => {
       email: {
         billing: "immediate",
         security: "immediate",
+        membership_requests: "immediate",
+        access_requests: "none",
+        mentions: "digest",
+        chat_replies: "digest",
         support: "immediate",
-        collaboration: "digest",
         ai: "immediate",
-        product: "off",
-        maintenance: "digest",
         course: "none",
+        maintenance: "digest",
+        product: "off",
       },
       digest: {
         time: "08:00",
@@ -70,6 +78,20 @@ describe("notification preferences", () => {
     ).toMatchObject({
       billing: "immediate",
       security: "immediate",
+    });
+  });
+
+  it("restricts membership requests to email delivery modes", () => {
+    expect(
+      normalizeNotificationPreferences({
+        email: {
+          membership_requests: "digest",
+          access_requests: "off",
+        },
+      }).email,
+    ).toMatchObject({
+      membership_requests: "digest",
+      access_requests: "off",
     });
   });
 });

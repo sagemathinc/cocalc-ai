@@ -173,8 +173,13 @@ describe("AccountPreferencesCommunication", () => {
     expect(screen.getByText("Notifications")).toBeTruthy();
     expect(screen.getByText("Billing")).toBeTruthy();
     expect(screen.getByText("Security")).toBeTruthy();
+    expect(screen.getByText("Membership requests")).toBeTruthy();
+    expect(screen.getByText("Access requests")).toBeTruthy();
+    expect(screen.getByText("Mentions")).toBeTruthy();
+    expect(screen.getByText("Chat replies")).toBeTruthy();
     expect(screen.getByText("AI activity")).toBeTruthy();
     expect(screen.getByText("Onboarding and marketing emails")).toBeTruthy();
+    expect(screen.queryByText("project invitations")).toBeNull();
     expect(screen.queryByText("Required immediate email")).toBeNull();
     expect(screen.queryByText("Show Announcement Banner")).toBeNull();
     expect(screen.queryByText("Hide free warnings")).toBeNull();
@@ -189,10 +194,13 @@ describe("AccountPreferencesCommunication", () => {
     ).toEqual([
       "security",
       "billing",
-      "collaboration",
+      "membership_requests",
+      "access_requests",
+      "mentions",
+      "chat_replies",
+      "ai",
       "course",
       "support",
-      "ai",
       "maintenance",
       "product",
     ]);
@@ -216,6 +224,50 @@ describe("AccountPreferencesCommunication", () => {
       { disabled: true, text: "Digest email and in-app", value: "digest" },
       { disabled: true, text: "In-app only", value: "off" },
       { disabled: true, text: "None", value: "none" },
+    ]);
+
+    const membershipRow = screen.getByTestId(
+      "notification-row-membership_requests",
+    );
+    const membershipSelect = within(membershipRow).getByTestId(
+      "delivery-mode",
+    ) as HTMLSelectElement;
+    expect(
+      Array.from(membershipSelect.options).map(({ disabled, text, value }) => ({
+        disabled,
+        text,
+        value,
+      })),
+    ).toEqual([
+      {
+        disabled: false,
+        text: "Immediate email and in-app",
+        value: "immediate",
+      },
+      { disabled: false, text: "Digest email and in-app", value: "digest" },
+      { disabled: true, text: "In-app only", value: "off" },
+      { disabled: true, text: "None", value: "none" },
+    ]);
+
+    const accessRow = screen.getByTestId("notification-row-access_requests");
+    const accessSelect = within(accessRow).getByTestId(
+      "delivery-mode",
+    ) as HTMLSelectElement;
+    expect(
+      Array.from(accessSelect.options).map(({ disabled, text, value }) => ({
+        disabled,
+        text,
+        value,
+      })),
+    ).toEqual([
+      {
+        disabled: false,
+        text: "Immediate email and in-app",
+        value: "immediate",
+      },
+      { disabled: false, text: "Digest email and in-app", value: "digest" },
+      { disabled: false, text: "In-app only", value: "off" },
+      { disabled: false, text: "None", value: "none" },
     ]);
   });
 
@@ -283,7 +335,7 @@ describe("AccountPreferencesCommunication", () => {
     render(<AccountPreferencesCommunication />);
 
     fireEvent.change(
-      within(screen.getByTestId("notification-row-collaboration")).getByTestId(
+      within(screen.getByTestId("notification-row-mentions")).getByTestId(
         "delivery-mode",
       ),
       { target: { value: "none" } },
@@ -293,7 +345,7 @@ describe("AccountPreferencesCommunication", () => {
       OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
       expect.objectContaining({
         email: expect.objectContaining({
-          collaboration: "none",
+          mentions: "none",
         }),
       }),
     );

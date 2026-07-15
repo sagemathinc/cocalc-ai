@@ -51,7 +51,7 @@ Table({
     category: {
       type: "string",
       pg_type: "VARCHAR(64)",
-      desc: "User-facing notification category such as billing, collaboration, or ai.",
+      desc: "User-facing notification category such as billing, mentions, or ai.",
     },
     lane: {
       type: "string",
@@ -61,7 +61,7 @@ Table({
     delivery_mode: {
       type: "string",
       pg_type: "VARCHAR(64)",
-      desc: "Resolved external delivery mode: immediate, digest, or off.",
+      desc: "Resolved external delivery mode: immediate, digest, off, or none.",
     },
     recipient_email: {
       type: "string",

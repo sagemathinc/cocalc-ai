@@ -60,6 +60,9 @@ function accountNoticeCategory(opts: {
   if (noticeType.startsWith("course_")) {
     return "course";
   }
+  if (noticeType.startsWith("project_access_")) {
+    return "access_requests";
+  }
 
   const originLabel = lower(
     opts.summary.origin_label ?? opts.event_payload.origin_label,
@@ -81,10 +84,26 @@ function accountNoticeCategory(opts: {
   ) {
     return "billing";
   }
+  if (originLabel.includes("project access")) {
+    return "access_requests";
+  }
+  if (originLabel.includes("site licenses")) {
+    return "membership_requests";
+  }
   if (originLabel.includes("support") || opts.origin_kind === "admin") {
     return "support";
   }
   return "support";
+}
+
+function mentionCategory(opts: {
+  summary: Record<string, any>;
+  event_payload: Record<string, any>;
+}): NotificationCategory {
+  const reason = lower(
+    opts.summary.notification_reason ?? opts.event_payload.notification_reason,
+  );
+  return reason === "thread_follow" ? "chat_replies" : "mentions";
 }
 
 function laneForCategory(category: NotificationCategory): EmailLane {
@@ -94,10 +113,13 @@ function laneForCategory(category: NotificationCategory): EmailLane {
       return "critical";
     case "support":
     case "maintenance":
+    case "membership_requests":
+    case "access_requests":
       return "transactional";
     case "product":
       return "marketing";
-    case "collaboration":
+    case "mentions":
+    case "chat_replies":
     case "ai":
     case "course":
       return "notification";
@@ -128,7 +150,7 @@ export function resolveNotificationDeliveryPolicy(
   const event_payload = opts.event_payload ?? {};
   const category: NotificationCategory =
     kind === "mention"
-      ? "collaboration"
+      ? mentionCategory({ summary, event_payload })
       : kind === "account_notice"
         ? accountNoticeCategory({
             summary,

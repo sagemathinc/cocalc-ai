@@ -53,7 +53,7 @@ const ROW = {
   target_account_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
   actor_account_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
   responsible_account_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
-  category: "collaboration",
+  category: "mentions",
   lane: "notification",
   delivery_mode: "immediate",
   recipient_email: "user@example.com",
@@ -109,7 +109,7 @@ describe("notification email outbox maintenance", () => {
       expect.objectContaining({
         to: "user@example.com",
         subject: "CoCalc mention in chat",
-        categories: ["notification-collaboration", "notification"],
+        categories: ["notification-mentions", "notification"],
       }),
       ROW.responsible_account_id,
       "notification",

@@ -77,9 +77,10 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
 
   function deliveryOptions(category: NotificationCategoryRow) {
     return NOTIFICATION_EMAIL_MODES.map(({ key, label }) => ({
-      disabled:
-        category.requiredEmailMode != null &&
-        key !== category.requiredEmailMode,
+      disabled: category.requiredEmailMode
+        ? key !== category.requiredEmailMode
+        : category.allowedEmailModes != null &&
+          !category.allowedEmailModes.includes(key),
       label,
       value: key,
     }));

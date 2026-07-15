@@ -14,7 +14,10 @@ export type NotificationCategory =
   | "billing"
   | "security"
   | "support"
-  | "collaboration"
+  | "membership_requests"
+  | "access_requests"
+  | "mentions"
+  | "chat_replies"
   | "ai"
   | "product"
   | "maintenance"
@@ -26,6 +29,7 @@ export interface NotificationCategoryDefinition {
   description: string;
   defaultEmailMode: NotificationEmailMode;
   requiredEmailMode?: NotificationEmailMode;
+  allowedEmailModes?: NotificationEmailMode[];
 }
 
 export interface NotificationPreferences {
@@ -84,11 +88,37 @@ export const NOTIFICATION_CATEGORIES: NotificationCategoryDefinition[] = [
     requiredEmailMode: "immediate",
   },
   {
-    key: "collaboration",
-    label: "Mentions and collaboration",
+    key: "membership_requests",
+    label: "Membership requests",
     description:
-      "Mentions, project invitations, and direct collaboration notifications.",
+      "Requests, approvals, reverification, and status changes for memberships managed by another account or organization.",
     defaultEmailMode: "immediate",
+    allowedEmailModes: ["immediate", "digest"],
+  },
+  {
+    key: "access_requests",
+    label: "Access requests",
+    description:
+      "Requests to access projects and decisions on your access requests.",
+    defaultEmailMode: "immediate",
+  },
+  {
+    key: "mentions",
+    label: "Mentions",
+    description: "Direct mentions in project files and chats.",
+    defaultEmailMode: "immediate",
+  },
+  {
+    key: "chat_replies",
+    label: "Chat replies",
+    description: "Replies in chat threads you follow or have participated in.",
+    defaultEmailMode: "immediate",
+  },
+  {
+    key: "ai",
+    label: "AI activity",
+    description: "Long-running AI tasks completed or requiring attention.",
+    defaultEmailMode: "off",
   },
   {
     key: "course",
@@ -103,12 +133,6 @@ export const NOTIFICATION_CATEGORIES: NotificationCategoryDefinition[] = [
     description:
       "Replies and notices from support staff or site administrators.",
     defaultEmailMode: "immediate",
-  },
-  {
-    key: "ai",
-    label: "AI activity",
-    description: "Long-running AI tasks completed or requiring attention.",
-    defaultEmailMode: "off",
   },
   {
     key: "maintenance",
@@ -173,15 +197,32 @@ export function normalizeNotificationPreferences(
     typeof (raw as { email?: unknown }).email === "object"
       ? ((raw as { email: Record<string, unknown> }).email ?? {})
       : {};
+  const legacyCollaborationMode = isNotificationEmailMode(
+    rawEmail.collaboration,
+  )
+    ? rawEmail.collaboration
+    : undefined;
 
   const email = { ...defaults.email };
   for (const category of NOTIFICATION_CATEGORIES) {
-    const value = rawEmail[category.key];
-    email[category.key] = category.requiredEmailMode
-      ? category.requiredEmailMode
-      : isNotificationEmailMode(value)
-        ? value
-        : defaults.email[category.key];
+    const value =
+      rawEmail[category.key] ??
+      (category.key === "mentions" || category.key === "chat_replies"
+        ? legacyCollaborationMode
+        : undefined);
+    if (category.requiredEmailMode) {
+      email[category.key] = category.requiredEmailMode;
+      continue;
+    }
+    if (
+      isNotificationEmailMode(value) &&
+      (category.allowedEmailModes == null ||
+        category.allowedEmailModes.includes(value))
+    ) {
+      email[category.key] = value;
+      continue;
+    }
+    email[category.key] = defaults.email[category.key];
   }
   return { ...defaults, email };
 }
