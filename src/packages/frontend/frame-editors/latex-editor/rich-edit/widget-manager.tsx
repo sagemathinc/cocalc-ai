@@ -39,10 +39,11 @@ import {
 } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 
 import { extractMacros } from "./latex-macros";
+import { getFormulaAgentContext, openFormulaAgent } from "./formula-agent";
 import { MathMacrosContext } from "./math-macros-context";
 import { parseViewport } from "./parser";
 import { WidgetDescriptor, WidgetType } from "./types";
-import { renderWidget } from "./widget-renderer";
+import { AI_EDITABLE_TYPES, renderWidget } from "./widget-renderer";
 
 const WIDGET_CLASS = "cc-latex-rich-edit-widget";
 const DEBOUNCE_MS = 80;
@@ -204,18 +205,47 @@ export function attachWidgetManager(
       cm.focus();
     };
 
-    // Formula AI editing is deliberately deferred in cocalc-ai. The
-    // Widget/onAiEdit contract remains so a future Agent-flyout action can
-    // use the same Shift+click / Shift+Enter interaction without changing
-    // widget rendering or marker lifecycle.
+    // Shift+click / Shift+Enter on math widgets opens a Formula Agent task in
+    // the project flyout. It sends context only; the Agent, not this widget,
+    // performs a later live-document edit after asking the user what to do.
+    const onAiEdit =
+      AI_EDITABLE_TYPES.has(d.type) && !cm.getOption("readOnly")
+        ? async () => {
+            if (marker == null) return;
+            const range = marker.find();
+            if (range == null || !("from" in range)) return;
+            const source = cm.getRange(range.from, range.to);
+            const context = getFormulaAgentContext(
+              (line) => cm.getLine(line),
+              cm.lineCount(),
+              range.from,
+              range.to,
+              source,
+            );
+            await openFormulaAgent({
+              project_id: frameContext.project_id,
+              path: frameContext.path,
+              source,
+              from: range.from,
+              to: range.to,
+              context: context.text,
+              contextTruncated: context.truncated,
+            });
+          }
+        : undefined;
+
     // Keyboard activation: the host is focusable (role=button,
     // tabindex=0). Enter/Space dissolves it to raw source — mirroring
-    // the plain-click path in the Widget component. Shift+Enter is reserved
-    // for the future Agent-based formula-edit action.
+    // the plain-click path in the Widget component. Shift+Enter opens the
+    // Formula Agent task, mirroring Shift+click.
     host.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        onActivate();
+        if (e.shiftKey && onAiEdit != null) {
+          void onAiEdit();
+        } else {
+          onActivate();
+        }
       }
     });
 
@@ -228,7 +258,7 @@ export function attachWidgetManager(
       root.render(
         <FrameContext.Provider value={frameContext}>
           <MathMacrosContext.Provider value={currentMacros}>
-            {renderWidget(desc, onActivate, undefined)}
+            {renderWidget(desc, onActivate, onAiEdit)}
           </MathMacrosContext.Provider>
         </FrameContext.Provider>,
       );

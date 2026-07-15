@@ -89,19 +89,19 @@ files:
   span intersects the cursor selection dissolves to raw source, so typing
   inside a dissolved widget isn't fought by premature re-marking).
 
-### Math widgets and future Agent editing
+### Math widgets and Agent editing
 
 Display math is laid out as a centered block in its own
 horizontally-scrollable box. For this initial cocalc-ai port, clicking a
 formula behaves like every other widget and reveals the canonical LaTeX
 source for manual editing.
 
-The widget contract preserves an optional formula-edit action. A follow-up
-will use it for Shift+click / Shift+Enter to create or focus a Codex Agent
-conversation in the side flyout, with the project, file, exact formula,
-and source range in the navigator intent. It must operate on the live sync
-document rather than a stale filesystem copy. No popup dialog or direct
-programmatic replacement is part of this port.
+Shift+click / Shift+Enter creates or focuses a Codex Agent conversation in
+the side flyout, with the project, full file path, exact formula, line/range,
+and a bounded nearby source window in the navigator intent. The initial
+message asks the user what to change before editing. The Agent must operate
+on the live sync document rather than a stale filesystem copy. No popup
+dialog or direct programmatic replacement is part of this feature.
 
 ### Per-document math macros
 
@@ -266,7 +266,7 @@ don't remount when a sibling `\item` is inserted/deleted. Prose between
 items stays live, so inner `\textbf` / `$…$` render through the normal
 pipeline.
 
-### Future Agent formula-edit action
+### Agent formula-edit action
 
 The Agent action must carry the marker's current source and range after a
 fresh `marker.find()` lookup. It should follow the existing
@@ -369,6 +369,6 @@ replacedWith, clearOnEnter, handleMouseEvents, … })` replaces a range
 - [frame-editors.md](frame-editors.md) — frame-editor framework
 - [frontend.md](frontend.md) — frontend state management
 - [code-editor/codemirror-gutter-marker.tsx](../packages/frontend/frame-editors/code-editor/codemirror-gutter-marker.tsx) — reference for `createRoot` + `FrameContext.Provider`
-- [frame-editors/ai/help-me-fix.tsx](../packages/frontend/frame-editors/ai/help-me-fix.tsx) — navigator-intent and Agent-flyout pattern for the planned formula action
+- [frame-editors/ai/help-me-fix.tsx](../packages/frontend/frame-editors/ai/help-me-fix.tsx) — navigator-intent and Agent-flyout pattern used by formula editing
 - [misc/math-to-html.ts](../packages/frontend/misc/math-to-html.ts) — KaTeX rendering wrapper (`mathToHtml`, extra-macros arg)
 - [sagews/sagews.coffee:791](../packages/frontend/sagews/sagews.coffee) — the only other `markText({replacedWith})` site (legacy, no `clearOnEnter`)

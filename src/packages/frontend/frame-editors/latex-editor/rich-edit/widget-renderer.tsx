@@ -142,10 +142,9 @@ const WIDGETS: Record<WidgetType, ComponentType<WidgetProps>> = {
 };
 
 /**
- * Widget types that support shift+click AI editing. Only math
- * widgets today; future widgets that want AI editing can be added
- * here. Used by the widget-manager to decide whether to set up the
- * onAiEdit closure.
+ * Widget types that support the Formula Agent action. Only math widgets
+ * today; future widgets can be added here. Used by the widget-manager to
+ * decide whether to set up the onAiEdit closure.
  */
 export const AI_EDITABLE_TYPES: ReadonlySet<WidgetType> = new Set<WidgetType>([
   "math-inline",

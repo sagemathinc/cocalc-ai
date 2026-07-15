@@ -63,7 +63,7 @@ export function Widget({
                 }}
               />
               <div style={{ fontSize: "0.85em", opacity: 0.85 }}>
-                Shift+click to edit with AI
+                Shift+click to edit with Agent
               </div>
             </>
           )}
@@ -82,8 +82,8 @@ export function Widget({
           // comment) and our explicit dissolve runs.
           e.stopPropagation();
           e.preventDefault();
-          // A future Agent-based formula action will use Shift+click; a
-          // plain click always dissolves to raw source.
+          // Shift+click opens the Formula Agent action; a plain click always
+          // dissolves to raw source.
           if (e.shiftKey && onAiEdit != null) {
             void onAiEdit();
           } else {

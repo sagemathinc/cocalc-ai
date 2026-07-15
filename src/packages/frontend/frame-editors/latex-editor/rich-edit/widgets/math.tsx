@@ -13,9 +13,8 @@ Three flavors:
                     (multi-line, starred variants supported)
 
 All three render via `mathToHtml` (KaTeX). A plain click dissolves a
-widget to raw source for manual editing. Formula editing through the
-cocalc-ai Agent flyout is planned separately; the shared `Widget`
-contract retains an optional hook for that action.
+widget to raw source for manual editing. Shift+click opens the cocalc-ai
+Agent flyout with the selected formula and bounded nearby source context.
 
 A KaTeX render error doesn't break the widget — we fall back to a
 muted red "?math?" so the user sees something is off and can hover

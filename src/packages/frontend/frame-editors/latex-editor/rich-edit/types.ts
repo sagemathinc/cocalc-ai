@@ -121,9 +121,8 @@ export interface WidgetProps {
    */
   onActivate: () => void;
   /**
-   * Optional future formula-edit action. cocalc-ai will route this through
-   * an Agent flyout rather than a popup dialog; non-math widgets leave it
-   * undefined.
+   * Optional formula-edit action. cocalc-ai routes this through an Agent
+   * flyout rather than a popup dialog; non-math widgets leave it undefined.
    */
   onAiEdit?: () => Promise<void> | void;
 }
