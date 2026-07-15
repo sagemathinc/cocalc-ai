@@ -42,18 +42,20 @@ export const NOTIFICATION_EMAIL_MODES: {
 }[] = [
   {
     key: "immediate",
-    label: "Immediate",
-    description: "Email me soon after this notification happens.",
+    label: "Immediate email and in-app",
+    description:
+      "Send an email soon after this happens and show an in-app notification.",
   },
   {
     key: "digest",
-    label: "Daily digest",
-    description: "Include this in one daily summary email.",
+    label: "Digest email and in-app",
+    description:
+      "Include this in a daily email digest and show an in-app notification.",
   },
   {
     key: "off",
-    label: "CoCalc only",
-    description: "Show this in CoCalc, but do not email me.",
+    label: "In-app only",
+    description: "Show an in-app notification, but do not send email.",
   },
 ];
 

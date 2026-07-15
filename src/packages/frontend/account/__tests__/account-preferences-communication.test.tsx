@@ -48,33 +48,37 @@ jest.mock("antd", () => ({
       {children}
     </section>
   ),
-  Radio: {
-    Group: ({
-      options,
-      onChange,
-    }: {
-      options: {
-        disabled?: boolean;
-        value: NotificationEmailMode;
-        label: string;
-      }[];
-      onChange: (event: { target: { value: NotificationEmailMode } }) => void;
-    }) => (
-      <div>
-        {options.map((option) => (
-          <button
-            data-testid={`mode-${option.value}`}
-            disabled={option.disabled}
-            key={option.value}
-            onClick={() => onChange({ target: { value: option.value } })}
-            type="button"
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-    ),
-  },
+  Select: ({
+    options,
+    onChange,
+    value,
+  }: {
+    options: {
+      disabled?: boolean;
+      value: NotificationEmailMode;
+      label: string;
+    }[];
+    onChange: (value: NotificationEmailMode) => void;
+    value: NotificationEmailMode;
+  }) => (
+    <select
+      data-testid="delivery-mode"
+      onChange={(event) =>
+        onChange(event.currentTarget.value as NotificationEmailMode)
+      }
+      value={value}
+    >
+      {options.map((option) => (
+        <option
+          disabled={option.disabled}
+          key={option.value}
+          value={option.value}
+        >
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
   Space: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Table: ({ columns, dataSource, rowKey }: any) => (
     <table>
@@ -176,27 +180,34 @@ describe("AccountPreferencesCommunication", () => {
     ]);
 
     const billingRow = screen.getByTestId("notification-row-billing");
+    const billingSelect = within(billingRow).getByTestId(
+      "delivery-mode",
+    ) as HTMLSelectElement;
     expect(
-      (within(billingRow).getByTestId("mode-immediate") as HTMLButtonElement)
-        .disabled,
-    ).toBe(false);
-    expect(
-      (within(billingRow).getByTestId("mode-digest") as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
-    expect(
-      (within(billingRow).getByTestId("mode-off") as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
+      Array.from(billingSelect.options).map(({ disabled, text, value }) => ({
+        disabled,
+        text,
+        value,
+      })),
+    ).toEqual([
+      {
+        disabled: false,
+        text: "Immediate email and in-app",
+        value: "immediate",
+      },
+      { disabled: true, text: "Digest email and in-app", value: "digest" },
+      { disabled: true, text: "In-app only", value: "off" },
+    ]);
   });
 
   it("persists notification_preferences when a category mode changes", () => {
     render(<AccountPreferencesCommunication />);
 
-    fireEvent.click(
+    fireEvent.change(
       within(screen.getByTestId("notification-row-ai")).getByTestId(
-        "mode-immediate",
+        "delivery-mode",
       ),
+      { target: { value: "immediate" } },
     );
 
     expect(setOtherSettings).toHaveBeenCalledWith(
@@ -215,10 +226,11 @@ describe("AccountPreferencesCommunication", () => {
   it("persists marketing consent and product email preference together", () => {
     render(<AccountPreferencesCommunication />);
 
-    fireEvent.click(
+    fireEvent.change(
       within(screen.getByTestId("notification-row-product")).getByTestId(
-        "mode-digest",
+        "delivery-mode",
       ),
+      { target: { value: "digest" } },
     );
 
     expect(setOtherSettings).toHaveBeenCalledWith("newsletter", true);

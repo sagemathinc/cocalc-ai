@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Radio, Space, Table } from "antd";
+import { Alert, Select, Space, Table } from "antd";
 import type { TableColumnsType } from "antd";
 import { defineMessage } from "react-intl";
 
@@ -95,11 +95,9 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
     {
       key: "delivery",
       render: (_, category) => (
-        <Radio.Group
+        <Select
           value={notificationPreferences.email[category.key]}
-          onChange={(e) =>
-            setNotificationEmailMode(category.key, e.target.value)
-          }
+          onChange={(mode) => setNotificationEmailMode(category.key, mode)}
           options={deliveryOptions(category)}
         />
       ),
