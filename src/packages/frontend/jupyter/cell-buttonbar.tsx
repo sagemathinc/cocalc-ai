@@ -81,6 +81,15 @@ export const CellButtonBar: React.FC<Props> = React.memo(
 
     const frameActions = useNotebookFrameActions();
     const [formatting, setFormatting] = useState<boolean>(false);
+    // The button bar is normally only shown while the cell is hovered
+    // (showControls).  The dropdown popups render in a portal outside the
+    // cell's DOM, so when a menu opens upward (near the bottom of the
+    // viewport), moving the pointer into it leaves the cell and would unmount
+    // the menu's own trigger, instantly closing the menu.  Pin the controls
+    // visible while any of the dropdown menus is open.
+    const [runMenuOpen, setRunMenuOpen] = useState<boolean>(false);
+    const [actionMenuOpen, setActionMenuOpen] = useState<boolean>(false);
+    const controlsVisible = showControls || runMenuOpen || actionMenuOpen;
 
     const isCodeCell = cell_type === "code";
     const isMarkdownCell = cell_type === "markdown";
@@ -139,6 +148,7 @@ export const CellButtonBar: React.FC<Props> = React.memo(
             type="text"
             trigger={["click"]}
             mouseLeaveDelay={1.5}
+            onOpenChange={setRunMenuOpen}
             icon={
               <Icon
                 name="angle-down"
@@ -259,6 +269,7 @@ export const CellButtonBar: React.FC<Props> = React.memo(
           frameActions={frameActions}
           id={id}
           cell={cell}
+          onOpenChange={setActionMenuOpen}
         />
       );
     }
@@ -301,11 +312,11 @@ export const CellButtonBar: React.FC<Props> = React.memo(
             gap: "3px",
           }}
         >
-          {showControls ? renderCodeBarRunStop() : null}
-          {showControls ? renderCodeBarAIButtons() : null}
-          {showControls ? renderMarkdownEditButton() : null}
-          {showControls ? renderCodeBarFormatButton() : null}
-          {showControls ? renderDropdownMenu() : null}
+          {controlsVisible ? renderCodeBarRunStop() : null}
+          {controlsVisible ? renderCodeBarAIButtons() : null}
+          {controlsVisible ? renderMarkdownEditButton() : null}
+          {controlsVisible ? renderCodeBarFormatButton() : null}
+          {controlsVisible ? renderDropdownMenu() : null}
           {renderCodeBarCellTiming()}
           <CellIndexNumber index={index} />
         </div>
