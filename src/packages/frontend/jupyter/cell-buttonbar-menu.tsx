@@ -6,6 +6,7 @@
 import type { MenuProps } from "antd";
 import { Button, Dropdown } from "antd";
 import copy from "copy-to-clipboard";
+import { useState } from "react";
 import { useIntl } from "react-intl";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { Icon } from "@cocalc/frontend/components";
@@ -18,8 +19,27 @@ import {
   SPLIT_CELL_ICON,
 } from "./consts";
 
-export function CodeBarDropdownMenu({ actions, frameActions, id, cell }) {
+export function CodeBarDropdownMenu({
+  actions,
+  frameActions,
+  id,
+  cell,
+  onOpenChange,
+}: {
+  actions;
+  frameActions;
+  id;
+  cell;
+  // called with the dropdown's open state, e.g. so the parent button bar can
+  // stay mounted while the menu is open even when the cell is not hovered.
+  onOpenChange?: (open: boolean) => void;
+}) {
   const intl = useIntl();
+  const [open, setOpen] = useState<boolean>(false);
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  };
 
   // All jupyter commands
   const allCommands = commands({
@@ -344,6 +364,8 @@ export function CodeBarDropdownMenu({ actions, frameActions, id, cell }) {
 
   return (
     <Dropdown
+      open={open}
+      onOpenChange={handleOpenChange}
       menu={{ items, style: { maxHeight: "50vh", overflow: "auto" } }}
       arrow
       trigger={["click"]}
