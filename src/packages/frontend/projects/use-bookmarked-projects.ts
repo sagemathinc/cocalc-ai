@@ -18,7 +18,7 @@ bm.on('change', (e) => console.log('Bookmark change:', e))
  */
 
 import { uniq } from "lodash";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 import { redux } from "@cocalc/frontend/app-framework";
@@ -169,55 +169,66 @@ export function useBookmarkedProjects() {
     };
   }, []);
 
-  function setProjectBookmarked(project_id: string, bookmarked: boolean) {
-    if (!bookmarks || !isInitialized) {
-      console.warn("Conat bookmarks not yet initialized");
-      return;
-    }
+  // These are memoized so that consumers can safely use them in
+  // useMemo/useCallback dependency lists (e.g. the projects table derives
+  // its row records and columns from them) without recomputing on every
+  // render.
+  const setProjectBookmarked = useCallback(
+    (project_id: string, bookmarked: boolean) => {
+      if (!bookmarks || !isInitialized) {
+        console.warn("Conat bookmarks not yet initialized");
+        return;
+      }
 
-    const previous = bookmarkedProjectsRef.current;
-    const next = bookmarked
-      ? uniq([project_id, ...previous])
-      : previous.filter((p) => p !== project_id);
+      const previous = bookmarkedProjectsRef.current;
+      const next = bookmarked
+        ? uniq([project_id, ...previous])
+        : previous.filter((p) => p !== project_id);
 
-    // Update all hook users immediately for responsive UI.
-    setCurrentBookmarkedProjects(next);
+      // Update all hook users immediately for responsive UI.
+      setCurrentBookmarkedProjects(next);
 
-    // Store to conat (this will also trigger the change event for other clients)
-    try {
-      bookmarks.set(PROJECTS_KEY, next);
-    } catch (err) {
-      console.warn(`conat bookmark storage warning -- ${err}`);
-      // Revert local state on error
-      setCurrentBookmarkedProjects(previous);
-    }
-  }
+      // Store to conat (this will also trigger the change event for other clients)
+      try {
+        bookmarks.set(PROJECTS_KEY, next);
+      } catch (err) {
+        console.warn(`conat bookmark storage warning -- ${err}`);
+        // Revert local state on error
+        setCurrentBookmarkedProjects(previous);
+      }
+    },
+    [bookmarks, isInitialized],
+  );
 
-  function setBookmarkedProjectsOrder(
-    newBookmarkedProjects: BookmarkedProjects,
-  ) {
-    if (!bookmarks || !isInitialized) {
-      console.warn("Conat bookmarks not yet initialized");
-      return;
-    }
+  const setBookmarkedProjectsOrder = useCallback(
+    (newBookmarkedProjects: BookmarkedProjects) => {
+      if (!bookmarks || !isInitialized) {
+        console.warn("Conat bookmarks not yet initialized");
+        return;
+      }
 
-    const previous = bookmarkedProjectsRef.current;
-    // Update all hook users immediately for responsive UI.
-    setCurrentBookmarkedProjects(newBookmarkedProjects);
+      const previous = bookmarkedProjectsRef.current;
+      // Update all hook users immediately for responsive UI.
+      setCurrentBookmarkedProjects(newBookmarkedProjects);
 
-    // Store to conat (this will also trigger the change event for other clients)
-    try {
-      bookmarks.set(PROJECTS_KEY, newBookmarkedProjects);
-    } catch (err) {
-      console.warn(`conat bookmark storage warning -- ${err}`);
-      // Revert local state on error
-      setCurrentBookmarkedProjects(previous);
-    }
-  }
+      // Store to conat (this will also trigger the change event for other clients)
+      try {
+        bookmarks.set(PROJECTS_KEY, newBookmarkedProjects);
+      } catch (err) {
+        console.warn(`conat bookmark storage warning -- ${err}`);
+        // Revert local state on error
+        setCurrentBookmarkedProjects(previous);
+      }
+    },
+    [bookmarks, isInitialized],
+  );
 
-  function isProjectBookmarked(project_id: string): boolean {
-    return bookmarkedProjects.includes(project_id);
-  }
+  const isProjectBookmarked = useCallback(
+    (project_id: string): boolean => {
+      return bookmarkedProjects.includes(project_id);
+    },
+    [bookmarkedProjects],
+  );
 
   return {
     bookmarkedProjects,
