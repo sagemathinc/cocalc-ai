@@ -609,14 +609,12 @@ export function FileTab(props: Readonly<Props>) {
         }
         return tooltip({ project_id });
       }}
-      content={
-        // only editor-tabs can pop up
-        !isFixedTab ? (
-          <span style={{ color: COLORS.GRAY }}>
-            Hint: Shift+click to open in new window.
-          </span>
-        ) : undefined
-      }
+      content={() => (
+        // only editor-tabs can pop up (we returned early above for fixed tabs)
+        <span style={{ color: COLORS.GRAY }}>
+          Hint: Shift+click to open in new window.
+        </span>
+      )}
       mouseEnterDelay={1}
       placement={props.placement ?? "bottom"}
     >

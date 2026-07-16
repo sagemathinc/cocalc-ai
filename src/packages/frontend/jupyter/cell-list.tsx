@@ -23,7 +23,6 @@ import {
 import { React, useIsMountedRef } from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
 import {
-  DragHandle,
   SortableItem,
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
@@ -450,18 +449,6 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
     if (index == null) {
       index = cell_list.indexOf(id) ?? 0;
     }
-    const dragHandle = actions?.store?.is_cell_editable(id) ? (
-      <DragHandle
-        id={id}
-        style={{
-          position: "relative",
-          left: 0,
-          top: 0,
-          color: "#aaa",
-        }}
-      />
-    ) : undefined;
-
     return (
       <div key={id}>
         <Cell
@@ -491,7 +478,7 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
           aiTools={aiTools}
           isFirst={isFirst}
           isLast={isLast}
-          dragHandle={dragHandle}
+          showDragHandle={!!actions?.store.is_cell_editable(id)}
           read_only={read_only}
           isDragging={isDragging}
           isPending={pendingCells?.has(id)}

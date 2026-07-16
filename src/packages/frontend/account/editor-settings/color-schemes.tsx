@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2020-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -13,7 +13,10 @@ import { CSS } from "@cocalc/frontend/app-framework";
 import { Icon, LabeledRow, SelectorInput } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { AsyncComponent } from "@cocalc/frontend/misc/async-component";
-import { EDITOR_COLOR_SCHEMES } from "@cocalc/util/db-schema/accounts";
+import {
+  DEFAULT_EDITOR_THEME,
+  EDITOR_COLOR_SCHEMES,
+} from "@cocalc/util/db-schema/accounts";
 
 interface Props {
   theme: string;
@@ -44,10 +47,10 @@ export function EditorSettingsColorScheme(props: Props): React.JSX.Element {
     >
       <LabeledRow label={capitalize(title)}>
         <Button
-          disabled={props.theme === "default"}
+          disabled={props.theme === DEFAULT_EDITOR_THEME}
           style={{ float: "right" }}
           onClick={() => {
-            props.on_change("default");
+            props.on_change(DEFAULT_EDITOR_THEME);
           }}
         >
           {intl.formatMessage(labels.reset)}

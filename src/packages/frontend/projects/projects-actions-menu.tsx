@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2025-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -16,7 +16,7 @@
 import type { ProjectTableRecord } from "./projects-table-columns";
 
 import { Dropdown, MenuProps, Modal } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 
 import {
@@ -61,7 +61,47 @@ interface Props {
 }
 
 export function ProjectActionsMenu({ record, onToggleDetails }: Props) {
+  const [hydrated, setHydrated] = useState(false);
   const [open, setOpen] = useState(false);
+
+  // Lazy-hydrate: the full menu subtree (with its redux subscriptions and
+  // submenu helpers) only mounts after the ellipsis button is first used.
+  if (!hydrated) {
+    return (
+      <div
+        onClick={(e) => {
+          e.stopPropagation();
+          setHydrated(true);
+          setOpen(true);
+        }}
+        style={{ cursor: "pointer" }}
+      >
+        <span style={{ fontSize: "18px", padding: "4px 8px" }}>
+          <Icon name="ellipsis" rotate="90" />
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <HydratedProjectActionsMenu
+      record={record}
+      onToggleDetails={onToggleDetails}
+      open={open}
+      setOpen={setOpen}
+    />
+  );
+}
+
+function HydratedProjectActionsMenu({
+  record,
+  onToggleDetails,
+  open,
+  setOpen,
+}: Props & {
+  open: boolean;
+  setOpen: (open: boolean) => void;
+}) {
   const [moveOpen, setMoveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -86,12 +126,17 @@ export function ProjectActionsMenu({ record, onToggleDetails }: Props) {
     "project_log",
   );
 
-  // Initialize project_log when menu opens if not already loaded
-  function handleOpenChange(newOpen: boolean) {
-    setOpen(newOpen);
-    if (newOpen && project_log == null) {
+  // Initialize project_log when menu opens if not already loaded.  This
+  // component mounts with the menu already open (lazy hydration), so the
+  // first open happens on mount rather than via onOpenChange.
+  useEffect(() => {
+    if (open && project_log == null) {
       redux.getProjectActions(record.project_id)?.refresh_project_log();
     }
+  }, [open]);
+
+  function handleOpenChange(newOpen: boolean) {
+    setOpen(newOpen);
   }
 
   // Check if user is owner of this project

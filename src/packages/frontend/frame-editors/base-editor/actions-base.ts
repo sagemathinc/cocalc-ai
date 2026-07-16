@@ -547,8 +547,11 @@ export class BaseEditorActions<
       // local edits that may have happened after the commit.
       manager.recordLocalCommit(remoteValue, latest);
       if (!cm || localSnapshot === remoteValue) {
-        // Keep store in sync without rewriting the buffer.
-        this.setState({ value: remoteValue });
+        // Keep store in sync without rewriting the buffer, but avoid
+        // dispatching a redundant store update when nothing changed.
+        if (this.store?.get("value") !== remoteValue) {
+          this.setState({ value: remoteValue });
+        }
       }
       return;
     }

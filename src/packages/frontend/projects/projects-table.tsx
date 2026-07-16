@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2025-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -15,7 +15,7 @@
  */
 
 import { Table } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -86,24 +86,47 @@ export function ProjectsTable({
 
   const tableData = useProjectTableRecords({ visible_projects, projectLabel });
 
-  const handleToggleStar = (project_id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const isStarred = isProjectBookmarked(project_id);
-    setProjectBookmarked(project_id, !isStarred);
-  };
+  const handleToggleStar = useCallback(
+    (project_id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      const isStarred = isProjectBookmarked(project_id);
+      setProjectBookmarked(project_id, !isStarred);
+    },
+    [isProjectBookmarked, setProjectBookmarked],
+  );
 
-  const handleToggleExpand = (record: ProjectTableRecord) => {
-    actions.toggle_expanded_project(record.project_id);
-  };
+  const handleToggleExpand = useCallback(
+    (record: ProjectTableRecord) => {
+      actions.toggle_expanded_project(record.project_id);
+    },
+    [actions],
+  );
 
-  const renderActionsMenu = (record: ProjectTableRecord) => {
-    return (
-      <ProjectActionsMenu
-        record={record}
-        onToggleDetails={() => handleToggleExpand(record)}
-      />
-    );
-  };
+  const renderActionsMenu = useCallback(
+    (record: ProjectTableRecord) => {
+      return (
+        <ProjectActionsMenu
+          record={record}
+          onToggleDetails={() => handleToggleExpand(record)}
+        />
+      );
+    },
+    [handleToggleExpand],
+  );
+
+  const handleOpenProject = useCallback(
+    (record: ProjectTableRecord, e?: React.MouseEvent) => {
+      if (record.deletionBlocked) {
+        return;
+      }
+      actions.open_project({
+        project_id: record.project_id,
+        target: "files/",
+        switch_to: !(e?.button === 1 || e?.ctrlKey || e?.metaKey),
+      });
+    },
+    [actions],
+  );
 
   // Compute all unique collaborators and their information for filtering
   const collaboratorFilters = useMemo(() => {
@@ -162,7 +185,33 @@ export function ProjectsTable({
     return filters;
   }, [actions, visible_projects, project_map, user_map]);
 
-  const columns = getProjectTableColumns(
+  const columns = useMemo(() => {
+    const cols = getProjectTableColumns(
+      handleToggleStar,
+      renderActionsMenu,
+      handleOpenProject,
+      sortState,
+      collaboratorFilters,
+      narrow,
+      filteredCollaborators,
+      intl,
+      {
+        rootfsImages,
+        rootfsImagesLoading,
+        onOpenRootfs: (record, e) => {
+          e.stopPropagation();
+          setRootfsModalProjectId(record.project_id);
+        },
+      },
+    );
+    if (!freezeOrder) {
+      return cols;
+    }
+    return cols.map((column) => {
+      const { sorter: _sorter, sortOrder: _sortOrder, ...rest } = column;
+      return rest;
+    });
+  }, [
     handleToggleStar,
     renderActionsMenu,
     handleOpenProject,
@@ -171,32 +220,10 @@ export function ProjectsTable({
     narrow,
     filteredCollaborators,
     intl,
-    {
-      rootfsImages,
-      rootfsImagesLoading,
-      onOpenRootfs: (record, e) => {
-        e.stopPropagation();
-        setRootfsModalProjectId(record.project_id);
-      },
-    },
-  ).map((column) => {
-    if (!freezeOrder) {
-      return column;
-    }
-    const { sorter: _sorter, sortOrder: _sortOrder, ...rest } = column;
-    return rest;
-  });
-
-  function handleOpenProject(record: ProjectTableRecord, e?: React.MouseEvent) {
-    if (record.deletionBlocked) {
-      return;
-    }
-    actions.open_project({
-      project_id: record.project_id,
-      target: "files/",
-      switch_to: !(e?.button === 1 || e?.ctrlKey || e?.metaKey),
-    });
-  }
+    rootfsImages,
+    rootfsImagesLoading,
+    freezeOrder,
+  ]);
 
   function handleTableChange(_: any, filters: any, sorter: any) {
     // Update sort state when columnKey and order are present
