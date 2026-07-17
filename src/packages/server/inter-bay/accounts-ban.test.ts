@@ -10,21 +10,26 @@ const getClusterAccountByEmailDirectMock = jest.fn();
 const getClusterBanEquivalentEmailAccountsDirectMock = jest.fn();
 const reserveClusterAccountDirectoryEntryMock = jest.fn();
 const deleteStaleLocalClusterAccountDirectoryEntryByEmailMock = jest.fn();
+const touchClusterAccountDirectoryEntryDirectMock = jest.fn();
 const updateClusterAccountBannedDirectMock = jest.fn();
 const banUserMock = jest.fn();
 const removeUserBanMock = jest.fn();
 const quarantineAccountBillingResourcesLocalMock = jest.fn();
 const recordAccountBanAuditEventMock = jest.fn();
 const remoteSetBanMock = jest.fn();
+const remoteTouchMock = jest.fn();
 const assertSignupEmailDomainAllowedMock = jest.fn();
+const getConfiguredClusterRoleMock = jest.fn();
+const isMultiBayClusterMock = jest.fn();
 
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: jest.fn(() => "bay-1"),
 }));
 
 jest.mock("@cocalc/server/cluster-config", () => ({
-  getConfiguredClusterRole: jest.fn(() => "seed"),
-  isMultiBayCluster: jest.fn(() => true),
+  getConfiguredClusterRole: (...args: any[]) =>
+    getConfiguredClusterRoleMock(...args),
+  isMultiBayCluster: (...args: any[]) => isMultiBayClusterMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
@@ -35,6 +40,7 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
   createInterBayAccountDirectoryClient: jest.fn(() => ({
     getBanEquivalentEmailAccounts: (...args: any[]) =>
       getClusterBanEquivalentEmailAccountsDirectMock(...args),
+    touch: (...args: any[]) => remoteTouchMock(...args),
     updateBanned: (...args: any[]) =>
       updateClusterAccountBannedDirectMock(...args),
   })),
@@ -58,6 +64,8 @@ jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
   markClusterAccountProvisioned: jest.fn(),
   reserveClusterAccountDirectoryEntry: (...args: any[]) =>
     reserveClusterAccountDirectoryEntryMock(...args),
+  touchClusterAccountDirectoryEntryDirect: (...args: any[]) =>
+    touchClusterAccountDirectoryEntryDirectMock(...args),
   updateClusterAccountBannedDirect: (...args: any[]) =>
     updateClusterAccountBannedDirectMock(...args),
 }));
@@ -87,13 +95,19 @@ describe("inter-bay account ban routing", () => {
     jest.resetModules();
     getClusterAccountByIdDirectMock.mockReset();
     getClusterAccountByEmailDirectMock.mockReset().mockResolvedValue(null);
+    getConfiguredClusterRoleMock.mockReset().mockReturnValue("seed");
     getClusterBanEquivalentEmailAccountsDirectMock
       .mockReset()
       .mockResolvedValue([]);
+    isMultiBayClusterMock.mockReset().mockReturnValue(true);
     deleteStaleLocalClusterAccountDirectoryEntryByEmailMock
       .mockReset()
       .mockResolvedValue(undefined);
     reserveClusterAccountDirectoryEntryMock.mockReset().mockResolvedValue(null);
+    remoteTouchMock.mockReset().mockResolvedValue(undefined);
+    touchClusterAccountDirectoryEntryDirectMock
+      .mockReset()
+      .mockResolvedValue(undefined);
     updateClusterAccountBannedDirectMock.mockReset().mockResolvedValue({
       account_id: "00000000-0000-4000-8000-000000000001",
       home_bay_id: "bay-1",
@@ -145,6 +159,23 @@ describe("inter-bay account ban routing", () => {
       account_id: "00000000-0000-4000-8000-000000000001",
       banned: true,
     });
+  });
+
+  it("updates local directory activity in single-bay mode and throttles repeats", async () => {
+    isMultiBayClusterMock.mockReturnValue(false);
+    const account_id = "00000000-0000-4000-8000-000000000001";
+
+    const { touchClusterAccountDirectoryEntry } = await import("./accounts");
+    await touchClusterAccountDirectoryEntry({ account_id });
+    await touchClusterAccountDirectoryEntry({ account_id });
+
+    expect(touchClusterAccountDirectoryEntryDirectMock).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(touchClusterAccountDirectoryEntryDirectMock).toHaveBeenCalledWith(
+      account_id,
+    );
+    expect(remoteTouchMock).not.toHaveBeenCalled();
   });
 
   it("routes bans to a remote account home bay before syncing the directory", async () => {

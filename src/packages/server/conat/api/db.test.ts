@@ -7,6 +7,24 @@ let queryMock: jest.Mock;
 let mockGetBlob: jest.Mock;
 let mockSha1: jest.Mock;
 let mockAssertCollab: jest.Mock;
+let mockTouch: jest.Mock;
+let mockTouchClusterAccountDirectoryEntry: jest.Mock;
+
+jest.mock("@cocalc/backend/logger", () => ({
+  __esModule: true,
+  default: jest.fn(() => ({
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  })),
+  getLogger: jest.fn(() => ({
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  })),
+}));
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -19,11 +37,17 @@ jest.mock("@cocalc/database", () => ({
   db: () => ({
     get_blob: mockGetBlob,
     sha1: mockSha1,
+    touch: mockTouch,
   }),
 }));
 
 jest.mock("./util", () => ({
   assertCollab: (...args: any[]) => mockAssertCollab(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  touchClusterAccountDirectoryEntry: (...args: any[]) =>
+    mockTouchClusterAccountDirectoryEntry(...args),
 }));
 
 describe("conat db api", () => {
@@ -32,6 +56,10 @@ describe("conat db api", () => {
     mockGetBlob = jest.fn(({ cb }) => cb(undefined, Buffer.from("patches")));
     mockSha1 = jest.fn(() => "syncstring-id");
     mockAssertCollab = jest.fn(async () => {});
+    mockTouch = jest.fn(({ cb }) => cb?.());
+    mockTouchClusterAccountDirectoryEntry = jest
+      .fn()
+      .mockResolvedValue(undefined);
   });
 
   it("only removes blob TTLs for blobs owned by the caller account", async () => {
@@ -91,5 +119,35 @@ describe("conat db api", () => {
     ).resolves.toBe("patches");
 
     expect(mockAssertCollab).not.toHaveBeenCalled();
+  });
+
+  it("best-effort touches the account directory after account activity", async () => {
+    const { touch } = await import("./db");
+    const account_id = "22222222-2222-4222-8222-222222222222";
+
+    await touch({ account_id });
+
+    expect(mockTouch).toHaveBeenCalledWith(
+      expect.objectContaining({ account_id, action: "edit" }),
+    );
+    expect(mockTouchClusterAccountDirectoryEntry).toHaveBeenCalledWith({
+      account_id,
+    });
+  });
+
+  it("best-effort touches the account directory after project activity", async () => {
+    const { touch } = await import("./db");
+    const account_id = "22222222-2222-4222-8222-222222222222";
+    const project_id = "33333333-3333-4333-8333-333333333333";
+
+    await touch({ account_id, project_id, action: "edit" });
+
+    expect(mockAssertCollab).toHaveBeenCalledWith({ account_id, project_id });
+    expect(mockTouch).toHaveBeenCalledWith(
+      expect.objectContaining({ account_id, project_id, action: "edit" }),
+    );
+    expect(mockTouchClusterAccountDirectoryEntry).toHaveBeenCalledWith({
+      account_id,
+    });
   });
 });

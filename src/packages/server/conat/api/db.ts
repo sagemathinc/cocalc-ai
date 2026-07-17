@@ -1,9 +1,11 @@
 import { db } from "@cocalc/database";
+import getLogger from "@cocalc/backend/logger";
 import userQuery from "@cocalc/database/user-query";
 import { callback2 } from "@cocalc/util/async-utils";
 import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 import { assertCollab } from "./util";
+import { touchClusterAccountDirectoryEntry } from "@cocalc/server/inter-bay/accounts";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
 import {
   assertCanSaveBlobForAccount,
@@ -13,6 +15,17 @@ import {
 } from "@cocalc/server/membership/blob-limits";
 
 export { userQuery };
+
+const logger = getLogger("server:conat:api:db");
+
+function touchAccountDirectoryBestEffort(account_id: string): void {
+  touchClusterAccountDirectoryEntry({ account_id }).catch((err) => {
+    logger.debug("failed to touch cluster account directory", {
+      account_id,
+      err: `${err}`,
+    });
+  });
+}
 
 export async function touch({
   account_id,
@@ -31,10 +44,12 @@ export async function touch({
   }
   if (!project_id) {
     await callback2(D.touch, { account_id, action });
+    touchAccountDirectoryBestEffort(account_id);
     return;
   }
   await assertCollab({ account_id, project_id });
   await callback2(D.touch, { account_id, project_id, path, action });
+  touchAccountDirectoryBestEffort(account_id);
 }
 
 export async function getLegacyTimeTravelInfo({

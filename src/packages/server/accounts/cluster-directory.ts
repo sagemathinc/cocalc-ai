@@ -279,6 +279,17 @@ export async function ensureClusterAccountApiKeyDirectorySchema(): Promise<void>
   );
 }
 
+let clusterAccountDirectoryTouchSchemaReady: Promise<void> | undefined;
+
+async function ensureClusterAccountDirectoryTouchSchema(): Promise<void> {
+  clusterAccountDirectoryTouchSchemaReady ??=
+    ensureClusterAccountDirectorySchema().catch((err) => {
+      clusterAccountDirectoryTouchSchemaReady = undefined;
+      throw err;
+    });
+  await clusterAccountDirectoryTouchSchemaReady;
+}
+
 function canonicalLocalEntry(row: any): AccountDirectoryEntry {
   const display_name =
     displayNameFromAccount({
@@ -1063,7 +1074,7 @@ export async function touchClusterAccountDirectoryEntryDirect(
   if (!isValidUUID(account_id)) {
     return;
   }
-  await ensureClusterAccountDirectorySchema();
+  await ensureClusterAccountDirectoryTouchSchema();
   await getPool().query(
     `UPDATE ${TABLE}
         SET last_active=NOW()

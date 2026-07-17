@@ -90,6 +90,30 @@ function currentBayId(): string {
   return getConfiguredBayId();
 }
 
+const ACCOUNT_DIRECTORY_TOUCH_MIN_INTERVAL_MS = 120_000;
+const ACCOUNT_DIRECTORY_TOUCH_MAX_CACHE_AGE_MS = 10 * 60_000;
+const accountDirectoryTouchedAt = new Map<string, number>();
+
+function shouldTouchAccountDirectory(account_id: string): boolean {
+  if (!isValidUUID(account_id)) {
+    return false;
+  }
+  const now = Date.now();
+  const last = accountDirectoryTouchedAt.get(account_id) ?? 0;
+  if (now - last < ACCOUNT_DIRECTORY_TOUCH_MIN_INTERVAL_MS) {
+    return false;
+  }
+  accountDirectoryTouchedAt.set(account_id, now);
+  if (accountDirectoryTouchedAt.size > 10_000) {
+    for (const [id, touchedAt] of accountDirectoryTouchedAt) {
+      if (now - touchedAt > ACCOUNT_DIRECTORY_TOUCH_MAX_CACHE_AGE_MS) {
+        accountDirectoryTouchedAt.delete(id);
+      }
+    }
+  }
+  return true;
+}
+
 export async function getClusterAccountById(
   account_id: string,
 ): Promise<AccountDirectoryEntry | null> {
@@ -280,16 +304,21 @@ export async function touchClusterAccountDirectoryEntry(opts: {
   const normalized = {
     account_id: `${opts.account_id ?? ""}`.trim().toLowerCase(),
   };
-  if (!isMultiBayCluster()) {
+  if (!shouldTouchAccountDirectory(normalized.account_id)) {
     return;
   }
-  if (getConfiguredClusterRole() === "seed") {
-    await touchClusterAccountDirectoryEntryDirect(normalized.account_id);
-    return;
+  try {
+    if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+      await touchClusterAccountDirectoryEntryDirect(normalized.account_id);
+      return;
+    }
+    await createInterBayAccountDirectoryClient({
+      client: getInterBayFabricClient(),
+    }).touch(normalized);
+  } catch (err) {
+    accountDirectoryTouchedAt.delete(normalized.account_id);
+    throw err;
   }
-  await createInterBayAccountDirectoryClient({
-    client: getInterBayFabricClient(),
-  }).touch(normalized);
 }
 
 export async function getClusterAccountApiKeyByKeyId(
