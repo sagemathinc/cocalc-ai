@@ -36,7 +36,7 @@ import { EditorState } from "../frame-tree/types";
 import type { Actions } from "./actions";
 import { GutterMarkers } from "./codemirror-gutter-markers";
 import { SAVE_DEBOUNCE_MS } from "./const";
-import { get_linked_doc, has_doc, set_doc } from "./doc";
+import { connect_editor_doc } from "./doc";
 import { AccountState } from "../../account/types";
 import { attachSyncListeners } from "./cm-adapter";
 import {
@@ -894,19 +894,7 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
     if (cm == null) return;
     (cm as any)._actions = editor_actions();
 
-    if (props.value == null) {
-      if (!has_doc(props.project_id, props.path)) {
-        // save it to cache so can be used by other components/editors
-        set_doc(props.project_id, props.path, cm);
-      } else {
-        // has it already, so use that.
-        cm.swapDoc(get_linked_doc(props.project_id, props.path));
-      }
-    } else {
-      const value =
-        typeof props.value == "function" ? (props.value() ?? "") : props.value;
-      cm.setValue(value);
-    }
+    connect_editor_doc(cm, props.project_id, props.path, props.value);
 
     const throttled_save_editor_state = throttle(save_editor_state, 150);
     cm.on("scroll", () => throttled_save_editor_state(cm));
