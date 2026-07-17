@@ -3,7 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { CSSProperties, useEffect, useRef, useState } from "react";
+import {
+  CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { InlineCodeLink } from "@cocalc/chat";
 import { getStaticRender } from "./elements/register";
 import { slateCodeBlockThemeVars } from "./elements/code-block/render-theme";
@@ -23,6 +30,13 @@ interface Props {
 
 type PartialSlateEditor = any; // TODO
 
+interface StaticMarkdownRenderInput {
+  value: string;
+  inlineCodeLinks?: InlineCodeLink[];
+  inlineCodeProjectRoot?: string;
+  highlightQuery?: string;
+}
+
 export default function StaticMarkdown({
   value,
   style,
@@ -33,6 +47,8 @@ export default function StaticMarkdown({
   highlightQuery,
 }: Props) {
   const didMountRef = useRef(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const pendingRenderRef = useRef<StaticMarkdownRenderInput | null>(null);
   const [editor, setEditor] = useState<PartialSlateEditor>({
     children: renderStaticMarkdownChildren({
       value,
@@ -42,19 +58,63 @@ export default function StaticMarkdown({
     }),
   });
   const [change, setChange] = useState<number>(0);
+  const [hasPendingRender, setHasPendingRender] = useState(false);
+  const renderedChildren = useMemo(
+    () =>
+      editor?.children?.map((element, index) => (
+        <RenderElement key={index} element={element} />
+      )) ?? null,
+    [editor?.children],
+  );
+  const replaceEditor = useCallback((editor: PartialSlateEditor) => {
+    setEditor(editor);
+    setChange((change) => change + 1);
+  }, []);
+  const changeContext = useMemo(
+    () => ({ change, editor, setEditor: replaceEditor }),
+    [change, editor, replaceEditor],
+  );
+
+  useEffect(() => {
+    if (!hasPendingRender) return;
+    const flushPendingRender = () => {
+      const pending = pendingRenderRef.current;
+      if (pending == null || selectionIntersectsNode(rootRef.current)) {
+        return;
+      }
+      pendingRenderRef.current = null;
+      setHasPendingRender(false);
+      setEditor({ children: renderStaticMarkdownChildren(pending) });
+      setChange((change) => change + 1);
+    };
+    document.addEventListener("selectionchange", flushPendingRender);
+    return () => {
+      document.removeEventListener("selectionchange", flushPendingRender);
+    };
+  }, [hasPendingRender]);
+
   useEffect(() => {
     if (!didMountRef.current) {
       didMountRef.current = true;
       return;
     }
-    setEditor({
-      children: renderStaticMarkdownChildren({
-        value,
-        inlineCodeLinks,
-        inlineCodeProjectRoot,
-        highlightQuery,
-      }),
-    });
+    const nextRender = {
+      value,
+      inlineCodeLinks,
+      inlineCodeProjectRoot,
+      highlightQuery,
+    };
+    // Replacing rendered Markdown destroys native browser selections. Keep
+    // streaming the latest value, but do not replace selected DOM underneath
+    // somebody who is copying part of an activity log or response.
+    if (selectionIntersectsNode(rootRef.current)) {
+      pendingRenderRef.current = nextRender;
+      setHasPendingRender(true);
+      return;
+    }
+    pendingRenderRef.current = null;
+    setHasPendingRender(false);
+    setEditor({ children: renderStaticMarkdownChildren(nextRender) });
     setChange((change) => change + 1);
   }, [value, inlineCodeLinks, inlineCodeProjectRoot, highlightQuery]);
 
@@ -63,17 +123,9 @@ export default function StaticMarkdown({
   }
 
   return (
-    <ChangeContext.Provider
-      value={{
-        change,
-        editor,
-        setEditor: (editor) => {
-          setEditor(editor);
-          setChange((change) => change + 1);
-        },
-      }}
-    >
+    <ChangeContext.Provider value={changeContext}>
       <div
+        ref={rootRef}
         style={{
           width: "100%",
           ...slateCodeBlockThemeVars(editorTheme),
@@ -81,12 +133,36 @@ export default function StaticMarkdown({
         }}
         className={["cocalc-slate-render", className].filter(Boolean).join(" ")}
       >
-        {editor.children.map((element, n) => {
-          return <RenderElement key={n} element={element} />;
-        })}
+        {renderedChildren}
       </div>
     </ChangeContext.Provider>
   );
+}
+
+function selectionIntersectsNode(node: HTMLElement | null): boolean {
+  if (node == null) return false;
+  const selection = node.ownerDocument.defaultView?.getSelection();
+  if (
+    selection == null ||
+    selection.isCollapsed ||
+    selection.rangeCount === 0
+  ) {
+    return false;
+  }
+  if (
+    (selection.anchorNode != null && node.contains(selection.anchorNode)) ||
+    (selection.focusNode != null && node.contains(selection.focusNode))
+  ) {
+    return true;
+  }
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    try {
+      if (selection.getRangeAt(index).intersectsNode(node)) return true;
+    } catch {
+      // Ignore stale ranges from DOM that another renderer already replaced.
+    }
+  }
+  return false;
 }
 
 function renderStaticMarkdownChildren({

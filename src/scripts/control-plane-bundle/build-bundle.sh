@@ -8,6 +8,13 @@
 
 set -euo pipefail
 
+# Package-local TypeScript builds can exceed Node's 2 GB default heap while
+# assembling release bundles. Preserve an explicit operator-provided limit.
+case " ${NODE_OPTIONS:-} " in
+  *" --max-old-space-size="* | *" --max_old_space_size="* | *" --max-old-space-size "* | *" --max_old_space_size "*) ;;
+  *) export NODE_OPTIONS="${NODE_OPTIONS:+${NODE_OPTIONS} }--max-old-space-size=8192" ;;
+esac
+
 ROOT="$(realpath "$(dirname "${BASH_SOURCE[0]}")/../..")"
 ENTRYPOINT=""
 OUT=""
@@ -331,6 +338,7 @@ fi
 
 echo "- Build common control-plane runtime dependencies"
 pnpm --filter @cocalc/database run build
+pnpm --filter @cocalc/ai run build
 pnpm --filter @cocalc/server run build
 pnpm --filter @cocalc/http-api run build
 pnpm --filter @cocalc/hub run build
@@ -348,6 +356,13 @@ if [[ "$INCLUDE_PGLITE" -eq 1 ]]; then
   NCC_ARGS+=(--external @electric-sql/pglite)
 fi
 ncc_build "${NCC_ARGS[@]}"
+
+# Workspace packages must be part of the self-contained bundle. ncc can
+# silently leave them as runtime requires when their dist output was missing
+# as dependency analysis started, which only fails after a hub worker starts.
+if grep -nE 'eval\("require"\)\("@cocalc/' "$OUT/bundle/index.js" >&2; then
+  die "control-plane bundle contains unresolved @cocalc workspace imports"
+fi
 
 copy_native_pkg "bufferutil" "$OUT"
 copy_native_pkg "utf-8-validate" "$OUT"

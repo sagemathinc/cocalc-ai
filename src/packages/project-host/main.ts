@@ -86,7 +86,10 @@ import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { startCodexSubscriptionCacheGc } from "./codex/codex-subscription-cache-gc";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
-import { reconcileProjectCgroup } from "@cocalc/project-runner/run/podman";
+import {
+  reconcileProjectCgroup,
+  reconcileProjectNetworkLimits,
+} from "@cocalc/project-runner/run/podman";
 import { getOrCreateSelfSigned } from "@cocalc/lite/tls";
 import { handleDaemonCli } from "./daemon";
 import { startCopyWorker } from "./pending-copies";
@@ -1561,6 +1564,7 @@ export async function main(
         config: runnerConfigFromQuota(run_quota),
         force,
       }),
+    reconcileProjectNetworkLimits,
     recoverStaleRuntime: async (project_id) => {
       const stopped = await runnerApi.stop({ project_id, force: true });
       if (stopped?.state === "opened") {

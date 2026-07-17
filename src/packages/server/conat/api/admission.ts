@@ -5,7 +5,7 @@
 
 export type HubApiAdmissionDecision = {
   allowed: boolean;
-  source: "hub-api" | "hub-api-low-priority";
+  source: "hub-api" | "hub-api-low-priority" | "hub-api-account";
   reason?: string;
   maximum: number;
 };
@@ -39,14 +39,30 @@ export function getHubApiLowPriorityMaximum(maximum: number): number {
 export function getHubApiAdmissionDecision({
   active,
   maximum,
+  accountActive,
+  accountMaximum,
   key,
 }: {
   active: number;
   maximum: number;
+  accountActive?: number;
+  accountMaximum?: number;
   key: unknown;
 }): HubApiAdmissionDecision {
   const max = Math.max(1, Math.floor(Number(maximum)));
   const current = Math.max(0, Math.floor(Number(active)));
+  if (accountActive != null && accountMaximum != null) {
+    const accountCurrent = Math.max(0, Math.floor(Number(accountActive) || 0));
+    const accountMax = Math.max(1, Math.floor(Number(accountMaximum) || 1));
+    if (accountCurrent >= accountMax) {
+      return {
+        allowed: false,
+        source: "hub-api-account",
+        maximum: accountMax,
+        reason: "hub api per-account request budget is exhausted",
+      };
+    }
+  }
   const lowPriority = isLowPriorityHubApiMethod(key);
   if (lowPriority) {
     const lowPriorityMaximum = getHubApiLowPriorityMaximum(max);

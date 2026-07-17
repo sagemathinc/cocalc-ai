@@ -108,6 +108,40 @@ describe("browser session sync controller", () => {
     expect(upsertBrowserSession).toHaveBeenCalledTimes(2);
   });
 
+  it("does not let dirty-state rescheduling bypass retry backoff", async () => {
+    const upsertBrowserSession = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(undefined);
+
+    const { createBrowserSessionHeartbeat } = require("./session-heartbeat");
+    const heartbeat = createBrowserSessionHeartbeat({
+      hub: {
+        system: {
+          upsertBrowserSession,
+        },
+      },
+      getSnapshot: () => ({ browser_id: "browser-1", open_projects: [] }),
+      retryMs: 4_000,
+      maxRetryMs: 60_000,
+      retryBackoff: 2,
+      retryJitter: 0,
+    });
+
+    heartbeat.activate("acct-1");
+    heartbeat.resume();
+    heartbeat.markDirty(0);
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(upsertBrowserSession).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(3_999);
+    expect(upsertBrowserSession).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(1);
+    expect(upsertBrowserSession).toHaveBeenCalledTimes(2);
+  });
+
   it("reports consecutive failure counts to onFailure", async () => {
     const upsertBrowserSession = jest
       .fn()

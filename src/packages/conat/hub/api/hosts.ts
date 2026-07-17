@@ -616,13 +616,22 @@ export interface HostKernelSysctlMismatch {
   actual: number | null;
 }
 
+export interface HostKernelSysctlTextMismatch {
+  key: string;
+  target: string;
+  actual: string | null;
+}
+
 export interface HostKernelSysctlSnapshot {
   collected_at?: string;
   config_path?: string;
   targets: Record<string, number>;
   values: Record<string, number | null>;
+  text_targets?: Record<string, string>;
+  text_values?: Record<string, string | null>;
   ok: boolean;
   mismatches: HostKernelSysctlMismatch[];
+  text_mismatches?: HostKernelSysctlTextMismatch[];
   apply_attempted?: boolean;
   apply_succeeded?: boolean;
   error?: string;
@@ -914,6 +923,7 @@ export interface HostLogEntry {
 
 export type HostAvailabilityState =
   | "online"
+  | "unobserved"
   | "unavailable"
   | "recovering"
   | "degraded";
@@ -952,6 +962,7 @@ export interface HostAvailabilityDay {
   date: string;
   uptime_percent: number;
   online_ms: number;
+  unobserved_ms: number;
   planned_downtime_ms: number;
   unplanned_downtime_ms: number;
   outage_count: number;
@@ -960,15 +971,33 @@ export interface HostAvailabilityDay {
 
 export interface HostAvailabilitySummary {
   current_state: HostAvailabilityState;
+  current_healthy_interval_ms: number;
+  /** @deprecated Use current_healthy_interval_ms. */
   current_uptime_ms: number;
+  machine_uptime_ms?: number;
+  machine_boot_started_at?: string;
+  project_host_session_uptime_ms?: number;
+  project_host_session_started_at?: string;
   window_uptime_percent: number;
   reliability_percent: number;
   intended_online_ms: number;
   planned_downtime_ms: number;
   unplanned_downtime_ms: number;
+  unobserved_ms: number;
   unplanned_outage_count: number;
   longest_outage_ms: number;
   current_event?: HostAvailabilityEvent;
+  synthetic_probe?: {
+    status: "running" | "passed" | "failed";
+    checked_at?: string;
+    consecutive_failures: number;
+    quarantined: boolean;
+    total_checks: number;
+    passed_checks: number;
+    failed_checks: number;
+    pass_percent?: number;
+    error?: string;
+  };
 }
 
 export interface HostAvailabilityReport {

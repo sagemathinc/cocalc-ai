@@ -395,6 +395,10 @@ export function startConatRouterManagedEgressLoop({
           });
         }
       }
+    } catch (err) {
+      logger.warn("managed conat egress sampling failed", {
+        err: `${err}`,
+      });
     } finally {
       running = false;
     }

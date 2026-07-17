@@ -1829,12 +1829,19 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     availability?.summary.current_event &&
     availability.summary.current_state !== "online" ? (
       <Alert
-        type={availability.summary.current_event.planned ? "warning" : "error"}
+        type={
+          availability.summary.current_event.planned ||
+          availability.summary.current_state === "unobserved"
+            ? "warning"
+            : "error"
+        }
         showIcon
         message={
           availability.summary.current_event.planned
             ? "This host is intentionally unavailable"
-            : "This host is unavailable or recovering"
+            : availability.summary.current_state === "unobserved"
+              ? "Host observation is stale"
+              : "This host is unavailable or recovering"
         }
         description={availability.summary.current_event.summary}
       />

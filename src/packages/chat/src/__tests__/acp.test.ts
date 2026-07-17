@@ -13,6 +13,7 @@ import {
   getLatestEventLineText,
   getLatestMessageText,
   getLatestSummaryText,
+  mergeProgressiveMessageText,
 } from "../acp";
 
 function textEvent(
@@ -29,6 +30,15 @@ function textEvent(
 }
 
 describe("appendStreamMessage", () => {
+  test("never deduplicates a raw delta against the accumulated prefix", () => {
+    expect(
+      mergeProgressiveMessageText("Initial update.", "I", {
+        previousHasDelta: true,
+        nextIsDelta: true,
+      }),
+    ).toBe("Initial update. I");
+  });
+
   test("adds a separating space between adjacent markdown bold blocks", () => {
     const events = [textEvent("thinking", "**First block**", 1)];
     const merged = appendStreamMessage(

@@ -104,10 +104,7 @@ export class ContainerExecutor {
 
   // where the project is mounted on the host filesystem
   getMountPoint = (): string => {
-    if (!containerFileIO) {
-      throw Error("containerFileIO must be defined");
-    }
-    const projectRoot = containerFileIO.mountPoint(this.options.projectId);
+    const projectRoot = this.getProjectMountPoint();
     const runtimeRelative = projectRuntimeHomeRelativePath(
       this.options.workspaceRoot,
     );
@@ -115,6 +112,13 @@ export class ContainerExecutor {
       return projectRoot;
     }
     return path.join(projectRoot, runtimeRelative);
+  };
+
+  getProjectMountPoint = (): string => {
+    if (!containerFileIO) {
+      throw Error("containerFileIO must be defined");
+    }
+    return containerFileIO.mountPoint(this.options.projectId);
   };
 
   // Read a project file relative to the project root/workspaceRoot.

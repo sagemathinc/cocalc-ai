@@ -26,13 +26,16 @@ export function resolveWorkspaceRoot(
     // container paths alone.
     if (!requested) return DEFAULT_PROJECT_RUNTIME_HOME;
     const normalized = path.posix.normalize(requested);
+    if (!path.posix.isAbsolute(normalized)) {
+      return path.posix.resolve(DEFAULT_PROJECT_RUNTIME_HOME, normalized);
+    }
     if (normalized === DEFAULT_PROJECT_RUNTIME_HOME) {
       return DEFAULT_PROJECT_RUNTIME_HOME;
     }
     if (normalized.startsWith(`${DEFAULT_PROJECT_RUNTIME_HOME}/`)) {
       return normalized;
     }
-    return requested;
+    return normalized;
   }
   // Lite/local mode: respect absolute working dir; otherwise resolve from HOME.
   const home = process.env.HOME ?? process.cwd();

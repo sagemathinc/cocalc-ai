@@ -157,6 +157,38 @@ export async function ensureHostAvailabilitySchema(): Promise<void> {
         CHECK (state IN ('online', 'unavailable', 'recovering', 'degraded'))
       )
     `);
+    await pool().query(`
+      /* CREATE TABLE IF NOT EXISTS ${TABLE}: state-check-v2 migration */
+      DO $migration$
+      BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('${TABLE}:state-check-v2'));
+        IF NOT EXISTS (
+          SELECT 1
+            FROM pg_constraint
+           WHERE conrelid='${TABLE}'::regclass
+             AND conname='${TABLE}_state_check'
+             AND pg_get_constraintdef(oid) LIKE '%unobserved%'
+        ) THEN
+          ALTER TABLE ${TABLE}
+            DROP CONSTRAINT IF EXISTS ${TABLE}_state_check;
+          ALTER TABLE ${TABLE}
+            ADD CONSTRAINT ${TABLE}_state_check
+            CHECK (state IN ('online', 'unobserved', 'unavailable', 'recovering', 'degraded'));
+        END IF;
+        UPDATE ${TABLE}
+           SET state='unobserved', updated_at=NOW()
+         WHERE admin_note IS NULL
+           AND state <> 'unobserved'
+           AND (
+             (category='host_stale' AND planned=FALSE)
+             OR (
+               category='runtime_degraded'
+               AND summary LIKE 'Host synthetic project probe failed:%'
+             )
+           );
+      END
+      $migration$;
+    `);
     await pool().query(
       `CREATE INDEX IF NOT EXISTS ${TABLE}_host_started_idx
        ON ${TABLE} (host_id, started_at DESC)`,
@@ -392,6 +424,7 @@ export function classifyHostAvailabilitySnapshot(
       last_seen: lastSeen?.toISOString(),
       recovery_phase: recoveryPhase,
       runtime_health: runtimeHealth,
+      synthetic_probe: syntheticProbe,
       public_route_probe: publicRouteProbe,
     },
   };
@@ -407,7 +440,7 @@ export function classifyHostAvailabilitySnapshot(
   if (
     status === "running" &&
     heartbeatFresh &&
-    `${syntheticProbe.status ?? ""}` === "failed"
+    syntheticProbe.quarantined === true
   ) {
     return {
       ...base,
@@ -474,10 +507,11 @@ export function classifyHostAvailabilitySnapshot(
     if (status === "running") {
       return {
         ...base,
-        state: "unavailable",
+        state: "unobserved",
         planned: false,
         category: "host_stale",
-        summary: "Host is running at the provider but not reporting.",
+        summary:
+          "Host is expected to be running, but control-plane observation is stale.",
       };
     }
   }
@@ -502,10 +536,11 @@ export function classifyHostAvailabilitySnapshot(
   if (status === "running") {
     return {
       ...base,
-      state: "unavailable",
+      state: "unobserved",
       planned: false,
       category: "host_stale",
-      summary: "Host is running at the provider but not reporting.",
+      summary:
+        "Host is expected to be running, but control-plane observation is stale.",
     };
   }
   if (["starting", "restarting", "provisioning"].includes(status)) {
@@ -1090,6 +1125,18 @@ export async function getHostAvailabilityReport({
   await ensureHostAvailabilitySchema();
   const windowDays = clampWindowDays(days);
   const now = new Date();
+  const { rows: hostRows } = await pool().query<{
+    last_seen?: Date | string | null;
+    metadata?: Record<string, any> | null;
+  }>(
+    `SELECT last_seen, metadata
+       FROM project_hosts
+      WHERE id=$1
+      LIMIT 1`,
+    [hostId],
+  );
+  const hostRow = hostRows[0];
+  const hostMetadata = hostRow?.metadata ?? {};
   const todayStart = utcDayStart(now);
   const windowStart = new Date(
     todayStart.getTime() - (windowDays - 1) * DAY_MS,
@@ -1109,6 +1156,7 @@ export async function getHostAvailabilityReport({
     {
       total_ms: number;
       online_ms: number;
+      unobserved_ms: number;
       planned_downtime_ms: number;
       unplanned_downtime_ms: number;
       outage_count: number;
@@ -1123,6 +1171,7 @@ export async function getHostAvailabilityReport({
     daysMap.set(key, {
       total_ms: overlapMs(dayStart, dayEnd, windowStart, now),
       online_ms: 0,
+      unobserved_ms: 0,
       planned_downtime_ms: 0,
       unplanned_downtime_ms: 0,
       outage_count: 0,
@@ -1130,6 +1179,7 @@ export async function getHostAvailabilityReport({
     });
   }
   let onlineMs = 0;
+  let unobservedMs = 0;
   let plannedDowntimeMs = 0;
   let unplannedDowntimeMs = 0;
   let unplannedOutageCount = 0;
@@ -1141,6 +1191,8 @@ export async function getHostAvailabilityReport({
     const eventWindowMs = overlapMs(start, end, windowStart, now);
     if (event.state === "online") {
       onlineMs += eventWindowMs;
+    } else if (event.state === "unobserved") {
+      unobservedMs += eventWindowMs;
     } else if (event.planned) {
       plannedDowntimeMs += eventWindowMs;
     } else {
@@ -1156,6 +1208,8 @@ export async function getHostAvailabilityReport({
       day.events.push(event);
       if (event.state === "online") {
         day.online_ms += ms;
+      } else if (event.state === "unobserved") {
+        day.unobserved_ms += ms;
       } else if (event.planned) {
         day.planned_downtime_ms += ms;
       } else {
@@ -1172,30 +1226,90 @@ export async function getHostAvailabilityReport({
       ? now.getTime() - currentStartedAt.getTime()
       : 0;
   const intendedOnlineMs = onlineMs + unplannedDowntimeMs;
+  const observedWindowMs = Math.max(0, windowMs - unobservedMs);
+  const hostBootStartedAt = normalizeDate(hostMetadata.host_boot_started_at);
+  const sampledHostUptimeMs = Number(hostMetadata.host_uptime_s) * 1000;
+  const lastSeenAt = normalizeDate(hostRow?.last_seen);
+  const sampleAgeMs = lastSeenAt
+    ? Math.max(0, now.getTime() - lastSeenAt.getTime())
+    : 0;
+  const machineUptimeMs = hostBootStartedAt
+    ? Math.max(0, now.getTime() - hostBootStartedAt.getTime())
+    : Number.isFinite(sampledHostUptimeMs)
+      ? Math.max(0, sampledHostUptimeMs + sampleAgeMs)
+      : undefined;
+  const hostSessionStartedAt = normalizeDate(
+    hostMetadata.host_session_started_at,
+  );
+  const syntheticProbe = hostMetadata.runtime_synthetic_probe ?? {};
+  const syntheticTotal = Math.max(0, Number(syntheticProbe.total_checks) || 0);
+  const syntheticPassed = Math.max(
+    0,
+    Number(syntheticProbe.passed_checks) || 0,
+  );
+  const syntheticFailed = Math.max(
+    0,
+    Number(syntheticProbe.failed_checks) || 0,
+  );
+  const syntheticStatus = `${syntheticProbe.status ?? ""}`;
   return {
     host_id: hostId,
     generated_at: now.toISOString(),
     window_days: windowDays,
     summary: {
       current_state: currentEvent?.state ?? "unavailable",
+      current_healthy_interval_ms: currentUptimeMs,
       current_uptime_ms: currentUptimeMs,
-      window_uptime_percent: windowMs > 0 ? (onlineMs / windowMs) * 100 : 0,
+      machine_uptime_ms: machineUptimeMs,
+      machine_boot_started_at: hostBootStartedAt?.toISOString(),
+      project_host_session_uptime_ms: hostSessionStartedAt
+        ? Math.max(0, now.getTime() - hostSessionStartedAt.getTime())
+        : undefined,
+      project_host_session_started_at: hostSessionStartedAt?.toISOString(),
+      window_uptime_percent:
+        observedWindowMs > 0 ? (onlineMs / observedWindowMs) * 100 : 0,
       reliability_percent:
         intendedOnlineMs > 0 ? (onlineMs / intendedOnlineMs) * 100 : 100,
       intended_online_ms: intendedOnlineMs,
       planned_downtime_ms: plannedDowntimeMs,
       unplanned_downtime_ms: unplannedDowntimeMs,
+      unobserved_ms: unobservedMs,
       unplanned_outage_count: unplannedOutageCount,
       longest_outage_ms: longestOutageMs,
       current_event: currentEvent,
+      synthetic_probe: ["running", "passed", "failed"].includes(syntheticStatus)
+        ? {
+            status: syntheticStatus as "running" | "passed" | "failed",
+            checked_at: normalizeDate(
+              syntheticProbe.checked_at ?? syntheticProbe.claimed_at,
+            )?.toISOString(),
+            consecutive_failures: Math.max(
+              0,
+              Number(syntheticProbe.consecutive_failures) || 0,
+            ),
+            quarantined: syntheticProbe.quarantined === true,
+            total_checks: syntheticTotal,
+            passed_checks: syntheticPassed,
+            failed_checks: syntheticFailed,
+            pass_percent:
+              syntheticTotal > 0
+                ? (syntheticPassed / syntheticTotal) * 100
+                : undefined,
+            error: `${syntheticProbe.error ?? ""}`.trim() || undefined,
+          }
+        : undefined,
     },
     days: Array.from(daysMap, ([date, day]) => ({
       date,
       uptime_percent:
-        day.total_ms > 0
-          ? Math.min(100, (day.online_ms / day.total_ms) * 100)
+        day.total_ms - day.unobserved_ms > 0
+          ? Math.min(
+              100,
+              (day.online_ms / (day.total_ms - day.unobserved_ms)) * 100,
+            )
           : 0,
       online_ms: day.online_ms,
+      unobserved_ms: day.unobserved_ms,
       planned_downtime_ms: day.planned_downtime_ms,
       unplanned_downtime_ms: day.unplanned_downtime_ms,
       outage_count: day.outage_count,

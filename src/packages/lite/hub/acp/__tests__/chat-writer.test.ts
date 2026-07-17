@@ -1006,6 +1006,71 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("durably finalizes a queued terminal payload during initialization", async () => {
+    (queue.listAcpPayloads as any).mockReturnValue([
+      {
+        type: "event",
+        event: { type: "message", text: "recovered output" },
+        seq: 0,
+      },
+      {
+        type: "summary",
+        finalResponse: "recovered final response",
+        seq: 1,
+      },
+    ]);
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await writer.ready;
+    await flush(writer);
+
+    expect(findLastChatSet(sets)?.generating).toBe(false);
+    expect(findLastChatSet(sets)?.history?.[0]?.content).toContain(
+      "recovered final response",
+    );
+    expect(
+      sets.find(
+        (row) => row.event === "chat-thread-state" && row.state === "running",
+      ),
+    ).toBeUndefined();
+    expect(queue.clearAcpPayloads).toHaveBeenCalledTimes(1);
+    writer.dispose?.(true);
+  });
+
+  it("retains queued output when an unfinished writer is disposed", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "partial output" },
+      seq: 0,
+    } as AcpStreamMessage);
+
+    writer.dispose?.(true);
+    await writer.waitUntilDisposed();
+
+    expect(queue.clearAcpPayloads).not.toHaveBeenCalled();
+  });
+
   it("publishes live logs and persists AKV at terminal", async () => {
     const logSet = jest.fn().mockResolvedValue(undefined);
     const livePublish = jest.fn().mockResolvedValue({
@@ -1415,6 +1480,12 @@ describe("ChatStreamWriter", () => {
       time: 1000,
     } as AcpStreamMessage);
     await writer.handle({
+      type: "status",
+      state: "running",
+      seq: 10,
+      time: 1500,
+    } as AcpStreamMessage);
+    await writer.handle({
       type: "event",
       event: { type: "message", text: second, delta: true } as any,
       seq: 20,
@@ -1432,6 +1503,69 @@ describe("ChatStreamWriter", () => {
     expect(getLiveResponseMarkdown(previewEvents)).toBe(
       `${first}\n\n${second}`,
     );
+    writer.dispose?.(true);
+  });
+
+  it("preserves a leading delta that matches the start of an earlier update", async () => {
+    const previewPayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+      livePreviewStreamFactory: () =>
+        ({
+          publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+            previewPayloads.push(payload);
+            return { seq: previewPayloads.length, time: Date.now() };
+          },
+          close: () => {},
+        }) as any,
+    });
+
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "Initial update.", delta: true },
+      seq: 0,
+      time: 1000,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "status",
+      state: "running",
+      seq: 1,
+      time: 2000,
+    } as AcpStreamMessage);
+    for (const [seq, text] of ["I", " am", " keeping the output."].entries()) {
+      await writer.handle({
+        type: "event",
+        event: { type: "message", text, delta: true },
+        seq: seq + 2,
+        time: 3000 + seq,
+      } as AcpStreamMessage);
+    }
+    await writer.waitForLivePreviewFlush();
+
+    const previewEvents = flattenLivePayloads(previewPayloads);
+    const latestPreview = previewEvents
+      .filter(
+        (event) => event.type === "event" && event.event.type === "message",
+      )
+      .at(-1) as any;
+    expect(latestPreview.event.text).toBe(
+      "Initial update.\n\nI am keeping the output.",
+    );
+    expect(getLiveResponseBlocks(previewEvents)).toEqual([
+      expect.objectContaining({ kind: "agent", text: "Initial update." }),
+      expect.objectContaining({
+        kind: "agent",
+        text: "I am keeping the output.",
+      }),
+    ]);
     writer.dispose?.(true);
   });
 
@@ -2395,6 +2529,31 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
+  it("maps runtime-home chat paths outside a deep workspace through the project root", async () => {
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        path: "/home/user/.local/share/cocalc/navigator.chat",
+        message_id: "msg-project-root-chat-path",
+      } as any,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      workspaceRoot: "/home/user/Notebooks/Exams",
+      hostWorkspaceRoot: "/mnt/cocalc/project-test/Notebooks/Exams",
+      hostProjectRoot: "/mnt/cocalc/project-test",
+      syncdbOverride: makeFakeSyncDB().syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    expect((writer as any).resolveChatFilePath()).toBe(
+      "/mnt/cocalc/project-test/.local/share/cocalc/navigator.chat",
+    );
+    writer.dispose?.(true);
+  });
+
   it("resolves chat row by message_id when sender/date changed", async () => {
     const rowDate = new Date("2026-02-21T10:11:12.000Z").toISOString();
     const rows: any[] = [
@@ -2847,6 +3006,142 @@ describe("repairInterruptedAcpTurn", () => {
       "thread-interrupt-activity:msg-interrupt-activity",
     );
     expect(finalChat?.acp_account_id).toBe("account-1");
+  });
+
+  it("restores queued output over an already-interrupted placeholder", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      event: "chat",
+      date: "2026-03-19T20:00:00.000Z",
+      sender_id: "codex-agent",
+      message_id: "msg-interrupt-retry",
+      thread_id: "thread-interrupt-retry",
+      generating: false,
+      acp_interrupted: true,
+      history: [
+        {
+          author_id: "codex-agent",
+          content: ":robot: Thinking...",
+          date: "2026-03-19T20:00:00.000Z",
+        },
+      ],
+    });
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (queue.listAcpPayloads as any).mockReturnValue([
+      {
+        type: "event",
+        event: {
+          type: "message",
+          text: "This streamed answer must remain visible.",
+        },
+        seq: 0,
+      },
+    ]);
+
+    const repaired = await repairInterruptedAcpTurn({
+      client: makeFakeClient() as any,
+      turn: {
+        project_id: "p",
+        path: "chat",
+        message_date: "2026-03-19T20:00:00.000Z",
+        sender_id: "codex-agent",
+        message_id: "msg-interrupt-retry",
+        thread_id: "thread-interrupt-retry",
+      },
+    });
+
+    const finalChat = syncdb.get_one({
+      event: "chat",
+      message_id: "msg-interrupt-retry",
+    });
+    expect(repaired).toBe(true);
+    expect(finalChat?.history?.[0]?.content).toContain(
+      "This streamed answer must remain visible.",
+    );
+    expect(finalChat?.history?.[0]?.content).toContain(
+      "Conversation interrupted",
+    );
+    expect(queue.clearAcpPayloads).toHaveBeenCalled();
+  });
+
+  it("retains queued output when activity-log persistence fails", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      event: "chat",
+      date: "2026-03-19T20:00:00.000Z",
+      sender_id: "codex-agent",
+      message_id: "msg-interrupt-log-failure",
+      thread_id: "thread-interrupt-log-failure",
+      generating: true,
+      history: [],
+    });
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (queue.listAcpPayloads as any).mockReturnValue([
+      {
+        type: "event",
+        event: { type: "message", text: "valuable streamed output" },
+        seq: 0,
+      },
+    ]);
+    (akv as any).mockReturnValue({
+      set: jest.fn(async () => {
+        throw new Error("persist service unavailable");
+      }),
+    });
+
+    const repaired = await repairInterruptedAcpTurn({
+      client: makeFakeClient() as any,
+      turn: {
+        project_id: "p",
+        path: "chat",
+        message_date: "2026-03-19T20:00:00.000Z",
+        sender_id: "codex-agent",
+        message_id: "msg-interrupt-log-failure",
+        thread_id: "thread-interrupt-log-failure",
+      },
+    });
+
+    expect(repaired).toBe(true);
+    expect(queue.clearAcpPayloads).not.toHaveBeenCalled();
+  });
+
+  it("retains queued output when the visible chat repair cannot save", async () => {
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      event: "chat",
+      date: "2026-03-19T20:00:00.000Z",
+      sender_id: "codex-agent",
+      message_id: "msg-interrupt-chat-failure",
+      thread_id: "thread-interrupt-chat-failure",
+      generating: true,
+      history: [],
+    });
+    syncdb.save = async () => {
+      throw new Error("persist service unavailable");
+    };
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (queue.listAcpPayloads as any).mockReturnValue([
+      {
+        type: "event",
+        event: { type: "message", text: "valuable streamed output" },
+        seq: 0,
+      },
+    ]);
+
+    const repaired = await repairInterruptedAcpTurn({
+      client: makeFakeClient() as any,
+      turn: {
+        project_id: "p",
+        path: "chat",
+        message_date: "2026-03-19T20:00:00.000Z",
+        sender_id: "codex-agent",
+        message_id: "msg-interrupt-chat-failure",
+        thread_id: "thread-interrupt-chat-failure",
+      },
+    });
+
+    expect(repaired).toBe(false);
+    expect(queue.clearAcpPayloads).not.toHaveBeenCalled();
   });
 
   it("repairs a stale running chat thread with no live backend turn", async () => {

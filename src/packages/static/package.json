@@ -16,7 +16,7 @@
     "analyze:dev": "pnpm run build0 && COCALC_OUTPUT=dist-measure MEASURE=1 NODE_ENV=development pnpm rspack build",
     "webpack-measure": "pnpm run analyze:dev",
     "webpack-measure-prod": "pnpm run analyze",
-    "build0": "pnpm run copy-css && cd src && ../../node_modules/.bin/tsc --build",
+    "build0": "pnpm run copy-css && node --max-old-space-size=6144 ../node_modules/typescript/bin/tsc --build",
     "build": "pnpm run build0 && ./production-build.py",
     "build:dev": "pnpm run build0 && NODE_ENV=development pnpm rspack build",
     "check-entry-budgets": "pnpm build && node ./scripts/check-entry-budgets.mjs",

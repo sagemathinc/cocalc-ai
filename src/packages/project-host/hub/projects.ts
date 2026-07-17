@@ -147,6 +147,10 @@ import { normalizeRunQuota, runnerConfigFromQuota } from "../run-quota";
 const logger = getLogger("project-host:hub:projects");
 const CODEX_DEVICE_AUTH_VERIFY_TIMEOUT_MS = 45_000;
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
+const SYNTHETIC_RUNTIME_PROBE_TIMEOUT_MS = Math.max(
+  10_000,
+  Number(process.env.COCALC_SYNTHETIC_RUNTIME_PROBE_TIMEOUT_MS) || 90_000,
+);
 const MB = 1_000_000;
 const DEFAULT_MAX_BACKUPS_PER_PROJECT = 30;
 const PROJECT_OWNER_LIMITS_CACHE_TTL_MS = 5 * 60_000;
@@ -155,7 +159,7 @@ const LRO_PUBLISH_RETRY_DELAY_MS = 500;
 const LRO_PUBLISH_ATTEMPT_TIMEOUT_MS = 3000;
 const RUNNER_START_PORT_RETRY_LIMIT = 5;
 const RUNNER_START_PORT_RETRY_BASE_DELAY_MS = 250;
-const LISTENING_PROJECT_PORT_CACHE_TTL_MS = 250;
+const OCCUPIED_PROJECT_PORT_CACHE_TTL_MS = 250;
 const RECENT_FAILED_PROJECT_PORT_OFFSET_TTL_MS =
   PROJECT_PORT_BIND_FAILURE_COOLDOWN_MS;
 const projectOwnerLimitsCache = new TTL<string, MembershipEffectiveLimits>({
@@ -173,13 +177,13 @@ const accountLimitsInflight = new Map<
   Promise<MembershipEffectiveLimits>
 >();
 
-let listeningProjectPortOffsetsCache:
+let occupiedProjectPortOffsetsCache:
   | {
       value: Set<number>;
       expiresAt: number;
     }
   | undefined;
-let listeningProjectPortOffsetsInflight: Promise<Set<number>> | undefined;
+let occupiedProjectPortOffsetsInflight: Promise<Set<number>> | undefined;
 const recentFailedProjectPortOffsets = new Map<number, number>();
 
 function delay(ms: number): Promise<void> {
@@ -192,13 +196,11 @@ function listeningProjectPortOffset(port?: number | null): number | undefined {
   );
 }
 
-function parseListeningPortOffsetsFromProcNet(raw: string): Set<number> {
+export function parseOccupiedPortOffsetsFromProcNet(raw: string): Set<number> {
   const offsets = new Set<number>();
   for (const line of raw.split("\n").slice(1)) {
     const fields = line.trim().split(/\s+/);
-    if (fields.length < 4) continue;
-    const state = fields[3];
-    if (state !== "0A") continue;
+    if (fields.length < 2) continue;
     const localAddress = fields[1] ?? "";
     const portHex = localAddress.split(":")[1];
     if (!portHex) continue;
@@ -212,16 +214,16 @@ function parseListeningPortOffsetsFromProcNet(raw: string): Set<number> {
   return offsets;
 }
 
-async function loadListeningProjectPortOffsetsUncached(): Promise<Set<number>> {
+async function loadOccupiedProjectPortOffsetsUncached(): Promise<Set<number>> {
   const offsets = new Set<number>();
   for (const procPath of ["/proc/net/tcp", "/proc/net/tcp6"]) {
     try {
       const raw = await readFile(procPath, "utf8");
-      for (const offset of parseListeningPortOffsetsFromProcNet(raw)) {
+      for (const offset of parseOccupiedPortOffsetsFromProcNet(raw)) {
         offsets.add(offset);
       }
     } catch (err) {
-      logger.debug("unable to inspect listening TCP ports", {
+      logger.debug("unable to inspect occupied TCP ports", {
         procPath,
         err: `${err}`,
       });
@@ -230,26 +232,26 @@ async function loadListeningProjectPortOffsetsUncached(): Promise<Set<number>> {
   return offsets;
 }
 
-async function getListeningProjectPortOffsets(): Promise<Set<number>> {
+async function getOccupiedProjectPortOffsets(): Promise<Set<number>> {
   const now = Date.now();
-  const cached = listeningProjectPortOffsetsCache;
+  const cached = occupiedProjectPortOffsetsCache;
   if (cached && cached.expiresAt > now) {
     return new Set(cached.value);
   }
-  if (listeningProjectPortOffsetsInflight) {
-    return new Set(await listeningProjectPortOffsetsInflight);
+  if (occupiedProjectPortOffsetsInflight) {
+    return new Set(await occupiedProjectPortOffsetsInflight);
   }
-  listeningProjectPortOffsetsInflight = (async () => {
-    const value = await loadListeningProjectPortOffsetsUncached();
-    listeningProjectPortOffsetsCache = {
+  occupiedProjectPortOffsetsInflight = (async () => {
+    const value = await loadOccupiedProjectPortOffsetsUncached();
+    occupiedProjectPortOffsetsCache = {
       value,
-      expiresAt: Date.now() + LISTENING_PROJECT_PORT_CACHE_TTL_MS,
+      expiresAt: Date.now() + OCCUPIED_PROJECT_PORT_CACHE_TTL_MS,
     };
     return value;
   })().finally(() => {
-    listeningProjectPortOffsetsInflight = undefined;
+    occupiedProjectPortOffsetsInflight = undefined;
   });
-  return new Set(await listeningProjectPortOffsetsInflight);
+  return new Set(await occupiedProjectPortOffsetsInflight);
 }
 
 function rememberRecentFailedProjectPortOffset(port?: number): void {
@@ -276,8 +278,8 @@ function getRecentFailedProjectPortOffsets(): Set<number> {
 
 export function resetPortBindStateForTesting(): void {
   recentFailedProjectPortOffsets.clear();
-  listeningProjectPortOffsetsCache = undefined;
-  listeningProjectPortOffsetsInflight = undefined;
+  occupiedProjectPortOffsetsCache = undefined;
+  occupiedProjectPortOffsetsInflight = undefined;
 }
 
 async function collectPortBindDiagnostics({
@@ -315,18 +317,18 @@ async function collectPortBindDiagnostics({
     diagnostics.cooling_offsets_error = `${err}`;
   }
   try {
-    const listeningOffsets = await getListeningProjectPortOffsets();
-    diagnostics.listening_offset_count = listeningOffsets.size;
-    diagnostics.ssh_port_listening =
+    const occupiedOffsets = await getOccupiedProjectPortOffsets();
+    diagnostics.occupied_offset_count = occupiedOffsets.size;
+    diagnostics.ssh_port_occupied =
       Number.isInteger(ssh_port) &&
       ssh_port &&
-      listeningOffsets.has(listeningProjectPortOffset(Number(ssh_port)) ?? -1);
-    diagnostics.http_port_listening =
+      occupiedOffsets.has(listeningProjectPortOffset(Number(ssh_port)) ?? -1);
+    diagnostics.http_port_occupied =
       Number.isInteger(http_port) &&
       http_port &&
-      listeningOffsets.has(listeningProjectPortOffset(Number(http_port)) ?? -1);
+      occupiedOffsets.has(listeningProjectPortOffset(Number(http_port)) ?? -1);
   } catch (err) {
-    diagnostics.listening_offsets_error = `${err}`;
+    diagnostics.occupied_offsets_error = `${err}`;
   }
   try {
     const ports = [ssh_port, http_port].filter(
@@ -336,7 +338,7 @@ async function collectPortBindDiagnostics({
     if (ports.length) {
       const { stdout, stderr, exit_code } = await executeCode({
         command: "ss",
-        args: ["-ltn"],
+        args: ["-tan"],
         err_on_exit: false,
         verbose: false,
         timeout: 5,
@@ -912,7 +914,7 @@ async function getRunnerConfig(
   const scratch = limits.scratch ?? existing?.scratch;
   const ssh_proxy_public_key = await getSshProxyPublicKey();
   const secret = getOrCreateProjectLocalSecretToken(project_id);
-  const avoidOffsets = await getListeningProjectPortOffsets();
+  const avoidOffsets = await getOccupiedProjectPortOffsets();
   for (const offset of getRecentFailedProjectPortOffsets()) {
     avoidOffsets.add(offset);
   }
@@ -1262,15 +1264,24 @@ async function startRunnerWithPortRetry({
 }
 
 export function wireProjectsApi(runnerApi: RunnerApi) {
-  async function runSyntheticRuntimeProbe(): Promise<{
+  type SyntheticRuntimeProbeResult = {
     project_id: string;
     started_at: string;
     finished_at: string;
     duration_ms: number;
-  }> {
+  };
+  let syntheticRuntimeProbeInFlight:
+    | {
+        started_at: number;
+        promise: Promise<SyntheticRuntimeProbeResult>;
+      }
+    | undefined;
+
+  async function performSyntheticRuntimeProbe(): Promise<SyntheticRuntimeProbeResult> {
     const project_id = uuid();
     const marker = uuid();
     const startedAt = Date.now();
+    let stage = "create";
     syntheticRuntimeProbeProjects.add(project_id);
     try {
       await createProject({
@@ -1286,12 +1297,14 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           disk_quota: 256,
         },
       } as CreateProjectOptions);
+      stage = "status";
       const status = await runnerApi.status({ project_id });
       if (status?.state !== "running") {
         throw new Error(
           `synthetic project did not reach running state (state=${status?.state ?? "unknown"})`,
         );
       }
+      stage = "exec_file";
       const result = await sandboxExec({
         project_id,
         script: `mkdir -p .cocalc && printf '%s' '${marker}' > .cocalc/host-runtime-probe && cat .cocalc/host-runtime-probe`,
@@ -1309,6 +1322,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         finished_at: new Date().toISOString(),
         duration_ms: Date.now() - startedAt,
       };
+    } catch (err) {
+      throw new Error(
+        `synthetic project probe failed project_id=${project_id} stage=${stage}: ${err}`,
+      );
     } finally {
       await runnerApi.stop({ project_id, force: true }).catch((err) => {
         logger.warn("synthetic runtime probe failed to stop its project", {
@@ -1327,6 +1344,29 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       deleteProjectLocal(project_id);
       syntheticRuntimeProbeProjects.delete(project_id);
     }
+  }
+
+  async function runSyntheticRuntimeProbe(): Promise<SyntheticRuntimeProbeResult> {
+    if (syntheticRuntimeProbeInFlight != null) {
+      throw new Error(
+        `synthetic runtime probe already in progress for ${Date.now() - syntheticRuntimeProbeInFlight.started_at}ms`,
+      );
+    }
+    const startedAt = Date.now();
+    const promise = performSyntheticRuntimeProbe().finally(() => {
+      if (syntheticRuntimeProbeInFlight?.promise === promise) {
+        syntheticRuntimeProbeInFlight = undefined;
+      }
+    });
+    syntheticRuntimeProbeInFlight = {
+      started_at: startedAt,
+      promise,
+    };
+    return await withTimeout(
+      promise,
+      SYNTHETIC_RUNTIME_PROBE_TIMEOUT_MS,
+      "synthetic runtime probe",
+    );
   }
 
   async function rehydrateAcpAutomations(

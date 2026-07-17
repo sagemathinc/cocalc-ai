@@ -572,6 +572,76 @@ class BootstrapJournaldLimitsTest(unittest.TestCase):
             )
 
 
+class BootstrapRsyslogLimitsTest(unittest.TestCase):
+    def test_unchanged_limits_do_not_queue_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            logrotate_path = Path(tmpdir) / "logrotate.d" / "rsyslog"
+            logrotate_path.parent.mkdir()
+            logrotate_path.write_text(
+                bootstrap.RSYSLOG_LOGROTATE_CONTENT,
+                encoding="utf-8",
+            )
+            calls = []
+            original_run_best_effort = bootstrap.run_best_effort
+            try:
+                bootstrap.run_best_effort = lambda *args, **kwargs: calls.append(
+                    (args, kwargs)
+                )
+                bootstrap.configure_rsyslog_limits(
+                    cfg,
+                    logrotate_path=logrotate_path,
+                )
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+
+            self.assertEqual(calls, [])
+
+    def test_changed_limits_queue_nonblocking_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            logrotate_path = Path(tmpdir) / "logrotate.d" / "rsyslog"
+            logrotate_path.parent.mkdir()
+            calls = []
+            original_run_best_effort = bootstrap.run_best_effort
+            original_which = bootstrap.shutil.which
+            try:
+                bootstrap.run_best_effort = lambda *args, **kwargs: calls.append(
+                    (args, kwargs)
+                )
+                bootstrap.shutil.which = lambda _name: "/usr/bin/systemctl"
+                bootstrap.configure_rsyslog_limits(
+                    cfg,
+                    logrotate_path=logrotate_path,
+                )
+            finally:
+                bootstrap.run_best_effort = original_run_best_effort
+                bootstrap.shutil.which = original_which
+
+            self.assertEqual(
+                logrotate_path.read_text(encoding="utf-8"),
+                bootstrap.RSYSLOG_LOGROTATE_CONTENT,
+            )
+            self.assertEqual(
+                calls,
+                [
+                    (
+                        (
+                            cfg,
+                            [
+                                "systemctl",
+                                "start",
+                                "--no-block",
+                                "logrotate.service",
+                            ],
+                            "queue classic system log rotation",
+                        ),
+                        {"timeout": 15},
+                    )
+                ],
+            )
+
+
 class BootstrapSubidAllocationTest(unittest.TestCase):
     def test_rewrites_user_subid_ranges_to_the_exact_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1375,6 +1445,65 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("enter-project-cgroup)", script)
             self.assertIn("verify-project-pool)", script)
             self.assertIn("attach-project-cgroup)", script)
+            self.assertIn("verify-project-network-limits)", script)
+            self.assertIn("reconcile-project-network-limits)", script)
+            self.assertIn('PROJECT_PASTA_NOFILE_LIMIT="4096"', script)
+            self.assertIn('PROJECT_TCP_NEW_RATE="50"', script)
+            self.assertIn('PROJECT_UDP_NEW_RATE="100"', script)
+            self.assertIn("socket cgroupv2 level", script)
+            self.assertIn("apply_pasta_resource_limits", script)
+            self.assertIn("ensure_project_network_rule", script)
+            self.assertIn("emit_project_network_rules", script)
+            ensure_network_body = script.split(
+                "ensure_project_network_rule() {", 1
+            )[1].split("\n}\n\nemit_project_network_rules()", 1)[0]
+            self.assertNotIn("project_network_rule_handles", ensure_network_body)
+            self.assertIn(
+                'if emit_project_network_rules "$project_id" | run_project_network_nft -f -; then',
+                ensure_network_body,
+            )
+            self.assertIn("configure_project_network_table", ensure_network_body)
+            self.assertIn(
+                "printf 'flush chain inet %s %s\\n'", script
+            )
+            self.assertIn(
+                "printf '%s\\n' \"$rules\" | run_project_network_nft -f -",
+                script,
+            )
+            self.assertIn('PROJECT_CGROUP_LOCK_WAIT_SECONDS="5"', script)
+            self.assertIn('PROJECT_NETWORK_LOCK_WAIT_SECONDS="5"', script)
+            self.assertIn('PROJECT_NETWORK_NFT_TIMEOUT_SECONDS="30"', script)
+            self.assertIn("project-cgroup-lock-timeout", script)
+            self.assertIn("project-network-lock-timeout", script)
+            self.assertIn("--kill-after=2s", script)
+            attach_body = script.split(
+                "  attach-project-cgroup)", 1
+            )[1].split("\n    ;;", 1)[0]
+            self.assertNotIn(
+                'ensure_project_network_rule "$project_id"',
+                attach_body,
+            )
+            self.assertLess(
+                attach_body.index("release_project_lock"),
+                attach_body.index("find_project_conmon_pids"),
+            )
+            reconcile_body = script.split(
+                "reconcile_project_network_limits() {", 1
+            )[1].split("\n}\n", 1)[0]
+            self.assertNotIn(
+                'ensure_project_network_rule "$project_id"',
+                reconcile_body,
+            )
+            self.assertLess(
+                reconcile_body.index('rules="$(render_project_network_rules)"'),
+                reconcile_body.index("acquire_project_network_lock"),
+            )
+            self.assertLess(
+                reconcile_body.index("release_project_lock"),
+                reconcile_body.index("apply_project_network_process_limits"),
+            )
+            self.assertIn("project_cgroup_has_processes", script)
+            self.assertNotIn('[ -s "$cgroup/cgroup.procs" ]', script)
             self.assertIn(
                 'pool="$(project_cgroup "$project_id")"', script
             )
@@ -1778,6 +1907,14 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             )
             self.assertIn(
                 "apply-sysctls)",
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "net.ipv4.ip_local_port_range = 10000 65535",
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "net.ipv4.ip_local_reserved_ports = 30000-59999",
                 rootctl.read_text(encoding="utf-8"),
             )
             self.assertIn(
@@ -2497,9 +2634,16 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
 
             config = next(data for path, data, _ in writes if path == "/etc/cloudflared/config.yml")
             unit = next(data for path, data, _ in writes if path == "/etc/systemd/system/cocalc-cloudflared.service")
+            recovery_dropin = next(
+                data
+                for path, data, _ in writes
+                if path
+                == "/etc/systemd/system/cocalc-cloudflared.service.d/cocalc-recovery.conf"
+            )
             self.assertIn("credentials-file: /etc/cloudflared/tunnel-id.json", config)
             self.assertNotIn("--token", unit)
             self.assertNotIn("EnvironmentFile=/etc/cloudflared/token.env", unit)
+            self.assertEqual(recovery_dropin, "[Service]\nTimeoutStopSec=30\n")
 
     def test_configure_cloudflared_uses_token_file_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2595,6 +2739,9 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 bootstrap.os.chmod = lambda *_args, **_kwargs: None
 
                 bootstrap.configure_cloudflared_with_options(cfg, install_package=False)
+                stored.pop(
+                    "/etc/systemd/system/cocalc-cloudflared.service.d/cocalc-recovery.conf"
+                )
                 commands.clear()
                 events.clear()
                 bootstrap.configure_cloudflared_with_options(cfg, install_package=False)
@@ -2611,7 +2758,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertFalse(
                 any(args[:2] == ["systemctl", "restart"] for args, _desc, _kwargs in commands)
             )
-            self.assertFalse(
+            self.assertTrue(
                 any(args[:2] == ["systemctl", "daemon-reload"] for args, _desc, _kwargs in commands)
             )
             self.assertTrue(
@@ -2796,8 +2943,10 @@ class BootstrapModesTest(unittest.TestCase):
             patch("configure_kernel_key_limits", lambda _cfg: None)
             patch("configure_inotify_limits", lambda _cfg: None)
             patch("configure_journald_limits", lambda _cfg: None)
+            patch("configure_rsyslog_limits", lambda _cfg: None)
             patch("install_btrfs_helper", lambda _cfg: None)
             patch("install_privileged_wrappers", lambda _cfg: None)
+            patch("reconcile_project_network_limits", lambda _cfg: None)
             patch("ensure_cocalc_mount", lambda _cfg: None)
             patch("ensure_btrfs_data", lambda _cfg: None)
             patch("ensure_subuids", lambda _cfg: None)

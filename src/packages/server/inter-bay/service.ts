@@ -2518,6 +2518,8 @@ async function startHostControlService(): Promise<void> {
       timeout,
     });
   const impl: InterBayHostControlApi = {
+    restartCloudflared: async ({ host_id, restart }) =>
+      await (await getHostClient(host_id, 75_000)).restartCloudflared(restart),
     runSyntheticRuntimeProbe: async ({ host_id }) =>
       await (
         await getHostClient(host_id, 15 * 60 * 1000)

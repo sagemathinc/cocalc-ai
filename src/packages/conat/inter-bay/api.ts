@@ -2088,6 +2088,7 @@ export type HostConnectionMethod =
   | "reconnect-host-rehome"
   | "record-host-rehome-log";
 export type HostControlMethod =
+  | "restart-cloudflared"
   | "create-project"
   | "start-project"
   | "stop-project"
@@ -3125,6 +3126,10 @@ type HostControlArg<K extends keyof HostControlApi> = Parameters<
 >[0];
 
 export interface InterBayHostControlApi {
+  restartCloudflared: (opts: {
+    host_id: string;
+    restart: HostControlArg<"restartCloudflared">;
+  }) => ReturnType<HostControlApi["restartCloudflared"]>;
   runSyntheticRuntimeProbe: (opts: {
     host_id: string;
   }) => ReturnType<HostControlApi["runSyntheticRuntimeProbe"]>;
@@ -3971,6 +3976,7 @@ export function hostControlSubject({
 type HostControlName = keyof InterBayHostControlApi;
 
 const HOST_CONTROL_METHOD_SPECS = [
+  { name: "restartCloudflared", method: "restart-cloudflared" },
   { name: "createProject", method: "create-project" },
   { name: "startProject", method: "start-project" },
   { name: "stopProject", method: "stop-project" },

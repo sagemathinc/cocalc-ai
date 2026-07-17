@@ -101,6 +101,7 @@ export function createBrowserSessionHeartbeat({
       }
       return;
     }
+    let retryDelayMs: number | undefined;
     inFlight = (async () => {
       await hub.system.upsertBrowserSession(snapshot);
       consecutiveFailures = 0;
@@ -114,12 +115,12 @@ export function createBrowserSessionHeartbeat({
         dirty = true;
         onWarn?.(`browser-session sync failed: ${err}`);
         onFailure?.(err, consecutiveFailures);
-        schedule(nextRetryDelay());
+        retryDelayMs = nextRetryDelay();
       })
       .finally(() => {
         inFlight = undefined;
         if (canRun() && dirty) {
-          schedule(0);
+          schedule(retryDelayMs ?? 0);
         }
       });
     await inFlight;

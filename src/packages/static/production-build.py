@@ -38,6 +38,9 @@ def main():
     #
     # TODO -- this is dumb and we must get rid of hardcoding of the base url. But that is another problem for later...
     NODE_ENV = os.environ.get('NODE_ENV', 'production')
+    # Rspack's CLI runs under Node. Keep the caller's explicit policy, but do
+    # not fall back to Node's roughly 2 GiB default during production builds.
+    os.environ.setdefault('NODE_OPTIONS', '--max-old-space-size=6144')
     cmd(f"NODE_ENV={NODE_ENV} rspack"
         )
     app_version()

@@ -3,9 +3,19 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { createProjectHostRuntimeHealthMonitor } from "./runtime-health";
+import { _test, createProjectHostRuntimeHealthMonitor } from "./runtime-health";
 
 describe("project-host runtime health", () => {
+  it("preserves both ends of long runtime errors", () => {
+    const text = `command=${"x".repeat(1500)}: Address already in use`;
+    const truncated = _test.errorText(text);
+
+    expect(truncated).toHaveLength(1000);
+    expect(truncated).toContain("command=");
+    expect(truncated).toContain("error middle omitted");
+    expect(truncated).toContain("Address already in use");
+  });
+
   it("does not probe Podman until the application is ready", async () => {
     let applicationReady = false;
     const probe = jest.fn(async () => undefined);
@@ -111,8 +121,8 @@ describe("project-host runtime health", () => {
     });
     await monitor.refresh();
     expect(monitor.getSnapshot()).toMatchObject({
-      status: "degraded",
-      ready: false,
+      status: "ready",
+      ready: true,
       consecutive_failures: 0,
       synthetic_probe: {
         status: "failed",
@@ -128,6 +138,32 @@ describe("project-host runtime health", () => {
         status: "passed",
         consecutive_failures: 0,
       },
+    });
+  });
+
+  it("classifies transient project port collisions", async () => {
+    const monitor = createProjectHostRuntimeHealthMonitor({
+      isApplicationReady: () => true,
+      probe: jest.fn(async () => undefined),
+      captureDiagnostics: jest.fn(async () => undefined),
+    });
+
+    await monitor.refresh();
+    monitor.recordSyntheticProbe({
+      startedAt: Date.now() - 100,
+      error: new Error(
+        "pasta failed: Failed to bind port 46818 (Address already in use)",
+      ),
+    });
+    expect(monitor.getSnapshot().synthetic_probe).toMatchObject({
+      status: "failed",
+      failure_kind: "port_bind_collision",
+    });
+
+    monitor.recordSyntheticProbe({ startedAt: Date.now() - 100 });
+    expect(monitor.getSnapshot().synthetic_probe).toMatchObject({
+      status: "passed",
+      failure_kind: undefined,
     });
   });
 });

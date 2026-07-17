@@ -15,8 +15,22 @@ import {
 } from "@cocalc/conat/sync-doc/immer-db";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import { getLogger } from "@cocalc/conat/logger";
+import { posix as path } from "node:path";
 
 const logger = getLogger("chat:server");
+const PROJECT_HOME = "/home/user";
+
+export type { ImmerDB };
+
+export function canonicalChatPath(chatPath: string): string {
+  const value = `${chatPath ?? ""}`.trim();
+  if (!value) {
+    throw new Error("chat path must be nonempty");
+  }
+  return path.isAbsolute(value)
+    ? path.normalize(value)
+    : path.resolve(PROJECT_HOME, value);
+}
 
 // Keep legacy keys first, but include v2 identity keys so we can do indexed
 // lookups by message_id/thread_id without O(n) scans.
@@ -57,7 +71,7 @@ export function createChatSyncDB(opts: CreateChatSyncDBOptions): ImmerDB {
     ...rest,
     client,
     project_id,
-    path,
+    path: canonicalChatPath(path),
     primary_keys: CHAT_PRIMARY_KEYS,
     string_cols: string_cols ?? CHAT_STRING_COLS,
     change_throttle: change_throttle ?? 50,
@@ -90,7 +104,7 @@ const leases = new RefcountLeaseManager<string>({
 const leaseReleases: Map<string, Array<() => Promise<void>>> = new Map();
 
 function poolKey(project_id: string, path: string): string {
-  return `${project_id}:${path}`;
+  return `${project_id}:${canonicalChatPath(path)}`;
 }
 
 function pushRelease(key: string, release: () => Promise<void>) {

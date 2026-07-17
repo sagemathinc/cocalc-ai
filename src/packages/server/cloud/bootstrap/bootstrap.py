@@ -1264,6 +1264,55 @@ def configure_journald_limits(
         )
 
 
+RSYSLOG_LOGROTATE_CONTENT = """/var/log/syslog
+/var/log/mail.log
+/var/log/kern.log
+/var/log/auth.log
+/var/log/user.log
+/var/log/cron.log
+{
+    daily
+    rotate 3
+    maxsize 256M
+    missingok
+    notifempty
+    compress
+    sharedscripts
+    postrotate
+        /usr/lib/rsyslog/rsyslog-rotate
+    endscript
+}
+"""
+
+
+def configure_rsyslog_limits(
+    cfg: BootstrapConfig,
+    *,
+    logrotate_path: Path = Path("/etc/logrotate.d/rsyslog"),
+) -> None:
+    if not logrotate_path.parent.exists():
+        return
+    log_line(cfg, "bootstrap: configuring classic system log limits")
+    try:
+        changed = (
+            logrotate_path.read_text(encoding="utf-8")
+            != RSYSLOG_LOGROTATE_CONTENT
+        )
+    except OSError:
+        changed = True
+    if not changed:
+        log_line(cfg, "bootstrap: classic system log limits already current")
+        return
+    logrotate_path.write_text(RSYSLOG_LOGROTATE_CONTENT, encoding="utf-8")
+    if shutil.which("systemctl") is not None:
+        run_best_effort(
+            cfg,
+            ["systemctl", "start", "--no-block", "logrotate.service"],
+            "queue classic system log rotation",
+            timeout=15,
+        )
+
+
 ALGIF_AEAD_DISABLE_CONF = (
     'install algif_aead /bin/false\n'
 )
@@ -2483,12 +2532,46 @@ PROJECT_PROCESS_OOM_SCORE_ADJ="500"
 RUNTIME_USER="__RUNTIME_USER__"
 PROJECT_LEAF_POOL_HEADROOM_BYTES="$((2 * 1024 * 1024 * 1024))"
 MIN_PROJECT_LEAF_MEMORY_MAX_BYTES="$((512 * 1024 * 1024))"
+PROJECT_PASTA_NOFILE_LIMIT="4096"
+PROJECT_TCP_NEW_RATE="50"
+PROJECT_TCP_NEW_BURST="200"
+PROJECT_UDP_NEW_RATE="100"
+PROJECT_UDP_NEW_BURST="400"
+PROJECT_NETWORK_NFT="/usr/sbin/nft"
+PROJECT_NETWORK_TABLE="cocalc_project_network"
+PROJECT_NETWORK_CHAIN="output"
+PROJECT_CGROUP_LOCK_WAIT_SECONDS="5"
+PROJECT_NETWORK_LOCK_WAIT_SECONDS="5"
+# Full-chain reads are only used by background reconciliation and can take
+# over ten seconds on a busy host with hundreds of cgroup/socket rules.
+# Foreground project creation uses an append-only write and does not pay this
+# timeout unless it must repair a missing table.
+PROJECT_NETWORK_NFT_TIMEOUT_SECONDS="30"
 
 deny() {
   local code="$1"
   local detail="$2"
   echo "SECURITY_DENY code=${code} detail=${detail}" >&2
   exit 2
+}
+
+acquire_project_cgroup_lock() {
+  exec 9>/run/lock/cocalc-project-cgroups.lock
+  if ! flock -x -w "$PROJECT_CGROUP_LOCK_WAIT_SECONDS" 9; then
+    deny "project-cgroup-lock-timeout" "$PROJECT_CGROUP_LOCK_WAIT_SECONDS"
+  fi
+}
+
+acquire_project_network_lock() {
+  exec 9>/run/lock/cocalc-project-network.lock
+  if ! flock -x -w "$PROJECT_NETWORK_LOCK_WAIT_SECONDS" 9; then
+    deny "project-network-lock-timeout" "$PROJECT_NETWORK_LOCK_WAIT_SECONDS"
+  fi
+}
+
+release_project_lock() {
+  flock -u 9 || true
+  exec 9>&-
 }
 
 is_project_uuid() {
@@ -2745,6 +2828,193 @@ find_pasta_pids_for_netns() {
   done < <(find_pasta_pids)
 }
 
+find_pasta_pids_for_project() {
+  local project_id="$1" expected pid actual
+  expected="$(project_cgroup_relative_path "$project_id")"
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    actual="$(awk -F: '$1 == "0" {print $3}' "/proc/${pid}/cgroup" 2>/dev/null || true)"
+    [ "$actual" = "$expected" ] && printf '%s\\n' "$pid"
+  done < <(find_pasta_pids)
+}
+
+project_network_cgroup_path() {
+  local project_id="$1" relative
+  relative="${PROJECT_POOL_CGROUP_DEFAULT#/sys/fs/cgroup/}"
+  relative="${relative#/}"
+  printf '%s/project-%s\\n' "$relative" "$project_id"
+}
+
+project_network_cgroup_level() {
+  local path
+  path="$(project_network_cgroup_path "$1")"
+  awk -F/ '{print NF}' <<< "$path"
+}
+
+project_network_rule_marker() {
+  printf 'cocalc-project-network-%s\\n' "$1"
+}
+
+require_project_network_tools() {
+  [ -x "$PROJECT_NETWORK_NFT" ] || deny "project-network-tool-missing" "$PROJECT_NETWORK_NFT"
+  [ -x /usr/bin/prlimit ] || deny "project-network-tool-missing" "/usr/bin/prlimit"
+  [ -x /usr/bin/timeout ] || deny "project-network-tool-missing" "/usr/bin/timeout"
+}
+
+run_project_network_nft() {
+  /usr/bin/timeout --signal=TERM --kill-after=2s \
+    "${PROJECT_NETWORK_NFT_TIMEOUT_SECONDS}s" "$PROJECT_NETWORK_NFT" "$@"
+}
+
+configure_project_network_table() {
+  require_project_network_tools
+  if ! run_project_network_nft list table inet "$PROJECT_NETWORK_TABLE" >/dev/null 2>&1; then
+    run_project_network_nft add table inet "$PROJECT_NETWORK_TABLE"
+  fi
+  if ! run_project_network_nft list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" >/dev/null 2>&1; then
+    printf 'add chain inet %s %s { type filter hook output priority filter; policy accept; }\\n' \
+      "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" | run_project_network_nft -f -
+  fi
+}
+
+project_network_rule_handles() {
+  local project_id="$1" marker
+  marker="$(project_network_rule_marker "$project_id")"
+  run_project_network_nft -a list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" 2>/dev/null | \
+    awk -v marker="comment \\\"${marker}-" '
+      index($0, marker) {
+        for (i = 1; i < NF; i++) {
+          if ($i == "handle") print $(i + 1)
+        }
+      }
+    '
+}
+
+ensure_project_network_rule() {
+  local project_id="$1"
+  is_project_uuid "$project_id" || deny "project-id-invalid" "$project_id"
+  # Listing a cgroup/socket rule chain can take many seconds on a busy host.
+  # Project creation must not depend on that read path: append containment
+  # rules atomically, then let the periodic full reconciliation remove any
+  # duplicate or stale rules. Bootstrap normally creates the table first; the
+  # fallback keeps a cold or manually repaired host self-healing.
+  if emit_project_network_rules "$project_id" | run_project_network_nft -f -; then
+    return 0
+  fi
+  configure_project_network_table
+  emit_project_network_rules "$project_id" | run_project_network_nft -f -
+}
+
+emit_project_network_rules() {
+  local project_id="$1" path level marker
+  path="$(project_network_cgroup_path "$project_id")"
+  level="$(project_network_cgroup_level "$project_id")"
+  marker="$(project_network_rule_marker "$project_id")"
+  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" meta l4proto tcp tcp flags & (fin | syn | rst | ack) == syn limit rate over %s/second burst %s packets counter drop comment "%s-tcp"\\n' \
+    "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
+    "$PROJECT_TCP_NEW_RATE" "$PROJECT_TCP_NEW_BURST" "$marker"
+  printf 'add rule inet %s %s socket cgroupv2 level %s "%s" meta l4proto udp ct state new limit rate over %s/second burst %s packets counter drop comment "%s-udp"\\n' \
+    "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" "$level" "$path" \
+    "$PROJECT_UDP_NEW_RATE" "$PROJECT_UDP_NEW_BURST" "$marker"
+}
+
+remove_project_network_rule() {
+  local project_id="$1" handle handles
+  if ! run_project_network_nft list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" >/dev/null 2>&1; then
+    return 0
+  fi
+  handles="$(project_network_rule_handles "$project_id")"
+  while IFS= read -r handle; do
+    [ -n "$handle" ] || continue
+    run_project_network_nft delete rule inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" handle "$handle"
+  done <<< "$handles"
+}
+
+apply_pasta_resource_limits() {
+  local pid="$1"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 0
+  /usr/bin/prlimit --pid "$pid" \
+    --nofile="${PROJECT_PASTA_NOFILE_LIMIT}:${PROJECT_PASTA_NOFILE_LIMIT}"
+}
+
+project_cgroup_has_processes() {
+  local cgroup="$1" pid=""
+  [ -r "$cgroup/cgroup.procs" ] || return 1
+  read -r pid < "$cgroup/cgroup.procs" || true
+  [ -n "$pid" ]
+}
+
+verify_project_network_limits() {
+  local project_id="$1" marker rules tcp_count udp_count pid found=0 limits
+  is_project_uuid "$project_id" || deny "project-id-invalid" "$project_id"
+  require_project_network_tools
+  marker="$(project_network_rule_marker "$project_id")"
+  if ! rules="$(run_project_network_nft list chain inet "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN" 2>/dev/null)"; then
+    echo "project network nftables chain is missing" >&2
+    return 1
+  fi
+  tcp_count="$(grep -Fc "comment \\\"${marker}-tcp\\\"" <<< "$rules" || true)"
+  udp_count="$(grep -Fc "comment \\\"${marker}-udp\\\"" <<< "$rules" || true)"
+  if [ "$tcp_count" -ne 1 ] || [ "$udp_count" -ne 1 ]; then
+    echo "project network nftables rules are missing or duplicated: tcp=${tcp_count} udp=${udp_count}" >&2
+    return 1
+  fi
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    found=1
+    limits="$(awk '$1 == "Max" && $2 == "open" && $3 == "files" {print $4 " " $5}' "/proc/${pid}/limits" 2>/dev/null || true)"
+    if [ "$limits" != "${PROJECT_PASTA_NOFILE_LIMIT} ${PROJECT_PASTA_NOFILE_LIMIT}" ]; then
+      echo "pasta nofile limit mismatch: pid=${pid} limits=${limits:-missing}" >&2
+      return 1
+    fi
+  done < <(find_pasta_pids_for_project "$project_id")
+  if [ "$found" -ne 1 ]; then
+    echo "project pasta process is missing" >&2
+    return 1
+  fi
+}
+
+render_project_network_rules() {
+  local cgroup project_id
+  {
+    printf 'flush chain inet %s %s\\n' \
+      "$PROJECT_NETWORK_TABLE" "$PROJECT_NETWORK_CHAIN"
+    for cgroup in "${PROJECT_POOL_CGROUP_DEFAULT}"/project-*; do
+      [ -d "$cgroup" ] || continue
+      project_cgroup_has_processes "$cgroup" || continue
+      project_id="${cgroup##*/project-}"
+      is_project_uuid "$project_id" || continue
+      emit_project_network_rules "$project_id"
+    done
+  }
+}
+
+apply_project_network_process_limits() {
+  local pid actual pool_relative
+  pool_relative="${PROJECT_POOL_CGROUP_DEFAULT#/sys/fs/cgroup}"
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    actual="$(awk -F: '$1 == "0" {print $3}' "/proc/${pid}/cgroup" 2>/dev/null || true)"
+    case "$actual" in
+      "${pool_relative}/project-"*) apply_pasta_resource_limits "$pid" ;;
+    esac
+  done < <(find_pasta_pids)
+}
+
+reconcile_project_network_limits() {
+  local rules
+  # Discovering hundreds of project cgroups and pasta processes can take
+  # minutes on a large host. Build the atomic nftables update before taking
+  # the foreground project-start lock, and keep per-process prlimit work
+  # outside it entirely.
+  rules="$(render_project_network_rules)"
+  acquire_project_network_lock
+  configure_project_network_table
+  printf '%s\\n' "$rules" | run_project_network_nft -f -
+  release_project_lock
+  apply_project_network_process_limits
+}
+
 find_bees_pid() {
   local mountpoint="$1" proc pid
   for proc in /proc/[0-9]*; do
@@ -2979,8 +3249,7 @@ case "$cmd" in
     if ! is_project_uuid "$project_id"; then
       deny "project-id-invalid" "$project_id"
     fi
-    exec 9>/run/lock/cocalc-project-cgroups.lock
-    flock -x 9
+    acquire_project_cgroup_lock
     require_runtime_owned_pid "$launcher_pid"
     configure_project_pool_hierarchy
     require_finite_project_pool_memory_max
@@ -2992,17 +3261,21 @@ case "$cmd" in
     printf '%s\n' "$launcher_pid" > "$pool/cgroup.procs"
     printf '%s\n' "$PROJECT_PROCESS_OOM_SCORE_ADJ" > "/proc/${launcher_pid}/oom_score_adj"
     verify_project_pid_in_pool "$project_id" "$launcher_pid"
+    release_project_lock
+    acquire_project_network_lock
+    ensure_project_network_rule "$project_id"
+    release_project_lock
     ;;
   enter-project-cgroup)
     if [ "$#" -ne 2 ] || ! is_project_uuid "$1"; then
       echo "usage: cocalc-runtime-storage enter-project-cgroup <project-id> <launcher-pid>" >&2
       exit 2
     fi
-    exec 9>/run/lock/cocalc-project-cgroups.lock
-    flock -x 9
+    acquire_project_cgroup_lock
     configure_project_pool_hierarchy
     require_finite_project_pool_memory_max
     attach_project_launcher "$1" "$2"
+    release_project_lock
     ;;
   verify-project-pool)
     if [ "$#" -ne 2 ] || ! is_project_uuid "$1"; then
@@ -3039,8 +3312,7 @@ case "$cmd" in
         *) deny "podman-netns-path-invalid" "$netns_path" ;;
       esac
     fi
-    exec 9>/run/lock/cocalc-project-cgroups.lock
-    flock -x 9
+    acquire_project_cgroup_lock
     configure_project_pool_hierarchy
     require_finite_project_pool_memory_max
     pool="$(project_cgroup "$project_id")"
@@ -3048,21 +3320,40 @@ case "$cmd" in
       "$pool" "$memory_max" "$memory_high" "$memory_low" \
       "$memory_swap_max" "$pids_max" "$cpu_quota" "$cpu_period" \
       "$cpu_weight" "$io_weight"
+    release_project_lock
+    # Process discovery and migration can be slow for a project with a very
+    # large process tree. The cgroup now exists with its final limits, so keep
+    # that work outside the global hierarchy lock; cleanup races are harmless
+    # because these attachments are already best effort.
     while IFS= read -r conmon_pid; do
       attach_pid_tree_to_project_pool_storage "$conmon_pid" "$pool" || true
     done < <(find_project_conmon_pids "$project_id")
     if [ "$netns_path" != "-" ]; then
       while IFS= read -r pasta_pid; do
         attach_pid_to_project_pool_storage "$pasta_pid" "$pool" || true
+        apply_pasta_resource_limits "$pasta_pid"
       done < <(find_pasta_pids_for_netns "$netns_path")
     fi
+    ;;
+  verify-project-network-limits)
+    if [ "$#" -ne 1 ] || ! is_project_uuid "$1"; then
+      echo "usage: cocalc-runtime-storage verify-project-network-limits <project-id>" >&2
+      exit 2
+    fi
+    verify_project_network_limits "$1"
+    ;;
+  reconcile-project-network-limits)
+    if [ "$#" -ne 0 ]; then
+      echo "usage: cocalc-runtime-storage reconcile-project-network-limits" >&2
+      exit 2
+    fi
+    reconcile_project_network_limits
     ;;
   cleanup-project-cgroup)
     if [ "$#" -ne 1 ] || ! is_project_uuid "$1"; then
       deny "project-id-invalid" "${1:-missing}"
     fi
-    exec 9>/run/lock/cocalc-project-cgroups.lock
-    flock -x 9
+    acquire_project_cgroup_lock
     pool="$(project_cgroup "$1")"
     if [ -d "$pool" ]; then
       if [ -w "$pool/cgroup.kill" ]; then
@@ -3076,19 +3367,28 @@ case "$cmd" in
         deny "project-cgroup-cleanup-failed" "$1"
       fi
     fi
+    release_project_lock
+    acquire_project_network_lock
+    remove_project_network_rule "$1"
+    release_project_lock
     ;;
   attach-pasta-cgroups)
     if [ "$#" -ne 0 ]; then
       echo "usage: cocalc-runtime-storage attach-pasta-cgroups" >&2
       exit 2
     fi
-    exec 9>/run/lock/cocalc-project-cgroups.lock
-    flock -x 9
+    acquire_project_cgroup_lock
     configure_project_pool_hierarchy
     pool="$(project_legacy_cgroup)"
     while IFS= read -r pasta_pid; do
-      attach_pid_to_project_pool_storage "$pasta_pid" "$pool" || true
+      actual="$(awk -F: '$1 == "0" {print $3}' "/proc/${pasta_pid}/cgroup" 2>/dev/null || true)"
+      case "$actual" in
+        "$(project_pool_relative_path)/project-"*) ;;
+        *) attach_pid_to_project_pool_storage "$pasta_pid" "$pool" || true ;;
+      esac
     done < <(find_pasta_pids)
+    release_project_lock
+    reconcile_project_network_limits
     ;;
   btrfs)
     check_args "$@"
@@ -4274,6 +4574,18 @@ def reconcile_bees_runtime_policy(cfg: BootstrapConfig) -> None:
     )
 
 
+def reconcile_project_network_limits(cfg: BootstrapConfig) -> None:
+    run_cmd(
+        cfg,
+        [
+            "/usr/local/sbin/cocalc-runtime-storage",
+            "reconcile-project-network-limits",
+        ],
+        "reconcile per-project network containment",
+        timeout=60,
+    )
+
+
 def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: ensuring /mnt/cocalc/data subvolume")
     try:
@@ -5222,6 +5534,10 @@ fs.inotify.max_user_watches = 2097152
 fs.inotify.max_queued_events = 65536
 kernel.keys.maxkeys = 20000
 kernel.keys.maxbytes = 25000000
+# Project listeners use 30,000-59,999. Exclude those ports from ephemeral
+# client allocation while preserving a large ephemeral pool around them.
+net.ipv4.ip_local_port_range = 10000 65535
+net.ipv4.ip_local_reserved_ports = 30000-59999
 SYSCTL
   chmod 0644 "${SYSCTL_CONFIG_PATH}"
   sysctl -p "${SYSCTL_CONFIG_PATH}"
@@ -6564,8 +6880,16 @@ Type=simple
     unit_changed = write_text_if_changed(
         Path("/etc/systemd/system/cocalc-cloudflared.service"), unit
     )
+    recovery_dropin_dir = Path(
+        "/etc/systemd/system/cocalc-cloudflared.service.d"
+    )
+    recovery_dropin_dir.mkdir(parents=True, exist_ok=True)
+    recovery_dropin_changed = write_text_if_changed(
+        recovery_dropin_dir / "cocalc-recovery.conf",
+        "[Service]\nTimeoutStopSec=30\n",
+    )
     service_changed = unit_changed or service_changed
-    if unit_changed:
+    if unit_changed or recovery_dropin_changed:
         run_cmd(cfg, ["systemctl", "daemon-reload"], "daemon-reload", timeout=30)
     run_cmd(cfg, ["systemctl", "enable", "cocalc-cloudflared"], "enable cloudflared")
     active = run_cmd(
@@ -6774,6 +7098,7 @@ def run_provision(cfg: BootstrapConfig) -> int:
         install_gpu_support(cfg)
         configure_chrony(cfg)
         configure_journald_limits(cfg)
+        configure_rsyslog_limits(cfg)
         enable_userns(cfg)
         ensure_subuids(cfg)
         enable_linger(cfg)
@@ -6800,9 +7125,11 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
         configure_kernel_key_limits(cfg)
         configure_inotify_limits(cfg)
         configure_journald_limits(cfg)
+        configure_rsyslog_limits(cfg)
         image_size_gb = compute_image_size(cfg)
         install_btrfs_helper(cfg)
         install_privileged_wrappers(cfg)
+        reconcile_project_network_limits(cfg)
         ensure_cocalc_mount(cfg)
         reconcile_bees_runtime_policy(cfg)
         setup_shared_scratch(cfg)

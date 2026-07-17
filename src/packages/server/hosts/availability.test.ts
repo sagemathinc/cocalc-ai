@@ -3,9 +3,35 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { _test, classifyHostAvailabilitySnapshot } from "./availability";
+import getPool from "@cocalc/database/pool";
+import {
+  _test,
+  classifyHostAvailabilitySnapshot,
+  ensureHostAvailabilitySchema,
+} from "./availability";
 
 describe("classifyHostAvailabilitySnapshot", () => {
+  it("allows durable unobserved availability events", async () => {
+    await ensureHostAvailabilitySchema();
+    const id = "0f490467-90fe-4f06-a896-dd4c8ef1945a";
+    const hostId = "12869982-da11-495e-9914-ee784ee8d5a8";
+    await getPool().query(
+      `INSERT INTO project_host_availability_events
+         (id, host_id, started_at, state, planned, category, source)
+       VALUES ($1, $2, NOW(), 'unobserved', FALSE, 'host_stale', 'test')`,
+      [id, hostId],
+    );
+    const { rows } = await getPool().query(
+      `SELECT state FROM project_host_availability_events WHERE id=$1`,
+      [id],
+    );
+    expect(rows[0]?.state).toBe("unobserved");
+    await getPool().query(
+      `DELETE FROM project_host_availability_events WHERE id=$1`,
+      [id],
+    );
+  });
+
   it("treats a healthy standard fallback host as online", () => {
     const observation = classifyHostAvailabilitySnapshot({
       id: "dab25958-64df-4bea-803b-77319d7839f6",
@@ -58,7 +84,7 @@ describe("classifyHostAvailabilitySnapshot", () => {
     expect(observation.category).toBe("spot_interruption");
   });
 
-  it("treats a running host with stale heartbeats as unavailable", () => {
+  it("treats a running host with stale heartbeats as unobserved", () => {
     const observation = classifyHostAvailabilitySnapshot({
       id: "12869982-da11-495e-9914-ee784ee8d5a8",
       status: "running",
@@ -68,12 +94,41 @@ describe("classifyHostAvailabilitySnapshot", () => {
       },
     });
 
-    expect(observation.state).toBe("unavailable");
+    expect(observation.state).toBe("unobserved");
     expect(observation.planned).toBe(false);
     expect(observation.category).toBe("host_stale");
-    expect(observation.summary).toBe(
-      "Host is running at the provider but not reporting.",
-    );
+    expect(observation.summary).toContain("observation is stale");
+  });
+
+  it("does not degrade availability for the first synthetic failure", () => {
+    const base = {
+      id: "7b1fa6e1-032d-4e90-bd20-00568c67d5d0",
+      status: "running",
+      last_seen: new Date().toISOString(),
+      metadata: {
+        desired_state: "running",
+        runtime_synthetic_probe: {
+          status: "failed",
+          consecutive_failures: 1,
+          quarantined: false,
+          error: "transient crun getcwd failure",
+        },
+      },
+    };
+    expect(classifyHostAvailabilitySnapshot(base).state).toBe("online");
+    expect(
+      classifyHostAvailabilitySnapshot({
+        ...base,
+        metadata: {
+          ...base.metadata,
+          runtime_synthetic_probe: {
+            ...base.metadata.runtime_synthetic_probe,
+            consecutive_failures: 2,
+            quarantined: true,
+          },
+        },
+      }).state,
+    ).toBe("degraded");
   });
 
   it("treats a fresh heartbeat with a failed runtime probe as degraded", () => {

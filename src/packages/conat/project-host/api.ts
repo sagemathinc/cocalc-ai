@@ -446,6 +446,15 @@ export interface HostStaticAppPathInspection {
 }
 
 export interface HostControlApi {
+  restartCloudflared: (opts: {
+    reason: "public-route-probe";
+    claim_id: string;
+  }) => Promise<{
+    ok: true;
+    started_at: string;
+    finished_at: string;
+    duration_ms: number;
+  }>;
   runSyntheticRuntimeProbe: () => Promise<{
     project_id: string;
     started_at: string;

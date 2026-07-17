@@ -53,7 +53,6 @@ CodeMirror.defineExtension(
     }
 
     const default_mode = opts.mode ?? cm.get_edit_mode();
-    const canonical_mode = (name) => name ?? default_mode;
 
     const { args, cmd } = opts;
 
@@ -85,7 +84,9 @@ CodeMirror.defineExtension(
     const selections = cm.listSelections();
     for (let selection of selections) {
       let left = "";
-      const mode = canonical_mode(cm.getModeAt(selection.head).name);
+      // get_edit_mode canonicalizes CodeMirror implementation names such as
+      // "stex" to the editor command-map name "tex".
+      const mode = cm.get_edit_mode(selection.head) ?? default_mode;
       const from = selection.from();
       const to = selection.to();
       let src = cm.getRange(from, to);

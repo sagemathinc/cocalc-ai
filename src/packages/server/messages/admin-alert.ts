@@ -56,6 +56,7 @@ export default async function adminAlert({
   errorOnFail,
   stackTrace,
   dedupMinutes = 60 * 4,
+  dedupBySubject,
   to_ids,
 }: {
   subject: string;
@@ -64,6 +65,9 @@ export default async function adminAlert({
   stackTrace?: boolean;
   // If you try to send the exact same admin alert more often than this, then it is dropped
   dedupMinutes?: number;
+  // Dedupe on recipients, sender, subject, and thread without comparing the
+  // diagnostic body. Use for multi-worker alerts with changing statistics.
+  dedupBySubject?: boolean;
   // If not given, send to all admins. This is useful for alert categories
   // where individual admins can opt out.
   to_ids?: string[];
@@ -83,6 +87,7 @@ export default async function adminAlert({
       body: toString(body) + stack,
       to_ids: targets,
       dedupMinutes,
+      dedupBySubject,
     });
   } catch (err) {
     if (errorOnFail) {

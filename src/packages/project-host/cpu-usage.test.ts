@@ -166,6 +166,51 @@ describe("project-host CPU usage accounting", () => {
     ]);
   });
 
+  it("skips a container removed between listing and inspection", async () => {
+    const firstProject = "11111111-1111-4111-8111-111111111111";
+    const removedProject = "22222222-2222-4222-8222-222222222222";
+    const podmanCommand = jest
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          { Id: "ctr-live", Names: [`project-${firstProject}`] },
+          { Id: "ctr-removed", Names: [`project-${removedProject}`] },
+        ]),
+      })
+      .mockRejectedValueOnce(new Error("no such object: ctr-removed"))
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          {
+            Name: `/project-${firstProject}`,
+            State: { Pid: 1234 },
+          },
+        ]),
+      })
+      .mockRejectedValueOnce(new Error("no such object: ctr-removed"));
+
+    const samples = await collectRunningProjectCpuSamples({
+      podmanCommand,
+      readdirFn: jest.fn().mockResolvedValue(["1234"]),
+      readFileFn: jest.fn().mockImplementation(async (path: string) => {
+        if (path === "/proc/1234/stat") {
+          return procStat({ pid: 1234, ppid: 1, utime: 100, stime: 0 });
+        }
+        if (path === "/proc/1234/cmdline") {
+          return "python\0";
+        }
+        throw new Error(`unexpected path: ${path}`);
+      }),
+    });
+
+    expect(samples).toEqual([
+      expect.objectContaining({
+        project_id: firstProject,
+        container_id: "ctr-live",
+        pid: 1234,
+      }),
+    ]);
+  });
+
   it("attaches high-confidence cryptomining evidence from project process commands", async () => {
     const sample = await collectRunningProjectCpuSamples({
       podmanCommand: jest
@@ -531,5 +576,26 @@ describe("project-host CPU usage accounting", () => {
 
     expect(sample).not.toHaveBeenCalled();
     expect(recordManagedProjectCpuUsageMock).not.toHaveBeenCalled();
+  });
+
+  it("continues sampling after a transient collection failure", async () => {
+    const sample = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("podman inspect raced container stop"))
+      .mockResolvedValueOnce([]);
+
+    const stop = startManagedCpuUsageLoop({
+      intervalMs: 1000,
+      sample: sample as any,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    jest.advanceTimersByTime(1000);
+    await Promise.resolve();
+    await Promise.resolve();
+    stop();
+
+    expect(sample).toHaveBeenCalledTimes(2);
   });
 });

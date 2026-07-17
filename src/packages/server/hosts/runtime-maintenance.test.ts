@@ -30,6 +30,18 @@ function degradedCloudHost(overrides: Record<string, any> = {}) {
   };
 }
 
+function syntheticClaim(overrides: Record<string, any> = {}) {
+  return {
+    claim_id: "claim-1",
+    previous_failures: 0,
+    previous_total_checks: 0,
+    previous_passed_checks: 0,
+    previous_failed_checks: 0,
+    was_quarantined: false,
+    ...overrides,
+  };
+}
+
 describe("project-host runtime maintenance policy", () => {
   it("requires completed forensic capture before rebooting", () => {
     const row = degradedCloudHost();
@@ -44,6 +56,50 @@ describe("project-host runtime maintenance policy", () => {
     expect(_test.autoRebootDecision(degradedCloudHost(), NOW)).toEqual({
       action: "reboot",
       attempts: [],
+    });
+  });
+
+  it("does not reboot for synthetic-only failures", () => {
+    const row = degradedCloudHost({
+      runtime_health: {
+        status: "degraded",
+        ready: false,
+        consecutive_failures: 0,
+        diagnostics_completed_at: new Date(NOW - 60_000).toISOString(),
+        error: "synthetic project probe failed",
+        synthetic_probe: {
+          status: "failed",
+          consecutive_failures: 2,
+          failure_kind: "port_bind_collision",
+        },
+      },
+    });
+
+    expect(_test.autoRebootDecision(row, NOW)).toEqual({
+      action: "wait",
+      reason: "passive runtime failure threshold is not met",
+    });
+  });
+
+  it("does not reboot for an unclassified synthetic-only failure", () => {
+    const row = degradedCloudHost({
+      runtime_health: {
+        status: "degraded",
+        ready: false,
+        consecutive_failures: 0,
+        diagnostics_completed_at: new Date(NOW - 60_000).toISOString(),
+        error: "synthetic project probe failed",
+        synthetic_probe: {
+          status: "failed",
+          consecutive_failures: 8,
+          failure_kind: "project_start_failed",
+        },
+      },
+    });
+
+    expect(_test.autoRebootDecision(row, NOW)).toEqual({
+      action: "wait",
+      reason: "passive runtime failure threshold is not met",
     });
   });
 
@@ -170,18 +226,80 @@ describe("project-host runtime maintenance policy", () => {
     expect(_test.syntheticProbeDue(row, NOW)).toBe(false);
   });
 
-  it("rate limits repeated synthetic failure alerts by host metadata", () => {
+  it("alerts once per synthetic quarantine incident", () => {
     const row = degradedCloudHost({
       runtime_synthetic_probe: {
         status: "failed",
         alerted_at: new Date(NOW - 5 * 60_000).toISOString(),
       },
     });
-    expect(_test.syntheticProbeFailureAlertDue(row, NOW)).toBe(false);
+    expect(_test.syntheticProbeFailureAlertDue(row)).toBe(false);
     row.metadata.runtime_synthetic_probe.alerted_at = new Date(
-      NOW - 16 * 60_000,
+      NOW - 24 * 60 * 60_000,
     ).toISOString();
-    expect(_test.syntheticProbeFailureAlertDue(row, NOW)).toBe(true);
+    expect(_test.syntheticProbeFailureAlertDue(row)).toBe(false);
+    delete row.metadata.runtime_synthetic_probe.alerted_at;
+    expect(_test.syntheticProbeFailureAlertDue(row)).toBe(true);
+  });
+
+  it("requires two synthetic failures to quarantine and one pass to recover", () => {
+    const row = degradedCloudHost();
+    const firstFailure = _test.syntheticProbeOutcome({
+      row,
+      claim: syntheticClaim(),
+      checkedAt: new Date(NOW).toISOString(),
+      duration_ms: 100,
+      error: new Error("transient crun getcwd failure"),
+    });
+    expect(firstFailure).toMatchObject({
+      status: "failed",
+      consecutive_failures: 1,
+      quarantined: false,
+      total_checks: 1,
+      failed_checks: 1,
+    });
+
+    const secondFailure = _test.syntheticProbeOutcome({
+      row,
+      claim: syntheticClaim({
+        claim_id: "claim-2",
+        previous_failures: 1,
+        previous_total_checks: 1,
+        previous_failed_checks: 1,
+      }),
+      checkedAt: new Date(NOW).toISOString(),
+      duration_ms: 100,
+      error: new Error("repeated failure"),
+    });
+    expect(secondFailure).toMatchObject({
+      status: "failed",
+      consecutive_failures: 2,
+      quarantined: true,
+      total_checks: 2,
+      failed_checks: 2,
+    });
+
+    const recovered = _test.syntheticProbeOutcome({
+      row,
+      claim: syntheticClaim({
+        claim_id: "claim-3",
+        previous_failures: 2,
+        previous_total_checks: 2,
+        previous_failed_checks: 2,
+        was_quarantined: true,
+      }),
+      checkedAt: new Date(NOW).toISOString(),
+      duration_ms: 100,
+      result: { project_id: "probe-project" },
+    });
+    expect(recovered).toMatchObject({
+      status: "passed",
+      consecutive_failures: 0,
+      quarantined: false,
+      total_checks: 3,
+      passed_checks: 1,
+      failed_checks: 2,
+    });
   });
 
   it("runs public-route probes after a boot, process session, or interval", () => {
@@ -263,6 +381,8 @@ describe("project-host runtime maintenance policy", () => {
         health_status: 200,
         preflight_status: 204,
         session_status: 401,
+        websocket_status: 101,
+        websocket_attempts: 8,
       },
     });
     expect(firstSuccess).toMatchObject({
@@ -289,6 +409,8 @@ describe("project-host runtime maintenance policy", () => {
         health_status: 200,
         preflight_status: 204,
         session_status: 401,
+        websocket_status: 101,
+        websocket_attempts: 8,
       },
     });
     expect(secondSuccess).toMatchObject({
@@ -299,7 +421,7 @@ describe("project-host runtime maintenance policy", () => {
     expect(secondSuccess.alerted_at).toBeUndefined();
   });
 
-  it("rate limits repeated public-route failure alerts", () => {
+  it("alerts once per public-route quarantine incident", () => {
     const row = degradedCloudHost({
       public_route_probe: {
         status: "failed",
@@ -307,11 +429,45 @@ describe("project-host runtime maintenance policy", () => {
         alerted_at: new Date(NOW - 5 * 60_000).toISOString(),
       },
     });
-    expect(_test.publicRouteProbeFailureAlertDue(row, NOW)).toBe(false);
+    expect(_test.publicRouteProbeFailureAlertDue(row)).toBe(false);
     row.metadata.public_route_probe.alerted_at = new Date(
-      NOW - 16 * 60_000,
+      NOW - 24 * 60 * 60_000,
     ).toISOString();
-    expect(_test.publicRouteProbeFailureAlertDue(row, NOW)).toBe(true);
+    expect(_test.publicRouteProbeFailureAlertDue(row)).toBe(false);
+    delete row.metadata.public_route_probe.alerted_at;
+    expect(_test.publicRouteProbeFailureAlertDue(row)).toBe(true);
+  });
+
+  it("only repairs quarantined capable hosts outside the cooldown", () => {
+    const probe = {
+      status: "failed",
+      claim_id: "probe-claim",
+      quarantined: true,
+      consecutive_failures: 2,
+    };
+    const row = degradedCloudHost({
+      cloudflared_restart_supported: true,
+      public_route_probe: probe,
+    });
+    expect(_test.publicRouteAutoRepairDecision(row, probe, NOW)).toEqual({
+      action: "restart",
+    });
+
+    row.metadata.cloudflared_restart_supported = false;
+    expect(_test.publicRouteAutoRepairDecision(row, probe, NOW)).toEqual({
+      action: "wait",
+      reason: "host does not advertise tunnel restart support",
+    });
+
+    row.metadata.cloudflared_restart_supported = true;
+    row.metadata.public_route_auto_recovery = {
+      status: "restart_completed",
+      attempted_at: new Date(NOW - 5 * 60_000).toISOString(),
+    };
+    expect(_test.publicRouteAutoRepairDecision(row, probe, NOW)).toEqual({
+      action: "wait",
+      reason: "host tunnel repair is in cooldown",
+    });
   });
 
   it("identifies the deployment from the project-host public URL", () => {

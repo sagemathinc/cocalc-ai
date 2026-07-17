@@ -133,6 +133,7 @@ import {
   projectSecretsHostPath,
   PROJECT_SECRETS_HOST_ROOT,
   reconcileProjectCgroup,
+  reconcileProjectNetworkLimits,
   refreshProjectSecretsHostPath,
   podmanRuntimeArgs,
   redactConfigurationForLog,
@@ -190,7 +191,7 @@ describe("project-runner podman orphan fallback", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUnmountAll.mockResolvedValue(undefined);
-    mockExecuteCode.mockResolvedValue({ stdout: "" });
+    mockExecuteCode.mockResolvedValue({ stdout: "", exit_code: 0 });
     mockGetConmonContainerProcessLists.mockResolvedValue(new Map());
     mockFileServerClient.mockReturnValue({
       beginRestoreStaging: jest.fn(async () => null),
@@ -256,6 +257,49 @@ describe("project-runner podman orphan fallback", () => {
     expect(mockPodman).not.toHaveBeenCalledWith(
       expect.arrayContaining(["rm", `project-${project1}`]),
       expect.anything(),
+    );
+  });
+
+  it("reconciles network containment once at host scope", async () => {
+    mockGetConmonContainerProcessLists.mockResolvedValue(
+      new Map([
+        [
+          `project-${project1}`,
+          [
+            {
+              name: `project-${project1}`,
+              project_id: project1,
+              conmon_pid: 400,
+              child_pids: [401],
+            },
+          ],
+        ],
+      ]),
+    );
+
+    await reconcileProjectNetworkLimits();
+
+    expect(mockExecuteCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "sudo",
+        args: [
+          "-n",
+          "/usr/local/sbin/cocalc-runtime-storage",
+          "reconcile-project-network-limits",
+        ],
+      }),
+    );
+  });
+
+  it("rejects a timed-out host network reconciliation", async () => {
+    mockExecuteCode.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "timed out",
+      exit_code: null,
+    });
+
+    await expect(reconcileProjectNetworkLimits()).rejects.toThrow(
+      "failed to reconcile project network containment: timed out",
     );
   });
 

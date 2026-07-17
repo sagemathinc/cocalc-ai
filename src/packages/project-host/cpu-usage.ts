@@ -107,12 +107,35 @@ async function inspectProjectContainerPids(
   podmanCommand: PodmanLike,
 ): Promise<Array<ProjectContainer & { pid: number }>> {
   if (containers.length === 0) return [];
-  const inspect = await podmanCommand([
-    "inspect",
-    ...containers.map((container) => container.id),
-    "--format",
-    "json",
-  ]);
+  let inspect: Awaited<ReturnType<PodmanLike>>;
+  try {
+    inspect = await podmanCommand([
+      "inspect",
+      ...containers.map((container) => container.id),
+      "--format",
+      "json",
+    ]);
+  } catch (err) {
+    if (!isMissingContainerError(err)) {
+      throw err;
+    }
+    if (containers.length === 1) {
+      return [];
+    }
+    // A project may stop between `podman ps` and this inspect. Bisect the
+    // failed batch so the remaining live projects are still sampled.
+    const middle = Math.ceil(containers.length / 2);
+    return [
+      ...(await inspectProjectContainerPids(
+        containers.slice(0, middle),
+        podmanCommand,
+      )),
+      ...(await inspectProjectContainerPids(
+        containers.slice(middle),
+        podmanCommand,
+      )),
+    ];
+  }
   const parsed = `${inspect.stdout ?? ""}`.trim()
     ? JSON.parse(`${inspect.stdout ?? ""}`)
     : [];
@@ -128,6 +151,15 @@ async function inspectProjectContainerPids(
     out.push({ ...container, pid });
   }
   return out;
+}
+
+function isMissingContainerError(err: unknown): boolean {
+  const message = `${err}`.toLowerCase();
+  return (
+    message.includes("no such object") ||
+    message.includes("no such container") ||
+    message.includes("container not found")
+  );
 }
 
 function parseProcCgroup(
@@ -557,6 +589,10 @@ export function startManagedCpuUsageLoop({
           });
         }
       }
+    } catch (err) {
+      logger.warn("managed CPU usage sampling failed", {
+        err: `${err}`,
+      });
     } finally {
       running = false;
     }

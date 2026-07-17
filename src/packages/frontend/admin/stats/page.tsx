@@ -8,36 +8,40 @@ import {
   Alert,
   Card,
   Col,
+  Input,
   Popover,
   Row,
   Select,
   Space,
   Spin,
   Statistic,
-  Switch,
   Table,
   Tag,
   Typography,
 } from "antd";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
+  AcpAdmissionDenialReport,
+  AcpAdmissionDenialSummary,
   LaunchHealthCheck,
   LaunchHealthLevel,
   LaunchHealthStatus,
+  ServiceAdmissionDenialReport,
+  ServiceAdmissionDenialSummary,
   UxLatencyMetricSummary,
   UxLatencyRecentEvent,
   UxLatencySummary,
 } from "@cocalc/conat/hub/api/system";
-import { ADMIN_UX_LATENCY_ALERTS_ENABLED_KEY } from "@cocalc/util/admin-alerts";
 
 const { Text } = Typography;
 
 const WINDOW_OPTIONS = [
+  { label: "Last 15 minutes", value: 15 },
   { label: "Last hour", value: 60 },
   { label: "Last 6 hours", value: 6 * 60 },
   { label: "Last 24 hours", value: 24 * 60 },
+  { label: "Last 7 days", value: 7 * 24 * 60 },
 ];
 
 function windowLabel(minutes: number): string {
@@ -55,6 +59,63 @@ function formatMs(value?: number): string {
 
 function formatCount(value?: number | null): string {
   return value == null ? "n/a" : `${value}`;
+}
+
+function formatDate(value: string): string {
+  return new Date(value).toLocaleString();
+}
+
+function formatSpan(first: string, last: string): string {
+  const duration = Math.max(0, Date.parse(last) - Date.parse(first));
+  if (duration < 1000) return `${duration} ms`;
+  if (duration < 60_000) return `${(duration / 1000).toFixed(1)} s`;
+  return `${(duration / 60_000).toFixed(1)} min`;
+}
+
+function matchesSearch(row: object, search: string): boolean {
+  const query = search.trim().toLowerCase();
+  if (!query) return true;
+  return Object.values(row).some((value) =>
+    `${value ?? ""}`.toLowerCase().includes(query),
+  );
+}
+
+function sumCounts(rows: Array<{ count: number }>): number {
+  return rows.reduce((total, row) => total + row.count, 0);
+}
+
+function distinctCount(
+  rows: Array<{ account_id: string | null; project_id: string | null }>,
+  key: "account_id" | "project_id",
+): number {
+  return new Set(rows.map((row) => row[key]).filter(Boolean)).size;
+}
+
+function Scope({
+  account_id,
+  project_id,
+  host_id,
+}: {
+  account_id: string | null;
+  project_id: string | null;
+  host_id?: string | null;
+}): React.JSX.Element {
+  const values = [
+    account_id ? `account ${account_id}` : undefined,
+    project_id ? `project ${project_id}` : undefined,
+    host_id ? `host ${host_id}` : undefined,
+  ].filter((value): value is string => value != null);
+  return values.length ? (
+    <Space direction="vertical" size={0}>
+      {values.map((value) => (
+        <Text key={value} code copyable={{ text: value.split(" ")[1] }}>
+          {value}
+        </Text>
+      ))}
+    </Space>
+  ) : (
+    <Text type="secondary">global</Text>
+  );
 }
 
 function healthColor(level: LaunchHealthLevel): string {
@@ -192,11 +253,12 @@ export const UsageStatistics: React.FC = () => {
   const [windowMinutes, setWindowMinutes] = useState(24 * 60);
   const [summary, setSummary] = useState<UxLatencySummary>();
   const [launchHealth, setLaunchHealth] = useState<LaunchHealthStatus>();
+  const [serviceDenials, setServiceDenials] =
+    useState<ServiceAdmissionDenialReport>();
+  const [acpDenials, setAcpDenials] = useState<AcpAdmissionDenialReport>();
+  const [search, setSearch] = useState("");
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
-  const otherSettings = useTypedRedux("account", "other_settings");
-  const alertsEnabled =
-    otherSettings?.get?.(ADMIN_UX_LATENCY_ALERTS_ENABLED_KEY) !== false;
 
   useEffect(() => {
     let canceled = false;
@@ -204,17 +266,30 @@ export const UsageStatistics: React.FC = () => {
       setLoading(true);
       setError(undefined);
       try {
-        const [nextSummary, nextHealth] = await Promise.all([
-          webapp_client.conat_client.hub.system.getUxLatencySummary({
-            window_minutes: windowMinutes,
-          }),
-          webapp_client.conat_client.hub.system.getLaunchHealth({
-            window_minutes: windowMinutes,
-          }),
-        ]);
+        const [nextSummary, nextHealth, nextServiceDenials, nextAcpDenials] =
+          await Promise.all([
+            webapp_client.conat_client.hub.system.getUxLatencySummary({
+              window_minutes: windowMinutes,
+            }),
+            webapp_client.conat_client.hub.system.getLaunchHealth({
+              window_minutes: windowMinutes,
+            }),
+            webapp_client.conat_client.hub.system.getServiceAdmissionDenialReport(
+              {
+                window_minutes: windowMinutes,
+                limit: 500,
+              },
+            ),
+            webapp_client.conat_client.hub.system.getAcpAdmissionDenialReport({
+              window_minutes: windowMinutes,
+              limit: 500,
+            }),
+          ]);
         if (!canceled) {
           setSummary(nextSummary);
           setLaunchHealth(nextHealth);
+          setServiceDenials(nextServiceDenials);
+          setAcpDenials(nextAcpDenials);
         }
       } catch (err) {
         if (!canceled) {
@@ -355,13 +430,244 @@ export const UsageStatistics: React.FC = () => {
     { title: "Ext", dataIndex: "path_ext", key: "path_ext" },
   ];
 
+  const serviceDenialColumns = [
+    {
+      title: "Last seen",
+      dataIndex: "last_time",
+      key: "last_time",
+      render: (value: string, row: ServiceAdmissionDenialSummary) => (
+        <div>
+          <div>{formatDate(value)}</div>
+          <Text type="secondary">span {formatSpan(row.first_time, value)}</Text>
+        </div>
+      ),
+    },
+    {
+      title: "Count",
+      dataIndex: "count",
+      key: "count",
+      align: "right" as const,
+    },
+    {
+      title: "Surface",
+      dataIndex: "surface",
+      key: "surface",
+      render: (value: string, row: ServiceAdmissionDenialSummary) => (
+        <div>
+          <Tag>{value}</Tag>
+          <div>
+            <Text type="secondary">{row.source}</Text>
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: "Limit",
+      dataIndex: "limit",
+      key: "limit",
+      render: (value: string, row: ServiceAdmissionDenialSummary) => (
+        <div>
+          <Text code>{value}</Text>
+          <div>
+            <Text type="secondary">
+              max {row.max_current}/{row.max_maximum}
+            </Text>
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: "Scope",
+      key: "scope",
+      render: (_: unknown, row: ServiceAdmissionDenialSummary) => (
+        <Scope
+          account_id={row.account_id}
+          project_id={row.project_id}
+          host_id={row.host_id}
+        />
+      ),
+    },
+    {
+      title: "Operation",
+      key: "operation",
+      render: (_: unknown, row: ServiceAdmissionDenialSummary) => (
+        <div>
+          <div>
+            {row.sample_key || row.sample_subject || row.sample_path || "-"}
+          </div>
+          {row.sample_reason ? (
+            <Text type="secondary">{row.sample_reason}</Text>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      title: "Bay",
+      dataIndex: "bay_id",
+      key: "bay_id",
+      render: (value?: string) => value || "-",
+    },
+  ];
+
+  const acpDenialColumns = [
+    {
+      title: "Last seen",
+      dataIndex: "last_time",
+      key: "last_time",
+      render: (value: string, row: AcpAdmissionDenialSummary) => (
+        <div>
+          <div>{formatDate(value)}</div>
+          <Text type="secondary">span {formatSpan(row.first_time, value)}</Text>
+        </div>
+      ),
+    },
+    {
+      title: "Count",
+      dataIndex: "count",
+      key: "count",
+      align: "right" as const,
+    },
+    {
+      title: "Limit",
+      dataIndex: "limit",
+      key: "limit",
+      render: (value: string, row: AcpAdmissionDenialSummary) => (
+        <div>
+          <Text code>{value}</Text>
+          <div>
+            <Text type="secondary">
+              max {row.max_current}/{row.max_maximum}
+            </Text>
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: "Source",
+      dataIndex: "source",
+      key: "source",
+    },
+    {
+      title: "Scope",
+      key: "scope",
+      render: (_: unknown, row: AcpAdmissionDenialSummary) => (
+        <Scope account_id={row.account_id} project_id={row.project_id} />
+      ),
+    },
+    {
+      title: "Sample",
+      key: "sample",
+      render: (_: unknown, row: AcpAdmissionDenialSummary) =>
+        row.sample_path || row.sample_thread_id || "-",
+    },
+    {
+      title: "Bay",
+      dataIndex: "bay_id",
+      key: "bay_id",
+      render: (value?: string) => value || "-",
+    },
+  ];
+
   const metricRows = summary?.metrics ?? [];
   const segmentRows = summary?.segments ?? [];
   const recentRows = summary?.recent_slow_events ?? [];
+  const allServiceDenialRows = serviceDenials?.groups ?? [];
+  const allAcpDenialRows = acpDenials?.groups ?? [];
+  const serviceDenialRows = allServiceDenialRows.filter((row) =>
+    matchesSearch(row, search),
+  );
+  const acpDenialRows = allAcpDenialRows.filter((row) =>
+    matchesSearch(row, search),
+  );
+  const containmentRows = [...allServiceDenialRows, ...allAcpDenialRows];
+  const unavailableBays = [
+    ...(serviceDenials?.bays ?? []),
+    ...(acpDenials?.bays ?? []),
+  ].filter((bay, index, rows) => {
+    if (bay.ok) return false;
+    return (
+      rows.findIndex((candidate) => candidate.bay_id === bay.bay_id) === index
+    );
+  });
   const activeWindowLabel = windowLabel(windowMinutes).toLowerCase();
 
   return (
     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <Card
+        title="Operations Monitor"
+        extra={
+          <Select
+            options={WINDOW_OPTIONS}
+            value={windowMinutes}
+            onChange={setWindowMinutes}
+            style={{ minWidth: 150 }}
+          />
+        }
+      >
+        {error ? (
+          <Alert
+            type="error"
+            showIcon
+            message="Unable to refresh all operations data"
+            description={error}
+            style={{ marginBottom: 16 }}
+          />
+        ) : null}
+        <Alert
+          type="info"
+          showIcon
+          message="Contained events are monitoring state, not admin alerts"
+          description="Admission controls rejected these requests to protect shared services. They remain searchable here for investigation; admin alerts are reserved for conditions that require immediate attention."
+          style={{ marginBottom: 16 }}
+        />
+        {unavailableBays.length ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Some bay telemetry is unavailable"
+            description={unavailableBays
+              .map((bay) => `${bay.bay_id}: ${bay.error || "unknown error"}`)
+              .join(" | ")}
+            style={{ marginBottom: 16 }}
+          />
+        ) : null}
+        <Spin spinning={loading && !serviceDenials && !acpDenials}>
+          <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="Service requests contained"
+                value={sumCounts(allServiceDenialRows)}
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="ACP requests contained"
+                value={sumCounts(allAcpDenialRows)}
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="Affected accounts"
+                value={distinctCount(containmentRows, "account_id")}
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="Affected projects"
+                value={distinctCount(containmentRows, "project_id")}
+              />
+            </Col>
+          </Row>
+          <Input
+            allowClear
+            prefix={<Icon name="search" />}
+            placeholder="Search account, project, host, bay, method, surface, limit, source, or reason"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </Spin>
+      </Card>
+
       <Card
         title={
           <Space>
@@ -421,55 +727,7 @@ export const UsageStatistics: React.FC = () => {
         </Spin>
       </Card>
 
-      <Card
-        title="User Latency"
-        extra={
-          <Space wrap>
-            <Space>
-              <Text type="secondary">My alerts</Text>
-              <Popover
-                title="Admin alert preference"
-                content={
-                  <div style={{ maxWidth: 320 }}>
-                    The My alerts switch only controls whether this admin
-                    account receives UX latency admin alerts. It does not
-                    disable monitoring or alerts for other admins.
-                  </div>
-                }
-              >
-                <Text type="secondary" style={{ cursor: "help" }}>
-                  <Icon name="info-circle" />
-                </Text>
-              </Popover>
-              <Switch
-                checked={alertsEnabled}
-                onChange={(checked) =>
-                  redux
-                    .getActions("account")
-                    .set_other_settings(
-                      ADMIN_UX_LATENCY_ALERTS_ENABLED_KEY,
-                      checked,
-                    )
-                }
-              />
-            </Space>
-            <Select
-              options={WINDOW_OPTIONS}
-              value={windowMinutes}
-              onChange={setWindowMinutes}
-              style={{ minWidth: 150 }}
-            />
-          </Space>
-        }
-      >
-        {error ? (
-          <Alert
-            type="error"
-            showIcon
-            message="Unable to load operations health"
-            description={error}
-          />
-        ) : null}
+      <Card title="User Latency">
         <Spin spinning={loading && !summary}>
           <Row gutter={[16, 16]}>
             <Col xs={24} md={8}>
@@ -515,6 +773,46 @@ export const UsageStatistics: React.FC = () => {
             </Col>
           </Row>
         </Spin>
+      </Card>
+
+      <Card
+        title="Service Admission Containment"
+        extra={
+          <Text type="secondary">
+            {serviceDenialRows.length} of {allServiceDenialRows.length} groups
+          </Text>
+        }
+      >
+        <Table<ServiceAdmissionDenialSummary>
+          columns={serviceDenialColumns}
+          dataSource={serviceDenialRows}
+          rowKey={(row, index) =>
+            `${row.bay_id}:${row.surface}:${row.limit}:${row.account_id}:${row.project_id}:${index}`
+          }
+          pagination={{ pageSize: 20 }}
+          scroll={{ x: 1100 }}
+          size="small"
+        />
+      </Card>
+
+      <Card
+        title="ACP Admission Containment"
+        extra={
+          <Text type="secondary">
+            {acpDenialRows.length} of {allAcpDenialRows.length} groups
+          </Text>
+        }
+      >
+        <Table<AcpAdmissionDenialSummary>
+          columns={acpDenialColumns}
+          dataSource={acpDenialRows}
+          rowKey={(row, index) =>
+            `${row.bay_id}:${row.limit}:${row.account_id}:${row.project_id}:${index}`
+          }
+          pagination={{ pageSize: 20 }}
+          scroll={{ x: 1000 }}
+          size="small"
+        />
       </Card>
 
       <Card title="Latency Metrics">

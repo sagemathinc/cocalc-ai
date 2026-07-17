@@ -18,6 +18,13 @@ export const PROJECT_HOST_SYSCTL_TARGETS: Record<string, number> = {
   "kernel.keys.maxbytes": 25_000_000,
 };
 
+export const PROJECT_HOST_SYSCTL_TEXT_TARGETS: Record<string, string> = {
+  // Project listeners occupy 30,000-59,999. Keep that range out of ephemeral
+  // client allocation while retaining a large pool on both sides of it.
+  "net.ipv4.ip_local_port_range": "10000 65535",
+  "net.ipv4.ip_local_reserved_ports": "30000-59999",
+};
+
 function procPathForKey(key: string): string {
   return `/proc/sys/${key.replace(/\./g, "/")}`;
 }
@@ -32,6 +39,19 @@ async function readSysctlValue(key: string): Promise<number | null> {
   }
 }
 
+async function readTextSysctlValue(key: string): Promise<string | null> {
+  try {
+    const raw = await readFile(procPathForKey(key), "utf8");
+    return normalizeTextSysctlValue(raw);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeTextSysctlValue(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
 export function buildProjectHostSysctlConfig(): string {
   return [
     "# Managed by CoCalc project-host.",
@@ -40,18 +60,31 @@ export function buildProjectHostSysctlConfig(): string {
     ...Object.entries(PROJECT_HOST_SYSCTL_TARGETS).map(
       ([key, value]) => `${key} = ${value}`,
     ),
+    ...Object.entries(PROJECT_HOST_SYSCTL_TEXT_TARGETS).map(
+      ([key, value]) => `${key} = ${value}`,
+    ),
     "",
   ].join("\n");
 }
 
 export async function readProjectHostKernelSysctls(): Promise<HostKernelSysctlSnapshot> {
-  const entries = await Promise.all(
-    Object.keys(PROJECT_HOST_SYSCTL_TARGETS).map(async (key) => [
-      key,
-      await readSysctlValue(key),
-    ]),
-  );
+  const [entries, textEntries] = await Promise.all([
+    Promise.all(
+      Object.keys(PROJECT_HOST_SYSCTL_TARGETS).map(
+        async (key) => [key, await readSysctlValue(key)] as const,
+      ),
+    ),
+    Promise.all(
+      Object.keys(PROJECT_HOST_SYSCTL_TEXT_TARGETS).map(
+        async (key) => [key, await readTextSysctlValue(key)] as const,
+      ),
+    ),
+  ]);
   const values = Object.fromEntries(entries) as Record<string, number | null>;
+  const textValues = Object.fromEntries(textEntries) as Record<
+    string,
+    string | null
+  >;
   const mismatches = Object.entries(PROJECT_HOST_SYSCTL_TARGETS)
     .filter(([key, target]) => values[key] == null || values[key] < target)
     .map(([key, target]) => ({
@@ -59,13 +92,23 @@ export async function readProjectHostKernelSysctls(): Promise<HostKernelSysctlSn
       target,
       actual: values[key] ?? null,
     }));
+  const textMismatches = Object.entries(PROJECT_HOST_SYSCTL_TEXT_TARGETS)
+    .filter(([key, target]) => textValues[key] !== target)
+    .map(([key, target]) => ({
+      key,
+      target,
+      actual: textValues[key] ?? null,
+    }));
   return {
     collected_at: new Date().toISOString(),
     config_path: CONFIG_PATH,
     targets: PROJECT_HOST_SYSCTL_TARGETS,
     values,
-    ok: mismatches.length === 0,
+    text_targets: PROJECT_HOST_SYSCTL_TEXT_TARGETS,
+    text_values: textValues,
+    ok: mismatches.length === 0 && textMismatches.length === 0,
     mismatches,
+    text_mismatches: textMismatches,
   };
 }
 
@@ -86,6 +129,7 @@ export async function ensureProjectHostKernelSysctls(): Promise<HostKernelSysctl
 
   logger.warn("project-host kernel sysctl limits are below target", {
     mismatches: before.mismatches,
+    text_mismatches: before.text_mismatches,
   });
 
   const useRoot =
@@ -104,6 +148,7 @@ export async function ensureProjectHostKernelSysctls(): Promise<HostKernelSysctl
     } else {
       logger.warn("project-host kernel sysctl limits still below target", {
         mismatches: after.mismatches,
+        text_mismatches: after.text_mismatches,
       });
     }
     return {
@@ -127,5 +172,6 @@ export async function ensureProjectHostKernelSysctls(): Promise<HostKernelSysctl
 
 export const _test = {
   buildProjectHostSysctlConfig,
+  normalizeTextSysctlValue,
   procPathForKey,
 };

@@ -6,6 +6,11 @@ import {
   deriveAcpLogRefs,
   type ChatThreadConfigRecord,
 } from "@cocalc/chat";
+import {
+  acquireChatSyncDB,
+  releaseChatSyncDB,
+  type ImmerDB,
+} from "@cocalc/chat/server";
 import { akv } from "@cocalc/conat/sync/akv";
 import { automationAcp } from "@cocalc/conat/ai/acp/client";
 import type {
@@ -136,67 +141,11 @@ function summarizeThread(
   };
 }
 
-function replaceThreadConfigRecord(
-  rows: any[],
-  record: ChatThreadConfigRecord,
-): any[] {
-  const cleanThreadId = `${record.thread_id ?? ""}`.trim();
-  const next = rows.filter(
-    (row) =>
-      !(
-        row?.event === "chat-thread-config" &&
-        `${row?.thread_id ?? ""}`.trim() === cleanThreadId
-      ),
-  );
-  next.push(record);
-  return next;
-}
-
-function isMissingFileError(err: unknown): boolean {
-  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
-  return message.includes("enoent") || message.includes("no such file");
-}
-
-async function readChatRows({
-  client,
-  project_id,
-  path,
-}: {
-  client: any;
-  project_id: string;
-  path: string;
-}): Promise<any[]> {
-  let raw = "";
-  try {
-    raw = String(await client.fs({ project_id }).readFile(path, "utf8"));
-  } catch (err) {
-    if (isMissingFileError(err)) {
-      return [];
-    }
-    throw err;
-  }
-  return raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
-}
-
-async function writeChatRows({
-  client,
-  project_id,
-  path,
-  rows,
-}: {
-  client: any;
-  project_id: string;
-  path: string;
-  rows: any[];
-}): Promise<void> {
-  const content =
-    rows.map((row) => JSON.stringify(row)).join("\n") +
-    (rows.length ? "\n" : "");
-  await client.fs({ project_id }).writeFile(path, content);
+function chatRows(syncdb: ImmerDB): any[] {
+  const rows = syncdb.get();
+  if (Array.isArray(rows)) return rows;
+  if (typeof rows?.toJS === "function") return rows.toJS();
+  return [];
 }
 
 export function mergeThreadConfigRecord(opts: {
@@ -231,7 +180,12 @@ async function withProjectChatFile<Ctx, Project extends ProjectIdentity, T>({
   chatPath: string;
   ensureParentDir?: boolean;
   cwd?: string;
-  fn: (args: { project: Project; client: any; rows: any[] }) => Promise<T>;
+  fn: (args: {
+    project: Project;
+    client: any;
+    rows: any[];
+    syncdb: ImmerDB;
+  }) => Promise<T>;
 }): Promise<T> {
   const path = `${chatPath ?? ""}`.trim();
   if (!path) {
@@ -247,12 +201,16 @@ async function withProjectChatFile<Ctx, Project extends ProjectIdentity, T>({
       recursive: true,
     });
   }
-  const rows = await readChatRows({
+  const syncdb = await acquireChatSyncDB({
     client,
     project_id: project.project_id,
     path,
   });
-  return await fn({ project, client, rows });
+  try {
+    return await fn({ project, client, rows: chatRows(syncdb), syncdb });
+  } finally {
+    await releaseChatSyncDB(project.project_id, path);
+  }
 }
 
 export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
@@ -288,7 +246,7 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
       chatPath: path,
       ensureParentDir: true,
       cwd,
-      fn: async ({ project, client, rows }) => {
+      fn: async ({ project, rows, syncdb }) => {
         const nextThreadId = `${threadId ?? ""}`.trim() || randomUUID();
         if (getThreadConfigRecord(rows, nextThreadId)) {
           throw new Error(`thread '${nextThreadId}' already exists`);
@@ -305,18 +263,15 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
             : undefined),
           ...(acpConfig ? { acp_config: acpConfig } : undefined),
         });
-        const nextRows = replaceThreadConfigRecord(rows, record);
-        await writeChatRows({
-          client,
-          project_id: project.project_id,
-          path,
-          rows: nextRows,
-        });
+        syncdb.set(record);
+        syncdb.commit();
+        await syncdb.save();
+        await syncdb.save_to_disk();
         return {
           project_id: project.project_id,
           path,
           created: true,
-          thread: summarizeThread(record, nextRows),
+          thread: summarizeThread(record, [...rows, record]),
         };
       },
     });
@@ -393,6 +348,17 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
         if (!row) {
           throw new Error(`thread '${threadId}' not found`);
         }
+        if (action === "status") {
+          return {
+            project_id: project.project_id,
+            path,
+            thread_id: threadId,
+            ok: true,
+            config: row.automation_config ?? null,
+            state: row.automation_state ?? null,
+            record: null,
+          };
+        }
         const response = (await automationAcp(
           {
             project_id: project.project_id,
@@ -409,14 +375,8 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
           path,
           thread_id: threadId,
           ok: !!response.ok,
-          config:
-            response.config ??
-            (action === "status" ? row.automation_config : null) ??
-            null,
-          state:
-            response.state ??
-            (action === "status" ? row.automation_state : null) ??
-            null,
+          config: response.config ?? null,
+          state: response.state ?? null,
           record: response.record ?? null,
         };
       },

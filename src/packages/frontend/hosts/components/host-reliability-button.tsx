@@ -48,7 +48,9 @@ export function HostReliabilityButton({
   const summary = availability?.summary;
   const currentLabel =
     summary?.current_state === "online"
-      ? `up ${formatDuration(summary.current_uptime_ms)}`
+      ? `healthy ${formatDuration(
+          summary.current_healthy_interval_ms ?? summary.current_uptime_ms,
+        )}`
       : summary?.current_state;
   const buttonLabel = summary
     ? `${compact ? "" : "Reliability "}${formatPercent(summary.reliability_percent)} · ${currentLabel}`

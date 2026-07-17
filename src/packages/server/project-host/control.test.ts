@@ -143,6 +143,47 @@ describe("host placement pressure helpers", () => {
     expect(selected?.id).toBe("host-observe");
   });
 
+  it("never chooses hosts quarantined by runtime or public-route probes", () => {
+    const selected = choosePlacementHostRow(
+      [
+        {
+          id: "runtime-quarantined",
+          metadata: {
+            pressure: { zone: "normal" },
+            runtime_synthetic_probe: { quarantined: true },
+          },
+        },
+        {
+          id: "route-quarantined",
+          metadata: {
+            pressure: { zone: "normal" },
+            public_route_probe: { quarantined: true },
+          },
+        },
+        {
+          id: "healthy",
+          metadata: { pressure: { zone: "observe" } },
+        },
+      ],
+      () => 0,
+    );
+    expect(selected?.id).toBe("healthy");
+  });
+
+  it("returns no placement when every candidate is quarantined", () => {
+    expect(
+      choosePlacementHostRow(
+        [
+          {
+            id: "route-quarantined",
+            metadata: { public_route_probe: { quarantined: true } },
+          },
+        ],
+        () => 0,
+      ),
+    ).toBeUndefined();
+  });
+
   it("filters placement candidates to the project's region before ranking by pressure", () => {
     const selected = choosePlacementHostRow(
       [

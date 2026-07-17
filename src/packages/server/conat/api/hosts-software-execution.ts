@@ -398,23 +398,47 @@ function managedComponentAlignmentFailures({
 function projectHostRollbackVersionFromHostAgent({
   hostAgentStatus,
   desiredVersion,
+  rolloutStartedAt,
 }: {
   hostAgentStatus?: HostAgentStatus;
   desiredVersion?: string;
+  rolloutStartedAt: number;
 }): string | undefined {
-  const targetVersion = normalizeObservedVersion(
-    hostAgentStatus?.project_host?.last_automatic_rollback?.target_version ??
-      (hostAgentStatus?.project_host?.rollout?.phase === "rolled_back"
-        ? hostAgentStatus?.project_host?.rollout?.target_version
-        : undefined),
-  );
-  if (!desiredVersion || targetVersion !== desiredVersion) {
+  const projectHost = hostAgentStatus?.project_host;
+  const rollout = projectHost?.rollout;
+  if (
+    desiredVersion &&
+    rollout?.phase === "rolled_back" &&
+    normalizeObservedVersion(rollout.target_version) === desiredVersion &&
+    timestampAtOrAfter(
+      rollout.rollback_finished_at ??
+        rollout.rollback_started_at ??
+        rollout.started_at,
+      rolloutStartedAt,
+    )
+  ) {
+    return normalizeObservedVersion(rollout.previous_version);
+  }
+  const rollback = projectHost?.last_automatic_rollback;
+  if (
+    !desiredVersion ||
+    normalizeObservedVersion(rollback?.target_version) !== desiredVersion ||
+    !timestampAtOrAfter(
+      rollback?.finished_at ?? rollback?.started_at,
+      rolloutStartedAt,
+    )
+  ) {
     return undefined;
   }
-  return normalizeObservedVersion(
-    hostAgentStatus?.project_host?.last_automatic_rollback?.rollback_version ??
-      hostAgentStatus?.project_host?.rollout?.previous_version,
-  );
+  return normalizeObservedVersion(rollback?.rollback_version);
+}
+
+function timestampAtOrAfter(
+  value: string | undefined,
+  lowerBound: number,
+): boolean {
+  const timestamp = Date.parse(`${value ?? ""}`);
+  return Number.isFinite(timestamp) && timestamp >= lowerBound;
 }
 
 function projectHostPendingRolloutMatches({
@@ -1207,6 +1231,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
     projectHostRollbackVersion = projectHostRollbackVersionFromHostAgent({
       hostAgentStatus,
       desiredVersion,
+      rolloutStartedAt,
     });
     pendingProjectHostRollout = projectHostPendingRolloutMatches({
       hostAgentStatus,

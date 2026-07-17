@@ -445,7 +445,11 @@ export async function resolveHostConnectionLocalHelper({
   let ssh_server: string | null = row.ssh_server ?? null;
   let local_proxy = false;
   let ready = false;
-  const availability = computeHostOperationalAvailability(row);
+  // Synthetic probes control new placement. They must not hide a working
+  // data plane from projects that are already assigned to this host.
+  const availability = computeHostOperationalAvailability(row, {
+    includeSyntheticProbe: false,
+  });
   const normalizedStatus =
     row.status === "active" ? "running" : (row.status ?? null);
   const pricingModel =

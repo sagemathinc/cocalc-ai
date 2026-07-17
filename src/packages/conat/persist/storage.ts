@@ -303,6 +303,7 @@ export class PersistentStream extends EventEmitter {
   private readonly msgIDs = new TTL({ ttl: 2 * 60 * 1000 });
   private conf: Configuration;
   private throttledBackup?;
+  private closing = false;
 
   constructor(options: StorageOptions) {
     super();
@@ -411,27 +412,67 @@ export class PersistentStream extends EventEmitter {
     this.conf = this.config();
   };
 
-  close = async () => {
+  close = () => {
     const path = this.options?.path;
-    if (path == null) {
+    if (path == null || this.closing) {
       return;
     }
+    this.closing = true;
     logger.debug("close ", path);
-    if (this.db != null) {
-      this.vacuum();
-      this.db.prepare("PRAGMA wal_checkpoint(FULL)").run();
-      await this.backup();
-      if (this.options.backup) {
-        await this.backup(this.options.backup);
+    this.throttledBackup?.cancel?.();
+    try {
+      if (this.db != null) {
+        // This must remain synchronous. refCacheSync removes the stream from
+        // its cache as soon as close returns; yielding here allowed the same
+        // SQLite path to reopen while this connection was still checkpointing
+        // and closing. A full VACUUM on every disconnect was also unnecessary
+        // churn and expanded the native SQLite failure surface.
+        try {
+          this.db.prepare("PRAGMA wal_checkpoint(FULL)").run();
+        } catch (err) {
+          logger.debug("WARNING: error checkpointing database on close", {
+            path,
+            err,
+          });
+        }
+        let closed = false;
+        try {
+          this.db.close();
+          closed = true;
+        } catch (err) {
+          logger.debug("WARNING: error closing database", { path, err });
+        }
+        if (closed) {
+          this.backupClosedDatabase();
+        }
       }
-      this.db.close();
+    } finally {
+      // @ts-ignore
+      delete this.options;
+      this.msgIDs?.clear();
+      // @ts-ignore
+      delete this.msgIDs;
+      openPaths.delete(path);
     }
-    // @ts-ignore
-    delete this.options;
-    this.msgIDs?.clear();
-    // @ts-ignore
-    delete this.msgIDs;
-    openPaths.delete(path);
+  };
+
+  private backupClosedDatabase = (): void => {
+    if (!this.dbPath) return;
+    for (const destination of [this.options.archive, this.options.backup]) {
+      if (!destination) continue;
+      const dest = destination + ".db";
+      try {
+        // getStream creates these directories before opening the database.
+        // Synchronous copies keep close atomic with respect to refCacheSync.
+        copyFileSync(this.dbPath, dest);
+      } catch (err) {
+        logger.warn("error creating backup while closing database", {
+          source: this.dbPath,
+          destination: dest,
+          err,
+        });
+      }
+    }
   };
 
   private backup = reuseInFlight(async (path?: string): Promise<void> => {
@@ -451,6 +492,7 @@ export class PersistentStream extends EventEmitter {
     //console.log("backup", { path });
     try {
       await ensureContainingDirectoryExists(dest);
+      if (this.closing) return;
       copyFileSync(this.dbPath, dest);
     } catch (err) {
       if (!process.env.COCALC_TEST_MODE) {
@@ -798,6 +840,8 @@ export class PersistentStream extends EventEmitter {
     last_seq?: number;
     all?: boolean;
   }): { seqs: number[] } => {
+    // SQLite reuses freed pages. Do not run a full VACUUM while this live
+    // stream is open; physical compaction must be coordinated offline.
     let seqs: number[] = [];
     if (all) {
       this.runTransaction(() => {
@@ -808,7 +852,6 @@ export class PersistentStream extends EventEmitter {
         this.db.prepare("DELETE FROM messages").run();
         this.db.prepare("DELETE FROM stream_checkpoints").run();
       });
-      this.vacuum();
     } else if (last_seq) {
       this.runTransaction(() => {
         seqs = this.db
@@ -818,7 +861,6 @@ export class PersistentStream extends EventEmitter {
         this.db.prepare("DELETE FROM messages WHERE seq<=?").run(last_seq);
         this.deleteCheckpointsInSeqs(seqs);
       });
-      this.vacuum();
     } else if (seq) {
       this.runTransaction(() => {
         seqs = this.db
@@ -841,12 +883,6 @@ export class PersistentStream extends EventEmitter {
     this.emit("change", { op: "delete", seqs });
     this.throttledBackup();
     return { seqs };
-  };
-
-  vacuum = () => {
-    try {
-      this.db.prepare("VACUUM").run();
-    } catch {}
   };
 
   get length(): number {

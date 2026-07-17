@@ -817,12 +817,11 @@ export async function runUxLatencyAlertCheck(): Promise<number> {
   for (const alert of alerts) {
     await adminAlert({
       subject: `UX latency: ${alert.subject}`,
-      // Keep this body stable across adjacent maintenance ticks so adminAlert's
-      // message dedupe can suppress repeated alerts for the same retained slow
-      // samples. The changing check timestamp belongs in logs, not in the
-      // dedupe key.
       body: `${alert.body}\n\nWindow: ${summary.window_minutes} minutes`,
       dedupMinutes: 60,
+      // Every hub worker runs this maintenance loop. Statistics can differ
+      // slightly between workers, so body-based dedupe creates an alert storm.
+      dedupBySubject: true,
       to_ids,
     });
   }

@@ -29,6 +29,8 @@ export async function getRoutedHostControlClient({
       timeout_ms: timeout,
     });
     return {
+      restartCloudflared: async (restart) =>
+        await bridge.restartCloudflared({ host_id, restart }),
       runSyntheticRuntimeProbe: async () =>
         await bridge.runSyntheticRuntimeProbe({ host_id }),
       createProject: async (create) => {

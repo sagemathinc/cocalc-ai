@@ -66,6 +66,7 @@ describe("sandboxExec", () => {
         "project-00000000-0000-4000-8000-000000000001",
       ]),
       expect.objectContaining({
+        cwd: "/",
         env: {
           PATH: "/usr/bin",
           XDG_RUNTIME_DIR: "/mnt/cocalc/data/tmp/cocalc-podman-runtime-2000",

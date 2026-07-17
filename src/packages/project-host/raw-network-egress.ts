@@ -590,6 +590,10 @@ export function startManagedRawNetworkEgressLoop({
           });
         }
       }
+    } catch (err) {
+      logger.warn("managed raw network egress sampling failed", {
+        err: `${err}`,
+      });
     } finally {
       running = false;
     }

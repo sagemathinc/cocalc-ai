@@ -34,6 +34,17 @@ describe("runtime conformance", () => {
           "SECURITY_DENY code=unsupported-command detail=enter-project-cgroup",
       }),
     ).toBe(false);
+    expect(
+      __test__.helperCommandSupported(
+        {
+          exitCode: 2,
+          stdout: "",
+          stderr:
+            "usage: cocalc-runtime-storage verify-project-network-limits <project-id>",
+        },
+        "verify-project-network-limits",
+      ),
+    ).toBe(true);
   });
 
   it("times out stuck commands", async () => {

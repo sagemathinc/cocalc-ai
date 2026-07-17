@@ -3,7 +3,10 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { probeProjectHostPublicRoute } from "./public-route-probe";
+import { createHash } from "node:crypto";
+import { createServer } from "node:http";
+
+import { _test, probeProjectHostPublicRoute } from "./public-route-probe";
 
 const PUBLIC_URL = "https://host-123-cocalc-prod.cocalc.ai";
 const ORIGIN = "https://cocalc.ai";
@@ -33,12 +36,14 @@ describe("probeProjectHostPublicRoute", () => {
       )
       .mockResolvedValueOnce(response(204, corsHeaders()))
       .mockResolvedValueOnce(response(401, corsHeaders()));
+    const websocketProbeImpl = jest.fn().mockResolvedValue({ status: 101 });
 
     await expect(
       probeProjectHostPublicRoute({
         public_url: `${PUBLIC_URL}/ignored/path`,
         origin: ORIGIN,
         fetchImpl,
+        websocketProbeImpl,
         timeout_ms: 1000,
       }),
     ).resolves.toEqual({
@@ -47,6 +52,8 @@ describe("probeProjectHostPublicRoute", () => {
       health_status: 200,
       preflight_status: 204,
       session_status: 401,
+      websocket_status: 101,
+      websocket_attempts: 8,
       edge_server: "cloudflare",
       cf_ray: "ray-1",
     });
@@ -68,6 +75,80 @@ describe("probeProjectHostPublicRoute", () => {
       method: "POST",
       body: "{}",
     });
+    expect(websocketProbeImpl).toHaveBeenCalledTimes(8);
+    expect(websocketProbeImpl).toHaveBeenCalledWith({
+      url: new URL(`${PUBLIC_URL}/conat/?EIO=4&transport=websocket`),
+      origin: ORIGIN,
+      timeout_ms: 1000,
+    });
+  });
+
+  it("fails when any sampled WebSocket route cannot upgrade", async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(response(200))
+      .mockResolvedValueOnce(response(204, corsHeaders()))
+      .mockResolvedValueOnce(response(401, corsHeaders()));
+    const websocketProbeImpl = jest
+      .fn()
+      .mockResolvedValueOnce({ status: 101 })
+      .mockRejectedValueOnce(new Error("websocket error"))
+      .mockResolvedValue({ status: 101 });
+
+    await expect(
+      probeProjectHostPublicRoute({
+        public_url: PUBLIC_URL,
+        origin: ORIGIN,
+        fetchImpl,
+        websocketProbeImpl,
+        websocket_attempts: 4,
+      }),
+    ).rejects.toThrow(
+      "1/4 public project-host WebSocket upgrades failed: Error: websocket error",
+    );
+  });
+
+  it("performs and validates a raw WebSocket upgrade", async () => {
+    const server = createServer();
+    server.on("upgrade", (request, socket) => {
+      const key = `${request.headers["sec-websocket-key"] ?? ""}`;
+      const accept = createHash("sha1")
+        .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+        .digest("base64");
+      socket.end(
+        [
+          "HTTP/1.1 101 Switching Protocols",
+          "Connection: Upgrade",
+          "Upgrade: websocket",
+          `Sec-WebSocket-Accept: ${accept}`,
+          "CF-Ray: local-ray",
+          "",
+          "",
+        ].join("\r\n"),
+      );
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("test server did not bind a TCP port");
+      }
+      await expect(
+        _test.probeWebSocketUpgrade({
+          url: new URL(
+            `http://127.0.0.1:${address.port}/conat/?EIO=4&transport=websocket`,
+          ),
+          origin: ORIGIN,
+          timeout_ms: 1000,
+        }),
+      ).resolves.toEqual({ status: 101, cf_ray: "local-ray" });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
   });
 
   it("rejects a public edge response without browser CORS headers", async () => {

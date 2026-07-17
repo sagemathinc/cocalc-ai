@@ -422,9 +422,9 @@ function getAdminSections({
     },
     {
       key: "usage-stats",
-      title: "Operations & Latency",
+      title: "Operations Monitor",
       description:
-        "Track user-visible latency, alert preferences, and launch health.",
+        "Search launch health, latency, and contained admission events.",
       icon: "line-chart",
       group: "launch",
       component: () => <UsageStatistics />,

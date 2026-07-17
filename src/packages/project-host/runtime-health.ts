@@ -16,6 +16,7 @@ const DIAGNOSTIC_OUTPUT_LIMIT = 12_000;
 const ERROR_LIMIT = 1000;
 
 export type ProjectHostRuntimeHealthStatus = "starting" | "ready" | "degraded";
+export type ProjectHostSyntheticProbeFailureKind = "port_bind_collision";
 
 export interface ProjectHostRuntimeHealthSnapshot {
   synthetic_probe_supported: true;
@@ -33,6 +34,7 @@ export interface ProjectHostRuntimeHealthSnapshot {
     checked_at: string;
     latency_ms?: number;
     consecutive_failures: number;
+    failure_kind?: ProjectHostSyntheticProbeFailureKind;
     error?: string;
   };
 }
@@ -52,7 +54,28 @@ function probeTimeoutSeconds(): number {
 
 function errorText(err: unknown): string {
   const text = `${err}`.trim() || "unknown Podman runtime error";
-  return text.slice(0, ERROR_LIMIT);
+  if (text.length <= ERROR_LIMIT) return text;
+  const marker = "\n...[error middle omitted]...\n";
+  const retained = ERROR_LIMIT - marker.length;
+  const headLength = Math.ceil(retained / 2);
+  return `${text.slice(0, headLength)}${marker}${text.slice(
+    -(retained - headLength),
+  )}`;
+}
+
+function classifySyntheticProbeFailure(
+  err: unknown,
+): ProjectHostSyntheticProbeFailureKind | undefined {
+  const text = `${err ?? ""}`.toLowerCase();
+  if (
+    text.includes("address already in use") ||
+    text.includes("failed to bind port") ||
+    text.includes("port is already allocated") ||
+    text.includes("exhausted project port leases")
+  ) {
+    return "port_bind_collision";
+  }
+  return undefined;
 }
 
 export async function probeProjectHostPodmanRuntime(): Promise<void> {
@@ -223,18 +246,14 @@ export function createProjectHostRuntimeHealthMonitor({
       const started = Date.now();
       try {
         await probe();
-        const syntheticFailed = snapshot.synthetic_probe?.status === "failed";
         snapshot = {
           ...snapshot,
-          status: syntheticFailed ? "degraded" : "ready",
-          ready: !syntheticFailed,
+          status: "ready",
+          ready: true,
           checked_at: new Date().toISOString(),
           podman_latency_ms: Date.now() - started,
           consecutive_failures: 0,
-          error: syntheticFailed
-            ? (snapshot.synthetic_probe?.error ??
-              "synthetic runtime probe failed")
-            : undefined,
+          error: undefined,
         };
       } catch (err) {
         const consecutiveFailures = snapshot.consecutive_failures + 1;
@@ -286,24 +305,20 @@ export function createProjectHostRuntimeHealthMonitor({
       ? (snapshot.synthetic_probe?.consecutive_failures ?? 0) + 1
       : 0;
     const syntheticError = failed ? errorText(error) : undefined;
+    const failureKind = failed
+      ? classifySyntheticProbeFailure(error)
+      : undefined;
     snapshot = {
       ...snapshot,
-      status: failed
-        ? "degraded"
-        : snapshot.consecutive_failures
-          ? "degraded"
-          : "ready",
-      ready: !failed && snapshot.consecutive_failures === 0,
-      error: failed
-        ? syntheticError
-        : snapshot.consecutive_failures
-          ? snapshot.error
-          : undefined,
+      status: snapshot.consecutive_failures ? "degraded" : "ready",
+      ready: snapshot.consecutive_failures === 0,
+      error: snapshot.consecutive_failures ? snapshot.error : undefined,
       synthetic_probe: {
         status: failed ? "failed" : "passed",
         checked_at: new Date().toISOString(),
         latency_ms: Math.max(0, Date.now() - startedAt),
         consecutive_failures: consecutiveFailures,
+        failure_kind: failureKind,
         error: syntheticError,
       },
     };
@@ -321,3 +336,8 @@ export function createProjectHostRuntimeHealthMonitor({
     getSnapshot: () => ({ ...snapshot }),
   };
 }
+
+export const _test = {
+  classifySyntheticProbeFailure,
+  errorText,
+};

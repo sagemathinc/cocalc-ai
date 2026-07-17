@@ -242,6 +242,7 @@ export type SiteSettingsExtrasKeys =
   | "conat_heading"
   | "conat_password"
   | "conat_admission_hub_api_max_active"
+  | "conat_admission_hub_api_max_active_per_account"
   | "conat_admission_service_max_parallel_active"
   | "conat_admission_max_connections"
   | "conat_admission_max_connections_per_user"
@@ -549,6 +550,16 @@ export const EXTRAS: SettingsExtras = {
   conat_admission_hub_api_max_active: {
     name: "Hub API Active Request Limit",
     desc: "Maximum simultaneously running hub Conat API requests. Blank uses `COCALC_HUB_CONAT_API_MAX_ACTIVE` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_hub_api_max_active_per_account: {
+    name: "Hub API Active Requests Per Account",
+    desc: "Maximum simultaneously running hub Conat API requests for one account on each hub process. Blank uses `COCALC_HUB_CONAT_API_MAX_ACTIVE_PER_ACCOUNT` or the built-in default.",
     default: "",
     valid: optionalPositiveInteger,
     to_val: to_trimmed_str,

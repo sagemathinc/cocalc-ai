@@ -28,6 +28,7 @@ export default async function send({
   body,
   reply_id,
   dedupMinutes,
+  dedupBySubject,
 }: {
   // account_id's of user (or users) to send the message to.
   to_ids: string[];
@@ -45,6 +46,9 @@ export default async function send({
   // if given and nonzero, attempts to send an identical message (with identical from and to)
   // within this interval of time is ignored.  Very useful for system notifications.
   dedupMinutes?: number;
+  // Ignore body differences when checking for a recent duplicate. This is
+  // useful for alerts whose diagnostics vary across control-plane workers.
+  dedupBySubject?: boolean;
 }) {
   logger.debug("send a message");
   const isInternalSystemMessage = !from_id;
@@ -95,6 +99,7 @@ export default async function send({
       body,
       thread_id,
       maxAgeMinutes: dedupMinutes,
+      dedupBySubject,
     });
     if (id != null) {
       logger.debug(`message is duplicate of id=${id}`);
@@ -167,18 +172,31 @@ export async function getRecentMessage({
   body,
   thread_id,
   maxAgeMinutes,
+  dedupBySubject = false,
+}: {
+  to_ids: string[];
+  from_id: string;
+  subject: string;
+  body: string;
+  thread_id?: number | null;
+  maxAgeMinutes: number;
+  dedupBySubject?: boolean;
 }): Promise<number | undefined> {
   const pool = getPool();
   const query = `
   SELECT id FROM messages where
-      to_ids=$1 AND from_id=$2 AND subject=$3 AND body=$4 AND coalesce(thread_id,0)=$5 AND
-      sent >= NOW()-interval '${parseInt(maxAgeMinutes)} minutes'`;
+      to_ids=$1 AND from_id=$2 AND subject=$3 AND
+      ($6::boolean OR body=$4) AND coalesce(thread_id,0)=$5 AND
+      sent >= NOW()-($7::double precision * interval '1 minute')
+      LIMIT 1`;
   const { rows } = await pool.query(query, [
     to_ids,
     from_id,
     subject,
     body,
     thread_id ?? 0,
+    dedupBySubject,
+    maxAgeMinutes,
   ]);
   return rows[0]?.id;
 }

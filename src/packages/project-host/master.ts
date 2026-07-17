@@ -2,7 +2,13 @@ import getLogger from "@cocalc/backend/logger";
 import { randomUUID } from "crypto";
 import { readFileSync } from "node:fs";
 import { promises as fsPromises } from "node:fs";
-import { availableParallelism, homedir, totalmem, userInfo } from "node:os";
+import {
+  availableParallelism,
+  homedir,
+  totalmem,
+  uptime,
+  userInfo,
+} from "node:os";
 import { dirname, join } from "node:path";
 import { getRow, upsertRow } from "@cocalc/lite/hub/sqlite/database";
 import {
@@ -244,6 +250,7 @@ const ROOTFS_SCANNER_PREPARE_MS = Math.max(
 const USER_DELTA_CURSOR_KEY = "users-delta-cursor";
 const STOP_POLICY_DELTA_CURSOR_KEY = "stop-policy-delta-cursor";
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
+const CLOUDFLARED_CONTROL_WRAPPER = "/usr/local/sbin/cocalc-cloudflared-ctl";
 const DEFAULT_RUNTIME_LOG_PATH =
   process.env.COCALC_PROJECT_HOST_LOG?.trim() ||
   process.env.DEBUG_FILE?.trim() ||
@@ -1245,6 +1252,40 @@ export async function startMasterRegistration({
 
   // Control plane for this host (master can ask us to create/start/stop projects).
   const controlImpl: HostControlApi = {
+    async restartCloudflared({ reason, claim_id }) {
+      await awaitReadyForControl("restartCloudflared", waitUntilReady);
+      if (reason !== "public-route-probe" || !isValidUUID(claim_id)) {
+        throw new Error("invalid cloudflared restart request");
+      }
+      const startedAt = Date.now();
+      logger.warn("restarting cloudflared after public route probe failures", {
+        reason,
+        claim_id,
+      });
+      const { stdout, stderr, exit_code } = await executeCode({
+        command: "sudo",
+        args: ["-n", CLOUDFLARED_CONTROL_WRAPPER, "restart"],
+        timeout: 60,
+        err_on_exit: false,
+      });
+      if (exit_code) {
+        throw new Error(
+          `cloudflared restart failed (exit ${exit_code}): ${stderr || stdout || ""}`.trim(),
+        );
+      }
+      const finishedAt = Date.now();
+      logger.info("cloudflared restart completed", {
+        reason,
+        claim_id,
+        duration_ms: finishedAt - startedAt,
+      });
+      return {
+        ok: true,
+        started_at: new Date(startedAt).toISOString(),
+        finished_at: new Date(finishedAt).toISOString(),
+        duration_ms: finishedAt - startedAt,
+      };
+    },
     async runSyntheticRuntimeProbe() {
       await awaitReadyForControl("runSyntheticRuntimeProbe", waitUntilReady);
       if (syntheticRuntimeProbeInflight) {
@@ -1682,6 +1723,9 @@ export async function startMasterRegistration({
       host_session_id: randomUUID(),
       host_boot_id: readHostBootId(),
       host_session_started_at: new Date().toISOString(),
+      host_boot_started_at: new Date(
+        Date.now() - uptime() * 1000,
+      ).toISOString(),
       host_cpu_count: availableParallelism(),
       host_ram_gb: Math.max(1, Math.round(totalmem() / 1024 ** 3)),
     },
@@ -1741,6 +1785,8 @@ export async function startMasterRegistration({
       version: versions.project_host ?? basePayload.version,
       metadata: {
         ...(basePayload.metadata ?? {}),
+        cloudflared_restart_supported: true,
+        host_uptime_s: Math.max(0, Math.floor(uptime())),
         ...(currentMetrics
           ? {
               metrics: {

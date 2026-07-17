@@ -612,7 +612,10 @@ export function mergeProgressiveMessageText(
   const cur = typeof next === "string" ? next : "";
   if (!prev || !cur) return undefined;
   if (opts?.nextIsDelta) {
-    return mergeResponseText(prev, cur, { preferParagraphBreaks: true });
+    // A delta is an append-only transport chunk, not a cumulative snapshot.
+    // Prefix/substring deduplication would drop a chunk such as "I" whenever
+    // the full turn happened to start with the same character.
+    return joinStreamText(prev, cur, { preferParagraphBreaks: true });
   }
   if (cur.startsWith(prev)) return cur;
   if (prev.startsWith(cur)) return prev;

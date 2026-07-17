@@ -5,6 +5,7 @@
 
 export type ServiceAdmissionLimitKey =
   | "hub_conat_api_max_active"
+  | "hub_conat_api_max_active_per_account"
   | "conat_service_max_parallel_active"
   | "conat_max_connections"
   | "conat_max_connections_per_user"
@@ -32,6 +33,10 @@ const DEFINITIONS: Record<ServiceAdmissionLimitKey, LimitDefinition> = {
   hub_conat_api_max_active: {
     env: "COCALC_HUB_CONAT_API_MAX_ACTIVE",
     fallback: 1000,
+  },
+  hub_conat_api_max_active_per_account: {
+    env: "COCALC_HUB_CONAT_API_MAX_ACTIVE_PER_ACCOUNT",
+    fallback: 256,
   },
   conat_service_max_parallel_active: {
     env: "COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE",

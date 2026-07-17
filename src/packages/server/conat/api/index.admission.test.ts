@@ -73,4 +73,35 @@ describe("hub api admission", () => {
       maximum: 200,
     });
   });
+
+  it("prevents one account from exhausting the global request pool", () => {
+    expect(
+      getHubApiAdmissionDecision({
+        active: 256,
+        maximum: 3000,
+        accountActive: 256,
+        accountMaximum: 256,
+        key: "hosts.resolveHostConnection",
+      }),
+    ).toMatchObject({
+      allowed: false,
+      source: "hub-api-account",
+      maximum: 256,
+      reason: "hub api per-account request budget is exhausted",
+    });
+
+    expect(
+      getHubApiAdmissionDecision({
+        active: 256,
+        maximum: 3000,
+        accountActive: 12,
+        accountMaximum: 256,
+        key: "hosts.resolveHostConnection",
+      }),
+    ).toMatchObject({
+      allowed: true,
+      source: "hub-api",
+      maximum: 3000,
+    });
+  });
 });

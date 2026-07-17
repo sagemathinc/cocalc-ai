@@ -42,8 +42,6 @@ import { configureHubServiceAdmissionDenialRecorder } from "./api/service-admiss
 import { startConatAdmissionSettingsRefresh } from "./admission-settings";
 import { startHostAvailabilityMaintenance } from "@cocalc/server/hosts/availability";
 import { startGlobalConfigMirrorRepairMaintenance } from "@cocalc/server/global-config-mirror-maintenance";
-import { startUxLatencyAlertMaintenance } from "@cocalc/server/monitoring/ux-latency";
-import { startServiceAdmissionAlertMaintenance } from "@cocalc/server/monitoring/service-admission";
 import { startAiSessionReconciliationMaintenance } from "@cocalc/server/ai/acp-sessions";
 import startPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 
@@ -139,8 +137,6 @@ export async function initConatApi() {
   startMembershipSideEffectsMaintenance();
   startSiteLicenseAffiliationReleaseMaintenance();
   startGlobalConfigMirrorRepairMaintenance();
-  startUxLatencyAlertMaintenance();
-  startServiceAdmissionAlertMaintenance();
   startAiSessionReconciliationMaintenance();
   if (isPrimaryBayWorker()) {
     startPurchasesMaintenanceLoop();

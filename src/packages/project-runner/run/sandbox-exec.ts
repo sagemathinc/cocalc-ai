@@ -114,6 +114,10 @@ export async function sandboxExec({
         launcher?.command ?? "podman",
         launcher ? [...launcher.argsPrefix, ...args] : args,
         {
+          // OCI runtimes call getcwd before entering the container.  Never
+          // inherit a deployment or project directory that may have been
+          // replaced, unmounted, or made inaccessible while the host stays up.
+          cwd: "/",
           timeout: timeoutMs,
           maxBuffer: Math.max(1024, maxOutputBytes ?? 10 * 1024 * 1024),
           killSignal: "SIGKILL",

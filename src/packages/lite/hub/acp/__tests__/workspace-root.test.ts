@@ -33,11 +33,18 @@ describe("resolveWorkspaceRoot", () => {
       expect(root).toBe("/scratch/demo");
     });
 
-    it("does not rewrite unexpected container paths either", () => {
+    it("resolves relative container paths from the project root", () => {
       const root = resolveWorkspaceRoot({
         workingDirectory: "sub",
       } as any);
-      expect(root).toBe("sub");
+      expect(root).toBe("/home/user/sub");
+    });
+
+    it("resolves a root-level automation directory to the project root", () => {
+      const root = resolveWorkspaceRoot({
+        workingDirectory: ".",
+      } as any);
+      expect(root).toBe("/home/user");
     });
 
     it("falls back to project root when unset", () => {

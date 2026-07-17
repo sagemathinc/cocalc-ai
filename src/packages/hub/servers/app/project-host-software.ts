@@ -516,7 +516,35 @@ async function sendBootstrapSha(req: Request, res: Response): Promise<void> {
   sendShaResponse(res, meta.sha256, basename(filePath));
 }
 
+async function redirectContainerRuntime(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  if (await maybeRedirectToRemoteSoftware(req, res)) return;
+  sendNotFound(
+    res,
+    "container-runtime artifacts require a remote software endpoint",
+  );
+}
+
 export default function init(router: Router) {
+  router.get(
+    "/software/container-runtime/latest-:os-:arch.json",
+    redirectContainerRuntime,
+  );
+  router.get(
+    "/software/container-runtime/versions-:channel-:os-:arch.json",
+    redirectContainerRuntime,
+  );
+  router.get(
+    "/software/container-runtime/:version/container-runtime-:os-:arch.tar.xz",
+    redirectContainerRuntime,
+  );
+  router.get(
+    "/software/container-runtime/:version/container-runtime-:os-:arch.tar.xz.sha256",
+    redirectContainerRuntime,
+  );
+
   router.get("/software/project-host/latest-:os.json", async (req, res) => {
     try {
       await sendLatestBundleManifest(req, res, {

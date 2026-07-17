@@ -39,7 +39,7 @@ import {
 } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 
 import { extractMacros } from "./latex-macros";
-import { getFormulaAgentContext, openFormulaAgent } from "./formula-agent";
+import { openFormulaAgent } from "./formula-agent";
 import { MathMacrosContext } from "./math-macros-context";
 import { parseViewport } from "./parser";
 import { WidgetDescriptor, WidgetType } from "./types";
@@ -206,33 +206,31 @@ export function attachWidgetManager(
     };
 
     // Shift+click / Shift+Enter on math widgets opens a Formula Agent task in
-    // the project flyout. It sends context only; the Agent, not this widget,
-    // performs a later live-document edit after asking the user what to do.
-    const onAiEdit =
-      AI_EDITABLE_TYPES.has(d.type) && !cm.getOption("readOnly")
-        ? async () => {
-            if (marker == null) return;
-            const range = marker.find();
-            if (range == null || !("from" in range)) return;
-            const source = cm.getRange(range.from, range.to);
-            const context = getFormulaAgentContext(
-              (line) => cm.getLine(line),
-              cm.lineCount(),
-              range.from,
-              range.to,
-              source,
-            );
-            await openFormulaAgent({
-              project_id: frameContext.project_id,
-              path: frameContext.path,
-              source,
-              from: range.from,
-              to: range.to,
-              context: context.text,
-              contextTruncated: context.truncated,
-            });
-          }
-        : undefined;
+    // the project flyout after the user provides an explicit instruction.
+    const onAiEdit = AI_EDITABLE_TYPES.has(d.type)
+      ? async () => {
+          // CM source panes briefly begin read-only while they hydrate. Do
+          // not capture that transient value when the marker is created:
+          // widgets are reused across reconciles, so doing so would leave
+          // the initial viewport without the Shift+click affordance. Check
+          // the live option at activation time instead.
+          if (cm.getOption("readOnly")) return;
+          if (marker == null) return;
+          const range = marker.find();
+          if (range == null || !("from" in range)) return;
+          const source = cm.getRange(range.from, range.to);
+          await openFormulaAgent({
+            project_id: frameContext.project_id,
+            path: frameContext.path,
+            source,
+            from: range.from,
+            to: range.to,
+            formulaType: d.type as "math-inline" | "math-display" | "math-env",
+            formulaContent: d.payload?.content as string | undefined,
+            macros: currentMacros,
+          });
+        }
+      : undefined;
 
     // Keyboard activation: the host is focusable (role=button,
     // tabindex=0). Enter/Space dissolves it to raw source — mirroring

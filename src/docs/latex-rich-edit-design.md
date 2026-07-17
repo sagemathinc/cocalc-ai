@@ -96,12 +96,14 @@ horizontally-scrollable box. For this initial cocalc-ai port, clicking a
 formula behaves like every other widget and reveals the canonical LaTeX
 source for manual editing.
 
-Shift+click / Shift+Enter creates or focuses a Codex Agent conversation in
-the side flyout, with the project, full file path, exact formula, line/range,
-and a bounded nearby source window in the navigator intent. The initial
-message asks the user what to change before editing. The Agent must operate
-on the live sync document rather than a stale filesystem copy. No popup
-dialog or direct programmatic replacement is part of this feature.
+Shift+click / Shift+Enter first opens a compact dialog showing the rendered
+formula and an instruction field. Its primary **Edit with Agent** button
+creates or focuses a Codex Agent conversation in the side flyout, with the
+project, full file path, exact formula, line/range, and requested change in
+the navigator intent metadata. The formula and requested change are visible
+in the Agent chat; its operational instructions, raw TeX, and metadata are
+inside a collapsible details block. The Agent must carry out that explicit
+request against the live sync document rather than a stale filesystem copy.
 
 ### Per-document math macros
 
@@ -268,11 +270,12 @@ pipeline.
 
 ### Agent formula-edit action
 
-The Agent action must carry the marker's current source and range after a
-fresh `marker.find()` lookup. It should follow the existing
-`help-me-fix` navigator-intent pattern: open or reuse the project’s Agent
-flyout, include the file path and live-document caveat, prompt the user
-for the requested change, and let the agent make and verify a safe edit.
+The Agent action must capture the marker's current source and range after a
+fresh `marker.find()` lookup. The compact dialog requires an explicit user
+instruction before it follows the existing `help-me-fix` navigator-intent
+pattern to open or reuse the project’s Agent flyout. The Agent receives the
+file path and live-document caveat, then makes and verifies the requested
+edit.
 
 ### React roots & FrameContext
 

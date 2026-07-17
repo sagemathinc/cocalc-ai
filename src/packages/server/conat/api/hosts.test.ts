@@ -7085,4 +7085,55 @@ describe("hosts.drainHostInternal", () => {
       },
     ]);
   });
+
+  it("uses architecture-specific container runtime catalogs", async () => {
+    getServerSettingsMock.mockResolvedValue({
+      project_hosts_software_base_url: "https://software.example.test/software",
+    });
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/container-runtime/latest-linux-amd64.json")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            url: "https://software.example.test/software/container-runtime/v2/container-runtime-linux-amd64.tar.xz",
+            sha256: "sha-latest",
+          }),
+        };
+      }
+      if (url.endsWith("/container-runtime/versions-latest-linux-amd64.json")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ versions: [] }),
+        };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+
+    const { listHostSoftwareVersions } = await import("./hosts");
+    const rows = await listHostSoftwareVersions({
+      account_id: ACCOUNT_ID,
+      artifacts: ["container-runtime"],
+      channels: ["latest"],
+      os: "linux",
+      arch: "amd64",
+      history_limit: 2,
+    });
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        artifact: "container-runtime",
+        channel: "latest",
+        os: "linux",
+        arch: "amd64",
+        version: "v2",
+        available: true,
+      }),
+    ]);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://software.example.test/software/container-runtime/latest-linux-amd64.json",
+      "https://software.example.test/software/container-runtime/versions-latest-linux-amd64.json",
+    ]);
+  });
 });

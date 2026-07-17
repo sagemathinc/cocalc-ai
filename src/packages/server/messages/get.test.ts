@@ -6,6 +6,7 @@
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { updateUnreadMessageCount } from "@cocalc/database/postgres/changefeed/messages";
 import get from "./get";
+import { getRecentMessage } from "./send";
 
 const TARGET_ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 const DIRECT_SENDER_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
@@ -62,5 +63,26 @@ describe("server messages get", () => {
       [TARGET_ACCOUNT_ID],
     );
     expect(rows[0]?.unread_message_count).toBe(1);
+  });
+
+  it("can deduplicate system alerts by subject across changing bodies", async () => {
+    const exactBodyMatch = await getRecentMessage({
+      to_ids: [TARGET_ACCOUNT_ID],
+      from_id: SUPPORT_ACCOUNT_ID,
+      subject: "System notice",
+      body: "Different diagnostics",
+      maxAgeMinutes: 60,
+    });
+    expect(exactBodyMatch).toBeUndefined();
+
+    const subjectMatch = await getRecentMessage({
+      to_ids: [TARGET_ACCOUNT_ID],
+      from_id: SUPPORT_ACCOUNT_ID,
+      subject: "System notice",
+      body: "Different diagnostics",
+      maxAgeMinutes: 60,
+      dedupBySubject: true,
+    });
+    expect(subjectMatch).toEqual(expect.any(Number));
   });
 });

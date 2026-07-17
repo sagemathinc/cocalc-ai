@@ -289,6 +289,20 @@ describe("project host start ACP rehydrate ordering", () => {
       });
   });
 
+  it("avoids project ports occupied by non-listening TCP sockets", async () => {
+    const { parseOccupiedPortOffsetsFromProcNet } = await import("./projects");
+    const procNet = [
+      "  sl  local_address rem_address st",
+      "   0: 0100007F:AFC9 0100007F:2382 01",
+      "   1: 0100007F:7532 00000000:0000 0A",
+      "   2: 0100007F:C350 00000000:0000 06",
+    ].join("\n");
+
+    expect([...parseOccupiedPortOffsetsFromProcNet(procNet)]).toEqual([
+      1, 2, 5000,
+    ]);
+  });
+
   it("does not rehydrate ACP automations before runner start on start()", async () => {
     const order: string[] = [];
     const runnerApi = {
@@ -638,6 +652,37 @@ describe("project host start ACP rehydrate ordering", () => {
       reportProvisioned: false,
     });
     expect(deleteProjectLocal).toHaveBeenCalledWith(syntheticProjectId);
+  });
+
+  it("does not overlap synthetic runtime probes after a caller times out", async () => {
+    let resolveStart!: (value: { state: string }) => void;
+    const startGate = new Promise<{ state: string }>((resolve) => {
+      resolveStart = resolve;
+    });
+    const runnerApi = {
+      start: jest.fn(async () => await startGate),
+      status: jest.fn(async () => ({ state: "running" })),
+      stop: jest.fn(async () => ({ state: "opened" })),
+    } as any;
+    sandboxExec.mockImplementation(async ({ script }: { script: string }) => {
+      const marker = script.match(/printf '%s' '([^']+)'/)?.[1];
+      return { stdout: marker ?? "", stderr: "", code: 0 };
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    const first = (hubApi.projects as any).runSyntheticRuntimeProbe();
+    await flushMicrotasks();
+    await expect(
+      (hubApi.projects as any).runSyntheticRuntimeProbe(),
+    ).rejects.toThrow("synthetic runtime probe already in progress");
+
+    resolveStart({ state: "running" });
+    await expect(first).resolves.toMatchObject({
+      project_id: expect.any(String),
+    });
+    expect(runnerApi.start).toHaveBeenCalledTimes(1);
   });
 
   it("does not wait for ACP rehydrate before returning from start()", async () => {

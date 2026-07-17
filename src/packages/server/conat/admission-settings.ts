@@ -21,6 +21,8 @@ let refreshStarted = false;
 const SETTINGS_TO_LIMITS: Record<string, keyof ServiceAdmissionLimitOverrides> =
   {
     conat_admission_hub_api_max_active: "hub_conat_api_max_active",
+    conat_admission_hub_api_max_active_per_account:
+      "hub_conat_api_max_active_per_account",
     conat_admission_service_max_parallel_active:
       "conat_service_max_parallel_active",
     conat_admission_max_connections: "conat_max_connections",

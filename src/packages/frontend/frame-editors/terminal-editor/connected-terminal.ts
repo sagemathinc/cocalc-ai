@@ -332,6 +332,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private ignoreData: number = 0;
   private writeBuffer: TerminalTransmit[] = [];
   private ptyInputReady: boolean = false;
+  private initializedPtys = new WeakSet<TerminalClient>();
 
   private title?: string;
   private projectsStore?;
@@ -452,15 +453,23 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.reconnectResource =
       webapp_client.conat_client.registerReconnectResource({
         canReconnect: () => !this.isClosed() && !this.ptyExited,
-        isConnected: () => this.pty?.socket.state === "ready",
+        isConnected: () => this.getWritablePty() != null,
         probeOnForeground: () => this.is_visible,
         priority: () => (this.is_visible ? "foreground" : "background"),
         reconnect: async () => {
           const pty = this.pty;
           if (pty?.socket.state === "ready") {
             try {
-              await pty.state();
-              return;
+              if (
+                (await pty.state()) === "running" &&
+                this.restorePtyConnection(
+                  pty,
+                  this.connectGeneration,
+                  "coordinator_probe",
+                )
+              ) {
+                return;
+              }
             } catch {
               // A ready-looking socket can have a dead request path.
             }
@@ -512,7 +521,9 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     if (
       next &&
       !this.isClosed() &&
-      (this.pty == null || this.pty.socket.state !== "ready")
+      (this.pty == null ||
+        this.pty.socket.state !== "ready" ||
+        !this.ptyInputReady)
     ) {
       this.reconnectResource?.requestReconnect({
         reason: "terminal_became_visible",
@@ -813,7 +824,14 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         ptyInputReady: this.ptyInputReady,
         socket_state: this.pty?.socket.state,
       });
+      const requestReconnect = this.writeBuffer.length === 0;
       this.writeBuffer.push(message);
+      if (requestReconnect) {
+        this.reconnectResource?.requestReconnect({
+          reason: "terminal_input_not_ready",
+          resetBackoff: true,
+        });
+      }
       return;
     }
     if (this.writeBuffer.length > 0) {
@@ -1029,6 +1047,34 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
   };
 
+  private restorePtyConnection = (
+    pty: TerminalClient,
+    generation: number,
+    reason: string,
+  ): boolean => {
+    if (
+      this.isClosed() ||
+      generation !== this.connectGeneration ||
+      this.pty !== pty ||
+      pty.socket.state !== "ready" ||
+      !this.initializedPtys.has(pty)
+    ) {
+      return false;
+    }
+    if (!this.ptyInputReady || this.transientReconnectStyleActive) {
+      this.debug("connection:restored", {
+        generation,
+        reason,
+        buffered_writes: this.writeBuffer.length,
+      });
+      this.ptyInputReady = true;
+      this.set_connection_status("connected");
+      this.setTransientReconnectStyle(false);
+      this.flushWriteBuffer();
+    }
+    return true;
+  };
+
   private showManualStartMessage = async (): Promise<void> => {
     this.setTransientReconnectStyle(false);
     this.set_connection_status("disconnected");
@@ -1175,7 +1221,16 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       });
       this.traceSocketForDebug(pty, generation);
       pty.socket.on("data", (data) => {
+        this.restorePtyConnection(pty, generation, "project_data");
         void this.handleDataFromProject(data, { fromProject: true });
+      });
+
+      pty.socket.on("ready", () => {
+        this.restorePtyConnection(pty, generation, "socket_ready");
+      });
+
+      pty.socket.on("recovered", () => {
+        this.restorePtyConnection(pty, generation, "socket_recovered");
       });
 
       pty.on("exit", async () => {
@@ -1214,6 +1269,9 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           socket_id: pty.socket.id,
           socket_state: pty.socket.state,
         });
+        if (generation !== this.connectGeneration || this.pty !== pty) {
+          return;
+        }
         this.ptyInputReady = false;
         this.set_connection_status("disconnected");
         this.markTransientDisconnect();
@@ -1228,6 +1286,9 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           socket_id: pty.socket.id,
           socket_state: pty.socket.state,
         });
+        if (generation !== this.connectGeneration || this.pty !== pty) {
+          return;
+        }
         this.ptyInputReady = false;
         this.set_connection_status("disconnected");
         this.markTransientDisconnect();
@@ -1302,7 +1363,6 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           this.conn_write(`${this.command} ${argsJoin(this.args ?? [])}\n`);
         }
         */
-        this.set_connection_status("connected");
         if (!preserveVisibleContent || history) {
           this.terminal.reset();
         }
@@ -1319,8 +1379,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
             startedAt: connectStartedAt,
           });
         }
-        this.setTransientReconnectStyle(false);
-        this.ptyInputReady = true;
+        this.initializedPtys.add(pty);
+        this.restorePtyConnection(pty, generation, "spawn_complete");
         recordUxLatencyEvent({
           event_type: "project_ready",
           metric: "project_terminal_ready",
@@ -1334,9 +1394,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
             provisioned: readiness.provisioned as any,
           },
         });
-        this.flushWriteBuffer();
         pty.once("ready", () => {
-          this.flushWriteBuffer();
+          this.restorePtyConnection(pty, generation, "pty_ready");
         });
         this.measureSize();
       } finally {

@@ -661,6 +661,8 @@ describe("upgradeHostSoftwareInternalHelper", () => {
 
 describe("rolloutHostManagedComponentsInternalHelper", () => {
   it("throws a local rollback error when project-host converges to the previous version", async () => {
+    const rollbackStartedAt = new Date(Date.now() + 1_000).toISOString();
+    const rollbackFinishedAt = new Date(Date.now() + 2_000).toISOString();
     const initialRow = {
       id: "host-1",
       status: "running",
@@ -746,8 +748,8 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
               last_automatic_rollback: {
                 target_version: "ph-v2",
                 rollback_version: "ph-v1",
-                started_at: "2026-04-25T05:00:02.000Z",
-                finished_at: "2026-04-25T05:00:04.000Z",
+                started_at: rollbackStartedAt,
+                finished_at: rollbackFinishedAt,
                 reason: "health_deadline_exceeded",
               },
             },
@@ -776,6 +778,102 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
       id: "host-1",
       version: "ph-v1",
       reason: "automatic_project_host_local_rollback",
+    });
+  });
+
+  it("ignores a rollback record from an earlier rollout of the same version", async () => {
+    const desiredVersion = "ph-v2";
+    const row = {
+      id: "host-1",
+      status: "running",
+      version: desiredVersion,
+      last_seen: new Date(),
+      metadata: {
+        owner: "account-1",
+        software: {
+          project_host: desiredVersion,
+        },
+      },
+    };
+    const recordProjectHostLocalRollbackInternal = jest.fn();
+    const setLastKnownGoodArtifactVersionInternal = jest.fn(
+      async () => undefined,
+    );
+
+    await expect(
+      rolloutHostManagedComponentsInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        components: ["project-host"],
+        reason: "host_software_upgrade",
+        loadHostForStartStop: async () => row,
+        assertHostRunningForUpgrade: () => undefined,
+        hostControlClient: async () => ({
+          getRuntimeLog: async ({ source }) => ({
+            source: source ?? "project-host",
+            lines: 25,
+            text: "",
+          }),
+          rolloutManagedComponents: async () => ({
+            results: [
+              {
+                component: "project-host",
+                action: "restart_scheduled",
+              },
+            ],
+          }),
+          getManagedComponentStatus: async () => [
+            {
+              component: "project-host",
+              artifact: "project-host",
+              upgrade_policy: "restart_now",
+              enabled: true,
+              managed: true,
+              desired_version: desiredVersion,
+              runtime_state: "running",
+              version_state: "aligned",
+              running_versions: [desiredVersion],
+              running_pids: [456],
+            },
+          ],
+          getHostAgentStatus: async () => ({
+            project_host: {
+              last_known_good_version: "ph-v1",
+              last_automatic_rollback: {
+                target_version: desiredVersion,
+                rollback_version: "ph-v1",
+                started_at: "2026-07-16T12:00:00.000Z",
+                finished_at: "2026-07-16T12:02:00.000Z",
+                reason: "health_deadline_exceeded",
+              },
+            },
+          }),
+        }),
+        waitForHostHeartbeatAfter: async () => undefined,
+        installedProjectHostArtifactVersion: () => desiredVersion,
+        recordProjectHostLocalRollbackInternal,
+        project_host_local_rollback_error_code: "PROJECT_HOST_LOCAL_ROLLBACK",
+        setLastKnownGoodArtifactVersionInternal,
+        runtimeDeploymentsForComponentRollout: () => [],
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => undefined,
+        loadEffectiveRuntimeDeployments: async () => [],
+      }),
+    ).resolves.toMatchObject({
+      results: [
+        {
+          component: "project-host",
+          action: "restart_scheduled",
+        },
+      ],
+    });
+
+    expect(recordProjectHostLocalRollbackInternal).not.toHaveBeenCalled();
+    expect(setLastKnownGoodArtifactVersionInternal).toHaveBeenCalledWith({
+      host_id: "host-1",
+      row,
+      artifact: "project-host",
+      version: desiredVersion,
     });
   });
 

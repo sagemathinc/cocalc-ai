@@ -97,6 +97,7 @@ function hostToRegistryRow(host: Host): HostRegistryRow {
       billing: {
         enforcement: host.billing_enforcement,
       },
+      public_route_probe: host.public_route_probe,
     },
     delegated_access_role:
       host.access_role === "manager" || host.access_role === "user"
@@ -139,6 +140,13 @@ function normalizeHostPressureZone(
   }
 }
 
+function hostPlacementQuarantined(row: HostRegistryRow): boolean {
+  return (
+    row.metadata?.runtime_synthetic_probe?.quarantined === true ||
+    row.metadata?.public_route_probe?.quarantined === true
+  );
+}
+
 export function hostPlacementPressureRank(
   zone: HostPressureZone | undefined,
 ): number {
@@ -153,13 +161,12 @@ export function choosePlacementHostRow<T extends HostRegistryRow>(
   random: () => number = Math.random,
   project_region?: string,
 ): T | undefined {
-  const eligibleRows =
-    project_region == null
-      ? rows
-      : rows.filter(
-          (row) =>
-            mapCloudRegionToR2Region(row.region ?? "") === project_region,
-        );
+  const eligibleRows = rows.filter(
+    (row) =>
+      !hostPlacementQuarantined(row) &&
+      (project_region == null ||
+        mapCloudRegionToR2Region(row.region ?? "") === project_region),
+  );
   if (eligibleRows.length === 0) return;
   let bestRank = Number.POSITIVE_INFINITY;
   const rankedRows: Array<{ row: T; rank: number }> = [];
@@ -540,6 +547,8 @@ export async function selectActiveHost({
       "status='running'",
       "deleted IS NULL",
       "last_seen > NOW() - interval '2 minutes'",
+      "metadata #>> '{runtime_synthetic_probe,quarantined}' IS DISTINCT FROM 'true'",
+      "metadata #>> '{public_route_probe,quarantined}' IS DISTINCT FROM 'true'",
       "COALESCE(metadata #>> '{billing,enforcement,state}', 'ok') NOT IN ('at_risk', 'draining', 'stopped_billing_blocked', 'deprovision_pending', 'deprovisioned_recoverable')",
     ];
     if (exclude_host_id) {

@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import StaticMarkdown from "../static-markdown";
 
 describe("StaticMarkdown inline code links", () => {
@@ -13,6 +13,37 @@ describe("StaticMarkdown inline code links", () => {
 
     expect(screen.queryByText("first chunk")).toBeNull();
     expect(screen.getByText("first chunk and second chunk")).toBeTruthy();
+  });
+
+  it("does not replace selected code while streaming new content", async () => {
+    const url = "https://cocalc.ai/auth/elevate?token=secret";
+    const { container, rerender } = render(
+      <StaticMarkdown value={`\`\`\`\n${url}\n\`\`\``} />,
+    );
+    const code = container.querySelector("pre.cocalc-slate-code-block");
+    const textNode = code?.firstChild;
+    expect(textNode?.nodeType).toBe(Node.TEXT_NODE);
+
+    const range = document.createRange();
+    range.selectNodeContents(textNode!);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(selection.toString()).toBe(url);
+
+    rerender(
+      <StaticMarkdown value={`\`\`\`\n${url}\nstill waiting\n\`\`\``} />,
+    );
+
+    expect(selection.toString()).toBe(url);
+    expect(container.textContent).not.toContain("still waiting");
+
+    selection.removeAllRanges();
+    fireEvent(document, new Event("selectionchange"));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("still waiting");
+    });
   });
 
   it("renders verified inline code paths using the internal file-link scheme", () => {

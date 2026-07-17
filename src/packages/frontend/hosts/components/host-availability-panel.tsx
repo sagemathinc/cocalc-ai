@@ -76,6 +76,7 @@ function dayColor(day: HostAvailabilityDay): string {
     if (day.uptime_percent < 99.5) return COLORS.ANTD_ORANGE;
     return COLORS.YELL_D;
   }
+  if (day.unobserved_ms > 0) return COLORS.GRAY_L;
   if (day.planned_downtime_ms > 0) return COLORS.GRAY_L;
   if (day.uptime_percent >= 99.995) return COLORS.ANTD_GREEN;
   return COLORS.BS_GREEN_LL;
@@ -96,6 +97,11 @@ function dayTitle(day: HostAvailabilityDay): React.JSX.Element {
       {day.planned_downtime_ms > 0 && (
         <Typography.Text type="secondary">
           Planned downtime: {formatDuration(day.planned_downtime_ms)}
+        </Typography.Text>
+      )}
+      {day.unobserved_ms > 0 && (
+        <Typography.Text type="secondary">
+          Unobserved: {formatDuration(day.unobserved_ms)}
         </Typography.Text>
       )}
       {day.events
@@ -120,6 +126,9 @@ function stateTag(report: HostAvailabilityReport): React.JSX.Element {
   const event = report.summary.current_event;
   if (report.summary.current_state === "online") {
     return <Tag color="green">Online</Tag>;
+  }
+  if (report.summary.current_state === "unobserved") {
+    return <Tag>Unobserved</Tag>;
   }
   const color = event?.planned ? "orange" : "red";
   return <Tag color={color}>{report.summary.current_state}</Tag>;
@@ -246,12 +255,19 @@ export function HostAvailabilityPanel({
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
       {!currentIsOnline && (
         <Alert
-          type={currentEvent?.planned ? "warning" : "error"}
+          type={
+            currentEvent?.planned ||
+            availability.summary.current_state === "unobserved"
+              ? "warning"
+              : "error"
+          }
           showIcon
           message={
             currentEvent?.planned
               ? "Host is intentionally unavailable"
-              : "Host is currently unavailable or recovering"
+              : availability.summary.current_state === "unobserved"
+                ? "Host observation is stale"
+                : "Host is currently unavailable or recovering"
           }
           description={
             currentEvent?.summary ??
@@ -268,11 +284,28 @@ export function HostAvailabilityPanel({
               {formatPercent(availability.summary.reliability_percent)}
             </Tag>
             <Tag>
-              Current uptime:{" "}
+              Healthy interval:{" "}
               {currentIsOnline
-                ? formatDuration(availability.summary.current_uptime_ms)
+                ? formatDuration(
+                    availability.summary.current_healthy_interval_ms ??
+                      availability.summary.current_uptime_ms,
+                  )
                 : "not online"}
             </Tag>
+            {availability.summary.machine_uptime_ms != null && (
+              <Tag>
+                Machine uptime:{" "}
+                {formatDuration(availability.summary.machine_uptime_ms)}
+              </Tag>
+            )}
+            {availability.summary.project_host_session_uptime_ms != null && (
+              <Tag>
+                Project-host session:{" "}
+                {formatDuration(
+                  availability.summary.project_host_session_uptime_ms,
+                )}
+              </Tag>
+            )}
             <Tag>
               {availability.window_days}d availability:{" "}
               {formatPercent(availability.summary.window_uptime_percent)}
@@ -292,6 +325,29 @@ export function HostAvailabilityPanel({
               <Tag>
                 Planned:{" "}
                 {formatDuration(availability.summary.planned_downtime_ms)}
+              </Tag>
+            )}
+            {availability.summary.unobserved_ms > 0 && (
+              <Tag>
+                Unobserved: {formatDuration(availability.summary.unobserved_ms)}
+              </Tag>
+            )}
+            {availability.summary.synthetic_probe && (
+              <Tag
+                color={
+                  availability.summary.synthetic_probe.quarantined
+                    ? "red"
+                    : availability.summary.synthetic_probe.status === "failed"
+                      ? "orange"
+                      : "green"
+                }
+              >
+                Synthetic checks (session):{" "}
+                {availability.summary.synthetic_probe.total_checks > 0
+                  ? `${formatPercent(
+                      availability.summary.synthetic_probe.pass_percent,
+                    )} (${availability.summary.synthetic_probe.total_checks})`
+                  : availability.summary.synthetic_probe.status}
               </Tag>
             )}
           </Space>
@@ -320,9 +376,10 @@ export function HostAvailabilityPanel({
           </div>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             Reliability measures uptime only during periods when this host was
-            intended to be online. Availability is wall-clock uptime over the
-            whole window. Green days were reporting online; yellow/red indicates
-            unplanned exposure; gray indicates planned downtime.
+            intended to be online and observed. Heartbeat gaps are unobserved,
+            not assumed downtime. Green days were reporting online; yellow/red
+            indicates confirmed unplanned exposure; gray indicates planned or
+            unobserved time. Synthetic checks are tracked separately.
           </Typography.Text>
         </Space>
       </Card>

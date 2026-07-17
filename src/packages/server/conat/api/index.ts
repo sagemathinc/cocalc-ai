@@ -100,6 +100,7 @@ export const hubApi: HubApi = {
 const logger = getLogger("server:conat:api");
 
 let activeApiRequests = 0;
+const activeApiRequestsByAccount = new Map<string, number>();
 
 export function initAPI() {
   mainLoop();
@@ -152,30 +153,48 @@ async function serve() {
 
 async function handleMessage({ mesg }) {
   const request = mesg.data ?? ({} as any);
+  const { account_id } = getUserId(mesg.subject);
   // we explicitly do NOT await this, since we want this hub server to handle
   // potentially many messages at once, not one at a time!
   const maxActiveApiRequests = getServiceAdmissionLimit(
     "hub_conat_api_max_active",
   );
+  const maxActiveApiRequestsPerAccount = getServiceAdmissionLimit(
+    "hub_conat_api_max_active_per_account",
+  );
+  const activeAccountApiRequests = account_id
+    ? (activeApiRequestsByAccount.get(account_id) ?? 0)
+    : undefined;
   const limitName = serviceAdmissionLimitEnvName("hub_conat_api_max_active");
+  const accountLimitName = serviceAdmissionLimitEnvName(
+    "hub_conat_api_max_active_per_account",
+  );
   const admission = getHubApiAdmissionDecision({
     active: activeApiRequests,
     maximum: maxActiveApiRequests,
+    accountActive: activeAccountApiRequests,
+    accountMaximum: account_id ? maxActiveApiRequestsPerAccount : undefined,
     key: request?.name,
   });
   if (!admission.allowed) {
+    const accountLimited = admission.source === "hub-api-account";
     void recordServiceAdmissionDenialLocal({
       surface: "hub-conat-api",
       source: admission.source,
-      limit: limitName,
-      current: activeApiRequests,
+      limit: accountLimited ? accountLimitName : limitName,
+      current: accountLimited
+        ? (activeAccountApiRequests ?? 0)
+        : activeApiRequests,
       maximum: admission.maximum,
       reason: admission.reason,
       subject: mesg.subject,
+      account_id,
       key: request?.name,
     });
     logger.warn("rejecting hub.api request; active request cap reached", {
       active: activeApiRequests,
+      account_active: activeAccountApiRequests,
+      account_id,
       max: admission.maximum,
       name: request?.name,
       source: admission.source,
@@ -200,8 +219,19 @@ async function handleMessage({ mesg }) {
     key: request?.name,
   });
   activeApiRequests += 1;
+  if (account_id) {
+    activeApiRequestsByAccount.set(account_id, activeAccountApiRequests! + 1);
+  }
   void handleApiRequest({ request, mesg }).finally(() => {
     activeApiRequests -= 1;
+    if (account_id) {
+      const next = (activeApiRequestsByAccount.get(account_id) ?? 1) - 1;
+      if (next <= 0) {
+        activeApiRequestsByAccount.delete(account_id);
+      } else {
+        activeApiRequestsByAccount.set(account_id, next);
+      }
+    }
   });
 }
 

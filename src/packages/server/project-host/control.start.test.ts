@@ -223,6 +223,12 @@ describe("startProjectOnHost placement", () => {
         sql.includes("WHERE status='running'")
       ) {
         expect(params).toEqual(["bay-0"]);
+        expect(sql).toContain(
+          "metadata #>> '{runtime_synthetic_probe,quarantined}' IS DISTINCT FROM 'true'",
+        );
+        expect(sql).toContain(
+          "metadata #>> '{public_route_probe,quarantined}' IS DISTINCT FROM 'true'",
+        );
         return {
           rows: [
             {

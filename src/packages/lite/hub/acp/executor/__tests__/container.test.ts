@@ -82,6 +82,7 @@ describe("ContainerExecutor", () => {
       projectApi: api as any,
     });
     expect(exec.getMountPoint()).toBe(`/projects/${projectId}/cocalc-ai`);
+    expect(exec.getProjectMountPoint()).toBe(`/projects/${projectId}`);
   });
 
   it("prevents path escape", async () => {

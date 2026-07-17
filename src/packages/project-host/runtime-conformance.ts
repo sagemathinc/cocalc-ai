@@ -27,7 +27,10 @@ import getLogger from "@cocalc/backend/logger";
 const logger = getLogger("project-host:runtime-conformance");
 
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
-const REQUIRED_PROJECT_CGROUP_COMMAND = "enter-project-cgroup";
+const REQUIRED_PROJECT_CGROUP_COMMANDS = [
+  "enter-project-cgroup",
+  "verify-project-network-limits",
+] as const;
 
 const DEFAULT_SWEEP_MS = 5 * 60 * 1000;
 const MIN_SWEEP_MS = 30 * 1000;
@@ -176,7 +179,7 @@ async function checkSudoWhitelistAllowsWrapper(): Promise<CheckResult> {
 
 function helperCommandSupported(
   result: { exitCode: number; stdout: string; stderr: string },
-  command = REQUIRED_PROJECT_CGROUP_COMMAND,
+  command: string = REQUIRED_PROJECT_CGROUP_COMMANDS[0],
 ): boolean {
   const output = `${result.stdout}\n${result.stderr}`;
   return (
@@ -188,29 +191,28 @@ function helperCommandSupported(
 async function checkProjectCgroupHelperContract(): Promise<CheckResult> {
   // Missing arguments make a supported command return its usage without
   // changing cgroup state. Older helpers report unsupported-command instead.
-  const probe = await run("sudo", [
-    "-n",
-    STORAGE_WRAPPER,
-    REQUIRED_PROJECT_CGROUP_COMMAND,
-  ]);
-  if (helperCommandSupported(probe)) {
-    return {
-      name: "project-cgroup-helper-contract",
-      ok: true,
-      level: "error",
-      message: `runtime helper supports ${REQUIRED_PROJECT_CGROUP_COMMAND}`,
-    };
+  for (const command of REQUIRED_PROJECT_CGROUP_COMMANDS) {
+    const probe = await run("sudo", ["-n", STORAGE_WRAPPER, command]);
+    if (!helperCommandSupported(probe, command)) {
+      return {
+        name: "project-cgroup-helper-contract",
+        ok: false,
+        level: "error",
+        message: `runtime helper does not support ${command}`,
+        details: {
+          command,
+          exitCode: probe.exitCode,
+          stderr: probe.stderr.trim(),
+          stdout: probe.stdout.trim(),
+        },
+      };
+    }
   }
   return {
     name: "project-cgroup-helper-contract",
-    ok: false,
+    ok: true,
     level: "error",
-    message: `runtime helper does not support ${REQUIRED_PROJECT_CGROUP_COMMAND}`,
-    details: {
-      exitCode: probe.exitCode,
-      stderr: probe.stderr.trim(),
-      stdout: probe.stdout.trim(),
-    },
+    message: `runtime helper supports ${REQUIRED_PROJECT_CGROUP_COMMANDS.join(", ")}`,
   };
 }
 

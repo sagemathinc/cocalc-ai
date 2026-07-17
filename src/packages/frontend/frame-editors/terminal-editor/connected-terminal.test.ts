@@ -343,6 +343,125 @@ describe("connected terminal resizing", () => {
     terminal.close();
   });
 
+  it("restores input when the existing terminal socket recovers", async () => {
+    const { Terminal, ptys, reconnectResources, terminalClient } =
+      loadTerminalModule();
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const actions = {
+      project_id: "project-1",
+      path: "/tmp/example.term",
+      get_term_env: jest.fn(() => ({})),
+      set_connection_status: jest.fn(),
+      set_title: jest.fn(),
+      set_error: jest.fn(),
+      _tree_is_single_leaf: jest.fn(() => false),
+      close_frame: jest.fn(),
+      open_code_editor_frame: jest.fn(),
+      _get_project_actions: jest.fn(() => ({
+        flag_file_activity: jest.fn(),
+        open_file: jest.fn(),
+        close_tab: jest.fn(),
+        isTabClosed: jest.fn(() => false),
+        open_directory: jest.fn(),
+      })),
+    } as any;
+
+    const terminal = new Terminal(actions, 0, "term-1", parent);
+    await terminal.connect();
+    terminal["history"] = "user@host:~$ existing output\r\n";
+    actions.set_connection_status.mockClear();
+    terminalClient.mockClear();
+
+    const socketHandler = (event: string) =>
+      ptys[0].socket.on.mock.calls
+        .filter(([name]: [string]) => name === event)
+        .map(([, handler]) => handler)
+        .at(-1);
+    const disconnectedHandler = socketHandler("disconnected");
+    const recoveredHandler = socketHandler("recovered");
+
+    ptys[0].socket.state = "disconnected";
+    disconnectedHandler?.();
+    terminal.conn_write("echo recovered\n");
+
+    expect(ptys[0].socket.write).not.toHaveBeenCalled();
+    expect(terminal.element.style.opacity).toBe("0.62");
+    expect(reconnectResources[0].requestReconnect).toHaveBeenCalledWith({
+      reason: "terminal_input_not_ready",
+      resetBackoff: true,
+    });
+
+    ptys[0].socket.state = "ready";
+    recoveredHandler?.();
+
+    expect(ptys[0].socket.write).toHaveBeenCalledWith({
+      data: "echo recovered\n",
+      kind: "user",
+    });
+    expect(actions.set_connection_status).toHaveBeenLastCalledWith(
+      "term-1",
+      "connected",
+    );
+    expect(terminal.element.style.opacity).toBe("");
+    expect(terminalClient).not.toHaveBeenCalled();
+
+    terminal.close();
+  });
+
+  it("restores input when project output resumes after a missed socket event", async () => {
+    const { Terminal, ptys } = loadTerminalModule();
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const actions = {
+      project_id: "project-1",
+      path: "/tmp/example.term",
+      get_term_env: jest.fn(() => ({})),
+      set_connection_status: jest.fn(),
+      set_title: jest.fn(),
+      set_error: jest.fn(),
+      _tree_is_single_leaf: jest.fn(() => false),
+      close_frame: jest.fn(),
+      open_code_editor_frame: jest.fn(),
+      _get_project_actions: jest.fn(() => ({
+        flag_file_activity: jest.fn(),
+        open_file: jest.fn(),
+        close_tab: jest.fn(),
+        isTabClosed: jest.fn(() => false),
+        open_directory: jest.fn(),
+      })),
+    } as any;
+
+    const terminal = new Terminal(actions, 0, "term-1", parent);
+    await terminal.connect();
+    terminal["history"] = "user@host:~$ existing output\r\n";
+
+    const socketHandler = (event: string) =>
+      ptys[0].socket.on.mock.calls
+        .filter(([name]: [string]) => name === event)
+        .map(([, handler]) => handler)
+        .at(-1);
+
+    ptys[0].socket.state = "disconnected";
+    socketHandler("disconnected")?.();
+    terminal.conn_write("queued input");
+    ptys[0].socket.state = "ready";
+    socketHandler("data")?.("kk");
+    await Promise.resolve();
+
+    expect(ptys[0].socket.write).toHaveBeenCalledWith({
+      data: "queued input",
+      kind: "user",
+    });
+    expect(actions.set_connection_status).toHaveBeenLastCalledWith(
+      "term-1",
+      "connected",
+    );
+    expect(terminal.element.style.opacity).toBe("");
+
+    terminal.close();
+  });
+
   it("preserves visible terminal content during transient reconnects", async () => {
     const { Terminal, ptys, reconnectResources } = loadTerminalModule();
     const parent = document.createElement("div");
