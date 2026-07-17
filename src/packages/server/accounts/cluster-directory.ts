@@ -589,12 +589,27 @@ function mergeEntries(
       email_address_verified:
         current.email_address_verified ?? entry.email_address_verified,
       is_admin: current.is_admin ?? entry.is_admin,
+      last_active: latestAccountActivity(
+        current.last_active,
+        entry.last_active,
+      ),
       // The directory is the cluster routing source of truth. A stale local
       // account row on the seed must not win after an attached-bay rehome.
       home_bay_id: entry.home_bay_id ?? current.home_bay_id,
     });
   }
   return [...merged.values()];
+}
+
+function latestAccountActivity(
+  a?: number | null,
+  b?: number | null,
+): number | undefined {
+  const times = [a, b].filter(
+    (value): value is number =>
+      typeof value === "number" && Number.isFinite(value),
+  );
+  return times.length === 0 ? undefined : Math.max(...times);
 }
 
 export async function getClusterAccountByIdDirect(

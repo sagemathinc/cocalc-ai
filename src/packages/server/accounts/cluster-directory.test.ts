@@ -102,7 +102,7 @@ describe("accounts.cluster-directory", () => {
               last_name: "Local",
               home_bay_id: "bay-1",
               created: null,
-              last_active: null,
+              last_active: new Date("2026-07-16T12:00:00.000Z"),
               banned: false,
               email_address_verified: true,
               groups: ["admin"],
@@ -126,6 +126,7 @@ describe("accounts.cluster-directory", () => {
       display_name: "QA Local",
       last_name: "Local",
       home_bay_id: "bay-2",
+      last_active: new Date("2026-07-16T12:00:00.000Z").valueOf(),
     });
   });
 
