@@ -103,11 +103,11 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     metadataSummary:
       "Build presentation decks as a focused part of CoCalc's whiteboards and slides workflow, with markdown, math, diagrams, Jupyter cells, collaboration, and project context.",
     image: "/public/features/whiteboard-sage.png",
-    index: true,
+    index: false,
   },
   {
     slug: "whiteboard",
-    title: "Whiteboard",
+    title: "Whiteboard & Slides",
     metadataTitle: "Whiteboard & Slides",
     tagline: "A collaborative technical canvas for math, code, and sketches.",
     summary:

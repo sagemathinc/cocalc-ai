@@ -75,6 +75,15 @@ describe("PublicFeaturesApp", () => {
       ).not.toBeNull();
     }
 
+    expect(
+      screen.getByRole("heading", { name: "Whiteboard & Slides" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Explore Slides" }).getAttribute("href"),
+    ).toBe(featurePath("slides"));
+    expect(screen.queryByRole("heading", { name: "Slides" })).toBeNull();
+    expect(container.querySelector("a a")).toBeNull();
+
     expect(screen.queryByText("Feature Assets")).toBeNull();
     expect(screen.queryByText("Internationalization")).toBeNull();
     expect(

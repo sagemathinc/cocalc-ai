@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Fragment, useEffect } from "react";
+import { Fragment, type CSSProperties, useEffect } from "react";
 
 import { Button, Col, Empty, Flex, Row, Typography } from "antd";
 
@@ -104,7 +104,7 @@ const FEATURE_GROUPS = [
     description:
       "Create notebooks, papers, boards, slide decks, and project notes.",
     icon: "jupyter",
-    slugs: ["jupyter-notebook", "latex-editor", "whiteboard", "slides"],
+    slugs: ["jupyter-notebook", "latex-editor", "whiteboard"],
     title: "Documents",
     variant: "cards",
   },
@@ -194,6 +194,39 @@ const FEATURE_INDEX_CSS = `
     outline-offset: 3px;
   }
 
+  .cocalc-feature-link-card-combined {
+    cursor: default;
+  }
+
+  .cocalc-feature-link-card-primary {
+    color: inherit;
+    display: block;
+    flex: 1 1 auto;
+    text-decoration: none;
+  }
+
+  .cocalc-feature-link-card-secondary {
+    align-items: center;
+    align-self: flex-start;
+    color: ${PUBLIC_COLORS.link};
+    display: inline-flex;
+    font-weight: 600;
+    gap: 6px;
+    margin-top: 14px;
+    text-decoration: none;
+  }
+
+  .cocalc-feature-link-card-secondary:hover {
+    color: ${PUBLIC_COLORS.linkHover};
+    text-decoration: underline;
+  }
+
+  .cocalc-feature-link-card-primary:focus-visible,
+  .cocalc-feature-link-card-secondary:focus-visible {
+    outline: 2px solid ${PUBLIC_COLORS.linkHover};
+    outline-offset: 3px;
+  }
+
   .cocalc-feature-link-list {
     display: grid;
     gap: 12px;
@@ -276,65 +309,95 @@ function getOrderedFeatureIndexPages(): FeaturePage[] {
 
 type FeatureIndexCard = {
   href: string;
+  secondaryLink?: {
+    href: string;
+    label: string;
+  };
   slug: string;
   summary: string;
   title: string;
 };
 
-function FeatureLinkCard({ card }: { card: FeatureIndexCard }) {
+function FeatureLinkCardContent({ card }: { card: FeatureIndexCard }) {
   const meta = featureMeta(card.slug);
   return (
-    <a
-      className="cocalc-feature-link-card"
-      href={card.href}
-      style={{
-        background: PUBLIC_COLORS.surface,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PUBLIC_RADIUS.panel,
-        boxShadow: FEATURE_PANEL_SHADOW,
-        color: "inherit",
-        display: "block",
-        height: "100%",
-        minHeight: 168,
-        padding: 18,
-        textDecoration: "none",
-      }}
-    >
-      <Flex vertical gap={12}>
-        <Flex align="center" className="cocalc-feature-card-icon-row">
-          <div
-            className={`cocalc-feature-card-icon cocalc-feature-card-icon-${card.slug}`}
-            style={{
-              alignItems: "center",
-              background: `${meta.accent}14`,
-              border: `1px solid ${meta.accent}33`,
-              borderRadius: PUBLIC_RADIUS.panel,
-              color: meta.accent,
-              display: "flex",
-              fontSize: 22,
-              height: 44,
-              justifyContent: "center",
-              width: 44,
-            }}
-          >
-            <Icon name={meta.icon} />
-          </div>
-        </Flex>
-        <div>
-          <Title
-            className="cocalc-feature-link-card-title"
-            level={3}
-            style={{
-              fontSize: PUBLIC_TYPE.subhead,
-              lineHeight: 1.22,
-              margin: "0 0 8px",
-            }}
-          >
-            {card.title}
-          </Title>
-          <Paragraph style={{ margin: 0 }}>{card.summary}</Paragraph>
+    <Flex vertical gap={12}>
+      <Flex align="center" className="cocalc-feature-card-icon-row">
+        <div
+          className={`cocalc-feature-card-icon cocalc-feature-card-icon-${card.slug}`}
+          style={{
+            alignItems: "center",
+            background: `${meta.accent}14`,
+            border: `1px solid ${meta.accent}33`,
+            borderRadius: PUBLIC_RADIUS.panel,
+            color: meta.accent,
+            display: "flex",
+            fontSize: 22,
+            height: 44,
+            justifyContent: "center",
+            width: 44,
+          }}
+        >
+          <Icon name={meta.icon} />
         </div>
       </Flex>
+      <div>
+        <Title
+          className="cocalc-feature-link-card-title"
+          level={3}
+          style={{
+            fontSize: PUBLIC_TYPE.subhead,
+            lineHeight: 1.22,
+            margin: "0 0 8px",
+          }}
+        >
+          {card.title}
+        </Title>
+        <Paragraph style={{ margin: 0 }}>{card.summary}</Paragraph>
+      </div>
+    </Flex>
+  );
+}
+
+function FeatureLinkCard({ card }: { card: FeatureIndexCard }) {
+  const frameStyle = {
+    background: PUBLIC_COLORS.surface,
+    border: `1px solid ${PUBLIC_COLORS.border}`,
+    borderRadius: PUBLIC_RADIUS.panel,
+    boxShadow: FEATURE_PANEL_SHADOW,
+    color: "inherit",
+    display: "block",
+    height: "100%",
+    minHeight: 168,
+    padding: 18,
+    textDecoration: "none",
+  } satisfies CSSProperties;
+
+  if (card.secondaryLink) {
+    return (
+      <div
+        className="cocalc-feature-link-card cocalc-feature-link-card-combined"
+        style={{ ...frameStyle, display: "flex", flexDirection: "column" }}
+      >
+        <a className="cocalc-feature-link-card-primary" href={card.href}>
+          <FeatureLinkCardContent card={card} />
+        </a>
+        <a
+          className="cocalc-feature-link-card-secondary"
+          href={card.secondaryLink.href}
+        >
+          <span>{card.secondaryLink.label}</span>
+          <span aria-hidden="true">
+            <Icon name="arrow-right" />
+          </span>
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <a className="cocalc-feature-link-card" href={card.href} style={frameStyle}>
+      <FeatureLinkCardContent card={card} />
     </a>
   );
 }
@@ -408,6 +471,13 @@ function getFeatureIndexCard(
   if (!page) return undefined;
   return {
     href: featurePath(page.slug),
+    secondaryLink:
+      page.slug === "whiteboard"
+        ? {
+            href: featurePath("slides"),
+            label: "Explore Slides",
+          }
+        : undefined,
     slug: page.slug,
     summary: page.summary,
     title: page.title,

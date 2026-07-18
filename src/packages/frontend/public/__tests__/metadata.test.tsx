@@ -215,9 +215,11 @@ describe("public route metadata", () => {
     const featurePaths = PUBLIC_SITEMAP_PATHS.filter((path) =>
       path.startsWith("/features/"),
     );
-    expect(featurePaths).toEqual(
-      getFeatureIndexPages().map((page) => `/features/${page.slug}`),
-    );
+    expect(featurePaths).toEqual([
+      ...getFeatureIndexPages().map((page) => `/features/${page.slug}`),
+      "/features/slides",
+    ]);
+    expect(PUBLIC_SITEMAP_PATHS).toContain("/features/slides");
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/features/automations");
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/features/cli");
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/features/more-languages");

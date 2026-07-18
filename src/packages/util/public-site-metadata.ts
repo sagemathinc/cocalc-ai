@@ -279,6 +279,9 @@ export function buildPublicSitemapPaths(
     ...getPublicFeatureIndexPages().map((page) =>
       publicPath(`features/${page.slug}`),
     ),
+    // Slides is folded into the combined Whiteboard & Slides tile but remains
+    // a dedicated detail page that search engines should be able to discover.
+    publicPath("features/slides"),
     publicPath("guides"),
     langPath(),
     ...LOCALE.map((locale) => langPath(locale)),
