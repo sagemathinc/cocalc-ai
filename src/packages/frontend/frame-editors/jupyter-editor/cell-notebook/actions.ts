@@ -376,9 +376,16 @@ export class NotebookFrameActions {
       return;
     }
     if (mode == "edit") {
+      const cur_id = this.store.get("cur_id");
+      // Never enter edit mode on a protected cell (metadata.editable ===
+      // false), no matter which code path asks for it -- set_mode is the
+      // public entry point used directly by e.g. the Enter key command and
+      // the completion-dialog cleanup, which bypass activate_cell.
+      if (cur_id != null && !jupyterStore.is_cell_editable(cur_id)) {
+        return;
+      }
       // If we're changing to edit mode and current cell is a markdown
       // cell, switch it to the codemirror editor view.
-      const cur_id = this.store.get("cur_id");
       if (jupyterStore?.get_cell_type(cur_id) === "markdown") {
         this.set_md_cell_editing(cur_id);
       }
