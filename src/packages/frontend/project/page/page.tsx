@@ -49,9 +49,6 @@ import {
 } from "../context";
 import FileActionModal from "../file-action-modal";
 import { ProjectWarningBanner } from "../project-banner";
-import { DiskSpaceWarning } from "../warnings/disk-space";
-import { OOMWarning } from "../warnings/oom";
-import { RamWarning } from "../warnings/ram";
 import { FIX_BORDERS } from "./common";
 import { Content } from "./content";
 import { FIXED_PROJECT_TABS, isFixedTab } from "./file-tab";
@@ -1088,15 +1085,6 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
             }}
           />
         ) : null}
-        {!hardDeleteBlocked && !isViewer && (
-          <DiskSpaceWarning project_id={project_id} />
-        )}
-        {!hardDeleteBlocked && !isViewer && (
-          <RamWarning project_id={project_id} />
-        )}
-        {!hardDeleteBlocked && !isViewer && (
-          <OOMWarning project_id={project_id} />
-        )}
         {!hardDeleteBlocked && !isViewer && <ProjectWarningBanner />}
         {props.publicDirectoryShare ? (
           <PublicDirectoryShareBanner share={props.publicDirectoryShare} />

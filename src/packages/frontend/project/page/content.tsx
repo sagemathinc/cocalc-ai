@@ -43,11 +43,16 @@ import { ProjectNew } from "@cocalc/frontend/project/new";
 import { ProjectSearch } from "@cocalc/frontend/project/search/search";
 import { ProjectServers } from "@cocalc/frontend/project/servers";
 import { ProjectSettings } from "@cocalc/frontend/project/settings";
+import {
+  isFixedTab,
+  type FixedTab,
+} from "@cocalc/frontend/project/page/file-tab";
 import { WorkspacesPanel } from "@cocalc/frontend/project/page/flyouts/workspaces";
 import { ProjectDocsPanel } from "@cocalc/frontend/project/page/flyouts/docs";
 import { openFileComponentRuntimeIsUsable } from "@cocalc/frontend/project/redux/open-file-runtime";
 import { editor_id } from "@cocalc/frontend/project/utils";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { unreachable } from "@cocalc/util/misc";
 import { useProjectContext } from "../context";
 import { AgentsPanel } from "./flyouts/agents";
 import { RootfsPanel } from "./flyouts/rootfs";
@@ -202,84 +207,97 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
     );
   }
 
-  switch (tab_name) {
-    // Legacy in-memory state from the old project-home page.
-    case "home":
-    case "files":
-      return <Explorer isVisible={is_visible} />;
-    case "new":
-      return <ProjectNew project_id={project_id} isVisible={is_visible} />;
-    case "log":
-      return <ProjectLog project_id={project_id} isVisible={is_visible} />;
-    case "search":
-      return <ProjectSearch />;
-    case "servers":
-      return <ProjectServers />;
-    case "settings":
-      return <ProjectSettings project_id={project_id} />;
-    case "info":
-      return <ProjectInfo project_id={project_id} />;
-    case "users":
-      return <ProjectSettings project_id={project_id} />;
-    case "agents":
-      if (!agentAIEnabled) {
-        return (
-          <Alert
-            showIcon
-            type="info"
-            style={{ margin: "24px" }}
-            message="AI integrations are disabled"
-            description="Agents are hidden because AI integrations are disabled for this account or project."
-          />
-        );
-      }
-      return <AgentsPanel project_id={project_id} layout="page" />;
-    case "docs":
-      return <ProjectDocsPanel project_id={project_id} layout="page" />;
-    case "workspaces":
-      return <WorkspacesPanel project_id={project_id} layout="page" />;
-    case "rootfs":
-      return <RootfsPanel layout="page" />;
-    default:
-      // check for "editor-[filename]"
-      if (!tab_name.startsWith("editor-")) {
-        return <Loading theme="medium" />;
-      } else {
-        const value = {
-          urlTransform: getUrlTransform({ project_id, path }),
-          AnchorTagComponent: getAnchorTagComponent({ project_id, path }),
-          noSanitize: true, // TODO: temporary for backward compat for now; will make it user-configurable on a per file basis later.
-          MathComponent: KaTeX,
-          hasLanguageModel: redux
-            ?.getStore("projects")
-            .hasLanguageModelEnabled(project_id),
-          disableMarkdownCodebar: redux
-            ?.getStore("account")
-            .getIn(["other_settings", "disable_markdown_codebar"]),
-          disableExtraButtons: false,
-          project_id,
-          path,
-          is_visible,
-          client: webapp_client,
-          getMermaid,
-        };
-        return (
-          <FileContext.Provider value={value}>
-            <EditorContent
-              project_id={project_id}
-              path={path}
-              is_visible={is_visible}
-              chatState={open_files.getIn([path, "chatState"]) as any}
-              chat_width={
-                (open_files.getIn([path, "chat_width"]) as any) ??
-                DEFAULT_CHAT_WIDTH
-              }
-              component={open_files.getIn([path, "component"]) ?? {}}
-              deleted={recentlyDeletedPaths?.get(path)}
+  // Legacy in-memory state from the old project-home page.
+  if (tab_name === "home") {
+    return <Explorer isVisible={is_visible} />;
+  }
+
+  if (isFixedTab(tab_name)) {
+    return renderFixedTabContent(tab_name);
+  }
+
+  // check for "editor-[filename]"
+  if (!tab_name.startsWith("editor-")) {
+    return <Loading theme="medium" />;
+  }
+
+  const value = {
+    urlTransform: getUrlTransform({ project_id, path }),
+    AnchorTagComponent: getAnchorTagComponent({ project_id, path }),
+    noSanitize: true, // TODO: temporary for backward compat for now; will make it user-configurable on a per file basis later.
+    MathComponent: KaTeX,
+    hasLanguageModel: redux
+      ?.getStore("projects")
+      .hasLanguageModelEnabled(project_id),
+    disableMarkdownCodebar: redux
+      ?.getStore("account")
+      .getIn(["other_settings", "disable_markdown_codebar"]),
+    disableExtraButtons: false,
+    project_id,
+    path,
+    is_visible,
+    client: webapp_client,
+    getMermaid,
+  };
+  return (
+    <FileContext.Provider value={value}>
+      <EditorContent
+        project_id={project_id}
+        path={path}
+        is_visible={is_visible}
+        chatState={open_files.getIn([path, "chatState"]) as any}
+        chat_width={
+          (open_files.getIn([path, "chat_width"]) as any) ?? DEFAULT_CHAT_WIDTH
+        }
+        component={open_files.getIn([path, "component"]) ?? {}}
+        deleted={recentlyDeletedPaths?.get(path)}
+      />
+    </FileContext.Provider>
+  );
+
+  function renderFixedTabContent(tab: FixedTab): React.JSX.Element | null {
+    switch (tab) {
+      case "active":
+        // This activity-bar-only tab has no full-page representation.
+        return null;
+      case "files":
+        return <Explorer isVisible={is_visible} />;
+      case "new":
+        return <ProjectNew project_id={project_id} isVisible={is_visible} />;
+      case "log":
+        return <ProjectLog project_id={project_id} isVisible={is_visible} />;
+      case "search":
+        return <ProjectSearch />;
+      case "servers":
+        return <ProjectServers />;
+      case "settings":
+      case "users":
+        return <ProjectSettings project_id={project_id} />;
+      case "info":
+        return <ProjectInfo project_id={project_id} />;
+      case "agents":
+        if (!agentAIEnabled) {
+          return (
+            <Alert
+              showIcon
+              type="info"
+              style={{ margin: "24px" }}
+              message="AI integrations are disabled"
+              description="Agents are hidden because AI integrations are disabled for this account or project."
             />
-          </FileContext.Provider>
-        );
-      }
+          );
+        }
+        return <AgentsPanel project_id={project_id} layout="page" />;
+      case "docs":
+        return <ProjectDocsPanel project_id={project_id} layout="page" />;
+      case "workspaces":
+        return <WorkspacesPanel project_id={project_id} layout="page" />;
+      case "rootfs":
+        return <RootfsPanel layout="page" />;
+      default:
+        unreachable(tab);
+        return null;
+    }
   }
 };
 

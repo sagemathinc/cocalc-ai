@@ -49,7 +49,10 @@ import {
   loadRootfsImages,
   managedRootfsCatalogUrl,
 } from "@cocalc/frontend/rootfs/manifest";
-import { FixedTab } from "@cocalc/frontend/project/page/file-tab";
+import {
+  type FixedTab,
+  isFixedTab,
+} from "@cocalc/frontend/project/page/file-tab";
 import {
   FlyoutActiveMode,
   FlyoutLogDeduplicate,
@@ -206,6 +209,12 @@ const { defaults, required } = misc;
 
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
+
+type ProjectPageTab = Exclude<FixedTab, "active" | "users">;
+
+function isProjectPageTab(tab: string): tab is ProjectPageTab {
+  return isFixedTab(tab) && tab !== "active" && tab !== "users";
+}
 
 const VIEWER_EDITOR_EXTENSION_OVERRIDES = new globalThis.Map<string, string>([
   // Terminal files are project runtime sessions, not passive file viewers.
@@ -1126,6 +1135,31 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       this.hide_file(misc.tab_to_path(prev_active_project_tab));
     }
     const change: any = { active_project_tab: key };
+
+    if (!isProjectPageTab(key)) {
+      const path = misc.tab_to_path(key);
+      if (path == null) {
+        throw Error(`must be a project page or editor path but is ${key}`);
+      }
+      this.redux
+        .getActions("document_activity")
+        ?.mark_file(this.project_id, path, "open");
+      if (opts.change_history) {
+        this.push_state(this.toUrlPath(path, false));
+      }
+      this.set_current_path(this.workingDirectoryForProjectFile(path));
+
+      const info = store.get("open_files").getIn([path, "component"]) as any;
+      if (info == null) {
+        // Lazy session restore creates tab rows without editor component
+        // bootstrap. Foregrounding such a tab is the signal to hydrate it.
+        this.open_files?.set(path, "component", {});
+      }
+      this.ensureOpenFileComponent(path, { noFocus: opts.noFocus });
+      this.setState(change);
+      return;
+    }
+
     switch (key) {
       case "files":
         // Treat "/" as a fallback state. Re-entering the files tab should land in
@@ -1209,12 +1243,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         }
         break;
 
-      case "users":
-        if (opts.change_history) {
-          this.push_state("users", "");
-        }
-        break;
-
       case "agents":
         if (opts.change_history) {
           this.push_state("agents", "");
@@ -1239,33 +1267,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         }
         break;
 
-      case "upgrades":
-        if (opts.change_history) {
-          this.push_state("upgrades", "");
-        }
-        break;
-
       default:
-        // editor...
-        const path = misc.tab_to_path(key);
-        if (path == null) {
-          throw Error(`must be an editor path but is ${key}`);
-        }
-        this.redux
-          .getActions("document_activity")
-          ?.mark_file(this.project_id, path, "open");
-        if (opts.change_history) {
-          this.push_state(this.toUrlPath(path, false));
-        }
-        this.set_current_path(this.workingDirectoryForProjectFile(path));
-
-        const info = store.get("open_files").getIn([path, "component"]) as any;
-        if (info == null) {
-          // Lazy session restore creates tab rows without editor component
-          // bootstrap. Foregrounding such a tab is the signal to hydrate it.
-          this.open_files?.set(path, "component", {});
-        }
-        this.ensureOpenFileComponent(path, { noFocus: opts.noFocus });
+        misc.unreachable(key);
     }
     this.setState(change);
   };
