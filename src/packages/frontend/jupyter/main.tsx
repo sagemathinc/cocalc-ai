@@ -9,7 +9,7 @@ Top-level react component, which ties everything together
 
 import { Button } from "antd";
 import * as immutable from "immutable";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 
 import { React, redux, useRedux } from "@cocalc/frontend/app-framework";
 import { useRef } from "react";
@@ -222,11 +222,14 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
   // otherwise they will not re-render as expected.
   const aiEnabled = aiEnabledLegacy || (aiAllowedByPolicy && codexAvailable);
   // This only checks if we can use the AI tools at all – detailed checks like "for this project in a course" are by component.
-  const aiTools: AITools | undefined = aiEnabled
-    ? {
-        toolComponents,
-      }
-    : undefined;
+  const aiTools = useMemo<AITools | undefined>(() => {
+    if (!aiEnabled) {
+      return undefined;
+    }
+    return {
+      toolComponents,
+    };
+  }, [aiEnabled]);
 
   // We now always render via lazy-hydrate-once semantics.
   const useLazyRenderOnceRef = useRef<boolean>(true);
@@ -308,6 +311,11 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     "editor_settings",
     "jupyter_classic",
   ]);
+  const kernelspecData = useMemo(() => kernelspec?.toJS(), [kernelspec]);
+  const jupyterContext = useMemo(
+    () => ({ kernelspec: kernelspecData, trust }),
+    [kernelspecData, trust],
+  );
 
   useEffect(() => {
     if (!error) return;
@@ -466,7 +474,7 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
   }
 
   return (
-    <JupyterContext.Provider value={{ kernelspec: kernelspec?.toJS(), trust }}>
+    <JupyterContext.Provider value={jupyterContext}>
       <div
         style={{
           display: "flex",

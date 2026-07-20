@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2020-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -141,14 +141,18 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const cm_is_focused = useRef<boolean>(false);
   const vim_mode = useRef<boolean>(false);
   const cm_ref = React.createRef<HTMLTextAreaElement>();
-  const [cmValue, setCmValue] = useState<string>(value);
+  const [isEmpty, setIsEmpty] = useState<boolean>(value.length === 0);
   const handleChange = useCallback(() => {
-    setCmValue(cm.current?.getValue());
+    setIsEmpty((prev) => {
+      const next = (cm.current?.getValue() ?? "") === "";
+      return prev === next ? prev : next;
+    });
   }, []);
   const key = useRef<string | null>(null);
   const prev_options = usePrevious(options);
   const frameActions = useNotebookFrameActions();
   const ignoreNextValue = useRef<boolean>(false);
+  const skipInitialRefreshOnScrollOrFont = useRef<boolean>(true);
 
   useEffect(() => {
     if (frameActions.current?.frame_id != null) {
@@ -170,6 +174,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   }, []);
 
   useEffect(() => {
+    if (refresh == null) {
+      return;
+    }
     cm.current?.refresh();
   }, [refresh]);
 
@@ -184,6 +191,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   }, [options, value]);
 
   useEffect(() => {
+    if (skipInitialRefreshOnScrollOrFont.current) {
+      skipInitialRefreshOnScrollOrFont.current = false;
+      return;
+    }
     cm_refresh();
   }, [font_size, is_scrolling]);
 
@@ -203,6 +214,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     if (cm.current != null) {
       cm.current.setValueNoJump(value);
     }
+  }, [value]);
+
+  useEffect(() => {
+    setIsEmpty(value.length === 0);
   }, [value]);
 
   useEffect(() => {
@@ -234,7 +249,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
 
   useEffect(() => {
-    if (!is_current || cmValue) {
+    if (!is_current || !isEmpty) {
       return;
     }
     if (options.get("lineNumbers")) {
@@ -242,7 +257,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       // codemirror renders to see what we got.
       // That said, this only matters when the only line
       // number is "1" (since there can be at most 1 line in order for
-      // cmValue=''), so this number is always 30 in practice.
+      // the cell is empty, so this number is always 30 in practice.
       setPlaceHolderOffset(30);
       setTimeout(() => {
         setPlaceHolderOffset(
@@ -252,7 +267,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     } else {
       setPlaceHolderOffset(0);
     }
-  }, [is_current, cmValue, options]);
+  }, [is_current, isEmpty, options]);
 
   // This is an attempt to make code editing somewhat work at non 100% scale
   // for the whiteboard.  It's only used there, and is a miracle it partly
@@ -315,9 +330,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     if (cm.current == null || actions == null) {
       return;
     }
-    frameActions.current?.unselect_all_cells();
-    frameActions.current?.set_cur_id(id);
-    frameActions.current?.set_mode("edit");
+    frameActions.current?.activate_cell(id, {
+      mode: "edit",
+      clearSelection: true,
+    });
     if (vim_mode.current) {
       $(cm.current.getWrapperElement()).css({ paddingBottom: "1.5em" });
     }
@@ -805,7 +821,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   }
 
   function renderPlaceholder() {
-    if (!is_current || cmValue || !setShowAICellGen) {
+    if (!is_current || !isEmpty || !setShowAICellGen) {
       return;
     }
     return (

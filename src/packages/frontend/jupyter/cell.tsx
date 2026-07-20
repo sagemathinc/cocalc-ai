@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2020-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -58,7 +58,7 @@ interface Props {
   is_visible?: boolean;
   isFirst?: boolean;
   isLast?: boolean;
-  dragHandle?: React.JSX.Element;
+  showDragHandle?: boolean;
   read_only?: boolean;
   isDragging?: boolean;
   isPending?: boolean;
@@ -111,8 +111,8 @@ function getRenderChangeReasons(props: Props, nextProps: Props): string[] {
   ) {
     reasons.push("complete(current)");
   }
-  if ((nextProps.dragHandle == null) !== (props.dragHandle == null)) {
-    reasons.push("dragHandle.present");
+  if (nextProps.showDragHandle !== props.showDragHandle) {
+    reasons.push("showDragHandle");
   }
   if (nextProps.read_only !== props.read_only) reasons.push("read_only");
   if (nextProps.isDragging !== props.isDragging) reasons.push("isDragging");
@@ -146,9 +146,7 @@ function areEqual(props: Props, nextProps: Props): boolean {
     (nextProps.aiTools != null) !== (props.aiTools != null) ||
     (nextProps.complete !== props.complete && // only worry about complete when editing this cell
       (nextProps.is_current || props.is_current)) ||
-    // dragHandle is re-created by CellList on each render.  We only care if
-    // presence changes, not reference identity.
-    (nextProps.dragHandle == null) !== (props.dragHandle == null) ||
+    nextProps.showDragHandle !== props.showDragHandle ||
     nextProps.read_only !== props.read_only ||
     nextProps.isDragging !== props.isDragging ||
     nextProps.isPending !== props.isPending ||
@@ -206,7 +204,7 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
         is_scrolling={props.is_scrolling}
         aiTools={props.aiTools}
         setShowAICellGen={setShowAICellGen}
-        dragHandle={props.dragHandle}
+        showDragHandle={props.showDragHandle}
         isPending={props.isPending}
         runOverlay={props.runOverlay}
       />
@@ -245,9 +243,10 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
       frameActions.current?.select_cell_range(id);
       return;
     }
-    frameActions.current?.set_mode("escape");
-    frameActions.current?.set_cur_id(id);
-    frameActions.current?.unselect_all_cells();
+    frameActions.current?.activate_cell(id, {
+      mode: "escape",
+      clearSelection: true,
+    });
   }
 
   function double_click(event: any): void {
@@ -260,11 +259,10 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
     if (props.cell.get("cell_type") !== "markdown") {
       return;
     }
-    frameActions.current?.unselect_all_cells();
-    const id = props.cell.get("id");
-    frameActions.current?.set_md_cell_editing(id);
-    frameActions.current?.set_cur_id(id);
-    frameActions.current?.set_mode("edit");
+    frameActions.current?.activate_cell(props.cell.get("id"), {
+      mode: "edit",
+      clearSelection: true,
+    });
     event.stopPropagation();
   }
 

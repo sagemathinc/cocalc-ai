@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import React, { useCallback, useContext, useMemo } from "react";
+import React, { useCallback, useContext, useMemo, useState } from "react";
 import { useDraggable, useDroppable, useDndContext } from "@dnd-kit/core";
 import { ConfigProvider, Dropdown, Tabs } from "antd";
 import type { MenuProps } from "antd";
@@ -157,6 +157,7 @@ export function TabsContainer({
   editor_spec,
   active_id,
 }: Props) {
+  const [addTabMenuOpen, setAddTabMenuOpen] = useState(false);
   const children = frame_tree.get("children");
   const storedActiveTab = frame_tree.get("activeTab", 0);
   const tabsId = frame_tree.get("id") as string;
@@ -237,6 +238,10 @@ export function TabsContainer({
   }, [actions, childIds, children, editor_spec, tabsId]);
 
   const addTabMenu = useMemo((): MenuProps => {
+    if (!addTabMenuOpen) {
+      return { items: [] };
+    }
+
     const menuItems: MenuProps["items"] = [];
 
     if (switchToFiles && switchToFiles.size > 0) {
@@ -266,7 +271,7 @@ export function TabsContainer({
     }
 
     return { items: menuItems };
-  }, [editor_spec, switchToFiles, tabsId, actions]);
+  }, [addTabMenuOpen, editor_spec, switchToFiles, tabsId, actions]);
 
   const { setNodeRef: setTabBarDropRef, isOver: isTabBarOver } = useDroppable({
     id: `tab-bar-drop-${tabsId}`,
@@ -345,7 +350,11 @@ export function TabsContainer({
               tabBarStyle={FRAME_TAB_BAR_STYLE}
               tabBarExtraContent={{
                 right: (
-                  <Dropdown menu={addTabMenu} trigger={["click"]}>
+                  <Dropdown
+                    menu={addTabMenu}
+                    trigger={["click"]}
+                    onOpenChange={setAddTabMenuOpen}
+                  >
                     <Icon
                       name="down-circle-o"
                       style={{

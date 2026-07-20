@@ -6,7 +6,7 @@
 import { Popover, Tooltip as AntdTooltip } from "antd";
 import type { TooltipProps as AntdTooltipProps } from "antd";
 import { TooltipPlacement } from "antd/lib/tooltip";
-import React, { CSSProperties as CSS } from "react";
+import React, { CSSProperties as CSS, useCallback } from "react";
 
 import { useAccountOtherSetting } from "@cocalc/frontend/app-framework";
 import * as misc from "@cocalc/util/misc";
@@ -119,7 +119,7 @@ export const Tip: React.FC<Props> = React.memo((props: Props) => {
   } = props;
   const disabled = useTooltipsDisabled({ allow_touch, ignore_hide_setting });
 
-  function render_title() {
+  const render_title = useCallback(() => {
     const renderedTitle = typeof title === "function" ? title() : title;
     if (!renderedTitle) return null;
     if (!icon) return renderedTitle;
@@ -128,13 +128,13 @@ export const Tip: React.FC<Props> = React.memo((props: Props) => {
         <Icon name={icon} /> {renderedTitle}
       </span>
     );
-  }
+  }, [title, icon]);
 
   // a tip is rendered in a description box below the title
-  function render_tip(): React.JSX.Element {
+  const render_tip = useCallback((): React.JSX.Element => {
     const style = { ...TIP_STYLE, ...tip_style };
     return <div style={style}>{tip}</div>;
-  }
+  }, [tip, tip_style]);
 
   // this is the visible element, which gets some information
   function render_wrapped() {
@@ -156,7 +156,7 @@ export const Tip: React.FC<Props> = React.memo((props: Props) => {
 
     if (tip) {
       return (
-        <Popover title={render_title()} content={render_tip()} {...props}>
+        <Popover title={render_title} content={render_tip} {...props}>
           {render_wrapped()}
         </Popover>
       );

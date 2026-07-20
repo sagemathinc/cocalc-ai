@@ -123,9 +123,11 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
     : "";
 
   useEffect(() => {
-    if (mode !== "dropdown") return;
+    // Defer loading the project log until the dropdown is actually opened,
+    // not merely when dropdown mode is the persisted preference.
+    if (mode !== "dropdown" || !dropdownOpen) return;
     actions?.refresh_project_log?.();
-  }, [actions, mode]);
+  }, [actions, mode, dropdownOpen]);
 
   function setTabsMode(nextMode: FileTabsMode): void {
     setMode(nextMode);
@@ -178,9 +180,11 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
     labelMap.set(paths[index], `${labelsForPaths[index] ?? paths[index]}`);
   }
 
-  const recentFiles = useRecentFiles(project_log, 8, "").filter(
-    ({ filename }) => !paths.includes(filename),
-  );
+  const recentFiles = useRecentFiles(
+    project_log,
+    dropdownOpen ? 8 : 0,
+    "",
+  ).filter(({ filename }) => !paths.includes(filename));
   const recentPaths = recentFiles.map(({ filename }) => filename);
   const recentLabels = file_tab_labels(
     recentPaths,

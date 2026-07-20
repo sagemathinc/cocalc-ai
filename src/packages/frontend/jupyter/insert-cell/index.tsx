@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2020-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -15,7 +15,7 @@ which is confusing.
 // cSpell:ignore aicell
 
 import { Button, Space } from "antd";
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 
 import { redux } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
@@ -62,6 +62,7 @@ export function InsertCell({
   alwaysShow,
 }: InsertCellProps) {
   const frameActions = useNotebookFrameActions();
+  const [showControls, setShowControls] = useState<boolean>(!!alwaysShow);
 
   const showGenerateCell = redux
     .getStore("projects")
@@ -103,13 +104,14 @@ export function InsertCell({
     !hide &&
     (showAICellGen === position ||
       (position === "below" && showAICellGen === "replace"));
+  const controlsVisible = showControls || !!showAICellGen || !!alwaysShow;
 
   function renderControls() {
     return (
       <div
         className="cocalc-jupyter-insert-cell-controls"
         style={
-          showAICellGen || alwaysShow
+          controlsVisible
             ? {
                 visibility: "visible",
                 opacity: 1,
@@ -169,6 +171,22 @@ export function InsertCell({
         ...(showAICellGen ? { backgroundColor: COLORS.FG_BLUE } : {}),
       }}
       onClick={showAICellGen ? undefined : handleBarClick}
+      onMouseEnter={() => setShowControls(true)}
+      onMouseLeave={() => {
+        if (!showAICellGen && !alwaysShow) {
+          setShowControls(false);
+        }
+      }}
+      onFocus={() => setShowControls(true)}
+      onBlur={(e) => {
+        if (
+          !showAICellGen &&
+          !alwaysShow &&
+          !e.currentTarget.contains(e.relatedTarget as Node | null)
+        ) {
+          setShowControls(false);
+        }
+      }}
     >
       {isActiveAIGenerator ? (
         <AIGenerateCodeCell
@@ -180,9 +198,9 @@ export function InsertCell({
         >
           {renderControls()}
         </AIGenerateCodeCell>
-      ) : (
+      ) : controlsVisible ? (
         renderControls()
-      )}
+      ) : null}
     </div>
   );
 }
