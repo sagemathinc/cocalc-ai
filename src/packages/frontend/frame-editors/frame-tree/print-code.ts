@@ -26,7 +26,13 @@ interface Options {
 export function print_code(opts: Options) {
   const w = popup("");
 
-  const options = fromJS(opts.options);
+  // Always print with the "default" theme: the popup document only includes
+  // the hard-coded CODEMIRROR_CSS below, which ships syntax colors solely for
+  // .cm-s-default.  Any other theme (the account default "cocalc-light", a
+  // dark theme, ...) has its CSS loaded via webpack in the main app only, so
+  // its markup would print as unstyled black text -- and for printing on
+  // paper the light default colors are the right choice anyway.
+  const options = fromJS({ ...opts.options, theme: "default" });
 
   // We add a trailing whitespace, since some printers grey the last line (e.g., chrome, but not firefox)
   const value = opts.value + "\n";
