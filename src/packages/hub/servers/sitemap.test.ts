@@ -105,9 +105,11 @@ describe("public sitemap", () => {
     expect(PUBLIC_SITEMAP_PATHS).not.toContain("/policies/imprint");
     expect(
       PUBLIC_SITEMAP_PATHS.filter((path) => path.startsWith("/features/")),
-    ).toEqual(
-      getPublicFeatureIndexPages().map((page) => `/features/${page.slug}`),
-    );
+    ).toEqual([
+      ...getPublicFeatureIndexPages().map((page) => `/features/${page.slug}`),
+      // Slides is folded into the combined Whiteboard & Slides tile but stays in the sitemap.
+      "/features/slides",
+    ]);
   });
 
   it("adds public docs detail pages from the docs registry", async () => {
