@@ -18,8 +18,9 @@ const ORIGIN = "https://cocalc.ai";
 function response(
   status: number,
   headers: Record<string, string> = {},
+  body: BodyInit | null = null,
 ): Response {
-  return new Response(null, { status, headers });
+  return new Response(body, { status, headers });
 }
 
 function corsHeaders(): Record<string, string> {
@@ -282,6 +283,40 @@ describe("probeProjectHostPublicRoute", () => {
         fetchImpl,
       }),
     ).rejects.toThrow("health check returned HTTP 502");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a project-host that returns HTTP 200 before it is ready", async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(
+      response(
+        200,
+        { "content-type": "application/json" },
+        JSON.stringify({
+          ok: true,
+          ready: false,
+        }),
+      ),
+    );
+
+    let caught: unknown;
+    try {
+      await probeProjectHostPublicRoute({
+        public_url: PUBLIC_URL,
+        origin: ORIGIN,
+        fetchImpl,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toContain("reported ready=false");
+    expect(projectHostPublicRouteProbeDiagnostic(caught)).toMatchObject({
+      stage: "health",
+      health_status: 200,
+      health_ok: true,
+      health_ready: false,
+    });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 

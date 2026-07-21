@@ -274,28 +274,6 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
                 deleted: null,
                 metadata: {
                   bootstrap: {
-                    status: "error",
-                    updated_at: "2026-04-01T21:00:00Z",
-                    message: "bootstrap failed (exit 1) at line 206",
-                  },
-                  bootstrap_lifecycle: {
-                    summary_status: "in_sync",
-                    last_reconcile_finished_at: "2026-04-01T21:02:00Z",
-                    summary_message: "Host software is in sync",
-                  },
-                },
-              },
-            ],
-          };
-        }
-        if (pollCount === 2) {
-          return {
-            rows: [
-              {
-                status: "running",
-                deleted: null,
-                metadata: {
-                  bootstrap: {
                     status: "done",
                     updated_at: "2026-04-01T21:00:00Z",
                     message: "Host software reconciled",
@@ -310,6 +288,29 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
           };
         }
         if (pollCount === 2) {
+          return {
+            rows: [
+              {
+                status: "running",
+                deleted: null,
+                metadata: {
+                  bootstrap: {
+                    status: "running",
+                    updated_at: "2026-04-01T21:01:00Z",
+                    message: "Reconciling host software",
+                  },
+                  bootstrap_lifecycle: {
+                    summary_status: "in_sync",
+                    current_operation: "reconcile",
+                    last_reconcile_started_at: "2026-04-01T21:01:00Z",
+                    last_reconcile_finished_at: "2026-04-01T21:00:00Z",
+                  },
+                },
+              },
+            ],
+          };
+        }
+        if (pollCount === 3) {
           return {
             rows: [
               {
@@ -398,6 +399,7 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
       'BOOTSTRAP_PID="$(sudo -n bash -lc \'nohup env COCALC_BOOTSTRAP_RECONCILE_SCOPE="$3" bash "$1" >>"$2" 2>&1 </dev/null & echo $!\'',
     );
     expect(ssh.getScript()).toContain('"$BOOTSTRAP_LOG" "full")');
+    expect(delayMock).toHaveBeenCalledTimes(2);
   });
 
   it("does not fail bootstrap reconcile on stale drift before the new reconcile reports", async () => {

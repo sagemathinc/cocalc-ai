@@ -40,6 +40,8 @@ export type ProjectHostPublicRouteProbeDiagnostic = {
   public_url: string;
   origin: string;
   health_status?: number;
+  health_ok?: boolean;
+  health_ready?: boolean;
   preflight_status?: number;
   session_status?: number;
   edge_server?: string;
@@ -150,6 +152,22 @@ async function discardBody(response: Response): Promise<void> {
   } catch {
     // The status and headers are the probe result. A body cancellation failure
     // must not turn a successful edge check into a false outage.
+  }
+}
+
+async function readHealthState(
+  response: Response,
+): Promise<{ ok?: boolean; ready?: boolean }> {
+  try {
+    const value = await response.json();
+    if (value == null || typeof value !== "object") return {};
+    const body = value as Record<string, unknown>;
+    return {
+      ...(typeof body.ok === "boolean" ? { ok: body.ok } : {}),
+      ...(typeof body.ready === "boolean" ? { ready: body.ready } : {}),
+    };
+  } catch {
+    return {};
   }
 }
 
@@ -339,12 +357,21 @@ export async function probeProjectHostPublicRoute({
   } catch (err) {
     fail(`public project-host health check failed: ${errorText(err)}`);
   }
-  await discardBody(health);
   diagnostic.health_status = health.status;
   diagnostic.edge_server = health.headers.get("server") ?? undefined;
   diagnostic.cf_ray = health.headers.get("cf-ray") ?? undefined;
   if (health.status !== 200) {
+    await discardBody(health);
     fail(`public project-host health check returned HTTP ${health.status}`);
+  }
+  const healthState = await readHealthState(health);
+  diagnostic.health_ok = healthState.ok;
+  diagnostic.health_ready = healthState.ready;
+  if (healthState.ok === false) {
+    fail("public project-host health check reported ok=false");
+  }
+  if (healthState.ready === false) {
+    fail("public project-host health check reported ready=false");
   }
 
   const sessionUrl = new URL(

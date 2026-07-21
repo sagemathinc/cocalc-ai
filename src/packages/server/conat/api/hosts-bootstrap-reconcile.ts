@@ -276,9 +276,18 @@ function hostBootstrapReconcileSucceeded(
   baseline?: HostBootstrapReconcileState,
 ): boolean {
   if (state.lifecycle_summary_status === "in_sync") {
-    return baseline
-      ? hostBootstrapReconcileObservedAfterBaseline(baseline, state)
-      : true;
+    if (!baseline) {
+      return state.lifecycle_current_operation !== "reconcile";
+    }
+    // summary_status can remain in_sync briefly after a new reconcile starts.
+    // Require completion evidence from this invocation, not just activity.
+    return (
+      state.lifecycle_current_operation !== "reconcile" &&
+      timestampIsAfter(
+        state.lifecycle_last_reconcile_finished_at,
+        baseline.lifecycle_last_reconcile_finished_at,
+      )
+    );
   }
   if (
     baseline &&
