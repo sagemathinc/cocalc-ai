@@ -500,6 +500,12 @@ function publicRouteAutoRepairDecision(
   if (!enabled(process.env.COCALC_HOST_PUBLIC_ROUTE_AUTO_REPAIR_ENABLED)) {
     return { action: "wait", reason: "automatic tunnel repair is disabled" };
   }
+  if (row.metadata?.public_route?.active_mode === "cloudflare-proxy") {
+    return {
+      action: "wait",
+      reason: "direct public route does not use Cloudflare Tunnel",
+    };
+  }
   if (row.metadata?.cloudflared_restart_supported !== true) {
     return {
       action: "wait",
@@ -1334,6 +1340,10 @@ async function claimPublicRouteAutoRepair(
         AND COALESCE(target.last_seen, to_timestamp(0)) >=
           NOW() - ($5::double precision * INTERVAL '1 millisecond')
         AND target.metadata ->> 'cloudflared_restart_supported'='true'
+        AND COALESCE(
+          target.metadata -> 'public_route' ->> 'active_mode',
+          'cloudflare-tunnel'
+        ) <> 'cloudflare-proxy'
         AND target.metadata -> 'public_route_probe' ->> 'claim_id'=$4
         AND target.metadata -> 'public_route_probe' ->> 'quarantined'='true'
         AND target.metadata -> 'public_route_probe' -> 'origin_health'

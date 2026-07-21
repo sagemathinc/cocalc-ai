@@ -38,10 +38,12 @@ async function insertHost({
   host_id,
   probe_claim_id,
   recovery,
+  public_route,
 }: {
   host_id: string;
   probe_claim_id: string;
   recovery?: Record<string, any>;
+  public_route?: Record<string, any>;
 }) {
   await upsertProjectHost({
     id: host_id,
@@ -56,6 +58,19 @@ async function insertHost({
       ...(recovery ? { public_route_auto_recovery: recovery } : {}),
     },
   });
+  if (public_route) {
+    await getPool().query(
+      `UPDATE project_hosts
+       SET metadata=jsonb_set(
+         COALESCE(metadata, '{}'::jsonb),
+         '{public_route}',
+         $2::jsonb,
+         true
+       )
+       WHERE id=$1`,
+      [host_id, JSON.stringify(public_route)],
+    );
+  }
 }
 
 describe("public-route automatic repair claims", () => {
@@ -121,6 +136,18 @@ describe("public-route automatic repair claims", () => {
     await insertHost({ host_id: HOST_B, probe_claim_id: "probe-b" });
     await expect(
       _test.claimPublicRouteAutoRepair(failure(HOST_B, "probe-b")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("does not claim tunnel repair for a direct public route", async () => {
+    await insertHost({
+      host_id: HOST_A,
+      probe_claim_id: "probe-direct",
+      public_route: { active_mode: "cloudflare-proxy", status: "active" },
+    });
+
+    await expect(
+      _test.claimPublicRouteAutoRepair(failure(HOST_A, "probe-direct")),
     ).resolves.toBeUndefined();
   });
 
