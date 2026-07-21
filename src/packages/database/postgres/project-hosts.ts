@@ -24,6 +24,31 @@ function pool(): Pool {
   return getPool();
 }
 
+export async function mergeProjectHostMetadataObject({
+  id,
+  field,
+  patch,
+}: {
+  id: string;
+  field: string;
+  patch: Record<string, unknown>;
+}): Promise<void> {
+  await pool().query(
+    `
+    UPDATE project_hosts
+       SET metadata = jsonb_set(
+         COALESCE(metadata, '{}'::jsonb),
+         ARRAY[$2]::text[],
+         COALESCE(metadata -> $2, '{}'::jsonb) || $3::jsonb,
+         true
+       ),
+       updated = NOW()
+     WHERE id=$1 AND deleted IS NULL
+    `,
+    [id, field, JSON.stringify(patch)],
+  );
+}
+
 export async function upsertProjectHost({
   id,
   bay_id,

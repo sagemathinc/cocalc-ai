@@ -2,6 +2,7 @@ import express, { Router, type Request } from "express";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import getPool from "@cocalc/database/pool";
+import { mergeProjectHostMetadataObject } from "@cocalc/database/postgres/project-hosts";
 import { getLogger } from "@cocalc/hub/logger";
 import basePath from "@cocalc/backend/base-path";
 import { buildBootstrapScriptWithStatus } from "@cocalc/server/cloud/bootstrap-host";
@@ -105,21 +106,15 @@ async function updateBootstrapStatus(
   status: string,
   message?: string,
 ): Promise<void> {
-  const { rows } = await pool().query(
-    `SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
-    [hostId],
-  );
-  const metadata = rows[0]?.metadata ?? {};
-  metadata.bootstrap = {
-    ...(metadata.bootstrap ?? {}),
-    status,
-    updated_at: new Date().toISOString(),
-    ...(message ? { message } : {}),
-  };
-  await pool().query(
-    `UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
-    [hostId, metadata],
-  );
+  await mergeProjectHostMetadataObject({
+    id: hostId,
+    field: "bootstrap",
+    patch: {
+      status,
+      updated_at: new Date().toISOString(),
+      ...(message ? { message } : {}),
+    },
+  });
 }
 
 export default function init(router: Router) {

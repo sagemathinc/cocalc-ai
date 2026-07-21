@@ -5,7 +5,10 @@
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
-import { upsertProjectHost } from "./project-hosts";
+import {
+  mergeProjectHostMetadataObject,
+  upsertProjectHost,
+} from "./project-hosts";
 
 const HOST_ID = "7a1e7841-a2d0-461f-83f0-6f1dcc44174a";
 
@@ -95,6 +98,56 @@ describe("upsertProjectHost", () => {
           operation_id: "control-plane-operation",
         },
         pending_automatic_convergence_retry: { runtime: true },
+      },
+      public_route: { active_mode: "cloudflare-proxy" },
+      dns: { record_id: "control-plane-record" },
+      cloudflare_tunnel: { id: "control-plane-tunnel" },
+    });
+  });
+
+  it("atomically merges one metadata object without replacing siblings", async () => {
+    await upsertProjectHost({
+      id: HOST_ID,
+      status: "running",
+      metadata: {
+        bootstrap: {
+          status: "running",
+          message: "Bootstrap is running",
+        },
+      },
+    });
+    await getPool().query(
+      `UPDATE project_hosts
+          SET metadata=metadata || $2::jsonb
+        WHERE id=$1`,
+      [
+        HOST_ID,
+        JSON.stringify({
+          public_route: { active_mode: "cloudflare-proxy" },
+          dns: { record_id: "control-plane-record" },
+          cloudflare_tunnel: { id: "control-plane-tunnel" },
+        }),
+      ],
+    );
+
+    await mergeProjectHostMetadataObject({
+      id: HOST_ID,
+      field: "bootstrap",
+      patch: {
+        status: "done",
+        updated_at: "2026-07-21T20:00:00.000Z",
+      },
+    });
+
+    const { rows } = await getPool().query(
+      "SELECT metadata FROM project_hosts WHERE id=$1",
+      [HOST_ID],
+    );
+    expect(rows[0]?.metadata).toEqual({
+      bootstrap: {
+        status: "done",
+        message: "Bootstrap is running",
+        updated_at: "2026-07-21T20:00:00.000Z",
       },
       public_route: { active_mode: "cloudflare-proxy" },
       dns: { record_id: "control-plane-record" },
