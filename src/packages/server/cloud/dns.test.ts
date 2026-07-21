@@ -146,12 +146,43 @@ describe("cloud dns", () => {
     });
   });
 
-  it("adds a hostname-scoped Full SSL rule without replacing existing rules", async () => {
+  it("derives one zone-wide SSL rule for prod and staging hostnames", async () => {
+    const { projectHostSslRuleExpression } = await import("./dns");
+    const prod = projectHostSslRuleExpression({
+      hostname:
+        "host-7bd699f8-e20b-4b13-9dfa-f7358f85544e-cocalc-prod.cocalc.ai",
+      hostId: "7bd699f8-e20b-4b13-9dfa-f7358f85544e",
+    });
+    const staging = projectHostSslRuleExpression({
+      hostname:
+        "host-99838afd-80f3-4e5b-96b8-7aff05ba9452-cocalc-staging.cocalc.ai",
+      hostId: "99838afd-80f3-4e5b-96b8-7aff05ba9452",
+    });
+
+    expect(staging).toBe(prod);
+    expect(prod).toContain('starts_with(http.host, "host-")');
+    expect(prod).toContain('ends_with(http.host, ".cocalc.ai")');
+    expect(prod).not.toContain("cocalc-prod");
+    expect(prod).not.toContain("cocalc-staging");
+  });
+
+  it("adds the v2 Full SSL rule without replacing legacy or unrelated rules", async () => {
     const rules: any[] = [
       {
         id: "unrelated-rule",
         ref: "unrelated",
         description: "unrelated configuration",
+      },
+      {
+        id: "legacy-project-host-rule",
+        ref: "cocalc_project_host_direct_tls",
+        description:
+          "CoCalc project-host direct ingress uses encrypted Cloudflare origin traffic",
+        expression:
+          '(starts_with(http.host, "host-") and ends_with(http.host, "-cocalc-staging.cocalc.ai"))',
+        action: "set_config",
+        action_parameters: { ssl: "full" },
+        enabled: true,
       },
     ];
     fetchMock.mockImplementation(async (input: any, init?: RequestInit) => {
@@ -198,17 +229,20 @@ describe("cloud dns", () => {
     expect(result).toMatchObject({
       ruleset_id: "config-ruleset",
       rule_id: "project-host-rule",
-      ref: "cocalc_project_host_direct_tls",
+      ref: "cocalc_project_host_direct_tls_v2",
       ssl: "full",
     });
     expect(result.expression).toContain('starts_with(http.host, "host-")');
-    expect(result.expression).toContain(
-      'ends_with(http.host, "-dev.example.com")',
-    );
+    expect(result.expression).toContain('ends_with(http.host, ".example.com")');
     expect(result.expression).toContain(
       'starts_with(http.host, "direct-check-")',
     );
     expect(rules[0]?.id).toBe("unrelated-rule");
+    expect(rules[1]?.id).toBe("legacy-project-host-rule");
+    expect(rules[1]?.expression).toContain("cocalc-staging.cocalc.ai");
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH"),
+    ).toBe(false);
     const createCall = fetchMock.mock.calls.find(
       ([url, init]) =>
         String(url).endsWith("/rulesets/config-ruleset/rules") &&
@@ -221,12 +255,16 @@ describe("cloud dns", () => {
     });
   });
 
-  it("updates the managed SSL rule in place", async () => {
-    const managedRule = {
+  it("updates a stale v2 SSL rule in place and verifies its contents", async () => {
+    let managedRule: any = {
       id: "project-host-rule",
-      ref: "cocalc_project_host_direct_tls",
+      ref: "cocalc_project_host_direct_tls_v2",
       description:
-        "CoCalc project-host direct ingress uses encrypted Cloudflare origin traffic",
+        "CoCalc project-host direct ingress uses zone-wide encrypted origin traffic",
+      expression: "stale expression",
+      action: "set_config",
+      action_parameters: { ssl: "flexible" },
+      enabled: true,
     };
     fetchMock.mockImplementation(async (input: any, init?: RequestInit) => {
       const url = String(input);
@@ -244,6 +282,10 @@ describe("cloud dns", () => {
         url.endsWith("/rulesets/config-ruleset/rules/project-host-rule") &&
         init?.method === "PATCH"
       ) {
+        managedRule = {
+          ...JSON.parse(init.body as string),
+          id: "project-host-rule",
+        };
         return responseWith(managedRule);
       }
       if (url.endsWith("/rulesets/config-ruleset")) {
@@ -267,6 +309,51 @@ describe("cloud dns", () => {
           ) && init?.method === "PATCH",
       ),
     ).toBe(true);
+  });
+
+  it("does not rewrite an exact v2 SSL rule", async () => {
+    const expression =
+      '((starts_with(http.host, "host-") and ends_with(http.host, ".example.com")) or (starts_with(http.host, "direct-check-") and ends_with(http.host, ".example.com")))';
+    const managedRule = {
+      id: "project-host-rule",
+      ref: "cocalc_project_host_direct_tls_v2",
+      description:
+        "CoCalc project-host direct ingress uses zone-wide encrypted origin traffic",
+      expression,
+      action: "set_config",
+      action_parameters: { ssl: "full" },
+      enabled: true,
+    };
+    fetchMock.mockImplementation(async (input: any) => {
+      const url = String(input);
+      if (url.includes("/zones?")) return zoneResponse;
+      if (url.endsWith("/zones/zone-1/rulesets")) {
+        return responseWith([
+          {
+            id: "config-ruleset",
+            kind: "zone",
+            phase: "http_config_settings",
+          },
+        ]);
+      }
+      if (url.endsWith("/rulesets/config-ruleset")) {
+        return responseWith({ id: "config-ruleset", rules: [managedRule] });
+      }
+      return responseWith({});
+    });
+    (global as any).fetch = fetchMock;
+
+    const { ensureCloudflareProjectHostSslRule } = await import("./dns");
+    await ensureCloudflareProjectHostSslRule({
+      hostname: "host-abc123-dev.example.com",
+      host_id: "abc123",
+    });
+
+    expect(
+      fetchMock.mock.calls.some(([, init]) =>
+        ["POST", "PATCH"].includes(`${init?.method}`),
+      ),
+    ).toBe(false);
   });
 
   it("updates an existing record when record_id is provided", async () => {

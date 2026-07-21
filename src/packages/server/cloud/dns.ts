@@ -67,9 +67,29 @@ export type CloudflareProjectHostSslRule = {
   ssl: "full";
 };
 
-const PROJECT_HOST_SSL_RULE_REF = "cocalc_project_host_direct_tls";
+type CloudflareConfigurationRule = {
+  id?: string;
+  ref?: string;
+  description?: string;
+  expression?: string;
+  action?: string;
+  action_parameters?: { ssl?: string };
+  enabled?: boolean;
+};
+
+type CloudflareConfigurationRuleset = {
+  id?: string;
+  kind?: string;
+  phase?: string;
+  rules?: CloudflareConfigurationRule[];
+};
+
+// This identity intentionally differs from the deployment-scoped v1 rule.
+// During a rolling upgrade, an old hub may continue rewriting v1 without
+// affecting this deployment-independent safety rule.
+const PROJECT_HOST_SSL_RULE_REF = "cocalc_project_host_direct_tls_v2";
 const PROJECT_HOST_SSL_RULE_DESCRIPTION =
-  "CoCalc project-host direct ingress uses encrypted Cloudflare origin traffic";
+  "CoCalc project-host direct ingress uses zone-wide encrypted origin traffic";
 
 const CNAME_CONFLICT_RECORD_TYPES = new Set(["A", "AAAA"]);
 const ADDRESS_ROUTE_RECORD_TYPES = new Set(["A", "AAAA", "CNAME"]);
@@ -162,15 +182,18 @@ async function getZoneId(token: string, dns: string) {
   throw new Error(`cloudflare zone not found for ${dns}`);
 }
 
-async function getZoneIdForHostname(
+async function getZoneForHostname(
   token: string,
   hostname: string,
-): Promise<string> {
+): Promise<{ zoneId: string; zoneHostname: string }> {
   const parts = `${hostname ?? ""}`.split(".").filter(Boolean);
   for (let i = 0; i < parts.length - 1; i += 1) {
     const candidate = parts.slice(i).join(".");
     try {
-      return await getZoneId(token, candidate);
+      return {
+        zoneId: await getZoneId(token, candidate),
+        zoneHostname: candidate,
+      };
     } catch (err) {
       if (!isNotFoundError(err)) {
         throw err;
@@ -178,6 +201,13 @@ async function getZoneIdForHostname(
     }
   }
   throw new Error(`cloudflare zone not found for ${hostname}`);
+}
+
+async function getZoneIdForHostname(
+  token: string,
+  hostname: string,
+): Promise<string> {
+  return (await getZoneForHostname(token, hostname)).zoneId;
 }
 
 async function listDnsRecords(
@@ -252,10 +282,11 @@ async function getClient(): Promise<{
 async function getZoneClientForHostname(hostname: string): Promise<{
   token: string;
   zoneId: string;
+  zoneHostname: string;
 }> {
   const { token } = await getClient();
-  const zoneId = await getZoneIdForHostname(token, hostname);
-  return { token, zoneId };
+  const { zoneId, zoneHostname } = await getZoneForHostname(token, hostname);
+  return { token, zoneId, zoneHostname };
 }
 
 export async function ensureHostDns(opts: {
@@ -423,51 +454,65 @@ export async function getCloudflareZoneSslMode(
   };
 }
 
-function directSslRuleExpression(opts: {
+export function projectHostSslRuleExpression(opts: {
   hostname: string;
   hostId: string;
+  zoneHostname?: string;
 }): string {
   const hostname = `${opts.hostname ?? ""}`.trim().toLowerCase();
   const hostId = `${opts.hostId ?? ""}`.trim().toLowerCase();
-  const idOffset = hostname.indexOf(hostId);
   const labels = hostname.split(".").filter(Boolean);
-  if (!hostname || !hostId || idOffset <= 0 || labels.length < 2) {
+  const idOffset = labels[0]?.indexOf(hostId) ?? -1;
+  const zoneHostname =
+    normalizeCloudflareHostname(opts.zoneHostname) ?? labels.slice(1).join(".");
+  if (
+    !hostname ||
+    !hostId ||
+    idOffset <= 0 ||
+    !zoneHostname ||
+    !hostname.endsWith(`.${zoneHostname}`)
+  ) {
     throw new Error(
       "cannot derive project-host Cloudflare SSL rule expression",
     );
   }
-  const stablePrefix = hostname.slice(0, idOffset);
-  const stableSuffix = hostname.slice(idOffset + hostId.length);
-  const zoneSuffix = `.${labels.slice(1).join(".")}`;
+  const stablePrefix = labels[0].slice(0, idOffset);
+  const zoneSuffix = `.${zoneHostname}`;
   return [
     "(",
-    `(starts_with(http.host, ${JSON.stringify(stablePrefix)}) and ends_with(http.host, ${JSON.stringify(stableSuffix)}))`,
+    `(starts_with(http.host, ${JSON.stringify(stablePrefix)}) and ends_with(http.host, ${JSON.stringify(zoneSuffix)}))`,
     " or ",
     `(starts_with(http.host, "direct-check-") and ends_with(http.host, ${JSON.stringify(zoneSuffix)}))`,
     ")",
   ].join("");
 }
 
+function configurationRuleMatches(
+  rule: CloudflareConfigurationRule,
+  expression: string,
+): boolean {
+  return (
+    rule.ref === PROJECT_HOST_SSL_RULE_REF &&
+    rule.description === PROJECT_HOST_SSL_RULE_DESCRIPTION &&
+    rule.expression === expression &&
+    rule.action === "set_config" &&
+    rule.action_parameters?.ssl === "full" &&
+    rule.enabled === true
+  );
+}
+
 export async function ensureCloudflareProjectHostSslRule(opts: {
   hostname: string;
   host_id: string;
 }): Promise<CloudflareProjectHostSslRule> {
-  const { token, zoneId } = await getZoneClientForHostname(opts.hostname);
-  const expression = directSslRuleExpression({
+  const { token, zoneId, zoneHostname } = await getZoneClientForHostname(
+    opts.hostname,
+  );
+  const expression = projectHostSslRuleExpression({
     hostname: opts.hostname,
     hostId: opts.host_id,
+    zoneHostname,
   });
-  type Rule = {
-    id?: string;
-    ref?: string;
-    description?: string;
-  };
-  type Ruleset = {
-    id?: string;
-    kind?: string;
-    phase?: string;
-    rules?: Rule[];
-  };
   const rulePayload = {
     ref: PROJECT_HOST_SSL_RULE_REF,
     description: PROJECT_HOST_SSL_RULE_DESCRIPTION,
@@ -476,7 +521,7 @@ export async function ensureCloudflareProjectHostSslRule(opts: {
     action_parameters: { ssl: "full" },
     enabled: true,
   } as const;
-  const rulesets = await cloudflareRequest<Ruleset[]>(
+  const rulesets = await cloudflareRequest<CloudflareConfigurationRuleset[]>(
     token,
     "GET",
     `zones/${zoneId}/rulesets`,
@@ -486,7 +531,7 @@ export async function ensureCloudflareProjectHostSslRule(opts: {
       candidate.kind === "zone" && candidate.phase === "http_config_settings",
   );
   if (!ruleset?.id) {
-    ruleset = await cloudflareRequest<Ruleset>(
+    ruleset = await cloudflareRequest<CloudflareConfigurationRuleset>(
       token,
       "POST",
       `zones/${zoneId}/rulesets`,
@@ -500,7 +545,7 @@ export async function ensureCloudflareProjectHostSslRule(opts: {
       },
     );
   } else {
-    ruleset = await cloudflareRequest<Ruleset>(
+    ruleset = await cloudflareRequest<CloudflareConfigurationRuleset>(
       token,
       "GET",
       `zones/${zoneId}/rulesets/${ruleset.id}`,
@@ -510,15 +555,18 @@ export async function ensureCloudflareProjectHostSslRule(opts: {
         rule.ref === PROJECT_HOST_SSL_RULE_REF ||
         rule.description === PROJECT_HOST_SSL_RULE_DESCRIPTION,
     );
-    if (existingRule?.id) {
-      await cloudflareRequest<Rule>(
+    if (
+      existingRule?.id &&
+      !configurationRuleMatches(existingRule, expression)
+    ) {
+      await cloudflareRequest<CloudflareConfigurationRule>(
         token,
         "PATCH",
         `zones/${zoneId}/rulesets/${ruleset.id}/rules/${existingRule.id}`,
         rulePayload,
       );
-    } else {
-      await cloudflareRequest<Rule>(
+    } else if (!existingRule?.id) {
+      await cloudflareRequest<CloudflareConfigurationRule>(
         token,
         "POST",
         `zones/${zoneId}/rulesets/${ruleset.id}/rules`,
@@ -529,7 +577,7 @@ export async function ensureCloudflareProjectHostSslRule(opts: {
   if (!ruleset?.id) {
     throw new Error("cloudflare did not return configuration ruleset id");
   }
-  const verified = await cloudflareRequest<Ruleset>(
+  const verified = await cloudflareRequest<CloudflareConfigurationRuleset>(
     token,
     "GET",
     `zones/${zoneId}/rulesets/${ruleset.id}`,
@@ -539,7 +587,10 @@ export async function ensureCloudflareProjectHostSslRule(opts: {
       rule.ref === PROJECT_HOST_SSL_RULE_REF ||
       rule.description === PROJECT_HOST_SSL_RULE_DESCRIPTION,
   );
-  if (!verifiedRule?.id) {
+  if (
+    !verifiedRule?.id ||
+    !configurationRuleMatches(verifiedRule, expression)
+  ) {
     throw new Error("cloudflare project-host SSL rule verification failed");
   }
   return {
