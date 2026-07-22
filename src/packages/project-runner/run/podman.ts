@@ -533,9 +533,7 @@ async function maybeRestoreFromBackup({
 }): Promise<void> {
   const explicitBackupId = `${restore_backup_id ?? ""}`.trim();
   const effectiveRestore: RestoreMode | undefined = explicitBackupId
-    ? restore === "auto"
-      ? "auto"
-      : "required"
+    ? "required"
     : restore;
   if (!effectiveRestore || effectiveRestore === "none") return;
   const fs = fileServerClient({ timeout: RESTORE_RPC_TIMEOUT_MS });

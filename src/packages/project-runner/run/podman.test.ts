@@ -1116,7 +1116,7 @@ describe("project-runner podman orphan fallback", () => {
     expect(status).toMatchObject({ state: "running" });
   });
 
-  it("restores an explicit backup id without requiring restore mode", async () => {
+  it("forces required restore for an explicit backup id in auto mode", async () => {
     mockProjectStartPodman(project1);
     const getBackups = jest.fn();
     const restoreBackup = jest.fn(async () => undefined);
@@ -1145,6 +1145,7 @@ describe("project-runner podman orphan fallback", () => {
       }),
       config: {
         image: "docker.io/library/ubuntu:latest",
+        restore: "auto",
         restore_backup_id: "backup-explicit",
       },
     });
