@@ -4356,10 +4356,11 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     fi
     rustic_cmd=("$(rustic_binary)" -P "$repo_profile")
     cd "$src"
-    if "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" "${parent_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" .; then
+    backup_status=0
+    "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" "${parent_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" . || backup_status="$?"
+    if [ "$backup_status" -eq 0 ]; then
       exit 0
     fi
-    backup_status="$?"
     if "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then
       exit "$backup_status"
     fi

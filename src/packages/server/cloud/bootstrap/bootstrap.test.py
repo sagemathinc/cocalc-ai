@@ -1410,6 +1410,8 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 script,
             )
             self.assertEqual(script.count('backup_status="$?"'), 1)
+            self.assertIn("backup_status=0", script)
+            self.assertIn('if [ "$backup_status" -eq 0 ]; then', script)
             self.assertIn(
                 'if ! "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then',
                 script,
@@ -1419,7 +1421,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 script,
             )
             self.assertIn(
-                'if "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" "${parent_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" .; then',
+                '"${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" "${parent_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" . || backup_status="$?"',
                 script,
             )
             self.assertIn("parent_args=()", script)
