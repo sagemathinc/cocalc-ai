@@ -640,10 +640,6 @@ async function selectProjectBackupRepoForAssignmentLocal({
   const region = normalizeBackupRegion(project_region);
   const bucket = await getOrCreateBucketForRegion(region);
   if (!bucket) return null;
-  await ensureExistingBucketRowIsUsable({
-    bucket,
-    fallbackRegion: region,
-  });
   return await withProjectBackupRegionAssignmentLock(region, async (client) => {
     const existingAssignment = await loadProjectBackupRepoAssignmentTx(
       client,
@@ -735,12 +731,6 @@ async function listBucketsCached(
     expires: now + BUCKET_LIST_CACHE_MS,
   });
   return names;
-}
-
-function inferBucketRegion(name: string): string | undefined {
-  const i = name.lastIndexOf("-");
-  if (i <= 0) return undefined;
-  return parseR2Region(name.slice(i + 1)) ?? undefined;
 }
 
 function isAlreadyExistsError(err: string): boolean {
@@ -904,12 +894,18 @@ async function getOrCreateBucketForRegion(
     desired = existing;
   }
 
+  // Bucket rows are durable configuration. Cloudflare's control API is only
+  // needed when provisioning a bucket that is not already configured.
+  if (desired) {
+    return desired;
+  }
+
   if (!apiToken) {
     logger.warn("r2_api_token is missing; cannot verify/create bucket", {
       region,
       bucket: desiredName,
     });
-    return desired ?? existing;
+    return existing;
   }
 
   let created: R2BucketInfo | undefined;
@@ -951,29 +947,6 @@ export async function ensureProjectBackupBucketForRegion(
 } | null> {
   const normalized = parseR2Region(region) ?? mapCloudRegionToR2Region(region);
   return await getOrCreateBucketForRegion(normalized);
-}
-
-async function ensureExistingBucketRowIsUsable({
-  bucket,
-  fallbackRegion,
-}: {
-  bucket: BucketRow;
-  fallbackRegion: string;
-}): Promise<void> {
-  const { accountId, apiToken } = await getR2Settings();
-  if (!accountId || !apiToken) {
-    return;
-  }
-  const region =
-    parseR2Region(bucket.region) ??
-    inferBucketRegion(bucket.name) ??
-    fallbackRegion;
-  await ensureBucketExistsInR2({
-    accountId,
-    apiToken,
-    name: bucket.name,
-    region,
-  });
 }
 
 async function getProjectBackupAssignment(project_id: string): Promise<{

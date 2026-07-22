@@ -429,6 +429,7 @@ describe("project-backup", () => {
         return { rows };
       }
       if (sql.startsWith("INSERT INTO buckets")) {
+        settings.bucket_row_missing = false;
         return { rows: [] };
       }
       if (sql.includes("FROM buckets WHERE provider")) {
@@ -438,7 +439,9 @@ describe("project-backup", () => {
         return { rows: [bucketRow()] };
       }
       if (sql.includes("FROM buckets WHERE name=$1")) {
-        return { rows: [bucketRow(params?.[0])] };
+        return {
+          rows: settings.bucket_row_missing ? [] : [bucketRow(params?.[0])],
+        };
       }
       if (
         sql.includes("FROM information_schema.columns") &&
@@ -530,6 +533,32 @@ describe("project-backup", () => {
     expect(listBucketsMock).not.toHaveBeenCalled();
   });
 
+  it("assigns an existing repo without Cloudflare control API access", async () => {
+    settings = {
+      r2_account_id: "account",
+      r2_api_token: "token",
+      r2_access_key_id: "access",
+      r2_secret_access_key: "secret",
+      r2_bucket_prefix: "cocalc-backups",
+      project_region: "wnam",
+      repo_secret: "repo-secret",
+      repo_root: "rustic/shared-wnam-0001",
+      active_repo: true,
+    };
+    listBucketsMock = jest.fn(async () => {
+      throw new Error("cloudflare api failed: 429");
+    });
+    const { getBackupConfig } = await import("./index");
+    const result = await getBackupConfig({
+      host_id: HOST_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(result.toml).toContain('bucket = "cocalc-backups-wnam"');
+    expect(result.toml).toContain('root = "rustic/shared-wnam-0001"');
+    expect(settings.backup_repo_id).toBe(REPO_ID);
+    expect(listBucketsMock).not.toHaveBeenCalled();
+  });
+
   it("moves an existing assignment away from a disabled repo", async () => {
     settings = {
       r2_account_id: "account",
@@ -584,6 +613,7 @@ describe("project-backup", () => {
       project_backup_repo_count: 0,
       active_repo: false,
       repo_secret: "repo-secret",
+      bucket_row_missing: true,
     };
     listBucketsMock = jest.fn(async () => []);
     const { getBackupConfig } = await import("./index");
@@ -683,6 +713,7 @@ describe("project-backup", () => {
       r2_access_key_id: "access",
       r2_secret_access_key: "secret",
       r2_bucket_prefix: "cocalc-backups",
+      bucket_row_missing: true,
     };
     listBucketsMock = jest.fn(async () => []);
     const { ensureProjectBackupBucketForRegion } = await import("./index");
@@ -703,6 +734,7 @@ describe("project-backup", () => {
       r2_access_key_id: "access",
       r2_secret_access_key: "secret",
       r2_bucket_prefix: "cocalc-backups",
+      bucket_row_missing: true,
     };
     listBucketsMock = jest.fn().mockResolvedValue([]);
     createBucketMock = jest.fn(async () => {
