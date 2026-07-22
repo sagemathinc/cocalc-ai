@@ -26,7 +26,7 @@ jest.mock("antd", () => ({
     </button>
   ),
   Divider: () => <hr />,
-  Select: ({ options = [], onChange, dropdownRender, placeholder }: any) => (
+  Select: ({ options = [], onChange, popupRender, placeholder }: any) => (
     <div>
       <div>{placeholder}</div>
       {options.map((option: any) => (
@@ -38,7 +38,7 @@ jest.mock("antd", () => ({
           {option.label}
         </button>
       ))}
-      {dropdownRender?.()}
+      {popupRender?.()}
     </div>
   ),
   Tabs: ({ activeKey, items, onChange, onEdit }: any) => (

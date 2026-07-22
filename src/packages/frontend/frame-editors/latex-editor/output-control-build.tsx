@@ -11,7 +11,7 @@ Provides build, force build, clean, download, and print controls
 import type { SizeType } from "antd/es/config-provider/SizeContext";
 
 import type { MenuProps } from "antd";
-import { Dropdown } from "antd";
+import { Button, Dropdown, Space } from "antd";
 import { useIntl } from "react-intl";
 
 import { set_account_table } from "@cocalc/frontend/account/util";
@@ -140,18 +140,20 @@ export function BuildControls({
 
   return (
     <>
-      <Dropdown.Button
-        type="primary"
-        size={size}
-        icon={<Icon name="caret-down" />}
-        menu={{ items: buildMenuItems }}
-        trigger={["click"]}
-        onClick={handleBuild}
-      >
-        <Icon name="play-circle" />
-        {!narrow &&
-          intl.formatMessage(editor.build_control_and_log_title_short)}
-      </Dropdown.Button>
+      <Space.Compact size={size}>
+        <Button type="primary" size={size} onClick={handleBuild}>
+          <Icon name="play-circle" />
+          {!narrow &&
+            intl.formatMessage(editor.build_control_and_log_title_short)}
+        </Button>
+        <Dropdown menu={{ items: buildMenuItems }} trigger={["click"]}>
+          <Button
+            type="primary"
+            size={size}
+            icon={<Icon name="caret-down" />}
+          />
+        </Dropdown>
+      </Space.Compact>
 
       {/* Dark mode toggle - only shown when global dark mode is enabled */}
       {isDarkMode && id != null && (

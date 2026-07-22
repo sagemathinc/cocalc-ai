@@ -279,7 +279,10 @@ export function RichEditToolbar({ id, actions, editor_actions }: Props) {
         </Popover>
       </div>
 
-      <Divider type="vertical" style={{ margin: "0 4px", flexShrink: 0 }} />
+      <Divider
+        orientation="vertical"
+        style={{ margin: "0 4px", flexShrink: 0 }}
+      />
 
       <div style={AREA_STYLE}>
         {compact ? (
@@ -338,7 +341,7 @@ export function RichEditToolbar({ id, actions, editor_actions }: Props) {
             </Dropdown>
 
             <Divider
-              type="vertical"
+              orientation="vertical"
               style={{ margin: "0 4px", flexShrink: 0 }}
             />
 
@@ -373,7 +376,7 @@ export function RichEditToolbar({ id, actions, editor_actions }: Props) {
             </Dropdown>
 
             <Divider
-              type="vertical"
+              orientation="vertical"
               style={{ margin: "0 4px", flexShrink: 0 }}
             />
 

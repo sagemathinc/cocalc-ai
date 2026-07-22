@@ -639,7 +639,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
           ref={selectRef}
           size="middle"
           open={dropdownOpen}
-          onDropdownVisibleChange={(open) => {
+          onOpenChange={(open) => {
             setDropdownOpen(open);
             if (!open) {
               setSearchValue("");
@@ -656,7 +656,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
           onClear={() => setSearchValue("")}
           allowClear
           options={groupedOptions}
-          dropdownRender={() => (
+          popupRender={() => (
             <>
               <div style={{ maxHeight: 320, overflowY: "auto" }}>
                 {hasResults ? (

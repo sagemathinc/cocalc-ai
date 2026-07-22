@@ -983,7 +983,7 @@ export const AddCollaborators: React.FC<Props> = ({
             onBlur={() => {
               set_select_open(false);
             }}
-            onDropdownVisibleChange={(open) => {
+            onOpenChange={(open) => {
               set_select_open(open);
             }}
           >

@@ -153,7 +153,7 @@ function ArchiveControlStatusBanner({
           size="small"
           status="active"
           strokeColor={COLORS.COCALC_ORANGE}
-          trailColor={COLORS.GRAY_LL}
+          railColor={COLORS.GRAY_LL}
         />
         <div style={{ color: COLORS.GRAY_M, fontSize: "12px" }}>
           {rawStatus}

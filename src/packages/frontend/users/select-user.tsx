@@ -248,7 +248,7 @@ export default function SelectUser({
     <Select
       mode="multiple"
       open={open}
-      onDropdownVisibleChange={(open) => setOpen(open)}
+      onOpenChange={(open) => setOpen(open)}
       ref={ref}
       disabled={disabled}
       allowClear

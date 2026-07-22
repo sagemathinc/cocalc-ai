@@ -446,7 +446,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
         <Select
           size="middle"
           open={dropdownOpen}
-          onDropdownVisibleChange={(open) => {
+          onOpenChange={(open) => {
             setDropdownOpen(open);
             if (!open) setSearchValue("");
           }}
@@ -469,7 +469,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
             setDropdownOpen(false);
             setSearchValue("");
           }}
-          dropdownRender={() => (
+          popupRender={() => (
             <>
               <div style={{ maxHeight: 320, overflowY: "auto" }}>
                 <div
