@@ -1279,7 +1279,6 @@ async function getProjectBackupRepoSecret(
 
 export async function getProjectBackupConfigForRepo({
   backup_repo_id,
-  region,
 }: {
   backup_repo_id?: string | null;
   region?: string | null;
@@ -1294,13 +1293,7 @@ export async function getProjectBackupConfigForRepo({
   if (!repo) {
     return { toml: "" };
   }
-  const config = await buildBackupConfigFromRepo({
-    repo,
-    fallbackRegion:
-      parseR2Region(region) ??
-      parseR2Region(repo.region) ??
-      mapCloudRegionToR2Region(region ?? repo.region ?? DEFAULT_R2_REGION),
-  });
+  const config = await buildBackupConfigFromRepo({ repo });
   return { toml: config.toml };
 }
 
@@ -1945,10 +1938,8 @@ async function buildBackupIndexStoreConfigForBucket({
 
 async function buildBackupConfigFromRepo({
   repo,
-  fallbackRegion,
 }: {
   repo: ProjectBackupRepoRow;
-  fallbackRegion: string;
 }): Promise<{
   toml: string;
   ttl_seconds: number;
@@ -1962,10 +1953,8 @@ async function buildBackupConfigFromRepo({
   if (!bucket) {
     return { toml: "", ttl_seconds: 0, backup_repo_id: repo.id };
   }
-  await ensureExistingBucketRowIsUsable({
-    bucket,
-    fallbackRegion,
-  });
+  // Repository assignment verifies the bucket when it is provisioned. Config
+  // reads are a hot path and must not depend on Cloudflare's control API.
   const toml = await buildTomlForBucket({
     bucket,
     password: await getProjectBackupRepoSecret(repo),
@@ -2060,10 +2049,7 @@ export async function getSeedProjectBackupConfig({
   if (!repo) {
     return { toml: "", ttl_seconds: 0, backup_repo_id: null };
   }
-  return await buildBackupConfigFromRepo({
-    repo,
-    fallbackRegion: region,
-  });
+  return await buildBackupConfigFromRepo({ repo });
 }
 
 export async function getBackupConfig({
@@ -2129,10 +2115,7 @@ export async function getBackupConfig({
   if (assignment.backup_repo_id) {
     const repo = await loadProjectBackupRepoById(assignment.backup_repo_id);
     if (repo && projectBackupRepoCanAcceptExistingAssignment(repo)) {
-      const config = await buildBackupConfigFromRepo({
-        repo,
-        fallbackRegion: projectR2Region,
-      });
+      const config = await buildBackupConfigFromRepo({ repo });
       return {
         toml: config.toml,
         ttl_seconds: config.ttl_seconds,
@@ -2153,10 +2136,7 @@ export async function getBackupConfig({
   if (!repo) {
     return { toml: "", ttl_seconds: 0 };
   }
-  const config = await buildBackupConfigFromRepo({
-    repo,
-    fallbackRegion: projectR2Region,
-  });
+  const config = await buildBackupConfigFromRepo({ repo });
   return {
     toml: config.toml,
     ttl_seconds: config.ttl_seconds,

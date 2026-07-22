@@ -503,6 +503,33 @@ describe("project-backup", () => {
     expect(result.ttl_seconds).toBeGreaterThan(0);
   });
 
+  it("serves an existing assignment without Cloudflare control API access", async () => {
+    settings = {
+      r2_account_id: "account",
+      r2_api_token: "token",
+      r2_access_key_id: "access",
+      r2_secret_access_key: "secret",
+      r2_bucket_prefix: "cocalc-backups",
+      project_region: "wnam",
+      backup_repo_id: REPO_ID,
+      repo_secret: "repo-secret",
+      repo_root: "rustic/shared-wnam-0001",
+      active_repo: true,
+    };
+    listBucketsMock = jest.fn(async () => {
+      throw new Error("cloudflare api failed: 429");
+    });
+    const { getBackupConfig } = await import("./index");
+    const result = await getBackupConfig({
+      host_id: HOST_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(result.toml).toContain('bucket = "cocalc-backups-wnam"');
+    expect(result.toml).toContain('root = "rustic/shared-wnam-0001"');
+    expect(result.ttl_seconds).toBeGreaterThan(0);
+    expect(listBucketsMock).not.toHaveBeenCalled();
+  });
+
   it("moves an existing assignment away from a disabled repo", async () => {
     settings = {
       r2_account_id: "account",
