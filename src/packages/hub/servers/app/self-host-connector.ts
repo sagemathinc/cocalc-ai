@@ -19,6 +19,7 @@ import { enqueueCloudVmWorkOnce } from "@cocalc/server/cloud/db";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { checkAndRecordCount } from "./connector-rate-limit";
 
 const logger = getLogger("hub:servers:app:self-host-connector");
 
@@ -72,16 +73,6 @@ const ipLong = new LRU<string, number>({
   max: 100000,
   ttl: CONNECTOR_LONG_WINDOW_MS,
 });
-
-function checkAndRecordCount(
-  cache: LRU<string, number>,
-  key: string,
-  limit: number,
-): boolean {
-  const next = (cache.get(key) ?? 0) + 1;
-  cache.set(key, next);
-  return next <= limit;
-}
 
 function normalizeIp(ip?: string): string {
   let v = `${ip ?? ""}`.trim();
