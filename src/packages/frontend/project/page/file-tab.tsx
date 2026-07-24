@@ -166,6 +166,8 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
   rootfs: {
     label: defineMessage({
       id: "project.page.file-tab.rootfs.label",
+      description:
+        "Short navigation label for selecting the container image that defines the project's installed software and root filesystem",
       defaultMessage: "Image",
     }),
     flyoutTitle: defineMessage({

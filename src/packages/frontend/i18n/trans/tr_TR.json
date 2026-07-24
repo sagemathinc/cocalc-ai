@@ -812,6 +812,7 @@
   "jupyter.commands.tab_key.menu": "Tab Tuşu (tamamlama)",
   "jupyter.commands.toggle_all_line_numbers": "Tüm Hücrelerin Satır Numaralarını Değiştir",
   "jupyter.commands.toggle_cell_line_numbers": "Seçilen Hücrelerin Satır Numaralarını Değiştir",
+  "jupyter.commands.toggle_minimal_view.label": "Minimal Defter Görünümünü Aç/Kapat",
   "jupyter.commands.toggle_minimap.menu": "Mini haritayı aç/kapat",
   "jupyter.commands.toggle_minimap.tooltip": "Defter mini haritasını göster veya gizle.",
   "jupyter.commands.validate.body": "Defteri doğrulamak, çekirdeği yeniden başlatacak ve hatalı olanlar da dahil olmak üzere tüm hücreleri sırasıyla çalıştıracaktır. Bu, tüm çıktıların tüm hücrelerin sırasıyla çalıştırılmasının sonuçlarıyla tam olarak aynı olmasını sağlayacaktır.",

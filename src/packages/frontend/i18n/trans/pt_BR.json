@@ -812,6 +812,7 @@
   "jupyter.commands.tab_key.menu": "Tecla Tab (completar)",
   "jupyter.commands.toggle_all_line_numbers": "Alternar Números de Linha de Todas as Células",
   "jupyter.commands.toggle_cell_line_numbers": "Alternar Números de Linha das Células Selecionadas",
+  "jupyter.commands.toggle_minimal_view.label": "Alternar visualização mínima do notebook",
   "jupyter.commands.toggle_minimap.menu": "Alternar minimapa",
   "jupyter.commands.toggle_minimap.tooltip": "Mostrar ou ocultar o minimapa do notebook.",
   "jupyter.commands.validate.body": "Validar o notebook reiniciará o kernel e executará todas as células em ordem, mesmo aquelas com erros. Isso garantirá que toda a saída seja exatamente o resultado da execução de todas as células em ordem.",

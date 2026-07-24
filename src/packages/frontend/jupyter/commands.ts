@@ -1224,7 +1224,7 @@ export function commands(actions: AllActions): {
       b: defineMessage({
         id: "jupyter.commands.tab_key.button",
         defaultMessage: "Tab",
-        description: "Tab Key of a computer keyboard",
+        description: "Label for the Tab key on a computer keyboard.",
       }),
       i: "tab",
       f: () => actions.frame_actions?.tab_key(),

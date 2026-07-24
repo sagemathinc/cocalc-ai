@@ -812,6 +812,7 @@
   "jupyter.commands.tab_key.menu": "टैब कुंजी (पूरा करना)",
   "jupyter.commands.toggle_all_line_numbers": "सभी कोशिकाओं की लाइन नंबर टॉगल करें",
   "jupyter.commands.toggle_cell_line_numbers": "चयनित कोशिकाओं की पंक्ति संख्या टॉगल करें",
+  "jupyter.commands.toggle_minimal_view.label": "न्यूनतम नोटबुक दृश्य टॉगल करें",
   "jupyter.commands.toggle_minimap.menu": "मिनिमैप टॉगल करें",
   "jupyter.commands.toggle_minimap.tooltip": "नोटबुक मिनिमैप दिखाएँ या छिपाएँ.",
   "jupyter.commands.validate.body": "नोटबुक को सत्यापित करना कर्नेल को पुनः आरंभ करेगा और सभी सेल्स को क्रम में चलाएगा, यहां तक कि उन सेल्स को भी जिनमें त्रुटियाँ हैं। इससे सुनिश्चित होगा कि सभी आउटपुट वही हैं जो सभी सेल्स को क्रम में चलाने से प्राप्त होते हैं।",
