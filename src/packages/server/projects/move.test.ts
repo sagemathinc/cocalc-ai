@@ -26,6 +26,7 @@ let purgeProjectBackupsForRepoMock: jest.Mock;
 let conatPublishMock: jest.Mock;
 let getRoutedHostControlClientMock: jest.Mock;
 let invalidateBackupConfigMock: jest.Mock;
+let projectLogDstreamMock: jest.Mock;
 let projectLogRows: any[];
 let moveCallOrder: string[];
 
@@ -302,16 +303,17 @@ describe("moveProjectToHost", () => {
       region: "us-west1",
       can_place: true,
     }));
+    projectLogDstreamMock = jest.fn(async () => ({
+      getAll: () => [...projectLogRows],
+      publish: (row: any) => {
+        projectLogRows.push(row);
+      },
+      save: jest.fn(async () => undefined),
+      close: jest.fn(),
+    }));
     getExplicitProjectRoutedClientMock = jest.fn(async () => ({
       sync: {
-        dstream: jest.fn(async () => ({
-          getAll: () => [...projectLogRows],
-          publish: (row: any) => {
-            projectLogRows.push(row);
-          },
-          save: jest.fn(async () => undefined),
-          close: jest.fn(),
-        })),
+        dstream: (...args: any[]) => projectLogDstreamMock(...args),
       },
       fs: jest.fn(() => {
         const maybeThrowNotInitialized = () => {
@@ -2648,6 +2650,12 @@ describe("moveProjectToHost", () => {
       project_id: PROJECT_ID,
       fresh: true,
     });
+    expect(projectLogDstreamMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: PROJECT_ID,
+        bootstrapRetry: false,
+      }),
+    );
   });
 
   it("writes project log entries for move start and failure", async () => {

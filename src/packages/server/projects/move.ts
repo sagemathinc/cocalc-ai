@@ -249,6 +249,7 @@ async function openProjectLogStream(
   return await client.sync.dstream<ProjectLogRow>({
     project_id,
     name: PROJECT_LOG_STREAM_NAME,
+    bootstrapRetry: false,
     noAutosave: true,
     noCache: true,
     noInventory: true,

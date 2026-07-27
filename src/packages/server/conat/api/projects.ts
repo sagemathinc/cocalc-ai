@@ -4653,11 +4653,9 @@ async function runProjectStartLikeAction({
         : {}),
       ...(autostart ? { autostart } : {}),
     },
-    dedupe_key: [
-      "project-start",
-      kind,
-      effectiveRestoreBackupId || "default",
-    ].join(":"),
+    // A project can have only one active start lifecycle. In particular, an
+    // ordinary autostart must join rather than supersede an in-flight restore.
+    dedupe_key: "project-start",
     status: "queued",
   });
   const response = {
