@@ -112,7 +112,6 @@ const START_FAILURE_DETAIL_MAX_BYTES = 12_000;
 const VERIFY_PROJECT_POOL_TIMEOUT_S = 10;
 const VERIFY_PROJECT_IO_TIMEOUT_S = 10;
 const ATTACH_PROJECT_CGROUP_TIMEOUT_S = 10;
-const PROJECT_STARTUP_CPU_WEIGHT = "10000";
 const RECONCILE_PROJECT_NETWORK_TIMEOUT_S = 30;
 const DEFAULT_PROJECT_POOL_CGROUP = "/sys/fs/cgroup/cocalc-project-pool";
 const PROJECT_LEAF_POOL_HEADROOM_BYTES = 2 * 1024 * 1024 * 1024;
@@ -795,7 +794,7 @@ function projectCgroupPodmanLauncher(
       limits.pids_max,
       limits.cpu_max_quota,
       limits.cpu_max_period,
-      PROJECT_STARTUP_CPU_WEIGHT,
+      limits.cpu_weight,
       limits.io_weight,
       limits.io_class,
     ],
@@ -1102,11 +1101,9 @@ async function attachProjectToCgroup({
 async function attachPreparedProjectRuntime({
   project_id,
   name,
-  cpu_weight,
 }: {
   project_id: string;
   name: string;
-  cpu_weight: string;
 }): Promise<void> {
   const sandboxPath = await inspectContainerSandboxPath(name);
   const result = await executeCode({
@@ -1117,7 +1114,6 @@ async function attachPreparedProjectRuntime({
       "attach-prepared-project-runtime",
       project_id,
       sandboxPath ?? "-",
-      cpu_weight,
     ],
     timeout: ATTACH_PROJECT_CGROUP_TIMEOUT_S,
     err_on_exit: false,
@@ -2421,7 +2417,6 @@ async function startUnlocked({
           await attachPreparedProjectRuntime({
             project_id,
             name,
-            cpu_weight: projectCgroupLimits.cpu_weight,
           }),
       );
       await timings.measure(
