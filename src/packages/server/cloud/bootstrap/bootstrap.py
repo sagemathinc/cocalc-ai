@@ -8822,6 +8822,7 @@ def run_reconcile_helpers(cfg: BootstrapConfig) -> int:
         ensure_bootstrap_paths(cfg)
         configure_rsyslog_limits(cfg)
         install_privileged_wrappers(cfg)
+        write_helpers(cfg)
         configure_runtime_sudoers(cfg)
         verify_runtime_sudoers(cfg)
         reconcile_project_network_limits(cfg)
