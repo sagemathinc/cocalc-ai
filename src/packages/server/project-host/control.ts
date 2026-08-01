@@ -896,13 +896,22 @@ export async function startProjectOnHost(
     }
   }
   const task = (async () => {
+    const hostControlStarted = Date.now();
+    const hostControlTimings: Record<string, number> = {};
+    const markHostControl = (name: string, started: number) => {
+      hostControlTimings[`host_control.${name}`] = Date.now() - started;
+    };
+    let phaseStarted = Date.now();
     await cancelStaleProjectStartLros({ project_id });
+    markHostControl("cancel_stale_lros", phaseStarted);
     const explicitRestoreBackupId = `${opts?.restore_backup_id ?? ""}`.trim();
+    phaseStarted = Date.now();
     const snapshot = await getProjectStateSnapshot(project_id);
     const activeStartLro =
       snapshot.state === "starting"
         ? await hasActiveProjectStartLro(project_id)
         : false;
+    markHostControl("state_snapshot", phaseStarted);
     const startDecision = shouldSkipStartForSnapshot({
       state: snapshot.state,
       timeMs: snapshot.timeMs,
@@ -939,11 +948,14 @@ export async function startProjectOnHost(
       );
     }
 
+    phaseStarted = Date.now();
     const placement = await ensurePlacement(project_id, opts?.account_id);
     const client = await getRoutedHostControlClient({
       host_id: placement.host_id,
       timeout: START_PROJECT_TIMEOUT_MS,
     });
+    markHostControl("placement_and_client", phaseStarted);
+    phaseStarted = Date.now();
     try {
       if (typeof client.getProjectStatus === "function") {
         const live = await client.getProjectStatus({ project_id });
@@ -985,6 +997,8 @@ export async function startProjectOnHost(
         err: `${err}`,
       });
     }
+    markHostControl("live_status_probe", phaseStarted);
+    phaseStarted = Date.now();
     let cpuPolicyBlockMessage: string | undefined;
     try {
       if (
@@ -1008,11 +1022,17 @@ export async function startProjectOnHost(
     if (cpuPolicyBlockMessage) {
       throw new Error(cpuPolicyBlockMessage);
     }
+    markHostControl("cpu_policy", phaseStarted);
+    phaseStarted = Date.now();
     const meta = await loadProject(project_id);
+    markHostControl("load_project", phaseStarted);
+    phaseStarted = Date.now();
     const run_quota = await applyHostRuntimePolicyToRunQuota(
       meta.run_quota,
       placement.host_id,
     );
+    markHostControl("runtime_policy", phaseStarted);
+    phaseStarted = Date.now();
     const { rows } = await pool().query<{
       backup_repo_id: string | null;
       provisioned: boolean | null;
@@ -1022,8 +1042,10 @@ export async function startProjectOnHost(
     if (rows[0]?.backup_repo_id && rows[0]?.provisioned === false) {
       await assertCanRestoreProvisionedProjectStorage({ project_id });
     }
+    markHostControl("restore_metadata", phaseStarted);
     const restore = rows[0]?.backup_repo_id ? "auto" : "none";
     try {
+      phaseStarted = Date.now();
       const response = await client.startProject({
         project_id,
         authorized_keys: meta.authorized_keys,
@@ -1037,6 +1059,7 @@ export async function startProjectOnHost(
           ? { managed_egress_override: opts.managed_egress_override }
           : {}),
       });
+      markHostControl("start_rpc", phaseStarted);
       const saveRunningStateStarted = Date.now();
       await saveProjectStateSnapshot(project_id, response.state ?? "running", {
         runtime_started: true,
@@ -1046,8 +1069,10 @@ export async function startProjectOnHost(
       if (opts?.lro_op_id) {
         mergeStartProjectTimings(opts.lro_op_id, {
           ...response.phase_timings_ms,
+          ...hostControlTimings,
           "control.save_authoritative_running_state":
             Date.now() - saveRunningStateStarted,
+          "host_control.total": Date.now() - hostControlStarted,
         });
       }
     } catch (err) {
