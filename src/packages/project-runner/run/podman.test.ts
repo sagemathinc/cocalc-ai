@@ -168,6 +168,15 @@ function mockProjectStartPodman(project_id: string) {
   mockPodman.mockImplementation(async (args: string[]) => {
     if (
       args[0] === "inspect" &&
+      args.includes(
+        "{{.State.Running}}|{{.State.Pid}}|{{.State.ConmonPid}}|{{.NetworkSettings.SandboxKey}}",
+      ) &&
+      args.includes(name)
+    ) {
+      return { stdout: "true|4242|4241|\n" };
+    }
+    if (
+      args[0] === "inspect" &&
       args.includes("{{.State.Pid}}") &&
       args.includes(name)
     ) {
@@ -672,10 +681,12 @@ describe("project-runner podman orphan fallback", () => {
           "attach-prepared-project-runtime",
           project1,
           "-",
+          "4242",
+          "4241",
         ],
       }),
     );
-    expect(mockExecuteCode).toHaveBeenCalledWith(
+    expect(mockExecuteCode).not.toHaveBeenCalledWith(
       expect.objectContaining({
         command: "sudo",
         args: [

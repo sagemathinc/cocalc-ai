@@ -1885,6 +1885,20 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("verify-project-pool)", script)
             self.assertIn("attach-project-cgroup)", script)
             self.assertIn("attach-prepared-project-runtime)", script)
+            self.assertIn("[<init-pid> <conmon-pid>]", script)
+            self.assertIn('require_runtime_owned_pid "$conmon_pid"', script)
+            self.assertIn(
+                'deny "project-conmon-executable-invalid"',
+                script,
+            )
+            self.assertIn(
+                'verify_project_pid_in_pool "$project_id" "$init_pid"',
+                script,
+            )
+            self.assertIn(
+                "Compatibility with project-host versions deployed before helper v18",
+                script,
+            )
             self.assertIn("verify-project-network-limits)", script)
             self.assertIn("verify-project-io-limits)", script)
             self.assertIn("verify-project-io-policy)", script)

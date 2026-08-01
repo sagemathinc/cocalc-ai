@@ -904,18 +904,64 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForStartedContainer(name: string): Promise<boolean> {
+type StartedContainerRuntime = {
+  init_pid: number;
+  conmon_pid: number;
+  sandbox_path?: string;
+};
+
+async function inspectStartedContainerRuntime(
+  name: string,
+): Promise<StartedContainerRuntime | undefined> {
+  let stdout: string;
+  try {
+    ({ stdout } = await podman([
+      "inspect",
+      "--format",
+      "{{.State.Running}}|{{.State.Pid}}|{{.State.ConmonPid}}|{{.NetworkSettings.SandboxKey}}",
+      name,
+    ]));
+  } catch {
+    return undefined;
+  }
+  const [running, initPidText, conmonPidText, sandboxPath = ""] = `${
+    stdout ?? ""
+  }`
+    .trim()
+    .split("|", 4);
+  if (running !== "true") return undefined;
+  const initPid = Number(initPidText);
+  const conmonPid = Number(conmonPidText);
+  if (
+    !Number.isInteger(initPid) ||
+    initPid <= 1 ||
+    !Number.isInteger(conmonPid) ||
+    conmonPid <= 1
+  ) {
+    throw Error(
+      `invalid runtime pids for ${name}: init=${initPidText || "missing"}, conmon=${conmonPidText || "missing"}`,
+    );
+  }
+  return {
+    init_pid: initPid,
+    conmon_pid: conmonPid,
+    ...(sandboxPath ? { sandbox_path: sandboxPath } : {}),
+  };
+}
+
+async function waitForStartedContainer(
+  name: string,
+): Promise<StartedContainerRuntime | undefined> {
   const start = Date.now();
   while (Date.now() - start < START_RUNNING_CHECK_TIMEOUT_MS) {
-    if (await podmanReportsRunningContainer(name)) {
-      return true;
-    }
+    const runtime = await inspectStartedContainerRuntime(name);
+    if (runtime) return runtime;
     if (!(await hasLiveConmonContainer(name))) {
-      return false;
+      return undefined;
     }
     await wait(START_RUNNING_CHECK_INTERVAL_MS);
   }
-  return await podmanReportsRunningContainer(name);
+  return await inspectStartedContainerRuntime(name);
 }
 
 function truncateStartFailureDetail(text: string): string {
@@ -1100,12 +1146,11 @@ async function attachProjectToCgroup({
 
 async function attachPreparedProjectRuntime({
   project_id,
-  name,
+  runtime,
 }: {
   project_id: string;
-  name: string;
+  runtime: StartedContainerRuntime;
 }): Promise<void> {
-  const sandboxPath = await inspectContainerSandboxPath(name);
   const result = await executeCode({
     command: "sudo",
     args: [
@@ -1113,14 +1158,16 @@ async function attachPreparedProjectRuntime({
       "/usr/local/sbin/cocalc-runtime-storage",
       "attach-prepared-project-runtime",
       project_id,
-      sandboxPath ?? "-",
+      runtime.sandbox_path ?? "-",
+      `${runtime.init_pid}`,
+      `${runtime.conmon_pid}`,
     ],
     timeout: ATTACH_PROJECT_CGROUP_TIMEOUT_S,
     err_on_exit: false,
   });
   if (result.exit_code != null && result.exit_code !== 0) {
     throw Error(
-      `failed to attach ${name} runtime processes to its prepared project cgroup: ${result.stderr || result.stdout || `helper exited ${result.exit_code}`}`,
+      `failed to attach and verify project runtime processes for ${project_id}: ${result.stderr || result.stdout || `helper exited ${result.exit_code}`}`,
     );
   }
 }
@@ -2389,11 +2436,11 @@ async function startUnlocked({
           ),
         }),
     );
-    const started = await timings.measure(
+    const runtime = await timings.measure(
       "verify_container_running",
       async () => await waitForStartedContainer(name),
     );
-    if (!started) {
+    if (!runtime) {
       const detail = await collectStartFailureDetail(name);
       await podman(["rm", "-f", "-t", "0", name], { timeout: 10 }).catch(
         (err) => {
@@ -2416,12 +2463,8 @@ async function startUnlocked({
         async () =>
           await attachPreparedProjectRuntime({
             project_id,
-            name,
+            runtime,
           }),
-      );
-      await timings.measure(
-        "verify_project_cgroup",
-        async () => await verifyProjectContainerInPool({ project_id, name }),
       );
     } catch (err) {
       await podman(["rm", "-f", "-t", "0", name], { timeout: 10 }).catch(

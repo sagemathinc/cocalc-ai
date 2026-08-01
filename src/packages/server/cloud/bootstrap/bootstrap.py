@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260801-v17"
+HELPER_SCHEMA_VERSION = "20260801-v18"
 RUNTIME_WRAPPER_VERSION = "20260724-v15"
 NVM_VERSION = "0.40.4"
 CLOUDFLARED_VERSION = "2026.7.2"
@@ -4708,12 +4708,14 @@ case "$cmd" in
     fi
     ;;
   attach-prepared-project-runtime)
-    if [ "$#" -ne 2 ]; then
-      echo "usage: cocalc-runtime-storage attach-prepared-project-runtime <project-id> <podman-netns-path|->" >&2
+    if [ "$#" -ne 2 ] && [ "$#" -ne 4 ]; then
+      echo "usage: cocalc-runtime-storage attach-prepared-project-runtime <project-id> <podman-netns-path|-> [<init-pid> <conmon-pid>]" >&2
       exit 2
     fi
     project_id="$1"
     netns_path="$2"
+    init_pid="${3:-}"
+    conmon_pid="${4:-}"
     if ! is_project_uuid "$project_id"; then
       deny "project-id-invalid" "$project_id"
     fi
@@ -4729,14 +4731,36 @@ case "$cmd" in
     require_finite_project_pool_memory_max
     pool="$(project_cgroup "$project_id")"
     [ -d "$pool" ] || deny "project-cgroup-missing" "$pool"
-    while IFS= read -r conmon_pid; do
+    if [ -n "$init_pid" ]; then
+      # The enhanced caller obtains these PIDs from one Podman inspect. Check
+      # identity and ownership before using them so an untrusted PID can never
+      # be migrated into another project's cgroup.
+      require_live_pid "$init_pid"
+      require_runtime_owned_pid "$conmon_pid"
+      conmon_exe="$(readlink -f "/proc/${conmon_pid}/exe" 2>/dev/null || true)"
+      [ "$conmon_exe" = "/usr/bin/conmon" ] ||
+        deny "project-conmon-executable-invalid" "pid=${conmon_pid},exe=${conmon_exe:-missing}"
+      conmon_cmdline="$(tr '\\0' ' ' < "/proc/${conmon_pid}/cmdline" 2>/dev/null || true)"
+      case " $conmon_cmdline " in
+        *" -n project-${project_id} "*) ;;
+        *) deny "project-conmon-name-mismatch" "pid=${conmon_pid},project=${project_id}" ;;
+      esac
       attach_pid_tree_to_project_pool_storage "$conmon_pid" "$pool" || true
-    done < <(find_project_conmon_pids "$project_id")
+    else
+      # Compatibility with project-host versions deployed before helper v18.
+      while IFS= read -r discovered_conmon_pid; do
+        attach_pid_tree_to_project_pool_storage "$discovered_conmon_pid" "$pool" || true
+      done < <(find_project_conmon_pids "$project_id")
+    fi
     if [ "$netns_path" != "-" ]; then
       while IFS= read -r pasta_pid; do
         attach_pid_to_project_pool_storage "$pasta_pid" "$pool" || true
         apply_pasta_resource_limits "$pasta_pid"
       done < <(find_pasta_pids_for_netns "$netns_path")
+    fi
+    if [ -n "$init_pid" ]; then
+      verify_project_pid_in_pool "$project_id" "$init_pid" ||
+        deny "project-cgroup-verification-failed" "pid=${init_pid},project=${project_id}"
     fi
     ;;
   verify-project-io-limits)
