@@ -1863,10 +1863,16 @@ export async function start(opts: StartOptions): Promise<StartResult> {
   if (!isValidUUID(opts.project_id)) {
     throw Error("start: project_id must be valid");
   }
-  return await withProjectLifecycleLock(
-    opts.project_id,
-    async () => await startUnlocked(opts),
-  );
+  const lockRequestedAt = Date.now();
+  return await withProjectLifecycleLock(opts.project_id, async () => {
+    const lifecycleLockWait = Date.now() - lockRequestedAt;
+    const result = await startUnlocked(opts);
+    result.phase_timings_ms = {
+      ...result.phase_timings_ms,
+      lifecycle_lock_wait: lifecycleLockWait,
+    };
+    return result;
+  });
 }
 
 async function startUnlocked({
@@ -1894,27 +1900,34 @@ async function startUnlocked({
     starting.add(project_id);
     report({ type: "start-project", progress: 0 });
     const name = projectContainerName(project_id);
-    const hasLiveProjectContainer = await hasLiveConmonContainer(name);
-    let podmanReportsLiveProjectRunning = false;
-    if (hasLiveProjectContainer) {
-      podmanReportsLiveProjectRunning =
-        await podmanReportsRunningContainer(name);
-    }
-    if (hasLiveProjectContainer && !podmanReportsLiveProjectRunning) {
-      logger.warn(
-        "start: found live project processes without podman metadata; cleaning up before relaunch",
-        {
-          project_id,
-          name,
-        },
-      );
-      await cleanupOrphanedLiveContainer({
-        project_id,
-        name,
-        reason: "start found live project container without podman metadata",
-      });
-      podmanReportsLiveProjectRunning = false;
-    }
+    const { podmanReportsLiveProjectRunning } = await timings.measure(
+      "container_preflight",
+      async () => {
+        const hasLiveProjectContainer = await hasLiveConmonContainer(name);
+        let podmanReportsLiveProjectRunning = false;
+        if (hasLiveProjectContainer) {
+          podmanReportsLiveProjectRunning =
+            await podmanReportsRunningContainer(name);
+        }
+        if (hasLiveProjectContainer && !podmanReportsLiveProjectRunning) {
+          logger.warn(
+            "start: found live project processes without podman metadata; cleaning up before relaunch",
+            {
+              project_id,
+              name,
+            },
+          );
+          await cleanupOrphanedLiveContainer({
+            project_id,
+            name,
+            reason:
+              "start found live project container without podman metadata",
+          });
+          podmanReportsLiveProjectRunning = false;
+        }
+        return { hasLiveProjectContainer, podmanReportsLiveProjectRunning };
+      },
+    );
 
     let { home, scratch, quota_applied } = await timings.measure(
       "resolve_initial_paths",
@@ -2141,16 +2154,27 @@ async function startUnlocked({
       Number.isInteger(config?.http_port) && (config?.http_port ?? 0) > 0
         ? Number(config?.http_port)
         : undefined;
-    const ssh_port = configuredSshPort ?? (await getPort());
-    let http_port = configuredHttpPort ?? (await getPort());
-    // avoid rare collision with ssh_port when ports are probed locally
-    if (configuredHttpPort == null && http_port === ssh_port) {
-      http_port = await getPort();
-    }
+    const { ssh_port, http_port } = await timings.measure(
+      "allocate_ports",
+      async () => {
+        const ssh_port = configuredSshPort ?? (await getPort());
+        let http_port = configuredHttpPort ?? (await getPort());
+        // avoid rare collision with ssh_port when ports are probed locally
+        if (configuredHttpPort == null && http_port === ssh_port) {
+          http_port = await getPort();
+        }
+        return { ssh_port, http_port };
+      },
+    );
 
     const args: string[] = [];
     args.push("run");
-    args.push(...(await podmanRuntimeArgs()));
+    args.push(
+      ...(await timings.measure(
+        "resolve_podman_runtime",
+        async () => await podmanRuntimeArgs(),
+      )),
+    );
     // Podman 4.9 cannot reliably enforce rootless per-container limits on the
     // production cgroup layout. Keep it from moving descendants out of the
     // root-owned aggregate pool; the pre-exec launcher provides containment.
@@ -2307,7 +2331,10 @@ async function startUnlocked({
       args.push("-e", `${key}=${env[key]}`);
     }
 
-    const limitArgs = await podmanLimits(config);
+    const limitArgs = await timings.measure(
+      "resolve_cgroup_limits",
+      async () => await podmanLimits(config),
+    );
     const projectCgroupLimits = projectCgroupLimitsFromPodmanArgs(
       limitArgs,
       config?.io_class,
@@ -2357,11 +2384,15 @@ async function startUnlocked({
       );
     }
     try {
-      await attachProjectToCgroup({
-        project_id,
-        name,
-        limits: projectCgroupLimits,
-      });
+      await timings.measure(
+        "attach_project_cgroup",
+        async () =>
+          await attachProjectToCgroup({
+            project_id,
+            name,
+            limits: projectCgroupLimits,
+          }),
+      );
       await timings.measure(
         "verify_project_cgroup",
         async () => await verifyProjectContainerInPool({ project_id, name }),
@@ -2384,6 +2415,13 @@ async function startUnlocked({
       desc: "started",
     });
     timings.phase_timings_ms.total = Date.now() - totalStarted;
+    timings.phase_timings_ms.unattributed = Math.max(
+      0,
+      timings.phase_timings_ms.total -
+        Object.entries(timings.phase_timings_ms)
+          .filter(([phase]) => phase !== "total")
+          .reduce((sum, [_phase, duration]) => sum + duration, 0),
+    );
 
     return {
       state: "running",
