@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260801-v16"
+HELPER_SCHEMA_VERSION = "20260801-v17"
 RUNTIME_WRAPPER_VERSION = "20260724-v15"
 NVM_VERSION = "0.40.4"
 CLOUDFLARED_VERSION = "2026.7.2"
@@ -4616,12 +4616,13 @@ case "$cmd" in
     fi
     ;;
   attach-prepared-project-runtime)
-    if [ "$#" -ne 2 ]; then
-      echo "usage: cocalc-runtime-storage attach-prepared-project-runtime <project-id> <podman-netns-path|->" >&2
+    if [ "$#" -ne 3 ]; then
+      echo "usage: cocalc-runtime-storage attach-prepared-project-runtime <project-id> <podman-netns-path|-> <final-cpu-weight>" >&2
       exit 2
     fi
     project_id="$1"
     netns_path="$2"
+    cpu_weight="$3"
     if ! is_project_uuid "$project_id"; then
       deny "project-id-invalid" "$project_id"
     fi
@@ -4631,12 +4632,19 @@ case "$cmd" in
         *) deny "podman-netns-path-invalid" "$netns_path" ;;
       esac
     fi
+    if ! valid_positive_cgroup_limit "$cpu_weight" || [ "$cpu_weight" -gt 10000 ]; then
+      deny "project-cgroup-cpu-weight-invalid" "$cpu_weight"
+    fi
     # The pre-exec launcher creates this leaf and applies its final policy
     # before Podman starts. Do not repeat global hierarchy convergence here:
     # concurrent starts otherwise serialize on the global cgroup lock.
     require_finite_project_pool_memory_max
     pool="$(project_cgroup "$project_id")"
     [ -d "$pool" ] || deny "project-cgroup-missing" "$pool"
+    # The launcher temporarily uses the highest weight so lifecycle work can
+    # make progress on a saturated host. Restore the paid project weight
+    # before any later attachment step that could fail.
+    printf '%s\n' "$cpu_weight" > "$pool/cpu.weight"
     while IFS= read -r conmon_pid; do
       attach_pid_tree_to_project_pool_storage "$conmon_pid" "$pool" || true
     done < <(find_project_conmon_pids "$project_id")
