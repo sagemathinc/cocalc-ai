@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260718-v14"
+HELPER_SCHEMA_VERSION = "20260801-v15"
 RUNTIME_WRAPPER_VERSION = "20260724-v15"
 NVM_VERSION = "0.40.4"
 CLOUDFLARED_VERSION = "2026.7.2"
@@ -4580,6 +4580,38 @@ case "$cmd" in
     # large process tree. The cgroup now exists with its final limits, so keep
     # that work outside the global hierarchy lock; cleanup races are harmless
     # because these attachments are already best effort.
+    while IFS= read -r conmon_pid; do
+      attach_pid_tree_to_project_pool_storage "$conmon_pid" "$pool" || true
+    done < <(find_project_conmon_pids "$project_id")
+    if [ "$netns_path" != "-" ]; then
+      while IFS= read -r pasta_pid; do
+        attach_pid_to_project_pool_storage "$pasta_pid" "$pool" || true
+        apply_pasta_resource_limits "$pasta_pid"
+      done < <(find_pasta_pids_for_netns "$netns_path")
+    fi
+    ;;
+  attach-prepared-project-runtime)
+    if [ "$#" -ne 2 ]; then
+      echo "usage: cocalc-runtime-storage attach-prepared-project-runtime <project-id> <podman-netns-path|->" >&2
+      exit 2
+    fi
+    project_id="$1"
+    netns_path="$2"
+    if ! is_project_uuid "$project_id"; then
+      deny "project-id-invalid" "$project_id"
+    fi
+    if [ "$netns_path" != "-" ]; then
+      case "$netns_path" in
+        /mnt/cocalc/data/tmp/cocalc-podman-runtime-*/netns/netns-*|/run/user/*/netns/netns-*) ;;
+        *) deny "podman-netns-path-invalid" "$netns_path" ;;
+      esac
+    fi
+    # The pre-exec launcher creates this leaf and applies its final policy
+    # before Podman starts. Do not repeat global hierarchy convergence here:
+    # concurrent starts otherwise serialize on the global cgroup lock.
+    require_finite_project_pool_memory_max
+    pool="$(project_cgroup "$project_id")"
+    [ -d "$pool" ] || deny "project-cgroup-missing" "$pool"
     while IFS= read -r conmon_pid; do
       attach_pid_tree_to_project_pool_storage "$conmon_pid" "$pool" || true
     done < <(find_project_conmon_pids "$project_id")

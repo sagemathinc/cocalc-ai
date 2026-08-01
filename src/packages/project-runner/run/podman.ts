@@ -1098,6 +1098,33 @@ async function attachProjectToCgroup({
   }
 }
 
+async function attachPreparedProjectRuntime({
+  project_id,
+  name,
+}: {
+  project_id: string;
+  name: string;
+}): Promise<void> {
+  const sandboxPath = await inspectContainerSandboxPath(name);
+  const result = await executeCode({
+    command: "sudo",
+    args: [
+      "-n",
+      "/usr/local/sbin/cocalc-runtime-storage",
+      "attach-prepared-project-runtime",
+      project_id,
+      sandboxPath ?? "-",
+    ],
+    timeout: ATTACH_PROJECT_CGROUP_TIMEOUT_S,
+    err_on_exit: false,
+  });
+  if (result.exit_code != null && result.exit_code !== 0) {
+    throw Error(
+      `failed to attach ${name} runtime processes to its prepared project cgroup: ${result.stderr || result.stdout || `helper exited ${result.exit_code}`}`,
+    );
+  }
+}
+
 function projectPoolCgroupPath(): string {
   return (
     process.env.COCALC_PROJECT_POOL_CGROUP?.trim() ||
@@ -2387,10 +2414,9 @@ async function startUnlocked({
       await timings.measure(
         "attach_project_cgroup",
         async () =>
-          await attachProjectToCgroup({
+          await attachPreparedProjectRuntime({
             project_id,
             name,
-            limits: projectCgroupLimits,
           }),
       );
       await timings.measure(

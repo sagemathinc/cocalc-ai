@@ -669,6 +669,18 @@ describe("project-runner podman orphan fallback", () => {
         args: [
           "-n",
           "/usr/local/sbin/cocalc-runtime-storage",
+          "attach-prepared-project-runtime",
+          project1,
+          "-",
+        ],
+      }),
+    );
+    expect(mockExecuteCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "sudo",
+        args: [
+          "-n",
+          "/usr/local/sbin/cocalc-runtime-storage",
           "verify-project-pool",
           project1,
           "4242",

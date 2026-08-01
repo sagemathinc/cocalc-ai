@@ -1779,6 +1779,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("enter-project-cgroup)", script)
             self.assertIn("verify-project-pool)", script)
             self.assertIn("attach-project-cgroup)", script)
+            self.assertIn("attach-prepared-project-runtime)", script)
             self.assertIn("verify-project-network-limits)", script)
             self.assertIn("verify-project-io-limits)", script)
             self.assertIn("verify-project-io-policy)", script)

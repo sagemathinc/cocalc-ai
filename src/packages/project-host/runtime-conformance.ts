@@ -29,6 +29,7 @@ const logger = getLogger("project-host:runtime-conformance");
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 const REQUIRED_PROJECT_CGROUP_COMMANDS = [
   "enter-project-cgroup",
+  "attach-prepared-project-runtime",
   "verify-project-io-limits",
   "verify-project-network-limits",
 ] as const;

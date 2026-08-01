@@ -19,6 +19,9 @@ describe("runtime conformance", () => {
     expect(__test__.requiredProjectCgroupCommands()).toContain(
       "verify-project-io-limits",
     );
+    expect(__test__.requiredProjectCgroupCommands()).toContain(
+      "attach-prepared-project-runtime",
+    );
   });
 
   it("distinguishes supported helper usage from an old helper", () => {
