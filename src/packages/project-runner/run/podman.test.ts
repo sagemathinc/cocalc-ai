@@ -659,7 +659,6 @@ describe("project-runner podman orphan fallback", () => {
           argsPrefix: expect.arrayContaining([
             "cocalc-project-podman",
             project1,
-            "10000",
           ]),
         }),
       }),
@@ -673,7 +672,6 @@ describe("project-runner podman orphan fallback", () => {
           "attach-prepared-project-runtime",
           project1,
           "-",
-          "100",
         ],
       }),
     );
