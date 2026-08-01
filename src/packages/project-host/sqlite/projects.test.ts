@@ -60,7 +60,9 @@ describe("project sqlite runtime ports", () => {
     // overwritten the master after opened was accepted. Requeue the current
     // state so the periodic reporter restores convergence.
     expect(markProjectStateReported(project_id, "running")).toBe(false);
-    expect(listUnreportedProjects()).toEqual([{ project_id, state: "opened" }]);
+    expect(listUnreportedProjects()).toEqual([
+      { project_id, state: "opened", state_updated_at: expect.any(Number) },
+    ]);
 
     expect(markProjectStateReported(project_id, "opened")).toBe(true);
     expect(listUnreportedProjects()).toEqual([]);
@@ -77,6 +79,7 @@ describe("project sqlite runtime ports", () => {
       {
         project_id,
         state: "opened",
+        state_updated_at: expect.any(Number),
         runtime_exit_reason: "container_missing",
       },
     ]);
@@ -87,6 +90,29 @@ describe("project sqlite runtime ports", () => {
 
     upsertProject({ project_id, state: "starting" });
     expect(getProject(project_id)?.runtime_exit_reason).toBeNull();
+  });
+
+  it("does not move the lifecycle timestamp during metadata refreshes", () => {
+    upsertProject({
+      project_id,
+      state: "running",
+      state_updated_at: 1_785_552_000_000,
+      updated_at: 1_785_552_000_000,
+    });
+    upsertProject({
+      project_id,
+      state: "running",
+      title: "metadata refresh",
+      updated_at: 1_785_552_010_000,
+    });
+
+    expect(listUnreportedProjects()).toEqual([
+      {
+        project_id,
+        state: "running",
+        state_updated_at: 1_785_552_000_000,
+      },
+    ]);
   });
 
   it("stores and aggregates running project bundle/tools references", () => {

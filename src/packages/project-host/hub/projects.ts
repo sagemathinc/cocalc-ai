@@ -814,6 +814,7 @@ export function ensureProjectRow({
   const row: any = {
     project_id,
     state,
+    state_updated_at: now,
     updated_at: now,
     last_seen: now,
   };
@@ -900,16 +901,11 @@ export function ensureProjectRow({
     ) {
       markProjectStateReported(project_id, state);
     } else {
-      reportProjectStateToMaster(
-        project_id,
-        runtime_exit_reason == null
-          ? state
-          : {
-              state: state as any,
-              time: new Date(now),
-              runtime_exit_reason,
-            },
-      );
+      reportProjectStateToMaster(project_id, {
+        state: state as any,
+        time: new Date(now),
+        ...(runtime_exit_reason == null ? {} : { runtime_exit_reason }),
+      });
     }
   }
 }

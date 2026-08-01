@@ -273,10 +273,18 @@ export async function initHostStatusService() {
             return { action: "delete" as const };
           }
         }
-        const stateObj =
-          typeof state === "string"
-            ? { state, time: new Date().toISOString() }
-            : state;
+        const stateTime = (() => {
+          const value = typeof state === "string" ? undefined : state.time;
+          if (value == null) return new Date().toISOString();
+          const time = new Date(value);
+          return Number.isFinite(time.getTime())
+            ? time.toISOString()
+            : new Date().toISOString();
+        })();
+        const stateObj = {
+          ...(typeof state === "string" ? { state } : state),
+          time: stateTime,
+        };
         // NOTE: Do not mutate host/placement here; host assignment is explicit
         // via move/start flows. Updating host_id/host from heartbeat reports
         // can cause split-brain if multiple hosts still have a local row.
@@ -296,6 +304,10 @@ export async function initHostStatusService() {
                   'started_at', state->>'started_at'
                 ))
               WHERE project_id=$1
+                AND (
+                  state->>'time' IS NULL
+                  OR state->>'time' <= $3::text
+                )
                 AND state IS DISTINCT FROM (
                   $2::jsonb || jsonb_strip_nulls(jsonb_build_object(
                     'runtime_generation',
@@ -307,7 +319,7 @@ export async function initHostStatusService() {
                     'started_at', state->>'started_at'
                   ))
                 )`,
-            [project_id, stateObj],
+            [project_id, stateObj, stateTime],
           );
           if ((result.rowCount ?? 0) > 0) {
             changed = true;
