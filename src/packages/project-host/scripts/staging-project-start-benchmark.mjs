@@ -89,6 +89,8 @@ async function runCli(api, args) {
         "staging",
         "--api",
         api,
+        "--rpc-timeout",
+        "120s",
         "--poll-ms",
         "100ms",
         "--json",
