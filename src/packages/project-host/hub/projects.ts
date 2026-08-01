@@ -1836,18 +1836,24 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         message: "checking project disk quota",
       });
       await timings.measure("check_quota", async () => {
+        let scratchPrepared = scratchVolumeQuotaIsPrepared(project_id);
+        const stoppedPreparation = scratchPrepared
+          ? undefined
+          : stoppedVolumePreparationInFlight.get(project_id);
+        if (stoppedPreparation != null) {
+          await stoppedPreparation;
+          scratchPrepared = scratchVolumeQuotaIsPrepared(project_id);
+        }
+        // The authoritative quota ledger settles the normal case without a
+        // Podman round trip. Runtime state only matters when scratch remains
+        // unprepared, since resetting a live project's scratch is unsafe.
         const runtimeState =
-          projectQuotaLedgerMode() === "enforce" && runnerApi.status
+          !scratchPrepared &&
+          projectQuotaLedgerMode() === "enforce" &&
+          runnerApi.status
             ? (await runnerApi.status({ project_id }))?.state
             : undefined;
-        const stoppedPreparation =
-          stoppedVolumePreparationInFlight.get(project_id);
-        if (runtimeState !== "running" && stoppedPreparation != null) {
-          await stoppedPreparation;
-        }
-        const resetScratch =
-          runtimeState !== "running" &&
-          !scratchVolumeQuotaIsPrepared(project_id);
+        const resetScratch = runtimeState !== "running" && !scratchPrepared;
         await withBtrfsMutationContext(
           {
             operation_id: op_id,

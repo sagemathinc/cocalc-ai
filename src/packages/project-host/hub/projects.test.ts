@@ -1098,6 +1098,10 @@ describe("project host start ACP rehydrate ordering", () => {
     const previousMode = process.env.COCALC_PROJECT_QUOTA_LEDGER_MODE;
     process.env.COCALC_PROJECT_QUOTA_LEDGER_MODE = "enforce";
     projectVolumeQuotaIsApplied.mockReturnValue(true);
+    getProjectVolumeQuota.mockImplementation((_project_id, volume_kind) => ({
+      project_id,
+      volume_kind,
+    }));
     getProject.mockReturnValue({
       image: DEFAULT_PROJECT_IMAGE,
       run_quota: { disk_quota: 65_000 },
@@ -1127,6 +1131,7 @@ describe("project host start ACP rehydrate ordering", () => {
       });
       expect(getVolume).not.toHaveBeenCalled();
       expect(resetScratchVolume).not.toHaveBeenCalled();
+      expect(runnerApi.status).not.toHaveBeenCalled();
       expect(runnerApi.start).toHaveBeenCalled();
     } finally {
       if (previousMode == null) {

@@ -16,6 +16,8 @@ function parseArgs(argv) {
     concurrency: 4,
     rounds: 10,
     scenario: "idle",
+    settle_ms: 5_000,
+    stop_concurrency: 1,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i];
@@ -28,6 +30,8 @@ function parseArgs(argv) {
   }
   options.concurrency = Number(options.concurrency);
   options.rounds = Number(options.rounds);
+  options.settle_ms = Number(options.settle_ms);
+  options.stop_concurrency = Number(options.stop_concurrency);
   options.projects = `${options.projects ?? ""}`
     .split(",")
     .map((value) => value.trim())
@@ -50,6 +54,20 @@ function parseArgs(argv) {
     options.concurrency > 16
   ) {
     throw new Error("--concurrency must be an integer from 1 through 16");
+  }
+  if (
+    !Number.isInteger(options.stop_concurrency) ||
+    options.stop_concurrency < 1 ||
+    options.stop_concurrency > 16
+  ) {
+    throw new Error("--stop-concurrency must be an integer from 1 through 16");
+  }
+  if (
+    !Number.isInteger(options.settle_ms) ||
+    options.settle_ms < 0 ||
+    options.settle_ms > 120_000
+  ) {
+    throw new Error("--settle-ms must be an integer from 0 through 120000");
   }
   if (
     !Number.isInteger(options.rounds) ||
@@ -130,15 +148,31 @@ function percentile(values, fraction) {
   return sorted[Math.ceil(sorted.length * fraction) - 1];
 }
 
+async function sleep(ms) {
+  if (ms > 0) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+  }
+}
+
 const options = parseArgs(process.argv.slice(2));
 await mkdir(dirname(resolve(options.output)), { recursive: true });
 await writeFile(options.output, "", "utf8");
 
 const samples = [];
 for (let round = 1; round <= options.rounds; round += 1) {
-  await mapLimit(options.projects, options.concurrency, async (projectId) => {
-    await runCli(options.api, ["project", "stop", "-w", projectId, "--wait"]);
-  });
+  const preparationStarted = performance.now();
+  await mapLimit(
+    options.projects,
+    options.stop_concurrency,
+    async (projectId) => {
+      await runCli(options.api, ["project", "stop", "-w", projectId, "--wait"]);
+    },
+  );
+  const stopElapsedMs = Math.round(performance.now() - preparationStarted);
+  await sleep(options.settle_ms);
+  const preparationElapsedMs = Math.round(
+    performance.now() - preparationStarted,
+  );
   await mapLimit(options.projects, options.concurrency, async (projectId) => {
     const requestedAt = new Date().toISOString();
     const started = performance.now();
@@ -161,6 +195,9 @@ for (let round = 1; round <= options.rounds; round += 1) {
       project_id: projectId,
       op_id: response.data.op_id,
       requested_at: requestedAt,
+      stop_elapsed_ms: stopElapsedMs,
+      settle_ms: options.settle_ms,
+      preparation_elapsed_ms: preparationElapsedMs,
       client_elapsed_ms: clientElapsedMs,
       operation_started_at: operation.data.started_at,
       operation_finished_at: operation.data.finished_at,
