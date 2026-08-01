@@ -1922,6 +1922,8 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 script,
             )
             self.assertIn('PROJECT_CGROUP_LOCK_WAIT_SECONDS="5"', script)
+            self.assertIn("acquire_project_cgroup_shared_lock", script)
+            self.assertIn("project_pool_hierarchy_ready", script)
             self.assertIn('PROJECT_NETWORK_RECONCILE_ATTEMPTS="3"', script)
             self.assertIn(
                 'PROJECT_NETWORK_BOOT_RECONCILE_ATTEMPTS="20"', script

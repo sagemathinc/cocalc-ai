@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260801-v15"
+HELPER_SCHEMA_VERSION = "20260801-v16"
 RUNTIME_WRAPPER_VERSION = "20260724-v15"
 NVM_VERSION = "0.40.4"
 CLOUDFLARED_VERSION = "2026.7.2"
@@ -3263,6 +3263,13 @@ acquire_project_cgroup_lock() {
   fi
 }
 
+acquire_project_cgroup_shared_lock() {
+  exec 9>/run/lock/cocalc-project-cgroups.lock
+  if ! flock -s -w "$PROJECT_CGROUP_LOCK_WAIT_SECONDS" 9; then
+    deny "project-cgroup-lock-timeout" "$PROJECT_CGROUP_LOCK_WAIT_SECONDS"
+  fi
+}
+
 release_project_lock() {
   flock -u 9 || true
   exec 9>&-
@@ -3523,6 +3530,17 @@ configure_project_pool_hierarchy() {
   fi
   enable_cgroup_controllers "$PROJECT_POOL_CGROUP_DEFAULT"
   apply_project_pool_io_policy
+}
+
+project_pool_hierarchy_ready() {
+  local controller
+  [ -d "$PROJECT_POOL_CGROUP_DEFAULT" ] || return 1
+  [ -d "$(project_legacy_cgroup)" ] || return 1
+  [ -r "${PROJECT_POOL_CGROUP_DEFAULT}/cgroup.subtree_control" ] || return 1
+  for controller in cpu memory pids io; do
+    grep -qw "$controller" "${PROJECT_POOL_CGROUP_DEFAULT}/cgroup.subtree_control" || return 1
+  done
+  return 0
 }
 
 require_finite_project_pool_memory_max() {
@@ -4505,9 +4523,16 @@ case "$cmd" in
     if ! is_project_uuid "$project_id"; then
       deny "project-id-invalid" "$project_id"
     fi
-    acquire_project_cgroup_lock
     require_runtime_owned_pid "$launcher_pid"
-    configure_project_pool_hierarchy
+    # Starts operate on distinct project leaves, so they can safely share the
+    # hierarchy lock. Take the exclusive repair path only when the parent
+    # hierarchy has drifted or has not yet been initialized.
+    acquire_project_cgroup_shared_lock
+    if ! project_pool_hierarchy_ready; then
+      release_project_lock
+      acquire_project_cgroup_lock
+      configure_project_pool_hierarchy
+    fi
     require_finite_project_pool_memory_max
     pool="$(project_cgroup "$project_id")"
     configure_project_cgroup \
