@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260801-v16"
+HELPER_SCHEMA_VERSION = "20260801-v17"
 RUNTIME_WRAPPER_VERSION = "20260724-v15"
 NVM_VERSION = "0.40.4"
 CLOUDFLARED_VERSION = "2026.7.2"
@@ -775,6 +775,7 @@ class BootstrapConfig:
     shared_scratch_project_mount: str
     shared_scratch_filesystem: str
     project_io_capacity: dict[str, Any]
+    project_io_policy: dict[str, Any]
     apt_packages: list[str]
     has_gpu: bool
     ssh_user: str
@@ -825,6 +826,64 @@ def _ensure_object(value: Any, name: str) -> dict[str, Any]:
     raise RuntimeError(f"{name} must be object")
 
 
+def build_project_io_policy(capacity: dict[str, Any]) -> dict[str, Any]:
+    targets = capacity.get("targets")
+    supports_dynamic_capacity = (
+        capacity.get("provider") == "gcp"
+        and isinstance(targets, list)
+        and bool(targets)
+        and all(
+            isinstance(target, dict) and target.get("disk_type") == "balanced"
+            for target in targets
+        )
+    )
+    pool = (
+        {"rbps": 67108864, "wbps": 33554432, "riops": 2000, "wiops": 1000}
+        if supports_dynamic_capacity
+        else {"rbps": 0, "wbps": 0, "riops": 0, "wiops": 0}
+    )
+    return {
+        "version": 1,
+        "mode": "enforce" if supports_dynamic_capacity else "disabled",
+        "mountpoint": "/mnt/cocalc",
+        "profile": (
+            "gcp-pd-balanced-dynamic"
+            if supports_dynamic_capacity
+            else "unconfigured"
+        ),
+        "capacitySource": (
+            "gcp-pd-balanced-size-formula-2026-07-24"
+            if supports_dynamic_capacity
+            else "unconfigured"
+        ),
+        "capacity": {
+            "mode": "gcp-pd-balanced" if supports_dynamic_capacity else "static"
+        },
+        "pool": pool,
+        "leafClasses": {
+            "standard": {
+                "weight": 100,
+                **{key: value // 4 for key, value in pool.items()},
+            },
+            "member": {
+                "weight": 200,
+                **{key: value // 2 for key, value in pool.items()},
+            },
+            "premium": {
+                "weight": 400,
+                **{key: (value * 3) // 4 for key, value in pool.items()},
+            },
+        },
+        "adaptive": {
+            "enabled": False,
+            "sampleMs": 5000,
+            "enterSamples": 6,
+            "recoverSamples": 24,
+        },
+        "ioCost": {"mode": "disabled"},
+    }
+
+
 def load_config(bootstrap_dir: str) -> BootstrapConfig:
     facts_path = Path(bootstrap_dir) / "bootstrap-host-facts.json"
     desired_path = Path(bootstrap_dir) / "bootstrap-desired-state.json"
@@ -852,6 +911,22 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
     _require(
         1 <= cloudflared_grace_period_seconds <= 30,
         "cloudflared.gracePeriodSeconds must be between 1 and 30",
+    )
+    project_io_capacity = _ensure_object(
+        desired.get("project_io_capacity")
+        or {
+            "version": 1,
+            "provider": "unknown",
+            "targets": [
+                {
+                    "mountpoint": "/mnt/cocalc",
+                    "discovery": "btrfs",
+                    "disk_type": "unknown",
+                    "required": True,
+                }
+            ],
+        },
+        "bootstrap-desired-state.project_io_capacity",
     )
     return BootstrapConfig(
         bootstrap_user=_ensure_str(
@@ -913,21 +988,11 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
             shared_scratch.get("filesystem") or "ext4",
             "bootstrap-desired-state.shared_scratch.filesystem",
         ),
-        project_io_capacity=_ensure_object(
-            desired.get("project_io_capacity")
-            or {
-                "version": 1,
-                "provider": "unknown",
-                "targets": [
-                    {
-                        "mountpoint": "/mnt/cocalc",
-                        "discovery": "btrfs",
-                        "disk_type": "unknown",
-                        "required": True,
-                    }
-                ],
-            },
-            "bootstrap-desired-state.project_io_capacity",
+        project_io_capacity=project_io_capacity,
+        project_io_policy=_ensure_object(
+            desired.get("project_io_policy")
+            or build_project_io_policy(project_io_capacity),
+            "bootstrap-desired-state.project_io_policy",
         ),
         apt_packages=[
             str(p)
@@ -1478,6 +1543,7 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
             "filesystem": cfg.shared_scratch_filesystem,
         },
         "project_io_capacity": cfg.project_io_capacity,
+        "project_io_policy": cfg.project_io_policy,
         "runtime_user_contract": expected_runtime_user_contract(cfg),
         "bootstrap_connection": build_bootstrap_connection(cfg),
         "project_host_bundle": {
@@ -3176,6 +3242,32 @@ def main(argv=None, allowed_roots=ALLOWED_ROOTS):
 if __name__ == "__main__":
     raise SystemExit(main())
 '''
+
+
+def write_project_io_configuration(
+    cfg: BootstrapConfig,
+    *,
+    policy_path: Path = Path("/etc/cocalc/project-io-policy.json"),
+    override_path: Path = Path("/etc/cocalc/project-io-policy.override.json"),
+    capacity_path: Path = Path("/etc/cocalc/project-io-capacity.json"),
+) -> None:
+    text_write_atomic(
+        policy_path,
+        json.dumps(cfg.project_io_policy, indent=2, sort_keys=True) + "\n",
+        default_mode=0o644,
+    )
+    os.chown(policy_path, 0, 0)
+    policy_path.chmod(0o644)
+    if override_path.exists():
+        os.chown(override_path, 0, 0)
+        override_path.chmod(0o600)
+    text_write_atomic(
+        capacity_path,
+        json.dumps(cfg.project_io_capacity, indent=2, sort_keys=True) + "\n",
+        default_mode=0o644,
+    )
+    os.chown(capacity_path, 0, 0)
+    capacity_path.chmod(0o644)
 
 
 def install_privileged_wrappers(cfg: BootstrapConfig) -> None:
@@ -6084,43 +6176,7 @@ esac
         os.chown(p, 0, 0)
         p.chmod(0o755)
 
-    policy_path = Path("/etc/cocalc/project-io-policy.json")
-    if not policy_path.exists():
-        policy = {
-            "version": 1,
-            "mode": "disabled",
-            "mountpoint": "/mnt/cocalc",
-            "profile": "unconfigured",
-            "capacitySource": "unconfigured",
-            "capacity": {"mode": "static"},
-            "pool": {"rbps": 0, "wbps": 0, "riops": 0, "wiops": 0},
-            "leafClasses": {
-                "standard": {"weight": 100, "rbps": 0, "wbps": 0, "riops": 0, "wiops": 0},
-                "member": {"weight": 200, "rbps": 0, "wbps": 0, "riops": 0, "wiops": 0},
-                "premium": {"weight": 400, "rbps": 0, "wbps": 0, "riops": 0, "wiops": 0},
-            },
-            "adaptive": {"enabled": False, "sampleMs": 5000, "enterSamples": 6, "recoverSamples": 24},
-            "ioCost": {"mode": "disabled"},
-        }
-        text_write_atomic(
-            policy_path,
-            json.dumps(policy, indent=2, sort_keys=True) + "\n",
-            default_mode=0o644,
-        )
-    os.chown(policy_path, 0, 0)
-    policy_path.chmod(0o644)
-    override_path = Path("/etc/cocalc/project-io-policy.override.json")
-    if override_path.exists():
-        os.chown(override_path, 0, 0)
-        override_path.chmod(0o600)
-    capacity_path = Path("/etc/cocalc/project-io-capacity.json")
-    text_write_atomic(
-        capacity_path,
-        json.dumps(cfg.project_io_capacity, indent=2, sort_keys=True) + "\n",
-        default_mode=0o644,
-    )
-    os.chown(capacity_path, 0, 0)
-    capacity_path.chmod(0o644)
+    write_project_io_configuration(cfg)
 
 
 def reconcile_bees_runtime_policy(cfg: BootstrapConfig) -> None:

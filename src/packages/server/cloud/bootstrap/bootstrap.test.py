@@ -47,6 +47,50 @@ def make_cfg(tmpdir: str) -> bootstrap.BootstrapConfig:
                 }
             ],
         },
+        project_io_policy={
+            "version": 1,
+            "mode": "enforce",
+            "mountpoint": "/mnt/cocalc",
+            "profile": "gcp-pd-balanced-dynamic",
+            "capacitySource": "gcp-pd-balanced-size-formula-2026-07-24",
+            "capacity": {"mode": "gcp-pd-balanced"},
+            "pool": {
+                "rbps": 67108864,
+                "wbps": 33554432,
+                "riops": 2000,
+                "wiops": 1000,
+            },
+            "leafClasses": {
+                "standard": {
+                    "weight": 100,
+                    "rbps": 16777216,
+                    "wbps": 8388608,
+                    "riops": 500,
+                    "wiops": 250,
+                },
+                "member": {
+                    "weight": 200,
+                    "rbps": 33554432,
+                    "wbps": 16777216,
+                    "riops": 1000,
+                    "wiops": 500,
+                },
+                "premium": {
+                    "weight": 400,
+                    "rbps": 50331648,
+                    "wbps": 25165824,
+                    "riops": 1500,
+                    "wiops": 750,
+                },
+            },
+            "adaptive": {
+                "enabled": False,
+                "sampleMs": 5000,
+                "enterSamples": 6,
+                "recoverSamples": 24,
+            },
+            "ioCost": {"mode": "disabled"},
+        },
         apt_packages=[],
         has_gpu=False,
         ssh_user="missing-runtime-user",
@@ -88,7 +132,6 @@ class ProjectHostStartTest(unittest.TestCase):
                 "",
             ),
         )
-
     def test_start_project_host_runs_ctl_from_runtime_home(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = self.make_project_host_cfg(tmpdir)
@@ -149,6 +192,68 @@ class ProjectHostStartTest(unittest.TestCase):
                 [call[2].get("cwd") for call in calls],
                 [cfg.bootstrap_home, cfg.bootstrap_home, cfg.bootstrap_home],
             )
+
+
+class ProjectIoConfigurationTest(unittest.TestCase):
+    def test_derives_managed_policy_from_existing_capacity_metadata(self) -> None:
+        policy = bootstrap.build_project_io_policy(
+            {
+                "version": 1,
+                "provider": "gcp",
+                "targets": [
+                    {
+                        "mountpoint": "/mnt/cocalc",
+                        "discovery": "btrfs",
+                        "disk_type": "balanced",
+                        "required": True,
+                    }
+                ],
+            }
+        )
+        self.assertEqual(policy["mode"], "enforce")
+        self.assertEqual(policy["capacity"]["mode"], "gcp-pd-balanced")
+        self.assertEqual(policy["leafClasses"]["premium"]["wiops"], 750)
+
+    def test_fails_safe_for_unsupported_capacity_metadata(self) -> None:
+        policy = bootstrap.build_project_io_policy(
+            {
+                "version": 1,
+                "provider": "gcp",
+                "targets": [{"disk_type": "ssd"}],
+            }
+        )
+        self.assertEqual(policy["mode"], "disabled")
+        self.assertEqual(policy["capacity"]["mode"], "static")
+
+    def test_replaces_managed_policy_and_preserves_local_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            policy_path = Path(tmpdir) / "policy.json"
+            override_path = Path(tmpdir) / "override.json"
+            capacity_path = Path(tmpdir) / "capacity.json"
+            policy_path.write_text('{"mode":"disabled"}\n', encoding="utf-8")
+            override_text = '{"mode":"observe"}\n'
+            override_path.write_text(override_text, encoding="utf-8")
+            original_chown = bootstrap.os.chown
+            try:
+                bootstrap.os.chown = lambda *_args, **_kwargs: None
+                bootstrap.write_project_io_configuration(
+                    cfg,
+                    policy_path=policy_path,
+                    override_path=override_path,
+                    capacity_path=capacity_path,
+                )
+            finally:
+                bootstrap.os.chown = original_chown
+
+            self.assertEqual(
+                json.loads(policy_path.read_text()), cfg.project_io_policy
+            )
+            self.assertEqual(
+                json.loads(capacity_path.read_text()), cfg.project_io_capacity
+            )
+            self.assertEqual(override_path.read_text(), override_text)
+            self.assertEqual(override_path.stat().st_mode & 0o777, 0o600)
 
 
 class BootstrapSharedScratchTest(unittest.TestCase):

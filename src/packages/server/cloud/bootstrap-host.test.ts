@@ -141,6 +141,44 @@ describe("GCP bootstrap helpers", () => {
       ],
     });
   });
+
+  it("enforces provider-derived I/O containment on GCP balanced disks", () => {
+    expect(
+      bootstrapHost.buildProjectIoPolicy({
+        providerId: "gcp",
+        diskType: "balanced",
+        sharedScratchEnabled: true,
+        sharedScratchDiskType: "balanced",
+      }),
+    ).toMatchObject({
+      mode: "enforce",
+      profile: "gcp-pd-balanced-dynamic",
+      capacity: { mode: "gcp-pd-balanced" },
+      pool: { rbps: 67108864, wbps: 33554432, riops: 2000, wiops: 1000 },
+    });
+  });
+
+  it("fails safe when project-writable storage is not uniformly supported", () => {
+    expect(
+      bootstrapHost.buildProjectIoPolicy({
+        providerId: "gcp",
+        diskType: "balanced",
+        sharedScratchEnabled: true,
+        sharedScratchDiskType: "ssd",
+      }),
+    ).toMatchObject({
+      mode: "disabled",
+      profile: "unconfigured",
+      capacity: { mode: "static" },
+    });
+    expect(
+      bootstrapHost.buildProjectIoPolicy({
+        providerId: "lambda",
+        diskType: "balanced",
+        sharedScratchEnabled: false,
+      }),
+    ).toMatchObject({ mode: "disabled" });
+  });
 });
 
 describe("bootstrap-host shell templates", () => {
@@ -275,6 +313,7 @@ describe("bootstrap-host shell templates", () => {
     expect(source).toContain(`"shared_scratch_disk_devices"`);
     expect(source).toContain(`"shared_scratch"`);
     expect(source).toContain(`"project_io_capacity"`);
+    expect(source).toContain(`"project_io_policy"`);
     expect(source).toContain(`/mnt/cocalc-scratch`);
     expect(source).toContain(`COCALC_SHARED_SCRATCH_HOST_MOUNT`);
   });

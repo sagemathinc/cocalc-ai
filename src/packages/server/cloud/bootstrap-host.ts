@@ -529,6 +529,7 @@ export type BootstrapScripts = {
       required: boolean;
     }>;
   };
+  projectIoPolicy: ProjectIoPolicy;
   envFile: string;
   envLines: string[];
   nodeVersion: string;
@@ -570,6 +571,34 @@ export type BootstrapScripts = {
   };
 };
 
+type ProjectIoLimits = {
+  rbps: number;
+  wbps: number;
+  riops: number;
+  wiops: number;
+};
+
+export type ProjectIoPolicy = {
+  version: 1;
+  mode: "disabled" | "enforce";
+  mountpoint: "/mnt/cocalc";
+  profile: string;
+  capacitySource: string;
+  capacity: { mode: "static" | "gcp-pd-balanced" };
+  pool: ProjectIoLimits;
+  leafClasses: Record<
+    "standard" | "member" | "premium",
+    ProjectIoLimits & { weight: number }
+  >;
+  adaptive: {
+    enabled: false;
+    sampleMs: 5000;
+    enterSamples: 6;
+    recoverSamples: 24;
+  };
+  ioCost: { mode: "disabled" };
+};
+
 export function buildProjectIoCapacity({
   providerId,
   diskType,
@@ -602,6 +631,76 @@ export function buildProjectIoCapacity({
           ]
         : []),
     ],
+  };
+}
+
+export function buildProjectIoPolicy({
+  providerId,
+  diskType,
+  sharedScratchEnabled,
+  sharedScratchDiskType,
+}: {
+  providerId?: string;
+  diskType?: string;
+  sharedScratchEnabled: boolean;
+  sharedScratchDiskType?: string;
+}): ProjectIoPolicy {
+  const supportsDynamicCapacity =
+    providerId === "gcp" &&
+    diskType === "balanced" &&
+    (!sharedScratchEnabled || sharedScratchDiskType === "balanced");
+  const mode = supportsDynamicCapacity ? "enforce" : "disabled";
+  const capacityMode = supportsDynamicCapacity ? "gcp-pd-balanced" : "static";
+  const limits = supportsDynamicCapacity
+    ? {
+        rbps: 64 * 1024 * 1024,
+        wbps: 32 * 1024 * 1024,
+        riops: 2000,
+        wiops: 1000,
+      }
+    : { rbps: 0, wbps: 0, riops: 0, wiops: 0 };
+  return {
+    version: 1,
+    mode,
+    mountpoint: "/mnt/cocalc",
+    profile: supportsDynamicCapacity
+      ? "gcp-pd-balanced-dynamic"
+      : "unconfigured",
+    capacitySource: supportsDynamicCapacity
+      ? "gcp-pd-balanced-size-formula-2026-07-24"
+      : "unconfigured",
+    capacity: { mode: capacityMode },
+    pool: limits,
+    leafClasses: {
+      standard: {
+        weight: 100,
+        rbps: limits.rbps / 4,
+        wbps: limits.wbps / 4,
+        riops: limits.riops / 4,
+        wiops: limits.wiops / 4,
+      },
+      member: {
+        weight: 200,
+        rbps: limits.rbps / 2,
+        wbps: limits.wbps / 2,
+        riops: limits.riops / 2,
+        wiops: limits.wiops / 2,
+      },
+      premium: {
+        weight: 400,
+        rbps: (limits.rbps * 3) / 4,
+        wbps: (limits.wbps * 3) / 4,
+        riops: (limits.riops * 3) / 4,
+        wiops: (limits.wiops * 3) / 4,
+      },
+    },
+    adaptive: {
+      enabled: false,
+      sampleMs: 5000,
+      enterSamples: 6,
+      recoverSamples: 24,
+    },
+    ioCost: { mode: "disabled" },
   };
 }
 
@@ -1063,6 +1162,12 @@ export async function buildBootstrapScripts(
     sharedScratchEnabled,
     sharedScratchDiskType: spec.shared_disk_type,
   });
+  const projectIoPolicy = buildProjectIoPolicy({
+    providerId,
+    diskType: spec.disk_type,
+    sharedScratchEnabled,
+    sharedScratchDiskType: spec.shared_disk_type,
+  });
   const imageSizeGb = resolveBootstrapImageSizeGb({
     providerId,
     isSelfHost,
@@ -1302,6 +1407,7 @@ export async function buildBootstrapScripts(
     sharedScratchHostMount,
     sharedScratchProjectMount,
     projectIoCapacity,
+    projectIoPolicy,
     envFile,
     envLines,
     nodeVersion,
@@ -1516,6 +1622,7 @@ cat <<EOF_COCALC_BOOTSTRAP_DESIRED_STATE > "$BOOTSTRAP_DIR/bootstrap-desired-sta
     "filesystem": "ext4"
   },
   "project_io_capacity": ${JSON.stringify(scripts.projectIoCapacity)},
+  "project_io_policy": ${JSON.stringify(scripts.projectIoPolicy)},
   "bootstrap": {
     "selector": "${scripts.bootstrapSelector}",
     "url": "${scripts.bootstrapPyUrl}"
