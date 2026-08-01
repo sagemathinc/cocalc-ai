@@ -1885,6 +1885,12 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("verify-project-pool)", script)
             self.assertIn("attach-project-cgroup)", script)
             self.assertIn("attach-prepared-project-runtime)", script)
+            self.assertIn(
+                "attach-prepared-project-runtime <project-id> "
+                "<podman-netns-path|-> <final-cpu-weight>",
+                script,
+            )
+            self.assertIn('"$cpu_weight" > "$pool/cpu.weight"', script)
             self.assertIn("verify-project-network-limits)", script)
             self.assertIn("verify-project-io-limits)", script)
             self.assertIn("verify-project-io-policy)", script)
