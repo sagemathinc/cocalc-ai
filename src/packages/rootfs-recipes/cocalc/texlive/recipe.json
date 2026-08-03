@@ -1,0 +1,95 @@
+{
+  "id": "cocalc/texlive",
+  "version": 1,
+  "description": "Install or update a full upstream TeX Live tree under /usr/local, with fontconfig integration and an APT shim that keeps Debian's texlive-* packages out.",
+  "timeout": 14400,
+  "inputs": {
+    "mode": {
+      "type": "string",
+      "default": "install"
+    },
+    "year": {
+      "type": "string",
+      "default": "2026"
+    },
+    "scheme": {
+      "type": "string",
+      "default": "scheme-full"
+    },
+    "mirror": {
+      "type": "string",
+      "default": "https://mirror.ctan.org/systems/texlive/tlnet"
+    },
+    "paper": {
+      "type": "string",
+      "default": "letter"
+    },
+    "docfiles": {
+      "type": "boolean",
+      "default": false
+    },
+    "srcfiles": {
+      "type": "boolean",
+      "default": false
+    },
+    "autobackup": {
+      "type": "boolean",
+      "default": false
+    },
+    "fontconfig": {
+      "type": "boolean",
+      "default": true
+    },
+    "disable_apt_texlive": {
+      "type": "boolean",
+      "default": true
+    },
+    "purge_apt_texlive": {
+      "type": "boolean",
+      "default": true
+    },
+    "required_tl_packages": {
+      "type": "string[]",
+      "default": ["texcount", "pythontex", "latexmk", "biber"]
+    },
+    "min_free_kb": {
+      "type": "string",
+      "default": "9000000"
+    },
+    "luaotfload_db": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "run": {
+    "shell": "bash",
+    "script": "install.sh"
+  },
+  "verify": {
+    "shell": "bash",
+    "script": "verify.sh"
+  },
+  "contributes": {
+    "metadata": {
+      "family": "texlive",
+      "tags": ["latex", "texlive", "publishing", "pdf"]
+    },
+    "content": {
+      "version": 1,
+      "title": "TeX Live",
+      "subtitle": "A complete upstream TeX Live installation with PythonTeX and knitr support.",
+      "highlights": [
+        "Full upstream TeX Live",
+        "latexmk, biber, PythonTeX",
+        "System-wide fontconfig integration"
+      ],
+      "actions": [
+        {
+          "kind": "external-link",
+          "label": "TeX Live documentation",
+          "url": "https://www.tug.org/texlive/doc.html"
+        }
+      ]
+    }
+  }
+}

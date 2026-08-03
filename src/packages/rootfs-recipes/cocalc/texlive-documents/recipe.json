@@ -1,0 +1,18 @@
+{
+  "id": "cocalc/texlive-documents",
+  "version": 1,
+  "description": "Verification-only step: run texcount and compile representative PythonTeX, knitr, R Markdown, and Quarto documents using the same commands CoCalc's editors issue.",
+  "timeout": 3600,
+  "inputs": {
+    "wordcount": { "type": "boolean", "default": true },
+    "pythontex": { "type": "boolean", "default": true },
+    "knitr": { "type": "boolean", "default": true },
+    "rmarkdown": { "type": "boolean", "default": true },
+    "quarto": { "type": "boolean", "default": true }
+  },
+  "run": {
+    "shell": "bash",
+    "command": "echo 'cocalc/texlive-documents: verification-only step'"
+  },
+  "verify": { "shell": "bash", "script": "verify.sh" }
+}

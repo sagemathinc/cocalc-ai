@@ -1,0 +1,19 @@
+{
+  "id": "cocalc/texlive-r-python",
+  "version": 1,
+  "description": "Install the R and Python layer used by LaTeX-adjacent document formats: knitr, R Markdown, reticulate, and the scientific Python packages PythonTeX relies on.",
+  "timeout": 3600,
+  "inputs": {
+    "cran": { "type": "string", "default": "https://cloud.r-project.org" },
+    "reticulate_python": { "type": "string", "default": "/usr/bin/python3" },
+    "install_reticulate": { "type": "boolean", "default": true },
+    "clean": { "type": "boolean", "default": true }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" },
+  "contributes": {
+    "metadata": {
+      "tags": ["r", "knitr", "rmarkdown", "python", "latex"]
+    }
+  }
+}

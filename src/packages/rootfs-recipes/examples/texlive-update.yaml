@@ -1,0 +1,47 @@
+version: 1
+name: texlive-update
+
+# Monthly refresh of an existing TeX Live image. Build this into the project
+# that already runs the previous release: the installed tree is the base, so no
+# `base:` is needed here. tlmgr only updates within a yearly release; moving to
+# a new TeX Live year is a fresh build of texlive.yaml instead.
+#
+# The R/Python and Quarto layers are deliberately not re-run: this spec updates
+# TeX Live only. The document tests still run, so a TeX Live update that breaks
+# knitr, R Markdown, or Quarto rendering fails the build before publish.
+
+steps:
+  - uses: cocalc/texlive
+    with:
+      mode: update
+      year: "2026"
+    timeout: 7200
+
+  - uses: cocalc/texlive-documents
+    timeout: 3600
+
+verify:
+  - command -v tex
+  - command -v latexmk
+  # Upstream TeX Live installs `pythontex`; `pythontex3` is a Debian packaging
+  # artifact. CoCalc probes for both, so accept either here too.
+  - command -v pythontex || command -v pythontex3
+  - tlmgr --version
+
+publish:
+  label: TeX Live
+  # Catalog slugs are globally unique, so this is versioned per release and must
+  # be bumped together with `version` below.
+  slug: texlive-2026-08
+  description: Full upstream TeX Live with latexmk, PythonTeX, knitr, R Markdown, and Quarto, plus system-wide fontconfig integration.
+  family: texlive
+  version: "2026.08"
+  channel: stable
+  visibility: private
+  tags:
+    - latex
+    - texlive
+    - publishing
+    - pdf
+    - knitr
+    - quarto
