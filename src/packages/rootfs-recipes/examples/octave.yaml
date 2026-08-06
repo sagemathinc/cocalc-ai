@@ -1,0 +1,135 @@
+version: 1
+name: octave
+
+# Built on the default base image rather than on a published CoCalc image: the
+# point of this spec is a small, self-contained numerical environment, and
+# inheriting a general-purpose image would bring a second Python stack and a
+# LaTeX installation that nothing here uses.
+#
+# The Python layer is therefore added explicitly below, and it is the one the
+# Octave kernel is installed into as well, so the image has a single Jupyter
+# environment rather than one per language.
+
+builder:
+  run_quota:
+    # Octave's build tree is the largest thing here by far; the installed tree
+    # is a fraction of it once the sources and debug symbols are gone.
+    disk_quota: 30000
+
+# Every step runs a script from the octave-installer repository, pinned by
+# `repo_ref`. Pin a tag rather than a branch for anything published, so that
+# rebuilding reproduces the same image.
+steps:
+  - name: Build and install GNU Octave
+    uses: cocalc/octave
+    with:
+      script: install.sh
+      version: "11.3.0"
+      # sha256 of octave-11.3.0.tar.xz on ftp.gnu.org. The script warns rather
+      # than fails when this is empty, so an unpinned spec is possible but
+      # visible in the log.
+      sha256: 2b80f3149b2de6d1f4f2fcb4fe6515a17eb363b52111bf57b90f37bf6f5e12e1
+      graphics_toolkit: gnuplot
+    timeout: 14400
+
+  - name: Verify the Octave tree
+    uses: cocalc/octave
+    with:
+      script: verify.sh
+      # Must match the version above: verify.sh compares what octave-config
+      # reports against this, which is how a build that silently fell back to a
+      # distribution Octave gets caught.
+      version: "11.3.0"
+      graphics_toolkit: gnuplot
+    timeout: 1800
+
+  # Reused rather than reimplemented. Its position is load-bearing twice over:
+  # it has to come before the Octave packages, because `symbolic` is a bridge
+  # to SymPy and looks for a Python interpreter while installing, and before
+  # the Octave kernel, which is installed into this environment rather than a
+  # second one. Note also that this module creates the venv with --clear, so
+  # anything put in the prefix beforehand would be discarded.
+  - name: Install the Python and Jupyter layer
+    uses: cocalc/jupyter-python
+    with:
+      prefix: /opt/cocalc-jupyter
+      install_bash_kernel: true
+      packages:
+        - ipykernel
+        - ipywidgets
+        - jupyterlab
+        - jupyter-console
+        - matplotlib
+        - notebook
+        - numpy
+        - pandas
+        # Not needed by Octave, and not optional: cocalc/jupyter-python's own
+        # verify.sh imports a hardcoded list that ignores this input, and
+        # sklearn is on it. Dropping this to slim the image fails the build.
+        - scikit-learn
+        - scipy
+        # Not decoration: Octave's symbolic package is a bridge to SymPy and
+        # shells out to the Python on PATH, which is this one.
+        - sympy
+        - uv
+    timeout: 3600
+
+  - name: Install Octave packages
+    uses: cocalc/octave
+    with:
+      script: packages.sh
+    timeout: 7200
+
+  - name: Install the Octave Jupyter kernel
+    uses: cocalc/octave
+    with:
+      script: jupyter.sh
+      jupyter_prefix: /opt/cocalc-jupyter
+    timeout: 1800
+
+  # Nothing here is Octave-specific; the module exists so other images can take
+  # the same tools and the same defaults without copying a step.
+  - uses: cocalc/system-utils
+
+  # Runs last, so the packages and both kernels are all in place.
+  - name: Run the test suite
+    uses: cocalc/octave
+    with:
+      script: tests/run.sh
+      jupyter_prefix: /opt/cocalc-jupyter
+    timeout: 3600
+
+verify:
+  - command -v octave
+  - command -v octave-cli
+  - command -v mkoctfile
+  - octave-config -p VERSION
+  - octave-cli --norc --quiet --eval 'assert (1 + 1 == 2)'
+  - command -v jupyter
+  - command -v jupyter-lab
+  - python3 -c 'import ipykernel, jupyterlab, matplotlib, numpy, scipy, sympy'
+  - jupyter kernelspec list | grep -q octave
+  - jupyter kernelspec list | grep -q python3
+  - command -v htop
+  - grep -q '^hide_userland_threads=1$' /etc/htoprc
+
+publish:
+  label: Octave
+  # Catalog slugs are globally unique, so this is versioned per Octave release
+  # and must be bumped together with `version` below. Keeping the old slug
+  # published means projects pinned to it are not moved underneath their users;
+  # set supersedes_image_id on the new entry to offer the upgrade instead.
+  slug: octave-11-3
+  description: GNU Octave built from source with the statistics, control, signal, image, optim and symbolic packages, plus Jupyter kernels for Octave and Python.
+  family: octave
+  version: "11.3"
+  channel: stable
+  default_jupyter_kernel: octave
+  # Published privately first. Promote to public only after smoke-testing the
+  # image in a separate project.
+  visibility: private
+  tags:
+    - octave
+    - math
+    - numerical
+    - jupyter

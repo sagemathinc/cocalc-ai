@@ -1,0 +1,82 @@
+{
+  "id": "cocalc/octave",
+  "version": 1,
+  "description": "Run a script from the octave-installer repository: build GNU Octave from source, install Octave packages, register a Jupyter kernel, verify the tree, or run the test suite.",
+  "timeout": 14400,
+  "inputs": {
+    "repo_url": {
+      "type": "string",
+      "default": "https://github.com/sagemathinc/octave-installer.git"
+    },
+    "repo_ref": { "type": "string", "default": "main" },
+    "script": { "type": "string", "default": "install.sh" },
+
+    "version": { "type": "string", "default": "11.3.0" },
+    "prefix": { "type": "string", "default": "/usr/local" },
+    "mirror": { "type": "string", "default": "https://ftp.gnu.org/gnu/octave" },
+    "sha256": { "type": "string", "default": "" },
+    "jobs": { "type": "string", "default": "auto" },
+    "build_dir": { "type": "string", "default": "/var/tmp" },
+    "optimize": { "type": "string", "default": "-O2" },
+    "enable_gui": { "type": "boolean", "default": false },
+    "enable_java": { "type": "boolean", "default": false },
+    "strip_binaries": { "type": "boolean", "default": true },
+    "remove_manuals": { "type": "boolean", "default": true },
+    "keep_man_pages": { "type": "boolean", "default": true },
+    "graphics_toolkit": { "type": "string", "default": "gnuplot" },
+    "configure_extra": { "type": "string", "default": "" },
+    "purge_build_deps": { "type": "boolean", "default": false },
+    "min_free_kb": { "type": "string", "default": "12000000" },
+
+    "octave_packages": {
+      "type": "string[]",
+      "default": [
+        "struct",
+        "io",
+        "statistics",
+        "control",
+        "signal",
+        "image",
+        "optim",
+        "symbolic"
+      ]
+    },
+    "autoload": { "type": "boolean", "default": false },
+    "install_attempts": { "type": "string", "default": "3" },
+
+    "jupyter_prefix": { "type": "string", "default": "/opt/cocalc-jupyter" },
+    "kernel_name": { "type": "string", "default": "octave" },
+    "kernel_display_name": { "type": "string", "default": "Octave" },
+    "octave_kernel_version": { "type": "string", "default": "" },
+    "python_kernel_name": { "type": "string", "default": "python3" },
+    "owner_uid": { "type": "string", "default": "2001" },
+    "owner_gid": { "type": "string", "default": "2001" },
+
+    "test_packages": { "type": "boolean", "default": true },
+    "test_kernels": { "type": "boolean", "default": true },
+    "test_kernel_plots": { "type": "boolean", "default": true }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "contributes": {
+    "metadata": {
+      "family": "octave",
+      "tags": ["octave", "math", "numerical", "jupyter"]
+    },
+    "theme": {
+      "icon": "octave",
+      "color": "#ffffff",
+      "accent_color": "#0790c0"
+    },
+    "content": {
+      "version": 1,
+      "title": "GNU Octave",
+      "subtitle": "A current GNU Octave built from source, with the common Octave packages and Jupyter kernels for Octave and Python.",
+      "highlights": [
+        "GNU Octave, built from source",
+        "statistics, control, signal, image, optim, symbolic",
+        "Octave and Python Jupyter kernels",
+        "NumPy, SciPy, and Matplotlib"
+      ]
+    }
+  }
+}

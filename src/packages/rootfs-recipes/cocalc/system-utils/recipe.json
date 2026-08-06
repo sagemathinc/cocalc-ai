@@ -1,0 +1,11 @@
+{
+  "id": "cocalc/system-utils",
+  "version": 1,
+  "description": "Install interactive system utilities and ship sensible site-wide defaults for them.",
+  "inputs": {
+    "packages": { "type": "string[]", "default": ["htop"] },
+    "htop_hide_threads": { "type": "boolean", "default": true }
+  },
+  "run": { "shell": "bash", "script": "install.sh" },
+  "verify": { "shell": "bash", "script": "verify.sh" }
+}
