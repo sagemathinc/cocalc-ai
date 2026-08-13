@@ -11,6 +11,8 @@ const mockParseReq = jest.fn();
 const mockIsPublicAppSubdomainRequest = jest.fn();
 const mockIssueProjectHostAuthToken = jest.fn();
 const mockGetProjectHostAuthTokenPrivateKey = jest.fn();
+const mockHandleFileDownload = jest.fn();
+const mockIsWorkspaceProjectRuntime = jest.fn();
 
 jest.mock("http-proxy-3", () => ({
   __esModule: true,
@@ -45,6 +47,18 @@ jest.mock("@cocalc/conat/auth/project-host-token", () => ({
 jest.mock("@cocalc/backend/data", () => ({
   getProjectHostAuthTokenPrivateKey: (...args) =>
     mockGetProjectHostAuthTokenPrivateKey(...args),
+}));
+
+jest.mock("@cocalc/conat/files/file-download", () => ({
+  handleFileDownload: (...args) => mockHandleFileDownload(...args),
+}));
+
+jest.mock("@cocalc/backend/conat", () => ({
+  conat: () => ({ mock: "hub-conat-client" }),
+}));
+
+jest.mock("@cocalc/server/launchpad/project-runtime", () => ({
+  isWorkspaceProjectRuntime: () => mockIsWorkspaceProjectRuntime(),
 }));
 
 describe("hub project-host proxy auth injection", () => {
@@ -89,6 +103,8 @@ describe("hub project-host proxy auth injection", () => {
     mockGetProjectHostAuthTokenPrivateKey
       .mockReset()
       .mockReturnValue("private");
+    mockHandleFileDownload.mockReset().mockResolvedValue(undefined);
+    mockIsWorkspaceProjectRuntime.mockReset().mockReturnValue(false);
   });
 
   it("injects account-scoped project-host auth for proxied private requests", async () => {
@@ -116,6 +132,58 @@ describe("hub project-host proxy auth injection", () => {
       target: "http://project-host.internal:9911",
       prependPath: false,
     });
+  });
+
+  it("serves files locally only for an existing workspace project", async () => {
+    const hostlessRow = {
+      // Legacy workspace projects may retain an obsolete assignment.
+      host_id,
+      internal_url: null,
+      public_url: null,
+      metadata: null,
+    };
+    mockGetPool.mockReturnValue({
+      query: jest.fn().mockResolvedValue({ rows: [hostlessRow] }),
+    });
+    mockParseReq.mockReturnValue({ type: "files", project_id });
+    mockIsWorkspaceProjectRuntime.mockReturnValue(true);
+
+    const { createProjectHostProxyHandlers } = await import("./project-host");
+    const handlers = await createProjectHostProxyHandlers();
+    const req: any = { url: `/${project_id}/files/paper.pdf`, headers: {} };
+    const res: any = {};
+
+    await handlers.handleRequest(req, res);
+
+    expect(mockHandleFileDownload).toHaveBeenCalledWith(
+      expect.objectContaining({ req, res }),
+    );
+    expect(mockProxyWeb).not.toHaveBeenCalled();
+  });
+
+  it("does not use the local file service for unresolved hosted projects", async () => {
+    const hostlessRow = {
+      host_id: null,
+      internal_url: null,
+      public_url: null,
+      metadata: null,
+    };
+    mockGetPool.mockReturnValue({
+      query: jest.fn().mockResolvedValue({ rows: [hostlessRow] }),
+    });
+    mockParseReq.mockReturnValue({ type: "files", project_id });
+    mockIsWorkspaceProjectRuntime.mockReturnValue(false);
+
+    const { createProjectHostProxyHandlers } = await import("./project-host");
+    const handlers = await createProjectHostProxyHandlers();
+    const req: any = { url: `/${project_id}/files/paper.pdf`, headers: {} };
+    const res: any = { headersSent: false, end: jest.fn() };
+
+    await handlers.handleRequest(req, res);
+
+    expect(mockHandleFileDownload).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(404);
+    expect(res.end).toHaveBeenCalledWith("Host not available");
   });
 
   it("proxies project-host browser session bootstrap through the routed project path", async () => {

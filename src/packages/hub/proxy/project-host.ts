@@ -4,9 +4,12 @@ import { parseReq } from "./parse";
 import getPool from "@cocalc/database/pool";
 import LRU from "lru-cache";
 import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
+import { conat } from "@cocalc/backend/conat";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
+import { handleFileDownload } from "@cocalc/conat/files/file-download";
+import { isWorkspaceProjectRuntime } from "@cocalc/server/launchpad/project-runtime";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const logger = getLogger("proxy:project-host");
@@ -319,14 +322,43 @@ export async function createProjectHostProxyHandlers() {
       } else {
         setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
       }
-      const target =
-        parsed.type === "conat" || parsed.type === "project-host-session"
-          ? await targetForConatRoute(parsed.project_id)
-          : (
-              host?.internal_url ||
-              host?.public_url ||
-              (await targetForProject(parsed.project_id))
-            ).replace(/\/+$/, "");
+      let target: string;
+      try {
+        target =
+          parsed.type === "conat" || parsed.type === "project-host-session"
+            ? await targetForConatRoute(parsed.project_id)
+            : (
+                host?.internal_url ||
+                host?.public_url ||
+                (await targetForProject(parsed.project_id))
+              ).replace(/\/+$/, "");
+      } catch (err) {
+        if (
+          parsed.type === "files" &&
+          isWorkspaceProjectRuntime() &&
+          host != null
+        ) {
+          // Hostless/workspace runtime: the project's host row has no URL
+          // to proxy to — projects run as local processes managed by this
+          // hub, and their conat file read service is registered on this
+          // hub's conat server. Serve the download in-process via that
+          // service (same mechanism the lite server uses). Read access was
+          // already verified by handle-request before dispatching here.
+          // This fallback is deliberately limited to the deployment's local
+          // workspace runtime and an existing project row. Legacy projects
+          // may still carry an obsolete host_id, so do not require it to be
+          // null; deployment runtime ownership is authoritative here.
+          // A generic routing failure must never turn the hub into a
+          // cross-bay project-data proxy.
+          logger.debug(
+            "files: no proxy target; serving via project conat read service",
+            { project_id: parsed.project_id },
+          );
+          await handleFileDownload({ req, res, client: conat() });
+          return;
+        }
+        throw err;
+      }
       proxy.web(req, res, { target, prependPath: false });
     } catch (err) {
       logger.debug("proxy request error", { err: `${err}`, url: req?.url });
