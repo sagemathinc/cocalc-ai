@@ -11,12 +11,13 @@ describe("LaTeX persisted source change builds", () => {
     actions.redux = {
       getStore: () =>
         Map({
+          is_ready: true,
           editor_settings: Map({
             build_on_save: true,
           }),
         }),
       getEditorActions: jest.fn(() => ({
-        build: parentBuild,
+        auto_build: parentBuild,
       })),
     };
     actions._syncstring = {
@@ -28,7 +29,7 @@ describe("LaTeX persisted source change builds", () => {
     actions.project_id = "project-1";
     actions._last_syncstring_hash = undefined;
     actions.is_likely_master = () => true;
-    actions.build = build;
+    actions.auto_build = build;
     return { actions, build, parentBuild };
   }
 
@@ -37,7 +38,7 @@ describe("LaTeX persisted source change builds", () => {
     await (actions as any).maybeBuildAfterPersistedSourceChange();
     await (actions as any).maybeBuildAfterPersistedSourceChange();
     expect(build).toHaveBeenCalledTimes(1);
-    expect(build).toHaveBeenCalledWith("", false);
+    expect(build).toHaveBeenCalledWith("");
   });
 
   it("builds the parent master file for included documents", async () => {
@@ -45,7 +46,18 @@ describe("LaTeX persisted source change builds", () => {
     actions.parent_file = "master.tex";
     await (actions as any).maybeBuildAfterPersistedSourceChange();
     expect(parentBuild).toHaveBeenCalledTimes(1);
-    expect(parentBuild).toHaveBeenCalledWith("", false);
+    expect(parentBuild).toHaveBeenCalledWith("");
+    expect(build).not.toHaveBeenCalled();
+  });
+
+  it("skips build-on-save while account settings are not loaded", async () => {
+    const { actions, build } = createActions();
+    actions.redux.getStore = () =>
+      Map({
+        // is_ready missing — settings may not reflect the user's preference
+        editor_settings: Map({ build_on_save: true }),
+      });
+    await (actions as any).maybeBuildAfterPersistedSourceChange();
     expect(build).not.toHaveBeenCalled();
   });
 });
@@ -495,6 +507,18 @@ describe("LaTeX initial build", () => {
     actions.force_build = forceBuild;
     actions.path = "paper.tex";
     actions.knitr = false;
+    actions.redux = {
+      getStore: () => ({
+        get: (key: string) => (key === "is_ready" ? true : undefined),
+        getIn: (keys: string[]) =>
+          keys[0] === "editor_settings" && keys[1] === "build_on_save"
+            ? true
+            : undefined,
+        waitUntilReady: async () => true,
+      }),
+    };
+    // No PDF output yet — auto-build on open should proceed.
+    actions.fs = () => ({ exists: async () => false });
 
     const promise = (actions as any).init_config();
     await Promise.resolve();
@@ -1172,5 +1196,143 @@ describe("LaTeX marker/tail pairing", () => {
     expect(deadTail.bookmark.clear).toHaveBeenCalled();
     expect(deadTail.root.unmount).toHaveBeenCalled();
     expect(liveTail.bookmark.clear).not.toHaveBeenCalled();
+  });
+});
+
+describe("LaTeX build ownership", () => {
+  function createBuildActions() {
+    const actions: any = Object.create(Actions.prototype);
+    actions.project_id = "project-1";
+    actions.path = "paper.tex";
+    actions._state = "open";
+    actions.is_building = false;
+    actions._pendingBuildRequest = false;
+    actions._buildWasStopped = false;
+    actions.store = {
+      get: jest.fn((key: string) => {
+        if (key === "error") return "";
+        return undefined;
+      }),
+    };
+    actions.setState = jest.fn();
+    actions.set_error = jest.fn();
+    actions.set_status = jest.fn();
+    actions.save_all = jest.fn(async () => {});
+    actions.last_save_time = jest.fn(() => 1);
+    actions.buildCoordinator = {
+      setLocalBuildId: jest.fn(),
+      publishBuildStart: jest.fn(),
+      publishBuildFinished: jest.fn(),
+      requestStop: jest.fn(),
+      reconcileRunningBuild: jest.fn(),
+    };
+    return actions;
+  }
+
+  it("a build stopped during save cannot publish over its replacement", async () => {
+    const actions = createBuildActions();
+    let resolveSaveA!: () => void;
+    const saveA = new Promise<void>((resolve) => (resolveSaveA = resolve));
+    actions.save_all = jest
+      .fn()
+      .mockImplementationOnce(() => saveA)
+      .mockResolvedValue(undefined);
+    let resolveB!: () => void;
+    const runB = new Promise<void>((resolve) => (resolveB = resolve));
+    actions.run_build = jest.fn(() => runB);
+
+    const buildA = actions.buildInternal(undefined, false, false);
+    await Promise.resolve();
+    await actions.stop_build();
+    const buildB = actions.buildInternal(undefined, false, false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(actions.buildCoordinator.publishBuildStart).toHaveBeenCalledTimes(1);
+
+    resolveSaveA();
+    await buildA;
+    expect(actions.buildCoordinator.publishBuildStart).toHaveBeenCalledTimes(1);
+    expect(actions.is_building).toBe(true);
+
+    resolveB();
+    await buildB;
+  });
+
+  it("a stale rejected build cannot stop its replacement", async () => {
+    const actions = createBuildActions();
+    let rejectA!: (err: Error) => void;
+    let resolveB!: () => void;
+    const gateA = new Promise<void>((_resolve, reject) => (rejectA = reject));
+    const gateB = new Promise<void>((resolve) => (resolveB = resolve));
+    actions.run_build = jest
+      .fn()
+      .mockImplementationOnce(() => gateA)
+      .mockImplementationOnce(() => gateB);
+    const stopSpy = jest.spyOn(actions, "stop_build");
+
+    const buildA = actions.buildInternal(undefined, false, false);
+    await Promise.resolve();
+    await Promise.resolve();
+    await actions.stop_build();
+
+    const buildB = actions.buildInternal(undefined, false, false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(actions.is_building).toBe(true);
+
+    rejectA(new Error("late failure from A"));
+    await buildA;
+
+    // Only the explicit stop of A occurred. A's stale catch did not stop B.
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(actions.is_building).toBe(true);
+    expect(actions.set_error).not.toHaveBeenCalledWith(
+      "Error: late failure from A",
+    );
+
+    resolveB();
+    await buildB;
+    expect(actions.is_building).toBe(false);
+  });
+
+  it("project restart resets coordination without killing stale jobs", async () => {
+    const actions = createBuildActions();
+    actions.is_building = true;
+    actions._buildToken = "dead-build";
+    actions.store.get = jest.fn((key: string) =>
+      key === "build_logs"
+        ? Map({
+            latex: Map({ type: "async", status: "running", pid: 1234 }),
+          })
+        : undefined,
+    );
+    actions.buildCoordinator.resetRuntimeState = jest.fn();
+    actions.kill = jest.fn();
+    actions._init_pdf_directory_watcher = jest.fn(async () => {});
+    actions.update_pdf = jest.fn();
+
+    await actions._handle_project_started();
+
+    expect(actions.buildCoordinator.resetRuntimeState).toHaveBeenCalledTimes(1);
+    expect(actions.kill).not.toHaveBeenCalled();
+    expect(actions.is_building).toBe(false);
+    expect(actions.setState).toHaveBeenCalledWith({ building: false });
+  });
+
+  it("does not reset a fresh build twice after observing the stopped edge", async () => {
+    const actions = createBuildActions();
+    actions.is_building = true;
+    actions._buildToken = "fresh-build";
+    actions._projectStopObserved = true;
+    actions.buildCoordinator.resetRuntimeState = jest.fn();
+    actions._init_pdf_directory_watcher = jest.fn(async () => {});
+    actions.update_pdf = jest.fn();
+
+    await actions._handle_project_started();
+
+    expect(actions.buildCoordinator.resetRuntimeState).not.toHaveBeenCalled();
+    expect(actions.is_building).toBe(true);
+    expect(actions._buildToken).toBe("fresh-build");
+    expect(actions._projectStopObserved).toBe(false);
   });
 });

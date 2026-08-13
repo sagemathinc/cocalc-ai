@@ -1,32 +1,29 @@
 /*
- * Backend exec-stream functionality for streaming code execution.
- * Core streaming logic that can be used by different services.
+ *  This file is part of CoCalc: Copyright © 2020–2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { unreachable } from "@cocalc/util/misc";
+/*
+ * Backend exec-stream functionality for streaming code execution.
+ * Uses the `updates` EventEmitter as a single streaming source,
+ * so ALL callers (first and late joiners) get live streaming uniformly.
+ */
+
 import {
   ExecuteCodeOutput,
   ExecuteCodeOutputAsync,
-  ExecuteCodeStats,
-  ExecuteCodeStreamEvent,
 } from "@cocalc/util/types/execute-code";
-import { asyncCache, executeCode } from "./execute-code";
+import { asyncCache, eventKey, executeCode, updates } from "./execute-code";
 import getLogger from "./logger";
 import { abspath } from "./misc_node";
 
 export type StreamEvent = {
-  type?: "job" | ExecuteCodeStreamEvent["type"];
-  data?: ExecuteCodeStreamEvent["data"];
+  type?: "job" | "stdout" | "stderr" | "stats" | "done" | "error";
+  data?: any;
   error?: string;
 };
 
 const logger = getLogger("backend:exec-stream");
-
-const MONITOR_STATS_LENGTH_MAX = 100; // Max stats entries
-
-function truncStats(stats: ExecuteCodeStats): ExecuteCodeStats {
-  return stats.slice(stats.length - MONITOR_STATS_LENGTH_MAX);
-}
 
 export interface ExecuteStreamOptions {
   command?: string;
@@ -36,106 +33,37 @@ export interface ExecuteStreamOptions {
   env?: { [key: string]: string };
   timeout?: number;
   max_output?: number;
+  err_on_exit?: boolean;
   verbose?: boolean;
   project_id?: string;
   debug?: string;
+  // aggregate value (e.g. save timestamp/hash): calls with the same command
+  // and aggregate are deduped to one backend job — this is how late joiners
+  // attach to an already-running build and stream its output.
+  aggregate?: string | number;
   stream: (event: StreamEvent | null) => void;
-  waitForCompletion?: boolean;
 }
 
 export async function executeStream(
   options: ExecuteStreamOptions,
 ): Promise<ExecuteCodeOutput | undefined> {
-  const { stream, debug, project_id, waitForCompletion, ...opts } = options;
+  const { stream, debug, project_id, ...opts } = options;
 
-  // Log debug message for debugging purposes
   if (debug) {
     logger.debug(`executeStream: ${debug}`);
   }
 
-  let job: ExecuteCodeOutput | undefined;
-
   try {
     let done = false;
-    let stats: ExecuteCodeStats = [];
 
-    // Create streaming callback, passed into execute-code::executeCode call
-    const streamCB = (event: ExecuteCodeStreamEvent) => {
-      if (done) {
-        logger.debug(
-          `executeStream: ignoring event type=${event.type} because stream is done`,
-        );
-        return;
-      }
-
-      logger.debug(`executeStream: received event type=${event.type}`);
-
-      switch (event.type) {
-        case "stdout":
-          stream({
-            type: "stdout",
-            data: event.data,
-          });
-          break;
-
-        case "stderr":
-          stream({
-            type: "stderr",
-            data: event.data,
-          });
-          break;
-
-        case "stats":
-          // Stats are accumulated in the stats array for the final result
-          if (
-            event.data &&
-            typeof event.data === "object" &&
-            "timestamp" in event.data
-          ) {
-            stats.push(event.data as ExecuteCodeStats[0]);
-            // Keep stats array bounded
-            if (stats.length > MONITOR_STATS_LENGTH_MAX) {
-              stats.splice(0, stats.length - MONITOR_STATS_LENGTH_MAX);
-            }
-            stream({
-              type: "stats",
-              data: event.data,
-            });
-          }
-          break;
-
-        case "done":
-          logger.debug(`executeStream: processing done event`);
-          const result = event.data as ExecuteCodeOutputAsync;
-          // Include accumulated stats in final result
-          result.stats = truncStats(stats);
-          stream({
-            type: "done",
-            data: result,
-          });
-          done = true;
-          stream(null); // End the stream
-          break;
-
-        case "error":
-          logger.debug(`executeStream: processing error event`);
-          stream({ error: event.data as string });
-          done = true;
-          stream(null);
-          break;
-
-        default:
-          unreachable(event.type);
-      }
-    };
-
-    // Start an async execution job with streaming callback
-    job = await executeCode({
+    // Start async execution WITHOUT streamCB — we use updates EventEmitter instead.
+    // This ensures ALL callers (first and late joiners) get live streaming uniformly
+    // via the same event source, eliminating duplicate event problems.
+    const job = await executeCode({
       command: opts.command || "",
       path: abspath(opts.path ?? ""),
       ...opts,
-      async_call: true, // Force async mode for streaming
-      streamCB, // Add the streaming callback
+      async_call: true,
     });
 
     if (job?.type !== "async") {
@@ -144,9 +72,69 @@ export async function executeStream(
       return undefined;
     }
 
-    // Send initial job info with full async structure
-    // Get the current job status from cache in case it completed immediately
-    const currentJob = asyncCache.get(job.job_id);
+    const jobId = job.job_id;
+
+    // Snapshot the job's accumulated output NOW (synchronously, same tick as
+    // the subscriptions below, so no chunk can slip between snapshot and
+    // subscribe). The snapshot lengths let us discard the overlap between
+    // the snapshot and live chunks: the asyncCache is updated immediately on
+    // every data event, while `updates` emits from a ≤100ms batch buffer, so
+    // a late joiner's snapshot may already contain bytes that are emitted
+    // again on the next flush. Each emit carries the chunk's absolute
+    // offset (`at`) for exactly this reconciliation.
+    const snapshot = asyncCache.get(jobId);
+    const snapshotStdoutLen = (snapshot?.stdout ?? "").length;
+    const snapshotStderrLen = (snapshot?.stderr ?? "").length;
+    const dropSnapshotOverlap = (
+      snapLen: number,
+      data: string,
+      at?: number,
+    ): string => {
+      if (typeof at !== "number") return data; // no offset info — pass through
+      const overlap = snapLen - at;
+      if (overlap <= 0) return data;
+      if (overlap >= data.length) return "";
+      return data.slice(overlap);
+    };
+
+    // Subscribe to live streaming events BEFORE sending initial job info
+    // (to avoid missing chunks between job info send and listener registration)
+    const handleStdout = (data: string, at?: number) => {
+      if (done) return;
+      const fresh = dropSnapshotOverlap(snapshotStdoutLen, data, at);
+      if (fresh) stream({ type: "stdout", data: fresh });
+    };
+    const handleStderr = (data: string, at?: number) => {
+      if (done) return;
+      const fresh = dropSnapshotOverlap(snapshotStderrLen, data, at);
+      if (fresh) stream({ type: "stderr", data: fresh });
+    };
+    const handleStats = (data: any) => {
+      if (!done) stream({ type: "stats", data });
+    };
+    const cleanup = () => {
+      updates.off(eventKey("stdout", jobId), handleStdout);
+      updates.off(eventKey("stderr", jobId), handleStderr);
+      updates.off(eventKey("stats", jobId), handleStats);
+      updates.off(eventKey("finished", jobId), handleFinished);
+    };
+    const handleFinished = (result: ExecuteCodeOutputAsync) => {
+      cleanup();
+      if (done) return;
+      stream({ type: "done", data: result });
+      done = true;
+      stream(null);
+    };
+
+    updates.on(eventKey("stdout", jobId), handleStdout);
+    updates.on(eventKey("stderr", jobId), handleStderr);
+    updates.on(eventKey("stats", jobId), handleStats);
+    updates.once(eventKey("finished", jobId), handleFinished);
+
+    // Send initial job info — the exact snapshot the overlap-dedup above is
+    // calibrated against. Bytes past the snapshot arrive via the updates
+    // listeners; bytes inside it are sliced off incoming chunks.
+    const currentJob = snapshot;
     const initialJobInfo: ExecuteCodeOutputAsync = {
       type: "async",
       job_id: job.job_id,
@@ -155,36 +143,25 @@ export async function executeStream(
       start: job.start,
       stdout: currentJob?.stdout ?? "",
       stderr: currentJob?.stderr ?? "",
-      exit_code: currentJob?.exit_code ?? 0, // Default to 0, will be updated when job completes
+      exit_code: currentJob?.exit_code ?? 0,
       stats: currentJob?.stats ?? [],
     };
 
-    stream({
-      type: "job",
-      data: initialJobInfo,
-    });
+    stream({ type: "job", data: initialJobInfo });
 
     // If job already completed, send done event immediately
-    if (currentJob && currentJob.status !== "running") {
-      logger.debug(
-        `executeStream: job ${job.job_id} already completed, sending done event`,
-      );
-      stream({
-        type: "done",
-        data: currentJob,
-      });
+    if (!done && currentJob && currentJob.status !== "running") {
+      cleanup();
+      stream({ type: "done", data: currentJob });
       done = true;
       stream(null);
       return currentJob;
     }
 
-    // Stats monitoring is now handled by execute-code.ts via streamCB
+    return job;
   } catch (err) {
     stream({ error: `${err}` });
-    stream(null); // End the stream
+    stream(null);
     return undefined;
   }
-
-  // Return the job object so caller can wait for completion if desired
-  return job;
 }

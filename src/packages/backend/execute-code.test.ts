@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2024 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2024–2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -30,6 +30,23 @@ describe("hello world", () => {
       args: ["hello world"],
     });
     expect(stdout).toBe("hello world\n");
+  });
+
+  it("preserves streaming callbacks for blocking execution", async () => {
+    const chunks: string[] = [];
+    const result = await executeCode({
+      command: "sh",
+      args: ["-c", "printf hello; sleep 0.2; printf world"],
+      bash: false,
+      streamCB: (event) => {
+        if (event.type === "stdout" && typeof event.data === "string") {
+          chunks.push(event.data);
+        }
+      },
+    });
+
+    expect(result.stdout).toBe("helloworld");
+    expect(chunks.join("")).toBe("helloworld");
   });
 
   it("executes canonical project paths from the workspace process home", async () => {
@@ -409,6 +426,15 @@ describe("await", () => {
     check(s);
     if (s.type !== "async") return;
     expect(Array.isArray(s.stats)).toBeTruthy();
+    if (!Array.isArray(s.stats)) return;
+    expect(s.stats.length).toBeGreaterThan(0);
+    for (const stat of s.stats) {
+      expect(Number.isFinite(stat.cpu_pct)).toBeTruthy();
+      expect(Number.isFinite(stat.cpu_secs)).toBeTruthy();
+      expect(Number.isFinite(stat.mem_rss)).toBeTruthy();
+      expect(stat.cpu_secs).toBeGreaterThanOrEqual(0);
+      expect(stat.mem_rss).toBeGreaterThanOrEqual(0);
+    }
   });
 
   it("returns immediately if already done", async () => {
@@ -511,6 +537,107 @@ describe("await", () => {
     expect(s.stdout).toEqual("foo\n");
     expect(s.exit_code).toEqual(0);
     expect(s.status).toEqual("completed");
+  });
+});
+
+// Tests for the updates EventEmitter streaming (used by exec-stream for build coordination)
+describe("updates EventEmitter streaming for async jobs", () => {
+  it("emits stdout and stderr events on updates for async jobs", async () => {
+    const { updates, eventKey } = await import("./execute-code");
+
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+    let finishedResult: any = null;
+
+    const job = await executeCode({
+      command: "echo 'hello'; >&2 echo 'world'",
+      bash: true,
+      async_call: true,
+      err_on_exit: false,
+    });
+    expect(job.type).toBe("async");
+    if (job.type !== "async") return;
+
+    const jobId = job.job_id;
+    updates.on(eventKey("stdout", jobId), (data: string) => {
+      stdoutChunks.push(data);
+    });
+    updates.on(eventKey("stderr", jobId), (data: string) => {
+      stderrChunks.push(data);
+    });
+    updates.once(eventKey("finished", jobId), (result) => {
+      finishedResult = result;
+    });
+
+    // Wait for completion
+    while (!finishedResult) await delay(50);
+
+    // Cleanup
+    updates.removeAllListeners(eventKey("stdout", jobId));
+    updates.removeAllListeners(eventKey("stderr", jobId));
+
+    expect(stdoutChunks.join("")).toContain("hello");
+    expect(stderrChunks.join("")).toContain("world");
+    expect(finishedResult.status).toBe("completed");
+  });
+
+  it("emits stdout events even without streamCB", async () => {
+    const { updates, eventKey } = await import("./execute-code");
+
+    const chunks: string[] = [];
+    let done = false;
+
+    // No streamCB provided — should still emit on updates
+    const job = await executeCode({
+      command: "for i in 1 2 3; do echo line$i; sleep 0.05; done",
+      bash: true,
+      async_call: true,
+      err_on_exit: false,
+    });
+    expect(job.type).toBe("async");
+    if (job.type !== "async") return;
+
+    const jobId = job.job_id;
+    updates.on(eventKey("stdout", jobId), (data: string) => {
+      chunks.push(data);
+    });
+    updates.once(eventKey("finished", jobId), () => {
+      done = true;
+    });
+
+    while (!done) await delay(50);
+    updates.removeAllListeners(eventKey("stdout", jobId));
+
+    const all = chunks.join("");
+    expect(all).toContain("line1");
+    expect(all).toContain("line2");
+    expect(all).toContain("line3");
+  });
+
+  it("emits finished event with error status for failing commands", async () => {
+    const { updates, eventKey } = await import("./execute-code");
+
+    let finishedResult: any = null;
+
+    const job = await executeCode({
+      command: "exit 42",
+      bash: true,
+      async_call: true,
+      err_on_exit: true,
+    });
+    expect(job.type).toBe("async");
+    if (job.type !== "async") return;
+
+    const jobId = job.job_id;
+    updates.once(eventKey("finished", jobId), (result) => {
+      finishedResult = result;
+    });
+
+    while (!finishedResult) await delay(50);
+
+    expect(finishedResult.status).toBe("error");
+    // The exit_code may be normalized by the error handling path
+    expect(finishedResult.exit_code).toBeGreaterThan(0);
   });
 });
 

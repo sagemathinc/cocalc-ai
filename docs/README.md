@@ -10,5 +10,7 @@ Last Updated: September 2024.
 - Frame tree menus and command/action context: [frame-tree-menus.md](./frame-tree-menus.md)
 - Browser runtime debugging + API wishlist: [browser-debugging.md](./browser-debugging.md)
 - Explicit Conat routing and authority: [conat-routing.md](./conat-routing.md)
+- Conat DKV vs PubSub primitives: [conat-dkv-pubsub.md](./conat-dkv-pubsub.md)
+- Collaborative build coordination (LaTeX/Rmd/Qmd): [build-coordinator.md](./build-coordinator.md)
 - Site master key production runbook: [security/site-master-key-production-runbook.md](./security/site-master-key-production-runbook.md)
 - Private managed app trust model: [security/private-app-trust-model.md](./security/private-app-trust-model.md)

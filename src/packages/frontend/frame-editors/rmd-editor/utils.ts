@@ -22,32 +22,39 @@ export function derive_rmd_output_filename(path, ext) {
   return join(head, fn);
 }
 
-export async function checkProducedFiles(codeEditorActions) {
+// Checks which output files (pdf, html, nb.html) exist for a markdown-converter
+// source file. Returns a Set of found extensions, or null if the check could
+// not be performed (unknown state — callers should skip auto-build in that case).
+export async function checkProducedFiles(
+  codeEditorActions,
+): Promise<Set<string> | null> {
   const project_actions = codeEditorActions.redux.getProjectActions(
     codeEditorActions.project_id,
   );
   if (project_actions == null) {
-    return;
+    return null;
   }
 
-  let existing = Set();
-  const fs = codeEditorActions.fs();
-  const f = async (ext: string) => {
-    const expectedFilename = derive_rmd_output_filename(
-      codeEditorActions.path,
-      ext,
-    );
-    if (await fs.exists(expectedFilename)) {
-      existing = existing.add(ext);
-    }
-  };
-  const v = ["pdf", "html", "nb.html"].map(f);
-  await Promise.all(v);
-
-  // console.log("setting derived_file_types to", existing.toJS());
-  codeEditorActions.setState({
-    derived_file_types: existing as any,
-  });
+  try {
+    let existing = Set<string>();
+    const fs = codeEditorActions.fs();
+    const f = async (ext: string) => {
+      const expectedFilename = derive_rmd_output_filename(
+        codeEditorActions.path,
+        ext,
+      );
+      if (await fs.exists(expectedFilename)) {
+        existing = existing.add(ext);
+      }
+    };
+    const v = ["pdf", "html", "nb.html"].map(f);
+    await Promise.all(v);
+    return existing;
+  } catch {
+    // Filesystem check failed (project offline, transient error, etc.).
+    // Return null so callers skip auto-build rather than crashing.
+    return null;
+  }
 }
 
 interface RunJobOpts {
@@ -171,8 +178,11 @@ export async function runJob(opts: RunJobOpts): Promise<ExecOutput> {
       resolve(result);
     });
 
-    stream.on("end", (output: ExecOutput) => {
-      if (current_job_info) {
+    stream.on("end", (output?: ExecOutput) => {
+      // "end" is emitted WITHOUT arguments by ProjectClient (the final
+      // result arrives via "done"). Guard against that — dereferencing a
+      // missing output here used to throw inside the EventEmitter.
+      if (current_job_info && output != null) {
         // Final update with complete output
         const final_job_info: ExecuteCodeOutputAsync = {
           ...current_job_info,
@@ -182,7 +192,9 @@ export async function runJob(opts: RunJobOpts): Promise<ExecOutput> {
         };
         set_job_info(final_job_info);
       }
-      // Note: resolve() is now handled by the "done" event handler
+      // Note: resolve() is handled by the "done" event handler; a stream
+      // that ends without "done" is recovered via async_get in
+      // ProjectClient or rejected through the "error" event.
     });
 
     stream.on("error", (err) => {

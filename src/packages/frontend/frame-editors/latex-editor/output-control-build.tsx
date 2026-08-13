@@ -55,6 +55,9 @@ export function BuildControls({
   // Check if global dark mode is enabled
   const isDarkMode = useAccountOtherSetting<boolean>("dark_mode") ?? false;
 
+  // Track building state to disable buttons during builds
+  const is_building: boolean = useRedux(actions.name, "building") ?? false;
+
   // Get PDF dark mode disabled state from Redux store
   const pdfDarkModeDisabledMap = useRedux(
     actions.name,
@@ -88,12 +91,14 @@ export function BuildControls({
       label: "Force Build",
       icon: <Icon name="play-circle" />,
       onClick: handleForceBuild,
+      disabled: is_building,
     },
     {
       key: "clean",
       label: "Clean",
       icon: <Icon name="trash" />,
       onClick: handleClean,
+      disabled: is_building,
     },
     {
       type: "divider",
@@ -141,16 +146,33 @@ export function BuildControls({
   return (
     <>
       <Space.Compact size={size}>
-        <Button
-          type="primary"
-          size={size}
-          onClick={handleBuild}
-          data-testid="latex-build"
-        >
-          <Icon name="play-circle" />
-          {!narrow &&
-            intl.formatMessage(editor.build_control_and_log_title_short)}
-        </Button>
+        {is_building ? (
+          // While a build runs (ours or a collaborator's), the primary
+          // action is Stop — without this the output panel would have no
+          // stop affordance at all (Stop otherwise only exists in the
+          // title-bar menu and the classic build frame).
+          <Button
+            danger
+            size={size}
+            onClick={() => actions.stop_build()}
+            data-testid="latex-stop"
+          >
+            <Icon name="stop" />
+            {!narrow &&
+              intl.formatMessage(COMMANDS.stop_build.label as IntlMessage)}
+          </Button>
+        ) : (
+          <Button
+            type="primary"
+            size={size}
+            onClick={handleBuild}
+            data-testid="latex-build"
+          >
+            <Icon name="play-circle" />
+            {!narrow &&
+              intl.formatMessage(editor.build_control_and_log_title_short)}
+          </Button>
+        )}
         <Dropdown menu={{ items: buildMenuItems }} trigger={["click"]}>
           <Button
             type="primary"

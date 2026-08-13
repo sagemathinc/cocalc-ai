@@ -11,6 +11,7 @@ import { Rendered, useRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import Ansi from "@cocalc/frontend/components/ansi-to-react";
 import HelpMeFix from "@cocalc/frontend/frame-editors/ai/help-me-fix";
+import { COLORS } from "@cocalc/util/theme";
 import { Actions } from "./actions";
 import {
   STYLE_ERR,
@@ -167,7 +168,7 @@ export const BuildLog: React.FC<BuildLogProps> = React.memo(
       return (
         <div style={{ margin: "1rem", fontSize: `${font_size}px` }}>
           Document not built:{" "}
-          <Button bsSize={"small"} onClick={() => actions.run_rmd_converter()}>
+          <Button bsSize={"small"} onClick={() => actions.build()}>
             build now
           </Button>
           .
@@ -220,7 +221,7 @@ export const BuildLog: React.FC<BuildLogProps> = React.memo(
                   margin: "10px",
                   fontWeight: "bold",
                   fontSize: `${font_size}px`,
-                  color: "#666",
+                  color: COLORS.GRAY_M,
                 }}
               >
                 Build completed.{peakResourceUsage}

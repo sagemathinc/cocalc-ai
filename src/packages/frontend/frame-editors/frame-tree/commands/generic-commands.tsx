@@ -712,6 +712,7 @@ addCommands({
 
   build: {
     group: "build",
+    disabled: ({ props }) => !!props.editor_actions?.store?.get("building"),
     label: defineMessage({
       id: "command.generic.build.label",
       defaultMessage: "Build",
@@ -742,6 +743,7 @@ addCommands({
   },
   force_build: {
     group: "build",
+    disabled: ({ props }) => !!props.editor_actions?.store?.get("building"),
     label: defineMessage({
       id: "command.generic.force_build.label",
       defaultMessage: "Force Build",
@@ -754,8 +756,7 @@ addCommands({
   },
   stop_build: {
     group: "build",
-    // TODO does not react to changes
-    // disabled: ({ props }) => props.editor_actions.is_running !== true,
+    disabled: ({ props }) => !props.editor_actions?.store?.get("building"),
     label: defineMessage({
       id: "command.generic.stop_build.label",
       defaultMessage: "Stop",

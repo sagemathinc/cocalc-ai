@@ -250,6 +250,12 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
   ]);
   const rtc_status: "loading" | "live" | "error" | "reconnecting" | undefined =
     useRedux([props.editor_actions.name, "rtc_status"]);
+  // Subscribing to "building" triggers re-renders so the build/stop
+  // button disabled states update reactively via manageCommands.
+  const is_building: boolean = useRedux([
+    props.editor_actions.name,
+    "building",
+  ]);
 
   const manageCommands = useMemo(
     () =>
@@ -273,6 +279,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       read_only,
       editorSettings,
       intl,
+      is_building,
     ],
   );
 

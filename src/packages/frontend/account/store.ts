@@ -19,6 +19,24 @@ export class AccountStore extends Store<AccountState> {
     this.setup_selectors();
   }
 
+  // Wait until the account settings are fully loaded (is_ready).
+  // Returns true once ready, or false if the timeout elapses first.
+  async waitUntilReady(timeoutMs: number = 60000): Promise<boolean> {
+    if (this.get("is_ready")) return true;
+    return await new Promise<boolean>((resolve) => {
+      const onReady = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        // Clean up the event listener so it doesn't accumulate.
+        this.removeListener("is_ready", onReady);
+        resolve(false);
+      }, timeoutMs);
+      this.once("is_ready", onReady);
+    });
+  }
+
   get_user_type(): string {
     return this.get("user_type");
   }

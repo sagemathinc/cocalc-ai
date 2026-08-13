@@ -70,9 +70,12 @@ log.debug("configuration:", {
   MONITOR_STATS_LENGTH_MAX,
 });
 
-type AsyncAwait = "finished";
-const updates = new EventEmitter();
-const eventKey = (type: AsyncAwait, job_id: string): string =>
+type AsyncEvent = "finished" | "stdout" | "stderr" | "stats";
+export const updates = new EventEmitter();
+// Event keys are per-job-id so many concurrent builds each use unique keys.
+// Raise the limit to avoid spurious warnings from Node.js.
+updates.setMaxListeners(100);
+export const eventKey = (type: AsyncEvent, job_id: string): string =>
   `${type}-${job_id}`;
 
 export const asyncCache = new LRU<string, ExecuteCodeOutputAsync>({
@@ -170,7 +173,7 @@ export async function cleanUpTempDir(tempDir: string | undefined) {
     try {
       await rm(tempDir, { force: true, recursive: true });
     } catch (err) {
-      console.log("WARNING: issue cleaning up tempDir", err);
+      log.warn("issue cleaning up tempDir", err);
     }
   }
 }
@@ -282,7 +285,7 @@ async function executeCodeNoAggregate(
       asyncCache.set(job_id, job_config);
 
       const child = doSpawn(
-        { ...opts, origCommand, job_id, job_config },
+        { ...opts, origCommand, job_id, job_config, streamCB: opts.streamCB! },
         async (err, result) => {
           log.debug("async/doSpawn returned", {
             err,
@@ -336,7 +339,11 @@ async function executeCodeNoAggregate(
       return { ...job_config, pid };
     } else {
       // This is the blocking variant
-      return await callback(doSpawn, { ...opts, origCommand });
+      return await callback(doSpawn, {
+        ...opts,
+        origCommand,
+        streamCB: opts.streamCB!,
+      });
     }
   } finally {
     // do not delete the tempDir in async mode!
@@ -346,8 +353,13 @@ async function executeCodeNoAggregate(
   }
 }
 
+// After going through the `aggregate` wrapper, `streamCB` is always
+// set (to a fan-out function), even if no caller provided one.
+// Making it required here prevents dead-code guards like
+// `if (!opts.streamCB) { cb(err) }`.
 function doSpawn(
   opts: ExecuteCodeOptions & {
+    streamCB: NonNullable<ExecuteCodeOptions["streamCB"]>;
     origCommand: string;
     job_id?: string;
     job_config?: ExecuteCodeOutputAsync;
@@ -372,7 +384,7 @@ function doSpawn(
     detached: true, // so we can kill the entire process group if it times out
     cwd: opts.path,
     ...(opts.uid ? { uid: opts.uid } : undefined),
-    ...(opts.gid ? { uid: opts.gid } : undefined),
+    ...(opts.gid ? { gid: opts.gid } : undefined),
     env: {
       ...envForSpawn(),
       ...opts.env,
@@ -449,9 +461,12 @@ function doSpawn(
       obj.stats.push(statEntry);
       truncStats(obj);
       asyncCache.set(job_id, obj);
-      // Stream stats update if callback provided
+      // Stream stats update
       if (opts.streamCB) {
         opts.streamCB({ type: "stats", data: statEntry });
+      }
+      if (opts.job_id) {
+        updates.emit(eventKey("stats", opts.job_id), statEntry);
       }
 
       // initially, we record more frequently, but then we space it out up until the interval (probably 1 minute)
@@ -501,24 +516,39 @@ function doSpawn(
   // Batching mechanism for streaming to reduce message frequency -- otherwise there could be 100msg/s to process
   let streamBatchTimer: NodeJS.Timeout | undefined;
   const streamBuffer = { stdout: "", stderr: "" };
+  // Total chars already emitted per stream. The accumulated output lands in
+  // asyncCache immediately (update_async), while `updates` emits from this
+  // ≤100ms buffer — so a late joiner's cache snapshot can already contain
+  // bytes that are still pending here. Each emit therefore carries the
+  // chunk's absolute offset so subscribers can discard the overlap with
+  // their snapshot instead of duplicating it.
+  const streamEmitted = { stdout: 0, stderr: 0 };
 
   // Send batched stream data
   const sendBatchedStream = () => {
-    if (!opts.streamCB) return;
-
     const hasStdout = streamBuffer.stdout.length > 0;
     const hasStderr = streamBuffer.stderr.length > 0;
 
-    if (hasStdout || hasStderr) {
-      // Send stdout if available
-      if (hasStdout) {
-        opts.streamCB({ type: "stdout", data: streamBuffer.stdout });
-        streamBuffer.stdout = "";
+    if (!hasStdout && !hasStderr) return;
+
+    if (hasStdout) {
+      const chunk = streamBuffer.stdout;
+      const at = streamEmitted.stdout;
+      streamBuffer.stdout = "";
+      streamEmitted.stdout += chunk.length;
+      if (opts.streamCB) opts.streamCB({ type: "stdout", data: chunk });
+      if (opts.job_id) {
+        updates.emit(eventKey("stdout", opts.job_id), chunk, at);
       }
-      // Send stderr if available
-      if (hasStderr) {
-        opts.streamCB({ type: "stderr", data: streamBuffer.stderr });
-        streamBuffer.stderr = "";
+    }
+    if (hasStderr) {
+      const chunk = streamBuffer.stderr;
+      const at = streamEmitted.stderr;
+      streamBuffer.stderr = "";
+      streamEmitted.stderr += chunk.length;
+      if (opts.streamCB) opts.streamCB({ type: "stderr", data: chunk });
+      if (opts.job_id) {
+        updates.emit(eventKey("stderr", opts.job_id), chunk, at);
       }
     }
   };
@@ -532,8 +562,11 @@ function doSpawn(
     sendBatchedStream();
   };
 
-  // Start batch timer if streaming is enabled, every 100ms
-  if (opts.streamCB) {
+  // Keep the legacy blocking streamCB contract in addition to the async
+  // updates emitter. Existing project-host backup/restore/rootfs callers use
+  // executeCode in blocking mode and rely on incremental stderr progress.
+  const shouldBufferStream = opts.streamCB != null || opts.job_id != null;
+  if (shouldBufferStream) {
     streamBatchTimer = setInterval(sendBatchedStream, 100);
   }
 
@@ -566,14 +599,14 @@ function doSpawn(
         const newData = data.slice(0, opts.max_output - stdout.length);
         stdout += newData;
         // Buffer the new portion for batched streaming
-        if (opts.streamCB && stdout.length > prevLength) {
+        if (shouldBufferStream && stdout.length > prevLength) {
           streamBuffer.stdout += newData;
         }
       }
     } else {
       stdout += data;
       // Buffer the new data for batched streaming
-      if (opts.streamCB) {
+      if (shouldBufferStream) {
         streamBuffer.stdout += data;
       }
     }
@@ -588,14 +621,14 @@ function doSpawn(
         const newData = data.slice(0, opts.max_output - stderr.length);
         stderr += newData;
         // Buffer the new portion for batched streaming
-        if (opts.streamCB && stderr.length > prevLength) {
+        if (shouldBufferStream && stderr.length > prevLength) {
           streamBuffer.stderr += newData;
         }
       }
     } else {
       stderr += data;
       // Buffer the new data for batched streaming
-      if (opts.streamCB) {
+      if (shouldBufferStream) {
         streamBuffer.stderr += data;
       }
     }
@@ -633,22 +666,11 @@ function doSpawn(
     stderr += to_json(err);
     // a fundamental issue, we were not running some code
     ran_code = false;
-    // For streaming, flush buffer and send error event
-    if (opts.streamCB && opts.async_call && opts.job_id) {
-      flushStreamBuffer(); // Flush any buffered data first
-      const errorResult: ExecuteCodeOutputAsync = {
-        type: "async",
-        job_id: opts.job_id,
-        stdout,
-        stderr,
-        exit_code: exit_code ?? 1,
-        status: "error",
-        elapsed_s: walltime(start_time),
-        start: opts.job_config?.start ?? Date.now(),
-        pid: child.pid,
-        stats: opts.job_config?.stats,
-      };
-      opts.streamCB({ type: "done", data: errorResult });
+    // Flush any buffered streaming data before finish() sends the done event.
+    // Note: we do NOT send streamCB({type:"done"}) here — finish() handles that
+    // uniformly for all exit paths, avoiding a double-done event.
+    if (opts.async_call && opts.job_id) {
+      flushStreamBuffer();
     }
     finish();
   });
@@ -673,7 +695,7 @@ function doSpawn(
     // Safety check: if we're using streaming and the process has exited but streams aren't done,
     // force completion after a short delay to prevent hanging
     if (
-      opts.streamCB &&
+      shouldBufferStream &&
       exit_code != null &&
       (!stdout_is_done || !stderr_is_done)
     ) {
@@ -692,7 +714,7 @@ function doSpawn(
     trackedRoot.close();
 
     // Flush any remaining buffered stream data before finishing
-    if (opts.streamCB) {
+    if (shouldBufferStream) {
       flushStreamBuffer();
     }
 
@@ -743,10 +765,9 @@ function doSpawn(
           };
           opts.streamCB({ type: "done", data: errorResult });
         }
-        // For streaming, don't call cb with error - let the stream handle it
-        if (!opts.streamCB) {
-          cb?.(err);
-        }
+        // Always call cb to resolve the promise and update asyncCache.
+        // Without this, the cache entry stays "running" forever.
+        cb?.(err);
       } else {
         // sync behavior, like it was before
         cb?.(err);
@@ -774,10 +795,8 @@ function doSpawn(
           };
           opts.streamCB({ type: "done", data: errorResult });
         }
-        // For streaming, don't call cb with error - let the stream handle it
-        if (!opts.streamCB) {
-          cb?.(stderr);
-        }
+        // Always call cb to resolve the promise and update asyncCache.
+        cb?.(stderr);
       } else {
         // sync behavor, like it was before
         cb?.(

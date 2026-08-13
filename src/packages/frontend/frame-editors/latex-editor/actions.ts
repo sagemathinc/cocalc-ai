@@ -35,6 +35,8 @@ import { normalize as path_normalize } from "path";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+import { randomId } from "@cocalc/conat/names";
+import { type AccountStore } from "@cocalc/frontend/account";
 import { Store, TypedMap } from "@cocalc/frontend/app-framework";
 import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import {
@@ -55,6 +57,7 @@ import {
   project_api,
   server_time,
 } from "@cocalc/frontend/frame-editors/generic/client";
+import { BuildCoordinator } from "@cocalc/frontend/frame-editors/generic/build-coordinator";
 import { ExecOutput } from "@cocalc/util/db-schema/projects";
 import {
   change_filename_extension,
@@ -157,6 +160,7 @@ interface LatexEditorState extends CodeEditorState {
   output_panel_id_for_sync?: string; // stores the output panel ID for SyncTeX operations
   // job_infos: JobInfos;
   autoSyncInProgress?: boolean; // unified flag to prevent sync loops - true when any auto sync operation is in progress
+  building?: boolean; // true while a build is actively running (mirrors is_building for redux consumers)
   // Chat anchor markers / bookmarks found in the master + open sub-files,
   // keyed by file path.
   chat_markers?: IMap<string, List<TypedMap<ChatMarker>>>;
@@ -176,6 +180,24 @@ export class Actions extends BaseActions<LatexEditorState> {
     skipFramePopup?: boolean,
   ) => Promise<void>;
   private is_stopping: boolean = false; // if true, do not continue running any compile jobs
+  private buildCoordinator?: BuildCoordinator;
+  private _lastBuiltTime?: number;
+  private _buildWasStopped = false;
+  // last_save_time captured when a joined build started; recording this
+  // (not the completion-time value) prevents edits saved during the build
+  // from being marked as already built.
+  private _joinStartedSaveTime?: number;
+  // Set when a build is requested while another one is running; the
+  // finishing build then triggers one follow-up auto_build.
+  private _pendingBuildRequest = false;
+  // Ownership token of the build (local or joined) that currently owns the
+  // building state. A buildInternal invocation whose token no longer
+  // matches — e.g. it was stopped and a replacement build started before
+  // its run_build settled — must neither record success nor tear down the
+  // replacement's building state in its finally block.
+  private _buildToken?: string;
+  private _project_stopped_listener?: () => void;
+  private _projectStopObserved = false;
   private ext: string = "tex";
   private knitr: boolean = false; // true, if we deal with a knitr file
   private filename_knitr: string; // .rnw or .rtex
@@ -197,6 +219,8 @@ export class Actions extends BaseActions<LatexEditorState> {
   private parsed_output_log?: IProcessedLatexLog;
 
   private _last_sync_time = 0;
+  private _pdf_watcher_init_token = 0;
+  private _project_started_listener?: () => void;
 
   // PDF file watcher - watches directory for PDF file changes
   private pdf_watcher?: PDFWatcher;
@@ -263,7 +287,13 @@ export class Actions extends BaseActions<LatexEditorState> {
     this.init_latexmk();
     // This breaks browser spellcheck.
     // this._init_spellcheck();
-    this.init_config();
+    // init_config is async — it must complete (setting build_command)
+    // before the BuildCoordinator is created, otherwise a late-join
+    // attempt may fire with an empty build_command and silently bail.
+    this.init_config().then(() => {
+      if (this._state === "closed") return;
+      this._init_build_coordinator();
+    });
     if (!this.knitr) {
       this.output_directory = this.output_directory_path();
     }
@@ -275,16 +305,149 @@ export class Actions extends BaseActions<LatexEditorState> {
       "change",
       debounce(this.ensureNonempty.bind(this), 1500),
     );
-    this._init_pdf_directory_watcher();
+    this._project_started_listener = () => {
+      void this._handle_project_started();
+    };
+    // On project stop, any running build process is gone — reset-only
+    // (no kill of stale PIDs, see resetBuildRuntimeState).
+    this._project_stopped_listener = () => {
+      this._projectStopObserved = true;
+      this.buildCoordinator?.resetRuntimeState();
+      if (this.is_building) {
+        this.resetBuildRuntimeState();
+      }
+    };
+    {
+      const projectStore = this.redux.getProjectStore(this.project_id);
+      projectStore.on("started", this._project_started_listener);
+      projectStore.on("stopped", this._project_stopped_listener);
+    }
+    void this._init_pdf_directory_watcher();
     this.word_count = reuseInFlight(this._word_count.bind(this));
     this._initChatMarkers();
+  }
+
+  private async _handle_project_started(): Promise<void> {
+    // A project (re)start means any build process that was running is dead.
+    // If we still think we are building, the exec stream is orphaned and
+    // would keep the UI stuck on "building" until the runJob watchdog
+    // fires (~16 min). Reset the build state right away instead.
+    if (this._projectStopObserved) {
+      // The stopped edge already invalidated the dead runtime. Do not reset
+      // twice: a collaborator may have started a valid build in the new
+      // runtime before this client processes the started edge.
+      this._projectStopObserved = false;
+    } else if (this.is_building) {
+      // Fallback for clients that missed the stopped edge.
+      this.buildCoordinator?.resetRuntimeState();
+      this.resetBuildRuntimeState();
+    }
+    // The PDF preview may have tried to load while the project was still stopped
+    // or starting. Once the project is actually running, re-arm the watcher and
+    // force a fresh reload so the preview recovers without a full page refresh.
+    await this._init_pdf_directory_watcher();
+    this.update_pdf(server_time().valueOf(), true);
+  }
+
+  // Reset-only recovery after the project runtime was lost (stop/restart):
+  // invalidate build ownership and clear the building UI state WITHOUT
+  // issuing any kill into the (new) runtime — the recorded PIDs belong to
+  // the old runtime and could hit an unrelated process via PID reuse.
+  private resetBuildRuntimeState(): void {
+    this._buildToken = undefined;
+    this._pendingBuildRequest = false;
+    this._buildWasStopped = true;
+    this._lastBuiltTime = undefined;
+    this._joinStartedSaveTime = undefined;
+    this.is_building = false;
+    this.setState({ building: false });
+    this.set_status("");
+    // Mark stale running build_logs entries as errored in the UI (no kill —
+    // the processes died with the old runtime).
+    this.cleanupStaleBuildLogs();
+  }
+
+  private _init_build_coordinator(): void {
+    if (this.is_read_only_preview()) return;
+    this.buildCoordinator = new BuildCoordinator(this.project_id, this.path, {
+      join: async (buildId, aggregate, force, sourceRevision) => {
+        // Record the revision the ORIGINATOR captured at build start — not
+        // our own local state, which may already be ahead of the originator
+        // and would then be wrongly marked as built. Undefined (older
+        // client) simply means no last-built revision gets recorded.
+        this._joinStartedSaveTime = sourceRevision;
+        await this.run_build(aggregate ?? 0, force, buildId);
+      },
+      stop: (buildId) => {
+        void this.stop_build(undefined, buildId);
+      },
+      isBuilding: () => this.is_building,
+      setBuilding: (v, buildId) => {
+        if (v) {
+          // The joined build now owns the building state; a stale local
+          // buildInternal invocation settling late must not tear it down.
+          this._buildToken = buildId;
+          this._buildWasStopped = false;
+        } else if (this._buildToken !== buildId) {
+          return;
+        }
+        this.is_building = v;
+        this.setState({ building: v });
+        if (!v) {
+          this._buildToken = undefined;
+          // When build finishes, clean up any stale running entries in build_logs.
+          // This is especially important for joinBuild paths where the exec stream
+          // may error without properly finalizing the build_logs entry.
+          this.cleanupStaleBuildLogs();
+          if (!this._buildWasStopped && !this.store.get("error")) {
+            this._lastBuiltTime = this._joinStartedSaveTime;
+          }
+          this._joinStartedSaveTime = undefined;
+          // A build requested while we were joining must run now — the
+          // originator-path finally block never runs for joined builds.
+          this.drainPendingBuild();
+        }
+      },
+      setError: (err) => this.set_error(err),
+    });
+    // init_config may settle after the project already stopped. Fence the
+    // coordinator before its asynchronous DKV init can join an old entry.
+    if (this._projectStopObserved) {
+      this.buildCoordinator.resetRuntimeState();
+    }
+  }
+
+  private isBuildOwner(buildToken?: string): boolean {
+    return buildToken == null || this._buildToken === buildToken;
+  }
+
+  // Run the follow-up build recorded while another build (local or joined)
+  // was in progress. auto_build dedupes via _lastBuiltTime, so an unchanged
+  // source is a cheap no-op.
+  //
+  // Deferred on purpose: when invoked from the coordinator's
+  // setBuilding(false) inside joinBuild's finally, the coordinator still
+  // has to re-read the DKV for a replacement build. Starting the local
+  // build synchronously would mark us busy and make that re-check skip the
+  // replacement (the missed-build bug all over again). Deferring lets the
+  // replacement join win; if it does, buildInternal re-records the pending
+  // flag and this build queues behind the join.
+  private drainPendingBuild(): void {
+    if (!this._pendingBuildRequest) return;
+    setTimeout(() => {
+      if (!this._pendingBuildRequest) return; // e.g. cleared by stop_build
+      if (this._state === "closed") return;
+      this._pendingBuildRequest = false;
+      void this.auto_build();
+    }, 0);
   }
 
   // Watch the directory containing the PDF file for changes
   private async _init_pdf_directory_watcher(): Promise<void> {
     if (this.is_read_only_preview()) return;
     const pdfPath = pdf_path(this.path);
-    this.pdf_watcher = new PDFWatcher(
+    const token = ++this._pdf_watcher_init_token;
+    const pdf_watcher = new PDFWatcher(
       this.project_id,
       pdfPath,
       // We ignore the PDFs timestamp (mtime) and use last_save_time for consistency with build-triggered updates
@@ -292,7 +455,15 @@ export class Actions extends BaseActions<LatexEditorState> {
         this.update_pdf(this.last_save_time(), force);
       },
     );
-    await this.pdf_watcher.init();
+    await pdf_watcher.init();
+    // If another watcher init started while we were awaiting, drop this one so
+    // we don't keep multiple directory subscriptions alive for the same editor.
+    if (token !== this._pdf_watcher_init_token) {
+      pdf_watcher.close();
+      return;
+    }
+    this.pdf_watcher?.close();
+    this.pdf_watcher = pdf_watcher;
   }
 
   // similar to jupyter, where an empty document is really
@@ -351,9 +522,16 @@ export class Actions extends BaseActions<LatexEditorState> {
 
   private init_latexmk(): void {
     if (this.is_read_only_preview()) return;
-    const handlePersistedSourceChange = reuseInFlight(async () => {
-      await this.maybeBuildAfterPersistedSourceChange();
-    });
+    // NOTE: deliberately NOT reuseInFlight — the handler awaits the entire
+    // build, so a wrapped handler would swallow save events that arrive
+    // during a build (they'd reuse the running promise and never reach
+    // buildInternal, which is what records the pending-build request). The
+    // body is synchronous up to the build call, so concurrent entry is
+    // safe: a second event with the same content returns at the
+    // _last_syncstring_hash check.
+    const handlePersistedSourceChange = () => {
+      void this.maybeBuildAfterPersistedSourceChange();
+    };
     this._syncstring.on("save-to-disk", handlePersistedSourceChange);
     this._syncstring.on("filesystem-change", handlePersistedSourceChange);
   }
@@ -361,8 +539,11 @@ export class Actions extends BaseActions<LatexEditorState> {
   private async maybeBuildAfterPersistedSourceChange(): Promise<void> {
     if (this.is_read_only_preview()) return;
     if (this.not_ready()) return;
-    const account: any = this.redux.getStore("account");
-    if (!account?.getIn(["editor_settings", "build_on_save"])) {
+    const account: AccountStore = this.redux.getStore("account");
+    if (
+      !account?.get("is_ready") ||
+      !account.getIn(["editor_settings", "build_on_save"])
+    ) {
       return;
     }
     const value = this._syncstring.to_str();
@@ -380,10 +561,10 @@ export class Actions extends BaseActions<LatexEditorState> {
         this.parent_file,
       ) as Actions;
       // we're careful, maybe getEditorActions returns something else ...
-      await parent_actions?.build?.("", false);
+      await parent_actions?.auto_build?.("");
     } else if (this.parent_file == null && this.is_likely_master()) {
       // also check is_likely_master, b/c there must be a \\document* command.
-      await this.build("", false);
+      await this.auto_build("");
     }
   }
 
@@ -531,9 +712,31 @@ export class Actions extends BaseActions<LatexEditorState> {
     this._syncdb.on("change", set_cmd);
 
     if (this.is_likely_master() && !this.is_read_only_preview()) {
-      // We now definitely have the build command set and the document loaded,
-      // and it is likely a master latex file, so let's kick off our initial build.
+      // Only build on open if:
+      // - account settings are confirmed loaded (is_ready)
+      // - build_on_save is enabled
+      // - output PDF does not yet exist (null = unknown => skip)
+      const account: AccountStore = this.redux.getStore("account");
+      if (!account) return;
+      const ready = await account.waitUntilReady();
+      if (this._state === "closed") return;
+      if (!ready) return; // timed out — settings not loaded, skip auto-build
+      const buildOnSave =
+        account.getIn(["editor_settings", "build_on_save"]) ?? true;
+      if (!buildOnSave) return;
+      const pdfExists = await this.outputFileExists(pdf_path(this.path));
+      if (this._state === "closed") return;
+      if (pdfExists !== false) return; // exists or unknown => don't build
       this.force_build();
+    }
+  }
+
+  // Tri-state: true = file exists, false = confirmed absent, null = unknown/error (skip auto-build)
+  private async outputFileExists(filePath: string): Promise<boolean | null> {
+    try {
+      return await this.fs().exists(filePath);
+    } catch {
+      return null;
     }
   }
 
@@ -744,6 +947,28 @@ export class Actions extends BaseActions<LatexEditorState> {
     return this._new_frame_tree_layout();
   }
 
+  // Frame types (EDITOR_SPEC keys) that already display build errors.
+  // https://github.com/sagemathinc/cocalc/issues/8659
+  private static ERROR_DISPLAY_FRAMES = ["output", "build", "error"] as const;
+
+  private hasErrorDisplayFrame(): boolean {
+    try {
+      const tree = this._get_tree();
+      for (const id in this._get_leaf_ids()) {
+        const node = tree_ops.get_node(tree, id);
+        if (
+          node != null &&
+          (Actions.ERROR_DISPLAY_FRAMES as readonly string[]).includes(
+            node.get("type"),
+          )
+        ) {
+          return true;
+        }
+      }
+    } catch {}
+    return false;
+  }
+
   check_for_fatal_error(): void {
     const build_logs: BuildLogs = this.store.get("build_logs");
     if (!build_logs) return;
@@ -765,7 +990,11 @@ export class Actions extends BaseActions<LatexEditorState> {
         "WARNING: It is not possible to generate a useful PDF file.\n" +
         s.trim();
       console.warn(err);
-      this.set_error(err);
+      // Only show toast if no error-displaying frame is visible —
+      // if one is, the user can already see the problem there.
+      if (!this.hasErrorDisplayFrame()) {
+        this.set_error(err);
+      }
     }
   }
 
@@ -815,7 +1044,20 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   close(): void {
+    this._pdf_watcher_init_token += 1;
     this._forget_pdf_document();
+    this.buildCoordinator?.close();
+    {
+      const projectStore = this.redux.getProjectStore(this.project_id);
+      if (this._project_started_listener != null) {
+        projectStore.removeListener("started", this._project_started_listener);
+        this._project_started_listener = undefined;
+      }
+      if (this._project_stopped_listener != null) {
+        projectStore.removeListener("stopped", this._project_stopped_listener);
+        this._project_stopped_listener = undefined;
+      }
+    }
     if (this.pdf_watcher != null) {
       this.pdf_watcher.close();
       this.pdf_watcher = undefined;
@@ -946,9 +1188,11 @@ export class Actions extends BaseActions<LatexEditorState> {
     await this.build();
   }
 
-  // used by generic framework – this is bound to the instance, otherwise "this" is undefined, hence
-  // make sure to use an arrow function!
-  build = async (id?: string, force: boolean = false): Promise<void> => {
+  private async buildInternal(
+    id: string | undefined,
+    force: boolean,
+    useFreshAggregate: boolean,
+  ): Promise<void> {
     if (this.is_read_only_preview()) return;
     this.set_error("");
     this.set_status("");
@@ -963,6 +1207,10 @@ export class Actions extends BaseActions<LatexEditorState> {
       if (force) {
         await this.stop_build();
       } else {
+        // Remember that a build was requested — the running build's
+        // finally block triggers one follow-up auto_build, so a revision
+        // saved during the build is not silently skipped.
+        this._pendingBuildRequest = true;
         return;
       }
     }
@@ -974,11 +1222,61 @@ export class Actions extends BaseActions<LatexEditorState> {
       stale_after_ms: 10 * 60_000,
       sample_successes: true,
     });
+    const buildId = randomId();
+    // Capture before reset: if previous build was stopped, we need a fresh
+    // timestamp to bypass backend aggregate dedup (cached partial results).
+    const wasStopped = this._buildWasStopped;
     this.is_building = true;
+    this._buildWasStopped = false;
+    this._buildToken = buildId;
+    this.setState({ building: true });
+    this.buildCoordinator?.setLocalBuildId(buildId);
     try {
       await this.save_all(false);
+      // Stop/runtime reset may have released this build while save_all was in
+      // flight. Never let the stale continuation publish over a replacement.
+      if (!this.isBuildOwner(buildId)) return;
       buildTrace.mark("sources_saved");
-      await this.run_build(this.last_save_time(), force);
+      // Capture the revision we are about to build. This — not the
+      // completion-time value — is what gets recorded as "last built":
+      // reading last_save_time() again after the build would wrongly mark
+      // edits saved while the build was running as already built.
+      const startedSaveTime = this.last_save_time();
+      const time =
+        force || wasStopped || useFreshAggregate
+          ? server_time().valueOf()
+          : startedSaveTime;
+      // Skip if nothing changed since last build — avoids DKV chatter that
+      // causes other clients to flicker their build spinner for a no-op.
+      // Must be AFTER save so last_save_time() reflects pending edits.
+      if (
+        !force &&
+        !useFreshAggregate &&
+        this._lastBuiltTime != null &&
+        startedSaveTime === this._lastBuiltTime
+      ) {
+        return; // finally block cleans up is_building / building state
+      }
+      this.buildCoordinator?.publishBuildStart(
+        buildId,
+        time,
+        force,
+        startedSaveTime,
+      );
+      await this.run_build(time, force, buildId);
+      // run_build failures are often reported via set_error without
+      // throwing; buildInternal cleared the error at the start, so a
+      // non-empty error here means THIS build failed — don't record it
+      // as built or the next attempt would be skipped as a no-op.
+      // The ownership check keeps a stale invocation (stopped, replacement
+      // build running now) from recording ITS revision as built.
+      if (
+        this._buildToken === buildId &&
+        !this._buildWasStopped &&
+        !this.store.get("error")
+      ) {
+        this._lastBuiltTime = startedSaveTime;
+      }
       buildTrace.mark("build_pipeline_done");
       afterNextPaint(() => {
         buildTrace.record("latex_build_complete_v2", {
@@ -992,6 +1290,9 @@ export class Actions extends BaseActions<LatexEditorState> {
         });
       });
     } catch (err) {
+      // A stopped invocation may reject after its replacement has started.
+      // It no longer owns the error surface and must never stop the owner.
+      if (!this.isBuildOwner(buildId)) return;
       buildTrace.record("latex_build_failed_v2", {
         path_ext: "tex",
         editor: "latex",
@@ -1005,9 +1306,33 @@ export class Actions extends BaseActions<LatexEditorState> {
       // if there is an error, we issue a stop, but keep the build logs
       await this.stop_build();
     } finally {
-      this.is_building = false;
+      // Safe unconditionally: publishBuildFinished is buildId-guarded in
+      // the coordinator, so a stale invocation cannot clobber the DKV
+      // entry of a replacement build.
+      this.buildCoordinator?.publishBuildFinished(buildId);
+      // Only the owner of the building state may tear it down — a stale
+      // invocation settling late must not flip `building` off (or drain
+      // pending work) while a replacement build is running.
+      if (this._buildToken === buildId) {
+        this._buildToken = undefined;
+        this.is_building = false;
+        this.setState({ building: false });
+        this.buildCoordinator?.reconcileRunningBuild();
+        // A build requested while we were busy runs now.
+        this.drainPendingBuild();
+      }
     }
+  }
+
+  // used by generic framework – this is bound to the instance, otherwise "this" is undefined, hence
+  // make sure to use an arrow function!
+  build = async (id?: string, force: boolean = false): Promise<void> => {
+    await this.buildInternal(id, force, true);
   };
+
+  private async auto_build(id?: string): Promise<void> {
+    await this.buildInternal(id, false, false);
+  }
 
   async clean(): Promise<void> {
     if (this.is_read_only_preview()) return;
@@ -1041,7 +1366,21 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   // This stops all known jobs with a status "running" and resets the state.
-  async stop_build(_id?: string) {
+  async stop_build(_id?: string, expectedBuildToken?: string) {
+    if (expectedBuildToken != null && this._buildToken !== expectedBuildToken) {
+      return;
+    }
+    this.buildCoordinator?.requestStop();
+    // A stopped build didn't complete — clear the "last built" time so
+    // the next build isn't skipped as a no-op.
+    this._lastBuiltTime = undefined;
+    this._buildWasStopped = true;
+    // Stop means stop: also cancel any build queued while the stopped one
+    // was running — otherwise the drain would immediately restart it.
+    this._pendingBuildRequest = false;
+    // Release build ownership: the stopped invocation's finally block must
+    // not clean up state that a subsequent build re-claims.
+    this._buildToken = undefined;
     const build_logs = this.store.get("build_logs");
     try {
       this.is_stopping = true;
@@ -1054,12 +1393,18 @@ export class Actions extends BaseActions<LatexEditorState> {
     } finally {
       this.set_status("");
       this.is_building = false;
+      this.setState({ building: false });
       this.is_stopping = false;
+      this.buildCoordinator?.reconcileRunningBuild();
     }
   }
 
-  private async run_build(time: number, force: boolean): Promise<void> {
-    if (this.is_stopping) return;
+  private async run_build(
+    time: number,
+    force: boolean,
+    buildToken?: string,
+  ): Promise<void> {
+    if (this.is_stopping || !this.isBuildOwner(buildToken)) return;
     // reset state of build_logs, since it is a fresh start
     this.setState({ build_logs: IMap() });
 
@@ -1072,7 +1417,8 @@ export class Actions extends BaseActions<LatexEditorState> {
 
     // for knitr related documents, we have to first build the derived tex file ...
     if (this.knitr) {
-      await this.run_knitr(time, force);
+      await this.run_knitr(time, force, buildToken);
+      if (!this.isBuildOwner(buildToken)) return;
       if (this.store.get("knitr_error")) return;
     }
     // update word count asynchronously
@@ -1081,10 +1427,12 @@ export class Actions extends BaseActions<LatexEditorState> {
       run_word_count = this.word_count(time, force);
     }
     // update_pdf=false, because it is deferred until the end
-    await this.run_latex(time, force, false);
+    await this.run_latex(time, force, false, buildToken);
+    if (!this.isBuildOwner(buildToken)) return;
     // ... and then patch the synctex file to align the source line numberings
     if (this.knitr) {
-      await this.run_patch_synctex(time, force);
+      await this.run_patch_synctex(time, force, buildToken);
+      if (!this.isBuildOwner(buildToken)) return;
     }
 
     const s = this.store.unsafe_getIn(["build_logs", "latex", "stdout"]);
@@ -1096,36 +1444,56 @@ export class Actions extends BaseActions<LatexEditorState> {
       if (is_sagetex || is_pythontex) {
         if (this.ensure_output_directory_disabled()) {
           // rebuild if build command changed
-          await this.run_latex(time, true, false);
+          await this.run_latex(time, true, false, buildToken);
+          if (!this.isBuildOwner(buildToken)) return;
         }
         update_pdf = false;
         if (is_sagetex) {
-          await this.run_sagetex(time, force);
+          await this.run_sagetex(time, force, buildToken);
+          if (!this.isBuildOwner(buildToken)) return;
         }
         // don't make this an else-if: audacious latexer might want to run both o_O
         if (is_pythontex) {
-          await this.run_pythontex(time, force);
+          await this.run_pythontex(time, force, buildToken);
+          if (!this.isBuildOwner(buildToken)) return;
         }
       }
     }
 
     // we suppress a cycle of loading the PDF if sagetex or pythontex runs above
     // because these two trigger a rebuild and update_pdf on their own at the end
-    if (update_pdf) {
+    if (update_pdf && this.isBuildOwner(buildToken)) {
       this.update_pdf(time, force);
     }
 
     if (run_word_count != null) {
       // and finally, wait for word count to finish -- to make clear the whole operation is done
       await run_word_count;
+      if (!this.isBuildOwner(buildToken)) return;
     }
+
+    // Safety net: clean up any build_logs entries stuck in "running" status.
+    // This catches edge cases where a sub-step errored without finalizing its entry.
+    this.cleanupStaleBuildLogs();
   }
 
-  private async run_knitr(time: number, force: boolean): Promise<void> {
-    if (this.is_stopping) return;
+  private async run_knitr(
+    time: number,
+    force: boolean,
+    buildToken?: string,
+  ): Promise<void> {
+    if (this.is_stopping || !this.isBuildOwner(buildToken)) return;
     let output: BuildLog;
-    const status = (s) => this.set_status(`Running Knitr... ${s}`);
-    const set_job_info = (job) => this.set_build_logs({ knitr: job });
+    const status = (s) => {
+      if (this.isBuildOwner(buildToken)) {
+        this.set_status(`Running Knitr... ${s}`);
+      }
+    };
+    const set_job_info = (job) => {
+      if (this.isBuildOwner(buildToken)) {
+        this.set_build_logs({ knitr: job });
+      }
+    };
     status("");
 
     try {
@@ -1136,12 +1504,16 @@ export class Actions extends BaseActions<LatexEditorState> {
         status,
         set_job_info,
       );
+      if (!this.isBuildOwner(buildToken)) return;
     } catch (err) {
+      if (!this.isBuildOwner(buildToken)) return;
       this.set_error(err);
       this.setState({ knitr_error: true });
+      // Mark as errored so the spinner stops, but keep partial output visible
+      this.markBuildLogError("knitr");
       return;
     } finally {
-      this.set_status("");
+      if (this.isBuildOwner(buildToken)) this.set_status("");
     }
     output.parse = knitr_errors(output).toJS();
     this.merge_parsed_output_log(output.parse);
@@ -1150,9 +1522,18 @@ export class Actions extends BaseActions<LatexEditorState> {
     this.setState({ knitr_error: output.parse?.errors?.length > 0 });
   }
 
-  async run_patch_synctex(time: number, force: boolean): Promise<void> {
+  async run_patch_synctex(
+    time: number,
+    force: boolean,
+    buildToken?: string,
+  ): Promise<void> {
+    if (!this.isBuildOwner(buildToken)) return;
     // quotes around ${s} are just so codemirror doesn't syntax highlight the rest of this file:
-    const status = (s) => this.set_status(`Running Knitr/Synctex... "${s}"`);
+    const status = (s) => {
+      if (this.isBuildOwner(buildToken)) {
+        this.set_status(`Running Knitr/Synctex... "${s}"`);
+      }
+    };
     status("");
     try {
       await patch_synctex(
@@ -1161,11 +1542,13 @@ export class Actions extends BaseActions<LatexEditorState> {
         this.make_timestamp(time, force),
         status,
       );
+      if (!this.isBuildOwner(buildToken)) return;
     } catch (err) {
+      if (!this.isBuildOwner(buildToken)) return;
       this.set_error(err);
       return;
     } finally {
-      this.set_status("");
+      if (this.isBuildOwner(buildToken)) this.set_status("");
     }
   }
 
@@ -1205,8 +1588,9 @@ export class Actions extends BaseActions<LatexEditorState> {
     time: number,
     force: boolean,
     update_pdf: boolean = true,
+    buildToken?: string,
   ): Promise<void> {
-    if (this.is_stopping) return;
+    if (this.is_stopping || !this.isBuildOwner(buildToken)) return;
     let output: BuildLog;
     let build_command: string | string[];
     const timestamp = this.make_timestamp(time, force);
@@ -1223,8 +1607,16 @@ export class Actions extends BaseActions<LatexEditorState> {
     } else {
       build_command = s.toJS();
     }
-    const status = (s) => this.set_status(`Running Latex... ${s}`);
-    const set_job_info = (job) => this.set_build_logs({ latex: job });
+    const status = (s) => {
+      if (this.isBuildOwner(buildToken)) {
+        this.set_status(`Running Latex... ${s}`);
+      }
+    };
+    const set_job_info = (job) => {
+      if (this.isBuildOwner(buildToken)) {
+        this.set_build_logs({ latex: job });
+      }
+    };
 
     status("");
     try {
@@ -1237,8 +1629,10 @@ export class Actions extends BaseActions<LatexEditorState> {
         this.get_output_directory(),
         set_job_info,
       );
+      if (!this.isBuildOwner(buildToken)) return;
       // console.log(output);
     } catch (err) {
+      if (!this.isBuildOwner(buildToken)) return;
       const streamedOutput = this.get_streamed_latex_output();
       if (
         streamedOutput != null &&
@@ -1248,12 +1642,16 @@ export class Actions extends BaseActions<LatexEditorState> {
       } else {
         //console.info("LaTeX Editor/actions/run_latex error=", err);
         this.set_error(err);
+        // Mark the build_logs entry as errored so the build tab spinner stops,
+        // but preserve any partial output for the user to diagnose the failure.
+        this.markBuildLogError("latex");
         return;
       }
     } finally {
       // In all cases, we want the status info to clear
-      this.set_status("");
+      if (this.isBuildOwner(buildToken)) this.set_status("");
     }
+    if (!this.isBuildOwner(buildToken)) return;
     // resetting parsed_output_log is ok, even if we do two passes.
     // the reason is that in pythontex or sagetex there is a merge *after* this step.
     // therefore, resetting this here will get rid of then stale errors related to
@@ -1455,10 +1853,22 @@ export class Actions extends BaseActions<LatexEditorState> {
     this.set_status("");
   }
 
-  async run_sagetex(time: number, force: boolean): Promise<void> {
-    if (this.is_stopping) return;
-    const status = (s) => this.set_status(`Running SageTeX... ${s}`);
-    const set_job_info = (job) => this.set_build_logs({ sagetex: job });
+  async run_sagetex(
+    time: number,
+    force: boolean,
+    buildToken?: string,
+  ): Promise<void> {
+    if (this.is_stopping || !this.isBuildOwner(buildToken)) return;
+    const status = (s) => {
+      if (this.isBuildOwner(buildToken)) {
+        this.set_status(`Running SageTeX... ${s}`);
+      }
+    };
+    const set_job_info = (job) => {
+      if (this.isBuildOwner(buildToken)) {
+        this.set_build_logs({ sagetex: job });
+      }
+    };
     status("");
     // First compute hash of sagetex file.
     let hash: string = "";
@@ -1471,17 +1881,19 @@ export class Actions extends BaseActions<LatexEditorState> {
           status,
           this.get_output_directory(),
         );
+        if (!this.isBuildOwner(buildToken)) return;
         if (hash === this._last_sagetex_hash) {
           // no change - nothing to do except updating the pdf preview
           this.update_pdf(time, force);
           return;
         }
       } catch (err) {
+        if (!this.isBuildOwner(buildToken)) return;
         this.set_error(err);
         this.update_pdf(time, force);
         return;
       } finally {
-        this.set_status("");
+        if (this.isBuildOwner(buildToken)) this.set_status("");
       }
     }
 
@@ -1496,6 +1908,7 @@ export class Actions extends BaseActions<LatexEditorState> {
         this.get_output_directory(),
         set_job_info,
       );
+      if (!this.isBuildOwner(buildToken)) return;
       if (!output) throw new Error("Unable to run SageTeX.");
       if (output.stderr.indexOf("sagetex.VersionError") != -1) {
         // See https://github.com/sagemathinc/cocalc/issues/4432
@@ -1505,13 +1918,19 @@ export class Actions extends BaseActions<LatexEditorState> {
       }
       // Now Run LaTeX, since we had to run sagetex, which changes the sage output.
       // This +1 forces re-running latex... but still deduplicates it in case of multiple users.
-      await this.run_latex(time + 1, force);
+      await this.run_latex(time + 1, force, true, buildToken);
+      if (!this.isBuildOwner(buildToken)) return;
     } catch (err) {
+      if (!this.isBuildOwner(buildToken)) return;
       this.set_error(err);
+      // Mark as errored so the spinner stops, but keep partial output visible
+      this.markBuildLogError("sagetex");
       this.update_pdf(time, force);
     } finally {
-      this._last_sagetex_hash = hash;
-      this.set_status("");
+      if (this.isBuildOwner(buildToken)) {
+        this._last_sagetex_hash = hash;
+        this.set_status("");
+      }
     }
 
     if (output != null) {
@@ -1524,11 +1943,23 @@ export class Actions extends BaseActions<LatexEditorState> {
     }
   }
 
-  async run_pythontex(time: number, force: boolean): Promise<void> {
-    if (this.is_stopping) return;
+  async run_pythontex(
+    time: number,
+    force: boolean,
+    buildToken?: string,
+  ): Promise<void> {
+    if (this.is_stopping || !this.isBuildOwner(buildToken)) return;
     let output: BuildLog;
-    const status = (s) => this.set_status(`Running PythonTeX... ${s}`);
-    const set_job_info = (job) => this.set_build_logs({ pythontex: job });
+    const status = (s) => {
+      if (this.isBuildOwner(buildToken)) {
+        this.set_status(`Running PythonTeX... ${s}`);
+      }
+    };
+    const set_job_info = (job) => {
+      if (this.isBuildOwner(buildToken)) {
+        this.set_build_logs({ pythontex: job });
+      }
+    };
     status("");
 
     try {
@@ -1542,16 +1973,21 @@ export class Actions extends BaseActions<LatexEditorState> {
         this.get_output_directory(),
         set_job_info,
       );
+      if (!this.isBuildOwner(buildToken)) return;
       // Now run latex again, since we had to run pythontex, which changes the inserted snippets.
       // This +2 forces re-running latex... but still deduplicates it in case of multiple users. (+1 is for sagetex)
-      await this.run_latex(time + 2, force);
+      await this.run_latex(time + 2, force, true, buildToken);
+      if (!this.isBuildOwner(buildToken)) return;
     } catch (err) {
+      if (!this.isBuildOwner(buildToken)) return;
       this.set_error(err);
       // this.setState({ pythontex_error: true });
+      // Mark as errored so the spinner stops, but keep partial output visible
+      this.markBuildLogError("pythontex");
       this.update_pdf(time, force);
       return;
     } finally {
-      this.set_status("");
+      if (this.isBuildOwner(buildToken)) this.set_status("");
     }
     // this is similar to how knitr errors are processed
     output.parse = pythontex_errors(path_split(this.path).tail, output).toJS();
@@ -1850,6 +2286,37 @@ export class Actions extends BaseActions<LatexEditorState> {
     (this as any)._save_local_view_state();
   }
 
+  // Mark a build_logs entry as "error" while preserving any partial output
+  // (stdout/stderr) so the user can still see what happened before the failure.
+  private markBuildLogError(stage: BuildSpecName): void {
+    const build_logs: BuildLogs | undefined = this.store.get("build_logs");
+    if (!build_logs) return;
+    const entry = build_logs.get(stage);
+    if (!entry) return;
+    const js: BuildLog = entry.toJS();
+    if (js.type === "async" && js.status === "running") {
+      js.status = "error";
+      this.set_build_logs({ [stage]: js });
+    }
+  }
+
+  // Safety net: after a build completes, clean up any build_logs entries
+  // that are still stuck in "running" status.  This can happen when an exec
+  // stream errors out after the "job" event set status to "running" but
+  // before the "done" event could finalize it.
+  // Preserves partial output so the user can diagnose the failure.
+  private cleanupStaleBuildLogs(): void {
+    const build_logs: BuildLogs | undefined = this.store.get("build_logs");
+    if (!build_logs) return;
+    build_logs.forEach((entry, key) => {
+      const js: BuildLog = entry?.toJS();
+      if (js?.type === "async" && js?.status === "running") {
+        js.status = "error";
+        this.set_build_logs({ [key]: js });
+      }
+    });
+  }
+
   private set_build_logs(obj: { [K in keyof IBuildSpecs]?: BuildLog }): void {
     let build_logs: BuildLogs = this.store.get("build_logs") ?? IMap();
     let k: BuildSpecName;
@@ -1925,9 +2392,13 @@ export class Actions extends BaseActions<LatexEditorState> {
     }
   }
 
-  // time 0 implies to take the last_save_time,
+  // If time is provided (non-zero), use it as the aggregate key base.
+  // Note: sagetex/pythontex use time+1/time+2 to force distinct aggregate
+  // keys for their re-run of latex. Only generate a fresh timestamp when
+  // time=0 and force=true.
   make_timestamp(time: number, force: boolean): number {
-    return force ? Date.now() : time || this.last_save_time();
+    if (time) return time;
+    return force ? server_time().valueOf() : this.last_save_time();
   }
 
   private async _word_count(
