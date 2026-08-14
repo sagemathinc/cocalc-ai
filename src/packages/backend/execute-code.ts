@@ -308,9 +308,17 @@ async function executeCodeNoAggregate(
               status: "error",
             };
             if (err) {
+              // Keep what the job already streamed. The error path is also
+              // the timeout path, and the output up to the timeout is
+              // exactly what the user needs to see -- overwriting it with
+              // an empty string used to blank the build log at the moment
+              // it became most useful.
+              const partial = asyncCache.get(job_id);
               asyncCacheUpdate(job_id, {
-                stdout: "",
-                stderr: `${err}`,
+                stdout: partial?.stdout ?? "",
+                stderr: partial?.stderr
+                  ? `${partial.stderr}\n${err}`
+                  : `${err}`,
                 exit_code: 1,
                 ...info,
               });

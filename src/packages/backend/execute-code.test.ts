@@ -283,8 +283,10 @@ describe("async", () => {
     expect(s.type).toEqual("async");
     if (s.type !== "async") return;
     expect(s.status).toEqual("error");
+    // Output produced before the failure is preserved -- see the timeout
+    // test below for why that matters.
     expect(s.stdout).toEqual("");
-    expect(s.stderr).toEqual("baz\n");
+    expect(s.stderr).toContain("baz\n");
     // any error is code 1 it seems?
     expect(s.exit_code).toEqual(1);
   });
@@ -333,11 +335,14 @@ describe("async", () => {
     expect(s.type).toEqual("async");
     if (s.type !== "async") return;
     expect(s.status).toEqual("error");
-    expect(s.stdout).toEqual("");
+    // A timed-out job keeps what it printed before the kill: for a build,
+    // that partial log is exactly what the user needs in order to see why
+    // it ran long. (Upstream discards it -- worth upstreaming.)
+    expect(s.stdout).toEqual("foo\n");
     expect(s.elapsed_s).toBeGreaterThan(0.01);
     expect(s.elapsed_s).toBeLessThan(3);
     expect(s.start).toBeGreaterThan(1);
-    expect(s.stderr).toEqual(
+    expect(s.stderr).toContain(
       "killed command 'sh -c echo foo; sleep 1; echo bar;'",
     );
     expect(s.exit_code).toEqual(1);

@@ -212,6 +212,9 @@ export class Actions extends BaseActions<LatexEditorState> {
   // and never run two resolutions concurrently.
   private _setCmdRegistered = false;
   private _configuringBuild = false;
+  // A join we could not run because the build command was still
+  // unknown; retried when the configuration arrives.
+  private _deferredJoinBuildId?: string;
   private ext: string = "tex";
   private knitr: boolean = false; // true, if we deal with a knitr file
   private filename_knitr: string; // .rnw or .rtex
@@ -418,7 +421,16 @@ export class Actions extends BaseActions<LatexEditorState> {
         // run_latex would silently do nothing in that case; wait for it
         // instead, which is what the old "create the coordinator later"
         // ordering was really trying to achieve.
-        if (!(await this.waitForBuildCommand())) return;
+        if (!(await this.waitForBuildCommand())) {
+          // Returning normally would look like a completed join: the
+          // coordinator would clear the spinner, we would record the
+          // originator's revision as built without building anything, and
+          // this build id is never joined again. Mark it deferred instead
+          // and retry once the configuration arrives.
+          this._joinStartedRevision = undefined;
+          this._deferredJoinBuildId = buildId;
+          return;
+        }
         await this.run_build(aggregate ?? 0, force, buildId);
       },
       stop: (buildId) => {
@@ -850,7 +862,13 @@ export class Actions extends BaseActions<LatexEditorState> {
     if (this._configuringBuild) return;
     this._configuringBuild = true;
     try {
-      await this.configureBuildCommand();
+      if (!(await this.configureBuildCommand())) return;
+      if (this._deferredJoinBuildId != null) {
+        // A collaborator's build arrived while we had no build command. It
+        // may still be running -- re-read the shared state and join it now.
+        this._deferredJoinBuildId = undefined;
+        this.buildCoordinator?.reconcileRunningBuild();
+      }
     } catch (err) {
       console.warn("LaTeX: configureBuildCommand failed", err);
     } finally {

@@ -156,6 +156,11 @@ export function BuildControls({
             size={size}
             onClick={() => actions.stop_build()}
             data-testid="latex-stop"
+            // narrow mode hides the label and the icon is aria-hidden, so
+            // without this the button has no accessible name at all.
+            aria-label={intl.formatMessage(
+              COMMANDS.stop_build.label as IntlMessage,
+            )}
           >
             <Icon name="stop" />
             {!narrow &&

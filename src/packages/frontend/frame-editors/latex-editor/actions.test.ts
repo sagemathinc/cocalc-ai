@@ -3,6 +3,25 @@ import * as CodeMirror from "codemirror";
 import { Actions } from "./actions";
 import { EventEmitter } from "events";
 
+// Capture the callbacks the editor gives the coordinator, so the join path
+// can be exercised without a real DKV.
+let capturedCallbacks: any;
+jest.mock("@cocalc/frontend/frame-editors/generic/build-coordinator", () => ({
+  BuildCoordinator: class {
+    constructor(_project_id: string, _path: string, callbacks: any) {
+      capturedCallbacks = callbacks;
+    }
+    setLocalBuildId() {}
+    publishBuildStart() {}
+    publishBuildFinished() {}
+    requestStop() {}
+    reconcileRunningBuild() {}
+    resetRuntimeState() {}
+    ensureConnected() {}
+    close() {}
+  },
+}));
+
 describe("LaTeX persisted source change builds", () => {
   function createActions() {
     const build = jest.fn(async () => undefined);
@@ -1478,6 +1497,39 @@ describe("LaTeX save-triggered builds", () => {
     // Already configured: a later signal must not redo the work.
     await actions.ensureBuildConfig();
     expect(actions.configureBuildCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("defers a join it cannot run instead of reporting it as built", async () => {
+    // A join that returns normally looks like a completed build to the
+    // coordinator: it clears the spinner, records the originator's revision
+    // as built, and never joins that build id again. A client that had no
+    // build command yet would silently miss the build.
+    const actions = createSaveActions(() => 1);
+    actions.is_read_only_preview = () => false;
+    actions.set_error = jest.fn();
+    actions.waitForBuildCommand = jest.fn(async () => undefined);
+    actions.run_build = jest.fn(async () => {});
+    actions._init_build_coordinator();
+
+    await capturedCallbacks.join("remote-build", 100, false, 99);
+
+    expect(actions.run_build).not.toHaveBeenCalled();
+    expect(actions._joinStartedRevision).toBeUndefined();
+    expect(actions._deferredJoinBuildId).toBe("remote-build");
+  });
+
+  it("retries a deferred join once the build command arrives", async () => {
+    const actions = createSaveActions(() => 1);
+    actions._deferredJoinBuildId = "remote-build";
+    actions.store.get = jest.fn(() => undefined); // no build command yet
+    actions.configureBuildCommand = jest.fn(async () => true);
+
+    await actions.ensureBuildConfig();
+
+    expect(actions._deferredJoinBuildId).toBeUndefined();
+    expect(
+      actions.buildCoordinator.reconcileRunningBuild,
+    ).toHaveBeenCalledTimes(1);
   });
 
   it("does not resolve the build command twice concurrently", async () => {

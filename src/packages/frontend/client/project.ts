@@ -347,6 +347,47 @@ export class ProjectClient {
       provisioned?: unknown;
     };
   }): Promise<void> {
+    let sawDone = false;
+    let ended = false;
+
+    const emitEnd = () => {
+      if (ended) return;
+      ended = true;
+      execStream.emit("end");
+    };
+
+    // The stream can end prematurely in several ways -- a clean end with no
+    // "done", a server-reported error, a gap in the sequence numbers, or a
+    // dropped connection. In every one of those the backend job may still be
+    // running, so recover the real result through async_get rather than
+    // telling the editor the build failed (which would publish "finished"
+    // for a build that is still going).
+    const recoverFinalResult = async (reason: string): Promise<boolean> => {
+      if (sawDone) return true;
+      const jobId = execStream.job_id;
+      if (!jobId) return false;
+      try {
+        const result = await this.exec({
+          project_id: opts.project_id,
+          async_get: jobId,
+          async_await: true,
+          async_stats: true,
+          // Wait as long as the job itself may run: the default 30s would
+          // abandon any build longer than that (LaTeX allows minutes).
+          timeout: (opts.timeout ?? 300) + 30,
+        });
+        sawDone = true;
+        execStream.emit("done", result);
+        return true;
+      } catch (err) {
+        execStream.emit(
+          "error",
+          new Error(`${reason}; async_get for job ${jobId} failed: ${err}`),
+        );
+        return false;
+      }
+    };
+
     try {
       const cn = await this.client.conat_client.projectConat({
         project_id: opts.project_id,
@@ -357,14 +398,6 @@ export class ProjectClient {
         service: EXEC_STREAM_SERVICE,
       });
       let lastSeq = -1;
-      let sawDone = false;
-      let ended = false;
-
-      const emitEnd = () => {
-        if (ended) return;
-        ended = true;
-        execStream.emit("end");
-      };
 
       const req = cn.requestMany(
         subject,
@@ -378,29 +411,9 @@ export class ProjectClient {
       for await (const resp of await req) {
         if (resp.data == null) {
           // Stream ended. This should normally happen only after a "done"
-          // event. If we already know the async job id, fall back to the
-          // normal async_get API to recover the final result from the project.
-          if (!sawDone) {
-            const jobId = execStream.job_id;
-            if (jobId) {
-              try {
-                const result = await this.exec({
-                  project_id: opts.project_id,
-                  async_get: jobId,
-                  async_await: true,
-                  async_stats: true,
-                });
-                sawDone = true;
-                execStream.emit("done", result);
-              } catch (err) {
-                execStream.emit(
-                  "error",
-                  new Error(
-                    `Exec stream ended before done for job ${jobId}; async_get failed: ${err}`,
-                  ),
-                );
-              }
-            } else {
+          // event.
+          if (!sawDone && !(await recoverFinalResult("Exec stream ended"))) {
+            if (!execStream.job_id) {
               execStream.emit(
                 "error",
                 new Error("Exec stream ended before done"),
@@ -414,13 +427,22 @@ export class ProjectClient {
         const { error, type, data, seq } = resp.data;
 
         if (error) {
-          execStream.emit("error", new Error(error));
+          if (!(await recoverFinalResult(`exec stream error: ${error}`))) {
+            if (!execStream.job_id) {
+              execStream.emit("error", new Error(error));
+            }
+          }
           emitEnd();
           break;
         }
 
         if (seq != null && lastSeq + 1 != seq) {
-          execStream.emit("error", new Error("Missed response in stream"));
+          // A gap means we lost output, not necessarily the job.
+          if (!(await recoverFinalResult("missed response in stream"))) {
+            if (!execStream.job_id) {
+              execStream.emit("error", new Error("Missed response in stream"));
+            }
+          }
           emitEnd();
           break;
         }
@@ -471,8 +493,13 @@ export class ProjectClient {
         }
       }
     } catch (err) {
-      execStream.emit("error", err);
-      execStream.emit("end");
+      // Losing the connection does not stop the job in the project.
+      if (!(await recoverFinalResult(`exec stream failed: ${err}`))) {
+        if (!execStream.job_id) {
+          execStream.emit("error", err);
+        }
+      }
+      emitEnd();
     }
   }
 
