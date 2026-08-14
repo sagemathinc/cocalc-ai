@@ -856,40 +856,71 @@ describe("BuildCoordinator", () => {
       coord.close();
     });
 
-    test("retries init until the project is reachable again", async () => {
+    test("ensureConnected opens the DKV once the project is back", async () => {
       // Opening a file while the project is stopped used to leave THIS
       // editor uncoordinated for the life of the page: builds ran, but no
       // collaborator saw them and every client spawned its own process.
-      jest.useFakeTimers();
-      const flush = async () => {
-        for (let i = 0; i < 10; i++) await Promise.resolve();
-      };
-      try {
-        const cb = makeCallbacks();
-        const coord = new BuildCoordinator(PROJECT_ID, PATH, cb);
+      // Editors call ensureConnected() when the syncstring goes ready or
+      // the project starts — no polling, no deadline.
+      const cb = makeCallbacks();
+      const coord = new BuildCoordinator(PROJECT_ID, PATH, cb);
 
-        dkvReject(new Error("project not running"));
-        await flush();
-        // Nothing is coordinated yet.
-        coord.publishBuildStart("b0", 100);
-        expect(mockDkvInstance.get(PATH)).toBeUndefined();
+      dkvReject(new Error("project not running"));
+      await tick();
+      // Nothing is coordinated yet.
+      coord.publishBuildStart("b0", 100);
+      expect(mockDkvInstance.get(PATH)).toBeUndefined();
+      // A failed init must not be reported to the user: a stopped project
+      // is ordinary and there is nothing to act on.
+      expect(cb.setError).not.toHaveBeenCalled();
 
-        // The project comes back before the retry fires.
-        resetDkvMock();
-        jest.advanceTimersByTime(2000);
-        await flush();
-        dkvResolve(mockDkvInstance);
-        await flush();
+      // The project starts; the editor nudges the coordinator.
+      resetDkvMock();
+      coord.ensureConnected();
+      await initDkv();
 
-        // Coordination now works without a page reload.
-        coord.setLocalBuildId("b1");
-        coord.publishBuildStart("b1", 100);
-        expect(mockDkvInstance.get(PATH)?.buildId).toBe("b1");
+      // Coordination works now, without a page reload.
+      coord.setLocalBuildId("b1");
+      coord.publishBuildStart("b1", 100);
+      expect(mockDkvInstance.get(PATH)?.buildId).toBe("b1");
 
-        coord.close();
-      } finally {
-        jest.useRealTimers();
-      }
+      coord.close();
+    });
+
+    test("a late connect joins a build that is already running", async () => {
+      // The DKV keeps the running entry, so an editor that connects late
+      // still shows a collaborator's in-flight build.
+      const cb = makeCallbacks();
+      const coord = new BuildCoordinator(PROJECT_ID, PATH, cb);
+      dkvReject(new Error("project not running"));
+      await tick();
+
+      resetDkvMock();
+      mockDkvInstance.set(PATH, {
+        buildId: "remote",
+        status: "running",
+        aggregate: 100,
+        startedAt: Date.now(),
+      });
+      coord.ensureConnected();
+      await initDkv();
+
+      expect(cb.join).toHaveBeenCalledTimes(1);
+      coord.close();
+    });
+
+    test("ensureConnected is a no-op once connected", async () => {
+      const cb = makeCallbacks();
+      const coord = new BuildCoordinator(PROJECT_ID, PATH, cb);
+      const store = await initDkv();
+      coord.ensureConnected();
+      await tick();
+      // Still the same DKV — no second store was opened and closed.
+      expect(store.closed).toBe(false);
+      coord.setLocalBuildId("b1");
+      coord.publishBuildStart("b1", 100);
+      expect(store.get(PATH)?.buildId).toBe("b1");
+      coord.close();
     });
 
     test("close stops the init retry", async () => {

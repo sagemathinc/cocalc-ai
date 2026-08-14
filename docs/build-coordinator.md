@@ -44,6 +44,38 @@ owns the full join lifecycle:
 - **Stop**: `requestStop()` flips the entry to `"stopping"`; every client
   (including the originator) honors it if the `buildId` matches the build it
   is tracking, and kills its local process group.
+
+#### When the coordinator connects
+
+The coordinator is a **subscription**, and that dictates its lifetime. A
+collaborator who never builds anything still has to be listening *before*
+someone else starts a build, or they see nothing — which is the whole
+feature. So editors construct it eagerly when the file opens, and never
+lazily on the first build or first save.
+
+Opening the DKV, on the other hand, fails whenever the project is
+unreachable, and a stopped project can stay stopped for many minutes. So the
+open is driven by the same signals the sync layer itself waits for — the
+syncstring going ready, the project store's `started` event — via
+`ensureConnected()`, which opens the DKV if it isn't open yet and does
+nothing if it is. That mirrors how `wait_until_syncdoc_ready` works: wait for
+the event, no polling and no deadline. A timer retry remains only as a
+backstop for signals we might not observe, and a failed open is deliberately
+not surfaced to the user, since a stopped project is ordinary and there is
+nothing to act on. Because a late connect reads the DKV snapshot, an editor
+that connects after the project recovers still joins a build already in
+flight.
+
+This is worth stating because getting it wrong is invisible: the LaTeX editor
+used to create its coordinator in `init_config().then(...)`, and
+`init_config` awaits the aux syncdb becoming ready with no deadline. While
+the project was stopped that promise stayed *pending*, so the editor had no
+coordinator at all — builds ran, no collaborator saw them, and every client
+spawned its own process. Nothing failed loudly; coordination was just
+silently absent. The Rmd/Qmd editors, which construct theirs synchronously,
+were unaffected. Anything the coordinator needs but does not have yet
+(for LaTeX, the build command that `init_config` produces) is waited for in
+the `join` callback rather than by delaying the subscription.
 - **Robustness**: operations issued before the DKV finished initializing are
   buffered and flushed; stranded `"running"` entries older than 20 minutes
   (originator crashed) are ignored and cleared using the shared **server

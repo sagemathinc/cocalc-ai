@@ -61,14 +61,13 @@ interface BuildState {
  */
 const STALE_RUNNING_ENTRY_MS = 20 * 60 * 1000;
 
-// DKV init retry backoff. A project that is stopped, restarting, or briefly
-// unreachable makes init fail; without retrying, that editor never
-// coordinates again for the rest of the page's life.
-const INIT_RETRY_BASE_MS = 2000;
-const INIT_RETRY_MAX_MS = 30 * 1000;
-// Stay quiet through the first few attempts: a project that is simply
-// starting up is normal, and the user is already told it is starting.
-const INIT_ATTEMPTS_BEFORE_WARNING = 4;
+// Backstop only. Opening the DKV fails while the project is unreachable,
+// which can last for many minutes if the project is simply stopped. The
+// primary recovery path is ensureConnected(), which editors call on the
+// lifecycle signals that mean "the project is back" (syncstring ready,
+// project started) — the same event-driven approach the sync layer uses,
+// rather than polling. This timer only covers signals we might not see.
+const INIT_RETRY_MS = 30 * 1000;
 
 export interface BuildCoordinatorCallbacks {
   /**
@@ -118,8 +117,9 @@ export class BuildCoordinator {
   // A join that settles under an older generation must not tear down or
   // otherwise mutate the lifecycle of a replacement build.
   private _joinGeneration = 0;
-  // Retry bookkeeping for the DKV init (see init).
-  private initAttempts = 0;
+  // DKV init bookkeeping (see init / ensureConnected).
+  private project_id: string;
+  private initializing = false;
   private initTimer?: ReturnType<typeof setTimeout>;
   // Server-clock boundary for the most recent observed project-runtime loss.
   // A running entry from at or before this instant belongs to the dead
@@ -139,11 +139,33 @@ export class BuildCoordinator {
     callbacks: BuildCoordinatorCallbacks,
   ) {
     this.path = path;
+    this.project_id = project_id;
     this.callbacks = callbacks;
-    this.init(project_id);
+    void this.init();
   }
 
-  private async init(project_id: string) {
+  /**
+   * Open the DKV now if it isn't open yet.
+   *
+   * Editors call this on the signals that mean the project became reachable
+   * — the syncstring going ready, the project store's "started" event. That
+   * is how the rest of the sync layer works: wait for the event, no polling
+   * and no deadline. Opening the DKV fails while the project is stopped,
+   * and a project can be stopped for many minutes, so an editor opened in
+   * that window must be able to catch up later without a page reload.
+   */
+  ensureConnected(): void {
+    if (this.closed || this.dkv != null || this.initializing) return;
+    if (this.initTimer != null) {
+      clearTimeout(this.initTimer);
+      this.initTimer = undefined;
+    }
+    void this.init();
+  }
+
+  private async init() {
+    if (this.closed || this.dkv != null || this.initializing) return;
+    this.initializing = true;
     try {
       // Resolve the project's conat client explicitly (multibay routing
       // rule): collaborators homed on different bays must all open this
@@ -151,12 +173,12 @@ export class BuildCoordinator {
       // home-bay fallback — otherwise they'd coordinate on different
       // stores and never see each other's builds.
       const client = await webapp_client.conat_client.projectConat({
-        project_id,
+        project_id: this.project_id,
         caller: "BuildCoordinator",
         requireRouting: true,
       });
       const store = await webapp_client.conat_client.dkv<BuildState>({
-        project_id,
+        project_id: this.project_id,
         name: "build",
         ephemeral: true,
         client,
@@ -204,32 +226,23 @@ export class BuildCoordinator {
         }
       }
       this.pendingOps = undefined;
-      this.initAttempts = 0;
     } catch (err) {
       if (this.closed) return;
-      // Retry. Init fails whenever the project is unreachable — restarting,
-      // or briefly during a conat hiccup — and a file open during such a
-      // window used to leave THIS editor permanently uncoordinated: builds
-      // still ran, but no collaborator ever saw them and every client
-      // spawned its own process, until the page was reloaded.
-      this.initAttempts += 1;
+      // Failing here is ordinary: the project is stopped or still starting.
+      // Deliberately NOT surfaced to the user — "cannot coordinate builds"
+      // would fire for every stopped project, and there is nothing to act
+      // on. ensureConnected() retries as soon as the project is back; this
+      // timer is only the backstop for a signal we might not observe.
+      console.warn("BuildCoordinator: DKV not available yet", err);
       // Buffered ops predate the failure; a retry must not replay them.
       this.pendingOps = undefined;
-      if (this.initAttempts === INIT_ATTEMPTS_BEFORE_WARNING) {
-        console.warn("BuildCoordinator: failed to init DKV", err);
-        this.callbacks.setError(
-          "BuildCoordinator: cannot reach the project to coordinate builds — builds still run, but collaborators will not see them until the connection recovers",
-        );
-      }
-      const delay = Math.min(
-        INIT_RETRY_MAX_MS,
-        INIT_RETRY_BASE_MS * 2 ** Math.min(this.initAttempts - 1, 5),
-      );
       this.initTimer = setTimeout(() => {
         this.initTimer = undefined;
         if (this.closed) return;
-        void this.init(project_id);
-      }, delay);
+        void this.init();
+      }, INIT_RETRY_MS);
+    } finally {
+      this.initializing = false;
     }
   }
 

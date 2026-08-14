@@ -300,19 +300,17 @@ export class Actions extends BaseActions<LatexEditorState> {
     // init_config is async — it must complete (setting build_command)
     // before the BuildCoordinator is created, otherwise a late-join
     // attempt may fire with an empty build_command and silently bail.
-    // The coordinator is created after init_config so a late-join cannot
-    // fire with an empty build_command — but it must be created even if
-    // init_config fails (an unreachable project makes it throw), otherwise
-    // this editor never coordinates with anyone for the life of the page.
-    // A join with no build command bails harmlessly in run_latex.
-    this.init_config()
-      .catch((err) => {
-        console.warn("LaTeX: init_config failed", err);
-      })
-      .then(() => {
-        if (this._state === "closed") return;
-        this._init_build_coordinator();
-      });
+    // Create the coordinator eagerly, like the Rmd/Qmd editors do. It used
+    // to be created in init_config().then(...), but init_config awaits the
+    // syncdb becoming ready with no deadline: while the project is stopped
+    // that promise simply stays pending, so this editor had no coordinator
+    // at all — builds ran, no collaborator saw them, and every client
+    // spawned its own process. Joining before the build command is known is
+    // handled where the problem is, in the join callback.
+    this._init_build_coordinator();
+    this.init_config().catch((err) => {
+      console.warn("LaTeX: init_config failed", err);
+    });
     if (!this.knitr) {
       this.output_directory = this.output_directory_path();
     }
@@ -324,6 +322,11 @@ export class Actions extends BaseActions<LatexEditorState> {
       "change",
       debounce(this.ensureNonempty.bind(this), 1500),
     );
+    // The syncstring going ready means the project became reachable, which
+    // is exactly when opening the coordination DKV can succeed.
+    this._syncstring.on("ready", () => {
+      this.buildCoordinator?.ensureConnected();
+    });
     this._project_started_listener = () => {
       void this._handle_project_started();
     };
@@ -347,6 +350,9 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   private async _handle_project_started(): Promise<void> {
+    // The project is reachable again: if this editor opened while it was
+    // stopped, its coordination DKV could not be opened then.
+    this.buildCoordinator?.ensureConnected();
     // A project (re)start means any build process that was running is dead.
     // If we still think we are building, the exec stream is orphaned and
     // would keep the UI stuck on "building" until the runJob watchdog
@@ -400,6 +406,12 @@ export class Actions extends BaseActions<LatexEditorState> {
         // A joined build compiles the originator's revision, so a request
         // queued while we join must be judged against that revision too.
         this._lastAttemptedRevision = sourceRevision;
+        // The coordinator now exists from the moment the editor opens, so a
+        // join can arrive before init_config has produced a build command.
+        // run_latex would silently do nothing in that case; wait for it
+        // instead, which is what the old "create the coordinator later"
+        // ordering was really trying to achieve.
+        if (!(await this.waitForBuildCommand())) return;
         await this.run_build(aggregate ?? 0, force, buildId);
       },
       stop: (buildId) => {
@@ -443,6 +455,24 @@ export class Actions extends BaseActions<LatexEditorState> {
 
   private isBuildOwner(buildToken?: string): boolean {
     return buildToken == null || this._buildToken === buildToken;
+  }
+
+  // init_config sets build_command once the aux syncdb is ready. Bounded
+  // because a joined build is only worth running while the originator's
+  // process is plausibly still alive.
+  private async waitForBuildCommand(
+    timeoutMs = 60_000,
+  ): Promise<string | List<string> | undefined> {
+    const current = this.store.get("build_command");
+    if (current) return current;
+    try {
+      return await this.store.async_wait({
+        until: (store) => store.get("build_command"),
+        timeout: timeoutMs / 1000,
+      });
+    } catch {
+      return undefined; // timed out or the editor closed
+    }
   }
 
   /**

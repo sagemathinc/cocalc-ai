@@ -1225,6 +1225,7 @@ describe("LaTeX build ownership", () => {
       publishBuildFinished: jest.fn(),
       requestStop: jest.fn(),
       reconcileRunningBuild: jest.fn(),
+      ensureConnected: jest.fn(),
     };
     return actions;
   }
@@ -1364,6 +1365,7 @@ describe("LaTeX save-triggered builds", () => {
       publishBuildFinished: jest.fn(),
       requestStop: jest.fn(),
       reconcileRunningBuild: jest.fn(),
+      ensureConnected: jest.fn(),
     };
     return actions;
   }

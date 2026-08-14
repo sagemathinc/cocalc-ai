@@ -170,6 +170,9 @@ export abstract class MarkdownConverterActions extends MarkdownActions {
     // PIDs — after a restart those belong to the old runtime and could hit
     // an unrelated process via PID reuse.
     this._project_started_listener = () => {
+      // The project is reachable again: an editor opened while it was
+      // stopped could not open its coordination DKV back then.
+      this.buildCoordinator?.ensureConnected();
       // A normal stop→start transition was already reset by the stopped
       // handler. Do not reset again: a collaborator may have started a valid
       // build in the replacement runtime before this client sees "started".
