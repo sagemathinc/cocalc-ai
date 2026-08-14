@@ -37,6 +37,7 @@ jest.mock("antd", () => ({
       )}
       {items.map((item: any) => (
         <div
+          aria-selected="false"
           key={item.key}
           role="tab"
           tabIndex={0}

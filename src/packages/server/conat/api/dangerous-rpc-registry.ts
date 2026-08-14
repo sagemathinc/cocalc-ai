@@ -23,6 +23,10 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
+  "compute.approveAgentGrant": {
+    decision: "fresh-auth-required",
+    reason: "delegates billable managed compute actions to a project agent",
+  },
   "compute.createVm": {
     decision: "fresh-auth-required",
     reason: "creates billable managed compute infrastructure",
@@ -46,6 +50,26 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "compute.deleteVolume": {
     decision: "fresh-auth-required",
     reason: "irreversibly deletes a persistent managed compute volume",
+  },
+  "compute.prepareWindowsRdp": {
+    decision: "fresh-auth-required",
+    reason: "resets and returns a Windows VM administrator credential",
+  },
+  "compute.revokeAgentGrant": {
+    decision: "fresh-auth-not-required",
+    reason: "removes delegated project-agent compute authority",
+  },
+  "compute.setVmFundingMode": {
+    decision: "fresh-auth-required",
+    reason: "changes who funds recurring managed compute VM costs",
+  },
+  "compute.setVmMachineType": {
+    decision: "fresh-auth-required",
+    reason: "changes a managed compute VM's recurring machine cost",
+  },
+  "compute.setVolumeFundingMode": {
+    decision: "fresh-auth-required",
+    reason: "changes who funds recurring managed compute storage costs",
   },
   "compute.startVm": {
     decision: "fresh-auth-not-required",

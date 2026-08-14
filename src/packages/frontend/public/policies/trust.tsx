@@ -93,6 +93,7 @@ export const trustPolicy: PublicPolicy = {
               <iframe
                 srcDoc={GDPR_BADGE_HTML}
                 sandbox="allow-scripts"
+                title="GDPR Local verification badge"
                 style={{
                   border: "none",
                   height: "180px",

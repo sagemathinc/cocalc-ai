@@ -153,6 +153,12 @@ This creates a local, untracked config at:
 
 Edit that file as needed.
 
+The dev hub persists `project_hosts_route_mode=public` by default. This lets a
+hub running in the local Podman development environment manage project hosts in
+a separate cloud project/VPC. Set
+`COCALC_SETTING_PROJECT_HOSTS_ROUTE_MODE=auto` only when the hub can resolve and
+reach the managed hosts' private GCP addresses.
+
 Notes:
 
 - `pnpm --dir src smoke:self-host` will auto-create this config on first run if missing and continue with defaults.

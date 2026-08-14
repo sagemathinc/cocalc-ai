@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 import { Command } from "commander";
 import {
   buildVmSshConfigBlock,
+  isTransientVmPollError,
   parseTtlMinutes,
   registerVmCommand,
   removeVmSshConfigBlock,
@@ -24,11 +25,14 @@ function harness(opts: { projectId?: string; projectAuth?: boolean } = {}) {
   const callbackResults: unknown[] = [];
   const ttlCalls: any[] = [];
   const createCalls: any[] = [];
+  const machineCalls: any[] = [];
   const progressMessages: string[] = [];
   const sshAuthorizationCalls: any[] = [];
   const projectSshAuthorizationCalls: any[] = [];
   const listCalls: any[] = [];
   const projectListCalls: any[] = [];
+  const catalogCalls: any[] = [];
+  const rdpCalls: any[] = [];
   const program = new Command();
   program.exitOverride();
   program.configureOutput({ writeOut: () => {}, writeErr: () => {} });
@@ -41,6 +45,15 @@ function harness(opts: { projectId?: string; projectAuth?: boolean } = {}) {
         },
         hub: {
           compute: {
+            getCatalog: async (callOpts: any) => {
+              catalogCalls.push(callOpts);
+              return {
+                provider_catalogs: { gcp: { entries: [] } },
+                defaults: { provider: "gcp" },
+                limits: { max_active_per_project: 3 },
+                funding_modes: [],
+              };
+            },
             listVms: async (callOpts: any) => {
               listCalls.push(callOpts);
               return [];
@@ -54,7 +67,8 @@ function harness(opts: { projectId?: string; projectAuth?: boolean } = {}) {
               name: "build-vm",
               state: "ready",
               public_ip: "203.0.113.10",
-              ssh_user: "ubuntu",
+              ssh_user: "user",
+              operating_system: "windows",
             }),
             authorizeSshKey: async (opts: any) => {
               sshAuthorizationCalls.push(opts);
@@ -63,7 +77,8 @@ function harness(opts: { projectId?: string; projectAuth?: boolean } = {}) {
                 name: "build-vm",
                 state: "ready",
                 public_ip: "203.0.113.10",
-                ssh_user: "ubuntu",
+                ssh_user: "user",
+                operating_system: "windows",
               };
             },
             authorizeProjectSshKey: async (callOpts: any) => {
@@ -73,7 +88,8 @@ function harness(opts: { projectId?: string; projectAuth?: boolean } = {}) {
                 name: "build-vm",
                 state: "ready",
                 public_ip: "203.0.113.10",
-                ssh_user: "ubuntu",
+                ssh_user: "user",
+                operating_system: "windows",
               };
             },
             createVm: async (opts: any) => {
@@ -83,6 +99,27 @@ function harness(opts: { projectId?: string; projectAuth?: boolean } = {}) {
             setVmTtl: async (opts: any) => {
               ttlCalls.push(opts);
               return { id: "vm-id", name: "build-vm", ...opts };
+            },
+            setVmMachineType: async (opts: any) => {
+              machineCalls.push(opts);
+              return {
+                id: "vm-id",
+                name: "build-vm",
+                state: "stopped",
+                machine_type: opts.machine_type,
+              };
+            },
+            prepareWindowsRdp: async (callOpts: any) => {
+              rdpCalls.push(callOpts);
+              return {
+                id: "vm-id",
+                name: "build-vm",
+                hostname: "vm.example.test",
+                ssh_user: "user",
+                windows_user: "user",
+                windows_password: "temporary-password",
+                remote_port: 3389,
+              };
             },
           },
         },
@@ -106,13 +143,38 @@ function harness(opts: { projectId?: string; projectAuth?: boolean } = {}) {
     callbackResults,
     ttlCalls,
     createCalls,
+    machineCalls,
     progressMessages,
     sshAuthorizationCalls,
     projectSshAuthorizationCalls,
     listCalls,
     projectListCalls,
+    catalogCalls,
+    rdpCalls,
   };
 }
+
+describe("vm catalog", () => {
+  it("queries and selects the live provider catalog", async () => {
+    const { program, catalogCalls, callbackResults } = harness();
+    await program.parseAsync([
+      "node",
+      "cocalc",
+      "vm",
+      "catalog",
+      "--provider",
+      "gcp",
+    ]);
+    assert.deepEqual(catalogCalls, [{}]);
+    assert.deepEqual(callbackResults[0], {
+      provider: "gcp",
+      catalog: { entries: [] },
+      defaults: { provider: "gcp" },
+      limits: { max_active_per_project: 3 },
+      funding_modes: [],
+    });
+  });
+});
 
 describe("vm list scope", () => {
   it("defaults project authentication to the current project", async () => {
@@ -139,6 +201,60 @@ describe("vm list scope", () => {
 });
 
 describe("vm create", () => {
+  it("defaults to the attached project's deploy key", async () => {
+    const { program, createCalls } = harness();
+    await program.parseAsync([
+      "node",
+      "cocalc",
+      "vm",
+      "create",
+      "project-key",
+      "--project",
+      "project-id",
+    ]);
+    assert.equal(createCalls[0]?.ssh_public_key, undefined);
+    assert.equal(createCalls[0]?.configure_project_ssh, true);
+    assert.equal(createCalls[0]?.gpu_count, undefined);
+    assert.equal(createCalls[0]?.operating_system, "linux");
+  });
+
+  it("passes an explicit fixed GPU count", async () => {
+    const { program, createCalls } = harness();
+    await program.parseAsync([
+      "node",
+      "cocalc",
+      "vm",
+      "create",
+      "l4-vm",
+      "--project",
+      "project-id",
+      "--machine",
+      "g2-standard-4",
+      "--gpu-type",
+      "nvidia-l4",
+      "--gpu-count",
+      "1",
+    ]);
+    assert.equal(createCalls[0]?.gpu_count, 1);
+  });
+
+  it("creates Windows with its safer boot-disk default", async () => {
+    const { program, createCalls } = harness();
+    await program.parseAsync([
+      "node",
+      "cocalc",
+      "vm",
+      "create",
+      "windows-vm",
+      "--project",
+      "project-id",
+      "--os",
+      "windows",
+    ]);
+    assert.equal(createCalls[0]?.operating_system, "windows");
+    assert.equal(createCalls[0]?.boot_disk_gb, 80);
+  });
+
   it("can deliberately create without an initial SSH key", async () => {
     const { program, createCalls } = harness();
     await program.parseAsync([
@@ -152,6 +268,7 @@ describe("vm create", () => {
       "--no-ssh-key",
     ]);
     assert.equal(createCalls[0]?.ssh_public_key, "");
+    assert.equal(createCalls[0]?.configure_project_ssh, false);
   });
 
   it("accepts the literal public key shown by the web UI", async () => {
@@ -171,6 +288,24 @@ describe("vm create", () => {
       createCalls[0]?.ssh_public_key,
       "ssh-ed25519 AAAAUSER user@example.com",
     );
+    assert.equal(createCalls[0]?.configure_project_ssh, true);
+  });
+
+  it("can use a custom key without maintaining the project SSH alias", async () => {
+    const { program, createCalls } = harness();
+    await program.parseAsync([
+      "node",
+      "cocalc",
+      "vm",
+      "create",
+      "custom-key",
+      "--project",
+      "project-id",
+      "--ssh-public-key-value",
+      "ssh-ed25519 AAAAUSER user@example.com",
+      "--no-configure-project-ssh",
+    ]);
+    assert.equal(createCalls[0]?.configure_project_ssh, false);
   });
 
   it("reports when provider provisioning is queued", async () => {
@@ -190,7 +325,7 @@ describe("vm create", () => {
       "--no-ssh-key",
     ]);
     assert.deepEqual(progressMessages, [
-      "[vm create] Submitting 'status-vm' (e2-standard-2, us-west1-a)...",
+      "[vm create] Submitting 'status-vm' (gcp, linux, e2-standard-2, us-west1-a)...",
       "[vm create] Provider provisioning queued for 'status-vm' (id vm-id).",
     ]);
   });
@@ -228,12 +363,29 @@ describe("vm ttl", () => {
   });
 });
 
+describe("vm machine", () => {
+  it("changes the machine type through the account control plane", async () => {
+    const { program, machineCalls } = harness();
+    await program.parseAsync([
+      "node",
+      "cocalc",
+      "vm",
+      "machine",
+      "build-vm",
+      "n2d-standard-8",
+    ]);
+    assert.equal(machineCalls[0]?.id_or_name, "build-vm");
+    assert.equal(machineCalls[0]?.machine_type, "n2d-standard-8");
+    assert.equal(typeof machineCalls[0]?.idempotency_key, "string");
+  });
+});
+
 describe("vm ssh", () => {
   it("opens an interactive SSH session when no command is supplied", async () => {
     const { program, sshCalls, callbackResults, sshAuthorizationCalls } =
       harness();
     await program.parseAsync(["node", "cocalc", "vm", "ssh", "build-vm"]);
-    assert.deepEqual(sshCalls[0]?.slice(-1), ["ubuntu@203.0.113.10"]);
+    assert.deepEqual(sshCalls[0]?.slice(-1), ["user@203.0.113.10"]);
     assert.equal(
       sshAuthorizationCalls[0]?.ssh_public_key,
       "ssh-ed25519 AAAATEST test@example.com",
@@ -266,11 +418,38 @@ describe("vm ssh", () => {
       "-la",
     ]);
     assert.deepEqual(sshCalls[0]?.slice(-3), [
-      "ubuntu@203.0.113.10",
+      "user@203.0.113.10",
       "ls",
       "-la",
     ]);
     assert.deepEqual(callbackResults, [undefined]);
+  });
+});
+
+describe("vm rdp", () => {
+  it("returns a private tunnel and freshly rotated credentials", async () => {
+    const { program, callbackResults, rdpCalls } = harness();
+    await program.parseAsync([
+      "node",
+      "cocalc",
+      "vm",
+      "rdp",
+      "build-vm",
+      "--local-port",
+      "14489",
+    ]);
+
+    assert.equal(rdpCalls[0]?.id_or_name, "vm-id");
+    assert.deepEqual(callbackResults[0], {
+      id: "vm-id",
+      name: "build-vm",
+      rdp_address: "127.0.0.1:14489",
+      username: "user",
+      password: "temporary-password",
+      tunnel_command:
+        'ssh "-N" "-o" "ExitOnForwardFailure=yes" "-L" "14489:127.0.0.1:3389" "-o" "ForwardAgent=no" "-o" "StrictHostKeyChecking=accept-new" "user@203.0.113.10"',
+      note: "TCP 3389 is not public. Keep the SSH tunnel open while using RDP.",
+    });
   });
 });
 
@@ -284,12 +463,12 @@ describe("vm rsync", () => {
       "rsync",
       "-az",
       "./src/",
-      "build-vm:/work/src/",
+      "build-vm:/home/user/src/",
     ]);
     assert.deepEqual(rsyncCalls[0]?.slice(-3), [
       "-az",
       "./src/",
-      "ubuntu@203.0.113.10:/work/src/",
+      "user@203.0.113.10:/home/user/src/",
     ]);
     assert.deepEqual(callbackResults, [undefined]);
   });
@@ -301,21 +480,21 @@ describe("vm rsync", () => {
         name: "build-vm",
         state: "ready",
         public_ip: "203.0.113.10",
-        ssh_user: "ubuntu",
+        ssh_user: "user",
       },
-      ["-a", "build-vm:/work/dist/", "./dist/"],
+      ["-a", "build-vm:/home/user/dist/", "./dist/"],
       {},
     );
-    assert.equal(args.at(-2), "ubuntu@203.0.113.10:/work/dist/");
+    assert.equal(args.at(-2), "user@203.0.113.10:/home/user/dist/");
     assert.equal(
-      resolveVmRsyncEndpoint(["build-vm:/work", "."]).vm,
+      resolveVmRsyncEndpoint(["build-vm:/home/user", "."]).vm,
       "build-vm",
     );
   });
 
   it("rejects remote-to-remote and transport overrides", () => {
     assert.throws(
-      () => resolveVmRsyncEndpoint(["one:/work", "two:/work"]),
+      () => resolveVmRsyncEndpoint(["one:/home/user", "two:/home/user"]),
       /exactly one VM endpoint/,
     );
     assert.throws(
@@ -327,7 +506,7 @@ describe("vm rsync", () => {
             state: "ready",
             public_ip: "203.0.113.10",
           },
-          ["-e", "ssh -A", ".", "build-vm:/work"],
+          ["-e", "ssh -A", ".", "build-vm:/home/user"],
           {},
         ),
       /use --identity/,
@@ -357,6 +536,7 @@ describe("vm list", () => {
           name: "build-vm",
           state: "ready",
           machine: "e2-standard-2",
+          os: "Linux",
           pricing: "Spot",
           zone: "us-central1-a",
           ip: "203.0.113.10",
@@ -369,6 +549,21 @@ describe("vm list", () => {
 });
 
 describe("vm wait", () => {
+  it("retries transient hub socket failures but not provider failures", () => {
+    assert.equal(
+      isTransientVmPollError(new Error("socket has been disconnected")),
+      true,
+    );
+    assert.equal(
+      isTransientVmPollError(new Error("connection closed before reply")),
+      true,
+    );
+    assert.equal(
+      isTransientVmPollError(new Error("provider provisioning failed")),
+      false,
+    );
+  });
+
   it("explains retryable Spot capacity recovery", () => {
     assert.match(
       vmWaitProgress({
@@ -417,7 +612,7 @@ describe("vm ssh-config", () => {
     const oldBlock = buildVmSshConfigBlock({
       alias: "build-vm",
       hostname: "203.0.113.1",
-      username: "ubuntu",
+      username: "user",
       identity: "/home/user/.ssh/id_ed25519",
     });
     const content = `Host personal\n  HostName example.com\n\n${oldBlock}`;
@@ -431,7 +626,7 @@ describe("vm ssh-config", () => {
     const block = buildVmSshConfigBlock({
       alias: "build-vm",
       hostname: "203.0.113.10",
-      username: "ubuntu",
+      username: "user",
       identity: "/home/user/.ssh/id_ed25519",
     });
     assert.match(block, /Host build-vm/);

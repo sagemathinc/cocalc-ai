@@ -6,25 +6,58 @@ import {
   limitCodexActivityBlocks,
   shouldShowAcpResubmitToAgentButton,
 } from "../message-state";
+import "../../editors/slate/elements/types";
+import { markdown_to_slate } from "../../editors/slate/markdown-to-slate";
+import { slate_to_markdown } from "../../editors/slate/slate-to-markdown";
 
 describe("codexActivityBlocksToSelectableMarkdown", () => {
-  it("combines the visible activity window into one chronological document", () => {
-    expect(
-      codexActivityBlocksToSelectableMarkdown([
-        { kind: "agent", text: "Inspecting the project." },
-        {
-          kind: "guidance",
-          text: "Also check the tests.\nDo not deploy yet.",
-          state: "sent",
-        },
-        { kind: "agent", text: "The focused tests pass." },
-      ]),
-    ).toBe(
+  it("keeps agent and multi-paragraph guidance in one Markdown document", () => {
+    const markdown = codexActivityBlocksToSelectableMarkdown([
+      { kind: "agent", text: "Inspecting the project." },
+      {
+        kind: "guidance",
+        text: "> quoted request\n\nFollow-up guidance.",
+        state: "sent",
+      },
+      { kind: "agent", text: "The focused tests pass." },
+    ]);
+
+    expect(markdown).toBe(
       "Inspecting the project.\n\n" +
-        "> **Guidance sent**\n>\n" +
-        "> Also check the tests.\n> Do not deploy yet.\n\n" +
+        "```guidance\n> quoted request\n\nFollow-up guidance.\n```\n\n" +
         "The focused tests pass.",
     );
+    const slate = markdown_to_slate(markdown, true);
+    expect(slate.map((node: any) => node.type)).toEqual([
+      "paragraph",
+      "guidance",
+      "paragraph",
+    ]);
+    const guidance = slate[1] as any;
+    expect(guidance.state).toBe("sent");
+    expect(guidance.children.map((node: any) => node.type)).toEqual([
+      "blockquote",
+      "paragraph",
+    ]);
+    expect(slate_to_markdown(slate).trim()).toBe(markdown);
+  });
+
+  it("uses a longer outer fence when guidance contains fenced code", () => {
+    const markdown = codexActivityBlocksToSelectableMarkdown([
+      {
+        kind: "guidance",
+        state: "queued",
+        text: "Try this:\n\n```ts\nconst n = 1;\n```",
+      },
+    ]);
+
+    expect(markdown).toBe(
+      "````guidance queued\nTry this:\n\n```ts\nconst n = 1;\n```\n````",
+    );
+    const slate = markdown_to_slate(markdown, true);
+    expect((slate[0] as any).type).toBe("guidance");
+    expect((slate[0] as any).state).toBe("queued");
+    expect(slate_to_markdown(slate).trim()).toBe(markdown);
   });
 });
 

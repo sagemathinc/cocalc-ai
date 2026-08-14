@@ -44,6 +44,8 @@ import {
   normalizeRootfsContentManifest,
   normalizeRootfsEntry,
   ROOTFS_IMAGE_MANIFEST_VERSION,
+  ROOTFS_TAG_PROJECT_PUBLISH,
+  ROOTFS_TAG_SNAPSHOT_PREFIX,
   validateRootfsSlug,
 } from "@cocalc/util/rootfs-images";
 import { assertCanCreateOrUpdateRootfs } from "@cocalc/server/membership/rootfs-limits";
@@ -766,6 +768,59 @@ function addRootfsCatalogFilters({
   if (filters.channel) {
     where.push(`r.channel = ${addValue(filters.channel)}`);
   }
+  if (filters.lineage_image_id) {
+    const lineageImageId = addValue(filters.lineage_image_id);
+    where.push(`r.image_id IN (
+      WITH RECURSIVE lineage AS (
+        SELECT
+          image_id, owner_id, family, channel, gpu, official,
+          supersedes_image_id
+        FROM rootfs_images
+        WHERE image_id = ${lineageImageId}
+        UNION
+        SELECT
+          candidate.image_id, candidate.owner_id, candidate.family,
+          candidate.channel, candidate.gpu, candidate.official,
+          candidate.supersedes_image_id
+        FROM rootfs_images AS candidate
+        JOIN lineage AS current ON
+          NULLIF(btrim(candidate.family), '') IS NOT NULL
+          AND NULLIF(btrim(current.family), '') IS NOT NULL
+          AND lower(btrim(candidate.family)) = lower(btrim(current.family))
+          AND lower(
+            COALESCE(NULLIF(btrim(candidate.channel), ''), 'stable')
+          ) = lower(
+            COALESCE(NULLIF(btrim(current.channel), ''), 'stable')
+          )
+          AND COALESCE(candidate.gpu, false) = COALESCE(current.gpu, false)
+          AND COALESCE(candidate.official, false) =
+            COALESCE(current.official, false)
+          AND (
+            COALESCE(candidate.official, false)
+            OR lower(btrim(COALESCE(candidate.owner_id::TEXT, ''))) =
+              lower(btrim(COALESCE(current.owner_id::TEXT, '')))
+          )
+          AND (
+            candidate.supersedes_image_id = current.image_id
+            OR current.supersedes_image_id = candidate.image_id
+          )
+      )
+      SELECT image_id FROM lineage
+    )`);
+  }
+  if (filters.slug) {
+    where.push(`r.slug = ${addValue(filters.slug)}`);
+  }
+  if (filters.image_target) {
+    const imageTarget = addValue(filters.image_target);
+    where.push(`(
+      r.image_id = ${imageTarget}
+      OR r.release_id = ${imageTarget}
+      OR r.runtime_image = ${imageTarget}
+      OR r.digest = ${imageTarget}
+      OR regexp_replace(r.runtime_image, '^.*/', '') = ${imageTarget}
+    )`);
+  }
   const imageIds = Array.from(
     new Set(
       (filters.image_ids ?? [])
@@ -950,11 +1005,13 @@ function shouldSyncSeedCatalogEntry(entry: RootfsImageEntry): boolean {
   );
 }
 
-async function upsertSeedCatalogEntry(entry: RootfsImageEntry): Promise<void> {
+async function upsertSeedCatalogEntry(
+  entry: RootfsImageEntry,
+): Promise<string | null | undefined> {
   const pool = getPool("medium");
   const contentResult = normalizeRootfsContentManifest(entry.content);
   const slug = validateRootfsSlug(entry.slug);
-  await pool.query(
+  const { rows } = await pool.query<{ owner_id: string | null }>(
     `INSERT INTO rootfs_images
       (image_id, release_id, owner_id, runtime_image, label, family, version, channel, supersedes_image_id, description, default_jupyter_kernel, visibility, official, prepull, hidden, hidden_at, hidden_by, blocked, blocked_reason, blocked_at, blocked_by, deleted, deleted_reason, deleted_at, deleted_by, arch, gpu, size_gb, tags, digest, content_key, deprecated, deprecated_reason, slug, theme, content, content_warnings, created, updated)
       VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, false, NULL, NULL, false, NULL, NULL, NULL, false, NULL, NULL, NULL, $14, $15, $16, $17::TEXT[], $18, NULL, $19, $20, $21, $22::JSONB, $23::JSONB, $24::JSONB, COALESCE($25::TIMESTAMP, NOW()), NOW())
@@ -983,7 +1040,8 @@ async function upsertSeedCatalogEntry(entry: RootfsImageEntry): Promise<void> {
         content=EXCLUDED.content,
         content_warnings=EXCLUDED.content_warnings,
         updated=NOW()
-      WHERE rootfs_images.owner_id IS NULL OR COALESCE(rootfs_images.official, false)=true`,
+      WHERE rootfs_images.owner_id IS NULL OR COALESCE(rootfs_images.official, false)=true
+      RETURNING owner_id`,
     [
       entry.id,
       trimString(entry.release_id)!,
@@ -1014,6 +1072,7 @@ async function upsertSeedCatalogEntry(entry: RootfsImageEntry): Promise<void> {
       trimString(entry.created) ?? null,
     ],
   );
+  return rows[0]?.owner_id;
 }
 
 async function syncOfficialRootfsCatalogFromSeed(): Promise<void> {
@@ -1035,7 +1094,39 @@ async function syncOfficialRootfsCatalogFromSeed(): Promise<void> {
         .bayOps(seedBayId, { timeout_ms: 15_000 })
         .getRootfsCatalog({});
       const entries = manifest.images.filter(shouldSyncSeedCatalogEntry);
+      const syncedOwnerIds = new Map<string, string | null>();
+      // Insert every eligible row without its edge first, so validation does
+      // not depend on manifest ordering and stale invalid edges are removed.
       for (const entry of entries) {
+        const owner_id = await upsertSeedCatalogEntry({
+          ...entry,
+          supersedes_image_id: undefined,
+        });
+        if (owner_id !== undefined) {
+          syncedOwnerIds.set(entry.id, owner_id);
+        }
+      }
+      for (const entry of entries) {
+        const supersedes_image_id = trimString(entry.supersedes_image_id);
+        if (!supersedes_image_id || !syncedOwnerIds.has(entry.id)) continue;
+        try {
+          await assertRootfsSupersessionAllowed({
+            image_id: entry.id,
+            owner_id: syncedOwnerIds.get(entry.id) ?? null,
+            family: entry.family,
+            channel: entry.channel,
+            gpu: entry.gpu,
+            official: entry.official,
+            supersedes_image_id,
+          });
+        } catch (err) {
+          logger.warn("dropping invalid RootFS seed supersession edge", {
+            image_id: entry.id,
+            supersedes_image_id,
+            err,
+          });
+          continue;
+        }
         await upsertSeedCatalogEntry(entry);
       }
       seedCatalogSyncCheckedAt = Date.now();
@@ -1325,6 +1416,101 @@ function normalizeVisibility(value?: unknown): RootfsImageVisibility {
   return "private";
 }
 
+export async function assertRootfsSupersessionAllowed({
+  image_id,
+  owner_id,
+  family,
+  channel,
+  gpu,
+  official,
+  supersedes_image_id,
+}: {
+  image_id: string;
+  owner_id: string | null;
+  family?: string | null;
+  channel?: string | null;
+  gpu?: boolean | null;
+  official?: boolean | null;
+  supersedes_image_id?: string | null;
+}): Promise<void> {
+  const predecessorId = trimString(supersedes_image_id);
+  if (!predecessorId) return;
+  if (predecessorId === image_id) {
+    throw Error("a rootfs image cannot supersede itself");
+  }
+  const pool = getPool("medium");
+  const { rows } = await pool.query<{
+    image_id: string;
+    owner_id: string | null;
+    family: string | null;
+    channel: string | null;
+    gpu: boolean | null;
+    official: boolean | null;
+    deleted: boolean | null;
+  }>(
+    `SELECT image_id, owner_id, family, channel, gpu, official, deleted
+     FROM rootfs_images
+     WHERE image_id=$1`,
+    [predecessorId],
+  );
+  const predecessor = rows[0];
+  if (!predecessor || predecessor.deleted) {
+    throw Error("superseded rootfs image not found");
+  }
+  const normalizedFamily = trimString(family)?.toLowerCase();
+  const predecessorFamily = trimString(predecessor.family)?.toLowerCase();
+  const normalizedChannel = trimString(channel)?.toLowerCase() ?? "stable";
+  const predecessorChannel =
+    trimString(predecessor.channel)?.toLowerCase() ?? "stable";
+  if (
+    !normalizedFamily ||
+    normalizedFamily !== predecessorFamily ||
+    normalizedChannel !== predecessorChannel ||
+    Boolean(gpu) !== Boolean(predecessor.gpu) ||
+    Boolean(official) !== Boolean(predecessor.official)
+  ) {
+    throw Error(
+      "a rootfs image can only supersede an image with the same family, channel, GPU mode, and official status",
+    );
+  }
+  const normalizedOwner = (owner_id ?? "").trim().toLowerCase();
+  const predecessorOwner = (predecessor.owner_id ?? "").trim().toLowerCase();
+  if (!official && normalizedOwner !== predecessorOwner) {
+    throw Error(
+      "a community rootfs image can only supersede an image from the same owner",
+    );
+  }
+  const cycle = await pool.query<{ image_id: string; cycle: boolean }>(
+    `WITH RECURSIVE predecessors AS (
+       SELECT
+         image_id,
+         supersedes_image_id,
+         ARRAY[image_id]::TEXT[] AS path,
+         false AS cycle
+       FROM rootfs_images
+       WHERE image_id=$1
+       UNION ALL
+       SELECT
+         candidate.image_id,
+         candidate.supersedes_image_id,
+         current.path || candidate.image_id,
+         candidate.image_id = ANY(current.path)
+       FROM rootfs_images AS candidate
+       JOIN predecessors AS current
+         ON candidate.image_id = current.supersedes_image_id
+       WHERE NOT current.cycle
+     )
+     SELECT image_id, cycle
+     FROM predecessors
+     WHERE image_id=$2 OR cycle
+     LIMIT 1`,
+    [predecessorId, image_id],
+  );
+  if (cycle.rows.length > 0) {
+    throw Error("rootfs supersession would create a cycle");
+  }
+}
+
 async function upsertRootfsRow({
   account_id,
   body,
@@ -1454,6 +1640,16 @@ async function upsertRootfsRow({
     typeof size_gb === "number" && Number.isFinite(size_gb)
       ? Math.floor(size_gb * 1_000_000_000)
       : undefined;
+
+  await assertRootfsSupersessionAllowed({
+    image_id,
+    owner_id,
+    family,
+    channel,
+    gpu,
+    official,
+    supersedes_image_id,
+  });
 
   await assertCanCreateOrUpdateRootfs({
     account_id,
@@ -1716,8 +1912,8 @@ export async function publishProjectRootfsCatalogEntry({
     new Set(
       [
         ...(body.tags ?? []),
-        "project-publish",
-        `snapshot:${artifact.snapshot}`,
+        ROOTFS_TAG_PROJECT_PUBLISH,
+        `${ROOTFS_TAG_SNAPSHOT_PREFIX}${artifact.snapshot}`,
       ].filter(Boolean),
     ),
   );

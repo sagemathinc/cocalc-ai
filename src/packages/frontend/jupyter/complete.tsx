@@ -282,6 +282,7 @@ export function Complete({
         ) : (
           <li
             aria-disabled="true"
+            aria-selected="false"
             role="option"
             style={{ padding: "3px 20px" }}
           >

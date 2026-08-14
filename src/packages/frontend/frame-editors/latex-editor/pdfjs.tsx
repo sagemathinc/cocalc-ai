@@ -7,7 +7,7 @@
 
 const HIGHLIGHT_TIME_S: number = 6;
 
-import { Alert, Button } from "antd";
+import { Alert } from "antd";
 import { delay } from "awaiting";
 import type { Set as iSet } from "immutable";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist/webpack.mjs";
@@ -19,14 +19,7 @@ import {
   useIsMountedRef,
   useRedux,
 } from "@cocalc/frontend/app-framework";
-import {
-  HelpIcon,
-  Icon,
-  Loading,
-  Markdown,
-  Paragraph,
-  Text,
-} from "@cocalc/frontend/components";
+import { Icon, Loading, Markdown } from "@cocalc/frontend/components";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import usePinchToZoom, {
@@ -37,7 +30,7 @@ import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-ho
 import { list_alternatives, seconds_ago } from "@cocalc/util/misc";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { COLORS } from "@cocalc/util/theme";
-import { Actions, Actions as LatexEditorActions } from "./actions";
+import { Actions } from "./actions";
 import { dblclick } from "./mouse-click";
 import { SyncHighlight } from "./pdfjs-annotation";
 import { getDocument, url_to_pdf } from "./pdfjs-doc-cache";
@@ -103,8 +96,6 @@ export function PDFJS({
   const derived_file_types: iSet<string> = useRedux(name, "derived_file_types");
   const custom_pdf_error_message = useRedux(name, "custom_pdf_error_message");
   const autoSyncInProgress = useRedux(name, "autoSyncInProgress") ?? false;
-  const newLayoutNagDismissed =
-    useRedux([name, "local_view_state", "new_layout_nag_dismissed"]) ?? false;
 
   const [loaded, setLoaded] = useState<boolean>(false);
   const [pages, setPages] = useState<PDFPageProxy[]>([]);
@@ -751,99 +742,6 @@ export function PDFJS({
     );
   }
 
-  // Check if there's an output panel in the frame tree
-  const hasOutputPanel = useCallback(() => {
-    return actions.get_matching_frame({ type: "output" }) != null;
-  }, [actions]);
-
-  // Check if we should show the new layout nag banner
-  // Only show in LaTeX editor mode (not in standalone PDF editor)
-  function showNewLayoutNag(): boolean {
-    // Check if actions is from LaTeX editor using instanceof
-    if (!(actions instanceof LatexEditorActions)) {
-      return false;
-    }
-    // Don't show if dismissed or if there's already an output panel
-    if (newLayoutNagDismissed || hasOutputPanel()) {
-      return false;
-    }
-    return true;
-  }
-
-  // Handler for dismissing the new layout nag
-  function handleDismissLayoutNag() {
-    const local_view_state = actions.store.get("local_view_state");
-    actions.setState({
-      local_view_state: local_view_state.set("new_layout_nag_dismissed", true),
-    });
-    // save_local_view_state only exists in LaTeX editor actions
-    if (typeof (actions as any).save_local_view_state === "function") {
-      (actions as any).save_local_view_state();
-    }
-  }
-
-  function handleNewLayoutClick() {
-    // _new_frame_tree_layout only exists in LaTeX editor actions
-    if (typeof (actions as any)._new_frame_tree_layout === "function") {
-      const tree = (actions as any)._new_frame_tree_layout();
-      actions.replace_frame_tree(tree);
-    }
-  }
-
-  function renderNewLayoutNag(): React.JSX.Element | null {
-    if (!showNewLayoutNag()) {
-      return null;
-    }
-
-    return (
-      <Alert
-        banner
-        closable
-        type="info"
-        icon={<Icon name="layout" />}
-        title={
-          <>
-            <Button type="text" size="small" onClick={handleNewLayoutClick}>
-              <Text strong>New Layout Available:</Text>
-            </Button>{" "}
-            it unifies PDF preview, build logs, and more.{" "}
-            <HelpIcon title="About the New Layout">
-              <Paragraph>
-                The new <strong>Output</strong> panel combines everything you
-                need in one unified tabbed interface: PDF preview, build logs,
-                errors and warnings, table of contents, file list, and
-                statistics. You can also mix and match by opening additional
-                panels alongside the new output panel.
-              </Paragraph>
-              <Paragraph>
-                You can easily switch back to the classic layout at any time via
-                the <strong>Frame Menu</strong>. Click on "Source" or "Output"
-                and select "Classic Layout".
-              </Paragraph>
-              <Paragraph>
-                Finally, click on the <Icon name="times" />
-                -Icon on the right to{" "}
-                <Button size="small" onClick={handleDismissLayoutNag}>
-                  dismiss
-                </Button>{" "}
-                this banner for this LaTeX file.
-              </Paragraph>
-            </HelpIcon>{" "}
-            <Button
-              size="small"
-              onClick={handleNewLayoutClick}
-              style={{ marginLeft: "10px" }}
-            >
-              <Text strong>Switch Now</Text>
-            </Button>
-          </>
-        }
-        onClose={handleDismissLayoutNag}
-        style={{ marginBottom: "4px" }}
-      />
-    );
-  }
-
   function renderContent(): React.JSX.Element | React.JSX.Element[] {
     if (!loaded) {
       if (missing) {
@@ -852,12 +750,7 @@ export function PDFJS({
         return renderLoading();
       }
     } else {
-      return (
-        <div className="smc-vfill">
-          {renderNewLayoutNag()}
-          {renderPagesUsingVirtuoso()}
-        </div>
-      );
+      return <div className="smc-vfill">{renderPagesUsingVirtuoso()}</div>;
     }
   }
 

@@ -21,6 +21,14 @@ export type InlineCodexActivityBlock = {
 
 export const DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT = 100;
 
+function guidanceFence(text: string): string {
+  let fence = "```";
+  while (text.includes(fence)) {
+    fence += "`";
+  }
+  return fence;
+}
+
 export function codexActivityBlocksToSelectableMarkdown(
   blocks: InlineCodexActivityBlock[],
 ): string {
@@ -29,19 +37,10 @@ export function codexActivityBlocksToSelectableMarkdown(
       const text = `${block.text ?? ""}`;
       if (!text.trim()) return "";
       if (block.kind === "agent") return text;
-      const label =
-        block.state === "sending"
-          ? "Sending guidance"
-          : block.state === "queued"
-            ? "Guidance queued"
-            : block.state === "not-sent"
-              ? "Guidance not sent"
-              : "Guidance sent";
-      const quotedText = text
-        .split(/\r?\n/)
-        .map((line) => `> ${line}`)
-        .join("\n");
-      return `> **${label}**\n>\n${quotedText}`;
+      const fence = guidanceFence(text);
+      const state =
+        block.state && block.state !== "sent" ? ` ${block.state}` : "";
+      return `${fence}guidance${state}\n${text}\n${fence}`;
     })
     .filter(Boolean)
     .join("\n\n");

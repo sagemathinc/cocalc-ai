@@ -61,6 +61,9 @@ export function create_sync_db(
   });
 
   syncdb.once("ready", async () => {
+    if (actions.is_closed()) {
+      return;
+    }
     const t = {
       settings: {
         title: defaultCourseTitle(store.get("course_filename")),

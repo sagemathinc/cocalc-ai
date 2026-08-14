@@ -53,7 +53,9 @@ describe("getProjectRootfsUpgrade", () => {
 
   it("falls back to the runtime image name for projects without an image id", () => {
     const current = image("basic-1.6", "1.6");
-    const next = image("basic-1.7", "1.7");
+    const next = image("basic-1.7", "1.7", {
+      supersedes_image_id: current.id,
+    });
 
     expect(
       getProjectRootfsUpgrade({

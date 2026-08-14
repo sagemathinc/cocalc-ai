@@ -47,6 +47,7 @@ export function LanguageModelVendorAvatar(
   function renderImgIcon(icon: string) {
     return (
       <img
+        alt=""
         width={size}
         height={size}
         src={icon}

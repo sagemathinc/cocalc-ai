@@ -31,7 +31,9 @@ describe("SortableTab", () => {
   it("keeps drag listeners without overriding the tab's ARIA semantics", () => {
     render(
       <SortableTab id="a">
-        <div role="tab">Alpha</div>
+        <div aria-selected="false" role="tab">
+          Alpha
+        </div>
       </SortableTab>,
     );
 

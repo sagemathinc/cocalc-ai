@@ -40,7 +40,10 @@ import {
   spotRecoveryState,
   spotRetryWindowMs,
 } from "./spot-restore";
-import { resolveGcpManagedHostInternalUrl } from "./internal-network";
+import {
+  resolveGcpManagedHostInternalUrl,
+  resolveProjectHostRouteMode,
+} from "./internal-network";
 import {
   createProjectHostBootstrapToken,
   revokeProjectHostTokensForHost,
@@ -921,7 +924,14 @@ function managesCloudflareTunnel(row: any): boolean {
   return true;
 }
 
-function resolveInternalUrlForHost(row: any): string | undefined {
+function resolveInternalUrlForHost(
+  row: any,
+  opts: { publicUrl?: string | null; routeMode?: unknown } = {},
+): string | undefined {
+  const routeMode = resolveProjectHostRouteMode(opts.routeMode);
+  if (routeMode === "public") {
+    return `${opts.publicUrl ?? row?.public_url ?? ""}`.trim() || undefined;
+  }
   const providerId = normalizeProviderId(row?.metadata?.machine?.cloud);
   if (providerId === "gcp") {
     return resolveGcpManagedHostInternalUrl({
@@ -929,6 +939,7 @@ function resolveInternalUrlForHost(row: any): string | undefined {
       // Managed GCP hosts retain their private HTTP listener even when their
       // public browser route uses a proxied A record.
       tunnelEnabled: managesCloudflareTunnel(row),
+      routeMode,
     });
   }
   return undefined;
@@ -941,6 +952,7 @@ async function ensureDnsForHost(row: any) {
   if (hostPublicRouteMigrationInProgress(row)) {
     return;
   }
+  const { project_hosts_route_mode: routeMode } = await getServerSettings();
   if (activeHostPublicRouteMode(row) === "cloudflare-proxy") {
     if (!row?.metadata?.runtime?.public_ip) return;
     if (!(await hasDns())) return;
@@ -958,7 +970,10 @@ async function ensureDnsForHost(row: any) {
         metadata: row.metadata,
         public_url: `https://${dns.name}`,
         internal_url:
-          resolveInternalUrlForHost({ ...row, metadata: row.metadata }) ??
+          resolveInternalUrlForHost(
+            { ...row, metadata: row.metadata },
+            { publicUrl: `https://${dns.name}`, routeMode },
+          ) ??
           row.internal_url ??
           `https://${dns.name}`,
       });
@@ -1013,10 +1028,16 @@ async function ensureDnsForHost(row: any) {
       const nextUrls = {
         public_url: `https://${tunnel.hostname}`,
         internal_url:
-          resolveInternalUrlForHost({
-            ...row,
-            metadata: nextMetadata,
-          }) ?? `https://${tunnel.hostname}`,
+          resolveInternalUrlForHost(
+            {
+              ...row,
+              metadata: nextMetadata,
+            },
+            {
+              publicUrl: `https://${tunnel.hostname}`,
+              routeMode,
+            },
+          ) ?? `https://${tunnel.hostname}`,
       };
       await updateHostRow(row.id, {
         metadata: nextMetadata,
@@ -1043,10 +1064,16 @@ async function ensureDnsForHost(row: any) {
     const nextUrls = {
       public_url: `https://${dns.name}`,
       internal_url:
-        resolveInternalUrlForHost({
-          ...row,
-          metadata: row.metadata,
-        }) ?? `https://${dns.name}`,
+        resolveInternalUrlForHost(
+          {
+            ...row,
+            metadata: row.metadata,
+          },
+          {
+            publicUrl: `https://${dns.name}`,
+            routeMode,
+          },
+        ) ?? `https://${dns.name}`,
     };
     await updateHostRow(row.id, {
       metadata: row.metadata,
@@ -1200,12 +1227,13 @@ async function handleProvision(row: any) {
   const isLocalSelfHost =
     machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
   const providerId = normalizeProviderId(machine.cloud);
+  const serverSettings = await getServerSettings();
   if (!providerId) {
     await updateHostRow(row.id, { status: "running" });
     return;
   }
   if (providerId !== "self-host" && providerId !== "local") {
-    const { dns } = await getServerSettings();
+    const { dns } = serverSettings;
     const host = (dns ?? "").trim().toLowerCase();
     const invalid =
       !host ||
@@ -1349,7 +1377,10 @@ async function handleProvision(row: any) {
       (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined));
   const internalUrl = isLocalSelfHost
     ? null
-    : (resolveInternalUrlForHost(provisioned) ??
+    : (resolveInternalUrlForHost(provisioned, {
+        publicUrl,
+        routeMode: serverSettings.project_hosts_route_mode,
+      }) ??
       provisioned.internal_url ??
       (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined));
   const startedAt = new Date();
@@ -2551,11 +2582,16 @@ async function handleRefreshRuntime(row: any) {
   const isLocalSelfHost =
     machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
   if (isLocalSelfHost) return;
+  const { project_hosts_route_mode: routeMode } = await getServerSettings();
   const force = !!row.payload?.force;
   const providerId = normalizeProviderId(host.metadata?.machine?.cloud);
   const needsGcpNetworkRepair =
     providerId === "gcp" &&
-    (!`${runtime.private_ip ?? ""}`.trim() || !resolveInternalUrlForHost(host));
+    (!`${runtime.private_ip ?? ""}`.trim() ||
+      !resolveInternalUrlForHost(host, {
+        publicUrl: host.public_url,
+        routeMode,
+      }));
   if (runtime.public_ip && !force && !needsGcpNetworkRepair) return;
   logger.debug("handleRefreshRuntime", {
     host_id: host.id,
@@ -2683,10 +2719,16 @@ async function handleRefreshRuntime(row: any) {
     host.public_url ??
     (network?.public_ip ? `http://${network.public_ip}` : undefined);
   const internalUrl =
-    resolveInternalUrlForHost({
-      ...host,
-      metadata: nextMetadata,
-    }) ??
+    resolveInternalUrlForHost(
+      {
+        ...host,
+        metadata: nextMetadata,
+      },
+      {
+        publicUrl,
+        routeMode,
+      },
+    ) ??
     (network?.public_ip
       ? maybeReplaceIpInUrl(host.internal_url, previousIp, network.public_ip)
       : undefined) ??

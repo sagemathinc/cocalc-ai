@@ -76,7 +76,7 @@ jest.mock("../message", () => ({
   default: ({ index }: any) => (
     <div>
       message {index}
-      <img alt={`message-image-${index}`} src={`image-${index}.png`} />
+      <img alt={`message attachment ${index}`} src={`image-${index}.png`} />
     </div>
   ),
 }));
@@ -482,7 +482,7 @@ describe("ChatLog sidechat search jumps", () => {
       }),
     );
     const initialCalls = mockScrollToIndex.mock.calls.length;
-    fireEvent.load(screen.getByAltText("message-image-1"));
+    fireEvent.load(screen.getByAltText("message attachment 1"));
     await waitFor(() =>
       expect(mockScrollToIndex.mock.calls.length).toBeGreaterThan(initialCalls),
     );

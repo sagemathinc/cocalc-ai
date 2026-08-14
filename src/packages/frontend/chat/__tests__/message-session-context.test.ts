@@ -132,6 +132,22 @@ describe("resolveMessageGitBrowserRequest", () => {
       commitHash: "HEAD",
     });
   });
+
+  it("does not treat an external commit link as a local repository commit", () => {
+    expect(
+      resolveMessageGitBrowserRequest({
+        messageThreadId: "thread-abc",
+        date: 1700000000000,
+        activityBasePath: "/work/repo",
+        renderedMessageValue:
+          "Fixed by [67230a4](https://github.com/openai/codex/commit/67230a4).",
+      }),
+    ).toEqual({
+      threadKey: "thread-abc",
+      cwdOverride: "/work/repo",
+      commitHash: "HEAD",
+    });
+  });
 });
 
 describe("linkifyCommitHashes", () => {
@@ -160,6 +176,27 @@ describe("linkifyCommitHashes", () => {
       linkifyCommitHashes("- `6148897825 project-host: fix queueing`"),
     ).toBe(
       '- [Commit 6148897825](cocalc-commit://6148897825 "Open commit 6148897825") project-host: fix queueing',
+    );
+  });
+
+  it("does not rewrite hashes used as external Markdown link labels", () => {
+    const text =
+      "Fixed by [67230a4](https://github.com/openai/codex/commit/67230a4).";
+    expect(linkifyCommitHashes(text)).toBe(text);
+  });
+
+  it("is idempotent for commit links it already generated", () => {
+    const linked = linkifyCommitHashes("See abcdef1234567 for the fix.");
+    expect(linkifyCommitHashes(linked)).toBe(linked);
+  });
+
+  it("still links a bare local hash next to an external commit link", () => {
+    expect(
+      linkifyCommitHashes(
+        "Compare [67230a4](https://github.com/openai/codex/commit/67230a4) with abcdef1234567.",
+      ),
+    ).toBe(
+      'Compare [67230a4](https://github.com/openai/codex/commit/67230a4) with [Commit abcdef1234567](cocalc-commit://abcdef1234567 "Open commit abcdef1234567").',
     );
   });
 });

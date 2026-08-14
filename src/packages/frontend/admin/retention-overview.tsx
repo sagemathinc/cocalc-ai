@@ -61,7 +61,7 @@ function latestMetric(dashboard: GrowthDashboard, name: string): number {
   const points = dashboard.summary.series.find(
     ({ metric_name }) => metric_name === name,
   )?.points;
-  return points?.length ? (points.at(-1)?.value ?? 0) : 0;
+  return points?.length ? (points[points.length - 1]?.value ?? 0) : 0;
 }
 
 function ratio(numerator: number, denominator: number): number {

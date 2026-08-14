@@ -41,6 +41,8 @@ export const system = {
   // ssh support
   sshPublicKey: true,
   updateSshKeys: true,
+  managedVmSshPublicKey: true,
+  syncManagedVmSshConfig: true,
 };
 
 export interface System {
@@ -103,4 +105,13 @@ export interface System {
   // ~/.ssh/authorized_keys contains all entries set
   // in the database (in addition to whatever else might be there).
   updateSshKeys: () => Promise<string>;
+
+  managedVmSshPublicKey: () => Promise<string | null>;
+
+  syncManagedVmSshConfig: (opts: {
+    vm_id: string;
+    vm_name: string;
+    hostname: string;
+    enabled: boolean;
+  }) => Promise<{ alias: string; changed: boolean }>;
 }

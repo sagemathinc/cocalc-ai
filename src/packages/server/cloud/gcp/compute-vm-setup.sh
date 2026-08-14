@@ -216,39 +216,63 @@ while IFS=$'\t' read -r region subnet _ action; do
   fi
 done <"$TMP_DIR/subnet-plan.tsv"
 
-gcloud compute firewall-rules describe cocalc-compute-ssh --project "$PROJECT_ID" >/dev/null 2>&1 || \
+if gcloud compute firewall-rules describe cocalc-compute-ssh --project "$PROJECT_ID" >/dev/null 2>&1; then
+  gcloud compute firewall-rules update cocalc-compute-ssh \
+    --project "$PROJECT_ID" --network "$NETWORK" --direction=INGRESS \
+    --priority=1000 --action=ALLOW --rules=tcp:22 \
+    --source-ranges=0.0.0.0/0 --target-tags="$NETWORK_TAG"
+else
   gcloud compute firewall-rules create cocalc-compute-ssh \
     --project "$PROJECT_ID" --network "$NETWORK" --direction=INGRESS \
     --priority=1000 --action=ALLOW --rules=tcp:22 \
     --source-ranges=0.0.0.0/0 --target-tags="$NETWORK_TAG"
+fi
+
+if gcloud compute firewall-rules describe cocalc-compute-https --project "$PROJECT_ID" >/dev/null 2>&1; then
+  gcloud compute firewall-rules update cocalc-compute-https \
+    --project "$PROJECT_ID" --network "$NETWORK" --direction=INGRESS \
+    --priority=1000 --action=ALLOW --rules=tcp:443 \
+    --source-ranges=0.0.0.0/0 --target-tags="$NETWORK_TAG"
+else
+  gcloud compute firewall-rules create cocalc-compute-https \
+    --project "$PROJECT_ID" --network "$NETWORK" --direction=INGRESS \
+    --priority=1000 --action=ALLOW --rules=tcp:443 \
+    --source-ranges=0.0.0.0/0 --target-tags="$NETWORK_TAG"
+fi
 
 # Guests need the metadata endpoint for normal GCE boot, but cannot reach
-# private VPC, peering, VPN, or link-local destinations.
-gcloud compute firewall-rules describe cocalc-compute-metadata --project "$PROJECT_ID" >/dev/null 2>&1 || \
-  gcloud compute firewall-rules create cocalc-compute-metadata \
-    --project "$PROJECT_ID" --network "$NETWORK" --direction=EGRESS \
-    --priority=800 --action=ALLOW --rules=all \
-    --destination-ranges=169.254.169.254/32 --target-tags="$NETWORK_TAG"
+# private VPC, peering, VPN, or link-local destinations. Always update existing
+# rules so rerunning setup repairs policy drift.
+ensure_egress_rule() {
+  local name="$1" priority="$2" action="$3" ranges="$4"
+  if gcloud compute firewall-rules describe "$name" --project "$PROJECT_ID" >/dev/null 2>&1; then
+    gcloud compute firewall-rules update "$name" \
+      --project "$PROJECT_ID" --network "$NETWORK" --direction=EGRESS \
+      --priority="$priority" --action="$action" --rules=all \
+      --destination-ranges="$ranges" --target-tags="$NETWORK_TAG"
+  else
+    gcloud compute firewall-rules create "$name" \
+      --project "$PROJECT_ID" --network "$NETWORK" --direction=EGRESS \
+      --priority="$priority" --action="$action" --rules=all \
+      --destination-ranges="$ranges" --target-tags="$NETWORK_TAG"
+  fi
+}
 
-gcloud compute firewall-rules describe cocalc-compute-deny-private --project "$PROJECT_ID" >/dev/null 2>&1 || \
-  gcloud compute firewall-rules create cocalc-compute-deny-private \
-    --project "$PROJECT_ID" --network "$NETWORK" --direction=EGRESS \
-    --priority=900 --action=DENY --rules=all \
-    --destination-ranges=0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.0.0.0/24,192.0.2.0/24,192.88.99.0/24,192.168.0.0/16,198.18.0.0/15,198.51.100.0/24,199.36.153.4/30,199.36.153.8/30,203.0.113.0/24,224.0.0.0/4,240.0.0.0/4 \
-    --target-tags="$NETWORK_TAG"
-
-gcloud compute firewall-rules describe cocalc-compute-public-egress --project "$PROJECT_ID" >/dev/null 2>&1 || \
-  gcloud compute firewall-rules create cocalc-compute-public-egress \
-    --project "$PROJECT_ID" --network "$NETWORK" --direction=EGRESS \
-    --priority=1000 --action=ALLOW --rules=all \
-    --destination-ranges=0.0.0.0/0 --target-tags="$NETWORK_TAG"
+ensure_egress_rule cocalc-compute-metadata 800 ALLOW 169.254.169.254/32
+ensure_egress_rule cocalc-compute-deny-private 900 DENY 0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.0.0.0/24,192.0.2.0/24,192.88.99.0/24,192.168.0.0/16,198.18.0.0/15,198.51.100.0/24,199.36.153.4/30,199.36.153.8/30,203.0.113.0/24,224.0.0.0/4,240.0.0.0/4
+ensure_egress_rule cocalc-compute-public-egress 1000 ALLOW 0.0.0.0/0
 
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 gcloud iam service-accounts describe "$SA_EMAIL" --project "$PROJECT_ID" >/dev/null 2>&1 || \
   gcloud iam service-accounts create "$SA_NAME" --project "$PROJECT_ID" \
     --display-name="CoCalc managed compute VM controller"
 
-for role in roles/compute.instanceAdmin.v1 roles/compute.networkUser roles/compute.networkViewer roles/monitoring.viewer; do
+for role in \
+  roles/compute.instanceAdmin.v1 \
+  roles/compute.networkUser \
+  roles/compute.networkViewer \
+  roles/compute.publicIpAdmin \
+  roles/monitoring.viewer; do
   gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:${SA_EMAIL}" --role="$role" \
     --condition=None --quiet >/dev/null

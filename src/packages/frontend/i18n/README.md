@@ -62,6 +62,19 @@ pnpm i18n:delete <key-id>   # removes the key and all its translations from Simp
 pnpm i18n:update             # re-extracts, uploads (as new), auto-translates, downloads, compiles
 ```
 
+Caveat, observed 2026-08-13: this does **not** reliably produce a _different_
+translation. Four `command.generic.layout.*.title` keys were deleted and
+re-uploaded with an unchanged English source after the AI Context had been
+amended, and the German came back the same as before, still mixing du- and
+Sie-form. The likely cause is translation memory reusing the earlier result
+for an identical source string, so the model is never asked again.
+
+So delete-and-retranslate is the right move when the **English source
+changed**, but is not a way to re-roll a translation you simply dislike. To
+change an existing translation, edit it in the SimpleLocalize UI and download,
+or change the English wording as well. Amending the AI Context only affects
+strings the model is genuinely asked to translate.
+
 ### Unused keys
 
 Development goes on, and it might happen that keys are no longer in use.
@@ -112,7 +125,7 @@ This is about auto-translations, in "Settings → Auto-translation":
 - In the Auto-translate configuration, OpenAI → Configure:
   - API key: a separate one to track usage, it's fine to restrict its capabilities to list and use models.
   - GPT-4o
-  - System prompt: here, the key point is to give some context and to instruct it to retain those ICU messages. That's what I came up with after a few tests and iterations:
+  - **AI Context** (this field used to be labelled "System prompt"): gives the model context and rules it cannot infer from a single string in isolation. Every string is translated on its own, so anything that has to be consistent _across_ strings has to be stated here. The value below is authoritative — **if you change it in SimpleLocalize, update it here too**, otherwise the next person has no way to know what the translations were produced under.
 
         Translation of strings in the user-interface of the online platform "CoCalc AI".
 
@@ -120,12 +133,54 @@ This is about auto-translations, in "Settings → Auto-translation":
 
         If a label ends with "...", keep those dots in the translation.
 
-        Retain the syntax of ICU formatted messages. They could contain variables like `some text {variable} more text` or conditionals like `{variable, select, option1 {...} other {...}}`.
+        Retain the syntax of ICU formatted messages. They could contain variables like some text {variable} more text or conditionals like {variable, select, option1 {...} other {...}}.
+
+        Address the user in the register listed below for the target language, and never mix registers within a language:
+        - Formal (German Sie/Ihr, Dutch u, French vous, Portuguese você, Russian вы, Turkish siz, Hungarian Ön, Chinese 您, Hindi आप): de_DE, nl_NL, fr_FR, pt_PT, pt_BR, ru_RU, tr_TR, hu_HU, zh_CN, hi_IN
+        - Informal (Spanish tú, Italian tu, Polish ty): es_ES, es_PV, it_IT, pl_PL
+
+        Where the sentence can be phrased without addressing the user at all — an imperative or an impersonal construction — prefer that. It sidesteps the distinction entirely and is how interface text is usually written.
+
+        Translate a recurring interface term the same way every time. In particular "frame", meaning one pane of the editor's split layout, must map to a single word per language rather than a mix of synonyms.
 
   - add description as context: Yes. (I assume this uses the "code description")
 
 - Exclusion dialect: ICU messages
 - Excluded words or phrases: CoCalc
+
+#### Why the register is pinned per language
+
+Without an explicit rule the model picks a register per string, so a single
+menu ends up mixing forms. This happened to the frame-editor Layout submenu:
+three German tooltips came back in du-form and the fourth in Sie-form.
+
+The list is not "formal everywhere". It reflects what each language's existing
+translations already use, which in turn matches that language's software
+convention — German, French and Russian interfaces address the user formally,
+while Spanish, Italian and Polish ones idiomatically do not. Standardising on
+formal would have invalidated the existing Spanish, Italian and Polish work
+for no benefit.
+
+Re-derive the counts before changing the list, e.g. for German:
+
+```bash
+python3 -c "
+import json,re
+d=json.load(open('i18n/trans/de_DE.json'))
+inf=re.compile(r'\b(du|dir|dich|dein\w*)\b', re.I); form=re.compile(r'\b(Ihre\w*|Ihnen)\b')
+print('informal', sum(1 for v in d.values() if isinstance(v,str) and inf.search(v)))
+print('formal  ', sum(1 for v in d.values() if isinstance(v,str) and form.search(v)))
+"
+```
+
+Dutch was the one genuine judgement call — its corpus was mixed (89 informal
+vs 50 formal) and it is listed as formal for consistency with the other
+Germanic/business-facing locales. Turkish, Hungarian, European Portuguese and
+`es_PV` had too few marked strings to measure and were assigned by convention.
+
+Changing a language's register does not retranslate anything: SimpleLocalize
+only auto-translates new keys. Existing strings keep their old register until
+the key is deleted and re-uploaded.
 
 ### Translating
 

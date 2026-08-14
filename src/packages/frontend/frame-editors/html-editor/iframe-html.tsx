@@ -273,6 +273,7 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
         <iframe
           ref={iframe}
           src={trustedSrc}
+          title={`Rendered preview of ${path}`}
           width={"100%"}
           height={"100%"}
           style={{ border: 0, ...style }}
@@ -296,6 +297,7 @@ export const IFrameHTML: React.FC<Props> = React.memo((props: Props) => {
       <iframe
         ref={iframe}
         srcDoc={!trust && mode != "rmd" ? value : (srcDoc ?? "")}
+        title={`Rendered preview of ${path}`}
         width={"100%"}
         height={"100%"}
         style={{ border: 0, ...style }}

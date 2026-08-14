@@ -12,6 +12,7 @@ import {
   type ProjectRootfsStateEntry,
   type ProjectRootfsPublishLroRef,
   type PublishProjectRootfsBody,
+  type RootfsCatalogPageRequest,
   type RootfsCatalogSaveBody,
   RootfsImageEntry,
   RootfsImageManifest,
@@ -30,6 +31,9 @@ type RootfsImageLoadOptions = {
   query?: string;
   limit?: number;
   imageIds?: string[];
+  lineageImageId?: string;
+  slug?: string;
+  imageTarget?: string;
   allPages?: boolean;
 };
 
@@ -38,6 +42,8 @@ let manifestRevision = 0;
 const manifestListeners = new Set<() => void>();
 const MANAGED_CATALOG_RPC_TIMEOUT_MS = 12_000;
 const MANIFEST_FETCH_TIMEOUT_MS = 12_000;
+const MANAGED_CATALOG_MAX_ALL_PAGES = 20;
+const MANAGED_CATALOG_MAX_ALL_IMAGES = 4_000;
 
 function subscribeManifestInvalidation(listener: () => void): () => void {
   manifestListeners.add(listener);
@@ -140,9 +146,18 @@ async function loadManagedCatalogManifest(
     webapp_client.conat_client.is_signed_in();
   if (hasAccountContext) {
     try {
-      const pageLimit = opts.allPages ? 200 : (opts.limit ?? 200);
+      const pageLimit = opts.limit ?? 200;
+      const filterValues: NonNullable<RootfsCatalogPageRequest["filters"]> = {
+        image_target: opts.imageTarget,
+        lineage_image_id: opts.lineageImageId,
+        slug: opts.slug,
+      };
+      const filters = Object.values(filterValues).some(Boolean)
+        ? filterValues
+        : undefined;
       const page = await withTimeout(
         webapp_client.conat_client.hub.system.getRootfsCatalogPage({
+          filters,
           limit: pageLimit,
           query: opts.query?.trim() || undefined,
         }),
@@ -158,19 +173,34 @@ async function loadManagedCatalogManifest(
       if (opts.allPages) {
         const seenCursors = new Set<string>();
         let cursor = page.next_cursor;
-        while (cursor && !seenCursors.has(cursor)) {
+        let pageCount = 1;
+        while (
+          cursor &&
+          !seenCursors.has(cursor) &&
+          pageCount < MANAGED_CATALOG_MAX_ALL_PAGES &&
+          manifest.images.length < MANAGED_CATALOG_MAX_ALL_IMAGES
+        ) {
           seenCursors.add(cursor);
           const next = await withTimeout(
             webapp_client.conat_client.hub.system.getRootfsCatalogPage({
               cursor,
+              filters,
               limit: pageLimit,
               query: opts.query?.trim() || undefined,
             }),
             MANAGED_CATALOG_RPC_TIMEOUT_MS,
             "RootFS catalog RPC timed out",
           );
-          manifest.images.push(...next.images);
+          const remaining =
+            MANAGED_CATALOG_MAX_ALL_IMAGES - manifest.images.length;
+          manifest.images.push(...next.images.slice(0, remaining));
           cursor = next.next_cursor;
+          pageCount += 1;
+        }
+        if (cursor) {
+          console.warn(
+            `RootFS catalog loading stopped after ${pageCount} pages and ${manifest.images.length} images`,
+          );
         }
       }
       const requestedImageIds = Array.from(
@@ -234,7 +264,7 @@ export async function loadRootfsImages(
   )
     .sort()
     .join(",");
-  const key = `${scopeKey}|${opts.query ?? ""}|${opts.limit ?? ""}|${opts.allPages ? "all" : "page"}|${imageIdsKey}|${urls.join("|")}`;
+  const key = `${scopeKey}|${opts.query ?? ""}|${opts.limit ?? ""}|${opts.allPages ? "all" : "page"}|${opts.lineageImageId ?? ""}|${opts.slug ?? ""}|${opts.imageTarget ?? ""}|${imageIdsKey}|${urls.join("|")}`;
   const cached = manifestCache.get(key);
   if (cached) {
     return cached;
@@ -267,6 +297,9 @@ export function useRootfsImages(
   const query = opts.query?.trim() ?? "";
   const limit = opts.limit;
   const allPages = opts.allPages;
+  const lineageImageId = opts.lineageImageId?.trim() ?? "";
+  const slug = opts.slug?.trim() ?? "";
+  const imageTarget = opts.imageTarget?.trim() ?? "";
   const imageIdsKey = useMemo(
     () =>
       Array.from(
@@ -296,7 +329,15 @@ export function useRootfsImages(
     }
     setState((prev) => ({ ...prev, loading: true, error: undefined }));
     const imageIds = imageIdsKey ? imageIdsKey.split(",") : [];
-    loadRootfsImages(urls, scopeKey, { query, limit, imageIds, allPages })
+    loadRootfsImages(urls, scopeKey, {
+      query,
+      limit,
+      imageIds,
+      lineageImageId,
+      slug,
+      imageTarget,
+      allPages,
+    })
       .then((images) => {
         if (!active) return;
         setState({ images, loading: false });
@@ -312,7 +353,18 @@ export function useRootfsImages(
     return () => {
       active = false;
     };
-  }, [allPages, imageIdsKey, limit, query, revision, scopeKey, urls.join("|")]);
+  }, [
+    allPages,
+    imageIdsKey,
+    limit,
+    lineageImageId,
+    slug,
+    imageTarget,
+    query,
+    revision,
+    scopeKey,
+    urls.join("|"),
+  ]);
 
   return state;
 }

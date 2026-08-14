@@ -4,6 +4,7 @@
  */
 
 import { Select } from "antd";
+import type { CSSProperties } from "react";
 import { COLORS } from "@cocalc/util/theme";
 import type { HostFieldOption } from "../providers/registry";
 
@@ -14,12 +15,43 @@ type HostOptionsSelectProps = {
   value?: string;
   onChange?: (value: string) => void;
   size?: "small" | "middle" | "large";
+  style?: CSSProperties;
 };
 
 type HostOptionGroup = {
   label: string;
   options: HostFieldOption[];
 };
+
+export function hostOptionsRevision(options?: HostFieldOption[]): string {
+  return JSON.stringify(
+    options?.map(
+      ({
+        value,
+        label,
+        selectionLabel,
+        mainLabel,
+        subLabel,
+        detailLabel,
+        priceLabel,
+        hourlyRate,
+        stateLabel,
+        disabled,
+      }) => [
+        value,
+        label,
+        selectionLabel,
+        mainLabel,
+        subLabel,
+        detailLabel,
+        priceLabel,
+        hourlyRate,
+        stateLabel,
+        disabled,
+      ],
+    ) ?? [],
+  );
+}
 
 export type MachineTypeSortMode = "type" | "price" | "cpu" | "value";
 
@@ -181,17 +213,20 @@ export function HostOptionsSelect({
   value,
   onChange,
   size,
+  style,
 }: HostOptionsSelectProps) {
   const groupedOptions = groupHostOptions(options);
   const hasDetailLabels = options?.some((option) => !!option.detailLabel);
   return (
     <Select
+      key={hostOptionsRevision(options)}
       options={groupedOptions as any}
       disabled={disabled}
       placeholder={placeholder}
       value={value}
       onChange={onChange}
       size={size}
+      style={style}
       showSearch
       optionFilterProp="label"
       filterOption={(input, option) => {

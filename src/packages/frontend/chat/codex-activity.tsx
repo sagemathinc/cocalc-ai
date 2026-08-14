@@ -37,6 +37,8 @@ import {
 } from "./diff-prism";
 
 const { Text } = Typography;
+type SubagentEvent = Extract<AcpStreamEvent, { type: "subagent" }>;
+type SubagentActivityItem = SubagentEvent & { seq: number; time?: number };
 type ActivityEntry =
   | {
       kind: "reasoning";
@@ -132,6 +134,13 @@ type ActivityEntry =
         filename: string;
         url: string;
       };
+    }
+  | {
+      kind: "subagents";
+      id: string;
+      seq: number;
+      time?: number;
+      agents: SubagentActivityItem[];
     }
   | {
       kind: "steer";
@@ -483,6 +492,99 @@ function ActivityRow({
   const secondarySize = Math.max(11, fontSize - 2);
   const timestamp = formatEntryTimestamp(entry.time);
   switch (entry.kind) {
+    case "subagents": {
+      const active = entry.agents.filter((agent) =>
+        isActiveSubagentState(agent.state),
+      ).length;
+      return (
+        <section
+          aria-label="Codex subagent activity"
+          data-codex-activity-entry-index={rowIndex}
+          style={{
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 8,
+            padding: "8px 10px",
+          }}
+        >
+          <Space
+            size={8}
+            wrap
+            style={{ width: "100%", justifyContent: "space-between" }}
+          >
+            <Text strong>Subagents</Text>
+            <Text type="secondary">
+              {active > 0 ? `${active} working` : "None working"} ·{" "}
+              {entry.agents.length - active} done
+            </Text>
+          </Space>
+          <div style={{ marginTop: 6 }}>
+            {entry.agents.map((agent, index) => (
+              <details
+                key={agent.threadId}
+                style={{
+                  borderTop: `1px solid ${COLORS.GRAY_LLL}`,
+                  padding: "7px 0",
+                }}
+              >
+                <summary style={{ cursor: "pointer" }}>
+                  <Space size={7} wrap>
+                    {isActiveSubagentState(agent.state) ? (
+                      <LoadingOutlined spin aria-label="working" />
+                    ) : null}
+                    <Text strong>
+                      {agent.agentPath
+                        ?.split("/")
+                        .filter(Boolean)
+                        .slice(-1)[0] || `Subagent ${index + 1}`}
+                    </Text>
+                    <Tag
+                      color={
+                        agent.state === "failed"
+                          ? "red"
+                          : agent.state === "unknown"
+                            ? "orange"
+                            : isActiveSubagentState(agent.state)
+                              ? "processing"
+                              : "default"
+                      }
+                      style={{ margin: 0 }}
+                    >
+                      {agent.state}
+                    </Tag>
+                    {agent.task ? (
+                      <Text
+                        type="secondary"
+                        ellipsis={{ tooltip: agent.task }}
+                        style={{ maxWidth: 300 }}
+                      >
+                        {agent.task}
+                      </Text>
+                    ) : null}
+                    <ActivityTimestamp time={agent.time} />
+                  </Space>
+                </summary>
+                <div style={{ padding: "6px 0 0 24px" }}>
+                  {agent.agentPath && agent.task ? (
+                    <ParagraphText text={agent.task} fontSize={secondarySize} />
+                  ) : null}
+                  {agent.message ? (
+                    <ParagraphText
+                      text={agent.message}
+                      fontSize={secondarySize}
+                    />
+                  ) : null}
+                  <Text type="secondary" copyable={{ text: agent.threadId }}>
+                    Thread {agent.threadId}
+                    {agent.model ? ` · ${agent.model}` : ""}
+                    {agent.reasoning ? ` · ${agent.reasoning}` : ""}
+                  </Text>
+                </div>
+              </details>
+            ))}
+          </div>
+        </section>
+      );
+    }
     case "reasoning":
       return (
         <div data-codex-activity-entry-index={rowIndex}>
@@ -679,6 +781,7 @@ function normalizeEvents(
   const rows: ActivityEntry[] = [];
   let fallbackId = 0;
   const terminals = new Map<string, ActivityEntry & { kind: "terminal" }>();
+  const subagents = new Map<string, SubagentActivityItem>();
   let sawTerminalFinalizer = false;
   for (const message of events) {
     const seq = message.seq ?? ++fallbackId;
@@ -728,6 +831,21 @@ function normalizeEvents(
       "event" in message &&
       message.event != null
     ) {
+      if (message.event.type === "subagent") {
+        const previous = subagents.get(message.event.threadId);
+        subagents.set(message.event.threadId, {
+          ...previous,
+          ...message.event,
+          task: message.event.task ?? previous?.task,
+          message: message.event.message ?? previous?.message,
+          agentPath: message.event.agentPath ?? previous?.agentPath,
+          model: message.event.model ?? previous?.model,
+          reasoning: message.event.reasoning ?? previous?.reasoning,
+          seq,
+          time,
+        });
+        continue;
+      }
       const entry = createEventEntry({
         event: message.event,
         seq,
@@ -739,6 +857,20 @@ function normalizeEvents(
         rows.push(entry);
       }
     }
+  }
+  if (subagents.size > 0) {
+    const agents = [...subagents.values()].sort((a, b) => a.seq - b.seq);
+    rows.push({
+      kind: "subagents",
+      id: "subagents",
+      seq: Math.max(...agents.map((agent) => agent.seq)),
+      time: Math.max(
+        ...agents.map((agent) =>
+          typeof agent.time === "number" ? agent.time : 0,
+        ),
+      ),
+      agents,
+    });
   }
   if (sawTerminalFinalizer) {
     for (const row of rows) {
@@ -763,6 +895,85 @@ function normalizeEvents(
     return a.seq - b.seq;
   });
   return coalesceStatusEntries(coalesceTextEntries(coalesceFileReads(sorted)));
+}
+
+function isActiveSubagentState(state: SubagentEvent["state"]): boolean {
+  return state === "pending" || state === "running";
+}
+
+export function summarizeSubagentEvents(events: AcpLogStreamMessage[]): {
+  total: number;
+  active: number;
+} {
+  const latest = new Map<string, SubagentEvent>();
+  for (const message of events) {
+    if (message.type !== "event" || message.event.type !== "subagent") continue;
+    latest.set(message.event.threadId, message.event);
+  }
+  return {
+    total: latest.size,
+    active: [...latest.values()].filter((event) =>
+      isActiveSubagentState(event.state),
+    ).length,
+  };
+}
+
+export function reconcileSubagentEvents(
+  events: AcpLogStreamMessage[],
+  activeThreadIds: readonly string[] | undefined,
+  time = Date.now(),
+): AcpLogStreamMessage[] {
+  if (activeThreadIds == null) return events;
+  const active = new Set(activeThreadIds);
+  const latest = new Map<string, SubagentEvent>();
+  let seq = 0;
+  for (const message of events) {
+    seq = Math.max(seq, message.seq ?? 0);
+    if (message.type === "event" && message.event.type === "subagent") {
+      latest.set(message.event.threadId, message.event);
+    }
+  }
+  const reconciled: AcpLogStreamMessage[] = [];
+  for (const [threadId, event] of latest) {
+    if (!isActiveSubagentState(event.state) || active.has(threadId)) continue;
+    reconciled.push({
+      type: "event",
+      seq: ++seq,
+      time,
+      event: {
+        ...event,
+        operationId: `reconcile:${threadId}`,
+        state: "unknown",
+        message:
+          "The subagent is no longer active; its final status was not observed.",
+      },
+    });
+  }
+  for (const threadId of active) {
+    if (latest.has(threadId)) continue;
+    reconciled.push({
+      type: "event",
+      seq: ++seq,
+      time,
+      event: {
+        type: "subagent",
+        operationId: `reconcile:${threadId}`,
+        threadId,
+        state: "running",
+        tool: "activity",
+        message: "Active according to Codex runtime reconciliation.",
+      },
+    });
+  }
+  return reconciled.length > 0 ? [...events, ...reconciled] : events;
+}
+
+function ParagraphText({ text, fontSize }: { text: string; fontSize: number }) {
+  return (
+    <div style={{ marginBottom: 4, fontSize, whiteSpace: "pre-wrap" }}>
+      {text}
+    </div>
+  );
 }
 
 function coalesceFileReads(entries: ActivityEntry[]): ActivityEntry[] {
@@ -1007,14 +1218,17 @@ function createEventEntry({
       delta: false,
     };
   }
-  return {
-    kind: "agent",
-    id: `agent-${seq}`,
-    seq,
-    time,
-    text: eventHasText(event) ? (event.text ?? "") : "",
-    delta: event?.type === "message" && event.delta === true,
-  };
+  if (event?.type === "message") {
+    return {
+      kind: "agent",
+      id: `agent-${seq}`,
+      seq,
+      time,
+      text: eventHasText(event) ? (event.text ?? "") : "",
+      delta: event.delta === true,
+    };
+  }
+  return undefined;
 }
 
 function formatSummaryDetail(
@@ -1999,6 +2213,17 @@ function activityEntriesToMarkdown(entries: ActivityEntry[]): string {
         break;
       case "steer":
         lines.push(`- Guidance: ${entry.text}`);
+        break;
+      case "subagents":
+        lines.push(
+          [
+            "- Subagents:",
+            ...entry.agents.map(
+              (agent) =>
+                `  - ${agent.agentPath || agent.task || agent.threadId}: ${agent.state}${agent.message ? `: ${agent.message}` : ""}`,
+            ),
+          ].join("\n"),
+        );
         break;
       case "status": {
         const detail =

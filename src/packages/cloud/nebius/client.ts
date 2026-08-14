@@ -5,6 +5,12 @@ import {
   InstanceService,
   PlatformService,
 } from "@nebius/js-sdk/api/nebius/compute/v1/index";
+import {
+  AllocationService,
+  SecurityGroupService,
+  SecurityRuleService,
+  SubnetService,
+} from "@nebius/js-sdk/api/nebius/vpc/v1/index";
 import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("cloud:nebius:client");
@@ -48,6 +54,10 @@ export class NebiusClient {
   readonly instances: InstanceService;
   readonly images: ImageService;
   readonly platforms: PlatformService;
+  readonly allocations: AllocationService;
+  readonly securityGroups: SecurityGroupService;
+  readonly securityRules: SecurityRuleService;
+  readonly subnets: SubnetService;
 
   constructor(creds: NebiusCreds) {
     installNebiusUnhandledRejectionHandler();
@@ -63,6 +73,10 @@ export class NebiusClient {
     this.instances = new InstanceService(this.sdk);
     this.images = new ImageService(this.sdk);
     this.platforms = new PlatformService(this.sdk);
+    this.allocations = new AllocationService(this.sdk);
+    this.securityGroups = new SecurityGroupService(this.sdk);
+    this.securityRules = new SecurityRuleService(this.sdk);
+    this.subnets = new SubnetService(this.sdk);
   }
 
   parentId(): string | undefined {

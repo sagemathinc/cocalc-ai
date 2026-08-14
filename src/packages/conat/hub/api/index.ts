@@ -89,6 +89,10 @@ export function transformArgs({
   auth_session_hash,
   project_id,
   host_id,
+  auth_actor,
+  auth_token_fingerprint,
+  auth_iat_s,
+  auth_exp_s,
 }: {
   name: string;
   args: any[];
@@ -96,6 +100,10 @@ export function transformArgs({
   auth_session_hash?: string | null;
   project_id?: string;
   host_id?: string;
+  auth_actor?: "agent";
+  auth_token_fingerprint?: string;
+  auth_iat_s?: number;
+  auth_exp_s?: number;
 }) {
   const [group, functionName] = name.split(".");
   return HubApiStructure[group]?.[functionName]({
@@ -104,6 +112,10 @@ export function transformArgs({
     auth_session_hash,
     project_id,
     host_id,
+    auth_actor,
+    auth_token_fingerprint,
+    auth_iat_s,
+    auth_exp_s,
   });
 }
 
@@ -155,20 +167,66 @@ type UserId =
       account_id: string;
       project_id: undefined;
       host_id: undefined;
+      auth_actor?: undefined;
+      auth_token_fingerprint?: undefined;
+      auth_iat_s?: undefined;
+      auth_exp_s?: undefined;
     }
   | {
       account_id: undefined;
       project_id: string;
       host_id: undefined;
+      auth_actor?: undefined;
+      auth_token_fingerprint?: undefined;
+      auth_iat_s?: undefined;
+      auth_exp_s?: undefined;
     }
   | {
       account_id: undefined;
       project_id: undefined;
       host_id: string;
+      auth_actor?: undefined;
+      auth_token_fingerprint?: undefined;
+      auth_iat_s?: undefined;
+      auth_exp_s?: undefined;
+    }
+  | {
+      account_id: string;
+      project_id: string;
+      host_id: undefined;
+      auth_actor: "agent";
+      auth_token_fingerprint: string;
+      auth_iat_s?: number;
+      auth_exp_s?: number;
     };
 
 export function getUserId(subject: string): UserId {
   const segments = subject.split(".");
+  if (segments[1] === "agent") {
+    const account_id = segments[2];
+    const project_id = segments[3];
+    const auth_token_fingerprint = segments[4];
+    if (
+      segments.length !== 8 ||
+      !isValidUUID(account_id) ||
+      !isValidUUID(project_id) ||
+      !/^[a-f0-9]{64}$/.test(auth_token_fingerprint) ||
+      !/^\d+$/.test(segments[5] ?? "") ||
+      !/^\d+$/.test(segments[6] ?? "") ||
+      segments[7] !== "api"
+    ) {
+      throw new Error("invalid agent API subject");
+    }
+    return {
+      account_id,
+      project_id,
+      host_id: undefined,
+      auth_actor: "agent",
+      auth_token_fingerprint,
+      auth_iat_s: Number(segments[5]),
+      auth_exp_s: Number(segments[6]),
+    };
+  }
   const uuid = segments[2];
   if (!isValidUUID(uuid)) {
     throw Error(`invalid uuid '${uuid}'`);

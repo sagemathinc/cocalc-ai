@@ -489,6 +489,7 @@ SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
 const SPACER_BLOCK_TYPES = new Set<string>([
   "code_block",
   "blockquote",
+  "guidance",
   "html_block",
   "meta",
   "math_block",

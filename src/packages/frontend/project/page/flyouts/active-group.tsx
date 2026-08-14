@@ -13,12 +13,13 @@ import {
 } from "@cocalc/frontend/editor-tmp";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { handleFileEntryClick } from "@cocalc/frontend/project/history/utils";
+import { fileItemBorder } from "@cocalc/frontend/project/file-recency";
 
 import { capitalize, trunc_middle } from "@cocalc/util/misc";
 import { ACTIVE_FOLDER_TYPE, FLYOUT_PADDING } from "./consts";
 import { FileListItem } from "./file-list-item";
 import { FlyoutActiveMode } from "./state";
-import { GROUP_STYLE, deterministicColor, fileItemBorder } from "./utils";
+import { GROUP_STYLE, deterministicColor } from "./utils";
 
 interface GroupProps {
   group: string;

@@ -12,7 +12,7 @@ export const KioskModeBanner: React.FC = () => {
   return (
     <div id={"smc-startup-banner"}>
       <div>
-        <img src={APP_LOGO_WHITE} />
+        <img alt="" src={APP_LOGO_WHITE} />
       </div>
       <div
         className={"message ready"}

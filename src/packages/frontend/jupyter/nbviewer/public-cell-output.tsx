@@ -280,7 +280,7 @@ function renderImage(type: string, value: unknown): JSX.Element {
   const src = `data:${type};${encoding},${encodeURIComponent(content)}`;
   return (
     <img
-      alt="Image in a Jupyter notebook"
+      alt="Jupyter output"
       src={src}
       style={{ maxWidth: "100%", height: "auto" }}
     />

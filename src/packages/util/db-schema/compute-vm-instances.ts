@@ -33,6 +33,10 @@ Table({
       type: "string",
       desc: "Provider instance identifier for this generation.",
     },
+    public_address_id: {
+      type: "string",
+      desc: "Provider address used by this generation.",
+    },
     machine_type: { type: "string", desc: "Generation machine type." },
     pricing_model: { type: "string", desc: "Generation pricing model." },
     public_ip: { type: "string", desc: "Generation public IPv4." },

@@ -65,7 +65,8 @@ export function exactFileShareRouteAllowed({
   const suffix = relativePath.replace(/^\/+|\/+$/g, "");
   if (!suffix) return true;
   const normalizedSharePath = sharePath.replace(/^\/+|\/+$/g, "");
-  const basename = normalizedSharePath.split("/").filter(Boolean).at(-1) ?? "";
+  const parts = normalizedSharePath.split("/").filter(Boolean);
+  const basename = parts[parts.length - 1] ?? "";
   return suffix === basename || suffix === normalizedSharePath;
 }
 

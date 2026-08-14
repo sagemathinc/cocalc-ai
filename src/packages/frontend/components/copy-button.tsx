@@ -13,6 +13,7 @@ interface Props {
   noText?: boolean;
   block?: true;
   markdown?: boolean;
+  ariaLabel?: string;
 }
 
 export default function CopyButton({
@@ -22,6 +23,7 @@ export default function CopyButton({
   noText = false,
   block,
   markdown = false,
+  ariaLabel,
 }: Props) {
   const [copied, setCopied] = useState<boolean>(false);
   useEffect(() => {
@@ -40,7 +42,11 @@ export default function CopyButton({
   return (
     <Button
       aria-label={
-        noText ? (copied ? "Copied" : "Copy to clipboard") : undefined
+        noText
+          ? copied
+            ? "Copied"
+            : (ariaLabel ?? "Copy to clipboard")
+          : undefined
       }
       block={block}
       size={size}

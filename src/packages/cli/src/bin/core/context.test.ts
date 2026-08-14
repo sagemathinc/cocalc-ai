@@ -261,6 +261,45 @@ test("hubCallByName routes project-scoped auth through the project subject", asy
   ]);
 });
 
+test("hubCallByName routes agent auth through the fingerprint-bound subject", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const accountId = "00000000-1000-4000-8000-000000000001";
+  const projectId = "af027aca-e308-41c2-b528-a3e73de50996";
+  const fingerprint = "a".repeat(64);
+  await hubCallByName({
+    ctx: {
+      timeoutMs: 15_000,
+      rpcTimeoutMs: 15_000,
+      accountId,
+      remote: {
+        client: {} as any,
+        user: {
+          auth_actor: "agent",
+          auth_project_id: projectId,
+          auth_token_fingerprint: fingerprint,
+          auth_iat_s: 100,
+          auth_exp_s: 1000,
+        },
+      },
+    },
+    name: "compute.listProjectVms",
+    args: [{}],
+    callHub: async (opts) => {
+      calls.push(opts);
+      return [];
+    },
+  });
+  assert.deepEqual(calls[0]?.agent, {
+    account_id: accountId,
+    project_id: projectId,
+    token_fingerprint: fingerprint,
+    issued_at_s: 100,
+    expires_at_s: 1000,
+  });
+  assert.equal(calls[0]?.account_id, undefined);
+  assert.equal(calls[0]?.project_id, undefined);
+});
+
 test("hubCallByName lets explicit timeouts exceed the default rpc timeout", async () => {
   const calls: Array<Record<string, unknown>> = [];
 

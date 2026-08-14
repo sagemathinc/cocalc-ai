@@ -1,5 +1,6 @@
 import {
   groupHostOptions,
+  hostOptionsRevision,
   sortMachineTypeOptions,
 } from "./host-options-select";
 
@@ -139,5 +140,31 @@ describe("sortMachineTypeOptions", () => {
       "c3-highcpu-8",
       "t2a-standard-4",
     ]);
+  });
+});
+
+describe("hostOptionsRevision", () => {
+  it("changes when option order or regional prices change", () => {
+    const cheapFirst = [
+      { value: "small", label: "Small", hourlyRate: 1 },
+      { value: "large", label: "Large", hourlyRate: 2 },
+    ];
+    const expensiveFirst = [cheapFirst[1], cheapFirst[0]];
+    const repriced = [{ ...cheapFirst[0], hourlyRate: 3 }, cheapFirst[1]];
+
+    expect(hostOptionsRevision(expensiveFirst)).not.toBe(
+      hostOptionsRevision(cheapFirst),
+    );
+    expect(hostOptionsRevision(repriced)).not.toBe(
+      hostOptionsRevision(cheapFirst),
+    );
+  });
+
+  it("is stable for equivalent regenerated options", () => {
+    expect(
+      hostOptionsRevision([{ value: "small", label: "Small", hourlyRate: 1 }]),
+    ).toBe(
+      hostOptionsRevision([{ value: "small", label: "Small", hourlyRate: 1 }]),
+    );
   });
 });

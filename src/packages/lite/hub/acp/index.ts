@@ -183,6 +183,7 @@ import {
   type AcpJobRow,
 } from "../sqlite/acp-jobs";
 import {
+  getAcpSessionByOpId,
   heartbeatAcpSession,
   publishActiveAcpSessions,
   setAcpSessionPublisher,
@@ -363,6 +364,10 @@ const ACP_CHAT_WRITER_DISPOSE_TIMEOUT_MS = envNumber(
 const ACP_LOG_PERSIST_SLOW_MS = envNumber(
   "COCALC_ACP_LOG_PERSIST_SLOW_MS",
   150,
+);
+const ACP_LOG_CHECKPOINT_INTERVAL_MS = envNumber(
+  "COCALC_ACP_LOG_CHECKPOINT_INTERVAL_MS",
+  30_000,
 );
 const ACP_LIVE_LOG_PUBLISH_SLOW_MS = envNumber(
   "COCALC_ACP_LIVE_LOG_PUBLISH_SLOW_MS",
@@ -1681,6 +1686,9 @@ export class ChatStreamWriter {
   private logStoreName: string;
   private logKey: string;
   private logSubject: string;
+  private logPersistChain: Promise<void> = Promise.resolve();
+  private lastLogCheckpointAt = 0;
+  private pendingLogCheckpoint = false;
   private liveLogStream?: AStream<AcpStreamMessage | AcpStreamMessage[]>;
   private liveLogStreamName: string;
   private liveLogInitPromise?: Promise<
@@ -2503,6 +2511,7 @@ export class ChatStreamWriter {
     const shouldAutoRotate =
       message.type === "summary" || message.type === "error";
     this.processPayload(message, { persist: true });
+    this.scheduleLogCheckpoint(message);
     const isLastMessage =
       message.type === "summary" || message.type === "error" || this.finished;
     if (isLastMessage) {
@@ -3444,6 +3453,7 @@ export class ChatStreamWriter {
         time: Date.now(),
       };
       this.processPayload(message, { persist: true });
+      this.scheduleLogCheckpoint(message);
     })();
   }
 
@@ -3881,6 +3891,55 @@ export class ChatStreamWriter {
   }
 
   private async persistLog(): Promise<void> {
+    if (this.events.length === 0) return;
+    const persist = this.logPersistChain
+      .catch(() => {
+        // Earlier best-effort checkpoints must not prevent the terminal persist.
+      })
+      .then(() => this.persistLogNow());
+    this.logPersistChain = persist;
+    return await persist;
+  }
+
+  private scheduleLogCheckpoint(message: AcpStreamMessage): void {
+    if (
+      message.type === "summary" ||
+      message.type === "error" ||
+      this.finished ||
+      this.events.length === 0
+    ) {
+      return;
+    }
+    const now = Date.now();
+    if (
+      now - this.lastLogCheckpointAt < ACP_LOG_CHECKPOINT_INTERVAL_MS ||
+      this.pendingLogCheckpoint
+    ) {
+      return;
+    }
+    this.pendingLogCheckpoint = true;
+    this.lastLogCheckpointAt = now;
+    const persist = this.logPersistChain
+      .catch(() => {
+        // Keep checkpoint failures isolated and let later persists proceed.
+      })
+      .then(() => this.persistLogNow())
+      .catch((err) => {
+        logger.warn("failed to checkpoint acp log", {
+          chatKey: this.chatKey,
+          path: this.metadata.path,
+          logKey: this.logKey,
+          events: this.events.length,
+          err,
+        });
+      })
+      .finally(() => {
+        this.pendingLogCheckpoint = false;
+      });
+    this.logPersistChain = persist;
+  }
+
+  private async persistLogNow(): Promise<void> {
     if (this.events.length === 0) return;
     const store = this.getLogStore();
     let lastError: unknown;
@@ -6281,13 +6340,15 @@ export async function runDetachedAcpQueueWorker(
       runningJobs > 0 ||
       runningTurnLeases > 0 ||
       runtimeStatus.activeTurns > 0 ||
-      runtimeStatus.backgroundTerminalProcesses > 0;
+      runtimeStatus.backgroundTerminalProcesses > 0 ||
+      runtimeStatus.activeDescendantAgents > 0;
     if (hasLiveWork) {
       logger.info("draining ACP worker while its existing work continues", {
         worker_id: workerContext.worker_id,
         running_jobs: runningJobs,
         running_turn_leases: runningTurnLeases,
         active_turns: runtimeStatus.activeTurns,
+        active_descendant_agents: runtimeStatus.activeDescendantAgents,
         background_terminal_processes:
           runtimeStatus.backgroundTerminalProcesses,
         reason,
@@ -6338,7 +6399,8 @@ export async function runDetachedAcpQueueWorker(
         isDraining: nextState === "draining",
         runningJobs,
         runningTurnLeases,
-        activeTurns: runtimeStatus.activeTurns,
+        activeTurns:
+          runtimeStatus.activeTurns + runtimeStatus.activeDescendantAgents,
         backgroundTerminalProcesses: runtimeStatus.backgroundTerminalProcesses,
         exitRequestedAt: currentDetachedWorkerContext.exit_requested_at ?? null,
         quiesceMs: ACP_WORKER_DRAIN_QUIESCE_MS,
@@ -6480,7 +6542,8 @@ export async function runDetachedAcpQueueWorker(
       const hasWork =
         hasQueuedOrRunningAcpJobs() ||
         runtimeStatus.activeTurns > 0 ||
-        runtimeStatus.backgroundTerminalProcesses > 0;
+        runtimeStatus.backgroundTerminalProcesses > 0 ||
+        runtimeStatus.activeDescendantAgents > 0;
       if (hasWork) {
         idleSince = 0;
       } else if (!idleSince) {
@@ -6698,6 +6761,85 @@ async function ensureAgent(
       binaryPath: process.env.COCALC_CODEX_BIN,
       cwd: bindings.workspaceRoot ?? process.cwd(),
       uploadGeneratedImage: uploadGeneratedImageBlob,
+      onOutstandingWorkChanged: async ({
+        sessionId,
+        projectId,
+        accountId,
+        chat,
+        managerState,
+        activeDescendantThreadIds,
+        activeDescendants,
+        backgroundTerminals,
+      }) => {
+        if (!chat?.message_id) return;
+        const outstanding = activeDescendants + backgroundTerminals;
+        let existingMetadata: Record<string, unknown> = {};
+        const metadataJson = getAcpSessionByOpId(
+          chat.message_id,
+        )?.metadata_json;
+        if (metadataJson) {
+          try {
+            const parsed = JSON.parse(metadataJson);
+            if (
+              parsed &&
+              typeof parsed === "object" &&
+              !Array.isArray(parsed)
+            ) {
+              existingMetadata = parsed;
+            }
+          } catch {
+            // Invalid legacy metadata must not block retained-work monitoring.
+          }
+        }
+        upsertAcpSession({
+          session_id: sessionId,
+          op_id: chat.message_id,
+          project_id: projectId,
+          account_id: accountId,
+          approver_account_id: accountId,
+          path: chat.path,
+          thread_id: chat.thread_id,
+          message_id: chat.message_id,
+          parent_message_id: chat.parent_message_id,
+          state: outstanding > 0 ? "possibly_active" : managerState,
+          agent_kind: "codex",
+          run_kind: chat.automation_id ? "automation" : "interactive",
+          finished_at: outstanding > 0 ? null : Date.now(),
+          last_heartbeat_at: Date.now(),
+          metadata: {
+            ...existingMetadata,
+            active_descendant_thread_ids: activeDescendantThreadIds,
+            active_descendant_agents: activeDescendants,
+            background_terminal_processes: backgroundTerminals,
+            manager_finished: true,
+            ai_usage_may_continue: outstanding > 0,
+          },
+        });
+        if (conatClient) {
+          await withChatSyncDB({
+            client: conatClient,
+            project_id: projectId,
+            path: chat.path,
+            fn: async (syncdb) => {
+              syncdb.set({
+                event: "chat",
+                date: chat.message_date,
+                sender_id: chat.sender_id,
+                message_id: chat.message_id,
+                thread_id: chat.thread_id,
+                parent_message_id: chat.parent_message_id,
+                acp_manager_finished: true,
+                acp_active_descendant_thread_ids: activeDescendantThreadIds,
+                acp_active_descendant_agents: activeDescendants,
+                acp_background_terminal_processes: backgroundTerminals,
+                acp_ai_usage_may_continue: outstanding > 0,
+              });
+              syncdb.commit();
+              await syncdb.save();
+            },
+          });
+        }
+      },
     });
     logger.info("codex agent ready", { key, backend: "app-server" });
     agents.set(key, created);
@@ -9987,6 +10129,21 @@ async function handleTruncateSessionRequest(
 async function interruptCodexSession(threadId: string): Promise<boolean> {
   for (const agent of agents.values()) {
     if (
+      "interruptOutstanding" in agent &&
+      typeof (agent as any).interruptOutstanding === "function"
+    ) {
+      try {
+        if (await (agent as any).interruptOutstanding(threadId)) {
+          return true;
+        }
+      } catch (err) {
+        logger.warn("failed to stop outstanding Codex work", {
+          threadId,
+          err: `${err}`,
+        });
+      }
+    }
+    if (
       "interrupt" in agent &&
       typeof (agent as any).interrupt === "function"
     ) {
@@ -10023,21 +10180,25 @@ export function getAcpAgentRuntimeStatus(): {
   liveAppServerRuntimes: number;
   activeTurns: number;
   backgroundTerminalProcesses: number;
+  activeDescendantAgents: number;
 } {
   let liveAppServerRuntimes = 0;
   let activeTurns = 0;
   let backgroundTerminalProcesses = 0;
+  let activeDescendantAgents = 0;
   for (const agent of agents.values()) {
     const status = agent.getRuntimeStatus?.();
     if (!status) continue;
     liveAppServerRuntimes += Math.max(0, status.liveRuntimes);
     activeTurns += Math.max(0, status.activeTurns);
     backgroundTerminalProcesses += Math.max(0, status.backgroundTerminals);
+    activeDescendantAgents += Math.max(0, status.activeDescendants);
   }
   return {
     liveAppServerRuntimes,
     activeTurns,
     backgroundTerminalProcesses,
+    activeDescendantAgents,
   };
 }
 

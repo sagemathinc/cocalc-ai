@@ -47,6 +47,8 @@ export interface CodexSessionConfig {
   env?: Record<string, string>;
   codexPathOverride?: string;
   paymentSource?: CodexPaymentSourcePreference;
+  // Account-wide limit for spawned workers. The manager thread is not counted.
+  maxConcurrentSubagents?: number;
 }
 
 export function normalizeCodexSessionId(

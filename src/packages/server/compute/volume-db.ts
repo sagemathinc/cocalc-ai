@@ -5,6 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
+import { COMPUTE_VOLUME_V2_SQL } from "./contract";
 import { enqueueComputeWork } from "./db";
 import type { ComputeVolumeRow } from "./types";
 
@@ -30,6 +31,7 @@ export async function insertComputeVolume(
     const existing = await client.query<ComputeVolumeRow>(
       `SELECT * FROM compute_volumes
        WHERE owner_account_id=$1 AND idempotency_key=$2
+         AND ${COMPUTE_VOLUME_V2_SQL}
        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
       [row.owner_account_id, row.idempotency_key],
     );
@@ -42,7 +44,8 @@ export async function insertComputeVolume(
     );
     const { rows: countRows } = await client.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM compute_volumes
-       WHERE owner_account_id=$1 AND deleted_at IS NULL`,
+       WHERE owner_account_id=$1 AND deleted_at IS NULL
+         AND ${COMPUTE_VOLUME_V2_SQL}`,
       [row.owner_account_id],
     );
     const count = Number(countRows[0]?.count ?? 0);
@@ -54,6 +57,7 @@ export async function insertComputeVolume(
     const collision = await client.query(
       `SELECT id FROM compute_volumes
        WHERE owner_account_id=$1 AND name=$2 AND deleted_at IS NULL
+         AND ${COMPUTE_VOLUME_V2_SQL}
        LIMIT 1 FOR UPDATE`,
       [row.owner_account_id, row.name],
     );
@@ -63,13 +67,14 @@ export async function insertComputeVolume(
     const { rows } = await client.query<ComputeVolumeRow>(
       `INSERT INTO compute_volumes (
          id, name, owner_account_id, owning_bay_id, project_id, provider, region, zone,
-         disk_type, filesystem, size_gb, desired_size_gb, provider_disk_id,
+         role, funding_mode, provider_spec, disk_type, filesystem, size_gb,
+         desired_size_gb, effective_size_gb, provider_disk_id,
          state, desired_state, attached_vm_id, attachment_generation,
          attachment_state, created_at, updated_at, monthly_price_per_gb,
          authorized_monthly_cost, billing_state, idempotency_key, error, metadata
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
-         NOW(),NOW(),$19,$20,$21,$22,$23,$24
+         $19,$20,$21,$22,NOW(),NOW(),$23,$24,$25,$26,$27,$28
        ) RETURNING *`,
       [
         row.id,
@@ -80,10 +85,14 @@ export async function insertComputeVolume(
         row.provider,
         row.region,
         row.zone,
+        row.role,
+        row.funding_mode,
+        row.provider_spec,
         row.disk_type,
         row.filesystem,
         row.size_gb,
         row.desired_size_gb,
+        row.effective_size_gb,
         row.provider_disk_id,
         row.state,
         row.desired_state,
@@ -125,6 +134,7 @@ export async function resolveOwnedComputeVolume(opts: {
   const { rows } = await pool().query<ComputeVolumeRow>(
     `SELECT * FROM compute_volumes
      WHERE owner_account_id=$1 AND (id::text=$2 OR name=$2) ${deletedClause}
+       AND ${COMPUTE_VOLUME_V2_SQL}
      ORDER BY created_at DESC LIMIT 1`,
     [opts.owner_account_id, opts.id_or_name],
   );
@@ -140,6 +150,7 @@ export async function resolveProjectComputeVolume(opts: {
   const { rows } = await pool().query<ComputeVolumeRow>(
     `SELECT * FROM compute_volumes
      WHERE project_id=$1 AND (id::text=$2 OR name=$2) ${deletedClause}
+       AND ${COMPUTE_VOLUME_V2_SQL}
      ORDER BY created_at DESC LIMIT 2`,
     [opts.project_id, opts.id_or_name],
   );
@@ -166,6 +177,7 @@ export async function listOwnedComputeVolumes(opts: {
   const { rows } = await pool().query<ComputeVolumeRow>(
     `SELECT * FROM compute_volumes
      WHERE owner_account_id=$1 ${projectClause} ${deletedClause}
+       AND ${COMPUTE_VOLUME_V2_SQL}
      ORDER BY created_at DESC`,
     params,
   );
@@ -180,6 +192,7 @@ export async function listProjectComputeVolumes(opts: {
   const { rows } = await pool().query<ComputeVolumeRow>(
     `SELECT * FROM compute_volumes
      WHERE project_id=$1 ${deletedClause}
+       AND ${COMPUTE_VOLUME_V2_SQL}
      ORDER BY created_at DESC`,
     [opts.project_id],
   );
@@ -203,6 +216,8 @@ export async function updateComputeVolume(
     "project_id",
     "size_gb",
     "desired_size_gb",
+    "effective_size_gb",
+    "funding_mode",
     "state",
     "desired_state",
     "attached_vm_id",
@@ -277,7 +292,8 @@ export async function appendComputeVolumeEvent(opts: {
 export async function enqueueComputeVolumeReconciliation(limit = 100) {
   const { rows } = await pool().query<{ id: string }>(
     `SELECT id FROM compute_volumes
-     WHERE deleted_at IS NULL ORDER BY updated_at ASC LIMIT $1`,
+     WHERE deleted_at IS NULL AND ${COMPUTE_VOLUME_V2_SQL}
+     ORDER BY updated_at ASC LIMIT $1`,
     [limit],
   );
   for (const { id } of rows) {

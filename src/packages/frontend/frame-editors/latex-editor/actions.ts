@@ -903,36 +903,8 @@ export class Actions extends BaseActions<LatexEditorState> {
     return change;
   }
 
-  // this was the default until we made the new output.tsx one-stop-shop panel the default
-  _classic_frame_tree_layout(): FrameTree {
-    return {
-      type: "node",
-      direction: "col",
-      first: {
-        direction: "row",
-        type: "node",
-        first: { type: "cm" },
-        second: {
-          type: "node",
-          direction: "col",
-          first: { type: "latex_table_of_contents" },
-          second: { type: "error" },
-          pos: 0.3,
-        },
-        pos: 0.7,
-      },
-      second: {
-        direction: "row",
-        type: "node",
-        first: { type: "pdfjs_canvas" },
-        second: { type: "build" },
-        pos: 0.7,
-      },
-      pos: 0.5,
-    };
-  }
-
-  _new_frame_tree_layout(): FrameTree {
+  // Source on the left, the unified output panel on the right.
+  _raw_default_frame_tree(): FrameTree {
     return {
       type: "node",
       direction: "col",
@@ -940,11 +912,6 @@ export class Actions extends BaseActions<LatexEditorState> {
       second: { type: "output" },
       pos: 0.5,
     };
-  }
-
-  // Override to make new layout the default
-  _raw_default_frame_tree(): FrameTree {
-    return this._new_frame_tree_layout();
   }
 
   // Frame types (EDITOR_SPEC keys) that already display build errors.

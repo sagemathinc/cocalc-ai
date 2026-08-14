@@ -14,7 +14,13 @@ const disksUpdateMock = jest.fn();
 const instancesCreateMock = jest.fn();
 const instancesDeleteMock = jest.fn();
 const instancesGetMock = jest.fn();
+const instancesListMock = jest.fn();
+const instancesStopMock = jest.fn();
 const instancesUpdateMock = jest.fn();
+const allocationsCreateMock = jest.fn();
+const allocationsGetMock = jest.fn();
+const allocationsGetByNameMock = jest.fn();
+const allocationsDeleteMock = jest.fn();
 
 jest.mock("../nebius/client", () => {
   class NebiusClient {
@@ -29,7 +35,15 @@ jest.mock("../nebius/client", () => {
       create: instancesCreateMock,
       delete: instancesDeleteMock,
       get: instancesGetMock,
+      list: instancesListMock,
+      stop: instancesStopMock,
       update: instancesUpdateMock,
+    };
+    readonly allocations = {
+      create: allocationsCreateMock,
+      get: allocationsGetMock,
+      getByName: allocationsGetByNameMock,
+      delete: allocationsDeleteMock,
     };
 
     constructor(private creds: any) {}
@@ -85,7 +99,13 @@ describe("NebiusProvider", () => {
     instancesCreateMock.mockReset();
     instancesDeleteMock.mockReset();
     instancesGetMock.mockReset();
+    instancesListMock.mockReset();
+    instancesStopMock.mockReset();
     instancesUpdateMock.mockReset();
+    allocationsCreateMock.mockReset();
+    allocationsGetMock.mockReset();
+    allocationsGetByNameMock.mockReset();
+    allocationsDeleteMock.mockReset();
     disksListMock.mockResolvedValue({ items: [], nextPageToken: "" });
     disksGetMock.mockResolvedValue({
       metadata: {
@@ -105,10 +125,84 @@ describe("NebiusProvider", () => {
       .mockResolvedValueOnce(diskOp("boot-disk"))
       .mockResolvedValueOnce(diskOp("data-disk"));
     instancesCreateMock.mockResolvedValue(instanceOp("instance-1"));
+    instancesListMock.mockResolvedValue({ items: [], nextPageToken: "" });
     instancesDeleteMock.mockResolvedValue(instanceOp("instance-1"));
     instancesUpdateMock.mockResolvedValue(instanceOp("instance-1"));
     disksDeleteMock.mockResolvedValue(diskOp("deleted-disk"));
     disksUpdateMock.mockResolvedValue(diskOp("updated-disk"));
+  });
+
+  it("creates independent replicated SSD volumes with the requested type", async () => {
+    disksCreateMock.mockReset().mockResolvedValueOnce(diskOp("home-disk"));
+
+    await new NebiusProvider().ensurePersistentDisk(
+      { name: "managed-home", size_gb: 50, disk_type: "ssd" },
+      {
+        parentId: "project-1",
+        serviceAccountId: "svc-1",
+        publicKeyId: "pub-1",
+        privateKeyPem: "key",
+        sshPublicKey: "ssh-ed25519 AAAA",
+        subnetId: "subnet-1",
+      },
+    );
+
+    expect(disksCreateMock.mock.calls[0][0].spec.type).toBe(
+      DiskSpec_DiskType.NETWORK_SSD,
+    );
+  });
+
+  it("allocates a static public address from the configured subnet", async () => {
+    allocationsGetByNameMock.mockRejectedValue(new Error("NOT_FOUND"));
+    allocationsCreateMock.mockResolvedValue(diskOp("allocation-1"));
+    allocationsGetMock.mockResolvedValue({
+      metadata: { id: "allocation-1" },
+      status: { static: true, details: { allocatedCidr: "203.0.113.4/32" } },
+    });
+
+    const result = await new NebiusProvider().ensurePublicAddress(
+      { name: "managed-address" },
+      {
+        parentId: "project-1",
+        serviceAccountId: "svc-1",
+        publicKeyId: "pub-1",
+        privateKeyPem: "key",
+        sshPublicKey: "ssh-ed25519 AAAA",
+        subnetId: "subnet-1",
+      },
+    );
+
+    expect(result).toEqual({ id: "allocation-1", ip: "203.0.113.4" });
+    expect(
+      allocationsCreateMock.mock.calls[0][0].spec.ipSpec.ipv4Public.pool,
+    ).toEqual({ $case: "subnetId", subnetId: "subnet-1" });
+  });
+
+  it("does not send provisional instance names to ID-only APIs", async () => {
+    const provider = new NebiusProvider();
+    const runtime = {
+      provider: "nebius" as const,
+      instance_id: "cocalc-vm-provisional-name",
+      metadata: { provisional_instance_id: true },
+    };
+    const creds = {
+      parentId: "project-1",
+      serviceAccountId: "svc-1",
+      publicKeyId: "pub-1",
+      privateKeyPem: "key",
+      sshPublicKey: "ssh-ed25519 AAAA",
+      subnetId: "subnet-1",
+    };
+
+    const instance = await provider.getInstance(runtime, creds);
+    await provider.stopHost(runtime, creds);
+    await provider.deleteHost(runtime, creds);
+    await provider.deleteInstanceOnly(runtime, creds);
+
+    expect(instance).toBeUndefined();
+    expect(instancesGetMock).not.toHaveBeenCalled();
+    expect(instancesStopMock).not.toHaveBeenCalled();
+    expect(instancesDeleteMock).not.toHaveBeenCalled();
   });
 
   it("creates preemptible instances for spot hosts", async () => {
@@ -134,6 +228,85 @@ describe("NebiusProvider", () => {
     );
     expect(createArgs.spec.preemptible.priority).toBe(3);
     expect(createArgs.spec.recoveryPolicy).toBe(InstanceRecoveryPolicy.FAIL);
+  });
+
+  it("adopts a matching instance from the paginated parent listing", async () => {
+    instancesListMock
+      .mockResolvedValueOnce({ items: [], nextPageToken: "next" })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            metadata: { id: "instance-existing", name: "spot-host" },
+            spec: {
+              networkInterfaces: [
+                {
+                  subnetId: "subnet-1",
+                  publicIpAddress: {
+                    allocation: {
+                      $case: "allocationId",
+                      allocationId: "address-1",
+                    },
+                  },
+                  securityGroups: [{ id: "security-group-1" }],
+                },
+              ],
+              bootDisk: {
+                type: {
+                  $case: "existingDisk",
+                  existingDisk: { id: "boot-existing" },
+                },
+              },
+              secondaryDisks: [
+                {
+                  deviceId: "home",
+                  type: {
+                    $case: "existingDisk",
+                    existingDisk: { id: "home-existing" },
+                  },
+                },
+              ],
+            },
+            status: {
+              networkInterfaces: [
+                { publicIpAddress: { address: "192.0.2.10" } },
+              ],
+            },
+          },
+        ],
+        nextPageToken: "",
+      });
+
+    const runtime = await new NebiusProvider().createHost(
+      buildSpec({
+        metadata: {
+          machine_type: "spot-enabled-machine",
+          platform: "spot-platform",
+          source_image: "image-1",
+          public_address_id: "address-1",
+          security_group_ids: ["security-group-1"],
+          shared_disk_device_id: "home",
+          disable_service_account: true,
+        },
+      }),
+      {
+        parentId: "project-1",
+        serviceAccountId: "svc-1",
+        publicKeyId: "pub-1",
+        privateKeyPem: "key",
+        sshPublicKey: "ssh-ed25519 AAAA",
+        subnetId: "subnet-1",
+      },
+    );
+
+    expect(instancesListMock).toHaveBeenCalledTimes(2);
+    expect(instancesCreateMock).not.toHaveBeenCalled();
+    expect(runtime).toMatchObject({
+      instance_id: "instance-existing",
+      public_ip: "192.0.2.10",
+      metadata: {
+        diskIds: { boot: "boot-existing", scratch: "home-existing" },
+      },
+    });
   });
 
   it("creates and attaches a shared scratch disk", async () => {

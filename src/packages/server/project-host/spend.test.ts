@@ -12,6 +12,7 @@ import createPurchase from "@cocalc/server/purchases/create-purchase";
 import {
   closeDedicatedHostPurchaseSessionLocal,
   dedicatedHostRateFromPricingSnapshot,
+  estimateDedicatedHostRate,
   estimateDedicatedHostRateUsdPerHour,
   getDedicatedHostPostpaidUnbilledExposureLocal,
   getDedicatedHostWindowUsageLocal,
@@ -863,6 +864,12 @@ describe("dedicated host spend accounting", () => {
               price_usd: "0.000161111",
               unit: "GiB hour",
             },
+            {
+              product: "Network SSD disk",
+              region: "us-central1",
+              price_usd: "0.00009726027397260273",
+              unit: "GiB hour",
+            },
           ]),
         ],
       );
@@ -878,6 +885,24 @@ describe("dedicated host spend accounting", () => {
       });
 
       expect(toDecimal(rate ?? 0).toNumber()).toBeCloseTo(2.036983323, 9);
+
+      const volumeRate = await estimateDedicatedHostRate({
+        provider: "nebius",
+        region: "us-central1",
+        pricing_model: "on_demand",
+        disk_type: "ssd",
+        disk_gb: 93,
+        storage_mode: "persistent",
+        billing_state: "stopped",
+      });
+      expect(Number(volumeRate?.hourly_cost_usd)).toBeGreaterThan(0);
+      expect(
+        volumeRate?.pricing_snapshot.components.map(({ key }) => key),
+      ).toEqual(["disk"]);
+      expect(volumeRate?.pricing_snapshot.configuration).toMatchObject({
+        disk_type: "ssd",
+        disk_gb: 93,
+      });
     } finally {
       await getPool("medium").query(
         `

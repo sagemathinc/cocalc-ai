@@ -1246,11 +1246,8 @@ function rootfsCopyDefaultTargetPath(
   action: RootfsContentAction,
 ): string | undefined {
   const source = action.source_path?.trim() || action.path?.trim();
-  const fallbackName = source
-    ?.replace(/\/+$/, "")
-    .split("/")
-    .filter(Boolean)
-    .at(-1);
+  const sourceParts = source?.replace(/\/+$/, "").split("/").filter(Boolean);
+  const fallbackName = sourceParts?.[sourceParts.length - 1];
   return rootfsNormalizeHomeTargetPath(fallbackName);
 }
 

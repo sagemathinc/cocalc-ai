@@ -74,8 +74,8 @@ export async function nbconvert(
       opts.args = ["--template", "classic"].concat(opts.args);
     }
 
-    const command = "jupyter";
-    const args = ["nbconvert"].concat(opts.args);
+    const command = "python3";
+    const args = ["-m", "nbconvert"].concat(opts.args);
     // This is the **one and only case** where we sanitize the input filename.  Doing so when not calling
     // nbconvert would actually break everything.
     args[args.length - 1] = sanitize_nbconvert_path(args[args.length - 1]);

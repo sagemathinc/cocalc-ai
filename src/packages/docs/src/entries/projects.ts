@@ -133,14 +133,14 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
     body: VIRTUAL_MACHINES_BODY.trim(),
     category: "Projects",
     id: "projects.virtual-machines",
-    lastReviewed: "2026-08-08",
+    lastReviewed: "2026-08-13",
     requiredFeatures: ["compute-vms"],
     searchKeywords:
-      "managed compute dedicated virtual machines vm ssh rsync work volume spot standard egress billing",
+      "managed compute dedicated virtual machines vm ssh rsync scp rdp windows ubuntu home volume spot standard egress billing pricing gcp nebius gpu arm dns agent",
     slug: "projects/virtual-machines",
     status: "ready",
     summary:
-      "Create and operate standalone Ubuntu VMs with SSH access, metered egress, and optional persistent /work storage.",
+      "Create and operate managed Linux or Windows VMs with SSH, stable DNS, GPUs, metered costs, and persistent storage.",
     title: "Virtual machines",
   },
   {

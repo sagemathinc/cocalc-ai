@@ -35,6 +35,7 @@ import {
   usesDefaultCoCalcBranding,
 } from "@cocalc/frontend/public/config";
 import {
+  PUBLIC_ELEVATION,
   PUBLIC_COLORS,
   PUBLIC_DISPLAY_FONT_FAMILY,
 } from "@cocalc/frontend/public/theme";
@@ -49,6 +50,7 @@ const PUBLIC_DISPLAY_FONT_URL = joinUrlPath(
   appBasePath,
   "public/fonts/space-grotesk/SpaceGrotesk-wght.woff2",
 );
+export const PUBLIC_INTERACTIVE_CARD_CLASS = "cocalc-public-interactive-card";
 export const PUBLIC_PAGE_CSS = `
   @font-face {
     font-family: "Space Grotesk";
@@ -89,6 +91,23 @@ export const PUBLIC_PAGE_CSS = `
 
   .cocalc-public-card .ant-card-head-title {
     color: ${PUBLIC_COLORS.heading};
+  }
+
+  .${PUBLIC_INTERACTIVE_CARD_CLASS} {
+    cursor: pointer;
+    transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  }
+
+  .${PUBLIC_INTERACTIVE_CARD_CLASS}:hover {
+    border-color: ${PUBLIC_COLORS.linkHover} !important;
+    box-shadow: ${PUBLIC_ELEVATION.hover} !important;
+    transform: translateY(-1px);
+  }
+
+  .${PUBLIC_INTERACTIVE_CARD_CLASS}:focus-visible,
+  .${PUBLIC_INTERACTIVE_CARD_CLASS}:has(a:focus-visible) {
+    outline: 2px solid ${PUBLIC_COLORS.linkHover};
+    outline-offset: 3px;
   }
 
   .cocalc-public-sider.ant-layout-sider {

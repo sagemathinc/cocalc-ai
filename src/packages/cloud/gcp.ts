@@ -537,6 +537,16 @@ export class GcpProvider implements CloudProvider {
     delete logMetadata.startup_script;
     delete logMetadata.bootstrap_url;
     delete logMetadata.user_data;
+    if (logMetadata.instance_metadata) {
+      logMetadata.instance_metadata = Object.fromEntries(
+        Object.keys(
+          logMetadata.instance_metadata as Record<string, unknown>,
+        ).map((key) => [
+          key,
+          key.includes("script") ? "[redacted script]" : "[set]",
+        ]),
+      );
+    }
     logger.info("gcp.createHost", {
       name: spec.name,
       region: spec.region,
@@ -703,6 +713,7 @@ export class GcpProvider implements CloudProvider {
           {
             name: "External NAT",
             networkTier: "STANDARD",
+            natIP: spec.metadata?.public_ip || undefined,
           },
         ],
         stackType: "IPV4_ONLY",
@@ -730,15 +741,32 @@ export class GcpProvider implements CloudProvider {
         value: entries.join("\n"),
       });
     }
+    const instanceMetadata = spec.metadata?.instance_metadata;
+    if (instanceMetadata && typeof instanceMetadata === "object") {
+      const reserved = new Set(metadataItems.map(({ key }) => key));
+      for (const [key, rawValue] of Object.entries(instanceMetadata)) {
+        if (reserved.has(key)) {
+          throw new Error(`gcp: instance metadata key '${key}' is reserved`);
+        }
+        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(key)) {
+          throw new Error(`gcp: invalid instance metadata key '${key}'`);
+        }
+        if (typeof rawValue !== "string") {
+          throw new Error(`gcp: instance metadata '${key}' must be a string`);
+        }
+        metadataItems.push({ key, value: rawValue });
+      }
+    }
 
-    const guestAccelerators = spec.gpu
-      ? [
-          {
-            acceleratorCount: Math.max(1, spec.gpu.count ?? 1),
-            acceleratorType: `projects/${credentials.projectId}/zones/${zone}/acceleratorTypes/${spec.gpu.type}`,
-          },
-        ]
-      : [];
+    const guestAccelerators =
+      spec.gpu && !machineTypeFor(spec).startsWith("g2-")
+        ? [
+            {
+              acceleratorCount: Math.max(1, spec.gpu.count ?? 1),
+              acceleratorType: `projects/${credentials.projectId}/zones/${zone}/acceleratorTypes/${spec.gpu.type}`,
+            },
+          ]
+        : [];
     const scheduling =
       spec.pricing_model === "spot"
         ? spotScheduling()
@@ -774,10 +802,11 @@ export class GcpProvider implements CloudProvider {
         public_ip: publicIp,
         private_ip: privateIp,
         internal_hostname: internalHostname,
-        ssh_user: "ubuntu",
+        ssh_user: sshUserFor(spec),
         zone,
         metadata: {
           gcp_project_id: credentials.projectId,
+          gcp_instance_id: instance?.id?.toString(),
           machine_type: machineType,
           gpu_count: spec.gpu?.count ?? 0,
           disk_type: diskType,
@@ -1450,14 +1479,15 @@ export class GcpProvider implements CloudProvider {
         subnetwork,
       },
     ];
-    const guestAccelerators = spec.gpu
-      ? [
-          {
-            acceleratorCount: Math.max(1, spec.gpu.count ?? 1),
-            acceleratorType: `projects/${credentials.projectId}/zones/${zone}/acceleratorTypes/${spec.gpu.type}`,
-          },
-        ]
-      : [];
+    const guestAccelerators =
+      spec.gpu && !machineTypeFor(spec).startsWith("g2-")
+        ? [
+            {
+              acceleratorCount: Math.max(1, spec.gpu.count ?? 1),
+              acceleratorType: `projects/${credentials.projectId}/zones/${zone}/acceleratorTypes/${spec.gpu.type}`,
+            },
+          ]
+        : [];
     try {
       const [response] = await client.insert({
         project: credentials.projectId,
@@ -2201,6 +2231,8 @@ export class GcpProvider implements CloudProvider {
       }),
       metadata: {
         gcp_instance_id: instance.id?.toString(),
+        machine_type: `${instance.machineType ?? ""}`.split("/").pop(),
+        provider_status: instance.status ?? undefined,
         gcp_security: {
           service_account_count: instance?.serviceAccounts?.length ?? 0,
           can_ip_forward: instance?.canIpForward === true,
@@ -2209,6 +2241,8 @@ export class GcpProvider implements CloudProvider {
             `${blockProjectSshKeys ?? ""}`.toUpperCase() === "TRUE",
           tags: instance?.tags?.items ?? [],
           subnetwork: networkInterface?.subnetwork,
+          external_access_config_count:
+            networkInterface?.accessConfigs?.length ?? 0,
           network_tier: networkInterface?.accessConfigs?.[0]?.networkTier,
           external_ipv6:
             (networkInterface?.ipv6AccessConfigs?.length ?? 0) > 0 ||

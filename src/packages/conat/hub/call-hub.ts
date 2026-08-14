@@ -51,6 +51,7 @@ export default async function callHub({
   auth_session_hash,
   project_id,
   host_id,
+  agent,
   name,
   args = [],
   timeout = DEFAULT_TIMEOUT,
@@ -60,11 +61,18 @@ export default async function callHub({
   auth_session_hash?: string | null;
   project_id?: string;
   host_id?: string;
+  agent?: {
+    account_id: string;
+    project_id: string;
+    token_fingerprint: string;
+    issued_at_s: number;
+    expires_at_s: number;
+  };
   name: string;
   args?: any[];
   timeout?: number;
 }) {
-  const subject = getSubject({ account_id, project_id, host_id });
+  const subject = getSubject({ account_id, project_id, host_id, agent });
   try {
     const data = {
       name,
@@ -78,8 +86,10 @@ export default async function callHub({
   }
 }
 
-function getSubject({ account_id, project_id, host_id }) {
-  if (account_id) {
+function getSubject({ account_id, project_id, host_id, agent }) {
+  if (agent) {
+    return `hub.agent.${agent.account_id}.${agent.project_id}.${agent.token_fingerprint}.${agent.issued_at_s}.${agent.expires_at_s}.api`;
+  } else if (account_id) {
     return `hub.account.${account_id}.api`;
   } else if (project_id) {
     return `hub.project.${project_id}.api`;

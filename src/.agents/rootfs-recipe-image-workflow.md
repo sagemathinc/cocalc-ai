@@ -257,7 +257,10 @@ cocalc rootfs build-publish \
 
 Note the catalog fields:
 
-- `family` groups releases so the UI can offer upgrades within a line,
+- `family`, `channel`, GPU mode, and official status define the compatible
+  scope in which releases may be linked,
+- community releases must also have the same owner; official releases may
+  cross owners because every official entry is admin-vouched,
 - `version` and `channel` are the user-facing labels,
 - `supersedes_image_id` is what actually wires the lineage and drives the bulk
   upgrade flow. Without it a new release is just an unrelated image sitting

@@ -360,10 +360,31 @@ export default function CodexSessionsPanel() {
     {
       title: "State",
       key: "state",
-      render: (_, group) => (
-        <Tag color={stateColor(group.latest.state)}>{group.latest.state}</Tag>
-      ),
-      width: 140,
+      render: (_, group) => {
+        const metadata = sessionMetadata(group.latest);
+        const subagents = Number(metadata.active_descendant_agents ?? 0);
+        const commands = Number(metadata.background_terminal_processes ?? 0);
+        return (
+          <Space vertical size={2}>
+            <Tag color={stateColor(group.latest.state)}>
+              {group.latest.state}
+            </Tag>
+            {subagents > 0 || commands > 0 ? (
+              <Text type="warning" style={{ fontSize: 12 }}>
+                {subagents > 0
+                  ? `${subagents} subagent${subagents === 1 ? "" : "s"}`
+                  : ""}
+                {subagents > 0 && commands > 0 ? " · " : ""}
+                {commands > 0
+                  ? `${commands} command${commands === 1 ? "" : "s"}`
+                  : ""}{" "}
+                still running; usage may continue
+              </Text>
+            ) : null}
+          </Space>
+        );
+      },
+      width: 230,
     },
     {
       title: "Session",
@@ -453,7 +474,7 @@ export default function CodexSessionsPanel() {
             onClick={() => session && void interruptSession(session)}
             size="small"
           >
-            Interrupt
+            Stop all
           </Button>
         );
       },

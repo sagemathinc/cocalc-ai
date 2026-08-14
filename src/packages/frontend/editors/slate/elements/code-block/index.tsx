@@ -23,6 +23,7 @@ import type { JupyterCodeCell } from "../jupyter-code-cell/types";
 import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText, toCodeLines } from "./utils";
 import CodeCopyButton from "./copy-button";
+import { guidanceFromMarkdownFence } from "../guidance";
 
 export const CODE_BLOCK_TEXTAREA_STYLE: React.CSSProperties = {
   width: "100%",
@@ -475,6 +476,10 @@ export function toSlate({ token }) {
   const info = token.info ?? "";
   if (typeof info != "string") {
     throw Error("info must be a string");
+  }
+  if (token.type === "fence") {
+    const guidance = guidanceFromMarkdownFence({ info, value });
+    if (guidance != null) return guidance;
   }
   return {
     type: "code_block",

@@ -6,12 +6,28 @@ import {
   estimateNebiusCatalogRateBreakdown,
   estimateNebiusCatalogRateUsdPerHour,
   getDedicatedHostSurchargeFraction,
+  gcpMachineArchitecture,
+  gcpMachineGpu,
+  gcpMinimumBootDiskGb,
   hostPriceBreakdownForBillingState,
   isSupportedCatalogGcpMachineType,
   type GcpCatalogPrices,
 } from "./project-host-pricing";
 
 describe("project host pricing", () => {
+  it("describes the fixed L4 topology of G2 machine types", () => {
+    expect(gcpMachineGpu("g2-standard-4")).toEqual({
+      type: "nvidia-l4",
+      count: 1,
+    });
+    expect(gcpMachineGpu("g2-standard-24")?.count).toBe(2);
+    expect(gcpMachineGpu("g2-standard-48")?.count).toBe(4);
+    expect(gcpMachineGpu("g2-standard-96")?.count).toBe(8);
+    expect(gcpMachineGpu("t2d-standard-4")).toBeUndefined();
+    expect(gcpMinimumBootDiskGb("g2-standard-4")).toBe(40);
+    expect(gcpMinimumBootDiskGb("t2d-standard-4")).toBe(10);
+  });
+
   it("selects stopped costs from explicit billing-state metadata", () => {
     const stopped = hostPriceBreakdownForBillingState(
       {
@@ -50,6 +66,12 @@ describe("project host pricing", () => {
   it("filters out local-SSD GCP machine variants from the frozen catalog", () => {
     expect(isSupportedCatalogGcpMachineType("c3d-standard-8")).toBe(true);
     expect(isSupportedCatalogGcpMachineType("c3d-standard-8-lssd")).toBe(false);
+  });
+
+  it("uses the explicit machine-family architecture map", () => {
+    expect(gcpMachineArchitecture("t2a-standard-1")).toBe("arm64");
+    expect(gcpMachineArchitecture("t2d-standard-2")).toBe("x86_64");
+    expect(gcpMachineArchitecture("c3d-standard-8")).toBe("x86_64");
   });
 
   it("estimates GCP hourly rates from normalized catalog pricing", () => {
@@ -326,6 +348,40 @@ describe("project host pricing", () => {
     expect(breakdown?.total_usd_per_hour).toBeCloseTo(0.371, 9);
   });
 
+  it("charges the Windows Server license at the same rate for Spot", () => {
+    const catalog: GcpCatalogPrices = {
+      fetched_at: "2026-08-13T00:00:00.000Z",
+      service_id: "compute",
+      families: {
+        e2: {
+          cpu: { "us-central1": 0.03 },
+          ram: { "us-central1": 0.004 },
+          spot_cpu: { "us-central1": 0.01 },
+          spot_ram: { "us-central1": 0.001 },
+        },
+      },
+      gpus: {},
+      disks: { "pd-balanced": { "us-central1": 0.0001 } },
+    };
+    const windows = estimateGcpCatalogRateBreakdown(catalog, {
+      zone: "us-central1-a",
+      machine_type: "e2-standard-4",
+      pricing_model: "spot",
+      disk_type: "balanced",
+      disk_gb: 80,
+      operating_system: "windows",
+    });
+    const license = windows?.items.find(({ key }) => key === "windows_license");
+
+    expect(license?.usd_per_hour).toBeCloseTo(4 * 0.046, 9);
+    expect(license?.billing_states).toEqual(["running"]);
+    expect(
+      hostPriceBreakdownForBillingState(windows, "stopped")?.items.some(
+        ({ key }) => key === "windows_license",
+      ),
+    ).toBe(false);
+  });
+
   it("applies configured surcharges proportionally across displayed breakdown items", () => {
     const base = estimateGcpCatalogRateBreakdown(
       {
@@ -444,6 +500,34 @@ describe("project host pricing", () => {
 
     expect(breakdown?.items.map((item) => item.key)).toEqual(["vm", "disk"]);
     expect(breakdown?.total_usd_per_hour).toBeCloseTo(0.114183323, 9);
+  });
+
+  it("prices an independent Nebius persistent disk without an instance", () => {
+    const breakdown = estimateNebiusCatalogRateBreakdown({
+      prices: [
+        {
+          product: "Network SSD disk",
+          region: "us-central1",
+          price_usd: "0.00009726027397260273",
+          unit: "GiB hour",
+        },
+      ],
+      region: "us-central1",
+      disk_type: "ssd",
+      disk_gb: 93,
+      storage_mode: "persistent",
+    });
+
+    expect(breakdown?.items).toEqual([
+      expect.objectContaining({
+        key: "disk",
+        billing_states: ["running", "stopped"],
+      }),
+    ]);
+    expect(breakdown?.total_usd_per_hour).toBeCloseTo(
+      0.00009726027397260273 * 93,
+      12,
+    );
   });
 
   it("adds Nebius shared scratch disk as a separate line item", () => {

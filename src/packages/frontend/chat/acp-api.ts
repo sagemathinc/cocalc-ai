@@ -25,6 +25,11 @@ import {
   startCodexResponseTrace,
 } from "./codex-ux-latency";
 import { recordProductActivity } from "@cocalc/frontend/monitoring/product-activity";
+import {
+  OTHER_SETTINGS_CODEX_MAX_CONCURRENT_SUBAGENTS,
+  normalizeCodexMaxConcurrentSubagents,
+} from "@cocalc/frontend/account/codex-subagent-concurrency";
+import { redux } from "@cocalc/frontend/app-framework";
 
 let lastGeneratedAcpMessageMs = 0;
 const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
@@ -322,6 +327,14 @@ export async function processAcpLLM({
     ...(actions.getCodexConfig?.(thread_id) ?? {}),
     ...(acpConfigOverride ?? {}),
   };
+  const maxConcurrentSubagents = normalizeCodexMaxConcurrentSubagents(
+    redux
+      .getStore("account")
+      ?.getIn?.([
+        "other_settings",
+        OTHER_SETTINGS_CODEX_MAX_CONCURRENT_SUBAGENTS,
+      ]),
+  );
   const normalizedModel =
     typeof model === "string" ? normalizeCodexMention(model) : undefined;
   // If thread_config.sessionId has not been persisted yet, recover it from the
@@ -428,6 +441,7 @@ export async function processAcpLLM({
             ? { ...config, sessionId: effectiveSessionId }
             : config,
         model: normalizedModel,
+        maxConcurrentSubagents,
       }),
       chat: chatMetadata,
     };
@@ -878,15 +892,18 @@ function buildAcpConfig({
   path,
   config,
   model,
+  maxConcurrentSubagents,
 }: {
   path?: string;
   config?: CodexThreadConfig;
   model?: string;
+  maxConcurrentSubagents?: number;
 }): CodexSessionConfig {
   const baseWorkingDir = resolveWorkingDir(path);
   const workingDirectory = config?.workingDirectory || baseWorkingDir;
   const opts: CodexSessionConfig = {
     workingDirectory,
+    maxConcurrentSubagents,
   };
   const defaultModel =
     DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;

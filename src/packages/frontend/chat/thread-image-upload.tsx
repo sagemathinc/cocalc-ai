@@ -171,7 +171,7 @@ function renderUploadContents({
       {value ? (
         <img
           src={value}
-          alt="Chat image preview"
+          alt="Chat attachment preview"
           style={{
             width: `${size}px`,
             height: `${size}px`,

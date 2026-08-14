@@ -99,7 +99,7 @@
     "check-doc-urls": "cd scripts; python3 check_doc_urls.py",
     "check-all-urls": "cd scripts; python3 check_doc_urls.py --all --react",
     "test": "unset DEBUG && pnpm test:checks && pnpm run depcheck && ./workspaces.py test",
-    "test:checks": "pnpm check-doc-urls && pnpm run version-check && pnpm run lint && pnpm --dir packages/docs verify && pnpm --dir packages/docs gaps",
+    "test:checks": "pnpm check-doc-urls && pnpm accessibility:test && pnpm run version-check && pnpm run lint && pnpm --dir packages/docs verify && pnpm --dir packages/docs gaps",
     "test:audit": "node ./scripts/test-audit.mjs",
     "test:ci-plan": "node --test ./scripts/ci-test-plan.test.mjs",
     "test:e2e": "pnpm --dir packages/lite jupyter:test:e2e && pnpm --dir packages/frontend test:e2e && pnpm --dir packages/frontend test:e2e:chat",

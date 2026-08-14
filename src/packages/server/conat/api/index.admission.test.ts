@@ -12,6 +12,10 @@ import {
 
 describe("hub api admission", () => {
   it("classifies account usage polling as low priority", () => {
+    expect(isLowPriorityHubApiMethod("compute.getCatalog")).toBe(true);
+    expect(isLowPriorityHubApiMethod("compute.listAgentGrants")).toBe(true);
+    expect(isLowPriorityHubApiMethod("compute.listVms")).toBe(true);
+    expect(isLowPriorityHubApiMethod("compute.listVolumes")).toBe(true);
     expect(isLowPriorityHubApiMethod("purchases.getMembershipDetails")).toBe(
       true,
     );

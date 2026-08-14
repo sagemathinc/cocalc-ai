@@ -103,22 +103,36 @@ const VERSION_COLLATOR = new Intl.Collator(undefined, {
   sensitivity: "base",
 });
 
-function rootfsSeriesScopeKey(entry: RootfsImageEntry): string {
-  const arch = Array.isArray(entry.arch)
-    ? [...entry.arch].sort().join(",")
-    : (entry.arch ?? "any");
+function rootfsChannelKey(entry: RootfsImageEntry): string {
+  return entry.channel?.trim().toLowerCase() || "stable";
+}
+
+function rootfsOwnerKey(entry: RootfsImageEntry): string {
+  return (entry.owner_id ?? "").trim().toLowerCase();
+}
+
+/**
+ * The metadata scope in which an explicit supersession edge is allowed.
+ * Promoting an image changes this key, so its predecessors must be promoted as
+ * well before the chain reconnects. Label and architecture never affect it.
+ */
+export function rootfsLineageKey(entry: RootfsImageEntry): string | undefined {
+  const family = entry.family?.trim().toLowerCase();
+  if (!family) return;
   return [
-    (entry.owner_id ?? "").trim().toLowerCase(),
-    entry.official ? "official" : "user",
-    (entry.channel ?? "").trim().toLowerCase(),
+    family,
+    rootfsChannelKey(entry),
     entry.gpu ? "gpu" : "cpu",
-    arch.toLowerCase(),
+    entry.official ? "official" : "community",
   ].join("|");
 }
 
-function rootfsSeriesKey(entry: RootfsImageEntry): string | undefined {
-  if (!entry.family || !entry.version) return;
-  return `${rootfsSeriesScopeKey(entry)}|${entry.family.trim().toLowerCase()}`;
+export function isSameRootfsLineage(
+  left: RootfsImageEntry,
+  right: RootfsImageEntry,
+): boolean {
+  const lineage = rootfsLineageKey(left);
+  return lineage != null && lineage === rootfsLineageKey(right);
 }
 
 function compareVersionRecency(
@@ -133,15 +147,30 @@ function compareVersionRecency(
   return a.id.localeCompare(b.id);
 }
 
+export function isRootfsLineageSuccessor({
+  entry,
+  predecessor,
+}: {
+  entry: RootfsImageEntry;
+  predecessor: RootfsImageEntry;
+}): boolean {
+  return (
+    isSameRootfsLineage(entry, predecessor) &&
+    (entry.official === true ||
+      rootfsOwnerKey(entry) === rootfsOwnerKey(predecessor)) &&
+    entry.supersedes_image_id?.trim() === predecessor.id
+  );
+}
+
 export type RootfsVersionGroup = {
   latest: RootfsImageEntry;
   older: RootfsImageEntry[];
 };
 
 /**
- * Group catalog entries using the same series rules as
- * latestRootfsVersionEntries, while retaining every older release.  Groups
- * remain in catalog order and older releases are listed newest first.
+ * Group catalog entries connected by valid explicit supersession edges while
+ * retaining every older release. Groups remain in catalog order and older
+ * releases are listed newest first.
  */
 export function groupRootfsVersionEntries(
   images: RootfsImageEntry[],
@@ -161,25 +190,11 @@ export function groupRootfsVersionEntries(
     if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot);
   };
 
-  const firstBySeries = new Map<string, string>();
-  for (const entry of images) {
-    const key = rootfsSeriesKey(entry);
-    if (!key) continue;
-    const first = firstBySeries.get(key);
-    if (first) {
-      union(first, entry.id);
-    } else {
-      firstBySeries.set(key, entry.id);
-    }
-  }
   for (const entry of images) {
     const predecessor = entriesById.get(
       entry.supersedes_image_id?.trim() ?? "",
     );
-    if (
-      predecessor &&
-      rootfsSeriesScopeKey(predecessor) === rootfsSeriesScopeKey(entry)
-    ) {
+    if (predecessor && isRootfsLineageSuccessor({ entry, predecessor })) {
       union(predecessor.id, entry.id);
     }
   }
@@ -194,9 +209,28 @@ export function groupRootfsVersionEntries(
   const inputIndex = new Map(images.map((entry, index) => [entry.id, index]));
   return Array.from(grouped.values())
     .map((entries) => {
-      const [latest, ...older] = entries.sort((a, b) =>
-        compareVersionRecency(b, a),
+      const entryIds = new Set(entries.map((entry) => entry.id));
+      const supersededIds = new Set(
+        entries
+          .filter((entry) => {
+            const predecessor = entriesById.get(
+              entry.supersedes_image_id?.trim() ?? "",
+            );
+            return (
+              predecessor &&
+              entryIds.has(predecessor.id) &&
+              isRootfsLineageSuccessor({ entry, predecessor })
+            );
+          })
+          .map((entry) => entry.supersedes_image_id!.trim()),
       );
+      const heads = entries.filter((entry) => !supersededIds.has(entry.id));
+      const latest = [...(heads.length > 0 ? heads : entries)].sort((a, b) =>
+        compareVersionRecency(b, a),
+      )[0];
+      const older = entries
+        .filter((entry) => entry.id !== latest.id)
+        .sort((a, b) => compareVersionRecency(b, a));
       return { latest, older };
     })
     .sort(
@@ -216,11 +250,36 @@ export function latestRootfsVersionEntries(
   const visibleIds = new Set(
     groupRootfsVersionEntries(images).map(({ latest }) => latest.id),
   );
+  // Preserve the historical picker behavior for ad hoc entries. Explicit
+  // lineage metadata may relate them for upgrade guidance, but an unversioned
+  // image must not disappear from an in-app picker.
+  for (const entry of images) {
+    if (!entry.version?.trim()) visibleIds.add(entry.id);
+  }
   for (const id of opts?.preserveIds ?? []) {
     const value = `${id ?? ""}`.trim();
     if (value) visibleIds.add(value);
   }
   return images.filter((entry) => visibleIds.has(entry.id));
+}
+
+function rootfsVersionGroupForEntry({
+  current,
+  images,
+}: {
+  current: RootfsImageEntry;
+  images: RootfsImageEntry[];
+}): RootfsVersionGroup | undefined {
+  const entries = Array.from(
+    new Map<string, RootfsImageEntry>(
+      [...images, current].map((entry) => [entry.id, entry]),
+    ).values(),
+  );
+  return groupRootfsVersionEntries(entries).find(
+    ({ latest, older }) =>
+      latest.id === current.id ||
+      older.some((entry) => entry.id === current.id),
+  );
 }
 
 export function latestRootfsVersionForEntry({
@@ -230,14 +289,7 @@ export function latestRootfsVersionForEntry({
   current: RootfsImageEntry;
   images: RootfsImageEntry[];
 }): RootfsImageEntry {
-  const entries = images.some((entry) => entry.id === current.id)
-    ? images
-    : [...images, current];
-  const group = groupRootfsVersionEntries(entries).find(
-    ({ latest, older }) =>
-      latest.id === current.id ||
-      older.some((entry) => entry.id === current.id),
-  );
+  const group = rootfsVersionGroupForEntry({ current, images });
   return group?.latest ?? current;
 }
 
@@ -249,54 +301,15 @@ export function latestRootfsUpgradeEntry({
   images: RootfsImageEntry[];
 }): RootfsImageEntry | undefined {
   if (!current) return undefined;
-  const entries = images.filter(
+  // Upgrade prompts must not recommend entries a user cannot select. Public
+  // detail pages use the same lineage lookup on an already visibility-filtered
+  // server catalog, so only this in-app path needs the additional guard.
+  const selectable = images.filter(
     (entry) => !entry.hidden && !entry.blocked && entry.id !== current.id,
   );
-  const bySupersededId = new Map<string, RootfsImageEntry[]>();
-  for (const entry of entries) {
-    const supersededId = entry.supersedes_image_id?.trim();
-    if (!supersededId) continue;
-    const list = bySupersededId.get(supersededId) ?? [];
-    list.push(entry);
-    bySupersededId.set(supersededId, list);
-  }
-
-  const reachableExplicit: RootfsImageEntry[] = [];
-  let cursor: RootfsImageEntry = current;
-  const seen = new Set<string>([current.id]);
-  while (true) {
-    const candidates = (bySupersededId.get(cursor.id) ?? []).sort((a, b) =>
-      compareVersionRecency(b, a),
-    );
-    const next = candidates.find((entry) => !seen.has(entry.id));
-    if (!next) break;
-    reachableExplicit.push(next);
-    seen.add(next.id);
-    cursor = next;
-  }
-
-  const latestExplicit = reachableExplicit.sort((a, b) =>
-    compareVersionRecency(b, a),
-  )[0];
-  const currentSeriesKey = rootfsSeriesKey(current);
-  if (!currentSeriesKey) return latestExplicit;
-  const related = entries
-    .filter(
-      (entry) =>
-        rootfsSeriesKey(entry) === currentSeriesKey &&
-        !!entry.version &&
-        VERSION_COLLATOR.compare(entry.version, current.version!) > 0,
-    )
-    .sort((a, b) => compareVersionRecency(b, a));
-  const latestRelated = related[0];
-  if (!latestExplicit) return latestRelated;
-  if (
-    latestRelated &&
-    compareVersionRecency(latestRelated, latestExplicit) > 0
-  ) {
-    return latestRelated;
-  }
-  return latestExplicit;
+  const group = rootfsVersionGroupForEntry({ current, images: selectable });
+  if (!group || group.latest.id === current.id) return undefined;
+  return group.latest;
 }
 
 export function rootfsOptionSearchText(option?: any): string {

@@ -51,7 +51,7 @@ function renderImage({
       </div>
     );
   }
-  return <img {...props} alt="Image in a Jupyter notebook" />;
+  return <img {...props} alt="Jupyter output" />;
 }
 
 export function Image(props: ImageProps) {

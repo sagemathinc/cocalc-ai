@@ -113,6 +113,11 @@ export interface ChatMessage {
   acp_config?: CodexThreadConfig;
   acp_account_id?: string;
   acp_state?: "queued" | "running" | null;
+  acp_manager_finished?: boolean;
+  acp_active_descendant_thread_ids?: string[];
+  acp_active_descendant_agents?: number;
+  acp_background_terminal_processes?: number;
+  acp_ai_usage_may_continue?: boolean;
   message_id?: string;
   thread_id?: string;
   parent_message_id?: string;

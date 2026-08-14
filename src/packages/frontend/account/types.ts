@@ -75,6 +75,7 @@ export interface AccountState {
       reasoning?: CodexReasoningId;
       sessionMode: CodexSessionMode;
     };
+    codex_max_concurrent_subagents?: number;
   }>;
   stripe_customer?: TypedMap<{
     subscriptions: { data: Map<string, any> };

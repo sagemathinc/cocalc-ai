@@ -51,11 +51,17 @@ describe("public RootFS tags", () => {
 
     expect(
       screen.getByRole("button", {
-        name: "Filter by #jupyter (4 images)",
+        name: "Filter by #jupyter (4 families)",
       }),
     ).toHaveAttribute("aria-pressed", "true");
     expect(
-      screen.getByRole("button", { name: "Filter by #julia (1 image)" }),
-    ).toBeDisabled();
+      screen.getByRole("button", { name: "Filter by #julia (1 family)" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("button", { name: "Filter by #julia (1 family)" }),
+    ).not.toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Filter by #jupyter (4 families)" }),
+    ).toHaveTextContent("#jupyter 4");
   });
 });

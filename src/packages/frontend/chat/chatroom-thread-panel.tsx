@@ -84,7 +84,7 @@ import {
   shouldOpenThreadSearchShortcut,
 } from "./chatroom-thread-panel-shortcuts";
 import { resolveAgentSessionIdForThread } from "./thread-session";
-import { useCodexLiveActivityStatus } from "./use-codex-log";
+import { getLatestEventTimeFromEvents, useCodexLog } from "./use-codex-log";
 import { CodexFullAccessNotice } from "./codex-full-access";
 import { getCodexPaymentSourceOptions } from "./use-codex-payment-source";
 import {
@@ -657,12 +657,20 @@ export function ChatRoomThreadPanel({
       selectedRunningFallbackLogRefs.liveStream,
     [selectedRunningCodexMessage, selectedRunningFallbackLogRefs.liveStream],
   );
-  const selectedRunningCodexActivity = useCodexLiveActivityStatus({
+  const selectedRunningCodexActivity = useCodexLog({
     projectId: project_id,
+    logStore: selectedRunningLogStore,
+    logKey: selectedRunningLogKey,
     logSubject: selectedRunningLogSubject,
     liveLogStream: selectedRunningLiveLogStream,
+    generating: true,
     enabled: selectedRunningCodexMessage != null,
   });
+  const selectedRunningLastActivityAtMs = useMemo(
+    () =>
+      getLatestEventTimeFromEvents(selectedRunningCodexActivity.events ?? []),
+    [selectedRunningCodexActivity.events],
+  );
   const selectedRunningSessionIdForInterrupt = useMemo(() => {
     if (!selectedThreadId) return undefined;
     const resolved = resolveAgentSessionIdForThread({
@@ -1985,7 +1993,8 @@ export function ChatRoomThreadPanel({
                 path,
               }}
               activityLiveStatus={selectedRunningCodexActivity.liveStatus}
-              lastActivityAtMs={selectedRunningCodexActivity.lastActivityAtMs}
+              lastActivityAtMs={selectedRunningLastActivityAtMs}
+              logEvents={selectedRunningCodexActivity.events}
               notifyOnTurnFinish={notifyOnTurnFinish}
               onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
               interruptRequested={interruptRequested}
@@ -2010,7 +2019,7 @@ export function ChatRoomThreadPanel({
         >
           <img
             src={threadImagePreview}
-            alt="Chat image"
+            alt="Chat attachment"
             style={{
               width: 84,
               height: 84,

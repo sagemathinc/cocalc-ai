@@ -51,6 +51,7 @@ function AvatarPreview({
   if (image) {
     return (
       <img
+        alt={firstName ? `${firstName}'s avatar` : "Account avatar"}
         src={image}
         style={{
           borderRadius: "50%",

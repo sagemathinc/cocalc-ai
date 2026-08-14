@@ -5,6 +5,7 @@ import {
   getHostDisplayedPrice,
   getHostPriceEstimate,
   getGcpPersistentDiskPriceEstimate,
+  getNebiusPersistentDiskPriceEstimate,
   getHostPricingModeEstimates,
   getGcpMachineTypeOptions,
   getGcpRegionOptions,
@@ -253,6 +254,48 @@ describe("buildCreateHostPayload", () => {
 });
 
 describe("GCP region options", () => {
+  it("marks only regions with the selected architecture as compatible", () => {
+    const catalog = testCatalog([
+      {
+        kind: "regions",
+        scope: "global",
+        payload: [
+          { name: "us-central1", zones: ["us-central1-a"] },
+          { name: "us-east1", zones: ["us-east1-b"] },
+        ],
+      },
+      {
+        kind: "zones",
+        scope: "global",
+        payload: [
+          { name: "us-central1-a", region: "us-central1" },
+          { name: "us-east1-b", region: "us-east1" },
+        ],
+      },
+      {
+        kind: "machine_types",
+        scope: "zone/us-central1-a",
+        payload: [{ name: "t2a-standard-1", guestCpus: 1, memoryMb: 4096 }],
+      },
+      {
+        kind: "machine_types",
+        scope: "zone/us-east1-b",
+        payload: [{ name: "e2-standard-2", guestCpus: 2, memoryMb: 8192 }],
+      },
+    ]);
+
+    const options = getGcpRegionOptions(catalog, { architecture: "arm64" });
+    expect(
+      options.map((option) => [
+        option.value,
+        (option.meta as { compatible: boolean }).compatible,
+      ]),
+    ).toEqual([
+      ["us-central1", true],
+      ["us-east1", false],
+    ]);
+  });
+
   it("omits regions where the selected configuration has no price", () => {
     const machine = {
       name: "e2-standard-2",
@@ -321,6 +364,52 @@ describe("GCP region options", () => {
 });
 
 describe("GCP zone options", () => {
+  it("marks only zones with the selected architecture as compatible", () => {
+    const catalog = testCatalog([
+      {
+        kind: "regions",
+        scope: "global",
+        payload: [
+          {
+            name: "us-central1",
+            zones: ["us-central1-a", "us-central1-b"],
+          },
+        ],
+      },
+      {
+        kind: "zones",
+        scope: "global",
+        payload: [
+          { name: "us-central1-a", region: "us-central1" },
+          { name: "us-central1-b", region: "us-central1" },
+        ],
+      },
+      {
+        kind: "machine_types",
+        scope: "zone/us-central1-a",
+        payload: [{ name: "t2a-standard-1", guestCpus: 1, memoryMb: 4096 }],
+      },
+      {
+        kind: "machine_types",
+        scope: "zone/us-central1-b",
+        payload: [{ name: "e2-standard-2", guestCpus: 2, memoryMb: 8192 }],
+      },
+    ]);
+
+    expect(
+      getGcpZoneOptions(catalog, {
+        region: "us-central1",
+        architecture: "arm64",
+      }).map((option) => [
+        option.value,
+        (option.meta as { compatible: boolean }).compatible,
+      ]),
+    ).toEqual([
+      ["us-central1-a", true],
+      ["us-central1-b", false],
+    ]);
+  });
+
   it("omits specialized region zones absent from the selectable zones catalog", () => {
     const catalog = testCatalog([
       {
@@ -911,6 +1000,38 @@ describe("catalog-backed pricing labels", () => {
     );
 
     expect(estimate?.usd_per_hour).toBeCloseTo(0.0065, 9);
+    expect(estimate?.line_items.map(({ key }) => key)).toEqual(["disk"]);
+    expect(estimate?.notes).toEqual(["Includes a 30% site surcharge."]);
+  });
+
+  it("prices a Nebius persistent disk without machine pricing", () => {
+    const catalog = testCatalog([
+      {
+        kind: "prices",
+        scope: "global",
+        payload: [
+          {
+            product: "Network SSD disk",
+            region: "eu-north1",
+            price_usd: "0.0001",
+            unit: "GiB hour",
+          },
+        ],
+      },
+    ]);
+
+    const estimate = getNebiusPersistentDiskPriceEstimate(
+      catalog,
+      {
+        region: "eu-north1",
+        storage_mode: "persistent",
+        disk_type: "ssd",
+        disk_gb: 93,
+      },
+      { project_hosts_nebius_surcharge_percent: 30 },
+    );
+
+    expect(estimate?.usd_per_hour).toBeCloseTo(0.01209, 9);
     expect(estimate?.line_items.map(({ key }) => key)).toEqual(["disk"]);
     expect(estimate?.notes).toEqual(["Includes a 30% site surcharge."]);
   });

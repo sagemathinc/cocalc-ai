@@ -140,7 +140,7 @@ describe("CodexSessionsPanel", () => {
 
     render(<CodexSessionsPanel />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Interrupt" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop all" }));
 
     await waitFor(() =>
       expect(interruptMock).toHaveBeenCalledWith({

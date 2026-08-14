@@ -161,6 +161,7 @@ const RenderMedia: React.FC<{
     case "image":
       return (
         <img
+          alt={path}
           src={url}
           onLoad={(event) => {
             const width = event.currentTarget.naturalWidth;

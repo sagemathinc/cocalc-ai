@@ -34,7 +34,7 @@ function defaultTargetPath(path: string): string {
 
 function basename(path: string): string {
   const parts = `${path ?? ""}`.split("/").filter(Boolean);
-  return parts.at(-1) ?? "";
+  return parts[parts.length - 1] ?? "";
 }
 
 function encodeProjectPath(path: string): string {

@@ -647,7 +647,9 @@ function HistorySparkline({
       >
         <span>{new Date(points[0].collected_at).toLocaleString()}</span>
         <span>
-          {new Date(points.at(-1)?.collected_at ?? "").toLocaleString()}
+          {new Date(
+            points[points.length - 1]?.collected_at ?? "",
+          ).toLocaleString()}
         </span>
       </div>
     </div>
@@ -812,7 +814,7 @@ export default function DiskUsage({
     [history, historyMetric],
   );
   const historyMetricPointCount = historySeries.length;
-  const latestHistoryPoint = historySeries.at(-1);
+  const latestHistoryPoint = historySeries[historySeries.length - 1];
   const firstHistoryPoint = historySeries[0];
   const historyDelta =
     latestHistoryPoint != null && firstHistoryPoint != null
@@ -1208,7 +1210,7 @@ export default function DiskUsage({
                         {latestHistoryPoint == null
                           ? "?"
                           : historyMetric === "quota"
-                            ? `${human_readable_size(latestHistoryPoint.value)} / ${human_readable_size(history.points.at(-1)?.quota_size_bytes ?? quota?.size ?? 0)}`
+                            ? `${human_readable_size(latestHistoryPoint.value)} / ${human_readable_size(history.points[history.points.length - 1]?.quota_size_bytes ?? quota?.size ?? 0)}`
                             : human_readable_size(latestHistoryPoint.value)}
                       </div>
                     </div>
@@ -1244,7 +1246,8 @@ export default function DiskUsage({
                       metric={historyMetric}
                       points={historySeries}
                       quotaSizeBytes={
-                        history.points.at(-1)?.quota_size_bytes ?? quota?.size
+                        history.points[history.points.length - 1]
+                          ?.quota_size_bytes ?? quota?.size
                       }
                     />
                   )}

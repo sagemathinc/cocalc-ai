@@ -35,6 +35,18 @@ export function normalizeCoursePath(path: string): string {
 }
 
 export function defaultCourseTitle(path: string): string {
-  const normalized = normalizeCoursePath(path);
-  return normalized.slice(0, -".course".length);
+  try {
+    const normalized = normalizeCoursePath(path);
+    return normalized.slice(0, -".course".length) || "Course";
+  } catch {
+    // Existing course files may use a legacy or transient client path. A
+    // display default must not abort course-store initialization.
+    const filename = `${path ?? ""}`
+      .trim()
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter(Boolean)
+      .pop();
+    return filename?.replace(/\.course$/i, "") || "Course";
+  }
 }

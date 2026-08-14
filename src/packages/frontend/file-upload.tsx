@@ -607,7 +607,7 @@ function DropzonePreview() {
         <div className="dz-filename">
           <span data-dz-name></span>
         </div>
-        <img data-dz-thumbnail />
+        <img alt="" data-dz-thumbnail />
       </div>
       <div className="dz-progress">
         <span className="dz-upload" data-dz-uploadprogress></span>

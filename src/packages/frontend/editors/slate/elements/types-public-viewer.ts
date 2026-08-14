@@ -13,6 +13,7 @@ import "./code-block/public-viewer";
 import "./details";
 import "./emoji";
 import "./generic";
+import "./guidance";
 import "./hashtag";
 import "./heading";
 import "./html";

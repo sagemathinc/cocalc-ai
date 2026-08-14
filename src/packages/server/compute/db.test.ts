@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { after, before, getPool } from "@cocalc/server/test";
 import {
   addComputeVmSshPublicKey,
+  allocateComputeVmPublicHostname,
   claimComputeWork,
   enqueueComputeWork,
   enqueueComputeEmergencyStops,
@@ -15,14 +16,20 @@ import {
   finishComputeWork,
   insertComputeVm,
   getComputeVmById,
+  listComputeVmsForBillingEnforcement,
+  listComputeVmsForEgressMetering,
+  listComputeVmsForInventory,
   listOwnedComputeVms,
   resolveProjectComputeVm,
+  updateComputeVmEgressMetadata,
 } from "./db";
 import type { ComputeVmRow } from "./types";
 import type { ComputeVolumeRow } from "./types";
 import {
   getComputeVolumeById,
   insertComputeVolume,
+  enqueueComputeVolumeReconciliation,
+  listComputeVolumesForInventory,
   listOwnedComputeVolumes,
 } from "./volume-db";
 
@@ -49,26 +56,50 @@ function vmInput(
     owner_account_id: overrides.owner_account_id ?? randomUUID(),
     owning_bay_id: "bay-0",
     project_id: overrides.project_id ?? randomUUID(),
-    provider: "gcp",
-    region: "us-central1",
-    zone: "us-central1-a",
+    provider: overrides.provider ?? "gcp",
+    operating_system: overrides.operating_system ?? "linux",
+    operating_system_version:
+      overrides.operating_system_version ?? "ubuntu-24.04",
+    os_license_hourly_price: overrides.os_license_hourly_price ?? "0.000000",
+    region: overrides.region ?? "us-central1",
+    zone: Object.prototype.hasOwnProperty.call(overrides, "zone")
+      ? overrides.zone
+      : "us-central1-a",
     architecture: "x86_64",
-    machine_type: "e2-standard-2",
+    machine_type: overrides.machine_type ?? "e2-standard-2",
+    cpu: 2,
+    ram_gb: 8,
+    gpu_type: null,
+    gpu_count: 0,
+    provider_spec: {},
+    funding_mode: "account-prepaid",
     desired_pricing_model: "on_demand",
     effective_pricing_model: "on_demand",
     boot_disk_gb: 20,
     boot_disk_id: `cocalc-vm-${id.slice(0, 8)}-boot`,
-    attached_volume_id: overrides.attached_volume_id ?? null,
+    home_volume_id: overrides.home_volume_id ?? null,
     state: "requested",
     desired_state: "running",
     instance_generation: 1,
     provider_instance_id: `cocalc-vm-${id.slice(0, 8)}`,
+    public_address_id: null,
+    public_address_state: "released",
     public_ip: null,
-    ssh_user: "ubuntu",
+    public_hostname:
+      overrides.public_hostname ??
+      `vm-${id.replaceAll("-", "").slice(0, 32)}.example.test`,
+    dns_record_id: null,
+    dns_state: "released",
+    dns_error: null,
+    public_ports: [22, 443],
+    ssh_user: "user",
     ssh_public_key: "ssh-ed25519 AAAATEST owner",
     expires_at: Object.prototype.hasOwnProperty.call(overrides, "expires_at")
       ? overrides.expires_at
       : new Date(Date.now() + 60_000),
+    bootstrap_revision: 1,
+    observed_bootstrap_revision: null,
+    public_port_policy_revision: 1,
     allow_on_demand_fallback: false,
     authorized_fallback_hours: 0,
     spot_hourly_price: "0.020000",
@@ -93,13 +124,19 @@ function volumeInput(
     name: overrides.name ?? "test-volume",
     owner_account_id: overrides.owner_account_id ?? randomUUID(),
     owning_bay_id: "bay-0",
-    provider: "gcp",
-    region: "us-central1",
-    zone: overrides.zone ?? "us-central1-a",
-    disk_type: "balanced",
+    provider: overrides.provider ?? "gcp",
+    region: overrides.region ?? "us-central1",
+    zone: Object.prototype.hasOwnProperty.call(overrides, "zone")
+      ? overrides.zone
+      : "us-central1-a",
+    role: "home",
+    funding_mode: "account-prepaid",
+    provider_spec: {},
+    disk_type: overrides.disk_type ?? "balanced",
     filesystem: "ext4",
     size_gb: overrides.size_gb ?? 20,
     desired_size_gb: overrides.desired_size_gb ?? 20,
+    effective_size_gb: overrides.effective_size_gb ?? 20,
     provider_disk_id: `cocalc-vol-${id.slice(0, 8)}`,
     state: overrides.state ?? "ready",
     desired_state: "ready",
@@ -116,6 +153,68 @@ function volumeInput(
 }
 
 describe("compute VM durable state", () => {
+  it("quarantines pre-v2 rows while retaining them for provider inventory", async () => {
+    const vm = await insertComputeVm(vmInput());
+    const volume = await insertComputeVolume(
+      volumeInput({
+        owner_account_id: vm.owner_account_id,
+        project_id: vm.project_id,
+        attached_vm_id: vm.id,
+      }),
+      10,
+    );
+    await getPool().query(
+      `UPDATE compute_vms
+       SET public_hostname=NULL, bootstrap_revision=NULL, funding_mode=NULL,
+           expires_at=NOW() - interval '1 minute'
+       WHERE id=$1`,
+      [vm.id],
+    );
+    await getPool().query(
+      `UPDATE compute_volumes SET role=NULL, funding_mode=NULL WHERE id=$1`,
+      [volume.id],
+    );
+
+    await expect(
+      listOwnedComputeVms({ owner_account_id: vm.owner_account_id }),
+    ).resolves.toEqual([]);
+    await expect(
+      listOwnedComputeVolumes({ owner_account_id: vm.owner_account_id }),
+    ).resolves.toEqual([]);
+    await expect(listComputeVmsForBillingEnforcement()).resolves.toEqual([]);
+    await expect(listComputeVmsForEgressMetering()).resolves.toEqual([]);
+    await expect(enqueueExpiredComputeVms()).resolves.toBe(0);
+    await expect(enqueueComputeEmergencyStops()).resolves.toBe(0);
+    await expect(enqueueComputeReconciliation()).resolves.toBe(0);
+    await expect(enqueueComputeVolumeReconciliation()).resolves.toBe(0);
+
+    await expect(listComputeVmsForInventory()).resolves.toEqual([
+      expect.objectContaining({ id: vm.id }),
+    ]);
+    await expect(listComputeVolumesForInventory()).resolves.toEqual([
+      expect.objectContaining({ id: volume.id }),
+    ]);
+  });
+
+  it("allocates a random hostname and retries a collision", async () => {
+    const labels = [
+      "vm-11111111111111111111111111111111",
+      "vm-22222222222222222222222222222222",
+    ];
+    await insertComputeVm(
+      vmInput({
+        public_hostname: `${labels[0]}.staging.example.com`,
+      }),
+    );
+
+    await expect(
+      allocateComputeVmPublicHostname(
+        "https://staging.example.com/",
+        () => labels.shift()!,
+      ),
+    ).resolves.toBe("vm-22222222222222222222222222222222.staging.example.com");
+  });
+
   it("deduplicates owner-scoped create idempotency", async () => {
     const input = vmInput();
     const first = await insertComputeVm(input);
@@ -128,6 +227,37 @@ describe("compute VM durable state", () => {
     expect(
       await listOwnedComputeVms({ owner_account_id: input.owner_account_id }),
     ).toHaveLength(1);
+  });
+
+  it("attaches a zoneless Nebius volume to a zoneless VM", async () => {
+    const owner = randomUUID();
+    const project = randomUUID();
+    const volume = await insertComputeVolume(
+      volumeInput({
+        owner_account_id: owner,
+        project_id: project,
+        provider: "nebius",
+        region: "us-central1",
+        zone: null,
+        disk_type: "ssd",
+      }),
+    );
+    const vm = await insertComputeVm(
+      vmInput({
+        owner_account_id: owner,
+        project_id: project,
+        provider: "nebius",
+        region: "us-central1",
+        zone: undefined,
+        machine_type: "1gpu-24vcpu-218gb",
+        home_volume_id: volume.id,
+      }),
+    );
+    expect(vm.home_volume_id).toBe(volume.id);
+    await expect(getComputeVolumeById(volume.id)).resolves.toMatchObject({
+      attached_vm_id: vm.id,
+      attachment_state: "reserved",
+    });
   });
 
   it("resolves only an unambiguous VM attached to the project", async () => {
@@ -361,6 +491,41 @@ describe("compute VM durable state", () => {
     expect(work.rows).toEqual([{ action: "delete", state: "queued" }]);
   });
 
+  it("updates egress without replacing concurrent billing metadata", async () => {
+    const vm = await insertComputeVm(
+      vmInput({
+        metadata: {
+          billing: {
+            funding_mode: "site-funded",
+            pending_funding_mode: "account-prepaid",
+          },
+          runtime: { provider_status: "RUNNING" },
+        },
+      }),
+    );
+
+    const updated = await updateComputeVmEgressMetadata(vm.id, {
+      metered_through_at: "2026-08-13T02:30:00.000Z",
+      total_bytes: 1234,
+      total_cost_usd: "0.000000123",
+      error: null,
+    });
+
+    expect(updated?.metadata).toEqual({
+      billing: {
+        funding_mode: "site-funded",
+        pending_funding_mode: "account-prepaid",
+        egress: {
+          metered_through_at: "2026-08-13T02:30:00.000Z",
+          total_bytes: 1234,
+          total_cost_usd: "0.000000123",
+          error: null,
+        },
+      },
+      runtime: { provider_status: "RUNNING" },
+    });
+  });
+
   it("keeps budget-only VMs out of expiry while reconciling them", async () => {
     const vm = await insertComputeVm(vmInput({ expires_at: null }));
     expect(vm.expires_at).toBeNull();
@@ -427,7 +592,7 @@ describe("compute volume durable state", () => {
       vmInput({
         owner_account_id: owner,
         name: "first-vm",
-        attached_volume_id: volume.id,
+        home_volume_id: volume.id,
       }),
     );
     await expect(
@@ -435,7 +600,7 @@ describe("compute volume durable state", () => {
         vmInput({
           owner_account_id: owner,
           name: "second-vm",
-          attached_volume_id: volume.id,
+          home_volume_id: volume.id,
         }),
       ),
     ).rejects.toThrow("already reserved");

@@ -5,7 +5,15 @@
 
 import { Button, Flex, Typography } from "antd";
 
-import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
+import {
+  ROOTFS_TAG_DEV_FIXTURE,
+  ROOTFS_TAG_ONBOARDING_PREFIX,
+  ROOTFS_TAG_PRESET_PREFIX,
+  ROOTFS_TAG_PROJECT_PUBLISH,
+  ROOTFS_TAG_SNAPSHOT_PREFIX,
+  ROOTFS_TAG_SOURCE_PREFIX,
+  type RootfsImageEntry,
+} from "@cocalc/util/rootfs-images";
 
 const { Text } = Typography;
 
@@ -20,13 +28,17 @@ export function publicRootfsTags(entry: RootfsImageEntry): string[] {
     .filter(Boolean)
     .filter(
       (tag) =>
-        tag !== "project-publish" &&
-        tag !== "dev-fixture" &&
-        !tag.startsWith("source:") &&
-        !tag.startsWith("snapshot:") &&
-        !tag.startsWith("onboarding:"),
+        tag !== ROOTFS_TAG_PROJECT_PUBLISH &&
+        tag !== ROOTFS_TAG_DEV_FIXTURE &&
+        !tag.startsWith(ROOTFS_TAG_SOURCE_PREFIX) &&
+        !tag.startsWith(ROOTFS_TAG_SNAPSHOT_PREFIX) &&
+        !tag.startsWith(ROOTFS_TAG_ONBOARDING_PREFIX),
     )
-    .map((tag) => (tag.startsWith("preset:") ? tag.slice(7) : tag));
+    .map((tag) =>
+      tag.startsWith(ROOTFS_TAG_PRESET_PREFIX)
+        ? tag.slice(ROOTFS_TAG_PRESET_PREFIX.length)
+        : tag,
+    );
   return Array.from(new Set(tags)).sort((a, b) => a.localeCompare(b));
 }
 
@@ -44,15 +56,23 @@ export function RootfsTagPill({
   onToggle: (tag: string) => void;
 }) {
   const countLabel =
-    count == null ? "" : ` (${count} ${count === 1 ? "image" : "images"})`;
+    count == null ? "" : ` (${count} ${count === 1 ? "family" : "families"})`;
   return (
     <Button
+      aria-disabled={disabled}
       aria-label={`Filter by #${tag}${countLabel}`}
       aria-pressed={selected}
-      disabled={disabled}
-      onClick={() => onToggle(tag)}
+      onClick={() => {
+        if (!disabled) onToggle(tag);
+      }}
       shape="round"
       size="small"
+      style={disabled ? { cursor: "not-allowed", opacity: 0.5 } : undefined}
+      title={
+        disabled
+          ? "No image families match this tag with the current filters"
+          : undefined
+      }
       type={selected ? "primary" : "default"}
     >
       #{tag}
@@ -64,6 +84,7 @@ export function RootfsTagPill({
             opacity: 0.72,
           }}
         >
+          {" "}
           {count}
         </Text>
       )}

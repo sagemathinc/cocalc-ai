@@ -13,6 +13,7 @@ import { lite } from "@cocalc/frontend/lite";
 import { OtherSettings } from "./other-settings";
 import { CodexCredentialsPanel } from "./codex-credentials-panel";
 import { CodexDefaultsPanel } from "./codex-defaults-panel";
+import { CodexSubagentConcurrencyField } from "./codex-subagent-concurrency";
 import CodexSessionsPanel from "./codex-sessions-panel";
 import LiteAISettings from "./lite-ai-settings";
 import { AIUsageStatus } from "@cocalc/frontend/misc/ai-usage-status";
@@ -78,6 +79,7 @@ export function AccountPreferencesAI() {
           style={{ marginBottom: 12 }}
         />
         <CodexCredentialsPanel />
+        <CodexSubagentConcurrencyField />
         <CodexDefaultsPanel other_settings={other_settings} />
         <LiteAISettings />
         {codexSessionsSection}
@@ -103,6 +105,7 @@ export function AccountPreferencesAI() {
       </Typography.Paragraph>
       <AIUsageStatus variant="full" showHelp />
       <CodexCredentialsPanel />
+      <CodexSubagentConcurrencyField />
       <CodexDefaultsPanel other_settings={other_settings} />
       {codexSessionsSection}
     </>

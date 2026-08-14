@@ -4,8 +4,17 @@ import type { HostRuntime } from "@cocalc/cloud/types";
 export const DEFAULT_GCP_PROJECT_HOST_TUNNEL_PORT = 9002;
 export const DEFAULT_GCP_BAY_ROUTER_PORT = 9102;
 
+export type ProjectHostRouteMode = "auto" | "internal" | "public";
+
 function trim(value: unknown): string {
   return `${value ?? ""}`.trim();
+}
+
+export function resolveProjectHostRouteMode(
+  configured?: unknown,
+): ProjectHostRouteMode {
+  const value = trim(configured || "auto").toLowerCase();
+  return value === "internal" || value === "public" ? value : "auto";
 }
 
 export function isDevGcpReverseTunnelEnabled(value?: unknown): boolean {
@@ -40,11 +49,14 @@ export function resolveGcpManagedHostInternalUrl({
   runtime,
   tunnelEnabled,
   fallbackProjectId,
+  routeMode,
 }: {
   runtime?: HostRuntime | null;
   tunnelEnabled: boolean;
   fallbackProjectId?: string | null;
+  routeMode?: unknown;
 }): string | undefined {
+  if (resolveProjectHostRouteMode(routeMode) === "public") return;
   const hostname = resolveGcpRuntimeInternalHostname(runtime, {
     fallbackProjectId,
   });

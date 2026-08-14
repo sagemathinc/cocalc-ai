@@ -44,4 +44,11 @@ describe("defaultCourseTitle", () => {
       "classes/math",
     );
   });
+
+  it.each([
+    ["/tmp/legacy.course", "legacy"],
+    ["", "Course"],
+  ])("falls back safely for legacy client path %s", (path, title) => {
+    expect(defaultCourseTitle(path)).toBe(title);
+  });
 });

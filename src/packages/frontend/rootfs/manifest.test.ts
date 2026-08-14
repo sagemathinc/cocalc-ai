@@ -42,6 +42,19 @@ describe("managed RootFS catalog URL", () => {
   beforeEach(() => {
     invalidateRootfsImageCache();
     jest.clearAllMocks();
+    jest
+      .mocked(webapp_client.conat_client.hub.system.getRootfsCatalogPage)
+      .mockReset()
+      .mockResolvedValue({
+        images: [
+          {
+            id: "image-1",
+            image: "registry.example.com/image-1",
+            label: "Image 1",
+          },
+        ],
+        version: 1,
+      } as any);
   });
 
   it("includes the application base path", () => {
@@ -62,7 +75,11 @@ describe("managed RootFS catalog URL", () => {
     ]);
     expect(
       webapp_client.conat_client.hub.system.getRootfsCatalogPage,
-    ).toHaveBeenCalledWith({ limit: 200, query: undefined });
+    ).toHaveBeenCalledWith({
+      filters: undefined,
+      limit: 200,
+      query: undefined,
+    });
   });
 
   it("loads every managed catalog page when requested", async () => {
@@ -101,13 +118,89 @@ describe("managed RootFS catalog URL", () => {
       expect.objectContaining({ id: "image-2" }),
     ]);
     expect(getPage).toHaveBeenNthCalledWith(1, {
+      filters: undefined,
       limit: 200,
       query: undefined,
     });
     expect(getPage).toHaveBeenNthCalledWith(2, {
       cursor: "page-2",
+      filters: undefined,
       limit: 200,
       query: undefined,
     });
+  });
+
+  it("loads a lineage with a targeted catalog filter", async () => {
+    await loadRootfsImages(
+      [managedRootfsCatalogUrl()],
+      "account:lineage-test",
+      { lineageImageId: "image-1", limit: 40 },
+    );
+
+    expect(
+      webapp_client.conat_client.hub.system.getRootfsCatalogPage,
+    ).toHaveBeenCalledWith({
+      filters: {
+        image_target: undefined,
+        lineage_image_id: "image-1",
+        slug: undefined,
+      },
+      limit: 40,
+      query: undefined,
+    });
+  });
+
+  it("resolves a detail slug without scanning catalog pages", async () => {
+    await loadRootfsImages([managedRootfsCatalogUrl()], "account:slug-test", {
+      slug: "texlive-2026-08",
+      limit: 20,
+    });
+
+    expect(
+      webapp_client.conat_client.hub.system.getRootfsCatalogPage,
+    ).toHaveBeenCalledWith({
+      filters: {
+        image_target: undefined,
+        lineage_image_id: undefined,
+        slug: "texlive-2026-08",
+      },
+      limit: 20,
+      query: undefined,
+    });
+  });
+
+  it("caps all-pages loading and reports truncation", async () => {
+    const getPage = jest.mocked(
+      webapp_client.conat_client.hub.system.getRootfsCatalogPage,
+    );
+    let call = 0;
+    getPage.mockImplementation(async () => {
+      call += 1;
+      return {
+        images: [
+          {
+            id: `image-${call}`,
+            image: `registry.example.com/image-${call}`,
+            label: `Image ${call}`,
+          },
+        ],
+        next_cursor: `page-${call + 1}`,
+        version: 1,
+      } as any;
+    });
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    const images = await loadRootfsImages(
+      [managedRootfsCatalogUrl()],
+      "account:capped-pages-test",
+      { allPages: true },
+    );
+
+    expect(getPage).toHaveBeenCalledTimes(20);
+    expect(images).toHaveLength(20);
+    expect(warn).toHaveBeenCalledWith(
+      "RootFS catalog loading stopped after 20 pages and 20 images",
+    );
+    warn.mockRestore();
   });
 });

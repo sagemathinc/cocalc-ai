@@ -22,6 +22,42 @@ export const SUPPORTED_GCP_MACHINE_TYPE_PREFIXES = [
 export type SupportedGcpMachineTypePrefix =
   (typeof SUPPORTED_GCP_MACHINE_TYPE_PREFIXES)[number];
 
+const GCP_MACHINE_ARCHITECTURE_FAMILIES = [
+  { prefix: "t2a-standard-", architecture: "arm64" as const },
+] as const;
+
+export function gcpMachineArchitecture(
+  machineType: string,
+): "x86_64" | "arm64" {
+  return (
+    GCP_MACHINE_ARCHITECTURE_FAMILIES.find(({ prefix }) =>
+      machineType.startsWith(prefix),
+    )?.architecture ?? "x86_64"
+  );
+}
+
+const GCP_G2_GPU_COUNTS: Record<string, number> = {
+  "g2-standard-4": 1,
+  "g2-standard-8": 1,
+  "g2-standard-12": 1,
+  "g2-standard-16": 1,
+  "g2-standard-24": 2,
+  "g2-standard-32": 1,
+  "g2-standard-48": 4,
+  "g2-standard-96": 8,
+};
+
+export function gcpMachineGpu(
+  machineType: string,
+): { type: "nvidia-l4"; count: number } | undefined {
+  const count = GCP_G2_GPU_COUNTS[machineType];
+  return count == null ? undefined : { type: "nvidia-l4", count };
+}
+
+export function gcpMinimumBootDiskGb(machineType: string): number {
+  return gcpMachineGpu(machineType) ? 40 : 10;
+}
+
 export type GcpPricingFamily =
   | "e2"
   | "t2a"
@@ -69,6 +105,7 @@ export type HostPricingModel = "on_demand" | "spot";
 export type HostPriceBreakdownItemKey =
   | "vm"
   | "gpu"
+  | "windows_license"
   | "disk"
   | "shared_scratch_disk"
   | "public_ipv4";
@@ -122,6 +159,7 @@ export type GcpCatalogRateEstimateInput = {
   gpu_type?: string | null;
   gpu_count?: number | null;
   pricing_model?: HostPricingModel | null;
+  operating_system?: "linux" | "windows" | null;
 };
 
 export type NebiusCatalogPriceItem = {
@@ -145,6 +183,10 @@ const GCP_PUBLIC_IPV4_HOURLY_USD = {
   on_demand: 0.005,
   spot: 0.0025,
 } as const;
+
+// GCP bills this per visible vCPU while Windows Server is running. Spot
+// discounts apply to compute, but not to the operating-system license.
+export const GCP_WINDOWS_SERVER_LICENSE_USD_PER_VCPU_HOUR = 0.046;
 
 function normalizeSurchargeFraction(value: unknown): number {
   const numeric = Number(value);
@@ -402,6 +444,14 @@ export function estimateGcpCatalogRateBreakdown(
       billing_states: ["running"],
     },
   ];
+  if (input.operating_system === "windows") {
+    items.push({
+      key: "windows_license",
+      label: "Windows Server license",
+      usd_per_hour: GCP_WINDOWS_SERVER_LICENSE_USD_PER_VCPU_HOUR * Number(cpus),
+      billing_states: ["running"],
+    });
+  }
   const gpuType = `${input.gpu_type ?? ""}`.trim() as GcpGpuCatalogKey;
   const gpuCount = Number(input.gpu_count ?? 0);
   if (gpuType && gpuCount > 0) {
@@ -634,53 +684,55 @@ export function estimateNebiusCatalogRateBreakdown(opts: {
 }): HostPriceBreakdown | undefined {
   const region = `${opts.region ?? ""}`.trim();
   const instance = opts.instance ?? undefined;
-  if (!region || !instance) return undefined;
-  const family = selectNebiusFamilyRate({
-    prices: opts.prices,
-    region,
-    pricing_model: opts.pricing_model,
-    instance,
-  });
-  const gpuCount = Number(instance.gpus ?? 0);
-  const hasGpu = gpuCount > 0;
-  const hasUnifiedGpuRate =
-    hasGpu &&
-    isFinitePositiveNumber(family?.gpuRate) &&
-    (!isFinitePositiveNumber(family?.cpuRate) ||
-      !isFinitePositiveNumber(family?.ramRate));
-  if (
-    !hasUnifiedGpuRate &&
-    (!isFinitePositiveNumber(family?.cpuRate) ||
-      !isFinitePositiveNumber(family?.ramRate))
-  ) {
-    return undefined;
-  }
+  if (!region) return undefined;
   const items: HostPriceBreakdownItem[] = [];
-  if (hasUnifiedGpuRate) {
-    items.push({
-      key: "gpu",
-      label: "GPU instance",
-      usd_per_hour: family!.gpuRate! * gpuCount,
-      billing_states: ["running"],
+  if (instance) {
+    const family = selectNebiusFamilyRate({
+      prices: opts.prices,
+      region,
+      pricing_model: opts.pricing_model,
+      instance,
     });
-  } else {
-    items.push({
-      key: "vm",
-      label: "VM",
-      usd_per_hour:
-        family!.cpuRate! * Number(instance.vcpus ?? 0) +
-        family!.ramRate! * Number(instance.memory_gib ?? 0),
-      billing_states: ["running"],
-    });
-  }
-  if (hasGpu && !hasUnifiedGpuRate) {
-    if (!isFinitePositiveNumber(family.gpuRate)) return undefined;
-    items.push({
-      key: "gpu",
-      label: "GPU",
-      usd_per_hour: family.gpuRate * gpuCount,
-      billing_states: ["running"],
-    });
+    const gpuCount = Number(instance.gpus ?? 0);
+    const hasGpu = gpuCount > 0;
+    const hasUnifiedGpuRate =
+      hasGpu &&
+      isFinitePositiveNumber(family?.gpuRate) &&
+      (!isFinitePositiveNumber(family?.cpuRate) ||
+        !isFinitePositiveNumber(family?.ramRate));
+    if (
+      !hasUnifiedGpuRate &&
+      (!isFinitePositiveNumber(family?.cpuRate) ||
+        !isFinitePositiveNumber(family?.ramRate))
+    ) {
+      return undefined;
+    }
+    if (hasUnifiedGpuRate) {
+      items.push({
+        key: "gpu",
+        label: "GPU instance",
+        usd_per_hour: family!.gpuRate! * gpuCount,
+        billing_states: ["running"],
+      });
+    } else {
+      items.push({
+        key: "vm",
+        label: "VM",
+        usd_per_hour:
+          family!.cpuRate! * Number(instance.vcpus ?? 0) +
+          family!.ramRate! * Number(instance.memory_gib ?? 0),
+        billing_states: ["running"],
+      });
+    }
+    if (hasGpu && !hasUnifiedGpuRate) {
+      if (!isFinitePositiveNumber(family!.gpuRate)) return undefined;
+      items.push({
+        key: "gpu",
+        label: "GPU",
+        usd_per_hour: family!.gpuRate! * gpuCount,
+        billing_states: ["running"],
+      });
+    }
   }
   if (`${opts.storage_mode ?? "persistent"}`.trim() === "persistent") {
     const diskGb = positiveDiskGb(opts.disk_gb);
@@ -722,6 +774,7 @@ export function estimateNebiusCatalogRateBreakdown(opts: {
       billing_states: ["running", "stopped"],
     });
   }
+  if (!items.length) return undefined;
   return {
     items,
     total_usd_per_hour: items.reduce((sum, item) => sum + item.usd_per_hour, 0),

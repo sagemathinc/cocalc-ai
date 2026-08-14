@@ -292,8 +292,22 @@ async function handleMessage({ mesg }) {
 export async function handleApiRequest({ request, mesg }) {
   let resp, headers;
   try {
-    const { account_id, project_id, host_id } = getUserId(mesg.subject);
+    const {
+      account_id,
+      project_id,
+      host_id,
+      auth_actor,
+      auth_token_fingerprint,
+      auth_iat_s,
+      auth_exp_s,
+    } = getUserId(mesg.subject);
     const { name, args, auth_session_hash } = request as any;
+    if (auth_actor === "agent" && !AGENT_HUB_API_METHODS.has(name)) {
+      throw Object.assign(
+        new Error(`agent API method '${name}' is not permitted`),
+        { code: 403 },
+      );
+    }
     logger.debug("handling hub.api request:", {
       account_id,
       project_id,
@@ -311,6 +325,10 @@ export async function handleApiRequest({ request, mesg }) {
         auth_session_hash,
         project_id,
         host_id,
+        auth_actor,
+        auth_token_fingerprint,
+        auth_iat_s,
+        auth_exp_s,
       })) ?? null;
     headers = undefined;
   } catch (err) {
@@ -337,6 +355,10 @@ async function getResponse({
   auth_session_hash,
   project_id,
   host_id,
+  auth_actor,
+  auth_token_fingerprint,
+  auth_iat_s,
+  auth_exp_s,
 }) {
   const [group, functionName] = name.split(".");
   const f = hubApi[group]?.[functionName];
@@ -350,6 +372,30 @@ async function getResponse({
     auth_session_hash,
     project_id,
     host_id,
+    auth_actor,
+    auth_token_fingerprint,
+    auth_iat_s,
+    auth_exp_s,
   });
   return await f(...args2);
 }
+
+const AGENT_HUB_API_METHODS = new Set([
+  "system.getPublicSiteUrl",
+  "compute.listProjectVms",
+  "compute.getProjectVm",
+  "compute.listProjectVolumes",
+  "compute.getProjectVolume",
+  "compute.authorizeProjectSshKey",
+  "compute.createVm",
+  "compute.startVm",
+  "compute.stopVm",
+  "compute.deleteVm",
+  "compute.setVmTtl",
+  "compute.setVmFundingMode",
+  "compute.setVmMachineType",
+  "compute.createVolume",
+  "compute.resizeVolume",
+  "compute.setVolumeFundingMode",
+  "compute.deleteVolume",
+]);

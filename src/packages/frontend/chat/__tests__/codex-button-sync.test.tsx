@@ -59,6 +59,7 @@ jest.mock("antd", () => {
     },
     Input: () => <input />,
     Modal: ({ open, children }: any) => (open ? <div>{children}</div> : null),
+    Popover: ({ children }: any) => <>{children}</>,
     Progress: ({ "aria-label": ariaLabel }: any) => (
       <div aria-label={ariaLabel} />
     ),

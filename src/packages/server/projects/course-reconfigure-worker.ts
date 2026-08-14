@@ -4,6 +4,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { delay } from "awaiting";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import type {
@@ -52,6 +53,8 @@ const HEARTBEAT_MS = 15_000;
 const TICK_MS = 5_000;
 const DEFAULT_MAX_PARALLEL = 2;
 const DEFAULT_ITEM_PARALLEL = 4;
+const TRANSIENT_ITEM_ATTEMPTS = 4;
+const TRANSIENT_ITEM_RETRY_BASE_MS = 150;
 
 interface NormalizedStudentItem extends CourseReconfigureStudentItem {
   project_id: string;
@@ -74,6 +77,20 @@ let tickRequested = false;
 
 function isTerminal(status?: string | null): boolean {
   return isLroTerminalStatus(status);
+}
+
+export function isTransientCourseReconfigureError(err: unknown): boolean {
+  const code = `${(err as { code?: unknown } | null)?.code ?? ""}`;
+  if (code === "40P01" || code === "40001") {
+    return true;
+  }
+  const message = `${
+    err instanceof Error ? err.message : ((err as any)?.message ?? err ?? "")
+  }`.toLowerCase();
+  return (
+    message.includes("deadlock detected") ||
+    message.includes("could not serialize access")
+  );
 }
 
 function summarize(results: CourseReconfigureItemResult[]) {
@@ -443,6 +460,36 @@ async function reconcileOne({
   return { ...result, status: "done", ...response, error: undefined };
 }
 
+async function reconcileOneWithTransientRetry(
+  opts: Parameters<typeof reconcileOne>[0],
+): Promise<CourseReconfigureItemResult> {
+  let knownBayId = opts.knownBayId;
+  for (let attempt = 1; attempt <= TRANSIENT_ITEM_ATTEMPTS; attempt += 1) {
+    try {
+      return await reconcileOne({ ...opts, knownBayId });
+    } catch (err) {
+      if (
+        attempt === TRANSIENT_ITEM_ATTEMPTS ||
+        !isTransientCourseReconfigureError(err)
+      ) {
+        throw err;
+      }
+      logger.warn("retrying transient course project reconciliation failure", {
+        project_id: opts.request.project_id,
+        attempt,
+        err: `${err}`,
+      });
+      await delay(TRANSIENT_ITEM_RETRY_BASE_MS * 2 ** (attempt - 1));
+      // Project creation can commit before a later step deadlocks. Refreshing
+      // ownership makes the retry reconcile that project instead of recreating it.
+      knownBayId = (
+        await resolveProjectBay(opts.request.project_id).catch(() => undefined)
+      )?.bay_id;
+    }
+  }
+  throw new Error("unreachable course project retry state");
+}
+
 function buildInitialResults(
   input: CourseReconfigureLroInput,
   existing: CourseReconfigureItemResult[],
@@ -581,7 +628,7 @@ async function handleCourseReconfigureOpUnlocked(
       try {
         Object.assign(
           result,
-          await reconcileOne({
+          await reconcileOneWithTransientRetry({
             input,
             result,
             studentsById,

@@ -34,7 +34,7 @@ describe("getFeaturesRouteFromPath", () => {
 
 describe("PublicFeaturesApp", () => {
   it("renders the features index", () => {
-    render(
+    const { container } = render(
       <PublicFeaturesApp
         config={{ site_name: "Launchpad" }}
         initialRoute={{ view: "index" }}
@@ -52,6 +52,11 @@ describe("PublicFeaturesApp", () => {
     expect(screen.getByText("AI workflows")).not.toBeNull();
     expect(screen.getAllByText("Jupyter Notebooks").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Linux Terminal").length).toBeGreaterThan(0);
+    expect(
+      container.querySelector(
+        'a[href="/features/terminal"].cocalc-public-interactive-card',
+      ),
+    ).not.toBeNull();
     expect(screen.queryByText("Open page")).toBeNull();
     expect(
       screen

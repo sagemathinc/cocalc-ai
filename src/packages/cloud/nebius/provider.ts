@@ -29,6 +29,7 @@ import {
   PreemptibleSpec_PreemptionPolicy,
   PublicIPAddress,
   ResourcesSpec,
+  SecurityGroup,
   SourceImageFamily,
   StartInstanceRequest,
   StopInstanceRequest,
@@ -36,6 +37,28 @@ import {
   UpdateInstanceRequest,
 } from "@nebius/js-sdk/api/nebius/compute/v1/index";
 import { ResourceMetadata } from "@nebius/js-sdk/api/nebius/common/v1/index";
+import {
+  AllocationSpec,
+  CreateAllocationRequest,
+  DeleteAllocationRequest,
+  GetAllocationByNameRequest,
+  GetAllocationRequest,
+  IPv4PublicAllocationSpec,
+  ListSecurityRulesRequest,
+  ListAllocationsRequest,
+  CreateSecurityGroupRequest,
+  CreateSecurityRuleRequest,
+  GetSecurityGroupByNameRequest,
+  GetSecurityRuleByNameRequest,
+  GetSubnetRequest,
+  RuleAccessAction,
+  RuleEgress,
+  RuleIngress,
+  RuleProtocol,
+  RuleType,
+  SecurityGroupSpec,
+  SecurityRuleSpec,
+} from "@nebius/js-sdk/api/nebius/vpc/v1/index";
 import { Long } from "@nebius/js-sdk/runtime/protos/index";
 
 const logger = getLogger("cloud:nebius:provider");
@@ -49,10 +72,38 @@ type NebiusRuntimeMeta = {
   diskTypeCode?: number;
   scratchDiskTypeCode?: number;
   subnetId?: string;
+  provisional_instance_id?: boolean;
 };
+
+function hasProvisionalInstanceId(runtime: HostRuntime): boolean {
+  return (
+    (runtime.metadata as NebiusRuntimeMeta | undefined)
+      ?.provisional_instance_id === true
+  );
+}
 
 const DISK_DELETE_MAX_ATTEMPTS = 12;
 const DISK_DELETE_RETRY_DELAY_MS = 5000;
+const MANAGED_VM_SECURITY_GROUP = "cocalc-managed-vm";
+const MANAGED_VM_PRIVATE_EGRESS_RANGES = [
+  "0.0.0.0/8",
+  "10.0.0.0/8",
+  "100.64.0.0/10",
+  "127.0.0.0/8",
+  "169.254.0.0/16",
+  "172.16.0.0/12",
+  "192.0.0.0/24",
+  "192.0.2.0/24",
+  "192.88.99.0/24",
+  "192.168.0.0/16",
+  "198.18.0.0/15",
+  "198.51.100.0/24",
+  "199.36.153.4/30",
+  "199.36.153.8/30",
+  "203.0.113.0/24",
+  "224.0.0.0/4",
+  "240.0.0.0/4",
+];
 
 function sanitizeName(base: string, maxLen = 63): string {
   const clean = (value: string) =>
@@ -69,29 +120,26 @@ function sanitizeName(base: string, maxLen = 63): string {
   return safeBase || "cocalc";
 }
 
-function diskTypeFor(spec: HostSpec): DiskSpec_DiskType {
-  if (spec.disk_type === "standard") return DiskSpec_DiskType.NETWORK_HDD;
-  if (spec.disk_type === "balanced") {
-    return DiskSpec_DiskType.NETWORK_SSD_NON_REPLICATED;
-  }
-  if (spec.disk_type === "ssd_io_m3") {
-    return DiskSpec_DiskType.NETWORK_SSD_IO_M3;
-  }
-  return DiskSpec_DiskType.NETWORK_SSD;
-}
-
-function sharedScratchDiskTypeFor(spec: HostSpec): DiskSpec_DiskType {
-  switch (spec.shared_disk_type) {
+function diskTypeForValue(diskType?: string): DiskSpec_DiskType {
+  switch (diskType) {
+    case "standard":
+      return DiskSpec_DiskType.NETWORK_HDD;
     case "balanced":
       return DiskSpec_DiskType.NETWORK_SSD_NON_REPLICATED;
     case "ssd_io_m3":
       return DiskSpec_DiskType.NETWORK_SSD_IO_M3;
-    case "standard":
-      return DiskSpec_DiskType.NETWORK_HDD;
     case "ssd":
     default:
       return DiskSpec_DiskType.NETWORK_SSD;
   }
+}
+
+function diskTypeFor(spec: HostSpec): DiskSpec_DiskType {
+  return diskTypeForValue(spec.disk_type);
+}
+
+function sharedScratchDiskTypeFor(spec: HostSpec): DiskSpec_DiskType {
+  return diskTypeForValue(spec.shared_disk_type);
 }
 
 const NEBIUS_DISK_INCREMENT_GIB = 93;
@@ -407,6 +455,410 @@ export type NebiusProviderCreds = NebiusCreds & {
 };
 
 export class NebiusProvider implements CloudProvider {
+  async ensurePublicAddress(
+    spec: { id?: string; name: string },
+    creds: NebiusProviderCreds,
+  ): Promise<{ id: string; ip: string }> {
+    const client = new NebiusClient(creds);
+    const parentId = client.parentId();
+    if (!parentId) throw new Error("nebius parentId is required");
+    if (!creds.subnetId) throw new Error("nebius subnetId is required");
+    let allocation;
+    if (spec.id) {
+      try {
+        allocation = await client.allocations.get(
+          GetAllocationRequest.create({ id: spec.id }),
+        );
+      } catch (err) {
+        if (!isNotFoundError(err)) throw err;
+      }
+    }
+    if (!allocation) {
+      try {
+        allocation = await client.allocations.getByName(
+          GetAllocationByNameRequest.create({
+            parentId,
+            name: sanitizeName(spec.name),
+          }),
+        );
+      } catch (err) {
+        if (!isNotFoundError(err)) throw err;
+      }
+    }
+    if (!allocation) {
+      const operation = await client.allocations.create(
+        CreateAllocationRequest.create({
+          metadata: ResourceMetadata.create({
+            parentId,
+            name: sanitizeName(spec.name),
+          }),
+          spec: AllocationSpec.create({
+            ipSpec: {
+              $case: "ipv4Public",
+              ipv4Public: IPv4PublicAllocationSpec.create({
+                cidr: "/32",
+                pool: {
+                  $case: "subnetId",
+                  subnetId: creds.subnetId,
+                },
+              }),
+            },
+          }),
+        }),
+      );
+      await operation.wait();
+      allocation = await client.allocations.get(
+        GetAllocationRequest.create({ id: operation.resourceId() }),
+      );
+    }
+    const id = allocation.metadata?.id;
+    const ip = allocation.status?.details?.allocatedCidr?.replace(/\/32$/, "");
+    if (!id || !ip) {
+      throw new Error(`nebius allocation '${spec.name}' is incomplete`);
+    }
+    if (allocation.status?.static !== true) {
+      throw new Error(`nebius allocation '${spec.name}' is not static`);
+    }
+    return { id, ip };
+  }
+
+  async releasePublicAddress(
+    id: string,
+    creds: NebiusProviderCreds,
+  ): Promise<void> {
+    if (!id) return;
+    try {
+      const operation = await new NebiusClient(creds).allocations.delete(
+        DeleteAllocationRequest.create({ id }),
+      );
+      await operation.wait();
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err;
+    }
+  }
+
+  async ensureManagedComputeSecurityGroup(
+    creds: NebiusProviderCreds,
+  ): Promise<string> {
+    const client = new NebiusClient(creds);
+    const parentId = client.parentId();
+    if (!parentId) throw new Error("nebius parentId is required");
+    if (!creds.subnetId) throw new Error("nebius subnetId is required");
+    const subnet = await client.subnets.get(
+      GetSubnetRequest.create({ id: creds.subnetId }),
+    );
+    const networkId = `${subnet.spec?.networkId ?? ""}`.trim();
+    if (!networkId) {
+      throw new Error(`nebius subnet '${creds.subnetId}' has no network`);
+    }
+    let group: any;
+    try {
+      group = await client.securityGroups.getByName(
+        GetSecurityGroupByNameRequest.create({
+          parentId,
+          name: MANAGED_VM_SECURITY_GROUP,
+        }),
+      );
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err;
+      const operation = await client.securityGroups.create(
+        CreateSecurityGroupRequest.create({
+          metadata: ResourceMetadata.create({
+            parentId,
+            name: MANAGED_VM_SECURITY_GROUP,
+          }),
+          spec: SecurityGroupSpec.create({ networkId }),
+        }),
+      );
+      await operation.wait();
+      group = await client.securityGroups.getByName(
+        GetSecurityGroupByNameRequest.create({
+          parentId,
+          name: MANAGED_VM_SECURITY_GROUP,
+        }),
+      );
+    }
+    const groupId = `${group.metadata?.id ?? ""}`.trim();
+    if (!groupId || group.spec?.networkId !== networkId) {
+      throw new Error(
+        `nebius security group '${MANAGED_VM_SECURITY_GROUP}' has unexpected network policy`,
+      );
+    }
+    const rules: Array<{ name: string; spec: SecurityRuleSpec }> = [
+      {
+        name: "allow-ssh-https",
+        spec: SecurityRuleSpec.create({
+          access: RuleAccessAction.ALLOW,
+          priority: 100,
+          protocol: RuleProtocol.TCP,
+          type: RuleType.STATEFUL,
+          match: {
+            $case: "ingress",
+            ingress: RuleIngress.create({
+              sourceSecurityGroupId: "",
+              sourceCidrs: ["0.0.0.0/0"],
+              destinationPorts: [22, 443],
+            }),
+          },
+        }),
+      },
+      {
+        name: "allow-instance-metadata",
+        spec: SecurityRuleSpec.create({
+          access: RuleAccessAction.ALLOW,
+          priority: 100,
+          protocol: RuleProtocol.ANY,
+          type: RuleType.STATEFUL,
+          match: {
+            $case: "egress",
+            egress: RuleEgress.create({
+              destinationSecurityGroupId: "",
+              destinationCidrs: ["169.254.169.254/32"],
+              destinationPorts: [],
+            }),
+          },
+        }),
+      },
+      ...Array.from(
+        { length: Math.ceil(MANAGED_VM_PRIVATE_EGRESS_RANGES.length / 8) },
+        (_, index) => ({
+          name: `deny-private-egress-${index + 1}`,
+          spec: SecurityRuleSpec.create({
+            access: RuleAccessAction.DENY,
+            priority: 200 + index,
+            protocol: RuleProtocol.ANY,
+            type: RuleType.STATEFUL,
+            match: {
+              $case: "egress" as const,
+              egress: RuleEgress.create({
+                destinationSecurityGroupId: "",
+                destinationCidrs: MANAGED_VM_PRIVATE_EGRESS_RANGES.slice(
+                  index * 8,
+                  index * 8 + 8,
+                ),
+                destinationPorts: [],
+              }),
+            },
+          }),
+        }),
+      ),
+      {
+        name: "allow-public-egress",
+        spec: SecurityRuleSpec.create({
+          access: RuleAccessAction.ALLOW,
+          priority: 900,
+          protocol: RuleProtocol.ANY,
+          type: RuleType.STATEFUL,
+          match: {
+            $case: "egress",
+            egress: RuleEgress.create({
+              destinationSecurityGroupId: "",
+              destinationCidrs: ["0.0.0.0/0"],
+              destinationPorts: [],
+            }),
+          },
+        }),
+      },
+    ];
+    for (const expected of rules) {
+      let observed: any;
+      try {
+        observed = await client.securityRules.getByName(
+          GetSecurityRuleByNameRequest.create({
+            parentId: groupId,
+            name: expected.name,
+          }),
+        );
+      } catch (err) {
+        if (!isNotFoundError(err)) throw err;
+        const operation = await client.securityRules.create(
+          CreateSecurityRuleRequest.create({
+            metadata: ResourceMetadata.create({
+              parentId: groupId,
+              name: expected.name,
+            }),
+            spec: expected.spec,
+          }),
+        );
+        await operation.wait();
+        observed = await client.securityRules.getByName(
+          GetSecurityRuleByNameRequest.create({
+            parentId: groupId,
+            name: expected.name,
+          }),
+        );
+      }
+      if (JSON.stringify(observed.spec) !== JSON.stringify(expected.spec)) {
+        throw new Error(
+          `nebius managed VM security rule '${expected.name}' has drifted`,
+        );
+      }
+    }
+    const observedRules = await client.securityRules.list(
+      ListSecurityRulesRequest.create({
+        parentId: groupId,
+        pageSize: Long.fromNumber(999),
+        pageToken: "",
+      }),
+    );
+    const expectedRuleNames = new Set(rules.map(({ name }) => name));
+    const unexpectedRuleNames = (observedRules.items ?? [])
+      .map((rule) => `${rule.metadata?.name ?? ""}`.trim())
+      .filter((name) => name && !expectedRuleNames.has(name));
+    if (unexpectedRuleNames.length) {
+      throw new Error(
+        `nebius managed VM security group has unexpected rules: ${unexpectedRuleNames.join(", ")}`,
+      );
+    }
+    return groupId;
+  }
+
+  async ensurePersistentDisk(
+    spec: { name: string; size_gb: number; disk_type?: string },
+    creds: NebiusProviderCreds,
+  ): Promise<{ id: string; name: string; size_gb: number; users: string[] }> {
+    const client = new NebiusClient(creds);
+    const parentId = client.parentId();
+    if (!parentId) throw new Error("nebius parentId is required");
+    const normalized = normalizeDiskSizeGib(spec.size_gb);
+    const diskType = diskTypeForValue(spec.disk_type);
+    const id = await createDiskOrReuse(
+      client,
+      parentId,
+      sanitizeName(spec.name),
+      DiskSpec.create({
+        type: diskType,
+        blockSizeBytes: blockSizeBytes(),
+        size: {
+          $case: "sizeGibibytes",
+          sizeGibibytes: Long.fromNumber(normalized.sizeGib),
+        },
+      }),
+    );
+    const disk = await client.disks.get(GetDiskRequest.create({ id }));
+    return {
+      id,
+      name: disk.metadata?.name ?? spec.name,
+      size_gb: Number(disk.status?.sizeBytes ?? 0) / 2 ** 30,
+      users: [
+        disk.status?.readWriteAttachment,
+        ...(disk.status?.readOnlyAttachments ?? []),
+      ].filter((value): value is string => !!value),
+    };
+  }
+
+  async inspectPersistentDisk(
+    spec: { name: string },
+    creds: NebiusProviderCreds,
+  ): Promise<
+    { id: string; name: string; size_gb: number; users: string[] } | undefined
+  > {
+    const client = new NebiusClient(creds);
+    const parentId = client.parentId();
+    if (!parentId) throw new Error("nebius parentId is required");
+    const id = await findDiskIdByName(
+      client,
+      parentId,
+      sanitizeName(spec.name),
+    );
+    if (!id) return undefined;
+    try {
+      const disk = await client.disks.get(GetDiskRequest.create({ id }));
+      return {
+        id,
+        name: disk.metadata?.name ?? spec.name,
+        size_gb: Number(disk.status?.sizeBytes ?? 0) / 2 ** 30,
+        users: [
+          disk.status?.readWriteAttachment,
+          ...(disk.status?.readOnlyAttachments ?? []),
+        ].filter((value): value is string => !!value),
+      };
+    } catch (err) {
+      if (isNotFoundError(err)) return undefined;
+      throw err;
+    }
+  }
+
+  async resizePersistentDisk(
+    spec: { name: string; size_gb: number },
+    creds: NebiusProviderCreds,
+  ): Promise<void> {
+    const observed = await this.inspectPersistentDisk(spec, creds);
+    if (!observed) throw new Error(`nebius disk '${spec.name}' not found`);
+    await updateDiskSize({
+      client: new NebiusClient(creds),
+      diskId: observed.id,
+      diskType: DiskSpec_DiskType.NETWORK_SSD_NON_REPLICATED,
+      sizeGib: normalizeDiskSizeGib(spec.size_gb).sizeGib,
+      fallbackName: spec.name,
+    });
+  }
+
+  async deletePersistentDisk(
+    spec: { name: string },
+    creds: NebiusProviderCreds,
+  ): Promise<void> {
+    const observed = await this.inspectPersistentDisk(spec, creds);
+    if (!observed) return;
+    await deleteDiskWithRetry(
+      new NebiusClient(creds),
+      observed.id,
+      "managed-compute-volume",
+    );
+  }
+
+  async listPersistentDisks(
+    creds: NebiusProviderCreds,
+    opts?: { namePrefix?: string },
+  ): Promise<Array<{ id: string; name: string; size_gb: number }>> {
+    const client = new NebiusClient(creds);
+    const parentId = client.parentId();
+    if (!parentId) return [];
+    const response = await client.disks.list(
+      ListDisksRequest.create({
+        parentId,
+        pageSize: Long.fromNumber(999),
+        pageToken: "",
+      }),
+    );
+    return (response.items ?? [])
+      .map((disk) => ({
+        id: disk.metadata?.id ?? "",
+        name: disk.metadata?.name ?? "",
+        size_gb: Number(disk.status?.sizeBytes ?? 0) / 2 ** 30,
+      }))
+      .filter(
+        ({ id, name }) =>
+          !!id && (!opts?.namePrefix || name.startsWith(opts.namePrefix)),
+      );
+  }
+
+  async listPublicAddresses(
+    creds: NebiusProviderCreds,
+    opts?: { namePrefix?: string },
+  ): Promise<Array<{ id: string; name: string; ip?: string }>> {
+    const client = new NebiusClient(creds);
+    const parentId = client.parentId();
+    if (!parentId) return [];
+    const response = await client.allocations.list(
+      ListAllocationsRequest.create({
+        parentId,
+        pageSize: Long.fromNumber(999),
+        pageToken: "",
+      }),
+    );
+    return (response.items ?? [])
+      .map((allocation) => ({
+        id: allocation.metadata?.id ?? "",
+        name: allocation.metadata?.name ?? "",
+        ip: normalizeIp(allocation.status?.details?.allocatedCidr),
+      }))
+      .filter(
+        ({ id, name }) =>
+          !!id && (!opts?.namePrefix || name.startsWith(opts.namePrefix)),
+      );
+  }
+
   private routingCodeFromId(id?: string): string | undefined {
     if (!id) return undefined;
     const match = id.match(/^[a-z]+-([a-z0-9]{3})/i);
@@ -441,10 +893,103 @@ export class NebiusProvider implements CloudProvider {
     if (!subnetId) {
       throw new Error("nebius subnetId is required");
     }
+    let existing;
+    let pageToken = "";
+    do {
+      const response = await client.instances.list(
+        ListInstancesRequest.create({
+          parentId,
+          pageSize: Long.fromNumber(999),
+          pageToken,
+        }),
+      );
+      existing = response.items?.find(
+        (instance) => instance.metadata?.name === name,
+      );
+      pageToken = response.nextPageToken ?? "";
+    } while (!existing && pageToken);
+    if (existing) {
+      const instanceId = `${existing.metadata?.id ?? ""}`.trim();
+      if (!instanceId) {
+        throw new Error(`existing Nebius instance '${name}' has no ID`);
+      }
+      const nic = existing.spec?.networkInterfaces?.[0];
+      const observedAddressId =
+        nic?.publicIpAddress?.allocation?.$case === "allocationId"
+          ? nic.publicIpAddress.allocation.allocationId
+          : undefined;
+      if (
+        spec.metadata?.public_address_id &&
+        observedAddressId !== spec.metadata.public_address_id
+      ) {
+        throw new Error(
+          `existing Nebius instance '${name}' has an unexpected public address`,
+        );
+      }
+      const expectedSecurityGroups = Array.isArray(
+        spec.metadata?.security_group_ids,
+      )
+        ? spec.metadata.security_group_ids
+        : [];
+      const observedSecurityGroups =
+        nic?.securityGroups?.map((group) => group.id).filter(Boolean) ?? [];
+      if (
+        expectedSecurityGroups.length !== observedSecurityGroups.length ||
+        expectedSecurityGroups.some(
+          (id: string) => !observedSecurityGroups.includes(id),
+        )
+      ) {
+        throw new Error(
+          `existing Nebius instance '${name}' has unexpected security groups`,
+        );
+      }
+      if (
+        spec.metadata?.disable_service_account === true &&
+        existing.spec?.serviceAccountId
+      ) {
+        throw new Error(
+          `existing Nebius instance '${name}' has a cloud service account`,
+        );
+      }
+      const bootDiskId =
+        existing.spec?.bootDisk?.type?.$case === "existingDisk"
+          ? existing.spec.bootDisk.type.existingDisk.id
+          : undefined;
+      const secondary = existing.spec?.secondaryDisks ?? [];
+      const diskId = (deviceId: string) => {
+        const attached = secondary.find((disk) => disk.deviceId === deviceId);
+        return attached?.type?.$case === "existingDisk"
+          ? attached.type.existingDisk.id
+          : undefined;
+      };
+      logger.info("nebius: adopting existing instance after create retry", {
+        name,
+        instance_id: instanceId,
+      });
+      return {
+        provider: "nebius",
+        instance_id: instanceId,
+        public_ip: normalizeIp(
+          existing.status?.networkInterfaces?.[0]?.publicIpAddress?.address,
+        ),
+        ssh_user: spec.metadata?.ssh_user ?? "user",
+        zone: spec.region,
+        metadata: {
+          diskIds: {
+            boot: bootDiskId,
+            data: diskId("data"),
+            scratch: diskId(spec.metadata?.shared_disk_device_id ?? "scratch"),
+          },
+          subnetId: nic?.subnetId,
+        },
+      };
+    }
     const serviceAccountId =
-      spec.metadata?.service_account_id ??
-      spec.metadata?.serviceAccountId ??
-      spec.metadata?.nebius_service_account_id;
+      spec.metadata?.disable_service_account === true
+        ? undefined
+        : (spec.metadata?.service_account_id ??
+          spec.metadata?.serviceAccountId ??
+          spec.metadata?.nebius_service_account_id);
     let sourceImage =
       spec.metadata?.source_image ??
       spec.metadata?.image_id ??
@@ -497,28 +1042,30 @@ export class NebiusProvider implements CloudProvider {
       size_gb: bootDiskGb,
       type: bootDiskType,
     });
-    const bootDiskName = `${name}-boot`;
-    diskIds.boot = await createDiskOrReuse(
-      client,
-      parentId,
-      bootDiskName,
-      DiskSpec.create({
-        type: bootDiskType,
-        blockSizeBytes: blockSizeBytes(),
-        size: {
-          $case: "sizeGibibytes",
-          sizeGibibytes: Long.fromNumber(bootDiskGb),
-        },
-        source: sourceImage
-          ? { $case: "sourceImageId", sourceImageId: sourceImage }
-          : {
-              $case: "sourceImageFamily",
-              sourceImageFamily: SourceImageFamily.create({
-                imageFamily: sourceImageFamily!,
-              }),
+    const bootDiskName = spec.metadata?.boot_disk_name ?? `${name}-boot`;
+    diskIds.boot = spec.metadata?.boot_disk_provider_id
+      ? spec.metadata.boot_disk_provider_id
+      : await createDiskOrReuse(
+          client,
+          parentId,
+          bootDiskName,
+          DiskSpec.create({
+            type: bootDiskType,
+            blockSizeBytes: blockSizeBytes(),
+            size: {
+              $case: "sizeGibibytes",
+              sizeGibibytes: Long.fromNumber(bootDiskGb),
             },
-      }),
-    );
+            source: sourceImage
+              ? { $case: "sourceImageId", sourceImageId: sourceImage }
+              : {
+                  $case: "sourceImageFamily",
+                  sourceImageFamily: SourceImageFamily.create({
+                    imageFamily: sourceImageFamily!,
+                  }),
+                },
+          }),
+        );
 
     const storageMode = spec.metadata?.storage_mode;
     if (storageMode === "persistent") {
@@ -611,7 +1158,7 @@ export class NebiusProvider implements CloudProvider {
     const cloudInit = [
       "#cloud-config",
       "users:",
-      "  - name: ubuntu",
+      `  - name: ${spec.metadata?.ssh_user ?? "user"}`,
       "    sudo: ALL=(ALL) NOPASSWD:ALL",
       "    shell: /bin/bash",
       "    ssh_authorized_keys:",
@@ -655,8 +1202,23 @@ export class NebiusProvider implements CloudProvider {
               name: "eth0",
               // Nebius requires ipAddress to be present even when auto-assigning.
               ipAddress: IPAddress.create({}),
-              publicIpAddress: PublicIPAddress.create({ static: true }),
+              publicIpAddress: PublicIPAddress.create({
+                static: true,
+                ...(spec.metadata?.public_address_id
+                  ? {
+                      allocation: {
+                        $case: "allocationId" as const,
+                        allocationId: spec.metadata.public_address_id,
+                      },
+                    }
+                  : {}),
+              }),
               aliases: [],
+              securityGroups: Array.isArray(spec.metadata?.security_group_ids)
+                ? spec.metadata.security_group_ids.map((id: string) =>
+                    SecurityGroup.create({ id }),
+                  )
+                : [],
             }),
           ],
           bootDisk: AttachedDiskSpec.create({
@@ -684,7 +1246,7 @@ export class NebiusProvider implements CloudProvider {
               ? [
                   AttachedDiskSpec.create({
                     attachMode: AttachedDiskSpec_AttachMode.READ_WRITE,
-                    deviceId: "scratch",
+                    deviceId: spec.metadata?.shared_disk_device_id ?? "scratch",
                     type: {
                       $case: "existingDisk",
                       existingDisk: ExistingDisk.create({
@@ -718,7 +1280,7 @@ export class NebiusProvider implements CloudProvider {
     const runtime: HostRuntime = {
       provider: "nebius",
       instance_id: createOp.resourceId(),
-      ssh_user: "ubuntu",
+      ssh_user: spec.metadata?.ssh_user ?? "user",
       zone: spec.region,
       metadata: {
         diskIds,
@@ -746,6 +1308,7 @@ export class NebiusProvider implements CloudProvider {
   }
 
   async stopHost(runtime: HostRuntime, creds: NebiusProviderCreds) {
+    if (hasProvisionalInstanceId(runtime)) return;
     const client = new NebiusClient(creds);
     try {
       const op = await client.instances.stop(
@@ -760,6 +1323,40 @@ export class NebiusProvider implements CloudProvider {
         instance_id: runtime.instance_id,
       });
     }
+  }
+
+  async setPricingModel(
+    runtime: HostRuntime,
+    pricingModel: "spot" | "on_demand",
+    creds: NebiusProviderCreds,
+  ) {
+    const client = new NebiusClient(creds);
+    const instance = await client.instances.get(
+      GetInstanceRequest.create({ id: runtime.instance_id }),
+    );
+    const operation = await client.instances.update(
+      UpdateInstanceRequest.create({
+        metadata: ResourceMetadata.create({
+          id: runtime.instance_id,
+          name: instance.metadata?.name,
+        }),
+        spec: InstanceSpec.create({
+          ...(instance.spec ?? {}),
+          recoveryPolicy:
+            pricingModel === "spot"
+              ? InstanceRecoveryPolicy.FAIL
+              : InstanceRecoveryPolicy.RECOVER,
+          preemptible:
+            pricingModel === "spot"
+              ? PreemptibleSpec.create({
+                  onPreemption: PreemptibleSpec_PreemptionPolicy.STOP,
+                  priority: 3,
+                })
+              : undefined,
+        }),
+      }),
+    );
+    await operation.wait();
   }
 
   async restartHost(runtime: HostRuntime, creds: NebiusProviderCreds) {
@@ -779,6 +1376,7 @@ export class NebiusProvider implements CloudProvider {
     creds: NebiusProviderCreds,
     opts?: { preserveDataDisk?: boolean },
   ) {
+    if (hasProvisionalInstanceId(runtime)) return;
     const client = new NebiusClient(creds);
     try {
       const op = await client.instances.delete(
@@ -800,6 +1398,22 @@ export class NebiusProvider implements CloudProvider {
       : [diskIds?.scratch, diskIds?.data, diskIds?.boot];
     for (const diskId of disksToDelete.filter(Boolean) as string[]) {
       await deleteDiskWithRetry(client, diskId, runtime.instance_id);
+    }
+  }
+
+  async deleteInstanceOnly(
+    runtime: HostRuntime,
+    creds: NebiusProviderCreds,
+  ): Promise<void> {
+    if (hasProvisionalInstanceId(runtime)) return;
+    const client = new NebiusClient(creds);
+    try {
+      const op = await client.instances.delete(
+        DeleteInstanceRequest.create({ id: runtime.instance_id }),
+      );
+      await op.wait();
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err;
     }
   }
 
@@ -959,6 +1573,7 @@ export class NebiusProvider implements CloudProvider {
     runtime: HostRuntime,
     creds: NebiusProviderCreds,
   ): Promise<RemoteInstance | undefined> {
+    if (hasProvisionalInstanceId(runtime)) return undefined;
     const client = new NebiusClient(creds);
     let instance;
     try {
@@ -986,6 +1601,10 @@ export class NebiusProvider implements CloudProvider {
     const preemptible =
       preemptibleSpec?.onPreemption === PreemptibleSpec_PreemptionPolicy.STOP ||
       Number(preemptibleSpec?.priority ?? 0) > 0;
+    const securityGroupIds =
+      instance.spec?.networkInterfaces?.[0]?.securityGroups
+        ?.map((group) => `${group.id ?? ""}`.trim())
+        .filter(Boolean) ?? [];
     return {
       instance_id: runtime.instance_id,
       name: instance.metadata?.name,
@@ -996,6 +1615,8 @@ export class NebiusProvider implements CloudProvider {
         ...(platform ? { platform } : {}),
         pricing_model: preemptible ? "spot" : "on_demand",
         preemptible,
+        security_group_ids: securityGroupIds,
+        service_account_id: instance.spec?.serviceAccountId || undefined,
       },
     };
   }

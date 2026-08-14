@@ -167,7 +167,7 @@ function summarizeCpuHistory(history: ManagedCpuAdminHistory): {
   averageCpus: number;
 } {
   const points = history.points ?? [];
-  const latestPoint = points.at(-1);
+  const latestPoint = points[points.length - 1];
   const latestCpuSeconds = Math.max(0, latestPoint?.cpu_seconds ?? 0);
   const latestAverageCpus = latestPoint ? averageCpusForPoint(latestPoint) : 0;
   let peakAverageCpus = 0;

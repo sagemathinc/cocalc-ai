@@ -295,6 +295,27 @@ export type AcpStreamEvent =
       };
     }
   | {
+      type: "subagent";
+      operationId: string;
+      threadId: string;
+      parentThreadId?: string;
+      state:
+        | "pending"
+        | "running"
+        | "completed"
+        | "failed"
+        | "interrupted"
+        | "shutdown"
+        | "missing"
+        | "unknown";
+      tool?: "spawn" | "send" | "resume" | "wait" | "close" | "activity";
+      task?: string;
+      message?: string;
+      agentPath?: string;
+      model?: string;
+      reasoning?: string;
+    }
+  | {
       type: "terminal";
       terminalId: string;
       phase: "start" | "data" | "exit";

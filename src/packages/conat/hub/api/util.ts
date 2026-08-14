@@ -91,3 +91,44 @@ export const authFirstRequireProjectOrHost = async ({
   }
   throw Error("must be a project or host");
 };
+
+export const authFirstRequireComputeProject = async ({
+  args,
+  account_id,
+  project_id,
+  host_id,
+  auth_actor,
+  auth_token_fingerprint,
+  auth_iat_s,
+  auth_exp_s,
+}) => {
+  if (args[0] == null) args[0] = {} as any;
+  if (auth_actor === "agent") {
+    if (
+      !account_id ||
+      !project_id ||
+      !auth_token_fingerprint ||
+      !auth_iat_s ||
+      !auth_exp_s
+    ) {
+      throw new Error("invalid managed-compute agent identity");
+    }
+    args[0].project_id = project_id;
+    args[0].agent_auth = {
+      account_id,
+      project_id,
+      token_fingerprint: auth_token_fingerprint,
+      issued_at_s: auth_iat_s,
+      expires_at_s: auth_exp_s,
+    };
+    return args;
+  }
+  return await authFirstRequireProjectOrHost({ args, project_id, host_id });
+};
+
+export const authFirstRequireAccountOrComputeAgent = async (context) => {
+  if (context.auth_actor === "agent") {
+    return await authFirstRequireComputeProject(context);
+  }
+  return await authFirstRequireAccount(context);
+};

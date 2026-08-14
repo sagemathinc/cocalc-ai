@@ -1693,7 +1693,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             >
               <img
                 src={image}
-                alt="Thread image"
+                alt="Thread preview"
                 style={{ width: "100%", height: "100%", objectFit: "cover" }}
               />
             </div>

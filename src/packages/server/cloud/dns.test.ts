@@ -1,4 +1,5 @@
 let fetchMock: jest.Mock;
+let dnsRecords: any[];
 let mockedSettings: {
   project_hosts_cloudflare_tunnel_api_token: string;
   dns?: string;
@@ -35,21 +36,31 @@ describe("cloud dns", () => {
       dns: "https://dev.example.com",
       public_viewer_dns: "",
     };
+    dnsRecords = [];
     fetchMock = jest.fn(async (input: any, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/zones?")) {
         return zoneResponse;
       }
       if (init?.method === "GET" && url.includes("/dns_records?")) {
-        return responseWith([]);
+        return responseWith(dnsRecords);
       }
       if (init?.method === "POST" && url.includes("/dns_records")) {
-        return responseWith({ id: "record-1" });
+        const record = { ...JSON.parse(init.body as string), id: "record-1" };
+        dnsRecords = [record];
+        return responseWith(record);
       }
       if (init?.method === "PUT" && url.includes("/dns_records/record-xyz")) {
-        return responseWith({ id: "record-xyz" });
+        const record = {
+          ...JSON.parse(init.body as string),
+          id: "record-xyz",
+        };
+        dnsRecords = [record];
+        return responseWith(record);
       }
       if (init?.method === "DELETE") {
+        const id = url.split("/dns_records/")[1];
+        dnsRecords = dnsRecords.filter((record) => record.id !== id);
         return responseWith({ id: "record-1" });
       }
       return responseWith({});
@@ -73,10 +84,15 @@ describe("cloud dns", () => {
         }
       }
       if (init?.method === "GET" && url.includes("/dns_records?")) {
-        return responseWith([]);
+        return responseWith(dnsRecords);
       }
       if (init?.method === "POST" && url.includes("/dns_records")) {
-        return responseWith({ id: "record-parent" });
+        const record = {
+          ...JSON.parse(init.body as string),
+          id: "record-parent",
+        };
+        dnsRecords = [record];
+        return responseWith(record);
       }
       return responseWith({});
     });
@@ -119,6 +135,52 @@ describe("cloud dns", () => {
     expect(record.content).toBe("203.0.113.5");
     expect(record.name).toBe("host-abc-dev.example.com");
     expect(record.proxied).toBe(true);
+  });
+
+  it("creates and verifies a DNS-only A record for a managed VM", async () => {
+    const { ensureUnproxiedAddressDns } = await import("./dns");
+    const result = await ensureUnproxiedAddressDns({
+      name: "vm-0123456789abcdef0123456789abcdef.dev.example.com",
+      ipAddress: "203.0.113.44",
+    });
+
+    expect(result.record_id).toBe("record-1");
+    expect(dnsRecords).toEqual([
+      expect.objectContaining({
+        id: "record-1",
+        type: "A",
+        content: "203.0.113.44",
+        proxied: false,
+      }),
+    ]);
+  });
+
+  it("lists only random managed-VM A records in the configured zone", async () => {
+    dnsRecords = [
+      {
+        id: "vm-record",
+        name: "vm-0123456789abcdef0123456789abcdef.dev.example.com",
+        type: "A",
+        content: "203.0.113.44",
+        proxied: false,
+      },
+      {
+        id: "host-record",
+        name: "host-abc-dev.example.com",
+        type: "A",
+        content: "203.0.113.45",
+        proxied: true,
+      },
+    ];
+    const { listManagedVmDnsRecords } = await import("./dns");
+    await expect(listManagedVmDnsRecords()).resolves.toEqual([
+      {
+        record_id: "vm-record",
+        name: "vm-0123456789abcdef0123456789abcdef.dev.example.com",
+        content: "203.0.113.44",
+        proxied: false,
+      },
+    ]);
   });
 
   it("observes the authoritative host route record for read-back verification", async () => {
@@ -424,26 +486,32 @@ describe("cloud dns", () => {
   });
 
   it("atomically converts an existing tunnel CNAME into an A record", async () => {
+    dnsRecords = [
+      {
+        id: "tunnel-record",
+        name: "host-abc-dev.example.com",
+        type: "CNAME",
+        content: "tunnel.cfargotunnel.com",
+      },
+    ];
     fetchMock.mockImplementation(async (input: any, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/zones?")) {
         return zoneResponse;
       }
       if (init?.method === "GET" && url.includes("/dns_records?")) {
-        return responseWith([
-          {
-            id: "tunnel-record",
-            name: "host-abc-dev.example.com",
-            type: "CNAME",
-            content: "tunnel.cfargotunnel.com",
-          },
-        ]);
+        return responseWith(dnsRecords);
       }
       if (
         init?.method === "PUT" &&
         url.includes("/dns_records/tunnel-record")
       ) {
-        return responseWith({ id: "tunnel-record" });
+        const record = {
+          ...JSON.parse(init.body as string),
+          id: "tunnel-record",
+        };
+        dnsRecords = [record];
+        return responseWith(record);
       }
       return responseWith({});
     });
@@ -485,29 +553,38 @@ describe("cloud dns", () => {
   });
 
   it("dedupes existing A records for the same name", async () => {
+    dnsRecords = [
+      {
+        id: "record-a",
+        name: "host-abc-dev.example.com",
+        type: "A",
+      },
+      {
+        id: "record-b",
+        name: "host-abc-dev.example.com",
+        type: "A",
+      },
+    ];
     fetchMock.mockImplementation(async (input: any, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/zones?")) {
         return zoneResponse;
       }
       if (init?.method === "GET" && url.includes("/dns_records?")) {
-        return responseWith([
-          {
-            id: "record-a",
-            name: "host-abc-dev.example.com",
-            type: "A",
-          },
-          {
-            id: "record-b",
-            name: "host-abc-dev.example.com",
-            type: "A",
-          },
-        ]);
+        return responseWith(dnsRecords);
       }
       if (init?.method === "PUT" && url.includes("/dns_records/record-a")) {
-        return responseWith({ id: "record-a" });
+        const record = {
+          ...JSON.parse(init.body as string),
+          id: "record-a",
+        };
+        dnsRecords = dnsRecords.map((existing) =>
+          existing.id === "record-a" ? record : existing,
+        );
+        return responseWith(record);
       }
       if (init?.method === "DELETE" && url.includes("/dns_records/record-b")) {
+        dnsRecords = dnsRecords.filter((record) => record.id !== "record-b");
         return responseWith({ id: "record-b" });
       }
       return responseWith({});

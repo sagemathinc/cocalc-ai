@@ -32,7 +32,7 @@ export default function getTour(refs, projectId?: string) {
     v.push({
       title,
       description,
-      cover: cover != null ? <img src={cover as any} /> : undefined,
+      cover: cover != null ? <img alt="" src={cover as any} /> : undefined,
       target: refs[target]?.current,
     });
   }

@@ -150,7 +150,7 @@ export function resolveComputeVmConfig(settings: Settings): ComputeVmConfig {
     ),
     max_boot_disk_gb: positiveInteger(
       settings.compute_vm_max_boot_disk_gb,
-      200,
+      10_000,
     ),
     max_volumes_per_account: positiveInteger(
       settings.compute_vm_max_volumes_per_account,

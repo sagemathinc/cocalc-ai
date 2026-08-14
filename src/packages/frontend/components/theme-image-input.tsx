@@ -151,7 +151,7 @@ export function ThemeImageInput({
           {imageUrl ? (
             <img
               src={imageUrl}
-              alt="Theme image preview"
+              alt="Theme preview"
               style={{
                 width: size,
                 height: size,

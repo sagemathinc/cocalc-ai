@@ -92,6 +92,225 @@ describe("assertRootfsSlugAvailable", () => {
   });
 });
 
+describe("assertRootfsSupersessionAllowed", () => {
+  beforeEach(() => {
+    queryMock = jest.fn(async () => ({ rows: [] }));
+  });
+
+  const stableCpu = {
+    owner_id: ACCOUNT_ID,
+    family: "texlive",
+    channel: "stable",
+    gpu: false,
+    official: true,
+  };
+
+  it("rejects self-supersession without querying", async () => {
+    const { assertRootfsSupersessionAllowed } = await import("./catalog");
+
+    await expect(
+      assertRootfsSupersessionAllowed({
+        image_id: "image-1",
+        ...stableCpu,
+        supersedes_image_id: "image-1",
+      }),
+    ).rejects.toThrow("cannot supersede itself");
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing supersession target", async () => {
+    const { assertRootfsSupersessionAllowed } = await import("./catalog");
+
+    await expect(
+      assertRootfsSupersessionAllowed({
+        image_id: "image-2",
+        ...stableCpu,
+        supersedes_image_id: "missing",
+      }),
+    ).rejects.toThrow("superseded rootfs image not found");
+  });
+
+  it("accepts official supersession across owners and stable defaults", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          channel: null,
+          deleted: false,
+          family: " TeXLive ",
+          gpu: null,
+          image_id: "image-1",
+          official: true,
+          owner_id: "22222222-2222-4222-8222-222222222222",
+        },
+      ],
+    });
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    const { assertRootfsSupersessionAllowed } = await import("./catalog");
+
+    await expect(
+      assertRootfsSupersessionAllowed({
+        image_id: "image-2",
+        ...stableCpu,
+        supersedes_image_id: "image-1",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("accepts same-owner community supersession", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            channel: "stable",
+            deleted: false,
+            family: "texlive",
+            gpu: false,
+            image_id: "image-1",
+            official: false,
+            owner_id: "community publisher",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+    const { assertRootfsSupersessionAllowed } = await import("./catalog");
+
+    await expect(
+      assertRootfsSupersessionAllowed({
+        image_id: "image-2",
+        owner_id: " Community Publisher ",
+        family: "texlive",
+        channel: "stable",
+        gpu: false,
+        official: false,
+        supersedes_image_id: "image-1",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects cross-owner community supersession", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          channel: "stable",
+          deleted: false,
+          family: "texlive",
+          gpu: false,
+          image_id: "bob-image",
+          official: false,
+          owner_id: "bob",
+        },
+      ],
+    });
+    const { assertRootfsSupersessionAllowed } = await import("./catalog");
+
+    await expect(
+      assertRootfsSupersessionAllowed({
+        image_id: "eve-image",
+        owner_id: "eve",
+        family: "texlive",
+        channel: "stable",
+        gpu: false,
+        official: false,
+        supersedes_image_id: "bob-image",
+      }),
+    ).rejects.toThrow("community rootfs image can only supersede");
+  });
+
+  it.each([
+    [
+      "family",
+      {
+        family: "sagemath",
+        channel: "stable",
+        gpu: false,
+        official: true,
+      },
+    ],
+    [
+      "channel",
+      { family: "texlive", channel: "beta", gpu: false, official: true },
+    ],
+    [
+      "GPU mode",
+      { family: "texlive", channel: "stable", gpu: true, official: true },
+    ],
+    [
+      "official status",
+      { family: "texlive", channel: "stable", gpu: false, official: false },
+    ],
+  ])(
+    "rejects supersession across a %s boundary",
+    async (_name, predecessor) => {
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          {
+            ...predecessor,
+            deleted: false,
+            image_id: "image-1",
+          },
+        ],
+      });
+      const { assertRootfsSupersessionAllowed } = await import("./catalog");
+
+      await expect(
+        assertRootfsSupersessionAllowed({
+          image_id: "image-2",
+          ...stableCpu,
+          supersedes_image_id: "image-1",
+        }),
+      ).rejects.toThrow("same family, channel, GPU mode, and official status");
+    },
+  );
+
+  it("rejects a supersession cycle", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            ...stableCpu,
+            deleted: false,
+            image_id: "image-1",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [{ image_id: "image-2" }] });
+    const { assertRootfsSupersessionAllowed } = await import("./catalog");
+
+    await expect(
+      assertRootfsSupersessionAllowed({
+        image_id: "image-2",
+        ...stableCpu,
+        supersedes_image_id: "image-1",
+      }),
+    ).rejects.toThrow("would create a cycle");
+  });
+
+  it("rejects a target whose existing predecessor chain is cyclic", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            ...stableCpu,
+            deleted: false,
+            image_id: "image-1",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ cycle: true, image_id: "image-1" }],
+      });
+    const { assertRootfsSupersessionAllowed } = await import("./catalog");
+
+    await expect(
+      assertRootfsSupersessionAllowed({
+        image_id: "image-3",
+        ...stableCpu,
+        supersedes_image_id: "image-1",
+      }),
+    ).rejects.toThrow("would create a cycle");
+  });
+});
+
 describe("publishProjectRootfsCatalogEntry", () => {
   beforeEach(() => {
     queryMock = jest.fn(async (sql: string) => {

@@ -93,7 +93,7 @@ export default function ExplorerTour({
     },
     {
       title: "Actions",
-      cover: <img src={actionsImage} />,
+      cover: <img alt="" src={actionsImage} />,
       description: (
         <>
           Click the checkbox to the left of any file or folder to reveal

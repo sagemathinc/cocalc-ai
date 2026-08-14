@@ -1,6 +1,10 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import CodexActivity, { TerminalRow } from "../codex-activity";
+import CodexActivity, {
+  reconcileSubagentEvents,
+  summarizeSubagentEvents,
+  TerminalRow,
+} from "../codex-activity";
 
 jest.mock("@cocalc/frontend/components/time-ago", () => ({
   TimeAgo: ({ date }: any) => (
@@ -9,6 +13,35 @@ jest.mock("@cocalc/frontend/components/time-ago", () => ({
 }));
 
 describe("CodexActivity terminal rows", () => {
+  it("reconciles descendants that stopped after the manager finished", () => {
+    const events = [
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "subagent",
+          operationId: "spawn-1",
+          threadId: "child-1",
+          state: "running",
+        },
+      },
+    ] as any;
+
+    const reconciled = reconcileSubagentEvents(events, [], 2000);
+
+    expect(summarizeSubagentEvents(reconciled).active).toBe(0);
+    expect(reconciled[reconciled.length - 1]).toEqual(
+      expect.objectContaining({
+        seq: 2,
+        time: 2000,
+        event: expect.objectContaining({
+          threadId: "child-1",
+          state: "unknown",
+        }),
+      }),
+    );
+  });
+
   it("renders the per-turn Codex config", () => {
     render(
       React.createElement(CodexActivity, {
@@ -287,5 +320,57 @@ describe("CodexActivity terminal rows", () => {
     );
 
     expect(screen.getAllByText("Codex started")).toHaveLength(1);
+  });
+
+  it("groups subagent updates by thread and shows current state", () => {
+    const events: any[] = [
+      {
+        type: "event",
+        seq: 1,
+        time: 1000,
+        event: {
+          type: "subagent",
+          operationId: "spawn-1",
+          threadId: "child-1",
+          state: "running",
+          task: "Review the ACP adapter",
+        },
+      },
+      {
+        type: "event",
+        seq: 2,
+        time: 2000,
+        event: {
+          type: "subagent",
+          operationId: "wait-1",
+          threadId: "child-1",
+          state: "completed",
+          message: "Adapter review complete",
+        },
+      },
+      {
+        type: "event",
+        seq: 3,
+        time: 3000,
+        event: {
+          type: "subagent",
+          operationId: "spawn-2",
+          threadId: "child-2",
+          state: "running",
+          agentPath: "UI review",
+        },
+      },
+    ];
+
+    render(<CodexActivity expanded events={events} />);
+
+    expect(screen.getByText("Subagents")).not.toBeNull();
+    expect(
+      screen.getByRole("region", { name: "Codex subagent activity" }),
+    ).not.toBeNull();
+    expect(screen.getByText(/1 working/)).not.toBeNull();
+    expect(screen.getByText("Review the ACP adapter")).not.toBeNull();
+    expect(screen.getByText("UI review")).not.toBeNull();
+    expect(summarizeSubagentEvents(events)).toEqual({ total: 2, active: 1 });
   });
 });

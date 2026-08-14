@@ -56,6 +56,7 @@ import {
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
 import {
+  isRootfsLineageSuccessor,
   latestRootfsVersionEntries,
   latestRootfsUpgradeEntry,
   RootfsThemePreview,
@@ -415,26 +416,12 @@ export default function RootFilesystemImage({
       showOlderVersions,
     ],
   );
-  const relatedVersionEntries = useMemo(() => {
-    if (!currentDisplayEntry?.family) return [];
-    return catalogSelectableRootfsImages
-      .filter(
-        (entry) =>
-          entry.id !== currentDisplayEntry.id &&
-          entry.family === currentDisplayEntry.family &&
-          !entry.hidden &&
-          !entry.blocked &&
-          (!currentDisplayEntry.channel ||
-            entry.channel === currentDisplayEntry.channel),
-      )
-      .sort((a, b) => compareRootfsVersionEntries(a, b));
-  }, [catalogSelectableRootfsImages, currentDisplayEntry]);
   const suggestedUpgradeEntry = useMemo(() => {
     return latestRootfsUpgradeEntry({
       current: currentDisplayEntry,
-      images: relatedVersionEntries,
+      images: catalogSelectableRootfsImages,
     });
-  }, [currentDisplayEntry, relatedVersionEntries]);
+  }, [catalogSelectableRootfsImages, currentDisplayEntry]);
   const filteredPickerRootfsImages = useMemo(() => {
     const query = rootfsSearch.trim().toLowerCase();
     if (!query) return pickerRootfsImages;
@@ -3116,34 +3103,10 @@ function isRelatedRootfsVersion(
 ): boolean {
   if (!current || !next) return false;
   if (current.id === next.id) return false;
-  if (next.supersedes_image_id === current.id) return true;
-  return !!current.family && current.family === next.family;
-}
-
-function compareRootfsVersionEntries(
-  a: RootfsImageEntry,
-  b: RootfsImageEntry,
-): number {
-  const versionCompare = compareRootfsVersions(b.version, a.version);
-  if (versionCompare !== 0) return versionCompare;
-  return `${a.label || a.image}`.localeCompare(
-    `${b.label || b.image}`,
-    undefined,
-    {
-      numeric: true,
-      sensitivity: "base",
-    },
+  return (
+    isRootfsLineageSuccessor({ entry: next, predecessor: current }) ||
+    isRootfsLineageSuccessor({ entry: current, predecessor: next })
   );
-}
-
-function compareRootfsVersions(a?: string, b?: string): number {
-  if (!a && !b) return 0;
-  if (a && !b) return 1;
-  if (!a && b) return -1;
-  return `${a}`.localeCompare(`${b}`, undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
 }
 
 function ProjectPresetTagHints({

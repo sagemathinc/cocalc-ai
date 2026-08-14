@@ -345,6 +345,46 @@ describe("bootstrap-host promoted artifact defaults", () => {
     );
   });
 
+  it("advertises the public URL to hubs for cross-VPC GCP hosts", async () => {
+    getServerSettingsMock.mockResolvedValue({
+      project_hosts_software_base_url: softwareBaseUrl,
+      project_hosts_bootstrap_channel: "latest",
+      project_hosts_bootstrap_version: "",
+      project_hosts_route_mode: "public",
+      dns: "https://lite4b.example.com",
+      project_hosts_cloudflare_tunnel_host_suffix: "lite4b",
+    });
+    ensureCloudflareTunnelForHostMock.mockResolvedValue({
+      id: "tunnel-id",
+      hostname: "host-host-123-lite4b.example.com",
+      ssh_hostname: "ssh-host-123-lite4b.example.com",
+    });
+    const { buildBootstrapScripts } = await loadBootstrapHost();
+    const scripts = await buildBootstrapScripts({
+      id: "host-123",
+      name: "gcp-host",
+      region: "us-central1",
+      metadata: {
+        machine: { cloud: "gcp", zone: "us-central1-a" },
+        runtime: {
+          provider: "gcp",
+          instance_id: "gcp-host",
+          public_ip: "203.0.113.20",
+          private_ip: "10.0.0.20",
+          ssh_user: "ubuntu",
+          zone: "us-central1-a",
+          metadata: { gcp_project_id: "project-hosts-dev" },
+        },
+      },
+    } as any);
+
+    expect(scripts.publicUrl).toBe("https://host-host-123-lite4b.example.com");
+    expect(scripts.internalUrl).toBe(scripts.publicUrl);
+    expect(scripts.envLines).toContain(
+      "PROJECT_HOST_INTERNAL_URL=https://host-host-123-lite4b.example.com",
+    );
+  });
+
   it("does not let bootstrap replace an active direct route with a tunnel cname", async () => {
     getServerSettingsMock.mockResolvedValue({
       project_hosts_software_base_url: softwareBaseUrl,

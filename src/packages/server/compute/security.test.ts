@@ -25,6 +25,7 @@ function instance(overrides: Record<string, any> = {}): RemoteInstance {
         tags: ["cocalc-compute-vm"],
         subnetwork:
           "https://www.googleapis.com/compute/v1/projects/compute-prod/regions/us-central1/subnetworks/hostile-guests",
+        external_access_config_count: 1,
         network_tier: "STANDARD",
         external_ipv6: false,
         ...overrides,
@@ -37,6 +38,19 @@ describe("managed compute VM security validation", () => {
   it("accepts the isolated hostile-guest shape", () => {
     expect(() =>
       assertComputeVmSecurity(instance(), config, expectedSubnetwork),
+    ).not.toThrow();
+  });
+
+  it("accepts a stopped instance with no external access config", () => {
+    expect(() =>
+      assertComputeVmSecurity(
+        instance({
+          external_access_config_count: 0,
+          network_tier: undefined,
+        }),
+        config,
+        expectedSubnetwork,
+      ),
     ).not.toThrow();
   });
 

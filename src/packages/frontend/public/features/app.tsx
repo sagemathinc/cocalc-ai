@@ -10,6 +10,7 @@ import { Button, Col, Empty, Flex, Row, Typography } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { PublicPolicyPages } from "@cocalc/frontend/public/config";
 import {
+  PUBLIC_INTERACTIVE_CARD_CLASS,
   PublicPage,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
@@ -270,7 +271,7 @@ function FeatureLinkCard({ card }: { card: FeatureIndexCard }) {
   if (card.secondaryLink) {
     return (
       <div
-        className="cocalc-feature-link-card cocalc-feature-link-card-combined"
+        className={`cocalc-feature-link-card cocalc-feature-link-card-combined ${PUBLIC_INTERACTIVE_CARD_CLASS}`}
         style={{ ...frameStyle, display: "flex", flexDirection: "column" }}
       >
         <a className="cocalc-feature-link-card-primary" href={card.href}>
@@ -290,7 +291,11 @@ function FeatureLinkCard({ card }: { card: FeatureIndexCard }) {
   }
 
   return (
-    <a className="cocalc-feature-link-card" href={card.href} style={frameStyle}>
+    <a
+      className={`cocalc-feature-link-card ${PUBLIC_INTERACTIVE_CARD_CLASS}`}
+      href={card.href}
+      style={frameStyle}
+    >
       <FeatureLinkCardContent card={card} />
     </a>
   );
@@ -300,7 +305,7 @@ function FeatureListLink({ card }: { card: FeatureIndexCard }) {
   const meta = featureMeta(card.slug);
   return (
     <a
-      className="cocalc-feature-list-link"
+      className={`cocalc-feature-list-link ${PUBLIC_INTERACTIVE_CARD_CLASS}`}
       href={card.href}
       style={{
         alignItems: "start",
@@ -519,7 +524,7 @@ function TeachingWorkflowCallout() {
         </Col>
         <Col className="cocalc-feature-teaching-card-column" lg={19} xs={24}>
           <a
-            className="cocalc-feature-link-card"
+            className={`cocalc-feature-link-card ${PUBLIC_INTERACTIVE_CARD_CLASS}`}
             href={featurePath("teaching")}
             style={{
               background: PUBLIC_COLORS.surface,

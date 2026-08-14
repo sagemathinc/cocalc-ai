@@ -11,6 +11,11 @@ export type CoCalcUser =
       error?: string;
       auth_iat_s?: number;
       auth_session_hash?: string;
+      auth_actor?: "account" | "agent";
+      auth_scopes?: string[];
+      auth_project_id?: string;
+      auth_token_fingerprint?: string;
+      auth_exp_s?: number;
     }
   | {
       account_id?: string;

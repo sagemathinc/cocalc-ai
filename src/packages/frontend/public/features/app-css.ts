@@ -7,7 +7,6 @@
 // strings so they can interpolate the shared public theme constants.
 
 import {
-  alpha,
   PUBLIC_COLORS,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
@@ -23,25 +22,6 @@ export const FEATURE_INDEX_CSS = `
     line-height: 1.02 !important;
     max-width: 900px;
     text-wrap: balance;
-  }
-
-  .cocalc-feature-link-card,
-  .cocalc-feature-list-link {
-    cursor: pointer;
-    transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
-  }
-
-  .cocalc-feature-link-card:hover,
-  .cocalc-feature-list-link:hover {
-    border-color: ${PUBLIC_COLORS.linkHover} !important;
-    box-shadow: 0 18px 44px ${alpha(PUBLIC_COLORS.brandDark, 0.1)} !important;
-    transform: translateY(-1px);
-  }
-
-  .cocalc-feature-link-card:focus-visible,
-  .cocalc-feature-list-link:focus-visible {
-    outline: 2px solid ${PUBLIC_COLORS.linkHover};
-    outline-offset: 3px;
   }
 
   .cocalc-feature-link-card-combined {

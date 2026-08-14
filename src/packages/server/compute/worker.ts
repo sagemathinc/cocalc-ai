@@ -4,8 +4,11 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import net from "node:net";
+import { promisify } from "node:util";
 import getLogger from "@cocalc/backend/logger";
+import getPool, { withSessionAdvisoryLock } from "@cocalc/database/pool";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import { nextCalendarMonthStartAfter } from "@cocalc/server/purchases/billing-period";
 import type { HostRuntime, RemoteInstance } from "@cocalc/cloud";
@@ -31,25 +34,44 @@ import {
   listComputeVmsForEgressMetering,
   listComputeVmsForInventory,
   updateComputeInstance,
+  updateComputeVmEgressMetadata,
   updateComputeVm,
 } from "./db";
 import { getComputeVmConfig } from "./config";
 import {
   createProviderComputeVm,
+  deleteOrphanProviderComputeAddress,
+  deleteOrphanProviderComputeBootDisk,
+  deleteOrphanProviderComputeInstance,
   deleteProviderComputeVolume,
   deleteProviderComputeVm,
+  detachNebiusComputeVmForIntentionalStop,
   ensureProviderComputeVolume,
+  ensureProviderComputePublicAddress,
+  ensureProviderComputePublicAddressAttached,
   inspectProviderComputeVm,
   inspectProviderComputeVolume,
   getProviderComputePublicEgressBytes,
   listProviderComputeInventory,
   probeProviderComputeSpot,
+  releaseProviderComputePublicAddress,
   resizeProviderComputeVolume,
+  setProviderComputeMachineType,
   setProviderComputePricing,
   startProviderComputeVm,
   stopProviderComputeVm,
+  stopOrphanProviderComputeInstance,
 } from "./provider";
+import { isComputeVmV2, isComputeVolumeV2 } from "./contract";
+import {
+  deleteHostDns,
+  ensureUnproxiedAddressDns,
+  listManagedVmDnsRecords,
+} from "@cocalc/server/cloud/dns";
+import { getHostOwnerBaySshIdentity } from "@cocalc/server/cloud/ssh-key";
+import { syncManagedVmProjectSshConfig } from "@cocalc/server/projects/managed-vm-ssh-config";
 import type { ComputeVmRow, ComputeVolumeRow, ComputeWorkRow } from "./types";
+import { effectiveComputeVolumeSizeGb } from "./volume-size";
 import { ensureComputeWorkQueueSchema } from "./schema";
 import {
   closeDedicatedHostPurchaseSessionForAccount,
@@ -73,17 +95,106 @@ import {
   listComputeVolumesForInventory,
   updateComputeVolume,
 } from "./volume-db";
+import {
+  computeOrphanId,
+  observeComputeOrphan,
+  resolveAbsentComputeOrphans,
+  updateComputeOrphan,
+  type ComputeOrphanObservation,
+  type ComputeOrphanRow,
+} from "./orphans";
 
 const logger = getLogger("server:compute:worker");
 const COMPUTE_PUBLIC_EGRESS_USD_PER_GB = 0.1;
 const COMPUTE_EGRESS_FINALIZATION_DELAY_MS = 5 * 60_000;
+const COMPUTE_EGRESS_METER_LOCK_KEY = "managed-compute-egress-meter";
+const COMPUTE_ORPHAN_GRACE_MS = 24 * 60 * 60_000;
+const COMPUTE_ORPHAN_BOOT_DISK_GRACE_MS = 7 * COMPUTE_ORPHAN_GRACE_MS;
+const execFileAsync = promisify(execFile);
+const pool = () => getPool("medium");
 
-function fundingLane(resource: ComputeVmRow | ComputeVolumeRow) {
-  switch (resource.metadata?.billing?.funding_mode) {
+async function observeVmPhase<T>(
+  vm: ComputeVmRow,
+  phase: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    const result = await fn();
+    logger.info("managed compute phase completed", {
+      vm_id: vm.id,
+      project_id: vm.project_id,
+      provider: vm.provider,
+      phase,
+      outcome: "success",
+      duration_ms: Date.now() - startedAt,
+    });
+    return result;
+  } catch (err) {
+    logger.warn("managed compute phase failed", {
+      vm_id: vm.id,
+      project_id: vm.project_id,
+      provider: vm.provider,
+      phase,
+      outcome: "failure",
+      duration_ms: Date.now() - startedAt,
+      err,
+    });
+    throw err;
+  }
+}
+
+async function recordSiteFundedUsage(opts: {
+  resource: ComputeVmRow | ComputeVolumeRow;
+  resource_kind: "vm" | "volume";
+  usage_kind: "running" | "stopped" | "storage" | "egress";
+  started_at: Date;
+  ended_at: Date;
+  quantity: number;
+  unit: "seconds" | "bytes";
+  provider_cost_usd: number;
+  metadata?: Record<string, any>;
+}) {
+  if (opts.ended_at <= opts.started_at) return;
+  await pool().query(
+    `INSERT INTO compute_site_funded_usage (
+       id, resource_kind, resource_id, owner_account_id, project_id,
+       provider, region, usage_kind, quantity, unit, provider_cost_usd,
+       started_at, ended_at, metadata, created_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+     ON CONFLICT (resource_kind,resource_id,usage_kind,started_at,ended_at)
+     DO NOTHING`,
+    [
+      randomUUID(),
+      opts.resource_kind,
+      opts.resource.id,
+      opts.resource.owner_account_id,
+      opts.resource.project_id ?? null,
+      opts.resource.provider,
+      opts.resource.region,
+      opts.usage_kind,
+      opts.quantity,
+      opts.unit,
+      opts.provider_cost_usd.toFixed(9),
+      opts.started_at,
+      opts.ended_at,
+      opts.metadata ?? {},
+    ],
+  );
+}
+
+function fundingLane(
+  resource: ComputeVmRow | ComputeVolumeRow,
+): "prepaid" | "credit" {
+  switch (resource.funding_mode) {
     case "account-prepaid":
       return "prepaid" as const;
     case "account-postpaid":
       return "credit" as const;
+    case "site-funded":
+      throw new Error(
+        `site-funded compute resource '${resource.id}' has no customer funding lane`,
+      );
     default:
       throw new Error(
         `compute resource '${resource.id}' has no billable funding lane`,
@@ -91,11 +202,63 @@ function fundingLane(resource: ComputeVmRow | ComputeVolumeRow) {
   }
 }
 
+function previousSiteFundedVmUsageKind(
+  vm: ComputeVmRow,
+  fallback: "running" | "stopped",
+): "running" | "stopped" {
+  if (vm.billing_state === "site-funded-running") return "running";
+  if (vm.billing_state === "site-funded-stopped") return "stopped";
+  return fallback;
+}
+
+async function recordSiteFundedVmInterval(
+  vm: ComputeVmRow,
+  fallback: "running" | "stopped",
+): Promise<Date> {
+  const endedAt = new Date();
+  const intervalStart = vm.billing_updated_at ?? endedAt;
+  const usageKind = previousSiteFundedVmUsageKind(vm, fallback);
+  const rate =
+    usageKind === "stopped"
+      ? vm.metadata?.billing?.stopped_rate
+      : vm.metadata?.billing?.running_rates?.[vm.effective_pricing_model];
+  const seconds = Math.max(
+    0,
+    (endedAt.valueOf() - intervalStart.valueOf()) / 1000,
+  );
+  await recordSiteFundedUsage({
+    resource: vm,
+    resource_kind: "vm",
+    usage_kind: usageKind,
+    started_at: intervalStart,
+    ended_at: endedAt,
+    quantity: seconds,
+    unit: "seconds",
+    provider_cost_usd:
+      (seconds / 3600) *
+      Number(rate?.provider_hourly_cost_usd ?? rate?.hourly_cost_usd ?? 0),
+    metadata: { pricing_snapshot: rate?.pricing_snapshot },
+  });
+  return endedAt;
+}
+
 async function reconcileVmBilling(
   vm: ComputeVmRow,
   billingState: "running" | "stopped",
   startedAt = new Date(),
 ) {
+  if (vm.funding_mode === "site-funded") {
+    await closeDedicatedHostPurchaseSessionForAccount({
+      account_id: vm.owner_account_id,
+      host_id: vm.id,
+    });
+    const endedAt = await recordSiteFundedVmInterval(vm, billingState);
+    await updateComputeVm(vm.id, {
+      billing_state: `site-funded-${billingState}`,
+      billing_updated_at: endedAt,
+    });
+    return;
+  }
   const billing = vm.metadata?.billing;
   const rate =
     billingState === "stopped"
@@ -129,6 +292,18 @@ async function reconcileVmBilling(
 }
 
 async function closeVmBilling(vm: ComputeVmRow) {
+  if (vm.funding_mode === "site-funded") {
+    const billingState =
+      vm.state === "stopped" || vm.desired_state === "stopped"
+        ? "stopped"
+        : "running";
+    const endedAt = await recordSiteFundedVmInterval(vm, billingState);
+    await updateComputeVm(vm.id, {
+      billing_state: "closed",
+      billing_updated_at: endedAt,
+    });
+    return;
+  }
   await closeDedicatedHostPurchaseSessionForAccount({
     account_id: vm.owner_account_id,
     host_id: vm.id,
@@ -140,6 +315,18 @@ async function closeVmBilling(vm: ComputeVmRow) {
 }
 
 async function reconcileVolumeBilling(volume: ComputeVolumeRow) {
+  if (volume.funding_mode === "site-funded") {
+    await closeDedicatedHostPurchaseSessionForAccount({
+      account_id: volume.owner_account_id,
+      host_id: volume.id,
+    });
+    const endedAt = await recordSiteFundedVolumeInterval(volume);
+    await updateComputeVolume(volume.id, {
+      billing_state: "site-funded-storage",
+      billing_updated_at: endedAt,
+    });
+    return;
+  }
   const rate = volume.metadata?.billing?.rate;
   if (!rate?.hourly_cost_usd || !rate?.pricing_snapshot) {
     throw new Error(`compute volume '${volume.id}' has no pricing snapshot`);
@@ -166,6 +353,18 @@ async function reconcileVolumeBilling(volume: ComputeVolumeRow) {
 }
 
 async function closeVolumeBilling(volume: ComputeVolumeRow) {
+  if (volume.funding_mode === "site-funded") {
+    await closeDedicatedHostPurchaseSessionForAccount({
+      account_id: volume.owner_account_id,
+      host_id: volume.id,
+    });
+    const endedAt = await recordSiteFundedVolumeInterval(volume);
+    await updateComputeVolume(volume.id, {
+      billing_state: "closed",
+      billing_updated_at: endedAt,
+    });
+    return;
+  }
   await closeDedicatedHostPurchaseSessionForAccount({
     account_id: volume.owner_account_id,
     host_id: volume.id,
@@ -174,6 +373,104 @@ async function closeVolumeBilling(volume: ComputeVolumeRow) {
     billing_state: "closed",
     billing_updated_at: new Date(),
   });
+}
+
+async function recordSiteFundedVolumeInterval(
+  volume: ComputeVolumeRow,
+): Promise<Date> {
+  const endedAt = new Date();
+  const startedAt = volume.billing_updated_at ?? endedAt;
+  const rate = volume.metadata?.billing?.rate;
+  const seconds = Math.max(0, (endedAt.valueOf() - startedAt.valueOf()) / 1000);
+  await recordSiteFundedUsage({
+    resource: volume,
+    resource_kind: "volume",
+    usage_kind: "storage",
+    started_at: startedAt,
+    ended_at: endedAt,
+    quantity: seconds,
+    unit: "seconds",
+    provider_cost_usd:
+      (seconds / 3600) *
+      Number(rate?.provider_hourly_cost_usd ?? rate?.hourly_cost_usd ?? 0),
+    metadata: { pricing_snapshot: rate?.pricing_snapshot },
+  });
+  return endedAt;
+}
+
+function requireFundingTransitionTarget(
+  value: unknown,
+): ComputeVmRow["funding_mode"] {
+  if (
+    value !== "site-funded" &&
+    value !== "account-prepaid" &&
+    value !== "account-postpaid"
+  ) {
+    throw new Error("invalid managed compute funding transition target");
+  }
+  return value;
+}
+
+async function transitionVmFunding(
+  vm: ComputeVmRow,
+  targetValue: unknown,
+): Promise<void> {
+  const target = requireFundingTransitionTarget(targetValue);
+  if (vm.funding_mode !== target) {
+    if (vm.funding_mode === "site-funded") {
+      await reconcileVmBilling(
+        vm,
+        vm.desired_state === "running" ? "running" : "stopped",
+      );
+    } else {
+      await closeVmBilling(vm);
+    }
+    vm = (await updateComputeVm(vm.id, {
+      funding_mode: target,
+      billing_state: "transitioning",
+      billing_updated_at: new Date(),
+      metadata: {
+        ...vm.metadata,
+        billing: {
+          ...vm.metadata?.billing,
+          funding_mode: target,
+          pending_funding_mode: null,
+        },
+      },
+    }))!;
+  }
+  await reconcileVmBilling(
+    vm,
+    vm.desired_state === "running" ? "running" : "stopped",
+  );
+}
+
+async function transitionVolumeFunding(
+  volume: ComputeVolumeRow,
+  targetValue: unknown,
+): Promise<void> {
+  const target = requireFundingTransitionTarget(targetValue);
+  if (volume.funding_mode !== target) {
+    if (volume.funding_mode === "site-funded") {
+      await reconcileVolumeBilling(volume);
+    } else {
+      await closeVolumeBilling(volume);
+    }
+    volume = (await updateComputeVolume(volume.id, {
+      funding_mode: target,
+      billing_state: "transitioning",
+      billing_updated_at: new Date(),
+      metadata: {
+        ...volume.metadata,
+        billing: {
+          ...volume.metadata?.billing,
+          funding_mode: target,
+          pending_funding_mode: null,
+        },
+      },
+    }))!;
+  }
+  await reconcileVolumeBilling(volume);
 }
 
 function vmHourlyRate(vm: ComputeVmRow): string {
@@ -195,7 +492,19 @@ async function enforceComputeVmFunding() {
     Awaited<ReturnType<typeof getDedicatedHostPolicySnapshotForAccount>>
   >();
   for (const vm of rows) {
-    const fundingMode = vm.metadata?.billing?.funding_mode;
+    const fundingMode = vm.funding_mode;
+    if (fundingMode === "site-funded") {
+      if (
+        !vm.billing_updated_at ||
+        Date.now() - vm.billing_updated_at.valueOf() >= 5 * 60_000
+      ) {
+        await reconcileVmBilling(
+          vm,
+          vm.state === "stopped" ? "stopped" : "running",
+        );
+      }
+      continue;
+    }
     if (
       fundingMode !== "account-prepaid" &&
       fundingMode !== "account-postpaid"
@@ -216,7 +525,7 @@ async function enforceComputeVmFunding() {
       snapshot,
       fundingMode,
     );
-    const lane = fundingLane(vm);
+    const lane = fundingLane(vm)!;
     const decision = evaluateDedicatedHostBillingEnforcement({
       snapshot: effectiveSnapshot,
       funding_lane: lane,
@@ -326,7 +635,18 @@ async function enforceComputeVolumeFunding() {
     Awaited<ReturnType<typeof getDedicatedHostPolicySnapshotForAccount>>
   >();
   for (const volume of volumes) {
-    const fundingMode = volume.metadata?.billing?.funding_mode;
+    if (!isComputeVolumeV2(volume)) continue;
+    const fundingMode = volume.funding_mode;
+    if (fundingMode === "site-funded") {
+      if (
+        volume.ready_at &&
+        (!volume.billing_updated_at ||
+          Date.now() - volume.billing_updated_at.valueOf() >= 5 * 60_000)
+      ) {
+        await reconcileVolumeBilling(volume);
+      }
+      continue;
+    }
     if (
       fundingMode !== "account-prepaid" &&
       fundingMode !== "account-postpaid"
@@ -349,7 +669,7 @@ async function enforceComputeVolumeFunding() {
       snapshot,
       fundingMode,
     );
-    const lane = fundingLane(volume);
+    const lane = fundingLane(volume)!;
     const laneAllowed =
       selectDedicatedHostFundingLane(effectiveSnapshot) === lane;
     const previous = volume.metadata?.billing?.enforcement;
@@ -453,44 +773,66 @@ async function meterComputeVmPublicEgress() {
         end > start
           ? await getProviderComputePublicEgressBytes({ vm, start, end })
           : 0;
-      const costUsd =
-        (bytes / 1_000_000_000) * COMPUTE_PUBLIC_EGRESS_USD_PER_GB;
-      const metered = await recordDedicatedHostMeteredUsageForAccount({
-        account_id: vm.owner_account_id,
-        resource_id: vm.id,
-        resource_name: `VM egress: ${vm.name}`,
-        resource_bay_id: vm.owning_bay_id,
-        project_id: vm.project_id,
-        provider: vm.provider,
-        region: vm.region,
-        funding_lane: fundingLane(vm),
-        bytes,
-        cost_usd: costUsd.toFixed(9),
-        unit_cost_usd_per_gb: COMPUTE_PUBLIC_EGRESS_USD_PER_GB.toFixed(2),
-        interval_start: start,
-        interval_end: end,
-        finalize,
-      });
+      const unitCostUsd =
+        vm.provider === "nebius" ? 0 : COMPUTE_PUBLIC_EGRESS_USD_PER_GB;
+      const costUsd = (bytes / 1_000_000_000) * unitCostUsd;
       const current = await getComputeVmById(vm.id);
       if (!current) continue;
       const previous = current.metadata?.billing?.egress ?? {};
-      await updateComputeVm(vm.id, {
-        metadata: {
-          ...current.metadata,
-          billing: {
-            ...current.metadata.billing,
-            egress: {
-              ...previous,
-              metered_through_at: metered.metered_through_at,
-              total_bytes: metered.total_bytes,
-              total_cost_usd: metered.total_cost_usd,
-              unit_cost_usd_per_gb: COMPUTE_PUBLIC_EGRESS_USD_PER_GB,
-              finalized: metered.finalized,
-            },
-          },
-        },
+      const metered =
+        vm.funding_mode === "site-funded"
+          ? {
+              metered_through_at: end.toISOString(),
+              total_bytes: Number(previous.total_bytes ?? 0) + bytes,
+              total_cost_usd: (
+                Number(previous.total_cost_usd ?? 0) + costUsd
+              ).toFixed(9),
+              finalized: finalize,
+            }
+          : await recordDedicatedHostMeteredUsageForAccount({
+              account_id: vm.owner_account_id,
+              resource_id: vm.id,
+              resource_name: `VM egress: ${vm.name}`,
+              resource_bay_id: vm.owning_bay_id,
+              project_id: vm.project_id,
+              provider: vm.provider,
+              region: vm.region,
+              funding_lane: fundingLane(vm)!,
+              bytes,
+              cost_usd: costUsd.toFixed(9),
+              unit_cost_usd_per_gb: unitCostUsd.toFixed(2),
+              interval_start: start,
+              interval_end: end,
+              finalize,
+            });
+      if (vm.funding_mode === "site-funded") {
+        await recordSiteFundedUsage({
+          resource: vm,
+          resource_kind: "vm",
+          usage_kind: "egress",
+          started_at: start,
+          ended_at: end,
+          quantity: bytes,
+          unit: "bytes",
+          provider_cost_usd: costUsd,
+          metadata: { unit_cost_usd_per_gb: unitCostUsd },
+        });
+      }
+      await updateComputeVmEgressMetadata(vm.id, {
+        ...previous,
+        metered_through_at: metered.metered_through_at,
+        total_bytes: metered.total_bytes,
+        total_cost_usd: metered.total_cost_usd,
+        unit_cost_usd_per_gb: unitCostUsd,
+        finalized: metered.finalized,
+        error: null,
       });
     } catch (err) {
+      const current = await getComputeVmById(vm.id);
+      await updateComputeVmEgressMetadata(vm.id, {
+        ...current?.metadata?.billing?.egress,
+        error: `${err}`.slice(0, 1000),
+      });
       logger.error("failed to meter compute VM public egress", {
         vm_id: vm.id,
         start,
@@ -502,26 +844,62 @@ async function meterComputeVmPublicEgress() {
 }
 
 async function reconcileComputeProviderInventory() {
-  const [providerInventory, vms, volumes] = await Promise.all([
-    listProviderComputeInventory(),
+  const [vms, volumes] = await Promise.all([
     listComputeVmsForInventory(),
     listComputeVolumesForInventory(),
   ]);
+  const providerInventory = await listProviderComputeInventory({
+    vms,
+    volumes,
+  });
+  const providerKey = (provider: string, id: string) => `${provider}:${id}`;
   const providerInstances = new Set(
-    providerInventory.instances.map(({ instance_id }) => instance_id),
+    providerInventory.instances.map(({ provider, instance_id }) =>
+      providerKey(provider, instance_id),
+    ),
   );
   const providerDisks = new Set(
-    providerInventory.disks.map(({ name }) => name),
+    providerInventory.disks.map(({ provider, name }) =>
+      providerKey(provider, name),
+    ),
+  );
+  const providerAddresses = new Set(
+    providerInventory.addresses.map(({ provider, id }) =>
+      providerKey(provider, id),
+    ),
   );
   const expectedInstances = new Set(
-    vms.map(({ provider_instance_id }) => provider_instance_id),
+    vms.map(({ provider, provider_instance_id }) =>
+      providerKey(provider, provider_instance_id),
+    ),
   );
   const expectedDisks = new Set([
-    ...vms.map(({ boot_disk_id }) => boot_disk_id),
-    ...volumes.map(({ provider_disk_id }) => provider_disk_id),
+    ...vms.map(({ provider, boot_disk_id }) =>
+      providerKey(provider, boot_disk_id),
+    ),
+    ...volumes.map(({ provider, provider_disk_id }) =>
+      providerKey(provider, provider_disk_id),
+    ),
   ]);
+  const expectedAddresses = new Set(
+    vms
+      .filter(({ public_address_id }) => !!public_address_id)
+      .map(({ provider, public_address_id }) =>
+        providerKey(provider, public_address_id!),
+      ),
+  );
   for (const vm of vms) {
-    if (!providerInstances.has(vm.provider_instance_id) && vm.ready_at) {
+    if (!isComputeVmV2(vm)) continue;
+    const instanceMissing =
+      !providerInstances.has(
+        providerKey(vm.provider, vm.provider_instance_id),
+      ) && !!vm.ready_at;
+    const addressMissing =
+      vm.desired_state === "running" &&
+      !!vm.public_address_id &&
+      providerInventory.addresses_observed &&
+      !providerAddresses.has(providerKey(vm.provider, vm.public_address_id));
+    if (instanceMissing || addressMissing) {
       await enqueueComputeWork({
         resource_id: vm.id,
         action: "reconcile",
@@ -530,9 +908,12 @@ async function reconcileComputeProviderInventory() {
     }
   }
   for (const volume of volumes) {
+    if (!isComputeVolumeV2(volume)) continue;
     if (
       providerInventory.disks_observed &&
-      !providerDisks.has(volume.provider_disk_id) &&
+      !providerDisks.has(
+        providerKey(volume.provider, volume.provider_disk_id),
+      ) &&
       volume.ready_at
     ) {
       await enqueueComputeWork({
@@ -543,16 +924,231 @@ async function reconcileComputeProviderInventory() {
       });
     }
   }
-  const orphanInstances = [...providerInstances].filter(
-    (name) => !expectedInstances.has(name),
+  const orphanInstances = providerInventory.instances.filter(
+    (instance) => !providerComputeInstanceIsExpected(instance, vms),
   );
   const orphanDisks = providerInventory.disks_observed
-    ? [...providerDisks].filter((name) => !expectedDisks.has(name))
+    ? providerInventory.disks.filter(({ provider, name }) =>
+        name.startsWith("cocalc-vm-")
+          ? !expectedDisks.has(providerKey(provider, name))
+          : false,
+      )
     : [];
-  if (orphanInstances.length || orphanDisks.length) {
+  const orphanAddresses = providerInventory.addresses_observed
+    ? providerInventory.addresses.filter(
+        ({ provider, id }) => !expectedAddresses.has(providerKey(provider, id)),
+      )
+    : [];
+  const observedOrphanIds: string[] = [];
+  const reconcileOrphan = async (
+    observation: ComputeOrphanObservation,
+    graceMs: number,
+    mutate: (row: ComputeOrphanRow) => Promise<void>,
+  ) => {
+    const id = computeOrphanId(observation);
+    observedOrphanIds.push(id);
+    const row = await observeComputeOrphan(observation, graceMs);
+    try {
+      await mutate(row);
+    } catch (err) {
+      await updateComputeOrphan(row.id, {
+        state: "error",
+        last_error: `${err}`.slice(0, 4000),
+      });
+      logger.error("managed compute orphan remediation failed", {
+        orphan_id: row.id,
+        provider: row.provider,
+        resource_type: row.resource_type,
+        resource_id: row.resource_id,
+        err,
+      });
+    }
+  };
+  for (const instance of orphanInstances) {
+    await reconcileOrphan(
+      {
+        provider: instance.provider,
+        resource_type: "instance",
+        resource_id: instance.instance_id,
+        resource_name: instance.name,
+        region: instance.region,
+        zone: instance.zone,
+        metadata: { status: instance.status },
+      },
+      COMPUTE_ORPHAN_GRACE_MS,
+      async (row) => {
+        if (!row.stopped_at) {
+          await stopOrphanProviderComputeInstance({
+            provider: instance.provider,
+            resource_id: instance.instance_id,
+            resource_name: instance.name,
+            region: instance.region,
+            zone: instance.zone,
+          });
+          await updateComputeOrphan(row.id, {
+            state: "stopped",
+            stopped_at: new Date(),
+            last_error: null,
+          });
+          return;
+        }
+        if (
+          row.observation_count >= 2 &&
+          row.eligible_delete_at &&
+          row.eligible_delete_at <= new Date()
+        ) {
+          await deleteOrphanProviderComputeInstance({
+            provider: instance.provider,
+            resource_id: instance.instance_id,
+            resource_name: instance.name,
+            region: instance.region,
+            zone: instance.zone,
+          });
+          await updateComputeOrphan(row.id, {
+            state: "deleted",
+            resolved_at: new Date(),
+            last_error: null,
+          });
+        }
+      },
+    );
+  }
+  for (const disk of orphanDisks) {
+    await reconcileOrphan(
+      {
+        provider: disk.provider,
+        resource_type: "boot_disk",
+        resource_id: disk.id ?? disk.name,
+        resource_name: disk.name,
+        region: disk.region,
+        zone: disk.zone,
+      },
+      COMPUTE_ORPHAN_BOOT_DISK_GRACE_MS,
+      async (row) => {
+        if (
+          row.observation_count >= 2 &&
+          row.eligible_delete_at &&
+          row.eligible_delete_at <= new Date()
+        ) {
+          await deleteOrphanProviderComputeBootDisk({
+            provider: disk.provider,
+            resource_id: disk.id ?? disk.name,
+            resource_name: disk.name,
+            region: disk.region,
+            zone: disk.zone,
+          });
+          await updateComputeOrphan(row.id, {
+            state: "deleted",
+            resolved_at: new Date(),
+            last_error: null,
+          });
+        }
+      },
+    );
+  }
+  for (const address of orphanAddresses) {
+    await reconcileOrphan(
+      {
+        provider: address.provider,
+        resource_type: "address",
+        resource_id: address.id,
+        resource_name: address.id,
+        region: address.region,
+        metadata: { ip: address.ip },
+      },
+      COMPUTE_ORPHAN_GRACE_MS,
+      async (row) => {
+        if (
+          row.observation_count >= 2 &&
+          row.eligible_delete_at &&
+          row.eligible_delete_at <= new Date()
+        ) {
+          await deleteOrphanProviderComputeAddress({
+            provider: address.provider,
+            resource_id: address.id,
+            resource_name: address.id,
+            region: address.region,
+          });
+          await updateComputeOrphan(row.id, {
+            state: "deleted",
+            resolved_at: new Date(),
+            last_error: null,
+          });
+        }
+      },
+    );
+  }
+  await resolveAbsentComputeOrphans(observedOrphanIds, [
+    "instance",
+    "boot_disk",
+    "address",
+  ]);
+  let orphanDnsRecordCount: number | undefined;
+  try {
+    const managedDnsRecords = await listManagedVmDnsRecords();
+    const expectedHostnames = new Set(
+      vms.filter(isComputeVmV2).map(({ public_hostname }) => public_hostname),
+    );
+    const orphanDnsRecords = managedDnsRecords.filter(
+      ({ name }) => !expectedHostnames.has(name),
+    );
+    orphanDnsRecordCount = orphanDnsRecords.length;
+    const observedDnsOrphanIds: string[] = [];
+    for (const record of orphanDnsRecords) {
+      const observation: ComputeOrphanObservation = {
+        provider: "cloudflare",
+        resource_type: "dns_record",
+        resource_id: record.record_id,
+        resource_name: record.name,
+        metadata: { content: record.content, proxied: record.proxied },
+      };
+      const id = computeOrphanId(observation);
+      observedDnsOrphanIds.push(id);
+      const row = await observeComputeOrphan(
+        observation,
+        COMPUTE_ORPHAN_GRACE_MS,
+      );
+      if (
+        row.observation_count >= 2 &&
+        row.eligible_delete_at &&
+        row.eligible_delete_at <= new Date()
+      ) {
+        try {
+          await deleteHostDns({
+            record_id: record.record_id,
+            name: record.name,
+          });
+          await updateComputeOrphan(row.id, {
+            state: "deleted",
+            resolved_at: new Date(),
+            last_error: null,
+          });
+        } catch (err) {
+          await updateComputeOrphan(row.id, {
+            state: "error",
+            last_error: `${err}`.slice(0, 4000),
+          });
+        }
+      }
+    }
+    await resolveAbsentComputeOrphans(observedDnsOrphanIds, ["dns_record"]);
+  } catch (err) {
+    logger.warn(
+      "managed compute DNS orphan inventory failed independently of provider reconciliation",
+      { err },
+    );
+  }
+  if (orphanInstances.length || orphanDisks.length || orphanAddresses.length) {
     logger.error("managed compute provider inventory has orphan resources", {
-      orphan_instances: orphanInstances,
-      orphan_disks: orphanDisks,
+      orphan_instances: orphanInstances.map(({ provider, instance_id }) =>
+        providerKey(provider, instance_id),
+      ),
+      orphan_disks: orphanDisks.map(({ provider, name }) =>
+        providerKey(provider, name),
+      ),
+      orphan_addresses: orphanAddresses.map(({ provider, id }) =>
+        providerKey(provider, id),
+      ),
     });
   }
   logger.info("managed compute provider inventory reconciled", {
@@ -563,7 +1159,28 @@ async function reconcileComputeProviderInventory() {
     provider_disks_observed: providerInventory.disks_observed,
     orphan_instances: orphanInstances.length,
     orphan_disks: orphanDisks.length,
+    provider_addresses: providerAddresses.size,
+    orphan_addresses: orphanAddresses.length,
+    orphan_dns_records: orphanDnsRecordCount,
   });
+}
+
+export function providerComputeInstanceIsExpected(
+  instance: {
+    provider: "gcp" | "nebius";
+    instance_id: string;
+    name?: string;
+  },
+  vms: ComputeVmRow[],
+): boolean {
+  return vms.some(
+    (vm) =>
+      vm.provider === instance.provider &&
+      (vm.provider_instance_id === instance.instance_id ||
+        (!!instance.name &&
+          `${vm.metadata?.provider_instance_name ?? vm.provider_instance_id}` ===
+            instance.name)),
+  );
 }
 
 export class RetryableComputeWorkError extends Error {
@@ -597,9 +1214,63 @@ function spotState(vm: ComputeVmRow) {
   );
 }
 
-async function waitForSsh(host: string, timeoutMs = 180_000) {
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+export function managedVmReadinessCommand(
+  vm: ComputeVmRow,
+  expectedHomeDevice?: string,
+): string {
+  if ((vm.operating_system ?? "linux") === "windows") {
+    const script = [
+      '$ErrorActionPreference="Stop"',
+      'if ($env:USERNAME -ne "user") { exit 10 }',
+      'if ((Get-Service sshd).Status -ne "Running") { exit 11 }',
+      `$revision=(Get-Content -Raw "C:\\ProgramData\\CoCalc\\bootstrap-ready.txt").Trim(); if ($revision -ne "${vm.bootstrap_revision}") { exit 12 }`,
+      'Write-Output "ready"',
+    ].join("; ");
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
+    return `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${encoded}`;
+  }
+  const checks = [
+    'test "$(id -un)" = user',
+    'test "$(id -u)" = 1001',
+    'test "$(id -gn)" = user',
+    'test "$HOME" = /home/user',
+    "! id ubuntu >/dev/null 2>&1",
+    `test "$(cat /run/cocalc-managed-vm/bootstrap-ready)" = ${vm.bootstrap_revision}`,
+    ...(expectedHomeDevice
+      ? [
+          `test "$(readlink -f "$(findmnt -n -o SOURCE /home/user)")" = "$(readlink -f ${expectedHomeDevice})"`,
+        ]
+      : []),
+  ].join(" && ");
+  return `bash -lc ${shellQuote(checks)}`;
+}
+
+async function waitForSsh(
+  vm: ComputeVmRow,
+  host: string,
+  timeoutMs = (vm.operating_system ?? "linux") === "windows"
+    ? 12 * 60_000
+    : 180_000,
+) {
   const deadline = Date.now() + timeoutMs;
   let lastError = "SSH is not ready";
+  const identity = await getHostOwnerBaySshIdentity();
+  const homeVolume = vm.home_volume_id
+    ? await getComputeVolumeById(vm.home_volume_id)
+    : undefined;
+  if (vm.home_volume_id && !homeVolume) {
+    throw new Error("managed VM home volume row is missing");
+  }
+  const expectedHomeDevice = homeVolume
+    ? vm.provider === "gcp"
+      ? `/dev/disk/by-id/google-${homeVolume.provider_disk_id}`
+      : "/dev/disk/by-id/virtio-home"
+    : undefined;
+  const command = managedVmReadinessCommand(vm, expectedHomeDevice);
   while (Date.now() < deadline) {
     try {
       await new Promise<void>((resolve, reject) => {
@@ -618,6 +1289,26 @@ async function waitForSsh(host: string, timeoutMs = 180_000) {
           reject(err);
         });
       });
+      await execFileAsync(
+        "ssh",
+        [
+          "-i",
+          identity.privateKeyPath,
+          "-o",
+          "BatchMode=yes",
+          "-o",
+          "IdentitiesOnly=yes",
+          "-o",
+          "StrictHostKeyChecking=accept-new",
+          "-o",
+          "UserKnownHostsFile=/dev/null",
+          "-o",
+          "ConnectTimeout=5",
+          `${vm.ssh_user || "user"}@${host}`,
+          command,
+        ],
+        { timeout: 15_000 },
+      );
       return;
     } catch (err) {
       lastError = `${err}`;
@@ -627,9 +1318,12 @@ async function waitForSsh(host: string, timeoutMs = 180_000) {
   throw new Error(`SSH readiness timed out: ${lastError}`);
 }
 
-function volumeAttachedToVm(users: string[], vm: ComputeVmRow) {
-  const expected = `/instances/${vm.provider_instance_id}`;
-  return users.some((user) => user.endsWith(expected));
+export function volumeAttachedToVm(users: string[], vm: ComputeVmRow) {
+  const providerInstanceId = vm.provider_instance_id;
+  const expectedPath = `/instances/${providerInstanceId}`;
+  return users.some(
+    (user) => user === providerInstanceId || user.endsWith(expectedPath),
+  );
 }
 
 async function waitForVolumeAttachment(
@@ -651,7 +1345,7 @@ async function waitForVolumeAttachment(
 type ObservedRuntime = Pick<
   HostRuntime | RemoteInstance,
   "public_ip" | "private_ip" | "internal_hostname" | "metadata"
->;
+> & { instance_id?: string };
 
 export function computeRuntimeMetadata(
   current: Record<string, any> | undefined,
@@ -665,7 +1359,7 @@ export function computeRuntimeMetadata(
   };
 }
 
-function runtimeIdentityChanged(
+export function runtimeIdentityChanged(
   current: Record<string, any>,
   observed: ObservedRuntime,
 ) {
@@ -673,25 +1367,159 @@ function runtimeIdentityChanged(
     (observed.private_ip != null &&
       observed.private_ip !== current.private_ip) ||
     (observed.internal_hostname != null &&
-      observed.internal_hostname !== current.internal_hostname)
+      observed.internal_hostname !== current.internal_hostname) ||
+    (observed.metadata?.gcp_instance_id != null &&
+      observed.metadata.gcp_instance_id !== current.gcp_instance_id)
+  );
+}
+
+async function ensureVmPublicAddress(vm: ComputeVmRow): Promise<ComputeVmRow> {
+  const observed = await observeVmPhase(vm, "ensure_public_address", async () =>
+    ensureProviderComputePublicAddress(vm),
+  );
+  return (await updateComputeVm(vm.id, {
+    public_address_id: observed.id,
+    public_address_state: "assigned",
+    public_address_updated_at: new Date(),
+    public_ip: observed.ip,
+  }))!;
+}
+
+async function ensureVmDns(vm: ComputeVmRow): Promise<ComputeVmRow> {
+  if (!vm.public_ip) throw new Error("cannot publish VM DNS without an IP");
+  try {
+    const dns = await observeVmPhase(vm, "ensure_dns", async () =>
+      ensureUnproxiedAddressDns({
+        name: vm.public_hostname,
+        ipAddress: vm.public_ip!,
+        record_id: vm.dns_record_id ?? undefined,
+      }),
+    );
+    return (await updateComputeVm(vm.id, {
+      dns_record_id: dns.record_id,
+      dns_state: "ready",
+      dns_updated_at: new Date(),
+      dns_error: null,
+    }))!;
+  } catch (err) {
+    const message = `${(err as Error)?.message ?? err}`.slice(0, 4000);
+    await updateComputeVm(vm.id, {
+      dns_state: "degraded",
+      dns_updated_at: new Date(),
+      dns_error: message,
+    });
+    logger.warn("managed compute DNS is degraded", {
+      vm_id: vm.id,
+      hostname: vm.public_hostname,
+      err: message,
+    });
+    return (await getComputeVmById(vm.id))!;
+  }
+}
+
+async function releaseVmNetwork(vm: ComputeVmRow): Promise<ComputeVmRow> {
+  await observeVmPhase(vm, "release_dns", async () =>
+    deleteHostDns({
+      record_id: vm.dns_record_id ?? undefined,
+      name: vm.public_hostname,
+    }),
+  );
+  const withoutDns = (await updateComputeVm(vm.id, {
+    dns_record_id: null,
+    dns_state: "stopped",
+    dns_updated_at: new Date(),
+    dns_error: null,
+  }))!;
+  await observeVmPhase(vm, "release_public_address", async () =>
+    releaseProviderComputePublicAddress(withoutDns),
+  );
+  return (await updateComputeVm(vm.id, {
+    public_address_id: null,
+    public_address_state: "released",
+    public_address_updated_at: new Date(),
+    public_ip: null,
+  }))!;
+}
+
+async function syncVmProjectSshConfig(
+  vm: ComputeVmRow,
+  enabled: boolean,
+): Promise<ComputeVmRow> {
+  if (vm.metadata?.configure_project_ssh !== true) return vm;
+  try {
+    const result = await observeVmPhase(
+      vm,
+      "sync_project_ssh_config",
+      async () =>
+        syncManagedVmProjectSshConfig({
+          account_id: vm.owner_account_id,
+          project_id: vm.project_id,
+          vm_id: vm.id,
+          vm_name: vm.name,
+          hostname: vm.public_hostname,
+          enabled,
+        }),
+    );
+    return (await updateComputeVm(vm.id, {
+      metadata: {
+        ...vm.metadata,
+        project_ssh_config: {
+          state: enabled ? "ready" : "removed",
+          alias: result.alias,
+          updated_at: new Date().toISOString(),
+        },
+      },
+    }))!;
+  } catch (err) {
+    const message = `${(err as Error)?.message ?? err}`.slice(0, 4000);
+    logger.warn("managed compute project SSH config is degraded", {
+      vm_id: vm.id,
+      project_id: vm.project_id,
+      enabled,
+      err: message,
+    });
+    return (await updateComputeVm(vm.id, {
+      metadata: {
+        ...vm.metadata,
+        project_ssh_config: {
+          state: "degraded",
+          desired: enabled ? "present" : "absent",
+          error: message,
+          updated_at: new Date().toISOString(),
+        },
+      },
+    }))!;
+  }
+}
+
+export function managedVmProjectSshConfigNeedsSync(
+  vm: Pick<ComputeVmRow, "name" | "metadata">,
+): boolean {
+  return (
+    vm.metadata?.project_ssh_config?.state !== "ready" ||
+    vm.metadata?.project_ssh_config?.alias !== vm.name
   );
 }
 
 async function markReady(vm: ComputeVmRow, runtime: ObservedRuntime) {
   const publicIp = runtime.public_ip;
   if (!publicIp) throw new Error("provider VM has no public IPv4 address");
-  await waitForSsh(publicIp);
-  const next = await updateComputeVm(vm.id, {
+  await observeVmPhase(vm, "verify_bootstrap", async () =>
+    waitForSsh(vm, publicIp),
+  );
+  let next = await updateComputeVm(vm.id, {
     state: "ready",
     desired_state: "running",
     public_ip: publicIp,
     metadata: {
       ...(vm.metadata ?? {}),
       runtime: computeRuntimeMetadata(vm.metadata?.runtime, runtime),
+      provider_generation_provisioning: false,
     },
     ready_at: new Date(),
     stopped_at: null,
     error: null,
+    observed_bootstrap_revision: vm.bootstrap_revision,
     spot_recovery_state:
       vm.effective_pricing_model === "spot"
         ? {
@@ -702,6 +1530,8 @@ async function markReady(vm: ComputeVmRow, runtime: ObservedRuntime) {
           }
         : vm.spot_recovery_state,
   });
+  next = await ensureVmDns(next!);
+  next = await syncVmProjectSshConfig(next!, true);
   await updateComputeInstance(next!, {
     public_ip: publicIp,
     running: true,
@@ -725,13 +1555,21 @@ async function provision(vm: ComputeVmRow) {
     await updateComputeVm(vm.id, { state: "stopped", error: null });
     return;
   }
-  const provisioning = (await updateComputeVm(vm.id, {
+  const beginningNewGeneration =
+    !!vm.ready_at && vm.metadata?.provider_generation_provisioning !== true;
+  let provisioning = (await updateComputeVm(vm.id, {
     state: "provisioning",
+    instance_generation:
+      vm.instance_generation + (beginningNewGeneration ? 1 : 0),
     error: null,
+    metadata: {
+      ...vm.metadata,
+      provider_generation_provisioning: !!vm.ready_at,
+    },
   }))!;
   let volume: ComputeVolumeRow | undefined;
-  if (provisioning.attached_volume_id) {
-    volume = await getComputeVolumeById(provisioning.attached_volume_id);
+  if (provisioning.home_volume_id) {
+    volume = await getComputeVolumeById(provisioning.home_volume_id);
     if (!volume || volume.deleted_at || volume.desired_state !== "ready") {
       throw new Error("attached compute volume is unavailable");
     }
@@ -745,16 +1583,19 @@ async function provision(vm: ComputeVmRow) {
     }
     volume = (await updateComputeVolume(volume.id, {
       state: "ready",
-      size_gb: disk.size_gb,
+      size_gb: volume.desired_size_gb,
+      effective_size_gb: disk.size_gb,
       ready_at: volume.ready_at ?? new Date(),
       error: null,
       metadata: { ...(volume.metadata ?? {}), provider: disk },
     }))!;
   }
-  await insertComputeInstance(provisioning);
+  provisioning = await ensureVmPublicAddress(provisioning);
   let runtime;
   try {
-    runtime = await createProviderComputeVm(provisioning, volume);
+    runtime = await observeVmPhase(provisioning, "provider_create", async () =>
+      createProviderComputeVm(provisioning, volume),
+    );
   } catch (err) {
     if (
       provisioning.desired_pricing_model === "spot" &&
@@ -807,18 +1648,26 @@ async function provision(vm: ComputeVmRow) {
     }
     throw err;
   }
+  if (runtime.public_ip !== provisioning.public_ip) {
+    throw new Error(
+      `provider attached unexpected public IP '${runtime.public_ip ?? "none"}' instead of reserved '${provisioning.public_ip}'`,
+    );
+  }
   const metadata = {
     ...(provisioning.metadata ?? {}),
     runtime: computeRuntimeMetadata(provisioning.metadata?.runtime, runtime),
   };
   const starting = (await updateComputeVm(vm.id, {
     state: "starting",
+    provider_instance_id:
+      runtime.instance_id ?? provisioning.provider_instance_id,
     public_ip: runtime.public_ip ?? null,
     metadata,
   }))!;
+  await insertComputeInstance(starting);
   await reconcileVmBilling(starting, "running");
   if (volume) {
-    const observedVolume = await waitForVolumeAttachment(volume, provisioning);
+    const observedVolume = await waitForVolumeAttachment(volume, starting);
     await updateComputeVolume(volume.id, {
       attachment_state: "attached",
       error: null,
@@ -836,12 +1685,24 @@ async function start(vm: ComputeVmRow) {
     return await remove(vm);
   }
   if (vm.desired_state === "stopped") return await reconcile(vm);
-  await updateComputeVm(vm.id, { state: "starting", error: null });
+  const observed = await inspectProviderComputeVm(vm);
+  if (observed.status === "missing") return await provision(vm);
+  await observeVmPhase(vm, "provider_set_machine_type", async () =>
+    setProviderComputeMachineType(vm),
+  );
+  vm = await ensureVmPublicAddress(vm);
+  await ensureProviderComputePublicAddressAttached(vm);
+  vm = (await updateComputeVm(vm.id, {
+    state: "starting",
+    error: null,
+  }))!;
   try {
-    await startProviderComputeVm(vm);
+    await observeVmPhase(vm, "provider_start", async () =>
+      startProviderComputeVm(vm),
+    );
     const observed = await inspectProviderComputeVm(vm);
-    if (vm.attached_volume_id) {
-      const volume = await getComputeVolumeById(vm.attached_volume_id);
+    if (vm.home_volume_id) {
+      const volume = await getComputeVolumeById(vm.home_volume_id);
       if (!volume) throw new Error("attached compute volume is unavailable");
       const observedVolume = await waitForVolumeAttachment(volume, vm);
       await updateComputeVolume(volume.id, {
@@ -917,9 +1778,7 @@ async function switchToOnDemand(vm: ComputeVmRow) {
     },
     error: null,
   }))!;
-  await startProviderComputeVm(fallback);
-  const observed = await inspectProviderComputeVm(fallback);
-  await markReady(fallback, observed.instance ?? {});
+  await start(fallback);
 }
 
 async function probeAndReturnToSpot(vm: ComputeVmRow) {
@@ -976,14 +1835,26 @@ export function computePostStopTransition(
 
 async function stop(vm: ComputeVmRow) {
   await updateComputeVm(vm.id, { state: "stopping", error: null });
-  await stopProviderComputeVm(vm);
+  await observeVmPhase(vm, "provider_stop", async () =>
+    stopProviderComputeVm(vm),
+  );
   const current = await getComputeVmById(vm.id);
   if (!current) return;
   const transition = computePostStopTransition(current.desired_state);
+  if (current.desired_state !== "running") {
+    await observeVmPhase(current, "provider_detach_for_stop", async () =>
+      detachNebiusComputeVmForIntentionalStop(current),
+    );
+  }
+  const networkState =
+    current.desired_state === "running"
+      ? current
+      : await releaseVmNetwork(await syncVmProjectSshConfig(current, false));
   const next = (await updateComputeVm(vm.id, {
     state: transition.state,
     stopped_at: new Date(),
-    public_ip: null,
+    public_ip:
+      current.desired_state === "running" ? networkState.public_ip : null,
     error: null,
   }))!;
   await updateComputeInstance(next, { stopped: true });
@@ -1002,9 +1873,17 @@ async function remove(vm: ComputeVmRow) {
     state: "deleting",
     desired_state: "deleted",
   });
-  await deleteProviderComputeVm(vm);
-  if (vm.attached_volume_id) {
-    const volume = await getComputeVolumeById(vm.attached_volume_id);
+  await stopProviderComputeVm(vm);
+  vm = await syncVmProjectSshConfig(
+    (await getComputeVmById(vm.id)) ?? vm,
+    false,
+  );
+  await observeVmPhase(vm, "provider_delete", async () =>
+    deleteProviderComputeVm(vm),
+  );
+  vm = await releaseVmNetwork(vm);
+  if (vm.home_volume_id) {
+    const volume = await getComputeVolumeById(vm.home_volume_id);
     if (volume) {
       const observed = await inspectProviderComputeVolume(volume);
       if (!observed) {
@@ -1054,7 +1933,8 @@ async function provisionVolume(volume: ComputeVolumeRow) {
   const disk = await ensureProviderComputeVolume(provisioning);
   const next = (await updateComputeVolume(volume.id, {
     state: "ready",
-    size_gb: disk.size_gb,
+    size_gb: volume.desired_size_gb,
+    effective_size_gb: disk.size_gb,
     ready_at: volume.ready_at ?? new Date(),
     error: null,
     metadata: { ...(volume.metadata ?? {}), provider: disk },
@@ -1081,6 +1961,10 @@ async function resizeVolume(volume: ComputeVolumeRow) {
   const next = (await updateComputeVolume(volume.id, {
     state: "ready",
     size_gb: volume.desired_size_gb,
+    effective_size_gb: effectiveComputeVolumeSizeGb(
+      volume.provider,
+      volume.desired_size_gb,
+    ),
     resized_at: new Date(),
     error: null,
     metadata: {
@@ -1137,7 +2021,10 @@ async function reconcileVolume(volume: ComputeVolumeRow) {
     });
     return;
   }
-  if (observed.size_gb < volume.desired_size_gb) {
+  if (
+    observed.size_gb <
+    effectiveComputeVolumeSizeGb(volume.provider, volume.desired_size_gb)
+  ) {
     return await resizeVolume(volume);
   }
   const attachedVm = volume.attached_vm_id
@@ -1149,7 +2036,8 @@ async function reconcileVolume(volume: ComputeVolumeRow) {
   const attachedElsewhere = observed.users.length > 0 && !attachedToExpectedVm;
   await updateComputeVolume(volume.id, {
     state: "ready",
-    size_gb: observed.size_gb,
+    size_gb: volume.desired_size_gb,
+    effective_size_gb: observed.size_gb,
     attachment_state: attachedElsewhere
       ? "unknown"
       : attachedToExpectedVm
@@ -1174,6 +2062,12 @@ async function reconcile(vm: ComputeVmRow) {
     if (observed.status === "running" || observed.status === "starting") {
       return await stop(vm);
     }
+    if (vm.public_address_id || vm.dns_record_id || vm.public_ip) {
+      vm = await releaseVmNetwork(vm);
+    }
+    if (vm.metadata?.project_ssh_config?.state !== "removed") {
+      vm = await syncVmProjectSshConfig(vm, false);
+    }
     if (vm.state !== "stopped") {
       await updateComputeVm(vm.id, {
         state: "stopped",
@@ -1193,6 +2087,15 @@ async function reconcile(vm: ComputeVmRow) {
   }
   if (observed.status === "running") {
     if (
+      vm.public_ip &&
+      observed.instance?.public_ip &&
+      observed.instance.public_ip !== vm.public_ip
+    ) {
+      throw new Error(
+        `running VM public IP drifted from reserved address '${vm.public_ip}' to '${observed.instance.public_ip}'`,
+      );
+    }
+    if (
       vm.desired_pricing_model === "spot" &&
       vm.effective_pricing_model === "on_demand" &&
       !spotStandardHoldIsActive(spotState(vm))
@@ -1210,6 +2113,11 @@ async function reconcile(vm: ComputeVmRow) {
       runtimeIdentityChanged(runtimeMetadata, observed.instance ?? {})
     ) {
       await markReady(vm, observed.instance ?? {});
+    } else {
+      if (vm.dns_state !== "ready") vm = await ensureVmDns(vm);
+      if (managedVmProjectSshConfigNeedsSync(vm)) {
+        await syncVmProjectSshConfig(vm, true);
+      }
     }
     return;
   }
@@ -1259,7 +2167,7 @@ async function reconcile(vm: ComputeVmRow) {
 async function handleWork(row: ComputeWorkRow) {
   if (row.resource_kind === "volume") {
     const volume = await getComputeVolumeById(row.resource_id);
-    if (!volume) return;
+    if (!isComputeVolumeV2(volume)) return;
     switch (row.action) {
       case "provision_volume":
         return await provisionVolume(volume);
@@ -1269,6 +2177,8 @@ async function handleWork(row: ComputeWorkRow) {
         return await deleteVolume(volume);
       case "reconcile_volume":
         return await reconcileVolume(volume);
+      case "funding_transition":
+        return await transitionVolumeFunding(volume, row.payload?.funding_mode);
       default:
         throw new Error(
           `unsupported compute volume work action '${row.action}'`,
@@ -1276,7 +2186,7 @@ async function handleWork(row: ComputeWorkRow) {
     }
   }
   const vm = await getComputeVmById(row.resource_id);
-  if (!vm) return;
+  if (!isComputeVmV2(vm)) return;
   switch (row.action) {
     case "provision":
       return await provision(vm);
@@ -1288,6 +2198,8 @@ async function handleWork(row: ComputeWorkRow) {
       return await remove(vm);
     case "reconcile":
       return await reconcile(vm);
+    case "funding_transition":
+      return await transitionVmFunding(vm, row.payload?.funding_mode);
     case "probe_spot":
       return await probeAndReturnToSpot(vm);
     default:
@@ -1320,7 +2232,10 @@ export function startComputeVmWorker(opts: { interval_ms?: number } = {}) {
         if (Date.now() - lastEgressMeter >= 5 * 60_000) {
           lastEgressMeter = Date.now();
           try {
-            await meterComputeVmPublicEgress();
+            await withSessionAdvisoryLock({
+              lockKey: COMPUTE_EGRESS_METER_LOCK_KEY,
+              fn: meterComputeVmPublicEgress,
+            });
           } catch (err) {
             logger.warn("managed compute egress metering pass failed", { err });
           }
@@ -1344,15 +2259,26 @@ export function startComputeVmWorker(opts: { interval_ms?: number } = {}) {
       const rows = await claimComputeWork({ worker_id: workerId, limit: 2 });
       await Promise.all(
         rows.map(async (row) => {
+          const startedAt = Date.now();
           try {
             await handleWork(row);
             await finishComputeWork({ id: row.id, state: "done" });
+            logger.info("managed compute work completed", {
+              id: row.id,
+              resource_kind: row.resource_kind,
+              resource_id: row.resource_id,
+              action: row.action,
+              outcome: "success",
+              duration_ms: Date.now() - startedAt,
+            });
           } catch (err) {
             const error = `${err}`.slice(0, 4000);
             logger.warn("compute work failed", {
               id: row.id,
               resource_id: row.resource_id,
               action: row.action,
+              outcome: "failure",
+              duration_ms: Date.now() - startedAt,
               err,
             });
             if (

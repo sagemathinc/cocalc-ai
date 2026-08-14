@@ -11,6 +11,7 @@ let debugMock: jest.Mock;
 let resolveProjectBayAcrossClusterMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
+let mockProjectHostsRouteMode: string;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -24,6 +25,12 @@ jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({
     query: (...args: any[]) => queryMock(...args),
+  })),
+}));
+
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  getServerSettings: jest.fn(async () => ({
+    project_hosts_route_mode: mockProjectHostsRouteMode,
   })),
 }));
 
@@ -58,6 +65,7 @@ describe("route-project bay-aware routing", () => {
     resolveProjectBayAcrossClusterMock = jest.fn(async () => null);
     projectReferenceGetMock = jest.fn(async () => null);
     hostConnectionGetMock = jest.fn(async () => null);
+    mockProjectHostsRouteMode = "auto";
   });
 
   afterEach(() => {
@@ -108,6 +116,36 @@ describe("route-project bay-aware routing", () => {
     });
     expect(queryMock).toHaveBeenCalledTimes(1);
     expect(warnMock).not.toHaveBeenCalled();
+  });
+
+  it("routes through the public host URL when public routing is configured", async () => {
+    mockProjectHostsRouteMode = "public";
+    queryMock.mockResolvedValue({
+      rows: [
+        {
+          host_id: HOST_ID,
+          resolved_host_id: HOST_ID,
+          project_owning_bay_id: "bay-0",
+          host_bay_id: "bay-0",
+          internal_url: "http://host.internal:9000",
+          public_url: "https://host.example.com",
+          metadata: {
+            host_session_id: "session-1",
+            machine: { cloud: "gcp" },
+          },
+        },
+      ],
+    });
+
+    const { materializeProjectHostTarget } = await import("./route-project");
+
+    await expect(
+      materializeProjectHostTarget(PROJECT_ID, { fresh: true }),
+    ).resolves.toEqual({
+      address: "https://host.example.com",
+      host_id: HOST_ID,
+      host_session_id: "session-1",
+    });
   });
 
   it("refuses to route a project through a host in a different bay", async () => {

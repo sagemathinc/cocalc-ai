@@ -36,6 +36,7 @@ import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdo
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
@@ -130,6 +131,7 @@ import {
   trimCompletedCachedCodexActivityBlocks,
   type InlineCodexActivityBlock,
 } from "./message-state";
+import { CodexFinalResponseCopy } from "./codex-final-response-copy";
 
 const EDIT_MARKDOWN_MIN_HEIGHT = 120;
 
@@ -141,6 +143,19 @@ export const SELECTABLE_MARKDOWN_STYLE: CSSProperties = {
 };
 
 const BORDER = "2px solid #ccc";
+
+function stringArray(value: unknown): string[] | undefined {
+  if (value == null) return;
+  const array = Array.isArray(value)
+    ? value
+    : typeof (value as any)?.toJS === "function"
+      ? (value as any).toJS()
+      : undefined;
+  if (!Array.isArray(array)) return;
+  return array.filter(
+    (entry): entry is string => typeof entry === "string" && entry.length > 0,
+  );
+}
 
 export function resolveThreadMetadataLookup({
   messageThreadId,
@@ -493,6 +508,8 @@ export default function Message({
   const [resubmittingAgentParentId, setResubmittingAgentParentId] = useState<
     string | undefined
   >(undefined);
+  const [retainedWorkStopRequested, setRetainedWorkStopRequested] =
+    useState(false);
 
   const replyMessageRef = useRef<string>("");
   const replyMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
@@ -516,6 +533,24 @@ export default function Message({
     }
     return undefined;
   }, [message]);
+  const activeDescendantThreadIds = useMemo(
+    () =>
+      stringArray(field<unknown>(message, "acp_active_descendant_thread_ids")),
+    [message],
+  );
+  const rawBackgroundTerminalProcesses = Number(
+    field<number>(message, "acp_background_terminal_processes") ?? 0,
+  );
+  const backgroundTerminalProcesses = Number.isFinite(
+    rawBackgroundTerminalProcesses,
+  )
+    ? Math.max(0, Math.floor(rawBackgroundTerminalProcesses))
+    : 0;
+  const hasRetainedWork =
+    (activeDescendantThreadIds?.length ?? 0) + backgroundTerminalProcesses > 0;
+  useEffect(() => {
+    if (!hasRetainedWork) setRetainedWorkStopRequested(false);
+  }, [hasRetainedWork]);
   const acpRecoveryReason = useMemo(
     () => field<string>(message, "acp_recovery_reason"),
     [message],
@@ -1919,8 +1954,12 @@ export default function Message({
       .filter((block) => block.kind === "agent")
       .map((block) => block.text)
       .join("\n\n");
-    const selectableActivityMarkdown =
-      codexActivityBlocksToSelectableMarkdown(visibleBlocks);
+    const selectableActivityMarkdown = codexActivityBlocksToSelectableMarkdown(
+      visibleBlocks.map((block) => ({
+        ...block,
+        text: linkifyCommitHashes(block.text),
+      })),
+    );
     const body = (
       <div onClickCapture={openCommitFromMessage}>
         <div
@@ -1959,7 +1998,7 @@ export default function Message({
           ) : null}
           {selectableActivityMarkdown
             ? renderSelectableMarkdownBody({
-                value: linkifyCommitHashes(selectableActivityMarkdown),
+                value: selectableActivityMarkdown,
                 message_class,
                 style: MARKDOWN_STYLE,
               })
@@ -2041,6 +2080,42 @@ export default function Message({
       setOpenCommitHash(hash);
       setOpenCommitSelectionRequestToken((current) => current + 1);
     };
+    const retainedSessionId = field<string>(message, "acp_thread_id");
+    const stopRetainedWork = async () => {
+      if (
+        retainedWorkStopRequested ||
+        !retainedSessionId ||
+        !date ||
+        !project_id ||
+        !path
+      ) {
+        return;
+      }
+      setRetainedWorkStopRequested(true);
+      let ok = false;
+      try {
+        const result = await webapp_client.conat_client.interruptAcp({
+          project_id,
+          threadId: retainedSessionId,
+          chat: {
+            project_id,
+            path,
+            sender_id: field<string>(message, "sender_id") ?? "",
+            message_date: new Date(date).toISOString(),
+            message_id: field<string>(message, "message_id"),
+            thread_id: field<string>(message, "thread_id") ?? `${date}`,
+            parent_message_id: field<string>(message, "parent_message_id"),
+          },
+        });
+        ok = result?.ok === true;
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        setRetainedWorkStopRequested(false);
+        antdMessage.error("Failed to stop outstanding Codex work.");
+      }
+    };
 
     return (
       <>
@@ -2076,6 +2151,15 @@ export default function Message({
           }
           deleteLog={codexPreviewLog.deleteLog}
           activityLiveStatus={codexPreviewLog.liveStatus}
+          logEvents={codexPreviewLog.events}
+          activeDescendantThreadIds={activeDescendantThreadIds}
+          backgroundTerminalProcesses={backgroundTerminalProcesses}
+          interruptRequested={retainedWorkStopRequested}
+          onInterrupt={
+            hasRetainedWork && !read_only && retainedSessionId
+              ? stopRetainedWork
+              : undefined
+          }
           openDrawerToken={openActivityDrawerToken}
           jumpText={undefined}
           jumpToken={0}
@@ -2132,6 +2216,7 @@ export default function Message({
             label: "Final response",
             accentColor: COLORS.BLUE_DD,
             borderColor: COLORS.BLUE_LLL,
+            action: <CodexFinalResponseCopy value={value} />,
             children: (
               <div onClickCapture={openCommitFromMessage}>
                 {messageBodyMode === "select" ? (

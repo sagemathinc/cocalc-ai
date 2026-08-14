@@ -4,7 +4,7 @@
     "rootDir": "./",
     "outDir": "dist",
     "sourceMap": true,
-    "lib": ["es5", "es6", "es2017", "dom"],
+    "lib": ["es2022", "dom"],
     "paths": {
       "@cocalc/app-tasks": ["../apps/tasks/src"],
       "@cocalc/app-tasks/*": ["../apps/tasks/src/*"],

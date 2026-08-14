@@ -1,6 +1,8 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import LRU from "lru-cache";
+import { resolveProjectHostRouteMode } from "@cocalc/server/cloud/internal-network";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { resolveProjectBayAcrossCluster } from "@cocalc/server/inter-bay/directory";
@@ -118,11 +120,14 @@ function cacheHostTarget(
   });
 }
 
-function selectHostAddress(row: {
-  internal_url?: string | null;
-  public_url?: string | null;
-  metadata?: any;
-}): { address?: string; host_session_id?: string } {
+function selectHostAddress(
+  row: {
+    internal_url?: string | null;
+    public_url?: string | null;
+    metadata?: any;
+  },
+  routeMode?: unknown,
+): { address?: string; host_session_id?: string } {
   const directTunnel = onPremTunnelAddress(row?.metadata);
   const host_session_id =
     `${row?.metadata?.host_session_id ?? ""}`.trim() || undefined;
@@ -144,10 +149,18 @@ function selectHostAddress(row: {
       host_session_id,
     };
   }
+  const usePublicRoute = resolveProjectHostRouteMode(routeMode) === "public";
   return {
-    address: row?.internal_url ?? row?.public_url ?? undefined,
+    address: usePublicRoute
+      ? (row?.public_url ?? row?.internal_url ?? undefined)
+      : (row?.internal_url ?? row?.public_url ?? undefined),
     host_session_id,
   };
+}
+
+async function projectHostRouteMode(): Promise<unknown> {
+  const settings = await getServerSettings();
+  return settings.project_hosts_route_mode;
 }
 
 async function fetchHostTarget(
@@ -195,7 +208,7 @@ async function fetchHostTarget(
         });
         return;
       }
-      const selected = selectHostAddress(row);
+      const selected = selectHostAddress(row, await projectHostRouteMode());
       cacheHostTarget(host_id, {
         address: selected.address,
         host_session_id: selected.host_session_id,
@@ -264,7 +277,7 @@ async function fetchHostAddress(
           });
           return;
         }
-        const selected = selectHostAddress(row);
+        const selected = selectHostAddress(row, await projectHostRouteMode());
         if (selected.address) {
           cacheHostTarget(row.host_id, {
             address: selected.address,

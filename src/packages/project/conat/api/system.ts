@@ -59,11 +59,14 @@ import ensureContainingDirectoryExists from "@cocalc/backend/misc/ensure-contain
 import { constants as fsConstants } from "node:fs";
 import {
   access,
+  chmod,
+  mkdir,
   open,
   readFile,
   readdir,
   realpath as fsRealpath,
   stat,
+  rename,
   writeFile,
 } from "fs/promises";
 import { isAbsolute, join, posix } from "node:path";
@@ -96,6 +99,142 @@ export async function readTextFileFromProject({
   path: string;
 }): Promise<string> {
   return (await readFile(processPath(path))).toString();
+}
+
+export async function managedVmSshPublicKey(): Promise<string | null> {
+  try {
+    const key = (
+      await readFile(processPath(".ssh/id_ed25519.pub"), "utf8")
+    ).trim();
+    if (!key) return null;
+    if (key.length > 16_384 || key.includes("\n") || key.includes("\r")) {
+      throw new Error("project deploy public key is invalid");
+    }
+    return key;
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+function managedVmAlias(vmName: string, vmId: string): string {
+  const name = vmName.trim();
+  const shortId = vmId.replaceAll("-", "").slice(0, 8).toLowerCase();
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(name) || !/^[a-f0-9]{8}$/.test(shortId)) {
+    throw new Error("invalid managed VM identity");
+  }
+  return name;
+}
+
+function hasExactSshHostAlias(content: string, alias: string): boolean {
+  const normalizedAlias = alias.toLowerCase();
+  return content.split("\n").some((line) => {
+    const match = line.match(/^\s*Host\s+(.+)$/i);
+    if (!match) return false;
+    return match[1]
+      .split("#", 1)[0]
+      .trim()
+      .split(/\s+/)
+      .some((token) => token.toLowerCase() === normalizedAlias);
+  });
+}
+
+function managedVmMarkers(vmId: string) {
+  const shortId = vmId.replaceAll("-", "").slice(0, 8).toLowerCase();
+  return {
+    start: `# >>> cocalc managed vm ${shortId} >>>`,
+    end: `# <<< cocalc managed vm ${shortId} <<<`,
+  };
+}
+
+export function updateManagedVmSshConfig(opts: {
+  content: string;
+  vm_id: string;
+  vm_name: string;
+  hostname: string;
+  enabled: boolean;
+}): { content: string; alias: string } {
+  const alias = managedVmAlias(opts.vm_name, opts.vm_id);
+  const hostname = opts.hostname.trim().toLowerCase();
+  if (!/^[a-z0-9.-]+$/.test(hostname)) {
+    throw new Error("invalid managed VM hostname");
+  }
+  const markers = managedVmMarkers(opts.vm_id);
+  const escape = (value: string) =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    `(?:^|\\n)${escape(markers.start)}\\n[\\s\\S]*?\\n${escape(markers.end)}(?:\\n|$)`,
+    "g",
+  );
+  const stripped = opts.content
+    .replace(pattern, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd();
+  if (!opts.enabled) {
+    return { content: stripped ? `${stripped}\n` : "", alias };
+  }
+  if (hasExactSshHostAlias(stripped, alias)) {
+    throw new Error(
+      `SSH config already defines Host '${alias}'; rename that entry or choose another VM name`,
+    );
+  }
+  const block = `${markers.start}
+Host ${alias}
+  HostName ${hostname}
+  User user
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+  StrictHostKeyChecking accept-new
+  ServerAliveInterval 15
+  ServerAliveCountMax 2
+  BatchMode yes
+  PreferredAuthentications publickey
+  PasswordAuthentication no
+  KbdInteractiveAuthentication no
+${markers.end}
+`;
+  return {
+    content: stripped ? `${stripped}\n\n${block}` : block,
+    alias,
+  };
+}
+
+let managedVmSshConfigMutation: Promise<unknown> = Promise.resolve();
+
+async function syncManagedVmSshConfigImpl(opts: {
+  vm_id: string;
+  vm_name: string;
+  hostname: string;
+  enabled: boolean;
+}): Promise<{ alias: string; changed: boolean }> {
+  const sshDir = processPath(".ssh");
+  const configPath = processPath(".ssh/config");
+  await mkdir(sshDir, { recursive: true, mode: 0o700 });
+  await chmod(sshDir, 0o700);
+  const current = await readFile(configPath, "utf8").catch((err: any) => {
+    if (err?.code === "ENOENT") return "";
+    throw err;
+  });
+  const next = updateManagedVmSshConfig({ ...opts, content: current });
+  if (next.content === current) return { alias: next.alias, changed: false };
+  const tempPath = `${configPath}.cocalc-vm-${process.pid}-${Date.now()}`;
+  await writeFile(tempPath, next.content, { mode: 0o600 });
+  await rename(tempPath, configPath);
+  await chmod(configPath, 0o600);
+  return { alias: next.alias, changed: true };
+}
+
+export async function syncManagedVmSshConfig(opts: {
+  vm_id: string;
+  vm_name: string;
+  hostname: string;
+  enabled: boolean;
+}): Promise<{ alias: string; changed: boolean }> {
+  const mutation = managedVmSshConfigMutation
+    .catch(() => undefined)
+    .then(() => syncManagedVmSshConfigImpl(opts));
+  managedVmSshConfigMutation = mutation;
+  return await mutation;
 }
 
 export async function realpath(path: string): Promise<string> {

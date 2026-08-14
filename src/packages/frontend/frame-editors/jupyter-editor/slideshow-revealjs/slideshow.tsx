@@ -52,6 +52,7 @@ class Slideshow extends Component<Props, {}> {
     if (this.props.slideshow == null) return;
     return (
       <iframe
+        title="Jupyter slideshow preview"
         width="100%"
         height="100%"
         src={this.props.slideshow.get("url")}

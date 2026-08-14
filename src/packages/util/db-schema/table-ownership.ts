@@ -484,6 +484,8 @@ export const TABLE_OWNERSHIP = {
       "compute_vm_instances",
       "compute_volumes",
       "compute_egress_meter_intervals",
+      "compute_site_funded_usage",
+      "compute_vm_turn_grants",
     ],
     {
       ownership: "account-home",
@@ -496,6 +498,14 @@ export const TABLE_OWNERSHIP = {
         "Account-owned managed compute state. Project attachment controls discovery but does not transfer ownership.",
     },
   ),
+
+  ...entries(["compute_vm_orphans"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    notes:
+      "Durable provider/DNS orphan observations and delayed remediation state. The local authority bay must retain this across worker and hub restarts.",
+  }),
 
   ...entries(["compute_resource_work"], {
     ownership: "ephemeral",

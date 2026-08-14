@@ -4,6 +4,7 @@ import {
   resolveGcpInternalConatUrl,
   resolveGcpManagedHostInternalUrl,
   resolveGcpRuntimeInternalHostname,
+  resolveProjectHostRouteMode,
   shouldUseGcpInternalConatUrl,
 } from "./internal-network";
 
@@ -68,6 +69,28 @@ describe("gcp internal network helpers", () => {
         fallbackProjectId: "proj-1",
       }),
     ).toBe("http://host-a.c.proj-1.internal:9002");
+  });
+
+  it("disables GCP internal host routing in public mode", () => {
+    expect(
+      resolveGcpManagedHostInternalUrl({
+        runtime: {
+          provider: "gcp",
+          instance_id: "host-a",
+          ssh_user: "ubuntu",
+          metadata: { gcp_project_id: "proj-1" },
+        },
+        tunnelEnabled: true,
+        routeMode: "public",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("normalizes managed project-host route modes", () => {
+    expect(resolveProjectHostRouteMode()).toBe("auto");
+    expect(resolveProjectHostRouteMode("internal")).toBe("internal");
+    expect(resolveProjectHostRouteMode("PUBLIC")).toBe("public");
+    expect(resolveProjectHostRouteMode("invalid")).toBe("auto");
   });
 
   it("rewrites public conat addresses to internal bay router addresses", () => {

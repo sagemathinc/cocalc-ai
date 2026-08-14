@@ -362,6 +362,40 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("checkpoints activity logs before terminal turn completion", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const logSet = jest.fn(async () => {});
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: logSet,
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "manager progress" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+
+    await waitForCondition(() => logSet.mock.calls.length > 0);
+    expect(logSet).toHaveBeenCalledWith(
+      "thread-0:msg-0",
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "event",
+          event: { type: "message", text: "manager progress" },
+        }),
+      ]),
+    );
+
+    (writer as any).dispose?.(true);
+  });
+
   it("publishes a submitted completion notice when config hydration lags", async () => {
     const { syncdb } = makeFakeSyncDB();
     let releaseNotice: (() => void) | undefined;
@@ -1074,7 +1108,10 @@ describe("ChatStreamWriter", () => {
     expect(liveEvents[0].type).toBe("status");
     expect((liveEvents[0] as any).state).toBe("running");
     expect(liveEvents[1].type).toBe("event");
-    expect(persistedLogs).toHaveLength(0);
+    expect(persistedLogs).toHaveLength(1);
+    expect(persistedLogs[0]).toEqual([
+      expect.objectContaining({ type: "status", state: "running" }),
+    ]);
 
     await writer.handle({
       type: "summary",
@@ -1084,9 +1121,9 @@ describe("ChatStreamWriter", () => {
     await flush(writer);
 
     expect(flattenLivePayloads(livePayloads)).toHaveLength(3);
-    expect(persistedLogs).toHaveLength(1);
-    expect(persistedLogs[0][0]?.type).toBe("status");
-    expect(persistedLogs[0].at(-1)?.type).toBe("summary");
+    expect(persistedLogs).toHaveLength(2);
+    expect(persistedLogs[1][0]?.type).toBe("status");
+    expect(persistedLogs[1].at(-1)?.type).toBe("summary");
     (writer as any).dispose?.(true);
   });
 
@@ -1302,7 +1339,8 @@ describe("ChatStreamWriter", () => {
     await flush(writer);
     await (writer as any).waitForLiveLogFlush();
     expect(livePublish).toHaveBeenCalledTimes(1);
-    expect(logSet).not.toHaveBeenCalled();
+    await waitForCondition(() => logSet.mock.calls.length > 0);
+    expect(logSet).toHaveBeenCalledTimes(1);
     await (writer as any).handle({
       type: "summary",
       finalResponse: "done",
@@ -1310,7 +1348,7 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
     expect(livePublish).toHaveBeenCalledTimes(2);
-    expect(logSet).toHaveBeenCalled();
+    expect(logSet).toHaveBeenCalledTimes(2);
     (writer as any).dispose?.(true);
   });
 
@@ -1878,7 +1916,7 @@ describe("ChatStreamWriter", () => {
     } as AcpStreamMessage);
     await flush(writer);
 
-    expect(logSet).toHaveBeenCalledTimes(2);
+    expect(logSet).toHaveBeenCalledTimes(3);
     expect(queue.clearAcpPayloads).toHaveBeenCalledTimes(1);
     expect(findLastChatSet(sets)?.generating).toBe(false);
     writer.dispose?.(true);

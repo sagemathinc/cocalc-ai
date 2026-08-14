@@ -7,9 +7,37 @@ import {
   AgentMessageStatus,
   AttachedSteerStatusList,
   describeLastActivity,
+  reconcileAvailableSubagentEvents,
   resolveLiveRunStartMs,
   STALE_ACTIVITY_MS,
 } from "../agent-message-status";
+
+describe("reconcileAvailableSubagentEvents", () => {
+  it("preserves missing events so the activity panel can load its persisted log", () => {
+    expect(reconcileAvailableSubagentEvents(undefined, [])).toBeUndefined();
+    expect(reconcileAvailableSubagentEvents(null, [])).toBeNull();
+  });
+
+  it("reconciles events that have already been loaded", () => {
+    const events = [
+      {
+        type: "event",
+        seq: 1,
+        event: {
+          type: "subagent",
+          operationId: "spawn-1",
+          threadId: "child-1",
+          state: "running",
+        },
+      },
+    ] as any;
+
+    const reconciled = reconcileAvailableSubagentEvents(events, []);
+
+    expect(reconciled).toHaveLength(2);
+    expect((reconciled as any[])[1].event.state).toBe("unknown");
+  });
+});
 
 describe("describeLastActivity", () => {
   it("prefers the ACP start time over the row date for live timing", () => {
@@ -188,6 +216,71 @@ describe("AgentMessageStatus", () => {
     expect(onInterrupt).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps post-turn retained work visible and stoppable", () => {
+    const onInterrupt = jest.fn();
+    render(
+      React.createElement(AgentMessageStatus, {
+        show: true,
+        generating: false,
+        durationLabel: "0:10",
+        date: 1000,
+        logRefs: {},
+        activityContext: {} as any,
+        activeDescendantThreadIds: ["child-1"],
+        backgroundTerminalProcesses: 1,
+        logEvents: [
+          {
+            type: "event",
+            seq: 1,
+            event: {
+              type: "subagent",
+              operationId: "spawn-1",
+              threadId: "child-1",
+              state: "running",
+            },
+          },
+        ] as any,
+        onInterrupt,
+      }),
+    );
+
+    expect(screen.getByText(/Manager finished/)).toBeTruthy();
+    expect(screen.getByText(/background command/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Stop all" }));
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not leave old pending subagents spinning after a turn completes", () => {
+    render(
+      React.createElement(AgentMessageStatus, {
+        show: true,
+        generating: false,
+        durationLabel: "0:10",
+        date: 8_675_309,
+        logRefs: {},
+        activityContext: {} as any,
+        logEvents: [
+          {
+            type: "event",
+            seq: 1,
+            event: {
+              type: "subagent",
+              operationId: "spawn-1",
+              threadId: "child-1",
+              state: "pending",
+            },
+          },
+        ] as any,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByText(/None working/)).toBeTruthy();
+    expect(screen.getByText("unknown")).toBeTruthy();
+    expect(screen.queryByLabelText("working")).toBeNull();
+  });
+
   it("includes steer guidance in the Codex activity drawer", () => {
     render(
       React.createElement(AgentMessageStatus, {
@@ -216,7 +309,7 @@ describe("AgentMessageStatus", () => {
 });
 
 describe("AttachedSteerStatusList", () => {
-  it("renders guidance text as markdown", () => {
+  it("keeps quoted guidance distinct from the user's follow-up", () => {
     render(
       React.createElement(AttachedSteerStatusList, {
         attachedSteers: [
@@ -224,14 +317,18 @@ describe("AttachedSteerStatusList", () => {
             messageId: "m1",
             date: 1000,
             state: "sent",
-            text: "**bold guidance** with `code`",
+            text: "> quoted request\n\n**follow-up guidance** with `code`",
           },
         ],
       }),
     );
 
-    expect(screen.getByText("bold guidance")).toBeTruthy();
+    const card = screen.getByRole("region", { name: "Guidance sent" });
+    expect(
+      screen.getByText("quoted request").closest("blockquote"),
+    ).toBeTruthy();
+    expect(screen.getByText("follow-up guidance")).toBeTruthy();
     expect(screen.getByText("code")).toBeTruthy();
-    expect(screen.getByText("Guidance sent")).toBeTruthy();
+    expect(card).toContainElement(screen.getByText("Guidance sent"));
   });
 });

@@ -17,6 +17,10 @@ Table({
       "desired_state",
       "expires_at",
       "provider_instance_id",
+      "public_address_id",
+      "public_hostname",
+      "dns_record_id",
+      "funding_mode",
     ],
   },
   fields: {
@@ -35,11 +39,41 @@ Table({
       type: "uuid",
       desc: "Project used for discovery and scoped agent access.",
     },
-    provider: { type: "string", desc: "Cloud provider; GCP in the MVP." },
+    provider: { type: "string", desc: "Managed provider: gcp or nebius." },
+    operating_system: {
+      type: "string",
+      pg_default: "'linux'",
+      not_null: true,
+      desc: "Immutable guest operating-system family: linux or windows.",
+    },
+    operating_system_version: {
+      type: "string",
+      pg_default: "'ubuntu-24.04'",
+      not_null: true,
+      desc: "Immutable normalized guest operating-system version.",
+    },
+    os_license_hourly_price: {
+      type: "string",
+      pg_default: "'0.000000'",
+      not_null: true,
+      desc: "Immutable customer OS-license price per running hour in USD.",
+    },
     region: { type: "string", desc: "Cloud region." },
     zone: { type: "string", desc: "Cloud zone." },
     architecture: { type: "string", desc: "Guest CPU architecture." },
     machine_type: { type: "string", desc: "Provider machine type." },
+    cpu: { type: "number", desc: "Normalized virtual CPU count." },
+    ram_gb: { type: "number", desc: "Normalized guest memory in GiB." },
+    gpu_type: { type: "string", desc: "Optional normalized GPU type." },
+    gpu_count: { type: "number", desc: "Normalized GPU count." },
+    provider_spec: {
+      type: "map",
+      desc: "Immutable provider-specific machine and image selection.",
+    },
+    funding_mode: {
+      type: "string",
+      desc: "site-funded, account-postpaid, or account-prepaid.",
+    },
     desired_pricing_model: {
       type: "string",
       desc: "Owner-authorized pricing model.",
@@ -53,9 +87,9 @@ Table({
       type: "string",
       desc: "Provider boot disk retained across instance recovery.",
     },
-    attached_volume_id: {
+    home_volume_id: {
       type: "uuid",
-      desc: "Optional account-owned volume mounted at /work.",
+      desc: "Optional account-owned persistent home volume.",
     },
     state: { type: "string", desc: "Observed logical VM state." },
     desired_state: { type: "string", desc: "Requested logical VM state." },
@@ -67,7 +101,39 @@ Table({
       type: "string",
       desc: "Current provider instance identifier.",
     },
-    public_ip: { type: "string", desc: "Current ephemeral public IPv4." },
+    public_address_id: {
+      type: "string",
+      desc: "Durable provider public-address resource identifier.",
+    },
+    public_address_state: {
+      type: "string",
+      desc: "Observed provider public-address lifecycle state.",
+    },
+    public_address_updated_at: {
+      type: "timestamp",
+      desc: "Most recent public-address reconciliation.",
+    },
+    public_ip: { type: "string", desc: "Current assigned public IPv4." },
+    public_hostname: {
+      type: "string",
+      unique: true,
+      desc: "Immutable random public DNS hostname.",
+    },
+    dns_record_id: {
+      type: "string",
+      desc: "Current Cloudflare DNS record identifier.",
+    },
+    dns_state: { type: "string", desc: "Observed DNS lifecycle state." },
+    dns_updated_at: {
+      type: "timestamp",
+      desc: "Most recent DNS reconciliation.",
+    },
+    dns_error: { type: "string", desc: "Latest bounded DNS error." },
+    public_ports: {
+      type: "array",
+      pg_type: "INTEGER[]",
+      desc: "Fixed public TCP port policy, currently 22 and 443.",
+    },
     ssh_user: { type: "string", desc: "SSH login user." },
     ssh_public_key: {
       type: "string",
@@ -113,6 +179,18 @@ Table({
     billing_state: {
       type: "string",
       desc: "Billing and price-envelope enforcement state.",
+    },
+    bootstrap_revision: {
+      type: "number",
+      desc: "Required managed guest bootstrap revision.",
+    },
+    observed_bootstrap_revision: {
+      type: "number",
+      desc: "Most recently SSH-verified guest bootstrap revision.",
+    },
+    public_port_policy_revision: {
+      type: "number",
+      desc: "Required public firewall policy revision.",
     },
     spot_recovery_policy: {
       type: "map",

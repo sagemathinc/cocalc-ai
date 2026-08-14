@@ -35,6 +35,10 @@ jest.mock("../codex-defaults-panel", () => ({
   CodexDefaultsPanel: () => <div>CodexDefaultsPanel</div>,
 }));
 
+jest.mock("../codex-subagent-concurrency", () => ({
+  CodexSubagentConcurrencyField: () => <div>CodexSubagentConcurrencyField</div>,
+}));
+
 jest.mock("../codex-sessions-panel", () => ({
   __esModule: true,
   default: () => <div>CodexSessionsPanel</div>,

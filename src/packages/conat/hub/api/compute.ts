@@ -6,13 +6,80 @@
 import {
   authFirstRequireAccount,
   authFirstRequireHost,
-  authFirstRequireProject,
-  authFirstRequireProjectOrHost,
+  authFirstRequireComputeProject,
+  authFirstRequireAccountOrComputeAgent,
 } from "./util";
 import type { HostCatalog } from "./hosts";
 
 export type ComputeVmPricingModel = "spot" | "on_demand";
 export type ComputeVmDesiredState = "running" | "stopped" | "deleted";
+export type ManagedComputeProviderId = "gcp" | "nebius";
+export type ManagedComputeOperatingSystem = "linux" | "windows";
+export type ManagedComputeVolumeDiskType =
+  | "balanced"
+  | "ssd"
+  | "ssd_io_m3"
+  | "standard";
+export type ManagedComputeFundingMode =
+  | "site-funded"
+  | "account-postpaid"
+  | "account-prepaid";
+
+export interface ComputeEgressSummary {
+  current_month_bytes: number;
+  current_month_cost_usd: string;
+  lifetime_bytes: number;
+  lifetime_cost_usd: string;
+  unit_price_per_gb_usd: string;
+  free: boolean;
+  updated_at?: string | Date | null;
+  complete_through?: string | Date | null;
+  stale: boolean;
+  error?: string | null;
+}
+
+export interface ComputeOrphan {
+  id: string;
+  provider: "gcp" | "nebius" | "cloudflare";
+  resource_type: "instance" | "boot_disk" | "address" | "dns_record";
+  resource_id: string;
+  resource_name?: string | null;
+  region?: string | null;
+  zone?: string | null;
+  state: string;
+  observation_count: number;
+  first_seen_at: string | Date;
+  last_seen_at: string | Date;
+  stopped_at?: string | Date | null;
+  eligible_delete_at?: string | Date | null;
+  resolved_at?: string | Date | null;
+  last_error?: string | null;
+  metadata: Record<string, any>;
+}
+
+export interface ComputeAgentGrant {
+  grant_id: string;
+  owner_account_id: string;
+  project_id: string;
+  turn_id: string;
+  session_id: string;
+  issued_by_account_id: string;
+  allowed_actions: string[];
+  allowed_vm_ids: string[];
+  allow_create: boolean;
+  allowed_providers: string[];
+  allowed_machine_classes: string[];
+  funding_mode?: ManagedComputeFundingMode | null;
+  max_active_vms: number;
+  max_hourly_usd: number;
+  max_total_authorized_usd: number;
+  max_ttl_minutes: number;
+  expires_at: string | Date;
+  revoked_at?: string | Date | null;
+  created_at: string | Date;
+  last_used_at?: string | Date | null;
+  metadata: Record<string, any>;
+}
 
 export interface ComputeVm {
   id: string;
@@ -20,21 +87,38 @@ export interface ComputeVm {
   owner_account_id: string;
   owning_bay_id: string;
   project_id: string;
-  provider: "gcp";
+  provider: ManagedComputeProviderId;
+  operating_system: ManagedComputeOperatingSystem;
+  operating_system_version: string;
+  os_license_hourly_price: string;
   region: string;
-  zone: string;
+  zone?: string | null;
   architecture: "x86_64" | "arm64";
   machine_type: string;
+  cpu: number;
+  ram_gb: number;
+  gpu_type?: string | null;
+  gpu_count: number;
+  provider_spec: Record<string, any>;
+  funding_mode: ManagedComputeFundingMode;
   desired_pricing_model: ComputeVmPricingModel;
   effective_pricing_model: ComputeVmPricingModel;
   boot_disk_gb: number;
   boot_disk_id: string;
-  attached_volume_id?: string | null;
+  home_volume_id?: string | null;
   state: string;
   desired_state: ComputeVmDesiredState;
   instance_generation: number;
   provider_instance_id: string;
+  public_address_id?: string | null;
+  public_address_state: string;
   public_ip?: string | null;
+  public_hostname: string;
+  dns_state: string;
+  dns_error?: string | null;
+  public_ports: number[];
+  ssh_alias: string;
+  egress_summary: ComputeEgressSummary;
   private_ip?: string | null;
   internal_hostname?: string | null;
   ssh_user: string;
@@ -63,15 +147,23 @@ export interface CreateComputeVmRequest {
   session_hash?: string;
   project_id: string;
   name: string;
-  zone: string;
+  provider: ManagedComputeProviderId;
+  operating_system?: ManagedComputeOperatingSystem;
+  architecture?: "x86_64" | "arm64";
+  region: string;
+  zone?: string;
   machine_type: string;
+  gpu_type?: string;
+  gpu_count?: number;
+  provider_spec?: Record<string, any>;
   pricing_model: ComputeVmPricingModel;
   allow_on_demand_fallback?: boolean;
   ttl_minutes?: number | null;
   boot_disk_gb?: number;
-  volume?: string;
-  funding_mode?: "account-prepaid" | "account-postpaid";
+  home_volume?: string;
+  funding_mode?: ManagedComputeFundingMode;
   ssh_public_key?: string;
+  configure_project_ssh?: boolean;
   idempotency_key: string;
 }
 
@@ -81,13 +173,17 @@ export interface ComputeVolume {
   owner_account_id: string;
   owning_bay_id: string;
   project_id?: string | null;
-  provider: "gcp";
+  provider: ManagedComputeProviderId;
   region: string;
-  zone: string;
-  disk_type: "balanced";
+  zone?: string | null;
+  role: "home";
+  funding_mode: ManagedComputeFundingMode;
+  provider_spec: Record<string, any>;
+  disk_type: ManagedComputeVolumeDiskType;
   filesystem: "ext4";
   size_gb: number;
   desired_size_gb: number;
+  effective_size_gb: number;
   provider_disk_id: string;
   state: string;
   desired_state: "ready" | "deleted";
@@ -113,15 +209,39 @@ export interface CreateComputeVolumeRequest {
   session_hash?: string;
   project_id: string;
   name: string;
-  zone: string;
+  provider: ManagedComputeProviderId;
+  region: string;
+  zone?: string;
   size_gb: number;
-  funding_mode?: "account-prepaid" | "account-postpaid";
+  funding_mode?: ManagedComputeFundingMode;
+  provider_spec?: Record<string, any>;
   idempotency_key: string;
 }
 
 export interface ComputeCatalog {
-  host_catalog: HostCatalog;
+  providers: ManagedComputeProviderId[];
+  provider_catalogs: Partial<Record<ManagedComputeProviderId, HostCatalog>>;
+  funding_modes: Array<{
+    value: ManagedComputeFundingMode;
+    label: string;
+    allowed: boolean;
+    reason?: string;
+  }>;
+  default_funding_mode: ManagedComputeFundingMode;
+  operating_systems: Array<{
+    value: ManagedComputeOperatingSystem;
+    label: string;
+    providers: ManagedComputeProviderId[];
+    architectures: Array<"x86_64" | "arm64">;
+    versions: string[];
+    minimum_boot_disk_gb: number;
+    license_per_vcpu_hourly_usd: string;
+  }>;
   defaults: {
+    provider: ManagedComputeProviderId;
+    operating_system: ManagedComputeOperatingSystem;
+    architecture: "x86_64" | "arm64";
+    region: string;
     zone: string;
     machine_type: string;
     ttl_minutes?: number | null;
@@ -135,27 +255,46 @@ export interface ComputeCatalog {
   };
 }
 
+export interface PrepareComputeWindowsRdpResult {
+  id: string;
+  name: string;
+  hostname: string;
+  ssh_user: string;
+  windows_user: string;
+  windows_password: string;
+  remote_port: 3389;
+}
+
 export const compute = {
-  getCatalog: authFirstRequireAccount,
-  createVm: authFirstRequireAccount,
+  getCatalog: authFirstRequireAccountOrComputeAgent,
+  createVm: authFirstRequireAccountOrComputeAgent,
   listVms: authFirstRequireAccount,
   getVm: authFirstRequireAccount,
-  listProjectVms: authFirstRequireProjectOrHost,
-  getProjectVm: authFirstRequireProjectOrHost,
+  listProjectVms: authFirstRequireComputeProject,
+  getProjectVm: authFirstRequireComputeProject,
   authorizeSshKey: authFirstRequireAccount,
-  authorizeProjectSshKey: authFirstRequireProject,
+  prepareWindowsRdp: authFirstRequireAccount,
+  authorizeProjectSshKey: authFirstRequireComputeProject,
   authorizeProjectSshKeyFromHost: authFirstRequireHost,
-  startVm: authFirstRequireAccount,
-  stopVm: authFirstRequireAccount,
-  deleteVm: authFirstRequireAccount,
-  setVmTtl: authFirstRequireAccount,
-  createVolume: authFirstRequireAccount,
+  startVm: authFirstRequireAccountOrComputeAgent,
+  stopVm: authFirstRequireAccountOrComputeAgent,
+  deleteVm: authFirstRequireAccountOrComputeAgent,
+  setVmTtl: authFirstRequireAccountOrComputeAgent,
+  setVmFundingMode: authFirstRequireAccountOrComputeAgent,
+  setVmMachineType: authFirstRequireAccountOrComputeAgent,
+  createVolume: authFirstRequireAccountOrComputeAgent,
   listVolumes: authFirstRequireAccount,
   getVolume: authFirstRequireAccount,
-  listProjectVolumes: authFirstRequireProjectOrHost,
-  getProjectVolume: authFirstRequireProjectOrHost,
-  resizeVolume: authFirstRequireAccount,
-  deleteVolume: authFirstRequireAccount,
+  listProjectVolumes: authFirstRequireComputeProject,
+  getProjectVolume: authFirstRequireComputeProject,
+  resizeVolume: authFirstRequireAccountOrComputeAgent,
+  setVolumeFundingMode: authFirstRequireAccountOrComputeAgent,
+  deleteVolume: authFirstRequireAccountOrComputeAgent,
+  listAgentGrants: authFirstRequireAccount,
+  approveAgentGrant: authFirstRequireAccount,
+  revokeAgentGrant: authFirstRequireAccount,
+  listOrphans: authFirstRequireAccount,
+  resolveOrphan: authFirstRequireAccount,
 };
 
 export interface ComputeApi {
@@ -188,6 +327,12 @@ export interface ComputeApi {
     ssh_public_key: string;
     idempotency_key: string;
   }) => Promise<ComputeVm>;
+  prepareWindowsRdp: (opts: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
+    id_or_name: string;
+  }) => Promise<PrepareComputeWindowsRdpResult>;
   authorizeProjectSshKey: (opts: {
     project_id?: string;
     id_or_name: string;
@@ -203,6 +348,8 @@ export interface ComputeApi {
   }) => Promise<ComputeVm>;
   startVm: (opts: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
     id_or_name: string;
     idempotency_key: string;
   }) => Promise<ComputeVm>;
@@ -225,6 +372,22 @@ export interface ComputeApi {
     id_or_name: string;
     ttl_minutes?: number | null;
     extend_minutes?: number;
+    idempotency_key: string;
+  }) => Promise<ComputeVm>;
+  setVmFundingMode: (opts: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
+    id_or_name: string;
+    funding_mode: ManagedComputeFundingMode;
+    idempotency_key: string;
+  }) => Promise<ComputeVm>;
+  setVmMachineType: (opts: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
+    id_or_name: string;
+    machine_type: string;
     idempotency_key: string;
   }) => Promise<ComputeVm>;
   createVolume: (opts: CreateComputeVolumeRequest) => Promise<ComputeVolume>;
@@ -253,7 +416,15 @@ export interface ComputeApi {
     session_hash?: string;
     id_or_name: string;
     size_gb: number;
-    funding_mode?: "account-prepaid" | "account-postpaid";
+    funding_mode?: ManagedComputeFundingMode;
+    idempotency_key: string;
+  }) => Promise<ComputeVolume>;
+  setVolumeFundingMode: (opts: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
+    id_or_name: string;
+    funding_mode: ManagedComputeFundingMode;
     idempotency_key: string;
   }) => Promise<ComputeVolume>;
   deleteVolume: (opts: {
@@ -264,4 +435,30 @@ export interface ComputeApi {
     confirm_name: string;
     idempotency_key: string;
   }) => Promise<ComputeVolume>;
+  listAgentGrants: (opts: {
+    account_id?: string;
+    project_id: string;
+    include_expired?: boolean;
+  }) => Promise<ComputeAgentGrant[]>;
+  approveAgentGrant: (opts: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
+    grant_id: string;
+  }) => Promise<ComputeAgentGrant>;
+  revokeAgentGrant: (opts: {
+    account_id?: string;
+    grant_id: string;
+  }) => Promise<void>;
+  listOrphans: (opts: {
+    account_id?: string;
+    include_resolved?: boolean;
+  }) => Promise<ComputeOrphan[]>;
+  resolveOrphan: (opts: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
+    orphan_id: string;
+    action: "stop" | "delete" | "ignore";
+  }) => Promise<ComputeOrphan>;
 }

@@ -218,7 +218,7 @@ export function summarizeManagedEgressHistory(
   avgBytesPerHour: number;
 } {
   const points = history.points ?? [];
-  const latestPoint = points.at(-1);
+  const latestPoint = points[points.length - 1];
   const latestBytes = Math.max(0, latestPoint?.bytes ?? 0);
   const latestBytesPerHour = latestPoint
     ? bytesPerHourForPoint(latestPoint)

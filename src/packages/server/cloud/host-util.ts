@@ -133,7 +133,7 @@ const normalizeGcpImageArchitecture = (
 
 const pickGcpAcceleratorFamily = (
   images: GcpImage[],
-  opts: { machineType?: string } = {},
+  opts: { machineType?: string; ubuntuVersion?: number } = {},
 ): { family?: string; project?: string } => {
   const desiredArch = gcpMachineTypeArchitecture(opts.machineType);
   const ubuntuImages = images.filter((img) =>
@@ -146,7 +146,9 @@ const pickGcpAcceleratorFamily = (
   });
   const versioned = gpuImages.filter((img) => {
     const version = parseGcpUbuntuVersion(img.family ?? img.name) ?? 0;
-    return version >= MIN_UBUNTU_VERSION;
+    return opts.ubuntuVersion != null
+      ? version === opts.ubuntuVersion
+      : version >= MIN_UBUNTU_VERSION;
   });
   if (!versioned.length) return {};
   const sorted = [...versioned].sort((a, b) => {
@@ -167,6 +169,28 @@ const pickGcpAcceleratorFamily = (
     project: chosen.project,
   };
 };
+
+export async function getGcpAcceleratorImage(
+  machineType: string,
+  opts: { ubuntuVersion?: number } = {},
+): Promise<{
+  family: string;
+  project: string;
+}> {
+  const { family, project } = pickGcpAcceleratorFamily(await loadGcpImages(), {
+    machineType,
+    ubuntuVersion: opts.ubuntuVersion,
+  });
+  if (!family) {
+    throw new Error(
+      `no GCP accelerator Ubuntu ${(opts.ubuntuVersion ?? MIN_UBUNTU_VERSION) / 100}${opts.ubuntuVersion == null ? "+" : ""} images available`,
+    );
+  }
+  return {
+    family,
+    project: project || "ubuntu-os-accelerator-images",
+  };
+}
 
 const pickNebiusImageFamily = (
   images: NebiusImage[],
@@ -445,18 +469,12 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
     }
   }
   if (providerId === "gcp" && gpu) {
-    const images = await loadGcpImages();
-    const { family, project } = pickGcpAcceleratorFamily(images, {
-      machineType: machine.machine_type,
-    });
-    if (!family) {
-      throw new Error(
-        `no GCP accelerator Ubuntu ${MIN_UBUNTU_VERSION / 100}+ images available`,
-      );
-    }
+    const { family, project } = await getGcpAcceleratorImage(
+      machine.machine_type ?? "",
+    );
     sourceImage = undefined;
     sourceImageFamily = family;
-    sourceImageProject = project || "ubuntu-os-accelerator-images";
+    sourceImageProject = project;
     logger.debug("buildHostSpec: selected gcp accelerator image", {
       host_id: row.id,
       family,

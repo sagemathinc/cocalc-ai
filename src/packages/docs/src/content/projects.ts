@@ -118,99 +118,209 @@ environment, or host placement. For the short creation flow, see
 export const VIRTUAL_MACHINES_BODY = String.raw`
 ## What virtual machines are
 
-Managed Compute VMs are standalone Linux machines associated with a CoCalc
-project. Each VM starts with a minimal Ubuntu 24.04 LTS image. CoCalc, Jupyter,
-and other CoCalc project software are not installed automatically.
+Managed Compute VMs are standalone cloud machines owned by your account and
+attached to a CoCalc project. Choose Linux on GCP or Nebius, including supported
+ARM and GPU machines, or Windows Server 2022 on GCP. CoCalc, Jupyter, and other
+CoCalc project software are not installed automatically.
 
 Use a VM when the project runtime is not the right size or shape for a job, or
 when you need full control of a conventional machine. Unlike a locked-down
 CoCalc project container, a VM gives you:
 
-- full \`sudo\` access to install system packages and run system services;
+- administrative access to install system packages and run system services;
 - Docker and other container runtimes;
-- FUSE filesystems and long-running system daemons;
+- FUSE filesystems and long-running system daemons on Linux;
 - the full machine for your workload, with no CoCalc project services competing
   for its CPU or memory;
 - predictable, dedicated performance that you can benchmark directly; and
-- direct SSH access through a dedicated public IP address.
+- direct SSH access through a managed public address and stable DNS hostname.
 
 That control also means you can misconfigure, exhaust, reboot, or crash the
-machine. Keep durable data on a separate \`/work\` volume. Managed Compute
-currently treats every VM independently; it does not provide private cluster
-networking or a cluster scheduler.
+machine. Managed Compute treats every VM independently; it does not provide
+private cluster networking or a cluster scheduler.
 
 ## Create a VM
 
 Use **Open project VMs** on this page to select a project and open its VM page,
-then choose **Create VM**. Configure:
+then choose **Create VM**. The form filters the live cloud catalog so that the
+selected operating system, architecture, GPU, region, and machine type are
+compatible. You can sort available regions and machines by price.
 
-- the region, zone, and machine type;
-- Standard or Spot capacity;
-- the persistent boot-disk size;
-- an optional deletion deadline;
-- an SSH key; and
-- an optional persistent \`/work\` volume.
+The currently supported combinations are:
 
-The create dialog shows the exact equivalent \`cocalc vm create\` command. A
-deletion deadline is optional. Spot capacity is less expensive but can be
-interrupted or unavailable at any time, so use Standard capacity for work that
-must remain continuously available.
+- **Linux:** minimal Ubuntu 24.04 LTS on GCP or Nebius. GCP includes x86-64 and
+  ARM64 choices; supported Linux GPU machines are offered by both providers.
+- **Windows:** Windows Server 2022 Desktop Experience on GCP, using x86-64 CPU
+  machines. Windows GPU machines and detachable home volumes are not currently
+  offered.
 
-Creating or starting a VM requires a membership authorized for prepaid or
-postpaid dedicated-host spending.
+Configure the name, funding source, cloud, region, machine, and boot disk in the
+main form. Expand **Advanced options** for Spot/Standard capacity, automatic
+fallback, a deletion deadline, and SSH settings. Before anything is purchased,
+**Create VM** shows a confirmation with the exact operating system, machine,
+location, capacity, boot-disk size, home storage, and estimated price.
 
-## Costs and funding
+The persistent boot disk holds the operating system and any data not placed on
+a separate home volume. It survives stop/start and automatic Spot recovery, but
+it is deleted with the VM. Choose its size carefully: **boot disks cannot
+currently be enlarged after creation**. The site controls the maximum allowed
+size.
 
-Compute, the boot disk, and retained \`/work\` volumes appear in **Purchases**.
-Public Internet egress costs **$0.10/GB**. Egress accumulates in one purchase per
-VM per calendar month rather than creating a new purchase for every meter
-sample. Usage normally takes about five minutes to appear, and each VM row shows
-its cumulative metered public egress and cost.
+Spot capacity costs less but can be interrupted or unavailable. With automatic
+Standard fallback enabled, CoCalc keeps trying Spot and may use Standard
+capacity for up to 24 hours so the VM can recover. Use Standard directly for
+work that must remain continuously available. Windows can take longer than
+Linux to complete its first boot.
 
-Running VMs stop when funding is unavailable. Site retention policies may later
-delete an unfunded VM and its root disk. A separate \`/work\` volume is retained
-independently, although prolonged inability to fund retained storage can
-eventually require deletion under the site's storage-exposure policy.
+Creating or starting a VM requires an eligible funding lane:
 
-## Connect and copy files
+- **Site-funded** is available only to site administrators.
+- **Account prepaid** uses the account's available balance and membership
+  limits.
+- **Account postpaid** requires an eligible membership and automatic billing.
 
-After the VM is ready, use the CoCalc CLI:
+The create form starts from site defaults. Use **Manage > Create similar** on an
+existing VM when you intentionally want to reuse its configuration. The
+equivalent CLI command is available under **Advanced options**.
+
+## Connect from the project
+
+Linux and Windows both use the login name \`user\`. On Linux, the home directory
+is \`/home/user\`; on Windows, the profile is \`C:\Users\user\`.
+
+When the project SSH key is selected during creation, CoCalc maintains a block
+in the project's \`~/.ssh/config\`. The VM name is the alias, so from a project
+terminal the shortest connection is:
+
+~~~sh
+ssh my-vm
+~~~
+
+The **Connect** menu shows this project-local command first, followed by the
+CoCalc CLI command, DNS hostname, and full direct SSH command. The same commands
+work for Linux and Windows:
 
 ~~~sh
 cocalc vm list
 cocalc vm ssh my-vm
 cocalc vm ssh my-vm uname -a
-cocalc vm rsync ./data/ my-vm:/work/data/
-cocalc vm rsync my-vm:/work/results/ ./results/
 ~~~
 
-To create a normal OpenSSH alias in \`~/.ssh/config\`:
+For Linux file transfer, use \`rsync\` through the CLI:
 
 ~~~sh
-cocalc vm ssh-config add my-vm
-ssh my-vm
+cocalc vm rsync ./data/ my-vm:/home/user/data/
+cocalc vm rsync my-vm:/home/user/results/ ./results/
 ~~~
 
-Inside a CoCalc project, \`cocalc vm list\` defaults to that project. With
-account authentication, \`cocalc vm list --all\` lists every VM owned by the
-account.
+\`cocalc vm rsync\` is not supported for Windows. Use \`scp\`, SFTP, Git, or a
+Windows-compatible transfer command instead.
 
-## Persistent /work volumes
+Inside a CoCalc project, \`cocalc vm list\` defaults to that project. With an
+account CLI profile, \`cocalc vm list --all\` lists every VM owned by the
+account. Run \`cocalc vm catalog\` to inspect the live providers, regions,
+machines, GPUs, prices, operating systems, and limits before scripting a
+creation.
 
-A \`/work\` volume is independent of a VM and survives VM deletion. A volume can
-only be attached to a VM in the same zone and to one VM at a time. Select an
-existing volume or create one while creating the VM; changing attachments later
-is not yet supported.
+## Connect to Windows with Remote Desktop
 
-Volumes can grow but cannot shrink. Deleting a detached volume is permanent and
-destroys all data on it.
+Windows VMs support SSH immediately after they become ready. Remote Desktop is
+kept private: TCP 3389 is **not** exposed to the Internet. Use the CoCalc CLI to
+generate a fresh Windows password and print an SSH tunnel:
 
-## Deletion and data safety
+~~~sh
+cocalc vm rdp windows-vm
+~~~
 
-Deleting a VM deletes its persistent root disk. It does not normally delete an
-attached \`/work\` volume. Keep durable data on \`/work\`, verify important
-results elsewhere, and delete unused retained volumes explicitly so they do not
+Use \`--tunnel\` to run the tunnel in the foreground. If RDP credentials are
+already configured, you can create the tunnel directly and point your RDP
+client at \`localhost:3389\`:
+
+~~~sh
+ssh -N -L 3389:localhost:3389 user@<vm-hostname>
+~~~
+
+Generating or resetting the Windows password requires fresh account approval.
+The password is returned once and is not stored in the project. Resetting it
+invalidates the previous Windows password.
+
+## Addresses and public services
+
+Each logical VM has a random stable DNS hostname. Its public IPv4 address stays
+attached across automatic Spot recovery while the desired state remains
+running. Explicitly stopping the VM releases the address; starting it again
+assigns an address and repoints the same hostname automatically.
+
+TCP ports **22** and **443** are public. CoCalc manages SSH access but does not
+run, authenticate, or terminate your HTTPS service. You must configure the
+server and TLS certificate on port 443. Windows RDP remains private behind its
+SSH tunnel.
+
+## Costs and usage
+
+The creation price popover itemizes compute, persistent disk, public IPv4,
+Windows Server licensing when applicable, and any configured surcharge. The
+monthly figure is an estimate based on continuous use, not a commitment or a
+fixed invoice. The Windows Server license is charged **only while the VM is
+running**; Spot discounts compute but not that license.
+
+The **Cost & usage** row shows the running rate, funding lane, explicit egress
+rate, and measured usage. Open it for the complete running and stopped price
+breakdowns. GCP public Internet egress costs **$0.10/GB**; the site pays it for
+site-funded VMs. Nebius currently costs **$0/GB**. Metering normally lags by
+about five minutes and the UI marks delayed data rather than treating it as
+current.
+
+Compute and the Windows license stop accruing when a VM is stopped. The
+persistent boot disk and any independent home volume remain billable. Running
+VMs stop when funding is unavailable, and site retention policy may eventually
+delete an unfunded VM and its boot disk.
+
+## Persistent Linux home volumes
+
+An optional Linux home volume is independent of the VM and mounts directly at
+\`/home/user\`. It survives VM deletion, can grow but cannot shrink, and can be
+attached read-write to only one VM at a time. The volume and VM must use the
+same provider location. Select an existing volume or create one during VM
+creation; changing attachments later is not yet supported.
+
+Nebius storage uses provider allocation increments. The UI normalizes and
+prices the actual size that will be purchased before confirmation. Deleting a
+detached volume is permanent and destroys all data on it.
+
+## Operate an existing VM
+
+The VM table shows operating system, provider, architecture, machine type, GPU,
+location, boot-disk size, capacity type, price, funding, egress, expiration, and
+current lifecycle state. Use:
+
+- **Connect** for project SSH, CLI SSH, DNS, direct SSH, and Windows RDP;
+- **Start/Stop** to control compute without deleting the persistent disk;
+- **Manage > Change machine type** after stopping a VM;
+- **Manage > Set deletion deadline** to add, change, or clear automatic
+  deletion;
+- **Manage > Create similar** to start a new form from that VM's configuration;
+- **Manage > Change funding** to move between eligible funding lanes; and
+- **Manage > Delete VM** to delete the VM, boot disk, public address, and DNS
+  record.
+
+Deletion does not normally delete an attached home volume. Verify important
+results elsewhere and delete unused detached volumes explicitly so they do not
 continue accruing storage charges.
+
+## Agents and account approval
+
+Human CLI mutations use account authentication and require fresh browser
+approval for sensitive or billable actions. A Codex turn in a project does not
+receive a reusable account session. Instead, it can request a narrow temporary
+capability for an exact VM operation, provider, machine class, funding lane,
+TTL, and spend envelope. The VM page shows the request for approval; grants are
+bound to the project and turn, expire within 30 minutes, can be revoked, and are
+audited.
+
+This lets an approved agent create, start, stop, resize home volumes, or delete
+managed resources without placing account cookies, cloud credentials, or broad
+billing authority in the collaborative project.
 `;
 
 export const RSTUDIO_PROJECT_BODY = String.raw`

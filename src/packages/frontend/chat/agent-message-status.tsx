@@ -19,6 +19,10 @@ import type { InlineCodeLink } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { COLORS } from "@cocalc/util/theme";
 import CodexLogPanel from "./codex-log-panel";
+import {
+  reconcileSubagentEvents,
+  summarizeSubagentEvents,
+} from "./codex-activity";
 import type { ActivityLogContext } from "./actions/activity-logs";
 import type { CodexLiveLogStatus } from "./use-codex-log";
 
@@ -52,6 +56,14 @@ type LogRefs = {
   subject?: string;
   liveStream?: string;
 };
+
+export function reconcileAvailableSubagentEvents(
+  events: AcpStreamMessage[] | null | undefined,
+  activeThreadIds: readonly string[] | undefined,
+): AcpStreamMessage[] | null | undefined {
+  if (events == null) return events;
+  return reconcileSubagentEvents(events, activeThreadIds);
+}
 
 export type AttachedSteerState = "sending" | "sent" | "queued" | "not-sent";
 
@@ -100,6 +112,60 @@ function renderSteerStatus(state: AttachedSteerState) {
   }
 }
 
+export function SteerGuidanceCard({ steer }: { steer: AttachedSteerMessage }) {
+  const status = renderSteerStatus(steer.state);
+  return (
+    <section
+      aria-label={status.label}
+      style={{
+        padding: "8px 10px 10px",
+        borderRadius: 10,
+        background: status.background,
+        border: `1px solid ${status.borderColor}`,
+      }}
+    >
+      <div style={{ marginBottom: 7 }}>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "2px 8px",
+            borderRadius: 999,
+            background: status.pillBackground,
+            color: status.pillColor,
+            fontSize: 12,
+            fontWeight: 600,
+            lineHeight: 1.2,
+          }}
+        >
+          {steer.state === "sending" ? (
+            <LoadingOutlined spin style={{ fontSize: 12 }} />
+          ) : null}
+          {status.label}
+        </span>
+      </div>
+      <div
+        style={{
+          fontSize: 13,
+          color: COLORS.GRAY_D,
+          minWidth: 0,
+          overflowWrap: "anywhere",
+        }}
+      >
+        <StaticMarkdown
+          value={steer.text}
+          style={{
+            fontSize: 13,
+            color: COLORS.GRAY_D,
+            overflowWrap: "anywhere",
+          }}
+        />
+      </div>
+    </section>
+  );
+}
+
 export function AttachedSteerStatusList({
   attachedSteers,
 }: {
@@ -118,59 +184,7 @@ export function AttachedSteerStatusList({
       }}
     >
       {steerItems.map((steer) => {
-        const status = renderSteerStatus(steer.state);
-        return (
-          <div
-            key={steer.messageId}
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 8,
-              flexWrap: "wrap",
-              padding: "6px 10px",
-              borderRadius: 8,
-              background: status.background,
-              border: `1px solid ${status.borderColor}`,
-            }}
-          >
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "2px 8px",
-                borderRadius: 999,
-                background: status.pillBackground,
-                color: status.pillColor,
-                fontSize: 12,
-                fontWeight: 600,
-                lineHeight: 1.2,
-              }}
-            >
-              {steer.state === "sending" ? (
-                <LoadingOutlined spin style={{ fontSize: 12 }} />
-              ) : null}
-              {status.label}
-            </span>
-            <div
-              style={{
-                fontSize: 12,
-                color: COLORS.GRAY_D,
-                flex: "1 1 220px",
-                minWidth: 0,
-              }}
-            >
-              <StaticMarkdown
-                value={steer.text}
-                style={{
-                  fontSize: 12,
-                  color: COLORS.GRAY_D,
-                  overflowWrap: "anywhere",
-                }}
-              />
-            </div>
-          </div>
-        );
+        return <SteerGuidanceCard key={steer.messageId} steer={steer} />;
       })}
     </div>
   );
@@ -257,6 +271,8 @@ interface AgentMessageStatusProps {
   interruptRequested?: boolean;
   onInterrupt?: () => void;
   activityLiveStatus?: CodexLiveLogStatus;
+  activeDescendantThreadIds?: readonly string[];
+  backgroundTerminalProcesses?: number;
 }
 
 interface AgentActivityChipProps {
@@ -268,6 +284,7 @@ interface AgentActivityChipProps {
   onOpen: () => void;
   style?: CSSProperties;
   liveStatus?: CodexLiveLogStatus;
+  activeSubagents?: number;
 }
 
 export function AgentActivityChip({
@@ -279,6 +296,7 @@ export function AgentActivityChip({
   onOpen,
   style,
   liveStatus = "idle",
+  activeSubagents = 0,
 }: AgentActivityChipProps) {
   const runStartMs = resolveLiveRunStartMs({ startedAtMs, date });
   const lastActivityInfo = useMemo(
@@ -389,6 +407,11 @@ export function AgentActivityChip({
           ? `Running ${durationLabel}`
           : `Worked for ${durationLabel}`}
       </span>
+      {activeSubagents > 0 ? (
+        <span style={{ color: COLORS.BRWN, fontSize: 12, fontWeight: 600 }}>
+          · {activeSubagents} subagent{activeSubagents === 1 ? "" : "s"} working
+        </span>
+      ) : null}
       {generating && lastActivityInfo.label ? (
         <Tooltip
           title={
@@ -470,6 +493,8 @@ export function AgentMessageStatus({
   interruptRequested = false,
   onInterrupt,
   activityLiveStatus,
+  activeDescendantThreadIds,
+  backgroundTerminalProcesses = 0,
 }: AgentMessageStatusProps) {
   const [showDrawer, setShowDrawer] = useState(false);
   const [activitySize, setActivitySize0] = useState<number>(
@@ -598,6 +623,25 @@ export function AgentMessageStatus({
     onDrawerOpenChange?.(showDrawer);
   }, [onDrawerOpenChange, showDrawer]);
 
+  const effectiveLogEvents = useMemo(
+    () =>
+      reconcileAvailableSubagentEvents(
+        logEvents,
+        activeDescendantThreadIds ?? (generating === false ? [] : undefined),
+      ),
+    [activeDescendantThreadIds, generating, logEvents],
+  );
+  const activeSubagents = summarizeSubagentEvents(
+    effectiveLogEvents ?? [],
+  ).active;
+  const backgroundCommands = Math.max(
+    0,
+    Number.isFinite(backgroundTerminalProcesses)
+      ? Math.floor(backgroundTerminalProcesses)
+      : 0,
+  );
+  const outstandingWork = activeSubagents + backgroundCommands;
+
   if (!show) return null;
 
   const openActivity = () => setShowDrawer(true);
@@ -621,15 +665,20 @@ export function AgentMessageStatus({
           date={date}
           onOpen={openActivity}
           liveStatus={activityLiveStatus}
+          activeSubagents={activeSubagents}
         />
-        {generating && onInterrupt ? (
+        {(generating || outstandingWork > 0) && onInterrupt ? (
           <Button
             size="small"
             disabled={interruptRequested}
             loading={interruptRequested}
             onClick={onInterrupt}
           >
-            {interruptRequested ? "Interrupting..." : "Interrupt"}
+            {interruptRequested
+              ? "Stopping..."
+              : outstandingWork > 0
+                ? "Stop all"
+                : "Interrupt"}
           </Button>
         ) : null}
         {generating && onNotifyOnTurnFinishChange ? (
@@ -648,6 +697,26 @@ export function AgentMessageStatus({
           </Tooltip>
         ) : null}
       </div>
+      {!generating && outstandingWork > 0 ? (
+        <div
+          role="status"
+          style={{
+            marginBottom: 8,
+            color: COLORS.ORANGE_WARN,
+            fontWeight: 600,
+          }}
+        >
+          Manager finished ·{" "}
+          {activeSubagents > 0
+            ? `${activeSubagents} subagent${activeSubagents === 1 ? " is" : "s are"} still running`
+            : ""}
+          {activeSubagents > 0 && backgroundCommands > 0 ? " · " : ""}
+          {backgroundCommands > 0
+            ? `${backgroundCommands} background command${backgroundCommands === 1 ? " is" : "s are"} still running`
+            : ""}{" "}
+          · AI usage may continue
+        </div>
+      ) : null}
       <AttachedSteerStatusList attachedSteers={attachedSteers} />
 
       <Drawer
@@ -700,7 +769,7 @@ export function AgentMessageStatus({
             liveLogStream={logRefs.liveStream}
             logProjectId={project_id}
             logEnabled={showDrawer}
-            events={logEvents}
+            events={effectiveLogEvents}
             activityContext={activityContext}
             onJumpToBottom={handleJumpToBottom}
             jumpText={jumpText}

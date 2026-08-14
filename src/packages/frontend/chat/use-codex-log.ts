@@ -140,7 +140,7 @@ function normalizeLiveStreamPayload(
   return normalizeIncomingLogPayload(payload).map(normalizeLiveStreamEvent);
 }
 
-function getLatestEventTimeFromEvents(
+export function getLatestEventTimeFromEvents(
   events: Array<{ time?: number } | null | undefined>,
 ): number | undefined {
   let latest: number | undefined;

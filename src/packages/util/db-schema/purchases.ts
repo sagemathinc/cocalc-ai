@@ -168,6 +168,7 @@ export interface DedicatedHostPricingConfiguration {
   shared_disk_gb?: number | null;
   shared_disk_type?: string | null;
   storage_mode?: string | null;
+  operating_system?: "linux" | "windows" | null;
 }
 
 export interface DedicatedHostPricingSnapshot {

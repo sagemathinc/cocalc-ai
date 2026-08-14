@@ -68,6 +68,7 @@ import {
   isDevGcpReverseTunnelEnabled,
   resolveGcpInternalConatUrl,
   resolveGcpManagedHostInternalUrl,
+  resolveProjectHostRouteMode,
   shouldUseGcpInternalConatUrl,
 } from "./internal-network";
 import { getHostSshPublicKeys } from "./ssh-key";
@@ -1001,6 +1002,7 @@ export async function buildBootstrapScripts(
     project_hosts_software_base_url,
     project_hosts_bootstrap_channel,
     project_hosts_bootstrap_version,
+    project_hosts_route_mode,
     google_cloud_service_account_json,
   } = serverSettings;
   const forcedSoftwareBaseUrl =
@@ -1231,23 +1233,29 @@ export async function buildBootstrapScripts(
       : row.public_url
         ? row.public_url.replace(/^http:\/\//, "https://")
         : `https://${publicIp || onPremUrlHost}`;
+  const projectHostRouteMode = resolveProjectHostRouteMode(
+    project_hosts_route_mode,
+  );
   const internalUrl = useOnPremSettings
     ? `http://${onPremUrlHost}:${port}`
-    : providerId === "gcp"
-      ? (resolveGcpManagedHostInternalUrl({
-          runtime: metadata.runtime,
-          tunnelEnabled,
-          fallbackProjectId: gcpProjectId,
-        }) ??
-        row.internal_url ??
-        (tunnel?.hostname
+    : projectHostRouteMode === "public"
+      ? publicUrl
+      : providerId === "gcp"
+        ? (resolveGcpManagedHostInternalUrl({
+            runtime: metadata.runtime,
+            tunnelEnabled,
+            fallbackProjectId: gcpProjectId,
+            routeMode: projectHostRouteMode,
+          }) ??
+          row.internal_url ??
+          (tunnel?.hostname
+            ? `https://${tunnel.hostname}`
+            : `https://${publicIp || onPremUrlHost}`))
+        : tunnel?.hostname
           ? `https://${tunnel.hostname}`
-          : `https://${publicIp || onPremUrlHost}`))
-      : tunnel?.hostname
-        ? `https://${tunnel.hostname}`
-        : row.internal_url
-          ? row.internal_url.replace(/^http:\/\//, "https://")
-          : `https://${publicIp || onPremUrlHost}`;
+          : row.internal_url
+            ? row.internal_url.replace(/^http:\/\//, "https://")
+            : `https://${publicIp || onPremUrlHost}`;
   const sshServer =
     providerId === "gcp" && publicIp
       ? `${publicIp}:${sshPort}`

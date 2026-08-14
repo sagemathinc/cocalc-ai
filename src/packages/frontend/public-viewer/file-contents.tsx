@@ -66,7 +66,9 @@ export default function PublicViewerFileContents({
   });
 
   if (isImage(ext)) {
-    return <img src={rawUrl} style={{ maxWidth: "100%", ...style }} />;
+    return (
+      <img alt={path} src={rawUrl} style={{ maxWidth: "100%", ...style }} />
+    );
   }
 
   if (isVideo(ext)) {

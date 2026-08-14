@@ -197,6 +197,11 @@ import { List, Map, fromJS, Set as iSet } from "immutable";
 import { debounce } from "lodash";
 import { set_account_table } from "../../account/util";
 import { default_opts } from "../codemirror/cm-options";
+import {
+  hasCustomLayout,
+  loadCustomLayout,
+  saveCustomLayout,
+} from "../frame-tree/frame-editor-settings";
 import * as tree_ops from "../frame-tree/tree-ops";
 import {
   ConnectionStatus,
@@ -292,6 +297,8 @@ export interface CodeEditorState {
   visible: boolean;
   switch_to_files: string[];
   pdf_dark_mode_disabled?: { [id: string]: boolean };
+  // whether this account has a saved custom layout for this file's type
+  has_custom_layout?: boolean;
 }
 
 export interface BaseEditorInitOptions {
@@ -366,6 +373,9 @@ export class BaseEditorActions<
   private _cm_selections: any;
   private _update_misspelled_words_last_hash: any;
   private _active_id_history: string[] = [];
+  // Prevent a delayed account-layout lookup from overwriting frame changes
+  // made after a fresh editor became interactive.
+  private _frame_tree_revision: number = 0;
   private _spellcheck_is_supported: boolean = false;
   private optimisticFastOpenEnabled: boolean = isFastOpenSyncstringEnabled();
   private optimisticFastOpenToken: number = 0;
@@ -1527,7 +1537,13 @@ export class BaseEditorActions<
     let frame_tree = local_view_state.get("frame_tree");
     if (frame_tree == null) {
       frame_tree = this._default_frame_tree();
+      // Nothing was stored locally for this file, so this is a fresh open:
+      // apply the user's saved layout for this file type, if there is one.
+      this._apply_custom_layout_if_available();
     } else {
+      // There is a local layout, so leave it alone -- but still find out
+      // whether a saved layout exists, so the menu entry can be enabled.
+      this._check_custom_layout_exists();
       frame_tree = tree_ops.assign_ids(frame_tree);
       frame_tree = tree_ops.ensure_ids_are_unique(frame_tree);
       frame_tree = tree_ops.migrateToNary(frame_tree);
@@ -1738,6 +1754,7 @@ export class BaseEditorActions<
     }
     const t1 = f(t0, ...args);
     if (t1 !== t0) {
+      this._frame_tree_revision += 1;
       if (op === "delete_node") {
         if (!tree_ops.is_leaf_id(t1, local.get("full_id"))) {
           local = local.delete("full_id");
@@ -1803,6 +1820,7 @@ export class BaseEditorActions<
 
   // Common logic to apply a processed frame tree and update state
   private _apply_frame_tree(tree: Map<string, any>): void {
+    this._frame_tree_revision += 1;
     let local = this.store.get("local_view_state");
     local = local.set("frame_tree", tree);
     // Also make some id active, since existing active_id is no longer valid.
@@ -1829,6 +1847,52 @@ export class BaseEditorActions<
   // Replace the entire frame tree with a custom tree structure
   replace_frame_tree(customTree: FrameTree): void {
     this._apply_frame_tree(this._process_frame_tree(customTree));
+  }
+
+  // Save the current frame layout as this account's layout for this file type.
+  async save_custom_layout(): Promise<void> {
+    const frameTree = this.store
+      .get("local_view_state")
+      ?.get("frame_tree")
+      ?.toJS();
+    if (frameTree == null) return;
+    await saveCustomLayout(this.path, frameTree);
+    this.setState({ has_custom_layout: true } as any);
+  }
+
+  // Apply this account's saved layout for this file type to the current file.
+  async load_custom_layout(): Promise<void> {
+    const layout = await loadCustomLayout(this.path);
+    if (layout == null) return;
+    this.replace_frame_tree(layout);
+  }
+
+  // Record whether a saved layout exists, so the menu can enable or gray out
+  // the entry for applying it.
+  private async _check_custom_layout_exists(): Promise<void> {
+    try {
+      const has = await hasCustomLayout(this.path);
+      if (this._state === "closed") return;
+      this.setState({ has_custom_layout: has } as any);
+    } catch {
+      // ignore -- this only controls whether a menu entry is enabled
+    }
+  }
+
+  // Called when a file is opened with no locally stored layout: apply the
+  // user's saved layout for this file type, if any.
+  private async _apply_custom_layout_if_available(): Promise<void> {
+    const frameTreeRevision = this._frame_tree_revision;
+    try {
+      const layout = await loadCustomLayout(this.path);
+      if (this._state === "closed") return;
+      this.setState({ has_custom_layout: layout != null } as any);
+      if (layout != null && this._frame_tree_revision === frameTreeRevision) {
+        this.replace_frame_tree(layout);
+      }
+    } catch {
+      // silently ignore -- fall back to the built-in default layout
+    }
   }
 
   set_frame_tree_leafs(obj): void {

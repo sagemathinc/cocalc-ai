@@ -9,7 +9,14 @@ import {
 } from "@testing-library/react";
 
 import { showPreferences } from "@cocalc/frontend/cookie-consent";
-import { PublicCard, PublicGrid, PublicPage, PublicSection } from "./shell";
+import {
+  PUBLIC_INTERACTIVE_CARD_CLASS,
+  PUBLIC_PAGE_CSS,
+  PublicCard,
+  PublicGrid,
+  PublicPage,
+  PublicSection,
+} from "./shell";
 
 jest.mock("@cocalc/frontend/cookie-consent", () => ({
   showPreferences: jest.fn(),
@@ -253,6 +260,16 @@ describe("PublicCard", () => {
     );
 
     expect(screen.getByRole("link", { name: /CoCalc Plus/i })).not.toBeNull();
+  });
+
+  it("defines the shared interactive-card hover and focus treatment", () => {
+    expect(PUBLIC_PAGE_CSS).toContain(
+      `.${PUBLIC_INTERACTIVE_CARD_CLASS}:hover`,
+    );
+    expect(PUBLIC_PAGE_CSS).toContain("transform: translateY(-1px)");
+    expect(PUBLIC_PAGE_CSS).toContain(
+      `.${PUBLIC_INTERACTIVE_CARD_CLASS}:focus-visible`,
+    );
   });
 });
 

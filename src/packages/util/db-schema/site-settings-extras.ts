@@ -365,6 +365,7 @@ export type SiteSettingsExtrasKeys =
   | "project_hosts_ssh_public_keys"
   | "google_cloud_service_account_json"
   | "project_hosts_google_prefix"
+  | "project_hosts_route_mode"
   | "project_hosts_software_base_url"
   | "project_hosts_runtime_retention_policy"
   | "project_hosts_bootstrap_channel"
@@ -1773,7 +1774,7 @@ export const EXTRAS: SettingsExtras = {
   compute_vm_max_boot_disk_gb: {
     name: "Managed Compute VMs: Maximum Boot Disk GB",
     desc: "Largest persistent root disk allowed for a VM lease.",
-    default: "200",
+    default: "10000",
     to_val: to_int,
     valid: only_pos_int,
     tags: ["Cloud"],
@@ -1782,7 +1783,7 @@ export const EXTRAS: SettingsExtras = {
   },
   compute_vm_max_volumes_per_account: {
     name: "Managed Compute VMs: Maximum Volumes Per Account",
-    desc: "Maximum undeleted persistent /work volumes owned by one account.",
+    desc: "Maximum undeleted persistent home volumes owned by one account.",
     default: "10",
     to_val: to_int,
     valid: only_pos_int,
@@ -1792,7 +1793,7 @@ export const EXTRAS: SettingsExtras = {
   },
   compute_vm_unfunded_volume_delete_days: {
     name: "Managed Compute VMs: Unfunded Volume Deletion Days",
-    desc: "Delete detached /work volumes that remain unfunded for this many days. Admin alerts begin immediately.",
+    desc: "Delete detached persistent home volumes that remain unfunded for this many days. Admin alerts begin immediately.",
     default: "30",
     to_val: toFloat,
     valid: onlyPosFloat,
@@ -1802,7 +1803,7 @@ export const EXTRAS: SettingsExtras = {
   },
   compute_vm_unfunded_volume_max_exposure_usd: {
     name: "Managed Compute VMs: Unfunded Volume Maximum Exposure USD",
-    desc: "Delete a detached unfunded /work volume early when its estimated retained-storage exposure reaches this amount.",
+    desc: "Delete a detached unfunded persistent home volume early when its estimated retained-storage exposure reaches this amount.",
     default: "100",
     to_val: toFloat,
     valid: onlyPosFloat,
@@ -1812,7 +1813,7 @@ export const EXTRAS: SettingsExtras = {
   },
   compute_vm_max_volume_gb: {
     name: "Managed Compute VMs: Maximum Volume GB",
-    desc: "Largest persistent /work volume allowed. Volumes are retained and billed independently from VMs.",
+    desc: "Largest persistent home volume allowed. Volumes are retained and billed independently from VMs.",
     default: "10000",
     to_val: to_int,
     valid: only_pos_int,
@@ -1943,6 +1944,21 @@ export const EXTRAS: SettingsExtras = {
     valid: () => true,
     group: "Compute / Project Hosts",
     subgroup: "Google Cloud",
+  },
+  project_hosts_route_mode: {
+    name: "Project Hosts: Hub Route Mode",
+    desc: "Controls how hubs connect to managed project hosts. `auto` uses private GCP routing when available and public routing for other providers. `internal` explicitly selects private GCP routing. `public` routes through each host's public Cloudflare/DNS URL, which is required when the hub and project hosts are in separate cloud projects or VPCs.",
+    default: "auto",
+    to_val: to_trimmed_str,
+    valid: ["auto", "internal", "public"],
+    valid_labels: {
+      auto: "Automatic (private GCP routing)",
+      internal: "Internal/private network",
+      public: "Public host URL",
+    },
+    tags: ["Project Hosts", "Cloud"],
+    group: "Compute / Project Hosts",
+    subgroup: "Networking",
   },
   project_hosts_software_base_url: {
     name: "Project Hosts: Software Base URL",

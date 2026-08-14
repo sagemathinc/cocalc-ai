@@ -64,7 +64,7 @@ export function open_new_tab(
         <span>
           Either enable popups for this website or{" "}
           <a href={url} target="_blank">
-            click here.
+            open the requested page directly.
           </a>
         </span>
       );

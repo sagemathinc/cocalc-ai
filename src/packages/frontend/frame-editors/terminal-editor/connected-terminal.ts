@@ -64,9 +64,8 @@ import { asyncDebounce, asyncThrottle } from "@cocalc/util/async-utils";
 import { path_split } from "@cocalc/util/misc";
 import { join } from "path";
 import { randomId } from "@cocalc/conat/names";
+import { ensureJqueryPluginsInitialized } from "@cocalc/frontend/jquery-plugins/ensure-init";
 //import { argsJoin } from "@cocalc/util/args";
-
-declare const $: any;
 
 const SCROLLBACK = 5000;
 const MAX_HISTORY_LENGTH = 100 * SCROLLBACK;
@@ -2402,9 +2401,17 @@ export function handleLink(_: MouseEvent, uri: string): void {
   // This horrendous code is because process-links is so "badly"
   // written, that its logic can only be used via jQuery...
   // and I don't want to rewrite it right now.
-  const e = $(`<div><a href='${uri}'>x</a></div>`);
-  e.process_smc_links();
-  e.find("a").click();
+  void ensureJqueryPluginsInitialized()
+    .then(() => {
+      const jquery = (window as any).jQuery;
+      if (jquery == null) {
+        throw Error("jQuery compatibility layer did not initialize");
+      }
+      const e = jquery(`<div><a href='${uri}'>x</a></div>`);
+      e.process_smc_links();
+      e.find("a").click();
+    })
+    .catch(() => window.location.assign(uri));
 }
 
 function historyFile(path: string): string | undefined {

@@ -5,6 +5,10 @@ interface User {
   host_id?: string;
   auth_actor?: "account" | "agent";
   auth_scopes?: string[];
+  auth_project_id?: string;
+  auth_token_fingerprint?: string;
+  auth_iat_s?: number;
+  auth_exp_s?: number;
   error?: string;
 }
 

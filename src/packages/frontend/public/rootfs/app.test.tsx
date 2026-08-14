@@ -35,21 +35,38 @@ function image(
 }
 
 describe("public RootFS catalog", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   it("features the latest image and reveals direct links to previous versions", () => {
+    const v10 = image("1.0");
+    const v15 = image("1.5", { supersedes_image_id: v10.id });
+    const v20 = image("2.0", { supersedes_image_id: v15.id });
     jest.mocked(useRootfsImages).mockReturnValue({
       error: undefined,
-      images: [image("1.0"), image("2.0"), image("1.5")],
+      images: [v10, v20, v15],
       loading: false,
     });
 
-    render(
+    const { container } = render(
       <PublicRootfsApp
         config={{ site_name: "CoCalc" }}
         initialRoute={{ view: "index" }}
       />,
     );
 
+    expect(
+      screen.getByText(
+        "Discover project runtime images that include ready-to-use software, examples, and files. Choose an image to create a matching project.",
+      ),
+    ).toHaveStyle({ width: "100%" });
     expect(screen.getByText("Latest")).not.toBeNull();
+    expect(
+      container.querySelector(
+        ".ant-card.cocalc-public-interactive-card.ant-card-hoverable",
+      ),
+    ).not.toBeNull();
     expect(screen.getByText("Version 2.0")).not.toBeNull();
     expect(screen.queryByText("Version 1.5")).toBeNull();
 
@@ -71,9 +88,11 @@ describe("public RootFS catalog", () => {
   });
 
   it("uses singular copy for one previous version", () => {
+    const v10 = image("1.0");
+    const v20 = image("2.0", { supersedes_image_id: v10.id });
     jest.mocked(useRootfsImages).mockReturnValue({
       error: undefined,
-      images: [image("1.0"), image("2.0")],
+      images: [v10, v20],
       loading: false,
     });
 
@@ -108,7 +127,7 @@ describe("public RootFS catalog", () => {
     render(<PublicRootfsApp initialRoute={{ view: "index" }} />);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Filter by #python (1 image)" }),
+      screen.getByRole("button", { name: "Filter by #python (1 family)" }),
     );
     expect(screen.getByText("Filtered by #python")).not.toBeNull();
     expect(screen.getByText("SageMath")).not.toBeNull();
@@ -152,26 +171,48 @@ describe("public RootFS catalog", () => {
     render(<PublicRootfsApp initialRoute={{ view: "index" }} />);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Filter by #python (2 images)" }),
+      screen.getByRole("button", { name: "Filter by #python (2 families)" }),
     );
     expect(screen.getByText("SageMath")).not.toBeNull();
     expect(screen.getByText("Python")).not.toBeNull();
     expect(
-      screen.getByRole("button", { name: "Filter by #statistics (1 image)" }),
-    ).toBeDisabled();
+      screen.getByRole("button", {
+        name: "Filter by #statistics (1 family)",
+      }),
+    ).toHaveAttribute("aria-disabled", "true");
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Filter by #math (1 image)" }),
+      screen.getByRole("button", { name: "Filter by #math (1 family)" }),
     );
     expect(screen.getByText("Filtered by #python + #math")).not.toBeNull();
     expect(screen.getByText("SageMath")).not.toBeNull();
     expect(screen.queryByText("Python")).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Filter by #data-science (1 image)" }),
-    ).toBeDisabled();
+      screen.getByRole("button", {
+        name: "Filter by #data-science (1 family)",
+      }),
+    ).toHaveAttribute("aria-disabled", "true");
     expect(
-      screen.getByRole("button", { name: "Filter by #python (2 images)" }),
-    ).not.toBeDisabled();
+      screen.getByRole("button", { name: "Filter by #python (2 families)" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("filters a family by tags carried only by an older release", () => {
+    const previous = image("1.0", { tags: ["gpu"] });
+    const latest = image("2.0", { tags: [] });
+    jest.mocked(useRootfsImages).mockReturnValue({
+      error: undefined,
+      images: [previous, latest],
+      loading: false,
+    });
+
+    render(<PublicRootfsApp initialRoute={{ view: "index" }} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Filter by #gpu (1 family)" }),
+    );
+    expect(screen.getByText("Minimal Jupyter and LaTeX")).not.toBeNull();
+    expect(screen.getByText("Filtered by #gpu")).not.toBeNull();
   });
 
   it("warns on an older detail page and links to the latest release", () => {
@@ -204,5 +245,13 @@ describe("public RootFS catalog", () => {
     expect(
       screen.getByRole("link", { name: "View latest version" }),
     ).toHaveAttribute("href", "/rootfs/python-3-14");
+    expect(useRootfsImages).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ allPages: true }),
+    );
+    expect(useRootfsImages).toHaveBeenCalledWith(
+      ["/rootfs/catalog.json"],
+      expect.objectContaining({ lineageImageId: previous.id }),
+    );
   });
 });

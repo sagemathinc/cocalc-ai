@@ -1,4 +1,4 @@
-import { buildHostSpec } from "./host-util";
+import { buildHostSpec, getGcpAcceleratorImage } from "./host-util";
 
 const loadGcpImagesMock = jest.fn();
 const loadNebiusImagesMock = jest.fn();
@@ -202,5 +202,31 @@ describe("buildHostSpec", () => {
     expect(spec.metadata?.source_image_project).toBe(
       "ubuntu-os-accelerator-images",
     );
+  });
+
+  it("can pin managed compute accelerator images to Ubuntu 24.04", async () => {
+    loadGcpImagesMock.mockResolvedValue([
+      {
+        family: "ubuntu-accelerator-2404-amd64-with-nvidia-595",
+        project: "ubuntu-os-accelerator-images",
+        architecture: "X86_64",
+        gpuReady: true,
+        creationTimestamp: "2026-07-01T00:00:00.000Z",
+      },
+      {
+        family: "ubuntu-accelerator-2604-amd64-with-nvidia-595",
+        project: "ubuntu-os-accelerator-images",
+        architecture: "X86_64",
+        gpuReady: true,
+        creationTimestamp: "2026-08-01T00:00:00.000Z",
+      },
+    ]);
+
+    await expect(
+      getGcpAcceleratorImage("g2-standard-4", { ubuntuVersion: 2404 }),
+    ).resolves.toEqual({
+      family: "ubuntu-accelerator-2404-amd64-with-nvidia-595",
+      project: "ubuntu-os-accelerator-images",
+    });
   });
 });

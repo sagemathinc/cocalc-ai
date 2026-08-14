@@ -86,7 +86,13 @@ function KernelLogo({ kernel, size, project_id, style, client }) {
   if (error || !src) {
     return <FallbackLogo kernel={kernel} size={size} title={error} />;
   }
-  return <img src={src} style={{ width: size, height: size, ...style }} />;
+  return (
+    <img
+      alt={`${kernel ?? "Jupyter"} kernel logo`}
+      src={src}
+      style={{ width: size, height: size, ...style }}
+    />
+  );
 }
 
 interface Options {

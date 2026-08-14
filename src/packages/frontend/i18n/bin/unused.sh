@@ -1,6 +1,8 @@
 #!/bin/bash
 # Check which keys are not used: i.e. which are in the translated files, but not in the extracted strings.
 
+. ./i18n/bin/common.sh
+
 # Extract keys from the first JSON file and sort them.
 # LC_ALL=C is essential: locale collation ignores punctuation, which silently
 # desyncs comm on keys mixing "-", "_" and "." and yields false positives.
@@ -26,22 +28,26 @@ if [ -z "$1" ]; then
 fi
 
 if [ "$1" == "delete" ]; then
-    # if $SIMPLELOCALIZE_KEY is not set, throw an error
-    if [ -z "${SIMPLELOCALIZE_KEY}" ]; then
-        echo "Error: SIMPLELOCALIZE_KEY is not set or is empty. Please provide a valid API key." >&2
-        exit 1
-    fi
+    check_api_key
 
     echo "Deleting unused keys from SimpleLocalize..."
+    deleted=0
+    failed=0
     for key in $unused; do
-        echo
-        echo "Deleting '$key':"
-        curl \
-            --location \
-            --request DELETE "https://api.simplelocalize.io/api/v1/translation-keys?key=$key" \
-            --header "X-SimpleLocalize-Token: $SIMPLELOCALIZE_KEY"
+        if simplelocalize_api DELETE \
+            "https://api.simplelocalize.io/api/v1/translation-keys?key=$key" >/dev/null; then
+            echo "  deleted '$key'"
+            deleted=$((deleted + 1))
+        else
+            echo "  FAILED  '$key'" >&2
+            failed=$((failed + 1))
+        fi
     done
+
     echo
-    echo
-    echo "Now you have to download  and compile again..."
+    if [ "$failed" -gt 0 ]; then
+        echo "Deleted $deleted key(s), but $failed failed -- see the errors above." >&2
+        exit 1
+    fi
+    echo "Deleted $deleted key(s). Now you have to download and compile again..."
 fi

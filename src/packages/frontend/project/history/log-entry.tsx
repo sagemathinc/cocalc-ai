@@ -646,7 +646,7 @@ export const LogEntry: React.FC<Props> = React.memo(
           result.push(
             <span key={i}>
               set project image to{" "}
-              <img src={value} width="16px" height="16px" />
+              <img alt="" src={value} width="16px" height="16px" />
             </span>,
           );
           continue;

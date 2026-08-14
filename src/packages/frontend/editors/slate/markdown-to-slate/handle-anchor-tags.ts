@@ -32,7 +32,13 @@ import { getAttrs } from "./util";
 
 // handling open anchor tag
 register(({ token, state }) => {
-  if (state.anchor != null) return; // already handling an anchor tag
+  if (
+    state.anchor != null ||
+    state.details != null ||
+    state.close_type != null
+  ) {
+    return;
+  }
   if (
     token.type != "html_inline" ||
     !token.content.toLowerCase().trim().startsWith("<a")

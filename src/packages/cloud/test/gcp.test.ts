@@ -322,6 +322,10 @@ describe("GcpProvider", () => {
     const spec = buildSpec({
       metadata: {
         bootstrap_url: "https://example.com/bootstrap.sh",
+        instance_metadata: {
+          "enable-windows-ssh": "TRUE",
+          "windows-startup-script-ps1": "Write-Output ready",
+        },
         subnetwork_uri:
           "projects/compute-proj/regions/us-west1/subnetworks/hostile-guests",
       },
@@ -351,6 +355,11 @@ describe("GcpProvider", () => {
         (item: any) => item.key === "startup-script",
       )?.value,
     ).toContain("bootstrap.sh");
+    expect(
+      insertArgs.instanceResource.metadata.items.find(
+        (item: any) => item.key === "windows-startup-script-ps1",
+      )?.value,
+    ).toBe("Write-Output ready");
 
     expect(runtime.public_ip).toBe("203.0.113.10");
     expect(runtime.private_ip).toBe("10.180.0.16");
@@ -384,6 +393,32 @@ describe("GcpProvider", () => {
     expect(insertArgs.instanceResource.scheduling?.onHostMaintenance).toBe(
       "TERMINATE",
     );
+  });
+
+  it("uses the GPUs integrated into a G2 machine without reattaching them", async () => {
+    insertMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-g2", status: "DONE" } },
+    ]);
+    waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
+    getMock.mockResolvedValueOnce([{ networkInterfaces: [] }]);
+    diskGetMock.mockRejectedValueOnce({ code: 404 });
+
+    const provider = new GcpProvider();
+    await provider.createHost(
+      buildSpec({
+        gpu: { type: "nvidia-l4", count: 1 },
+        metadata: { machine_type: "g2-standard-4" },
+      }),
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+    );
+
+    const instance = insertMock.mock.calls[0][0].instanceResource;
+    expect(instance.guestAccelerators).toEqual([]);
+    expect(instance.scheduling?.onHostMaintenance).toBe("TERMINATE");
   });
 
   it("creates a host with a shared scratch disk", async () => {
@@ -1122,6 +1157,8 @@ describe("GcpProvider", () => {
     getMock.mockResolvedValueOnce([
       {
         name: "compute-vm",
+        machineType: "zones/us-central1-a/machineTypes/e2-standard-4",
+        status: "RUNNING",
         canIpForward: false,
         deletionProtection: false,
         serviceAccounts: [],
@@ -1162,7 +1199,12 @@ describe("GcpProvider", () => {
       subnetwork:
         "projects/compute-prod/regions/us-central1/subnetworks/hostile-guests",
       network_tier: "STANDARD",
+      external_access_config_count: 1,
       external_ipv6: false,
+    });
+    expect(observed?.metadata).toMatchObject({
+      machine_type: "e2-standard-4",
+      provider_status: "RUNNING",
     });
   });
 

@@ -32,6 +32,7 @@ import {
   hostAccessRoleCan,
 } from "@cocalc/server/project-host/access";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
+import { createHash } from "node:crypto";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { isAcpSubject, parseAcpSubject } from "@cocalc/conat/ai/acp/subjects";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -116,6 +117,8 @@ type CoCalcUserWithAgent = CoCalcUser & {
   auth_scopes?: string[];
   auth_project_id?: string;
   auth_iat_s?: number;
+  auth_exp_s?: number;
+  auth_token_fingerprint?: string;
 };
 
 type CoCalcUserWithApiKey = CoCalcUser & Partial<ApiKeyPrincipal>;
@@ -173,6 +176,10 @@ function verifyAgentScopedProjectHostBearer(
       auth_scopes: [...DEFAULT_AGENT_SCOPES],
       auth_project_id: readAgentProjectId(socket),
       auth_iat_s: claims.iat,
+      auth_exp_s: claims.exp,
+      auth_token_fingerprint: createHash("sha256")
+        .update(bearerToken)
+        .digest("hex"),
     };
   } catch {
     return;
@@ -457,6 +464,28 @@ export async function isAllowed({
   }
   const agentUser = user as CoCalcUserWithAgent;
   if (agentUser.auth_actor === "agent") {
+    const agentApiSubject = [
+      "hub",
+      "agent",
+      agentUser.account_id,
+      agentUser.auth_project_id,
+      agentUser.auth_token_fingerprint,
+      agentUser.auth_iat_s,
+      agentUser.auth_exp_s,
+      "api",
+    ].join(".");
+    if (subject === agentApiSubject) {
+      return (
+        type === "pub" &&
+        !!agentUser.auth_project_id &&
+        !!agentUser.auth_token_fingerprint &&
+        agentUser.auth_scopes?.includes("project_session") === true &&
+        (await hasProjectCollaboratorAccessAllowRemote({
+          account_id: getCoCalcUserId(agentUser),
+          project_id: agentUser.auth_project_id,
+        }))
+      );
+    }
     if (isAcpSubject(subject)) {
       const parsed = parseAcpSubject(subject);
       const userId = getCoCalcUserId(agentUser);

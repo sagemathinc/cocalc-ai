@@ -41,7 +41,10 @@ export function assertComputeVmSecurity(
       `required network tag '${config.gcp_network_tag}' is missing`,
     );
   }
-  if (`${observed.network_tier ?? ""}`.toUpperCase() !== "STANDARD") {
+  if (
+    observed.external_access_config_count !== 0 &&
+    `${observed.network_tier ?? ""}`.toUpperCase() !== "STANDARD"
+  ) {
     violations.push("external interface is not Standard Tier");
   }
   if (observed.external_ipv6 !== false) {

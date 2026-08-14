@@ -68,6 +68,13 @@ export type HostDnsObservation = {
   }>;
 };
 
+export type ManagedVmDnsRecord = {
+  record_id: string;
+  name: string;
+  content: string;
+  proxied: boolean;
+};
+
 export type CloudflareZoneSslMode = {
   value?: string;
   editable?: boolean;
@@ -358,6 +365,56 @@ export async function ensureProxiedAddressDns(opts: {
   ipAddress: string;
   record_id?: string;
 }): Promise<{ name: string; record_id: string }> {
+  return await ensureAddressDns(opts, true);
+}
+
+export async function ensureUnproxiedAddressDns(opts: {
+  name: string;
+  ipAddress: string;
+  record_id?: string;
+}): Promise<{ name: string; record_id: string }> {
+  return await ensureAddressDns(opts, false);
+}
+
+export async function listManagedVmDnsRecords(): Promise<ManagedVmDnsRecord[]> {
+  const config = await getConfig();
+  if (!config.token || !config.dns) return [];
+  const { zoneId } = await getZoneForHostname(config.token, config.dns);
+  const suffix = `.${config.dns}`;
+  const records: ManagedVmDnsRecord[] = [];
+  const perPage = 5000;
+  for (let page = 1; ; page += 1) {
+    const qs = new URLSearchParams({
+      type: "A",
+      page: `${page}`,
+      per_page: `${perPage}`,
+    });
+    const batch = await cloudflareRequest<DnsRecord[]>(
+      config.token,
+      "GET",
+      `zones/${zoneId}/dns_records?${qs.toString()}`,
+    );
+    for (const record of batch) {
+      const name = `${record.name ?? ""}`.trim().toLowerCase();
+      const label = name.endsWith(suffix) ? name.slice(0, -suffix.length) : "";
+      const record_id = `${record.id ?? ""}`.trim();
+      if (!record_id || !/^vm-[a-f0-9]{32}$/.test(label)) continue;
+      records.push({
+        record_id,
+        name,
+        content: `${record.content ?? ""}`.trim(),
+        proxied: record.proxied === true,
+      });
+    }
+    if (batch.length < perPage) break;
+  }
+  return records;
+}
+
+async function ensureAddressDns(
+  opts: { name: string; ipAddress: string; record_id?: string },
+  proxied: boolean,
+): Promise<{ name: string; record_id: string }> {
   const name = `${opts.name ?? ""}`.trim().toLowerCase();
   if (!name) throw new Error("hostname required for DNS");
   if (!opts.ipAddress) throw new Error("ipAddress required for DNS");
@@ -371,7 +428,7 @@ export async function ensureProxiedAddressDns(opts: {
       content: opts.ipAddress,
       name,
       ttl: TTL,
-      proxied: true,
+      proxied,
     } as const;
     await cloudflareRequest(
       token,
@@ -387,7 +444,7 @@ export async function ensureProxiedAddressDns(opts: {
       name,
       content: opts.ipAddress,
       ttl: TTL,
-      proxied: true,
+      proxied,
     } as const;
     const response = await cloudflareRequest<{ id?: string }>(
       token,
@@ -451,6 +508,22 @@ export async function ensureProxiedAddressDns(opts: {
         }
       }
     }
+  }
+
+  const verified = (await listDnsRecordsByName(token, zoneId, name)).filter(
+    (record) =>
+      ADDRESS_ROUTE_RECORD_TYPES.has(`${record.type ?? ""}`.toUpperCase()),
+  );
+  if (
+    verified.length !== 1 ||
+    verified[0]?.id !== record_id ||
+    `${verified[0]?.type ?? ""}`.toUpperCase() !== "A" ||
+    `${verified[0]?.content ?? ""}`.trim() !== opts.ipAddress ||
+    Boolean(verified[0]?.proxied) !== proxied
+  ) {
+    throw new Error(
+      `cloudflare DNS verification failed for ${name}: expected one ${proxied ? "proxied" : "DNS-only"} A record for ${opts.ipAddress}`,
+    );
   }
 
   return { name, record_id };

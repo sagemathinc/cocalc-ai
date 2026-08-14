@@ -30,6 +30,7 @@ import {
   stripMarkdownSummary,
 } from "@cocalc/frontend/public/metadata-data";
 import {
+  PUBLIC_INTERACTIVE_CARD_CLASS,
   PublicGrid,
   PublicPage,
   PublicSection,
@@ -210,7 +211,11 @@ function RootfsCatalogCard({
   const title = displayTitle(entry);
   const description = displayDescription(entry);
   const hasOlder = olderEntries.length > 0;
-  const tags = publicRootfsTags(entry);
+  const tags = Array.from(
+    new Set(
+      [entry, ...olderEntries].flatMap((version) => publicRootfsTags(version)),
+    ),
+  ).sort((a, b) => a.localeCompare(b));
 
   return (
     <div
@@ -251,7 +256,11 @@ function RootfsCatalogCard({
           ) : null}
         </>
       ) : null}
-      <Card style={{ position: "relative" }}>
+      <Card
+        className={PUBLIC_INTERACTIVE_CARD_CLASS}
+        hoverable
+        style={{ position: "relative" }}
+      >
         <a
           href={rootfsPath(entry)}
           style={{ color: "inherit", display: "block", textDecoration: "none" }}
@@ -405,31 +414,42 @@ function RootfsCatalogCard({
 }
 
 function useSelectedRootfsImage(route: PublicRootfsRoute) {
-  const catalog = useRootfsImages([managedRootfsCatalogUrl()], {
-    allPages: true,
-  });
-  const query =
-    route.view === "slug"
-      ? route.slug
-      : route.view === "image-id"
-        ? route.imageId
-        : undefined;
-  const imageIds = route.view === "image-id" ? [route.imageId] : undefined;
+  const catalog = useRootfsImages(
+    route.view === "index" ? [managedRootfsCatalogUrl()] : [],
+    { allPages: route.view === "index" },
+  );
   const exact = useRootfsImages(
     route.view === "index" ? [] : [managedRootfsCatalogUrl()],
     {
-      imageIds,
       limit: route.view === "index" ? 200 : 20,
-      query,
+      slug: route.view === "slug" ? route.slug : undefined,
+      imageTarget: route.view === "image-id" ? route.imageId : undefined,
+    },
+  );
+  const exactSelected = useMemo(() => {
+    if (route.view === "slug") {
+      return exact.images.find((entry) => entry.slug === route.slug);
+    }
+    if (route.view === "image-id") {
+      return exact.images.find((entry) =>
+        rootfsEntryMatchesImageTarget(entry, route.imageId),
+      );
+    }
+  }, [exact.images, route]);
+  const lineage = useRootfsImages(
+    route.view !== "index" && exactSelected ? [managedRootfsCatalogUrl()] : [],
+    {
+      limit: 200,
+      lineageImageId: exactSelected?.id,
     },
   );
   const images = useMemo(() => {
     if (route.view === "index") return catalog.images;
     const merged = new Map(
-      [...catalog.images, ...exact.images].map((entry) => [entry.id, entry]),
+      [...exact.images, ...lineage.images].map((entry) => [entry.id, entry]),
     );
     return Array.from(merged.values());
-  }, [catalog.images, exact.images, route.view]);
+  }, [catalog.images, exact.images, lineage.images, route.view]);
   const selected = useMemo(() => {
     if (route.view === "slug") {
       return images.find((entry) => entry.slug === route.slug);
@@ -442,7 +462,7 @@ function useSelectedRootfsImage(route: PublicRootfsRoute) {
   }, [images, route]);
   if (route.view === "index") return { ...catalog, selected };
   return {
-    error: exact.error ?? catalog.error,
+    error: exact.error ?? lineage.error,
     images,
     loading: exact.loading && !selected,
     selected,
@@ -690,6 +710,8 @@ function RootfsIndexPage({
   images: RootfsImageEntry[];
   loading: boolean;
 }) {
+  // Filters intentionally remain local UI state. Public filtered views do not
+  // create additional crawlable URLs; /rootfs remains their canonical page.
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const selectedTagSet = useMemo(() => new Set(selectedTags), [selectedTags]);
   const imageGroups = useMemo(
@@ -700,7 +722,11 @@ function RootfsIndexPage({
     () =>
       imageGroups.map((group) => ({
         ...group,
-        tags: new Set(publicRootfsTags(group.latest)),
+        tags: new Set(
+          [group.latest, ...group.older].flatMap((entry) =>
+            publicRootfsTags(entry),
+          ),
+        ),
       })),
     [imageGroups],
   );
@@ -750,7 +776,11 @@ function RootfsIndexPage({
 
   return (
     <PublicPage config={config} title="Runtime images">
-      <PublicSection intro="Discover project runtime images that include ready-to-use software, examples, and files. Choose an image to create a matching project.">
+      <PublicSection>
+        <Paragraph style={{ margin: 0, width: "100%" }}>
+          Discover project runtime images that include ready-to-use software,
+          examples, and files. Choose an image to create a matching project.
+        </Paragraph>
         {loading ? (
           <Flex align="center" gap="middle">
             <Spin size="small" />
@@ -774,10 +804,10 @@ function RootfsIndexPage({
                 description={
                   selectedTags.length === 1
                     ? `Showing ${visibleGroups.length} ${
-                        visibleGroups.length === 1 ? "image" : "images"
+                        visibleGroups.length === 1 ? "family" : "families"
                       } tagged ${selectedTagLabel}.`
                     : `Showing ${visibleGroups.length} ${
-                        visibleGroups.length === 1 ? "image" : "images"
+                        visibleGroups.length === 1 ? "family" : "families"
                       } matching all ${selectedTags.length} selected tags.`
                 }
                 showIcon

@@ -35,6 +35,7 @@ export const WindowTab: React.FC<Props> = React.memo((props: Props) => {
     if (info.get("icon")) {
       return (
         <img
+          alt=""
           height={"20px"}
           style={{ paddingRight: "5px" }}
           src={info.get("icon")}

@@ -226,6 +226,8 @@ describe("project-host bearer account auth", () => {
       auth_scopes: ["browser_session", "project_session"],
       auth_project_id: project_id,
       auth_iat_s: 100,
+      auth_exp_s: 1000,
+      auth_token_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     expect(ensureAccountSecurityStateReadyMock).toHaveBeenCalled();
     expect(isAccountBannedCachedMock).toHaveBeenCalledWith(account_id);
@@ -510,6 +512,43 @@ describe("file-server management authorization", () => {
         subject: `fs.project-${project_id}`,
       }),
     ).resolves.toBe(true);
+  });
+
+  it("allows only the exact fingerprint-bound agent hub API subject", async () => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
+    const fingerprint = "a".repeat(64);
+    const user = {
+      account_id,
+      auth_actor: "agent",
+      auth_iat_s: 100,
+      auth_exp_s: 1000,
+      auth_scopes: ["project_session"],
+      auth_project_id: project_id,
+      auth_token_fingerprint: fingerprint,
+    } as any;
+    await expect(
+      isAllowed({
+        user,
+        type: "pub",
+        subject: `hub.agent.${account_id}.${project_id}.${fingerprint}.100.1000.api`,
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      isAllowed({
+        user,
+        type: "pub",
+        subject: `hub.agent.${account_id}.${project_id}.${"b".repeat(64)}.100.1000.api`,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      isAllowed({
+        user,
+        type: "sub",
+        subject: `hub.agent.${account_id}.${project_id}.${fingerprint}.100.1000.api`,
+      }),
+    ).resolves.toBe(false);
   });
 });
 

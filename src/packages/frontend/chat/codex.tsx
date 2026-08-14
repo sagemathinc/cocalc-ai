@@ -62,6 +62,7 @@ import {
 } from "@cocalc/util/ai/codex";
 import { COLORS } from "@cocalc/util/theme";
 import type { CodexThreadConfig } from "@cocalc/chat";
+import { CodexSubagentConcurrencyButton } from "@cocalc/frontend/account/codex-subagent-concurrency";
 import type { ChatActions } from "./actions";
 import {
   getCodexNewChatModeOptions,
@@ -1341,13 +1342,20 @@ export function CodexConfigButton({
                     />
                   </Form.Item>
                 </div>
-                {!siteFundedPolicy ? (
-                  <>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-end",
+                    flexWrap: "wrap",
+                    gap: 12,
+                  }}
+                >
+                  {!siteFundedPolicy ? (
                     <Form.Item
                       label="Speed"
                       name="serviceTier"
                       tooltip="Fast mode uses more Codex credits. Standard is the default."
-                      style={{ marginBottom: 0 }}
+                      style={{ marginBottom: 0, flex: "1 1 260px" }}
                     >
                       <Radio.Group>
                         <Space wrap>
@@ -1358,16 +1366,17 @@ export function CodexConfigButton({
                         </Space>
                       </Radio.Group>
                     </Form.Item>
-                    {effectiveServiceTier === "fast" ? (
-                      <Alert
-                        type="warning"
-                        showIcon
-                        style={{ marginTop: 10 }}
-                        title="Fast mode uses more Codex credits"
-                        description="Use this only when lower latency is worth the higher cost."
-                      />
-                    ) : null}
-                  </>
+                  ) : null}
+                  <CodexSubagentConcurrencyButton />
+                </div>
+                {effectiveServiceTier === "fast" && !siteFundedPolicy ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginTop: 10 }}
+                    title="Fast mode uses more Codex credits"
+                    description="Use this only when lower latency is worth the higher cost."
+                  />
                 ) : null}
               </div>
               <div style={sectionStyle}>

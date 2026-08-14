@@ -4,7 +4,10 @@ DOES check auth
 */
 
 import { conatServer } from "@cocalc/backend/data";
-import { connect as connectConat, type Client } from "@cocalc/conat/core/client";
+import {
+  connect as connectConat,
+  type Client,
+} from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
 import { projectApiClient } from "@cocalc/conat/project/api";
 import type {
@@ -32,7 +35,7 @@ function localProxyProjectHostAddress(
   return url.toString().replace(/\/+$/, "");
 }
 
-async function connectProjectHostClient({
+export async function connectProjectHostClient({
   account_id,
   host_id,
   project_id,

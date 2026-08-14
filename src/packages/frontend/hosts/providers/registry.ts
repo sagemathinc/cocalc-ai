@@ -23,6 +23,8 @@ import {
   estimateNebiusCatalogRateUsdPerHour,
   getDedicatedHostSurchargeFraction,
   gcpCatalogMachineTypeSortKey,
+  gcpMachineArchitecture,
+  gcpMachineGpu,
   isSupportedCatalogGcpMachineType,
   getNebiusPlatformAliases,
   normalizeNebiusPricingProduct,
@@ -202,6 +204,8 @@ export const isNebiusSpotSupported = (
 };
 
 export type ProviderSelection = {
+  operating_system?: "linux" | "windows";
+  architecture?: "x86_64" | "arm64";
   region?: string;
   zone?: string;
   machine_type?: string;
@@ -557,6 +561,9 @@ const estimateGcpSelectionUsdPerHour = (
   const next = { ...selection, ...overrides };
   const gpuType =
     next.gpu_type && next.gpu_type !== "none" ? next.gpu_type : undefined;
+  const gpuCount = next.machine_type
+    ? gcpMachineGpu(next.machine_type)?.count
+    : undefined;
   const machineTypeMeta = getGcpMachineTypeByZone(
     catalog,
     next.zone,
@@ -577,12 +584,13 @@ const estimateGcpSelectionUsdPerHour = (
       memory_gib: memoryGiB,
       pricing_model: next.pricing_model === "spot" ? "spot" : "on_demand",
       gpu_type: gpuType,
-      gpu_count: gpuType ? 1 : undefined,
+      gpu_count: gpuType ? (gpuCount ?? 1) : undefined,
       disk_type: next.disk_type,
       disk_gb: next.disk_gb,
       shared_disk_type: next.shared_disk_type,
       shared_disk_gb: next.shared_disk_gb,
       storage_mode: next.storage_mode,
+      operating_system: next.operating_system,
     }),
     getDedicatedHostSurchargeFraction("gcp", next.pricing_settings),
   );
@@ -596,6 +604,9 @@ const estimateGcpSelectionBreakdown = (
   const next = { ...selection, ...overrides };
   const gpuType =
     next.gpu_type && next.gpu_type !== "none" ? next.gpu_type : undefined;
+  const gpuCount = next.machine_type
+    ? gcpMachineGpu(next.machine_type)?.count
+    : undefined;
   const machineTypeMeta = getGcpMachineTypeByZone(
     catalog,
     next.zone,
@@ -616,12 +627,13 @@ const estimateGcpSelectionBreakdown = (
       memory_gib: memoryGiB,
       pricing_model: next.pricing_model === "spot" ? "spot" : "on_demand",
       gpu_type: gpuType,
-      gpu_count: gpuType ? 1 : undefined,
+      gpu_count: gpuType ? (gpuCount ?? 1) : undefined,
       disk_type: next.disk_type,
       disk_gb: next.disk_gb,
       shared_disk_type: next.shared_disk_type,
       shared_disk_gb: next.shared_disk_gb,
       storage_mode: next.storage_mode,
+      operating_system: next.operating_system,
     }),
     getDedicatedHostSurchargeFraction("gcp", next.pricing_settings),
   );
@@ -848,6 +860,56 @@ export const getGcpPersistentDiskPriceEstimate = (
   }));
   const surchargeFraction = getDedicatedHostSurchargeFraction(
     "gcp",
+    pricingSettings,
+  );
+  return {
+    usd_per_hour: hourlyRate,
+    usd_per_month: hourlyRate * MONTHLY_HOURS,
+    hourly_label: formatUsdHourlyLabel(hourlyRate),
+    monthly_label: formatUsdMonthlyLabel(hourlyRate),
+    line_items,
+    notes:
+      surchargeFraction > 0
+        ? [`Includes a ${Math.round(surchargeFraction * 100)}% site surcharge.`]
+        : [],
+  };
+};
+
+export const getNebiusPersistentDiskPriceEstimate = (
+  catalog: HostCatalog | undefined,
+  selection: Pick<
+    ProviderSelection,
+    "region" | "disk_type" | "disk_gb" | "storage_mode" | "pricing_settings"
+  >,
+  surchargeSettings?: DedicatedHostSurchargeSettings,
+): ProviderPriceEstimate | undefined => {
+  const pricingSettings = surchargeSettings ?? selection.pricing_settings;
+  const breakdown = applyDedicatedHostSurchargeToBreakdown(
+    estimateNebiusCatalogRateBreakdown({
+      prices: getNebiusPriceItems(catalog),
+      region: selection.region,
+      disk_type: selection.disk_type,
+      disk_gb: selection.disk_gb,
+      storage_mode: selection.storage_mode,
+    }),
+    getDedicatedHostSurchargeFraction("nebius", pricingSettings),
+  );
+  const hourlyRate = breakdown?.total_usd_per_hour;
+  if (
+    !breakdown ||
+    typeof hourlyRate !== "number" ||
+    !Number.isFinite(hourlyRate)
+  ) {
+    return undefined;
+  }
+  const line_items = breakdown.items.map((item) => ({
+    ...item,
+    usd_per_month: item.usd_per_hour * MONTHLY_HOURS,
+    hourly_label: formatUsdHourlyLabel(item.usd_per_hour),
+    monthly_label: formatUsdMonthlyLabel(item.usd_per_hour),
+  }));
+  const surchargeFraction = getDedicatedHostSurchargeFraction(
+    "nebius",
     pricingSettings,
   );
   return {
@@ -1198,6 +1260,23 @@ const gcpZoneHasMachineType = (
   return (types ?? []).some((mt) => mt.name === machineType);
 };
 
+const gcpZoneHasMachineArchitecture = (
+  catalog: HostCatalog | undefined,
+  zone: string,
+  architecture?: "x86_64" | "arm64",
+): boolean => {
+  if (!architecture) return true;
+  const types = getCatalogEntryPayload<HostCatalogMachineType[]>(
+    catalog,
+    "machine_types",
+    `zone/${zone}`,
+  );
+  return (types ?? []).some(
+    (machine) =>
+      !!machine.name && gcpMachineArchitecture(machine.name) === architecture,
+  );
+};
+
 const gcpZoneHasGpuType = (
   catalog: HostCatalog | undefined,
   zone: string,
@@ -1291,14 +1370,20 @@ export const getGcpRegionOptions = (
     const gpuPrefixes = gcpMachinePrefixesForGpuType(gpuType);
     let compatible = true;
     let compatibleZone: string | undefined;
-    if (gpuType || selection.machine_type) {
+    if (gpuType || selection.machine_type || selection.architecture) {
       const regionZones = r.zones ?? [];
       compatible = regionZones.some((zone) => {
         if (!gcpZoneHasGpuType(catalog, zone, gpuType)) return false;
         if (
           selection.machine_type
             ? !gcpZoneHasMachineType(catalog, zone, selection.machine_type)
-            : !gcpZoneHasMachinePrefix(catalog, zone, gpuPrefixes)
+            : selection.architecture
+              ? !gcpZoneHasMachineArchitecture(
+                  catalog,
+                  zone,
+                  selection.architecture,
+                )
+              : !gcpZoneHasMachinePrefix(catalog, zone, gpuPrefixes)
         ) {
           return false;
         }
@@ -1372,7 +1457,9 @@ export const getGcpZoneOptions = (
     const gpuCompatible = gcpZoneHasGpuType(catalog, z, gpuType);
     const machineCompatible = selection.machine_type
       ? gcpZoneHasMachineType(catalog, z, selection.machine_type)
-      : gcpZoneHasMachinePrefix(catalog, z, gpuPrefixes);
+      : selection.architecture
+        ? gcpZoneHasMachineArchitecture(catalog, z, selection.architecture)
+        : gcpZoneHasMachinePrefix(catalog, z, gpuPrefixes);
     const compatible = gpuCompatible && machineCompatible;
     return {
       value: z,
@@ -1386,8 +1473,6 @@ export const getGcpZoneOptions = (
     };
   });
 };
-
-const GCP_GPU_ONLY_MACHINE_PREFIXES = ["g2-"];
 
 // Release-frozen GCP GPU lane: G2 with L4 only.
 const GCP_ACCELERATOR_TYPES = new Set(["nvidia-l4"]);
@@ -1443,11 +1528,10 @@ export const getGcpMachineTypeOptions = (
     const memoryGiB =
       mt.memoryMb != null ? Number(mt.memoryMb) / 1024 : undefined;
     if (memoryGiB != null && memoryGiB < MIN_USABLE_RAM_GIB) return false;
-    if (!selection.gpu_type || selection.gpu_type === "none") {
-      return !GCP_GPU_ONLY_MACHINE_PREFIXES.some((prefix) =>
-        name.startsWith(prefix),
-      );
-    }
+    const machineGpu = gcpMachineGpu(name);
+    if (!selection.gpu_type || selection.gpu_type === "none")
+      return !machineGpu;
+    if (machineGpu?.type !== selection.gpu_type) return false;
     if (gpuPrefixes === undefined) return true;
     if (!gpuPrefixes.length) return false;
     return gpuPrefixes.some((prefix) => name.startsWith(prefix));

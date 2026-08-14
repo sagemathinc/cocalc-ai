@@ -42,7 +42,7 @@ export default function ProjectsPageTour({
           <DocsLink slug="projects/project-list">(docs)</DocsLink>
         </>
       ),
-      cover: <img src={projectsImage} />,
+      cover: <img alt="" src={projectsImage} />,
       description: (
         <div>
           Welcome to <SiteName />
@@ -144,7 +144,7 @@ export default function ProjectsPageTour({
           <Icon name="users" /> Collaborators & Sharing
         </>
       ),
-      cover: <img src={collabsImage} />,
+      cover: <img alt="" src={collabsImage} />,
       description: (
         <div>
           Expand a {projectLabelLower} via the <Icon name="plus-square" /> icon

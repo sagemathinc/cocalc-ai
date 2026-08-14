@@ -4,6 +4,7 @@
  */
 
 import { CSS } from "@cocalc/frontend/app-framework";
+import { FILE_RECENCY_BORDER_WIDTH_PX } from "@cocalc/frontend/project/file-recency";
 
 export const DEFAULT_EXT = "ipynb";
 
@@ -36,4 +37,4 @@ const PANEL_KEYS = ["selected", "terminal"];
 export type PanelKey = (typeof PANEL_KEYS)[number];
 
 // make sure two types of borders are of the same width
-export const BORDER_WIDTH_PX = "4px";
+export const BORDER_WIDTH_PX = FILE_RECENCY_BORDER_WIDTH_PX;

@@ -81,7 +81,12 @@ export default function ProjectImage({ avatarImage, onChange }: Props) {
           }}
         >
           {avatarImage ? (
-            <img src={avatarImage} width="160px" height="160px" />
+            <img
+              alt={projectLabel}
+              src={avatarImage}
+              width="160px"
+              height="160px"
+            />
           ) : (
             <p className="ant-upload-drag-icon">
               <InboxOutlined />

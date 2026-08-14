@@ -20,6 +20,7 @@ import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import type {
   AcpAgent,
   AcpEvaluateRequest,
+  AcpStreamEvent,
   AcpSteerRequest,
   AcpSteerResult,
   AcpStreamUsage,
@@ -55,10 +56,9 @@ const ACCOUNT_STATUS_REQUEST_TIMEOUT_MS = Math.max(
 );
 const TURN_NOTIFICATION_IDLE_TIMEOUT_MS = Math.max(
   REQUEST_TIMEOUT_MS,
-  Number(
-    process.env.COCALC_CODEX_APP_SERVER_NOTIFICATION_TIMEOUT_MS ?? 30 * 60_000,
-  ),
+  Number(process.env.COCALC_CODEX_APP_SERVER_NOTIFICATION_TIMEOUT_MS ?? 60_000),
 );
+const TURN_RECONCILE_FAILURE_LIMIT = 3;
 const SESSION_TRUNCATE_CHECK_INTERVAL_MS = Math.max(
   60_000,
   Number(process.env.COCALC_CODEX_SESSION_TRUNCATE_INTERVAL_MS ?? 15 * 60_000),
@@ -71,6 +71,34 @@ const BACKGROUND_TERMINAL_POLL_MS = Math.max(
   5_000,
   Number(process.env.COCALC_CODEX_BACKGROUND_TERMINAL_POLL_MS ?? 30_000),
 );
+const MAX_CONCURRENT_SUBAGENTS = 16;
+const MAX_SUBAGENT_EVENT_TEXT_LENGTH = 2_000;
+
+type SubagentStreamEvent = Extract<AcpStreamEvent, { type: "subagent" }>;
+
+function boundedSubagentText(value: unknown): string | undefined {
+  if (typeof value !== "string") return;
+  const text = value.trim();
+  if (!text) return;
+  return text.length <= MAX_SUBAGENT_EVENT_TEXT_LENGTH
+    ? text
+    : `${text.slice(0, MAX_SUBAGENT_EVENT_TEXT_LENGTH)}...`;
+}
+
+function normalizeMaxConcurrentSubagents(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isInteger(value)) return;
+  return Math.min(MAX_CONCURRENT_SUBAGENTS, Math.max(1, value));
+}
+
+function threadConfigForSubagents(
+  maxConcurrentSubagents: number | undefined,
+): Record<string, number> | undefined {
+  if (maxConcurrentSubagents == null) return;
+  // Codex counts the manager in max_concurrent_threads_per_session.
+  return {
+    "agents.max_concurrent_threads_per_session": maxConcurrentSubagents + 1,
+  };
+}
 
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*m/g;
 
@@ -323,6 +351,16 @@ type CodexAppServerOptions = {
       }
     | undefined
   >;
+  onOutstandingWorkChanged?: (status: {
+    sessionId: string;
+    projectId: string;
+    accountId: string;
+    chat?: AcpEvaluateRequest["chat"];
+    managerState: "completed" | "interrupted";
+    activeDescendantThreadIds: string[];
+    activeDescendants: number;
+    backgroundTerminals: number;
+  }) => void | Promise<void>;
 };
 
 type SpawnedCodexAppServer = {
@@ -395,12 +433,17 @@ type CodexAppServerRuntime = {
   accountId: string;
   cwd: string;
   paymentSource: CodexSessionConfig["paymentSource"];
+  maxConcurrentSubagents?: number;
   spawned: SpawnedCodexAppServer;
   client: AppServerClient;
   fundedTurn?: CodexSiteFundedTurnRuntime;
   threadId?: string;
   active: boolean;
   backgroundTerminalCount: number;
+  activeDescendantCount: number;
+  chat?: AcpEvaluateRequest["chat"];
+  managerState: "completed" | "interrupted";
+  lastOutstandingSignature?: string;
   idleTimer?: NodeJS.Timeout;
   backgroundPollTimer?: NodeJS.Timeout;
   disposed: boolean;
@@ -1778,8 +1821,36 @@ export class CodexAppServerAgent implements AcpAgent {
     return count;
   }
 
+  private async listDescendantThreads(
+    runtime: CodexAppServerRuntime,
+  ): Promise<any[]> {
+    const threadId = runtime.threadId;
+    if (!threadId || runtime.disposed) return [];
+    let cursor: string | null | undefined;
+    const rows: any[] = [];
+    do {
+      const result = await runtime.client.request("thread/list", {
+        ancestorThreadId: threadId,
+        cursor,
+        limit: 100,
+        useStateDbOnly: true,
+      });
+      if (Array.isArray(result?.data)) rows.push(...result.data);
+      cursor = result?.nextCursor ?? null;
+    } while (cursor);
+    runtime.activeDescendantCount = rows.filter(
+      (thread) => thread?.status?.type === "active",
+    ).length;
+    return rows;
+  }
+
   private scheduleRuntimeIdleExit(runtime: CodexAppServerRuntime): void {
-    if (runtime.disposed || runtime.active || runtime.backgroundTerminalCount) {
+    if (
+      runtime.disposed ||
+      runtime.active ||
+      runtime.backgroundTerminalCount ||
+      runtime.activeDescendantCount
+    ) {
       return;
     }
     if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
@@ -1812,8 +1883,15 @@ export class CodexAppServerAgent implements AcpAgent {
   ): Promise<void> {
     if (runtime.disposed || runtime.active) return;
     try {
-      const count = await this.listBackgroundTerminals(runtime);
-      if (count > 0) {
+      const [count, descendants] = await Promise.all([
+        this.listBackgroundTerminals(runtime),
+        this.listDescendantThreads(runtime),
+      ]);
+      const activeDescendants = descendants.filter(
+        (thread) => thread?.status?.type === "active",
+      ).length;
+      await this.notifyOutstandingWork(runtime, descendants);
+      if (count > 0 || activeDescendants > 0) {
         if (runtime.idleTimer) {
           clearTimeout(runtime.idleTimer);
           runtime.idleTimer = undefined;
@@ -1822,7 +1900,7 @@ export class CodexAppServerAgent implements AcpAgent {
         return;
       }
     } catch (err) {
-      logger.warn("codex app-server: failed listing background terminals", {
+      logger.warn("codex app-server: failed reconciling retained work", {
         threadId: runtime.threadId,
         err: `${err}`,
       });
@@ -1831,6 +1909,44 @@ export class CodexAppServerAgent implements AcpAgent {
       return;
     }
     this.scheduleRuntimeIdleExit(runtime);
+  }
+
+  private async notifyOutstandingWork(
+    runtime: CodexAppServerRuntime,
+    descendants: any[],
+  ): Promise<void> {
+    if (!this.opts.onOutstandingWorkChanged || !runtime.threadId) return;
+    const activeDescendantThreadIds = descendants
+      .filter(
+        (thread) =>
+          thread?.status?.type === "active" && typeof thread?.id === "string",
+      )
+      .map((thread) => thread.id)
+      .sort();
+    const signature = JSON.stringify({
+      managerState: runtime.managerState,
+      activeDescendantThreadIds,
+      backgroundTerminals: runtime.backgroundTerminalCount,
+    });
+    if (signature === runtime.lastOutstandingSignature) return;
+    try {
+      await this.opts.onOutstandingWorkChanged({
+        sessionId: runtime.threadId,
+        projectId: runtime.projectId,
+        accountId: runtime.accountId,
+        chat: runtime.chat,
+        managerState: runtime.managerState,
+        activeDescendantThreadIds,
+        activeDescendants: runtime.activeDescendantCount,
+        backgroundTerminals: runtime.backgroundTerminalCount,
+      });
+      runtime.lastOutstandingSignature = signature;
+    } catch (err) {
+      logger.warn("codex app-server: failed publishing outstanding work", {
+        threadId: runtime.threadId,
+        err: `${err}`,
+      });
+    }
   }
 
   private runtimeMatchesRequest(
@@ -1843,7 +1959,9 @@ export class CodexAppServerAgent implements AcpAgent {
       runtime.accountId === request.account_id &&
       runtime.cwd === cwd &&
       (runtime.paymentSource ?? "auto") ===
-        (request.config?.paymentSource ?? "auto")
+        (request.config?.paymentSource ?? "auto") &&
+      runtime.maxConcurrentSubagents ===
+        normalizeMaxConcurrentSubagents(request.config?.maxConcurrentSubagents)
     );
   }
 
@@ -1861,15 +1979,23 @@ export class CodexAppServerAgent implements AcpAgent {
     let runtime = this.runtimesByAlias.get(session.sessionId);
     if (runtime && !this.runtimeMatchesRequest(runtime, request, cwd)) {
       let backgroundTerminalCount = runtime.backgroundTerminalCount;
+      let activeDescendantCount = runtime.activeDescendantCount;
       try {
-        backgroundTerminalCount = await this.listBackgroundTerminals(runtime);
+        const [backgroundCount, descendants] = await Promise.all([
+          this.listBackgroundTerminals(runtime),
+          this.listDescendantThreads(runtime),
+        ]);
+        backgroundTerminalCount = backgroundCount;
+        activeDescendantCount = descendants.filter(
+          (thread) => thread?.status?.type === "active",
+        ).length;
       } catch {
-        // Preserve the runtime when we cannot prove it owns no processes.
+        // Preserve the runtime when we cannot prove it owns no work.
         backgroundTerminalCount = Math.max(1, backgroundTerminalCount);
       }
-      if (backgroundTerminalCount > 0) {
+      if (backgroundTerminalCount > 0 || activeDescendantCount > 0) {
         throw new Error(
-          "This Codex thread still has background commands running. Wait for them to finish or stop them before changing its payment source or runtime.",
+          "This Codex thread still has subagents or background commands running. Wait for them to finish or stop them before changing its runtime settings.",
         );
       }
       await this.disposeRuntime(runtime, "runtime configuration changed");
@@ -1880,6 +2006,9 @@ export class CodexAppServerAgent implements AcpAgent {
         throw new Error("This Codex thread already has an active turn.");
       }
       this.clearRuntimeTimers(runtime);
+      runtime.chat = request.chat;
+      runtime.managerState = "completed";
+      runtime.lastOutstandingSignature = undefined;
       runtime.active = true;
       if (runtime.spawned.siteFundedTurn) {
         try {
@@ -1945,11 +2074,17 @@ export class CodexAppServerAgent implements AcpAgent {
       accountId: request.account_id,
       cwd,
       paymentSource: request.config?.paymentSource,
+      maxConcurrentSubagents: normalizeMaxConcurrentSubagents(
+        request.config?.maxConcurrentSubagents,
+      ),
       spawned,
       client,
       fundedTurn: spawned.siteFundedTurn,
       active: true,
       backgroundTerminalCount: 0,
+      activeDescendantCount: 0,
+      chat: request.chat,
+      managerState: "completed",
       disposed: false,
     };
     this.runtimes.add(runtime);
@@ -2072,6 +2207,9 @@ export class CodexAppServerAgent implements AcpAgent {
       string,
       { command?: string; cwd?: string }
     >();
+    const agentMessageTextById = new Map<string, string>();
+    const emittedSubagentEventSignatures = new Set<string>();
+    const latestSubagentEvents = new Map<string, SubagentStreamEvent>();
     const completedTerminals = new Set<string>();
     const emittedFileWrites = new Set<string>();
     const emittedFileWritePaths = new Set<string>();
@@ -2202,6 +2340,11 @@ export class CodexAppServerAgent implements AcpAgent {
         serviceTier,
         approvalPolicy: "never",
         sandbox: toSandboxMode(spawned, effectiveConfig),
+        config: threadConfigForSubagents(
+          normalizeMaxConcurrentSubagents(
+            effectiveConfig?.maxConcurrentSubagents,
+          ),
+        ),
       };
       const sessionMode = resolveCodexSessionMode(effectiveConfig);
       await stream({
@@ -2363,12 +2506,204 @@ export class CodexAppServerAgent implements AcpAgent {
         });
       };
 
+      const emitSubagentEvent = async (
+        event: SubagentStreamEvent,
+      ): Promise<void> => {
+        latestSubagentEvents.set(event.threadId, event);
+        const signature = JSON.stringify(event);
+        if (emittedSubagentEventSignatures.has(signature)) return;
+        emittedSubagentEventSignatures.add(signature);
+        await stream({ type: "event", event });
+      };
+
+      const reconcileSubagentStates = async (): Promise<void> => {
+        if (latestSubagentEvents.size === 0) return;
+        let descendants: any[];
+        try {
+          descendants = await this.listDescendantThreads(runtime);
+        } catch (err) {
+          logger.warn("codex app-server: failed reconciling subagent states", {
+            threadId: actualThreadId,
+            turnId,
+            err: `${err}`,
+          });
+          return;
+        }
+        const descendantsById = new Map(
+          descendants
+            .filter((thread) => typeof thread?.id === "string")
+            .map((thread) => [thread.id, thread]),
+        );
+        for (const [threadId, previous] of latestSubagentEvents) {
+          if (previous.state !== "pending" && previous.state !== "running") {
+            continue;
+          }
+          const descendant = descendantsById.get(threadId);
+          let state: SubagentStreamEvent["state"];
+          if (descendant?.status?.type === "active") {
+            state = "running";
+          } else if (descendant?.status?.type === "systemError") {
+            state = "failed";
+          } else {
+            try {
+              const result = await runtime.client.request("thread/read", {
+                threadId,
+                includeTurns: true,
+              });
+              const turns = Array.isArray(result?.thread?.turns)
+                ? result.thread.turns
+                : [];
+              const status = `${turns[turns.length - 1]?.status ?? ""}`;
+              state =
+                status === "inProgress"
+                  ? "running"
+                  : status === "failed"
+                    ? "failed"
+                    : status === "interrupted"
+                      ? "interrupted"
+                      : status === "completed"
+                        ? "completed"
+                        : "unknown";
+            } catch {
+              state = descendant ? "unknown" : "missing";
+            }
+          }
+          if (state === previous.state) continue;
+          await emitSubagentEvent({
+            ...previous,
+            operationId: `reconcile:${turnId ?? "turn"}:${threadId}`,
+            state,
+            tool: "activity",
+            message:
+              state === "unknown"
+                ? "The subagent is no longer active; its final outcome was unavailable."
+                : previous.message,
+          });
+        }
+      };
+
       const handleItem = async (item: any): Promise<void> => {
         if (!item || typeof item !== "object") return;
         switch (item.type) {
+          case "collabAgentToolCall": {
+            const tool =
+              item.tool === "spawnAgent"
+                ? "spawn"
+                : item.tool === "sendInput"
+                  ? "send"
+                  : item.tool === "resumeAgent"
+                    ? "resume"
+                    : item.tool === "closeAgent"
+                      ? "close"
+                      : item.tool === "wait"
+                        ? "wait"
+                        : undefined;
+            const receiverIds = Array.isArray(item.receiverThreadIds)
+              ? item.receiverThreadIds.filter(
+                  (value: unknown): value is string =>
+                    typeof value === "string" && value.length > 0,
+                )
+              : [];
+            const agentStates =
+              item.agentsStates && typeof item.agentsStates === "object"
+                ? item.agentsStates
+                : {};
+            for (const threadId of receiverIds) {
+              const agentState = agentStates[threadId];
+              const rawState = `${agentState?.status ?? ""}`;
+              const state =
+                rawState === "pendingInit"
+                  ? "pending"
+                  : rawState === "running"
+                    ? "running"
+                    : rawState === "completed"
+                      ? "completed"
+                      : rawState === "interrupted"
+                        ? "interrupted"
+                        : rawState === "errored"
+                          ? "failed"
+                          : rawState === "shutdown"
+                            ? "shutdown"
+                            : rawState === "notFound"
+                              ? "missing"
+                              : item.status === "failed"
+                                ? "failed"
+                                : item.status === "completed" &&
+                                    tool === "close"
+                                  ? "shutdown"
+                                  : "running";
+              const event = {
+                type: "subagent",
+                operationId: `${item.id ?? `${tool ?? "activity"}:${threadId}`}`,
+                threadId,
+                parentThreadId:
+                  typeof item.senderThreadId === "string"
+                    ? item.senderThreadId
+                    : undefined,
+                state,
+                tool,
+                task: boundedSubagentText(item.prompt),
+                message: boundedSubagentText(agentState?.message),
+                model: typeof item.model === "string" ? item.model : undefined,
+                reasoning:
+                  typeof item.reasoningEffort === "string"
+                    ? item.reasoningEffort
+                    : undefined,
+              } as const;
+              await emitSubagentEvent(event);
+            }
+            break;
+          }
+          case "subAgentActivity": {
+            if (typeof item.agentThreadId !== "string") break;
+            const event = {
+              type: "subagent",
+              operationId: `${item.id ?? `activity:${item.agentThreadId}`}`,
+              threadId: item.agentThreadId,
+              state:
+                item.kind === "interrupted"
+                  ? "interrupted"
+                  : item.kind === "started"
+                    ? "pending"
+                    : "running",
+              tool: "activity",
+              agentPath:
+                typeof item.agentPath === "string" ? item.agentPath : undefined,
+            } as const;
+            await emitSubagentEvent(event);
+            break;
+          }
           case "agentMessage":
             if (typeof item.text === "string") {
               finalResponse = item.text;
+              const itemId = `${item.id ?? "agent-message"}`;
+              const previous = agentMessageTextById.get(itemId) ?? "";
+              if (item.text !== previous) {
+                const delta =
+                  previous && item.text.startsWith(previous)
+                    ? item.text.slice(previous.length)
+                    : "";
+                agentMessageTextById.set(itemId, item.text);
+                if (!previous || delta) {
+                  await stream({
+                    type: "event",
+                    event: {
+                      type: "message",
+                      text: delta || item.text,
+                      delta: !!delta,
+                    },
+                  });
+                } else {
+                  logger.debug(
+                    "codex app-server: completed manager snapshot was not an append-only update",
+                    {
+                      itemId,
+                      previousLength: previous.length,
+                      nextLength: item.text.length,
+                    },
+                  );
+                }
+              }
             }
             break;
           case "commandExecution": {
@@ -2604,9 +2939,14 @@ export class CodexAppServerAgent implements AcpAgent {
             await stream({ type: "status", state: "running" });
             break;
           case "item/agentMessage/delta": {
+            const itemId = `${notification.params?.itemId ?? "agent-message"}`;
             const delta = `${notification.params?.delta ?? ""}`;
             if (delta) {
               finalResponse += delta;
+              agentMessageTextById.set(
+                itemId,
+                `${agentMessageTextById.get(itemId) ?? ""}${delta}`,
+              );
               await stream({
                 type: "event",
                 event: { type: "message", text: delta, delta: true },
@@ -2706,17 +3046,73 @@ export class CodexAppServerAgent implements AcpAgent {
       };
 
       const pendingNotificationLoop = (async () => {
+        let reconciliationFailures = 0;
+        let lastReconciliationNoticeAt = 0;
         while (true) {
-          const notification = await client.waitForMessage((message) => {
-            const params = message.params ?? {};
-            if (message.method === "turn/completed") {
-              return params?.turn?.id === turnId;
+          let notification: RpcNotification;
+          try {
+            notification = await client.waitForMessage((message) => {
+              const params = message.params ?? {};
+              if (message.method === "turn/completed") {
+                return params?.turn?.id === turnId;
+              }
+              if (message.method === "turn/started") {
+                return params?.turn?.id === turnId;
+              }
+              return params?.turnId === turnId;
+            }, TURN_NOTIFICATION_IDLE_TIMEOUT_MS);
+          } catch (err) {
+            try {
+              const result = await client.request("thread/read", {
+                threadId: actualThreadId,
+                includeTurns: true,
+              });
+              const turns = Array.isArray(result?.thread?.turns)
+                ? result.thread.turns
+                : [];
+              const reconciledTurn = turns.find(
+                (candidate) => candidate?.id === turnId,
+              );
+              const status = `${reconciledTurn?.status ?? ""}`;
+              if (status === "inProgress") {
+                reconciliationFailures = 0;
+                if (Date.now() - lastReconciliationNoticeAt >= 5 * 60_000) {
+                  lastReconciliationNoticeAt = Date.now();
+                  await stream({
+                    type: "event",
+                    event: {
+                      type: "thinking",
+                      text: "Codex is still working; CoCalc reconciled the live turn after a quiet period.",
+                    },
+                  });
+                }
+                continue;
+              }
+              if (status) {
+                notification = {
+                  method: "turn/completed",
+                  params: { turn: reconciledTurn },
+                };
+              } else {
+                throw new Error("active turn was absent from thread/read");
+              }
+            } catch (reconcileErr) {
+              reconciliationFailures += 1;
+              logger.warn("codex app-server: turn reconciliation failed", {
+                threadId: actualThreadId,
+                turnId,
+                failures: reconciliationFailures,
+                waitError: `${err}`,
+                reconcileError: `${reconcileErr}`,
+              });
+              if (reconciliationFailures < TURN_RECONCILE_FAILURE_LIMIT) {
+                continue;
+              }
+              throw new Error(
+                `Unable to confirm Codex turn state after ${reconciliationFailures} reconciliation attempts: ${reconcileErr}`,
+              );
             }
-            if (message.method === "turn/started") {
-              return params?.turn?.id === turnId;
-            }
-            return params?.turnId === turnId;
-          }, TURN_NOTIFICATION_IDLE_TIMEOUT_MS);
+          }
           if (notification.method === "turn/completed") {
             const status =
               `${notification.params?.turn?.status ?? ""}`.toLowerCase();
@@ -2737,6 +3133,7 @@ export class CodexAppServerAgent implements AcpAgent {
       })();
 
       await pendingNotificationLoop;
+      await reconcileSubagentStates();
       await emitMissingTurnDiffEvents();
       if (quotaPollTimer) {
         clearInterval(quotaPollTimer);
@@ -2824,6 +3221,7 @@ export class CodexAppServerAgent implements AcpAgent {
         clearTimeout(maxTurnTimer);
       }
       if (runningEntry?.interrupted && !quotaStopReason) {
+        runtime.managerState = "interrupted";
         runtimeHealthy = true;
         fundedFinishStatus = "interrupted";
         fundedFinishOutcome = "turn interrupted";
@@ -2936,6 +3334,78 @@ export class CodexAppServerAgent implements AcpAgent {
     return true;
   }
 
+  async interruptOutstanding(threadId: string): Promise<boolean> {
+    const runtime = this.runtimesByAlias.get(threadId);
+    let handled = await this.interrupt(threadId);
+    if (!runtime || runtime.disposed || !runtime.threadId) return handled;
+
+    let descendants: any[] = [];
+    try {
+      descendants = await this.listDescendantThreads(runtime);
+    } catch (err) {
+      logger.warn(
+        "codex app-server: failed listing subagents during stop all",
+        {
+          parentThreadId: runtime.threadId,
+          err: `${err}`,
+        },
+      );
+    }
+    for (const descendant of descendants) {
+      if (descendant?.status?.type !== "active" || !descendant?.id) continue;
+      try {
+        const result = await runtime.client.request("thread/read", {
+          threadId: descendant.id,
+          includeTurns: true,
+        });
+        const turns = Array.isArray(result?.thread?.turns)
+          ? result.thread.turns
+          : [];
+        const activeTurn = [...turns]
+          .reverse()
+          .find((turn) => turn?.status === "inProgress");
+        if (activeTurn?.id) {
+          await runtime.client.request("turn/interrupt", {
+            threadId: descendant.id,
+            turnId: activeTurn.id,
+          });
+          handled = true;
+        }
+      } catch (err) {
+        logger.warn("codex app-server: failed interrupting subagent", {
+          parentThreadId: runtime.threadId,
+          threadId: descendant.id,
+          err: `${err}`,
+        });
+      }
+    }
+    for (const targetThreadId of [
+      runtime.threadId,
+      ...descendants.map((thread) => thread?.id).filter(Boolean),
+    ]) {
+      try {
+        await runtime.client.request("thread/backgroundTerminals/clean", {
+          threadId: targetThreadId,
+        });
+        handled = true;
+      } catch (err) {
+        logger.debug("codex app-server: background cleanup failed", {
+          threadId: targetThreadId,
+          err: `${err}`,
+        });
+      }
+    }
+    try {
+      await this.refreshRuntimeLifecycle(runtime);
+    } catch (err) {
+      logger.debug("codex app-server: post-interrupt reconciliation failed", {
+        threadId: runtime.threadId,
+        err: `${err}`,
+      });
+    }
+    return handled;
+  }
+
   hasRunningTurn(threadId: string): boolean {
     return this.running.has(threadId);
   }
@@ -2944,17 +3414,21 @@ export class CodexAppServerAgent implements AcpAgent {
     liveRuntimes: number;
     activeTurns: number;
     backgroundTerminals: number;
+    activeDescendants: number;
   } {
     let activeTurns = 0;
     let backgroundTerminals = 0;
+    let activeDescendants = 0;
     for (const runtime of this.runtimes) {
       if (runtime.active) activeTurns += 1;
       backgroundTerminals += runtime.backgroundTerminalCount;
+      activeDescendants += runtime.activeDescendantCount;
     }
     return {
       liveRuntimes: this.runtimes.size,
       activeTurns,
       backgroundTerminals,
+      activeDescendants,
     };
   }
 

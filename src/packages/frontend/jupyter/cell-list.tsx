@@ -5,7 +5,7 @@
 
 // React component that renders the ordered list of cells
 
-declare const $: any;
+import jquery from "jquery";
 import useResizeObserver from "use-resize-observer";
 import { delay } from "awaiting";
 import * as immutable from "immutable";
@@ -40,6 +40,10 @@ import { StickyMiniTOC } from "./minimal/sticky-mini-toc";
 import type { MinimalLayout, SectionBlock } from "./minimal/types";
 import { INPUT_PROMPT_COLOR, OUTPUT_STYLE } from "./prompt/base";
 import { getDisplayedCellExecCount } from "./run-cell-overlay";
+
+// This module still uses CoCalc's legacy jQuery plugins, which are not fully
+// represented by the upstream jQuery types.
+const $: any = jquery;
 
 /** Extract the section title from a section block's heading cell. */
 function getSectionTitle(
@@ -550,7 +554,7 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
       const cell = $(node).find(`#${cur_id}`);
       if (cell.length == 0) return;
       if (scroll.startsWith("cell visible")) {
-        cell.scrollintoview();
+        cell[0]?.scrollIntoView({ block: "nearest" });
       } else if (scroll == "cell top") {
         // Make it so the top of the cell is at the top of
         // the visible area.

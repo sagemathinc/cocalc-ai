@@ -3,18 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Tag, Typography } from "antd";
-import { useMemo } from "react";
+import { Alert, Modal, Tag, Typography } from "antd";
+import { Suspense, useMemo } from "react";
 import type { MouseEvent } from "react";
 
-import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
+import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
+import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { Icon, isIconName, Tooltip } from "@cocalc/frontend/components";
-import {
-  ProjectContext,
-  type ProjectContextState,
-  emptyProjectContext,
-} from "@cocalc/frontend/project/context";
-import { LazyRootFilesystemImageModal } from "@cocalc/frontend/project/settings/lazy-root-filesystem-image-modal";
 import { latestRootfsUpgradeEntry } from "@cocalc/frontend/rootfs/catalog-ui";
 import { COLORS } from "@cocalc/util/theme";
 import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
@@ -35,6 +31,15 @@ interface ProjectRootfsRuntimeModalProps {
   open: boolean;
   project_id: string;
 }
+
+const ProjectRootfsRuntimeModalContent =
+  lazyWithRetry<ProjectRootfsRuntimeModalProps>(async () => {
+    const [, content] = await Promise.all([
+      ensureProjectReduxRuntime(),
+      import("./project-rootfs-runtime-modal-content"),
+    ]);
+    return { default: content.ProjectRootfsRuntimeModalContent };
+  }, "project runtime for RootFS settings");
 
 function shortRootfsImage(image: string): string {
   const value = image.trim();
@@ -220,34 +225,42 @@ export function ProjectRootfsRuntimeModal({
   }
 
   return (
-    <ProjectRootfsRuntimeModalContent
-      onClose={onClose}
-      open={open}
-      project_id={project_id}
-    />
-  );
-}
-
-function ProjectRootfsRuntimeModalContent({
-  onClose,
-  open,
-  project_id,
-}: ProjectRootfsRuntimeModalProps) {
-  const actions = useActions({ project_id });
-  const project = useTypedRedux("projects", "project_map")?.get(project_id);
-  const context = useMemo(
-    (): ProjectContextState => ({
-      ...emptyProjectContext,
-      actions,
-      project: project as ProjectContextState["project"],
-      project_id,
-    }),
-    [actions, project, project_id],
-  );
-
-  return (
-    <ProjectContext.Provider value={context}>
-      <LazyRootFilesystemImageModal onClose={onClose} open={open} />
-    </ProjectContext.Provider>
+    <CocalcErrorBoundary
+      fallback={
+        <Modal
+          footer={null}
+          onCancel={onClose}
+          open
+          title="Project Runtime Image"
+        >
+          <Alert
+            description="Close this dialog and try again."
+            showIcon
+            title="The project runtime could not be loaded."
+            type="warning"
+          />
+        </Modal>
+      }
+      resetKeys={[open, project_id]}
+      scope="projects.rootfs-runtime-modal"
+    >
+      <Suspense
+        fallback={
+          <Modal
+            footer={null}
+            loading
+            onCancel={onClose}
+            open
+            title="Project Runtime Image"
+          />
+        }
+      >
+        <ProjectRootfsRuntimeModalContent
+          onClose={onClose}
+          open={open}
+          project_id={project_id}
+        />
+      </Suspense>
+    </CocalcErrorBoundary>
   );
 }

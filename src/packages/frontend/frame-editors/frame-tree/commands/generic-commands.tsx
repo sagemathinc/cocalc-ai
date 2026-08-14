@@ -1339,88 +1339,87 @@ addCommands({
     onClick: ({}) => {},
     children: ({ frameTypeCommands }) => frameTypeCommands(false),
   },
-  reset_local_view_state: {
+  layout: {
+    alwaysShow: true,
     icon: "layout",
     group: "frame_types",
-    isVisible: ({ props }) =>
-      // hide this when the editor exposes explicit layout switching commands
-      typeof props.actions?._new_frame_tree_layout !== "function",
-    title: defineMessage({
-      id: "command.generic.reset_local_view_state.title",
-      defaultMessage: "Reset the layout of all frames to the default",
-    }),
     label: defineMessage({
-      id: "command.generic.reset_local_view_state.label",
-      defaultMessage: "Default Layout",
+      id: "command.generic.layout.label",
+      defaultMessage: "Layout",
+      description:
+        "Label of a submenu that groups the commands for arranging, saving and restoring the frames (split panes) of the current editor",
     }),
-    button: defineMessage({
-      id: "command.generic.reset_local_view_state.button",
-      defaultMessage: "Default",
-    }),
-  },
-  new_layout: {
-    icon: "layout",
-    group: "frame_types",
     title: defineMessage({
-      id: "command.generic.new_layout.title.generic",
-      defaultMessage: "Switch to the new layout",
+      id: "command.generic.layout.title",
+      defaultMessage:
+        "Arrange the frames of this editor, and save your preferred arrangement.",
+      description:
+        "Tooltip of a submenu that groups the commands for arranging, saving and restoring the frames (split panes) of the current editor",
     }),
-    label: defineMessage({
-      id: "command.generic.new_layout.label",
-      defaultMessage: "New Layout",
-    }),
-    button: defineMessage({
-      id: "command.generic.new_layout.button",
-      defaultMessage: "New",
-    }),
-    isVisible: ({ props }) =>
-      typeof props.actions?._new_frame_tree_layout === "function",
-    onClick: ({ props }) => {
-      try {
-        // Use the editor's custom layout method if available
-        if (
-          props.actions._new_frame_tree_layout &&
-          props.actions.replace_frame_tree
-        ) {
-          const tree = props.actions._new_frame_tree_layout();
-          props.actions.replace_frame_tree(tree);
-        }
-      } catch (error) {
-        console.error("Error in New Layout:", error);
-      }
-    },
-  },
-  classic_layout: {
-    icon: "layout",
-    group: "frame_types",
-    title: defineMessage({
-      id: "command.generic.classic_layout.title.generic",
-      defaultMessage: "Switch back to the classic layout",
-    }),
-    label: defineMessage({
-      id: "command.generic.classic_layout.label",
-      defaultMessage: "Classic Layout",
-    }),
-    button: defineMessage({
-      id: "command.generic.classic_layout.button",
-      defaultMessage: "Classic",
-    }),
-    isVisible: ({ props }) =>
-      typeof props.actions?._classic_frame_tree_layout === "function",
-    onClick: ({ props }) => {
-      try {
-        // Use the editor's classic layout method if available
-        if (
-          props.actions._classic_frame_tree_layout &&
-          props.actions.replace_frame_tree
-        ) {
-          const tree = props.actions._classic_frame_tree_layout();
-          props.actions.replace_frame_tree(tree);
-        }
-      } catch (error) {
-        console.error("Error in Classic Layout:", error);
-      }
-    },
+    onClick: ({}) => {},
+    children: [
+      {
+        name: "save_custom_layout",
+        icon: "save",
+        label: defineMessage({
+          id: "command.generic.layout.save.label",
+          defaultMessage: "Save Layout",
+          description:
+            "Menu entry that stores the current arrangement of editor frames as the user's personal default for every file of this type",
+        }),
+        title: defineMessage({
+          id: "command.generic.layout.save.title",
+          defaultMessage:
+            "Remember how the frames are arranged right now, and use that arrangement for every file of this type that you open from now on.",
+          description:
+            "Tooltip explaining that saving the layout makes it the personal default for all files with the same filename extension, e.g. all Python files",
+        }),
+        onClick: ({ props }) => {
+          props.actions.save_custom_layout?.();
+        },
+      },
+      {
+        name: "load_custom_layout",
+        icon: "layout",
+        label: defineMessage({
+          id: "command.generic.layout.apply_custom.label",
+          defaultMessage: "Apply Custom Layout",
+          description:
+            "Menu entry that applies the arrangement of editor frames the user saved earlier to the file they are currently editing. 'Custom' is the user's own saved arrangement, as opposed to the built-in 'Default Layout' offered right below it. 'Apply' in the sense of putting a stored setting into effect, not in the sense of repairing or recovering anything.",
+        }),
+        title: defineMessage({
+          id: "command.generic.layout.apply_custom.title",
+          defaultMessage:
+            "Arrange the frames of the file you are editing right now the way you saved them for this type of file. Not available until you have saved a layout.",
+          description:
+            "Tooltip for applying the user's own previously saved frame arrangement to the current file; the entry is greyed out while no layout has been saved yet",
+        }),
+        disabled: ({ props }) => !props.actions.store?.get("has_custom_layout"),
+        onClick: ({ props }) => {
+          props.actions.load_custom_layout?.();
+        },
+      },
+      {
+        name: "reset_frame_tree",
+        icon: "undo",
+        label: defineMessage({
+          id: "command.generic.layout.apply_default.label",
+          defaultMessage: "Apply Default Layout",
+          description:
+            "Menu entry that throws away the current arrangement of editor frames and goes back to the one CoCalc provides out of the box. 'Default' is the built-in arrangement, as opposed to the user's own 'Custom Layout' offered right above it.",
+        }),
+        title: defineMessage({
+          id: "command.generic.layout.apply_default.title",
+          defaultMessage:
+            "Discard how the frames are arranged right now and go back to CoCalc's built-in arrangement for this type of file. Your saved layout is kept.",
+          description:
+            "Tooltip for discarding the current frame arrangement in favour of the built-in one; this does not delete a layout the user saved",
+        }),
+        onClick: ({ props }) => {
+          props.actions.reset_frame_tree?.();
+        },
+      },
+    ],
   },
   button_bar: {
     alwaysShow: true,

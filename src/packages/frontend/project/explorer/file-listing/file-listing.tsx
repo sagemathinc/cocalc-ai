@@ -37,7 +37,11 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { buildFileActionItems } from "@cocalc/frontend/project/file-context-menu";
 import { triggerFileAction as triggerProjectFileAction } from "@cocalc/frontend/project/file-action-trigger";
 import { FILE_ITEM_OPENED_STYLE } from "@cocalc/frontend/project/page/flyouts/file-list-item";
-import { fileItemStyle } from "@cocalc/frontend/project/page/flyouts/utils";
+import {
+  FILE_RECENCY_BORDER_WIDTH_PX,
+  FILE_RECENCY_COLOR_NONE,
+  fileRecencyBorder,
+} from "@cocalc/frontend/project/file-recency";
 import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 import { type DirectoryListingEntry } from "@cocalc/frontend/project/explorer/types";
 import {
@@ -968,10 +972,9 @@ export function FileListing({
         },
         style: {
           cursor: "pointer",
-          ...(fileItemStyle(
-            record.mtime ?? 0,
-            !!record.mask,
-          ) as React.CSSProperties),
+          // NOTE: the recency indicator is a left border on the *first cell* of
+          // the row (see itemContent), because in the separated borders model
+          // (the default for our tables) borders on <tr> are ignored.
           ...(record.isOpen ? FILE_ITEM_OPENED_STYLE : undefined),
           ...(isChecked ? { backgroundColor: COLORS.GRAY_LLL } : undefined),
           ...(isSelected ? { backgroundColor: COLORS.BLUE_LLL } : undefined),
@@ -1040,6 +1043,14 @@ export function FileListing({
       ...thStyle,
       textAlign: "center",
     };
+    // keep the header aligned with the rows, which have the recency bar on
+    // their first cell
+    const recencySpacer: React.CSSProperties = {
+      borderLeft: `${FILE_RECENCY_BORDER_WIDTH_PX} solid ${FILE_RECENCY_COLOR_NONE}`,
+    };
+    const showCheckboxColumn =
+      !student_project_functionality.disableActions &&
+      (!readOnly || allowReadOnlyCopy);
     const sortLabelStyle = (columnKey: string): React.CSSProperties =>
       sortColumn === columnKey
         ? { color: COLORS.ANTD_LINK_BLUE }
@@ -1047,24 +1058,30 @@ export function FileListing({
 
     return (
       <tr>
-        {!student_project_functionality.disableActions &&
-          (!readOnly || allowReadOnlyCopy) && (
-            <th
-              style={{
-                ...centeredHeaderStyle,
-                width: COL_W.CHECKBOX,
-                cursor: "default",
-              }}
-            >
-              <Checkbox
-                aria-label="Select all files"
-                checked={allChecked}
-                indeterminate={someChecked}
-                onChange={handleSelectAll}
-              />
-            </th>
-          )}
-        <th style={{ ...centeredHeaderStyle, width: COL_W.TYPE }}>
+        {showCheckboxColumn && (
+          <th
+            style={{
+              ...centeredHeaderStyle,
+              ...recencySpacer,
+              width: COL_W.CHECKBOX,
+              cursor: "default",
+            }}
+          >
+            <Checkbox
+              aria-label="Select all files"
+              checked={allChecked}
+              indeterminate={someChecked}
+              onChange={handleSelectAll}
+            />
+          </th>
+        )}
+        <th
+          style={{
+            ...centeredHeaderStyle,
+            ...(showCheckboxColumn ? undefined : recencySpacer),
+            width: COL_W.TYPE,
+          }}
+        >
           <Dropdown
             menu={{
               items: [
@@ -1211,7 +1228,14 @@ export function FileListing({
     (_index: number, entry: VirtualEntry) => {
       if (isPeekEntry(entry)) {
         return (
-          <td colSpan={numCols} style={{ padding: 0, background: "white" }}>
+          <td
+            colSpan={numCols}
+            style={{
+              padding: 0,
+              background: "white",
+              borderLeft: `${FILE_RECENCY_BORDER_WIDTH_PX} solid ${FILE_RECENCY_COLOR_NONE}`,
+            }}
+          >
             <DirectoryPeek
               project_id={project_id}
               dirPath={misc.path_to_file(current_path, entry._peekForName)}
@@ -1246,36 +1270,45 @@ export function FileListing({
         textOverflow: "ellipsis",
         borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
       };
+      // the colored bar at the very left of the row indicates how recently the
+      // file was modified – same as in the "Files" flyout.  It has to live on
+      // the first cell, since borders on <tr> are ignored (separated borders).
+      const showCheckboxColumn =
+        !student_project_functionality.disableActions &&
+        (!readOnly || allowReadOnlyCopy);
+      const recencyStyle: React.CSSProperties =
+        record.name === ".."
+          ? {
+              borderLeft: `${FILE_RECENCY_BORDER_WIDTH_PX} solid ${FILE_RECENCY_COLOR_NONE}`,
+            }
+          : (fileRecencyBorder(record.mtime ?? 0) as React.CSSProperties);
 
       return (
         <>
-          {!student_project_functionality.disableActions &&
-            (!readOnly || allowReadOnlyCopy) && (
-              <td
-                style={{
-                  ...cellStyle,
-                  width: COL_W.CHECKBOX,
-                  textAlign: "center",
-                }}
-              >
-                <Checkbox
-                  aria-label={`Select ${record.isDir ? "folder" : "file"} ${record.name}`}
-                  checked={checked_files.has(record.fullPath)}
-                  disabled={record.name === ".."}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) =>
-                    handleCheckboxChange(
-                      record,
-                      e.target.checked,
-                      e.nativeEvent,
-                    )
-                  }
-                />
-              </td>
-            )}
+          {showCheckboxColumn && (
+            <td
+              style={{
+                ...cellStyle,
+                ...recencyStyle,
+                width: COL_W.CHECKBOX,
+                textAlign: "center",
+              }}
+            >
+              <Checkbox
+                aria-label={`Select ${record.isDir ? "folder" : "file"} ${record.name}`}
+                checked={checked_files.has(record.fullPath)}
+                disabled={record.name === ".."}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) =>
+                  handleCheckboxChange(record, e.target.checked, e.nativeEvent)
+                }
+              />
+            </td>
+          )}
           <td
             style={{
               ...cellStyle,
+              ...(showCheckboxColumn ? undefined : recencyStyle),
               width: COL_W.TYPE,
               cursor:
                 record.isDir && record.name !== ".." ? "pointer" : undefined,

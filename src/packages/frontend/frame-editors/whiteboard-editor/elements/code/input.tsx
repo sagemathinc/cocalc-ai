@@ -397,7 +397,7 @@ function getCMOptions(mode) {
 function indexToPos(input: string): { x: number; y: number } {
   const lines = input.split("\n");
   return {
-    x: lines.at(-1)?.length ?? 0,
+    x: lines[lines.length - 1]?.length ?? 0,
     y: lines.length - 1,
   };
 }

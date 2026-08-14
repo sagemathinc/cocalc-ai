@@ -25,7 +25,13 @@ const OPEN_WITH_SUMMARY_TAG =
 const CLOSE_TAG = /^\s*<\/details\s*>\s*$/i;
 
 register(({ token, state }) => {
-  if (state.details != null) return; // already handling a details tag
+  if (
+    state.details != null ||
+    state.anchor != null ||
+    state.close_type != null
+  ) {
+    return;
+  }
   if (
     !token.type.startsWith("html_") ||
     (!OPEN_TAG.test(token.content) &&

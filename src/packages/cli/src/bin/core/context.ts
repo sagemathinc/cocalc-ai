@@ -10,6 +10,11 @@ export type HubCallContext = {
     user?: {
       auth_session_hash?: string | null;
       project_id?: string | null;
+      auth_actor?: "account" | "agent";
+      auth_project_id?: string | null;
+      auth_token_fingerprint?: string | null;
+      auth_iat_s?: number | null;
+      auth_exp_s?: number | null;
     } | null;
   };
 };
@@ -54,6 +59,13 @@ export async function hubCallByName<T>({
     account_id?: string;
     project_id?: string;
     auth_session_hash?: string | null;
+    agent?: {
+      account_id: string;
+      project_id: string;
+      token_fingerprint: string;
+      issued_at_s: number;
+      expires_at_s: number;
+    };
     name: string;
     args: any[];
     timeout: number;
@@ -66,6 +78,27 @@ export async function hubCallByName<T>({
       ? Math.max(1_000, Math.min(timeoutMs, ctx.rpcTimeoutMs))
       : Math.max(1_000, timeoutMs);
   const projectId = `${ctx.remote.user?.project_id ?? ""}`.trim();
+  const agentProjectId = `${ctx.remote.user?.auth_project_id ?? ""}`.trim();
+  const agentFingerprint =
+    `${ctx.remote.user?.auth_token_fingerprint ?? ""}`.trim();
+  const agentIssuedAt = Number(ctx.remote.user?.auth_iat_s ?? 0);
+  const agentExpiresAt = Number(ctx.remote.user?.auth_exp_s ?? 0);
+  const agent =
+    ctx.remote.user?.auth_actor === "agent" &&
+    agentProjectId &&
+    agentFingerprint &&
+    Number.isFinite(agentIssuedAt) &&
+    agentIssuedAt > 0 &&
+    Number.isFinite(agentExpiresAt) &&
+    agentExpiresAt > agentIssuedAt
+      ? {
+          account_id: ctx.accountId,
+          project_id: agentProjectId,
+          token_fingerprint: agentFingerprint,
+          issued_at_s: agentIssuedAt,
+          expires_at_s: agentExpiresAt,
+        }
+      : undefined;
   debug?.(projectId ? "hubCallProject" : "hubCallAccount", {
     name,
     timeoutMs,
@@ -76,9 +109,11 @@ export async function hubCallByName<T>({
   return (await withTimeout(
     callHub({
       client: ctx.remote.client,
-      ...(projectId
-        ? { project_id: projectId }
-        : { account_id: ctx.accountId }),
+      ...(agent
+        ? { agent }
+        : projectId
+          ? { project_id: projectId }
+          : { account_id: ctx.accountId }),
       auth_session_hash:
         typeof ctx.remote.user?.auth_session_hash === "string"
           ? ctx.remote.user.auth_session_hash

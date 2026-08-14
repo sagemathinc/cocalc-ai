@@ -10,6 +10,12 @@ export const ROOTFS_CONFIG_EXPORT_VERSION = 1;
 export const ROOTFS_CONTENT_MAX_JSON_BYTES = 32_000;
 export const ROOTFS_CONTENT_MAX_ACTIONS = 20;
 export const ROOTFS_CONTENT_MAX_HIGHLIGHTS = 20;
+export const ROOTFS_TAG_PROJECT_PUBLISH = "project-publish";
+export const ROOTFS_TAG_DEV_FIXTURE = "dev-fixture";
+export const ROOTFS_TAG_SOURCE_PREFIX = "source:";
+export const ROOTFS_TAG_SNAPSHOT_PREFIX = "snapshot:";
+export const ROOTFS_TAG_ONBOARDING_PREFIX = "onboarding:";
+export const ROOTFS_TAG_PRESET_PREFIX = "preset:";
 
 export type RootfsImageArch = "amd64" | "arm64" | "any";
 export type RootfsPhaseTimings = Record<string, number>;
@@ -336,6 +342,9 @@ export type RootfsCatalogPageRequest = {
     family?: string;
     channel?: string;
     image_ids?: string[];
+    lineage_image_id?: string;
+    slug?: string;
+    image_target?: string;
   };
 };
 
@@ -1115,7 +1124,7 @@ export function normalizeRootfsEntry(
 ): RootfsImageEntry {
   const baseTags = (entry.tags ?? []).map((tag) => tag.trim()).filter(Boolean);
   const tags = source
-    ? Array.from(new Set([...baseTags, `source:${source}`]))
+    ? Array.from(new Set([...baseTags, `${ROOTFS_TAG_SOURCE_PREFIX}${source}`]))
     : baseTags;
   return {
     ...entry,

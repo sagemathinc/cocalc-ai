@@ -106,6 +106,31 @@ This default is convenient, but for subframe-sensitive operations you usually wa
   - [src/packages/frontend/frame-editors/jupyter-editor/editor.ts](../src/packages/frontend/frame-editors/jupyter-editor/editor.ts)
   - [src/packages/frontend/frame-editors/jupyter-editor/actions.ts](../src/packages/frontend/frame-editors/jupyter-editor/actions.ts)
 
+## The Layout submenu and saved custom layouts
+
+The `layout` command in `generic-commands.tsx` (group `frame_types`, `alwaysShow: true`) is a submenu with three entries:
+
+- **Save Layout** (`save_custom_layout`) — stores the current frame tree as this account's layout for the file's extension.
+- **Apply Custom Layout** (`load_custom_layout`) — applies that stored layout to the current file. `disabled` while `store.get("has_custom_layout")` is falsy.
+- **Apply Default Layout** (`reset_frame_tree`) — back to the built-in layout.
+
+Note that "Apply Default Layout" deliberately calls `reset_frame_tree()` and not `reset_local_view_state()`: the latter reloads local view state, which re-runs the fresh-open path below and would immediately re-apply the custom layout, making the command look like a no-op.
+
+### Storage
+
+[src/packages/frontend/frame-editors/frame-tree/frame-editor-settings.ts](../src/packages/frontend/frame-editors/frame-tree/frame-editor-settings.ts) keeps layouts in the account-scoped Conat DKV `frame-editor-settings` under `custom-layout-{ext}`, so a layout saved from `foo.py` applies to every `.py` file that account opens. The DKV comes from `getSharedAccountDkv`, which caches and closes it on sign-out — callers must not close it.
+
+`stripFrameTreeIds()` keeps only structural fields (`type`, `direction`, `pos`, `sizes`, `activeTab`, `first`, `second`, `children`), dropping frame ids and other per-file state. `isFrameTree()` validates data read back from the DKV so corrupt values can't crash the editor.
+
+### Precedence
+
+`_load_local_view_state()` in [actions-base.ts](../src/packages/frontend/frame-editors/base-editor/actions-base.ts) decides which layout wins:
+
+- A file with a stored local layout keeps it — local state always overrides the account-wide layout. It only probes `hasCustomLayout()` to set `has_custom_layout` for the menu.
+- A file with no stored layout is a fresh open, so `_apply_custom_layout_if_available()` replaces the built-in default with the saved layout, if there is one.
+
+Both paths are async and fail silently, falling back to the built-in default.
+
 ## Import-cycle caution
 
 When registering menus inside an editor module, prefer importing `addEditorMenus` from the direct file:

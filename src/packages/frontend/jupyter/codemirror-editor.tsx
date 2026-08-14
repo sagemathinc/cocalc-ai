@@ -5,7 +5,7 @@
 
 // Focused codemirror editor, which you can interactively type into.
 
-declare const $: any;
+import jquery from "jquery";
 
 import { delay } from "awaiting";
 import CodeMirror from "codemirror";
@@ -30,6 +30,9 @@ import { Cursors } from "./cursors";
 import { Position } from "./insert-cell/types";
 import { is_whitespace } from "@cocalc/util/misc";
 import { initFold, saveFold } from "@cocalc/frontend/codemirror/util";
+
+// This editor predates the typed DOM wrappers used by newer frontend code.
+const $: any = jquery;
 
 // We cache a little info about each Codemirror editor we make here,
 // so we can restore it when we make the same one again.  Due to

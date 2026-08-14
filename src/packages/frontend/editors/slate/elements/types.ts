@@ -30,6 +30,8 @@ import type { Emoji } from "./emoji";
 import "./emoji/editable";
 import type { Generic } from "./generic";
 import "./generic";
+import type { Guidance } from "./guidance";
+import "./guidance";
 import type { Hashtag } from "./hashtag";
 import "./hashtag/editable";
 import type { Heading } from "./heading";
@@ -102,6 +104,7 @@ declare module "slate" {
       | ListItem
       | BulletList
       | OrderedList
+      | Guidance
       | Generic;
     Text: Marks;
   }
