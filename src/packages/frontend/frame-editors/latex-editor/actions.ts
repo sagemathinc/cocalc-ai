@@ -120,6 +120,7 @@ import { IProcessedLatexLog, LatexParser } from "./latex-log-parser";
 import {
   build_command,
   Engine,
+  fullRebuildCommand,
   get_engine_from_config,
   latexmk,
 } from "./latexmk";
@@ -181,15 +182,24 @@ export class Actions extends BaseActions<LatexEditorState> {
   ) => Promise<void>;
   private is_stopping: boolean = false; // if true, do not continue running any compile jobs
   private buildCoordinator?: BuildCoordinator;
-  private _lastBuiltTime?: number;
+  // Source revision (see sourceRevision) of the last build that COMPLETED
+  // successfully; an auto build for the same revision is a no-op.
+  private _lastBuiltRevision?: number;
+  // Source revision the currently running/most recent build started from,
+  // recorded whether or not it succeeded. Only used to decide whether a
+  // build requested during that build still has anything new to compile.
+  private _lastAttemptedRevision?: number;
   private _buildWasStopped = false;
-  // last_save_time captured when a joined build started; recording this
-  // (not the completion-time value) prevents edits saved during the build
-  // from being marked as already built.
-  private _joinStartedSaveTime?: number;
-  // Set when a build is requested while another one is running; the
-  // finishing build then triggers one follow-up auto_build.
+  // Source revision captured when a joined build started; recording the
+  // originator's revision (not our own current one) prevents edits saved
+  // during the build from being marked as already built.
+  private _joinStartedRevision?: number;
+  // Set when a build is requested while another one is running, together
+  // with the revision at that moment; the finishing build then triggers one
+  // follow-up auto_build, but only if that revision is not what it just
+  // compiled.
   private _pendingBuildRequest = false;
+  private _pendingBuildRevision?: number;
   // Ownership token of the build (local or joined) that currently owns the
   // building state. A buildInternal invocation whose token no longer
   // matches — e.g. it was stopped and a replacement build started before
@@ -356,9 +366,11 @@ export class Actions extends BaseActions<LatexEditorState> {
   private resetBuildRuntimeState(): void {
     this._buildToken = undefined;
     this._pendingBuildRequest = false;
+    this._pendingBuildRevision = undefined;
     this._buildWasStopped = true;
-    this._lastBuiltTime = undefined;
-    this._joinStartedSaveTime = undefined;
+    this._lastBuiltRevision = undefined;
+    this._lastAttemptedRevision = undefined;
+    this._joinStartedRevision = undefined;
     this.is_building = false;
     this.setState({ building: false });
     this.set_status("");
@@ -375,7 +387,10 @@ export class Actions extends BaseActions<LatexEditorState> {
         // our own local state, which may already be ahead of the originator
         // and would then be wrongly marked as built. Undefined (older
         // client) simply means no last-built revision gets recorded.
-        this._joinStartedSaveTime = sourceRevision;
+        this._joinStartedRevision = sourceRevision;
+        // A joined build compiles the originator's revision, so a request
+        // queued while we join must be judged against that revision too.
+        this._lastAttemptedRevision = sourceRevision;
         await this.run_build(aggregate ?? 0, force, buildId);
       },
       stop: (buildId) => {
@@ -400,9 +415,9 @@ export class Actions extends BaseActions<LatexEditorState> {
           // may error without properly finalizing the build_logs entry.
           this.cleanupStaleBuildLogs();
           if (!this._buildWasStopped && !this.store.get("error")) {
-            this._lastBuiltTime = this._joinStartedSaveTime;
+            this._lastBuiltRevision = this._joinStartedRevision;
           }
-          this._joinStartedSaveTime = undefined;
+          this._joinStartedRevision = undefined;
           // A build requested while we were joining must run now — the
           // originator-path finally block never runs for joined builds.
           this.drainPendingBuild();
@@ -421,9 +436,52 @@ export class Actions extends BaseActions<LatexEditorState> {
     return buildToken == null || this._buildToken === buildToken;
   }
 
+  /**
+   * Content revision of everything that goes into a build: the master file
+   * plus every dependency (latexmk -deps, via switch_to_files) that is open
+   * in this client.
+   *
+   * Content-based on purpose. The obvious alternative, last_save_time(), is
+   * a clock value that propagates asynchronously, so a build and the check
+   * that follows it can disagree about the same source. Hashing the saved
+   * content of each file cannot drift, and covers the multi-file case: a
+   * sub-file edit changes the revision even though the master is untouched.
+   *
+   * Returns undefined when no hash is available yet (syncstring not ready).
+   * Callers must treat that as "unknown" and build rather than skip.
+   */
+  private sourceRevision(): number | undefined {
+    const parts: string[] = [];
+    const add = (path: string, actions: any) => {
+      const hash = actions?._syncstring?.hash_of_saved_version?.();
+      if (hash != null) {
+        parts.push(`${path}:${hash}`);
+      }
+    };
+    add(this.path, this);
+    const files = this.store.get("switch_to_files");
+    if (files != null) {
+      for (const path of files) {
+        if (path === this.path) continue;
+        // Only open files have actions; a dependency nobody opened cannot
+        // change under us without its own client triggering a build.
+        add(path, this.redux.getEditorActions(this.project_id, path));
+      }
+    }
+    if (parts.length === 0) return undefined;
+    parts.sort();
+    return hash_string(parts.join("\n"));
+  }
+
   // Run the follow-up build recorded while another build (local or joined)
-  // was in progress. auto_build dedupes via _lastBuiltTime, so an unchanged
-  // source is a cheap no-op.
+  // was in progress.
+  //
+  // Gated on the revision captured when the request was queued: a build
+  // saves its own sources, and that save is what makes the syncstring emit
+  // "save-to-disk", so every build queues a request for the very revision it
+  // is already compiling. Comparing against _lastAttemptedRevision (not
+  // _lastBuiltRevision, which is only recorded on success) drops those
+  // without also swallowing a retry after a failed build.
   //
   // Deferred on purpose: when invoked from the coordinator's
   // setBuilding(false) inside joinBuild's finally, the coordinator still
@@ -437,7 +495,17 @@ export class Actions extends BaseActions<LatexEditorState> {
     setTimeout(() => {
       if (!this._pendingBuildRequest) return; // e.g. cleared by stop_build
       if (this._state === "closed") return;
+      const revision = this._pendingBuildRevision;
       this._pendingBuildRequest = false;
+      this._pendingBuildRevision = undefined;
+      if (
+        revision != null &&
+        this._lastAttemptedRevision != null &&
+        revision === this._lastAttemptedRevision
+      ) {
+        // The build that just ran already compiled this revision.
+        return;
+      }
       void this.auto_build();
     }, 0);
   }
@@ -1152,7 +1220,12 @@ export class Actions extends BaseActions<LatexEditorState> {
       await this.save_all(false);
       return;
     }
-    await this.build();
+    // auto_build, NOT build: Ctrl-S is "save, then build if the source
+    // actually changed". build() takes a fresh aggregate, which bypasses
+    // both the no-op check and the cross-client dedup, so routing Ctrl-S
+    // through it made every save start a private latexmk run — and the
+    // save this build performs itself then queued a second one.
+    await this.auto_build();
   }
 
   private async buildInternal(
@@ -1176,8 +1249,10 @@ export class Actions extends BaseActions<LatexEditorState> {
       } else {
         // Remember that a build was requested — the running build's
         // finally block triggers one follow-up auto_build, so a revision
-        // saved during the build is not silently skipped.
+        // saved during the build is not silently skipped. drainPendingBuild
+        // compares this revision against what that build compiled.
         this._pendingBuildRequest = true;
+        this._pendingBuildRevision = this.sourceRevision();
         return;
       }
     }
@@ -1206,30 +1281,29 @@ export class Actions extends BaseActions<LatexEditorState> {
       buildTrace.mark("sources_saved");
       // Capture the revision we are about to build. This — not the
       // completion-time value — is what gets recorded as "last built":
-      // reading last_save_time() again after the build would wrongly mark
-      // edits saved while the build was running as already built.
-      const startedSaveTime = this.last_save_time();
+      // reading it again after the build would wrongly mark edits saved
+      // while the build was running as already built. Must be AFTER save,
+      // so it hashes what actually landed on disk.
+      const revision = this.sourceRevision();
+      // The aggregate stays a timestamp: it is what makes two clients share
+      // one latexmk process, and last_save_time() is the same value on both.
       const time =
         force || wasStopped || useFreshAggregate
           ? server_time().valueOf()
-          : startedSaveTime;
+          : this.last_save_time();
       // Skip if nothing changed since last build — avoids DKV chatter that
       // causes other clients to flicker their build spinner for a no-op.
-      // Must be AFTER save so last_save_time() reflects pending edits.
+      // An unknown revision (undefined) never skips.
       if (
         !force &&
         !useFreshAggregate &&
-        this._lastBuiltTime != null &&
-        startedSaveTime === this._lastBuiltTime
+        revision != null &&
+        revision === this._lastBuiltRevision
       ) {
         return; // finally block cleans up is_building / building state
       }
-      this.buildCoordinator?.publishBuildStart(
-        buildId,
-        time,
-        force,
-        startedSaveTime,
-      );
+      this._lastAttemptedRevision = revision;
+      this.buildCoordinator?.publishBuildStart(buildId, time, force, revision);
       await this.run_build(time, force, buildId);
       // run_build failures are often reported via set_error without
       // throwing; buildInternal cleared the error at the start, so a
@@ -1242,7 +1316,7 @@ export class Actions extends BaseActions<LatexEditorState> {
         !this._buildWasStopped &&
         !this.store.get("error")
       ) {
-        this._lastBuiltTime = startedSaveTime;
+        this._lastBuiltRevision = revision;
       }
       buildTrace.mark("build_pipeline_done");
       afterNextPaint(() => {
@@ -1338,13 +1412,15 @@ export class Actions extends BaseActions<LatexEditorState> {
       return;
     }
     this.buildCoordinator?.requestStop();
-    // A stopped build didn't complete — clear the "last built" time so
+    // A stopped build didn't complete — clear the "last built" revision so
     // the next build isn't skipped as a no-op.
-    this._lastBuiltTime = undefined;
+    this._lastBuiltRevision = undefined;
+    this._lastAttemptedRevision = undefined;
     this._buildWasStopped = true;
     // Stop means stop: also cancel any build queued while the stopped one
     // was running — otherwise the drain would immediately restart it.
     this._pendingBuildRequest = false;
+    this._pendingBuildRevision = undefined;
     // Release build ownership: the stopped invocation's finally block must
     // not clean up state that a subsequent build re-claims.
     this._buildToken = undefined;
@@ -1573,6 +1649,10 @@ export class Actions extends BaseActions<LatexEditorState> {
       build_command = s;
     } else {
       build_command = s.toJS();
+    }
+    if (force && !this.store.get("build_command_hardcoded")) {
+      // Force Build means "redo everything", not just "ignore our caches".
+      build_command = fullRebuildCommand(build_command);
     }
     const status = (s) => {
       if (this.isBuildOwner(buildToken)) {

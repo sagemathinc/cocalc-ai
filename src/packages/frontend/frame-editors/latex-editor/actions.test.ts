@@ -1336,3 +1336,130 @@ describe("LaTeX build ownership", () => {
     expect(actions._projectStopObserved).toBe(false);
   });
 });
+
+describe("LaTeX save-triggered builds", () => {
+  const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 5));
+
+  function createSaveActions(hash: () => number | undefined) {
+    const actions: any = Object.create(Actions.prototype);
+    actions.project_id = "project-1";
+    actions.path = "paper.tex";
+    actions._state = "open";
+    actions.is_building = false;
+    actions._pendingBuildRequest = false;
+    actions._buildWasStopped = false;
+    actions._syncstring = { hash_of_saved_version: hash };
+    actions.store = {
+      get: jest.fn((key: string) => (key === "error" ? "" : undefined)),
+    };
+    actions.setState = jest.fn();
+    actions.set_error = jest.fn();
+    actions.set_status = jest.fn();
+    actions.save_all = jest.fn(async () => {});
+    actions.last_save_time = jest.fn(() => 1);
+    actions.run_build = jest.fn(async () => {});
+    actions.buildCoordinator = {
+      setLocalBuildId: jest.fn(),
+      publishBuildStart: jest.fn(),
+      publishBuildFinished: jest.fn(),
+      requestStop: jest.fn(),
+      reconcileRunningBuild: jest.fn(),
+    };
+    return actions;
+  }
+
+  it("Ctrl-S builds through the deduped path, not a fresh aggregate", async () => {
+    // build() takes a fresh aggregate, which bypasses both the no-op check
+    // and cross-client dedup — a save must not do that.
+    const actions = createSaveActions(() => 1);
+    actions.redux = { getStore: () => ({ getIn: () => true }) };
+    actions.is_likely_master = () => true;
+    actions.buildInternal = jest.fn(async () => {});
+
+    await actions.explicit_save();
+
+    expect(actions.buildInternal).toHaveBeenCalledTimes(1);
+    expect(actions.buildInternal).toHaveBeenCalledWith(undefined, false, false);
+  });
+
+  it("does not rebuild for the save the build performed itself", async () => {
+    // Regression: a build saves its sources, the syncstring emits
+    // "save-to-disk", the handler calls auto_build mid-build and queues a
+    // pending request — for the very revision being compiled.
+    const actions = createSaveActions(() => 4242);
+    let finishRun!: () => void;
+    actions.run_build = jest.fn(
+      () => new Promise<void>((resolve) => (finishRun = resolve)),
+    );
+
+    const build = actions.buildInternal(undefined, false, false);
+    await Promise.resolve();
+    await Promise.resolve();
+    // the build's own save_all lands here
+    await actions.buildInternal(undefined, false, false);
+    expect(actions._pendingBuildRequest).toBe(true);
+
+    finishRun();
+    await build;
+    await settle();
+
+    expect(actions.run_build).toHaveBeenCalledTimes(1);
+  });
+
+  it("does rebuild when the source changed while the build ran", async () => {
+    let hash = 1;
+    const actions = createSaveActions(() => hash);
+    let finishRun!: () => void;
+    actions.run_build = jest
+      .fn()
+      .mockImplementationOnce(
+        () => new Promise<void>((resolve) => (finishRun = resolve)),
+      )
+      .mockResolvedValue(undefined);
+
+    const build = actions.buildInternal(undefined, false, false);
+    await Promise.resolve();
+    await Promise.resolve();
+    hash = 2; // the user typed and saved during the build
+    await actions.buildInternal(undefined, false, false);
+
+    finishRun();
+    await build;
+    await settle();
+
+    expect(actions.run_build).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips an auto build for an unchanged revision", async () => {
+    const actions = createSaveActions(() => 7);
+    await actions.buildInternal(undefined, false, false);
+    expect(actions.run_build).toHaveBeenCalledTimes(1);
+    await actions.buildInternal(undefined, false, false);
+    expect(actions.run_build).toHaveBeenCalledTimes(1);
+  });
+
+  it("tracks sub-file content in the build revision", () => {
+    let subHash = 10;
+    const actions = createSaveActions(() => 1);
+    actions.store.get = jest.fn((key: string) =>
+      key === "switch_to_files" ? List(["paper.tex", "ch1.tex"]) : undefined,
+    );
+    actions.redux = {
+      getEditorActions: (_project_id: string, path: string) =>
+        path === "ch1.tex"
+          ? { _syncstring: { hash_of_saved_version: () => subHash } }
+          : undefined,
+    };
+
+    const before = actions.sourceRevision();
+    subHash = 11; // master untouched, included file edited
+    expect(actions.sourceRevision()).not.toBe(before);
+  });
+
+  it("never skips when no revision can be computed", async () => {
+    const actions = createSaveActions(() => undefined);
+    await actions.buildInternal(undefined, false, false);
+    await actions.buildInternal(undefined, false, false);
+    expect(actions.run_build).toHaveBeenCalledTimes(2);
+  });
+});

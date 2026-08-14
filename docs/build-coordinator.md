@@ -67,10 +67,32 @@ live-output source.
 
 Manual builds ("Build"/"Force Build" buttons) and any build after a stop use a
 **fresh** server-time aggregate to bypass the dedup cache (a stopped build
-leaves cached partial results under the old key). Build-on-save uses
-`auto_build()` which keeps the save-time key so collaborator saves dedupe.
-No-op builds (nothing changed since the last completed build) are skipped
-before publishing to the DKV, so peers don't flicker their spinners.
+leaves cached partial results under the old key). Build-on-save — including
+Ctrl-S, which is a save that may build, not a manual build — goes through
+`auto_build()`, which keeps the save-time key so collaborator saves dedupe
+into one process.
+
+Whether a build is a no-op is a separate question from the aggregate, and is
+decided on a **content revision**: a hash over `(path, hash_of_saved_version)`
+for the master plus every dependency open in this client (`sourceRevision()`
+in the LaTeX actions; the Rmd/Qmd actions hash their single file). Content,
+not `last_save_time()`, because a save timestamp propagates asynchronously,
+so a build and the check that follows it could disagree about the same
+source — and because an included file changing must count even though the
+master did not. An unknown revision never skips. A skipped build never
+reaches the DKV, so peers don't flicker their spinners.
+
+A build saves its own sources, and that save is what makes the syncstring
+emit `save-to-disk`, so **every** build queues a follow-up build request for
+the revision it is already compiling. `drainPendingBuild` therefore compares
+the queued revision against the one that build attempted and drops the
+duplicate. Comparing against the last *successful* build instead would
+swallow a retry after a failed one.
+
+"Force Build" additionally rewrites a latexmk command to use `-gg`
+(`fullRebuildCommand`), so it discards generated files and reprocesses rather
+than merely skipping our caches. A build command the user hardcoded (e.g. via
+a `% !TeX cocalc =` directive) is left alone.
 
 ### 3. Backend `updates` EventEmitter — late-join streaming
 

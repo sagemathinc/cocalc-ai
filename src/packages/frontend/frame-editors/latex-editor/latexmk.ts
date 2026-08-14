@@ -125,6 +125,39 @@ function build_command_name(engine: Engine): BuildCommandName {
   }
 }
 
+/**
+ * Turn a latexmk command into a full rebuild ("Force Build").
+ *
+ * A normal build reuses latexmk's .fdb_latexmk database and the existing
+ * .aux, so "force" without this only means "skip our own dedup caches" —
+ * latexmk itself may still decide most of the work is unnecessary. latexmk's
+ * -gg ("super go mode") cleans the generated files first and then processes,
+ * which is what a user asking to force a build actually wants. The plain -g
+ * we normally pass is redundant then, so it is dropped.
+ *
+ * Anything that is not a latexmk command is returned unchanged: a build
+ * command the user hardcoded (e.g. via a `% !TeX cocalc =` directive) is
+ * theirs, not ours to rewrite.
+ */
+export function fullRebuildCommand(cmd: string | string[]): string | string[] {
+  if (typeof cmd === "string") {
+    const trimmed = cmd.trim();
+    if (!trimmed.startsWith("latexmk ")) return cmd;
+    if (/(^|\s)-gg(\s|$)/.test(trimmed)) return cmd;
+    // Drop the preceding whitespace with the flag, so removing it cannot
+    // leave a double space behind (quoted arguments make blanket whitespace
+    // collapsing unsafe).
+    const rest = trimmed
+      .slice("latexmk".length)
+      .replace(/\s-g(?=\s|$)/, "")
+      .trim();
+    return `latexmk -gg ${rest}`;
+  }
+  if (cmd.length === 0 || !cmd[0].endsWith("latexmk")) return cmd;
+  if (cmd.includes("-gg")) return cmd;
+  return [cmd[0], "-gg", ...cmd.slice(1).filter((x) => x !== "-g")];
+}
+
 export function build_command(
   engine: Engine,
   filename: string,
