@@ -61,6 +61,15 @@ interface BuildState {
  */
 const STALE_RUNNING_ENTRY_MS = 20 * 60 * 1000;
 
+// DKV init retry backoff. A project that is stopped, restarting, or briefly
+// unreachable makes init fail; without retrying, that editor never
+// coordinates again for the rest of the page's life.
+const INIT_RETRY_BASE_MS = 2000;
+const INIT_RETRY_MAX_MS = 30 * 1000;
+// Stay quiet through the first few attempts: a project that is simply
+// starting up is normal, and the user is already told it is starting.
+const INIT_ATTEMPTS_BEFORE_WARNING = 4;
+
 export interface BuildCoordinatorCallbacks {
   /**
    * Format-specific build function called when joining a remote build.
@@ -109,6 +118,9 @@ export class BuildCoordinator {
   // A join that settles under an older generation must not tear down or
   // otherwise mutate the lifecycle of a replacement build.
   private _joinGeneration = 0;
+  // Retry bookkeeping for the DKV init (see init).
+  private initAttempts = 0;
+  private initTimer?: ReturnType<typeof setTimeout>;
   // Server-clock boundary for the most recent observed project-runtime loss.
   // A running entry from at or before this instant belongs to the dead
   // runtime, even if the DKV was still initializing when the reset occurred.
@@ -192,14 +204,32 @@ export class BuildCoordinator {
         }
       }
       this.pendingOps = undefined;
+      this.initAttempts = 0;
     } catch (err) {
-      console.warn("BuildCoordinator: failed to init DKV", err);
-      this.callbacks.setError(
-        "BuildCoordinator: failed to initialize coordination — builds will work but won't sync across tabs",
-      );
-      // DKV failed — discard buffered ops and disable further buffering
-      // so later calls fall through to the dkv?.method() no-op path.
+      if (this.closed) return;
+      // Retry. Init fails whenever the project is unreachable — restarting,
+      // or briefly during a conat hiccup — and a file open during such a
+      // window used to leave THIS editor permanently uncoordinated: builds
+      // still ran, but no collaborator ever saw them and every client
+      // spawned its own process, until the page was reloaded.
+      this.initAttempts += 1;
+      // Buffered ops predate the failure; a retry must not replay them.
       this.pendingOps = undefined;
+      if (this.initAttempts === INIT_ATTEMPTS_BEFORE_WARNING) {
+        console.warn("BuildCoordinator: failed to init DKV", err);
+        this.callbacks.setError(
+          "BuildCoordinator: cannot reach the project to coordinate builds — builds still run, but collaborators will not see them until the connection recovers",
+        );
+      }
+      const delay = Math.min(
+        INIT_RETRY_MAX_MS,
+        INIT_RETRY_BASE_MS * 2 ** Math.min(this.initAttempts - 1, 5),
+      );
+      this.initTimer = setTimeout(() => {
+        this.initTimer = undefined;
+        if (this.closed) return;
+        void this.init(project_id);
+      }, delay);
     }
   }
 
@@ -531,6 +561,10 @@ export class BuildCoordinator {
   close(): void {
     this.closed = true;
     this._joinGeneration += 1;
+    if (this.initTimer != null) {
+      clearTimeout(this.initTimer);
+      this.initTimer = undefined;
+    }
     // Detach change listener before closing the ref-counted DKV.
     // The DKV may stay alive if other editors in the same project
     // still hold references — without this, stale listeners accumulate.

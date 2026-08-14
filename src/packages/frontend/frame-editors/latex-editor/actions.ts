@@ -300,10 +300,19 @@ export class Actions extends BaseActions<LatexEditorState> {
     // init_config is async — it must complete (setting build_command)
     // before the BuildCoordinator is created, otherwise a late-join
     // attempt may fire with an empty build_command and silently bail.
-    this.init_config().then(() => {
-      if (this._state === "closed") return;
-      this._init_build_coordinator();
-    });
+    // The coordinator is created after init_config so a late-join cannot
+    // fire with an empty build_command — but it must be created even if
+    // init_config fails (an unreachable project makes it throw), otherwise
+    // this editor never coordinates with anyone for the life of the page.
+    // A join with no build command bails harmlessly in run_latex.
+    this.init_config()
+      .catch((err) => {
+        console.warn("LaTeX: init_config failed", err);
+      })
+      .then(() => {
+        if (this._state === "closed") return;
+        this._init_build_coordinator();
+      });
     if (!this.knitr) {
       this.output_directory = this.output_directory_path();
     }

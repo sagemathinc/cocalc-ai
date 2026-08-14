@@ -855,6 +855,62 @@ describe("BuildCoordinator", () => {
 
       coord.close();
     });
+
+    test("retries init until the project is reachable again", async () => {
+      // Opening a file while the project is stopped used to leave THIS
+      // editor uncoordinated for the life of the page: builds ran, but no
+      // collaborator saw them and every client spawned its own process.
+      jest.useFakeTimers();
+      const flush = async () => {
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+      };
+      try {
+        const cb = makeCallbacks();
+        const coord = new BuildCoordinator(PROJECT_ID, PATH, cb);
+
+        dkvReject(new Error("project not running"));
+        await flush();
+        // Nothing is coordinated yet.
+        coord.publishBuildStart("b0", 100);
+        expect(mockDkvInstance.get(PATH)).toBeUndefined();
+
+        // The project comes back before the retry fires.
+        resetDkvMock();
+        jest.advanceTimersByTime(2000);
+        await flush();
+        dkvResolve(mockDkvInstance);
+        await flush();
+
+        // Coordination now works without a page reload.
+        coord.setLocalBuildId("b1");
+        coord.publishBuildStart("b1", 100);
+        expect(mockDkvInstance.get(PATH)?.buildId).toBe("b1");
+
+        coord.close();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test("close stops the init retry", async () => {
+      jest.useFakeTimers();
+      try {
+        const cb = makeCallbacks();
+        const coord = new BuildCoordinator(PROJECT_ID, PATH, cb);
+        dkvReject(new Error("project not running"));
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+
+        coord.close();
+        resetDkvMock();
+        jest.advanceTimersByTime(60_000);
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+
+        // A closed coordinator must not keep dialing the project.
+        expect(jest.getTimerCount()).toBe(0);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   // =========================================================================
