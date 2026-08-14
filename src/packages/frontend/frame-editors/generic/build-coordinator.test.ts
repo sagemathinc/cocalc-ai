@@ -60,6 +60,7 @@ class MockDKV {
   on(event: string, handler: any) {
     if (event === "change") this.listeners.push(handler);
     if (event === "closed") this.closedListeners.push(handler);
+    if (event === "recovery-state") this.recoveryListeners.push(handler);
   }
 
   off(event: string, handler: any) {
@@ -71,11 +72,21 @@ class MockDKV {
         (fn) => fn !== handler,
       );
     }
+    if (event === "recovery-state") {
+      this.recoveryListeners = this.recoveryListeners.filter(
+        (fn) => fn !== handler,
+      );
+    }
   }
 
-  emit(event: string) {
+  private recoveryListeners: Array<(state: string) => void> = [];
+
+  emit(event: string, arg?: any) {
     if (event === "closed") {
       for (const fn of [...this.closedListeners]) fn();
+    }
+    if (event === "recovery-state") {
+      for (const fn of [...this.recoveryListeners]) fn(arg);
     }
   }
 
@@ -968,16 +979,23 @@ describe("BuildCoordinator", () => {
       coord.close();
     });
 
-    test("reopens after the DKV closes", async () => {
-      // The DKV recovers from transient trouble itself, but a permanent
-      // close would otherwise leave this editor silently unsubscribed.
+    test("reopens after the underlying stream closes permanently", async () => {
+      // The DKV recovers from transient trouble itself. A permanent failure
+      // arrives as recovery-state "closed" -- NOT the "closed" event, which
+      // only fires for an explicit DKV.close() -- and would otherwise leave
+      // this editor silently unsubscribed.
       const cb = makeCallbacks();
       const coord = new BuildCoordinator(PROJECT_ID, PATH, cb);
       const first = await initDkv();
 
-      first.emit("closed");
-
+      first.emit("recovery-state", "recovering"); // transient: ignored
       resetDkvMock();
+      coord.ensureConnected();
+      await tick();
+      expect((coord as any).dkv).toBe(first);
+
+      first.emit("recovery-state", "closed");
+
       coord.ensureConnected();
       const second = await initDkv();
       expect(second).not.toBe(first);

@@ -11,6 +11,7 @@ import { path_split } from "@cocalc/util/misc";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { ExecOutput } from "../generic/client";
 import { runJob } from "../rmd-editor/utils";
+import { TIMEOUT_BUILD_JOB_S } from "../generic/build-constants";
 
 export const convert: (opts: Opts) => Promise<ExecOutput> =
   reuseInFlight(_convert);
@@ -38,7 +39,7 @@ async function _convert(opts: Opts): Promise<ExecOutput> {
     project_id,
     runDir: x.head,
     set_job_info,
-    timeout: 4 * 60,
+    timeout: TIMEOUT_BUILD_JOB_S,
     path,
     debug: `QMD conversion for: ${path}`,
   });

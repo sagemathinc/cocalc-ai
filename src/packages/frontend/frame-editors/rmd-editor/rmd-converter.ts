@@ -12,6 +12,7 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { ExecOutput } from "../generic/client";
 import { ExecuteCodeOutputAsync } from "@cocalc/util/types/execute-code";
 import { runJob } from "./utils";
+import { TIMEOUT_BUILD_JOB_S } from "../generic/build-constants";
 
 export const convert = reuseInFlight(_convert);
 
@@ -46,7 +47,7 @@ async function _convert(
     project_id: project_id,
     runDir: x.head,
     set_job_info,
-    timeout: 4 * 60,
+    timeout: TIMEOUT_BUILD_JOB_S,
     path: path,
     debug: `RMD conversion for: ${path}`,
   });

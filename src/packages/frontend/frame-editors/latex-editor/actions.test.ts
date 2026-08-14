@@ -1518,6 +1518,29 @@ describe("LaTeX save-triggered builds", () => {
     expect(actions._deferredJoinBuildId).toBe("remote-build");
   });
 
+  it("retries a deferred join when configuration lands during the wait", async () => {
+    // Race: the build command can arrive while the join is still waiting for
+    // it. The marker is set before the wait, so whoever finishes the
+    // configuration flushes it -- setting it only afterwards would strand
+    // that build forever, because later ensureBuildConfig calls return early
+    // once a command exists.
+    const actions = createSaveActions(() => 1);
+    actions._deferredJoinBuildId = "remote-build";
+    actions.store.get = jest.fn((key: string) =>
+      key === "build_command" ? "latexmk -pdf paper.tex" : undefined,
+    );
+    actions.configureBuildCommand = jest.fn(async () => true);
+
+    await actions.ensureBuildConfig();
+
+    // Already configured, so no re-resolution -- but the join still runs.
+    expect(actions.configureBuildCommand).not.toHaveBeenCalled();
+    expect(actions._deferredJoinBuildId).toBeUndefined();
+    expect(
+      actions.buildCoordinator.reconcileRunningBuild,
+    ).toHaveBeenCalledTimes(1);
+  });
+
   it("retries a deferred join once the build command arrives", async () => {
     const actions = createSaveActions(() => 1);
     actions._deferredJoinBuildId = "remote-build";

@@ -421,7 +421,15 @@ export class Actions extends BaseActions<LatexEditorState> {
         // run_latex would silently do nothing in that case; wait for it
         // instead, which is what the old "create the coordinator later"
         // ordering was really trying to achieve.
-        if (!(await this.waitForBuildCommand())) {
+        // Mark BEFORE waiting: if the configuration lands while we wait,
+        // whoever completes it flushes the marker, and setting it only
+        // afterwards would race with that and strand this build forever.
+        this._deferredJoinBuildId = buildId;
+        const haveCommand = await this.waitForBuildCommand();
+        if (this._deferredJoinBuildId === buildId) {
+          this._deferredJoinBuildId = undefined;
+        }
+        if (!haveCommand) {
           // Returning normally would look like a completed join: the
           // coordinator would clear the spinner, we would record the
           // originator's revision as built without building anything, and
@@ -847,6 +855,8 @@ export class Actions extends BaseActions<LatexEditorState> {
     };
 
     set_cmd();
+    // The command exists now; a join that gave up waiting for it can run.
+    this.flushDeferredJoin();
     if (!this._setCmdRegistered) {
       this._syncdb.on("change", set_cmd);
       this._setCmdRegistered = true;
@@ -854,21 +864,31 @@ export class Actions extends BaseActions<LatexEditorState> {
     return true;
   }
 
+  /**
+   * A collaborator's build arrived while we had no build command, so its
+   * join gave up. If that build may still be running, re-read the shared
+   * state and join it now.
+   */
+  private flushDeferredJoin(): void {
+    if (this._deferredJoinBuildId == null) return;
+    this._deferredJoinBuildId = undefined;
+    this.buildCoordinator?.reconcileRunningBuild();
+  }
+
   // Re-resolve the build command if we still do not have one. Called on the
   // signals that mean the project became reachable.
   private async ensureBuildConfig(): Promise<void> {
     if (this._state === "closed") return;
-    if (this.store.get("build_command")) return;
+    if (this.store.get("build_command")) {
+      // Configured already — but a join may have given up while it wasn't.
+      this.flushDeferredJoin();
+      return;
+    }
     if (this._configuringBuild) return;
     this._configuringBuild = true;
     try {
       if (!(await this.configureBuildCommand())) return;
-      if (this._deferredJoinBuildId != null) {
-        // A collaborator's build arrived while we had no build command. It
-        // may still be running -- re-read the shared state and join it now.
-        this._deferredJoinBuildId = undefined;
-        this.buildCoordinator?.reconcileRunningBuild();
-      }
+      this.flushDeferredJoin();
     } catch (err) {
       console.warn("LaTeX: configureBuildCommand failed", err);
     } finally {

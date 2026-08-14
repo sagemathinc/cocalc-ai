@@ -41,30 +41,57 @@ export interface ExecuteStreamOptions {
   // and aggregate are deduped to one backend job — this is how late joiners
   // attach to an already-running build and stream its output.
   aggregate?: string | number;
+  /**
+   * Attach to an existing job instead of executing anything.
+   *
+   * A client whose stream dropped knows the job id, and that id is stable
+   * for the life of the job. Re-executing with the same aggregate is NOT a
+   * substitute: the aggregate wrapper only retains a completed call's result
+   * for 60s, and an async exec "completes" as soon as the job is created, so
+   * a reconnect a few minutes into a build would start a SECOND process.
+   */
+  attach_job_id?: string;
   stream: (event: StreamEvent | null) => void;
 }
 
 export async function executeStream(
   options: ExecuteStreamOptions,
 ): Promise<ExecuteCodeOutput | undefined> {
-  const { stream, debug, project_id, ...opts } = options;
+  const { stream, debug, project_id, attach_job_id, ...opts } = options;
 
   if (debug) {
-    logger.debug(`executeStream: ${debug}`);
+    logger.debug(
+      `executeStream: ${debug}${attach_job_id ? ` (attach ${attach_job_id})` : ""}`,
+    );
   }
 
   try {
     let done = false;
 
-    // Start async execution WITHOUT streamCB — we use updates EventEmitter instead.
-    // This ensures ALL callers (first and late joiners) get live streaming uniformly
-    // via the same event source, eliminating duplicate event problems.
-    const job = await executeCode({
-      command: opts.command || "",
-      path: abspath(opts.path ?? ""),
-      ...opts,
-      async_call: true,
-    });
+    let job: ExecuteCodeOutput | undefined;
+    if (attach_job_id) {
+      // Re-attach only: never execute. If the job is gone from the cache
+      // there is nothing to attach to, and starting a replacement here
+      // would silently double-run the user's build.
+      const existing = asyncCache.get(attach_job_id);
+      if (existing == null) {
+        stream({ error: `no such job ${attach_job_id}` });
+        stream(null);
+        return undefined;
+      }
+      job = existing;
+    } else {
+      // Start async execution WITHOUT streamCB — we use updates EventEmitter
+      // instead. This ensures ALL callers (first and late joiners) get live
+      // streaming uniformly via the same event source, eliminating duplicate
+      // event problems.
+      job = await executeCode({
+        command: opts.command || "",
+        path: abspath(opts.path ?? ""),
+        ...opts,
+        async_call: true,
+      });
+    }
 
     if (job?.type !== "async") {
       stream({ error: "Failed to create async job for streaming" });

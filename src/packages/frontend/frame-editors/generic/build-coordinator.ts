@@ -54,12 +54,12 @@ interface BuildState {
 
 /**
  * Maximum age of a "running" DKV entry we're willing to join as a late
- * joiner. The latex backend enforces a 15-minute hard timeout on the job
- * itself; anything older than that plus a generous safety margin is
- * definitely stranded (the originator's `publishBuildFinished` never ran)
- * and re-joining would just hang us the same way.
+ * joiner: anything older than the longest a job may run, plus a margin, is
+ * stranded (the originator's `publishBuildFinished` never ran) and joining
+ * it would just hang us the same way. Derived from the job timeout so
+ * raising that cannot silently make live builds look stranded.
  */
-const STALE_RUNNING_ENTRY_MS = 20 * 60 * 1000;
+import { STALE_RUNNING_ENTRY_MS } from "./build-constants";
 
 // Backstop. Opening the DKV fails while the project is unreachable, which
 // can last for many minutes if the project is simply stopped. The primary
@@ -104,6 +104,7 @@ export class BuildCoordinator {
     prev: BuildState | undefined;
   }) => void;
   private closedHandler?: () => void;
+  private recoveryStateHandler?: (state: string) => void;
   private callbacks: BuildCoordinatorCallbacks;
 
   // Build tracking state — managed here to avoid duplication in consumers.
@@ -232,7 +233,14 @@ export class BuildCoordinator {
           void this.init();
         }, INIT_RETRY_BASE_MS);
       };
+      // "closed" only fires for an explicit DKV.close(). An underlying
+      // stream that dies permanently surfaces as recovery-state "closed",
+      // which is the edge that actually strands us.
+      this.recoveryStateHandler = (state: string) => {
+        if (state === "closed") this.closedHandler?.();
+      };
       store.on("closed", this.closedHandler);
+      store.on("recovery-state", this.recoveryStateHandler);
 
       // A build of ours that started while we were disconnected is still
       // running and nobody knows about it: the DKV write had nowhere to go.
@@ -649,6 +657,10 @@ export class BuildCoordinator {
     if (this.closedHandler && dkv) {
       dkv.off("closed", this.closedHandler);
       this.closedHandler = undefined;
+    }
+    if (this.recoveryStateHandler && dkv) {
+      dkv.off("recovery-state", this.recoveryStateHandler);
+      this.recoveryStateHandler = undefined;
     }
     dkv?.close();
   }

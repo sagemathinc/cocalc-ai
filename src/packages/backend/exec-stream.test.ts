@@ -1250,3 +1250,84 @@ describe("updates EventEmitter streaming", () => {
     expect(doneEvent?.data?.stdout).toBe("first\nsecond\n");
   }, 15000);
 });
+
+describe("attaching to an existing job", () => {
+  it("re-attaches by job id without executing anything again", async () => {
+    // A reconnecting client must attach to the SAME job. Re-executing with
+    // the same aggregate is not equivalent: the aggregate wrapper only keeps
+    // a completed call's result for 60s, and an async exec completes as soon
+    // as the job exists, so minutes later that would start a second process.
+    const { executeStream } = await import("./exec-stream");
+    const first: any[] = [];
+    await new Promise<void>((resolve) => {
+      void executeStream({
+        command: "echo one; sleep 1; echo two",
+        bash: true,
+        err_on_exit: false,
+        stream: (event) => {
+          if (event == null) {
+            resolve();
+            return;
+          }
+          first.push(event);
+        },
+      });
+      setTimeout(resolve, 300); // attach while it is still running
+    });
+
+    const jobId = first.find((e) => e.type === "job")?.data?.job_id;
+    expect(typeof jobId).toBe("string");
+
+    const second: any[] = [];
+    await new Promise<void>((resolve) => {
+      void executeStream({
+        attach_job_id: jobId,
+        // deliberately a command that would be obvious if it ran
+        command: "echo SHOULD_NOT_RUN",
+        bash: true,
+        err_on_exit: false,
+        stream: (event) => {
+          if (event == null) {
+            resolve();
+            return;
+          }
+          second.push(event);
+        },
+      });
+    });
+
+    const attachedJob = second.find((e) => e.type === "job");
+    expect(attachedJob?.data?.job_id).toBe(jobId);
+    const done = second.find((e) => e.type === "done");
+    const text =
+      (attachedJob?.data?.stdout ?? "") +
+      second
+        .filter((e) => e.type === "stdout")
+        .map((e) => e.data)
+        .join("");
+    const full = done?.data?.stdout ?? text;
+    expect(full).toContain("one");
+    expect(full).not.toContain("SHOULD_NOT_RUN");
+  }, 20000);
+
+  it("reports a job that no longer exists instead of running the command", async () => {
+    const { executeStream } = await import("./exec-stream");
+    const events: any[] = [];
+    await new Promise<void>((resolve) => {
+      void executeStream({
+        attach_job_id: "no-such-job",
+        command: "echo SHOULD_NOT_RUN",
+        bash: true,
+        stream: (event) => {
+          if (event == null) {
+            resolve();
+            return;
+          }
+          events.push(event);
+        },
+      });
+    });
+    expect(events[0]?.error).toContain("no such job");
+    expect(events.some((e) => e.type === "done")).toBe(false);
+  }, 15000);
+});

@@ -9,6 +9,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { change_filename_extension, path_split } from "@cocalc/util/misc";
 import { ExecuteCodeOutputAsync } from "@cocalc/util/types/execute-code";
 import { ExecOutput } from "../generic/client";
+import { TIMEOUT_BUILD_JOB_S } from "../generic/build-constants";
 
 // something in the rmarkdown source code replaces all spaces by dashes
 // [hsy] I think this is because of calling pandoc.
@@ -79,7 +80,7 @@ export async function runJob(opts: RunJobOpts): Promise<ExecOutput> {
     project_id,
     runDir,
     set_job_info,
-    timeout = 4 * 60,
+    timeout = TIMEOUT_BUILD_JOB_S,
     path,
     debug,
   } = opts;

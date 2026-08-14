@@ -134,17 +134,21 @@ the build failed:
 
 | bound | value | why |
 | --- | --- | --- |
-| LaTeX job timeout | 15 min (`TIMEOUT_LATEX_JOB_S`) | the build itself |
+| build job timeout | 15 min (`TIMEOUT_BUILD_JOB_S`) | the build itself — LaTeX, Rmd and Qmd all use it |
 | exec-stream request `maxWait` | the job's timeout | the stream must outlive the job |
 | `async_get` recovery | job timeout + 30s | the default 30s would abandon any build longer than that |
 | re-attach deadline | job timeout + 60s | past it the job cannot still be running |
 | `asyncCache` TTL | 1 h | the result stays fetchable long after the job ends |
-| stranded-entry threshold | 20 min | > the job timeout, so a live build is never mistaken for stranded |
+| stranded-entry threshold | job timeout + 5 min | derived, so raising the timeout cannot make live builds look stranded |
 
-Losing the stream does not stop the job in the project. When the call carries
-an aggregate — every build does — the client re-issues it, which attaches to
-the *same* job through aggregate dedup; the service then replays that job's
-accumulated output as the initial `"job"` event and resumes live streaming.
+Losing the stream does not stop the job in the project, so the client
+re-attaches by **job id** (`attach_job_id`), which never executes anything:
+the service replays that job's accumulated output as the initial `"job"`
+event and resumes live streaming. Re-issuing the original call with the same
+aggregate would *not* be equivalent — the aggregate wrapper retains a
+completed call's result for only 60s, and an async exec "completes" the
+moment the job is created, so a reconnect minutes into a build would start a
+second process.
 The editor's `runJob` replaces its buffer on that event rather than appending,
 so nothing is duplicated. A client offline for minutes therefore returns to
 the full log so far plus continuing progress. Only when there is no aggregate
