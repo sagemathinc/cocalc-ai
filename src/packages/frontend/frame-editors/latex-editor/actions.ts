@@ -208,6 +208,10 @@ export class Actions extends BaseActions<LatexEditorState> {
   private _buildToken?: string;
   private _project_stopped_listener?: () => void;
   private _projectStopObserved = false;
+  // configureBuildCommand bookkeeping: register the syncdb listener once,
+  // and never run two resolutions concurrently.
+  private _setCmdRegistered = false;
+  private _configuringBuild = false;
   private ext: string = "tex";
   private knitr: boolean = false; // true, if we deal with a knitr file
   private filename_knitr: string; // .rnw or .rtex
@@ -326,6 +330,7 @@ export class Actions extends BaseActions<LatexEditorState> {
     // is exactly when opening the coordination DKV can succeed.
     this._syncstring.on("ready", () => {
       this.buildCoordinator?.ensureConnected();
+      void this.ensureBuildConfig();
     });
     this._project_started_listener = () => {
       void this._handle_project_started();
@@ -351,8 +356,10 @@ export class Actions extends BaseActions<LatexEditorState> {
 
   private async _handle_project_started(): Promise<void> {
     // The project is reachable again: if this editor opened while it was
-    // stopped, its coordination DKV could not be opened then.
+    // stopped, neither its coordination DKV nor its build command could be
+    // resolved back then.
     this.buildCoordinator?.ensureConnected();
+    void this.ensureBuildConfig();
     // A project (re)start means any build process that was running is dead.
     // If we still think we are building, the exec stream is orphaned and
     // would keep the UI stuck on "building" until the runJob watchdog
@@ -760,22 +767,34 @@ export class Actions extends BaseActions<LatexEditorState> {
     const path: string = this.knitr ? this.filename_knitr : this.path;
     this._init_syncdb(["key"], undefined, path);
 
-    // Wait for the syncdb to be loaded and ready.
-    if (this._syncdb == null) {
-      throw Error("syncdb must be defined");
-    }
-    if (!(await this.wait_until_syncdoc_ready(this._syncdb))) return;
+    if (!(await this.configureBuildCommand())) return;
+    await this.initialBuildOnOpen();
+  }
 
-    // If the build command is NOT already
-    // set in syncdb, we wait for file to load,
-    // looks for "% !TeX program =", and if so
-    // sets up the build command based on that:
-    if (this._syncdb == null) {
-      throw Error("syncdb must be defined");
-    }
+  /**
+   * Resolve the build command: honor a `% !TeX ...` directive, then track
+   * the aux syncdb.
+   *
+   * Separate from init_config, and re-runnable, because it depends on the
+   * project: the syncdb only becomes ready once the project is reachable.
+   * An editor opened while the project was stopped used to give up here for
+   * good, leaving build_command empty forever — such a client can neither
+   * build nor join a collaborator's build, silently. ensureBuildConfig()
+   * runs it again when the project comes back.
+   *
+   * Returns false if it bailed out (not ready, or the editor closed).
+   */
+  private async configureBuildCommand(): Promise<boolean> {
+    if (this._syncdb == null) return false;
+    // Waits without a deadline: resolves when the project is reachable.
+    if (!(await this.wait_until_syncdoc_ready(this._syncdb))) return false;
+    if (this._state == "closed" || this._syncdb == null) return false;
+
+    // If the build command is NOT already set in syncdb, look for
+    // "% !TeX program =" and set the build command from that.
     if (this._syncdb.get_one({ key: "build_command" }) == null) {
       await this.init_build_directive();
-      if (this._state == "closed") return;
+      if (this._state == "closed") return false;
     } else {
       // this scans for the "cocalc" directive, which hardcodes the build command
       await this.init_build_directive(true);
@@ -816,8 +835,30 @@ export class Actions extends BaseActions<LatexEditorState> {
     };
 
     set_cmd();
-    this._syncdb.on("change", set_cmd);
+    if (!this._setCmdRegistered) {
+      this._syncdb.on("change", set_cmd);
+      this._setCmdRegistered = true;
+    }
+    return true;
+  }
 
+  // Re-resolve the build command if we still do not have one. Called on the
+  // signals that mean the project became reachable.
+  private async ensureBuildConfig(): Promise<void> {
+    if (this._state === "closed") return;
+    if (this.store.get("build_command")) return;
+    if (this._configuringBuild) return;
+    this._configuringBuild = true;
+    try {
+      await this.configureBuildCommand();
+    } catch (err) {
+      console.warn("LaTeX: configureBuildCommand failed", err);
+    } finally {
+      this._configuringBuild = false;
+    }
+  }
+
+  private async initialBuildOnOpen(): Promise<void> {
     if (this.is_likely_master() && !this.is_read_only_preview()) {
       // Only build on open if:
       // - account settings are confirmed loaded (is_ready)

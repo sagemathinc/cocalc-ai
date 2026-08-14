@@ -1458,6 +1458,44 @@ describe("LaTeX save-triggered builds", () => {
     expect(actions.sourceRevision()).not.toBe(before);
   });
 
+  it("recovers the build command when the project becomes reachable", async () => {
+    // An editor opened while the project was stopped gave up resolving its
+    // build command for good: it could then neither build nor join a
+    // collaborator's build, with nothing reported anywhere.
+    const actions = createSaveActions(() => 1);
+    let buildCommand: string | undefined;
+    actions.store.get = jest.fn((key: string) =>
+      key === "build_command" ? buildCommand : undefined,
+    );
+    actions.configureBuildCommand = jest.fn(async () => {
+      buildCommand = "latexmk -pdf paper.tex";
+      return true;
+    });
+
+    await actions.ensureBuildConfig();
+    expect(actions.configureBuildCommand).toHaveBeenCalledTimes(1);
+
+    // Already configured: a later signal must not redo the work.
+    await actions.ensureBuildConfig();
+    expect(actions.configureBuildCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resolve the build command twice concurrently", async () => {
+    const actions = createSaveActions(() => 1);
+    actions.store.get = jest.fn(() => undefined); // never configured
+    let release!: () => void;
+    actions.configureBuildCommand = jest.fn(
+      () => new Promise<boolean>((resolve) => (release = () => resolve(true))),
+    );
+
+    const first = actions.ensureBuildConfig();
+    await actions.ensureBuildConfig(); // second signal while the first runs
+    expect(actions.configureBuildCommand).toHaveBeenCalledTimes(1);
+
+    release();
+    await first;
+  });
+
   it("never skips when no revision can be computed", async () => {
     const actions = createSaveActions(() => undefined);
     await actions.buildInternal(undefined, false, false);
