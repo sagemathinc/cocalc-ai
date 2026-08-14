@@ -153,6 +153,35 @@ most of the machinery above into "subscribe to the job". Until then, this
 implementation is kept intentionally close to upstream so fixes flow in
 both directions.
 
+### Planned V2 shape
+
+The intended end state is a **project-side build service** that can run
+LaTeX, Quarto and RMarkdown builds, rather than each client driving its own
+copy of the build pipeline:
+
+1. **Extract the build orchestration from the editor actions.** Today the
+   pipeline (`buildInternal`/`run_build`/`run_latex`/`run_knitr`/
+   `run_sagetex`/`run_pythontex` in the LaTeX actions, and the converter
+   runner in `rmd-editor/base-actions.ts`) is entangled with editor
+   lifecycle state — `is_building`, `_buildToken`, `_buildWasStopped`,
+   `is_stopping`, `_pendingBuildRequest`, `_lastBuiltTime`. A worthwhile
+   split moves **all** of that state into a build runner that owns the
+   lifecycle and exposes `build` / `stop` / `force`; moving only the
+   `run_*` methods would leave the state behind and make ownership worse.
+   The same runner is then what the project can host.
+2. **Expose it as a conat service on the project**, so a build is started,
+   observed and stopped through the project that actually runs it, with the
+   job's state and output stream owned there.
+3. **Clients use the service when the project offers it**, and fall back to
+   the V1 client-coordinated protocol described in this document when
+   talking to an older project. The two must therefore coexist: V1 stays
+   supported for as long as projects without the service exist, which is
+   also why V1 is kept close to upstream.
+
+Format-specific knowledge (latexmk vs quarto vs rmarkdown) belongs behind
+one interface in the runner, so the project side does not grow three
+parallel implementations.
+
 ## cocalc-ai adaptations vs upstream
 
 - DKV obtained via `webapp_client.conat_client.dkv(...)` with an explicitly
