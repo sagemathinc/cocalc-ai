@@ -61,13 +61,16 @@ interface BuildState {
  */
 const STALE_RUNNING_ENTRY_MS = 20 * 60 * 1000;
 
-// Backstop only. Opening the DKV fails while the project is unreachable,
-// which can last for many minutes if the project is simply stopped. The
-// primary recovery path is ensureConnected(), which editors call on the
-// lifecycle signals that mean "the project is back" (syncstring ready,
-// project started) — the same event-driven approach the sync layer uses,
-// rather than polling. This timer only covers signals we might not see.
-const INIT_RETRY_MS = 30 * 1000;
+// Backstop. Opening the DKV fails while the project is unreachable, which
+// can last for many minutes if the project is simply stopped. The primary
+// recovery path is ensureConnected(), which editors call on the lifecycle
+// signals that mean "the project is back" (syncstring ready, project
+// started) — the same event-driven approach the sync layer uses, rather
+// than polling. The backoff still ramps from 1s, because those signals can
+// arrive late: a user who restarts a project and immediately builds should
+// not wait half a minute for their collaborators to see it.
+const INIT_RETRY_BASE_MS = 1000;
+const INIT_RETRY_MAX_MS = 30 * 1000;
 
 export interface BuildCoordinatorCallbacks {
   /**
@@ -117,9 +120,13 @@ export class BuildCoordinator {
   // A join that settles under an older generation must not tear down or
   // otherwise mutate the lifecycle of a replacement build.
   private _joinGeneration = 0;
+  // The most recent local build start, kept so a late connect can still
+  // announce a build that is running right now (see init).
+  private _lastLocalStart?: BuildState;
   // DKV init bookkeeping (see init / ensureConnected).
   private project_id: string;
   private initializing = false;
+  private initFailures = 0;
   private initTimer?: ReturnType<typeof setTimeout>;
   // Server-clock boundary for the most recent observed project-runtime loss.
   // A running entry from at or before this instant belongs to the dead
@@ -211,6 +218,21 @@ export class BuildCoordinator {
       };
       this.dkv.on("change", this.changeHandler);
 
+      // A build of ours that started while we were disconnected is still
+      // running and nobody knows about it: the DKV write had nowhere to go.
+      // Announce it now, so collaborators can still join it. This matters
+      // right after a project restart, when a user builds before the
+      // coordination channel is open — the common case being the person who
+      // restarted the project and immediately pressed Build.
+      const localStart = this._lastLocalStart;
+      if (
+        localStart != null &&
+        localStart.buildId === this._localBuildId &&
+        this.callbacks.isBuilding()
+      ) {
+        this.dkv.set(this.path, localStart);
+      }
+
       // Late joiner: if a build is already running, join it.
       // Safe after subscribe — duplicate joins are guarded by isBuilding().
       const current = this.dkv.get(this.path);
@@ -226,6 +248,7 @@ export class BuildCoordinator {
         }
       }
       this.pendingOps = undefined;
+      this.initFailures = 0;
     } catch (err) {
       if (this.closed) return;
       // Failing here is ordinary: the project is stopped or still starting.
@@ -236,11 +259,16 @@ export class BuildCoordinator {
       console.warn("BuildCoordinator: DKV not available yet", err);
       // Buffered ops predate the failure; a retry must not replay them.
       this.pendingOps = undefined;
+      this.initFailures += 1;
+      const delay = Math.min(
+        INIT_RETRY_MAX_MS,
+        INIT_RETRY_BASE_MS * 2 ** Math.min(this.initFailures - 1, 5),
+      );
       this.initTimer = setTimeout(() => {
         this.initTimer = undefined;
         if (this.closed) return;
         void this.init();
-      }, INIT_RETRY_MS);
+      }, delay);
     } finally {
       this.initializing = false;
     }
@@ -418,6 +446,18 @@ export class BuildCoordinator {
     sourceRevision?: number,
   ): void {
     const startedAt = server_time().getTime();
+    // Remembered so a late connect can still announce a build that is
+    // running right now (see init). Deliberately state, not a queued
+    // closure: replaying an old start after an arbitrary delay would
+    // resurrect a build that has long finished.
+    this._lastLocalStart = {
+      buildId,
+      status: "running",
+      aggregate,
+      force,
+      startedAt,
+      sourceRevision,
+    };
     const doPublish = () => {
       this.dkv?.set(this.path, {
         buildId,
@@ -437,6 +477,9 @@ export class BuildCoordinator {
 
   /** Announce build completion. */
   publishBuildFinished(buildId: string): void {
+    if (this._lastLocalStart?.buildId === buildId) {
+      this._lastLocalStart = undefined;
+    }
     const doPublish = () => {
       // Only publish "finished" if the current entry matches our buildId —
       // prevents a finishing client from clobbering another client's newer build.

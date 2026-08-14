@@ -909,6 +909,51 @@ describe("BuildCoordinator", () => {
       coord.close();
     });
 
+    test("announces a build that started while disconnected", async () => {
+      // Restart the project, press Build immediately: the DKV write has
+      // nowhere to go, so without this the collaborators never learn about
+      // a build that is running right now.
+      let building = false;
+      const cb = makeCallbacks({ isBuilding: () => building });
+      const coord = new BuildCoordinator(PROJECT_ID, PATH, cb);
+      dkvReject(new Error("project not running"));
+      await tick();
+
+      building = true;
+      coord.setLocalBuildId("b1");
+      coord.publishBuildStart("b1", 100);
+
+      resetDkvMock();
+      coord.ensureConnected();
+      await initDkv();
+
+      const entry = mockDkvInstance.get(PATH);
+      expect(entry?.buildId).toBe("b1");
+      expect(entry?.status).toBe("running");
+      expect(entry?.aggregate).toBe(100);
+      coord.close();
+    });
+
+    test("does not announce a build that already finished", async () => {
+      let building = true;
+      const cb = makeCallbacks({ isBuilding: () => building });
+      const coord = new BuildCoordinator(PROJECT_ID, PATH, cb);
+      dkvReject(new Error("project not running"));
+      await tick();
+
+      coord.setLocalBuildId("b1");
+      coord.publishBuildStart("b1", 100);
+      coord.publishBuildFinished("b1");
+      building = false;
+
+      resetDkvMock();
+      coord.ensureConnected();
+      await initDkv();
+
+      expect(mockDkvInstance.get(PATH)).toBeUndefined();
+      coord.close();
+    });
+
     test("ensureConnected is a no-op once connected", async () => {
       const cb = makeCallbacks();
       const coord = new BuildCoordinator(PROJECT_ID, PATH, cb);
