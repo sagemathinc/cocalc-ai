@@ -55,13 +55,27 @@ class MockDKV {
     }
   }
 
-  on(event: string, handler: ChangeHandler) {
+  private closedListeners: Array<() => void> = [];
+
+  on(event: string, handler: any) {
     if (event === "change") this.listeners.push(handler);
+    if (event === "closed") this.closedListeners.push(handler);
   }
 
-  off(event: string, handler: ChangeHandler) {
+  off(event: string, handler: any) {
     if (event === "change") {
       this.listeners = this.listeners.filter((fn) => fn !== handler);
+    }
+    if (event === "closed") {
+      this.closedListeners = this.closedListeners.filter(
+        (fn) => fn !== handler,
+      );
+    }
+  }
+
+  emit(event: string) {
+    if (event === "closed") {
+      for (const fn of [...this.closedListeners]) fn();
     }
   }
 
@@ -951,6 +965,26 @@ describe("BuildCoordinator", () => {
       await initDkv();
 
       expect(mockDkvInstance.get(PATH)).toBeUndefined();
+      coord.close();
+    });
+
+    test("reopens after the DKV closes", async () => {
+      // The DKV recovers from transient trouble itself, but a permanent
+      // close would otherwise leave this editor silently unsubscribed.
+      const cb = makeCallbacks();
+      const coord = new BuildCoordinator(PROJECT_ID, PATH, cb);
+      const first = await initDkv();
+
+      first.emit("closed");
+
+      resetDkvMock();
+      coord.ensureConnected();
+      const second = await initDkv();
+      expect(second).not.toBe(first);
+
+      coord.setLocalBuildId("b1");
+      coord.publishBuildStart("b1", 100);
+      expect(second.get(PATH)?.buildId).toBe("b1");
       coord.close();
     });
 

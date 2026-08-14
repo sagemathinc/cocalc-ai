@@ -103,6 +103,7 @@ export class BuildCoordinator {
     value: BuildState | undefined;
     prev: BuildState | undefined;
   }) => void;
+  private closedHandler?: () => void;
   private callbacks: BuildCoordinatorCallbacks;
 
   // Build tracking state — managed here to avoid duplication in consumers.
@@ -217,6 +218,21 @@ export class BuildCoordinator {
         }
       };
       this.dkv.on("change", this.changeHandler);
+
+      // The DKV recovers from transient conat trouble on its own (it has
+      // its own recovering/recovered states), but a permanent close would
+      // otherwise leave us silently unsubscribed. Drop the reference so
+      // ensureConnected() and the backstop timer can open a fresh one.
+      this.closedHandler = () => {
+        if (this.closed || this.dkv !== store) return;
+        this.dkv = undefined;
+        this.initTimer ??= setTimeout(() => {
+          this.initTimer = undefined;
+          if (this.closed) return;
+          void this.init();
+        }, INIT_RETRY_BASE_MS);
+      };
+      store.on("closed", this.closedHandler);
 
       // A build of ours that started while we were disconnected is still
       // running and nobody knows about it: the DKV write had nowhere to go.
@@ -629,6 +645,10 @@ export class BuildCoordinator {
     if (this.changeHandler && dkv) {
       dkv.off("change", this.changeHandler);
       this.changeHandler = undefined;
+    }
+    if (this.closedHandler && dkv) {
+      dkv.off("closed", this.closedHandler);
+      this.closedHandler = undefined;
     }
     dkv?.close();
   }

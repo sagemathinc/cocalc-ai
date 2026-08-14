@@ -7,6 +7,8 @@
 Functionality that mainly involves working with a specific project.
 */
 
+import { delay } from "awaiting";
+
 import { readFile, type ReadFileOptions } from "@cocalc/conat/files/read";
 import { writeFile, type WriteFileOptions } from "@cocalc/conat/files/write";
 import { projectSubject, EXEC_STREAM_SERVICE } from "@cocalc/conat/names";
@@ -388,6 +390,18 @@ export class ProjectClient {
       }
     };
 
+    // Losing the stream does not stop the job in the project. When the call
+    // carries an aggregate, re-issuing it attaches to that same job (that is
+    // how late joiners work), and the service replays the job's accumulated
+    // output as the initial "job" event before resuming live streaming — so
+    // a client disconnected for minutes gets the whole log so far plus
+    // continuing progress, not just a final result. Without an aggregate a
+    // re-issue could start a second process, so we do not retry then.
+    const canReattach = opts.aggregate != null;
+    // The job cannot outlive its own timeout, so stop re-attaching after it.
+    const reattachDeadline = Date.now() + ((opts.timeout ?? 300) + 60) * 1000;
+    let reattachAttempt = 0;
+
     try {
       const cn = await this.client.conat_client.projectConat({
         project_id: opts.project_id,
@@ -397,100 +411,108 @@ export class ProjectClient {
         project_id: opts.project_id,
         service: EXEC_STREAM_SERVICE,
       });
-      let lastSeq = -1;
 
-      const req = cn.requestMany(
-        subject,
-        { ...opts, debug },
-        {
-          maxWait: (opts.timeout ?? 300) * 1000,
-          waitForInterest: true,
-        },
-      );
-      let recordedReady = false;
-      for await (const resp of await req) {
-        if (resp.data == null) {
-          // Stream ended. This should normally happen only after a "done"
-          // event.
-          if (!sawDone && !(await recoverFinalResult("Exec stream ended"))) {
-            if (!execStream.job_id) {
-              execStream.emit(
-                "error",
-                new Error("Exec stream ended before done"),
-              );
-            }
+      // Each pass is one attachment to the job; a pass that ends without
+      // "done" re-attaches (see canReattach) instead of giving up.
+      while (!sawDone && !ended) {
+        let lastSeq = -1;
+        let interruption: string | undefined;
+
+        const req = cn.requestMany(
+          subject,
+          { ...opts, debug },
+          {
+            maxWait: (opts.timeout ?? 300) * 1000,
+            waitForInterest: true,
+          },
+        );
+        let recordedReady = false;
+        for await (const resp of await req) {
+          if (resp.data == null) {
+            // Stream ended. This should normally happen only after a "done"
+            // event.
+            interruption = "exec stream ended before done";
+            break;
           }
-          emitEnd();
-          break;
-        }
 
-        const { error, type, data, seq } = resp.data;
+          const { error, type, data, seq } = resp.data;
 
-        if (error) {
-          if (!(await recoverFinalResult(`exec stream error: ${error}`))) {
-            if (!execStream.job_id) {
-              execStream.emit("error", new Error(error));
-            }
+          if (error) {
+            interruption = `exec stream error: ${error}`;
+            break;
           }
-          emitEnd();
-          break;
-        }
 
-        if (seq != null && lastSeq + 1 != seq) {
-          // A gap means we lost output, not necessarily the job.
-          if (!(await recoverFinalResult("missed response in stream"))) {
-            if (!execStream.job_id) {
-              execStream.emit("error", new Error("Missed response in stream"));
-            }
+          if (seq != null && lastSeq + 1 != seq) {
+            // A gap means we lost output, not necessarily the job.
+            interruption = "missed response in stream";
+            break;
           }
-          emitEnd();
-          break;
+
+          if (seq != null) {
+            lastSeq = seq;
+          }
+
+          // Handle different types of streaming data
+          switch (type) {
+            case "job":
+              if (!recordedReady) {
+                recordedReady = true;
+                recordUxLatencyEvent({
+                  event_type: "project_ready",
+                  metric: "project_exec_ready",
+                  duration_ms: elapsedUxMs(readyTimer),
+                  project_id: opts.project_id,
+                  path_ext: filename_extension(opts.path ?? ""),
+                  segment: readiness.segment,
+                  details: {
+                    command: opts.command,
+                    stream: true,
+                    initial_project_state: readiness.initial_state ?? "unknown",
+                    provisioned: readiness.provisioned as any,
+                  },
+                });
+              }
+              execStream.job_id = data.job_id;
+              execStream.emit("job", data);
+              break;
+            case "stdout":
+              execStream.emit("stdout", data);
+              break;
+            case "stderr":
+              execStream.emit("stderr", data);
+              break;
+            case "stats":
+              execStream.emit("stats", data);
+              break;
+            case "done":
+              sawDone = true;
+              execStream.emit("done", data);
+              emitEnd();
+              return;
+            default:
+              console.warn("Unknown execStream response type:", type);
+          }
         }
 
-        if (seq != null) {
-          lastSeq = seq;
+        if (sawDone || ended) break;
+        const reason = interruption ?? "exec stream ended before done";
+        if (canReattach && Date.now() < reattachDeadline) {
+          reattachAttempt += 1;
+          await delay(
+            Math.min(5000, 500 * 2 ** Math.min(reattachAttempt - 1, 4)),
+          );
+          if (sawDone || ended) break;
+          continue; // re-attach to the same job and replay its output
         }
-
-        // Handle different types of streaming data
-        switch (type) {
-          case "job":
-            if (!recordedReady) {
-              recordedReady = true;
-              recordUxLatencyEvent({
-                event_type: "project_ready",
-                metric: "project_exec_ready",
-                duration_ms: elapsedUxMs(readyTimer),
-                project_id: opts.project_id,
-                path_ext: filename_extension(opts.path ?? ""),
-                segment: readiness.segment,
-                details: {
-                  command: opts.command,
-                  stream: true,
-                  initial_project_state: readiness.initial_state ?? "unknown",
-                  provisioned: readiness.provisioned as any,
-                },
-              });
-            }
-            execStream.job_id = data.job_id;
-            execStream.emit("job", data);
-            break;
-          case "stdout":
-            execStream.emit("stdout", data);
-            break;
-          case "stderr":
-            execStream.emit("stderr", data);
-            break;
-          case "stats":
-            execStream.emit("stats", data);
-            break;
-          case "done":
-            sawDone = true;
-            execStream.emit("done", data);
-            emitEnd();
-            return;
-          default:
-            console.warn("Unknown execStream response type:", type);
+        // No aggregate to attach by, or the job can no longer be running:
+        // fall back to reading the final result.
+        if (!(await recoverFinalResult(reason))) {
+          if (!execStream.job_id) {
+            execStream.emit("error", new Error(reason));
+          }
         }
+        emitEnd();
+        break;
       }
     } catch (err) {
       // Losing the connection does not stop the job in the project.

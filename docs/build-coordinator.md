@@ -126,6 +126,35 @@ swallow a retry after a failed one.
 than merely skipping our caches. A build command the user hardcoded (e.g. via
 a `% !TeX cocalc =` directive) is left alone.
 
+#### Long builds and disconnected clients
+
+The chain is sized so a build that runs for many minutes survives, and so a
+client that loses its connection mid-build catches up rather than being told
+the build failed:
+
+| bound | value | why |
+| --- | --- | --- |
+| LaTeX job timeout | 15 min (`TIMEOUT_LATEX_JOB_S`) | the build itself |
+| exec-stream request `maxWait` | the job's timeout | the stream must outlive the job |
+| `async_get` recovery | job timeout + 30s | the default 30s would abandon any build longer than that |
+| re-attach deadline | job timeout + 60s | past it the job cannot still be running |
+| `asyncCache` TTL | 1 h | the result stays fetchable long after the job ends |
+| stranded-entry threshold | 20 min | > the job timeout, so a live build is never mistaken for stranded |
+
+Losing the stream does not stop the job in the project. When the call carries
+an aggregate — every build does — the client re-issues it, which attaches to
+the *same* job through aggregate dedup; the service then replays that job's
+accumulated output as the initial `"job"` event and resumes live streaming.
+The editor's `runJob` replaces its buffer on that event rather than appending,
+so nothing is duplicated. A client offline for minutes therefore returns to
+the full log so far plus continuing progress. Only when there is no aggregate
+to attach by, or the job can no longer be running, does the client fall back
+to `async_get` for the final result — never to "the build failed", which
+would publish `finished` for a process that is still running.
+
+The coordination DKV recovers from transient conat trouble on its own; a
+permanent close drops the reference so `ensureConnected()` opens a fresh one.
+
 ### 3. Backend `updates` EventEmitter — late-join streaming
 
 [execute-code.ts](../src/packages/backend/execute-code.ts) emits
