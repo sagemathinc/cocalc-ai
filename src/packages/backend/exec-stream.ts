@@ -26,8 +26,8 @@ export type StreamEvent = {
 const logger = getLogger("backend:exec-stream");
 
 /**
- * Jobs started through this service, keyed by what identifies a build:
- * command + args + path + aggregate.
+ * Jobs started through this service, keyed by everything that affects what
+ * the job does.
  *
  * This is what makes a LATE JOINER attach to a build that is already
  * running. The `aggregate` wrapper in @cocalc/util/aggregate cannot do it:
@@ -39,19 +39,22 @@ const logger = getLogger("backend:exec-stream");
  */
 const runningJobByKey = new Map<string, string>();
 
-function buildKey(opts: {
-  command?: string;
-  args?: string[];
-  path?: string;
-  aggregate?: string | number;
-}): string | undefined {
+/**
+ * Stable serialization of every execution-affecting option — same semantics
+ * as the aggregate wrapper's own key. Two calls may share a job ONLY if
+ * they would have run the same thing: differing env, bash, timeout,
+ * err_on_exit, max_output ... must never collide, or a caller would silently
+ * receive another command's output.
+ */
+function buildKey(opts: Record<string, any>): string | undefined {
   if (opts.aggregate == null) return undefined;
-  return JSON.stringify([
-    opts.command ?? "",
-    opts.args ?? null,
-    opts.path ?? "",
-    opts.aggregate,
-  ]);
+  return JSON.stringify(opts, (_key, value) =>
+    value != null && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value).sort(([a], [b]) => (a < b ? -1 : 1)),
+        )
+      : value,
+  );
 }
 
 export interface ExecuteStreamOptions {

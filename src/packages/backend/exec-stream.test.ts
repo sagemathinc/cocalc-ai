@@ -1358,22 +1358,49 @@ describe("late joiners", () => {
     });
     await delay(300);
 
+    // Join as a client arriving LONG after the start: pretend more than the
+    // aggregate wrapper's 60s retention has passed, so this cannot pass by
+    // hitting that cache -- only the running-job index can serve it.
+    const realNow = Date.now.bind(Date);
+    const nowSpy = jest
+      .spyOn(Date, "now")
+      .mockImplementation(() => realNow() + 61_000);
     const lateEvents: any[] = [];
-    await new Promise<void>((resolve) => {
-      void executeStream({
-        command,
-        bash: true,
-        err_on_exit: false,
-        aggregate,
-        stream: (event) => {
-          if (event == null) {
-            resolve();
-            return;
-          }
-          lateEvents.push(event);
-        },
+    try {
+      // The aggregate wrapper only prunes its 60s cache when some call
+      // completes, so trigger that pass explicitly -- otherwise the stale
+      // entry would still serve this join and the test would pass even
+      // without the running-job index.
+      await new Promise<void>((resolve) => {
+        void executeStream({
+          command: "echo cleanup",
+          bash: true,
+          err_on_exit: false,
+          aggregate: 1,
+          stream: (event) => {
+            if (event == null) resolve();
+          },
+        });
       });
-    });
+
+      await new Promise<void>((resolve) => {
+        void executeStream({
+          command,
+          bash: true,
+          err_on_exit: false,
+          aggregate,
+          stream: (event) => {
+            if (event == null) {
+              resolve();
+              return;
+            }
+            lateEvents.push(event);
+          },
+        });
+      });
+    } finally {
+      nowSpy.mockRestore();
+    }
 
     const originJobId = originEvents.find((e) => e.type === "job")?.data
       ?.job_id;
@@ -1384,6 +1411,45 @@ describe("late joiners", () => {
     // Exactly one process ran the command.
     const runs = await readFile(marker, "utf8");
     expect(runs.trim().split("\n")).toHaveLength(1);
+  }, 20000);
+
+  it("never shares a job between calls with different environments", async () => {
+    // The key must cover every execution-affecting option: sharing on
+    // command+aggregate alone would hand the second caller the first job's
+    // output for a different environment.
+    const { executeStream } = await import("./exec-stream");
+    const aggregate = 4242;
+    const command = "echo $VALUE";
+    const runWith = async (VALUE: string) => {
+      const events: any[] = [];
+      await new Promise<void>((resolve) => {
+        void executeStream({
+          command,
+          bash: true,
+          err_on_exit: false,
+          aggregate,
+          env: { VALUE },
+          stream: (event) => {
+            if (event == null) {
+              resolve();
+              return;
+            }
+            events.push(event);
+          },
+        });
+      });
+      const done = events.find((e) => e.type === "done");
+      return {
+        job_id: events.find((e) => e.type === "job")?.data?.job_id,
+        stdout: done?.data?.stdout ?? "",
+      };
+    };
+
+    const a = await runWith("A");
+    const b = await runWith("B");
+    expect(a.job_id).not.toBe(b.job_id);
+    expect(a.stdout.trim()).toBe("A");
+    expect(b.stdout.trim()).toBe("B");
   }, 20000);
 
   it("never attaches builds with different aggregates to each other", async () => {
