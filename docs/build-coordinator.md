@@ -90,9 +90,18 @@ the `join` callback rather than by delaying the subscription.
 ### 2. Aggregate piggybacking — one process, many callers
 
 Joining clients call the _same_ build chain with the _same_ aggregate value
-(server timestamp or saved-version hash). The backend `aggregate` wrapper
-([aggregate.ts](../src/packages/util/aggregate.ts)) dedupes so only one process
-runs and every caller receives the same async job identity. Its `streamCB`
+(server timestamp or saved-version hash), and `exec-stream` keeps an index of
+the jobs it started, keyed by command + args + path + aggregate, so a second
+caller attaches to the running job instead of executing.
+
+That index is what makes late joining work at all. The `aggregate` wrapper
+([aggregate.ts](../src/packages/util/aggregate.ts)) cannot do it on its own:
+it retains a *completed* call's result for 60s, and an async exec completes
+as soon as the job is created — so a client opening the file ten minutes into
+a build would miss the cache and start a second process. The index is honored
+only while the job is actually running (checked against `asyncCache`) and is
+dropped when it finishes, so a completed build never captures the next one,
+and different aggregates are never conflated. Its `streamCB`
 fan-out remains supported for existing direct `executeCode` consumers;
 `exec-stream` itself uses the job-keyed `updates` emitter below as its single
 live-output source.
@@ -141,8 +150,8 @@ the build failed:
 | `asyncCache` TTL | 1 h | the result stays fetchable long after the job ends |
 | stranded-entry threshold | job timeout + 5 min | derived, so raising the timeout cannot make live builds look stranded |
 
-Losing the stream does not stop the job in the project, so the client
-re-attaches by **job id** (`attach_job_id`), which never executes anything:
+A client that already knows its job id (its stream dropped) re-attaches by
+**job id** (`attach_job_id`), which never executes anything:
 the service replays that job's accumulated output as the initial `"job"`
 event and resumes live streaming. Re-issuing the original call with the same
 aggregate would *not* be equivalent — the aggregate wrapper retains a

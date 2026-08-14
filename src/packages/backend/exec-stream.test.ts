@@ -1331,3 +1331,89 @@ describe("attaching to an existing job", () => {
     expect(events.some((e) => e.type === "done")).toBe(false);
   }, 15000);
 });
+
+describe("late joiners", () => {
+  it("attaches to a running job with the same aggregate, without re-executing", async () => {
+    // The aggregate wrapper only remembers a *completed* call for 60s, and an
+    // async exec completes as soon as the job exists -- so this must not rely
+    // on it. A marker file proves the command ran exactly once.
+    const { executeStream } = await import("./exec-stream");
+    const { mkdtemp, readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(join(tmpdir(), "exec-stream-join-"));
+    const marker = join(dir, "runs");
+    const command = `echo run >> ${marker}; sleep 2; echo done`;
+    const aggregate = 12345;
+
+    const originEvents: any[] = [];
+    void executeStream({
+      command,
+      bash: true,
+      err_on_exit: false,
+      aggregate,
+      stream: (event) => {
+        if (event != null) originEvents.push(event);
+      },
+    });
+    await delay(300);
+
+    const lateEvents: any[] = [];
+    await new Promise<void>((resolve) => {
+      void executeStream({
+        command,
+        bash: true,
+        err_on_exit: false,
+        aggregate,
+        stream: (event) => {
+          if (event == null) {
+            resolve();
+            return;
+          }
+          lateEvents.push(event);
+        },
+      });
+    });
+
+    const originJobId = originEvents.find((e) => e.type === "job")?.data
+      ?.job_id;
+    const lateJobId = lateEvents.find((e) => e.type === "job")?.data?.job_id;
+    expect(typeof originJobId).toBe("string");
+    expect(lateJobId).toBe(originJobId);
+
+    // Exactly one process ran the command.
+    const runs = await readFile(marker, "utf8");
+    expect(runs.trim().split("\n")).toHaveLength(1);
+  }, 20000);
+
+  it("never attaches builds with different aggregates to each other", async () => {
+    // The aggregate is the build identity (save time / content hash). Two
+    // different builds must never share a job, however close together.
+    const { executeStream } = await import("./exec-stream");
+    const command = "echo hello";
+    const runOnce = async (aggregate: number) => {
+      const events: any[] = [];
+      await new Promise<void>((resolve) => {
+        void executeStream({
+          command,
+          bash: true,
+          err_on_exit: false,
+          aggregate,
+          stream: (event) => {
+            if (event == null) {
+              resolve();
+              return;
+            }
+            events.push(event);
+          },
+        });
+      });
+      return events.find((e) => e.type === "job")?.data?.job_id;
+    };
+
+    const first = await runOnce(1000);
+    const second = await runOnce(1001);
+    expect(typeof first).toBe("string");
+    expect(second).not.toBe(first);
+  }, 20000);
+});

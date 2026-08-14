@@ -25,6 +25,35 @@ export type StreamEvent = {
 
 const logger = getLogger("backend:exec-stream");
 
+/**
+ * Jobs started through this service, keyed by what identifies a build:
+ * command + args + path + aggregate.
+ *
+ * This is what makes a LATE JOINER attach to a build that is already
+ * running. The `aggregate` wrapper in @cocalc/util/aggregate cannot do it:
+ * it remembers a *completed* call for 60s, and an async exec completes the
+ * moment the job is created, so a client opening the file ten minutes into
+ * a build would miss and start a second process. The entry here is only
+ * honored while the job is actually running (checked against asyncCache),
+ * so a finished build never captures the next one.
+ */
+const runningJobByKey = new Map<string, string>();
+
+function buildKey(opts: {
+  command?: string;
+  args?: string[];
+  path?: string;
+  aggregate?: string | number;
+}): string | undefined {
+  if (opts.aggregate == null) return undefined;
+  return JSON.stringify([
+    opts.command ?? "",
+    opts.args ?? null,
+    opts.path ?? "",
+    opts.aggregate,
+  ]);
+}
+
 export interface ExecuteStreamOptions {
   command?: string;
   args?: string[];
@@ -69,6 +98,13 @@ export async function executeStream(
     let done = false;
 
     let job: ExecuteCodeOutput | undefined;
+    const key = buildKey(opts);
+    // A running job for the same build: attach to it instead of executing.
+    const runningId = key ? runningJobByKey.get(key) : undefined;
+    const running =
+      runningId != null && asyncCache.get(runningId)?.status === "running"
+        ? asyncCache.get(runningId)
+        : undefined;
     if (attach_job_id) {
       // Re-attach only: never execute. If the job is gone from the cache
       // there is nothing to attach to, and starting a replacement here
@@ -80,6 +116,11 @@ export async function executeStream(
         return undefined;
       }
       job = existing;
+    } else if (running != null) {
+      logger.debug(
+        `executeStream: joining running job ${running.job_id}${debug ? ` (${debug})` : ""}`,
+      );
+      job = running;
     } else {
       // Start async execution WITHOUT streamCB — we use updates EventEmitter
       // instead. This ensures ALL callers (first and late joiners) get live
@@ -100,6 +141,9 @@ export async function executeStream(
     }
 
     const jobId = job.job_id;
+    if (key != null) {
+      runningJobByKey.set(key, jobId);
+    }
 
     // Snapshot the job's accumulated output NOW (synchronously, same tick as
     // the subscriptions below, so no chunk can slip between snapshot and
@@ -146,6 +190,11 @@ export async function executeStream(
       updates.off(eventKey("finished", jobId), handleFinished);
     };
     const handleFinished = (result: ExecuteCodeOutputAsync) => {
+      // The job is over: stop offering it to late joiners (and keep the
+      // index from growing without bound).
+      if (key != null && runningJobByKey.get(key) === jobId) {
+        runningJobByKey.delete(key);
+      }
       cleanup();
       if (done) return;
       stream({ type: "done", data: result });
