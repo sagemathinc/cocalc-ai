@@ -5128,7 +5128,7 @@ describe("CodexAppServerAgent", () => {
         model: "gpt-5.6-sol",
         reasoning: "high",
         serviceTier: "fast",
-        maxConcurrentSubagents: 10,
+        maxConcurrentSubagents: 16,
       } as any,
     });
 
@@ -5140,14 +5140,15 @@ describe("CodexAppServerAgent", () => {
         },
       }),
     );
-    expect(
-      requests.find(({ method }) => method === "thread/start")?.params,
-    ).toMatchObject({
+    const threadStartParams = requests.find(
+      ({ method }) => method === "thread/start",
+    )?.params;
+    expect(threadStartParams).toMatchObject({
       model: "gpt-5.6-luna",
       serviceTier: null,
-      config: {
-        "agents.max_concurrent_threads_per_session": 11,
-      },
+    });
+    expect(threadStartParams?.config).toEqual({
+      "agents.max_threads": 16,
     });
     expect(
       requests.find(({ method }) => method === "turn/start")?.params,
