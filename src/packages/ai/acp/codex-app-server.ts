@@ -94,9 +94,10 @@ function threadConfigForSubagents(
   maxConcurrentSubagents: number | undefined,
 ): Record<string, number> | undefined {
   if (maxConcurrentSubagents == null) return;
-  // Codex counts the manager in max_concurrent_threads_per_session.
+  // Codex 0.144 accepts only the legacy alias; newer versions accept it too.
+  // The value counts spawned agents only (not the manager).
   return {
-    "agents.max_concurrent_threads_per_session": maxConcurrentSubagents + 1,
+    "agents.max_threads": maxConcurrentSubagents,
   };
 }
 
