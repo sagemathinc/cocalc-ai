@@ -17,7 +17,7 @@ import argparse, json, os, platform, shlex, shutil, subprocess, sys, tempfile, t
 from typing import Any, Optional, Callable, List
 
 MAX_PACKAGE_LOCK_SIZE_MB = 5
-RETIRED_WORKSPACES = set()
+RETIRED_WORKSPACES: set[str] = set()
 
 TEST_ENV_SCRUB_KEYS = [
     # Live project-scoped auth / routing from interactive CoCalc shells can make
@@ -187,8 +187,11 @@ def all_packages() -> List[str]:
         'packages/project',
         'packages/assets',
         'packages/chat',
+        'packages/chat-client',
         'packages/ai',
         'packages/frontend',  # static depends on frontend; frontend depends on assets
+        # static imports compiled JS and copied CSS from essential-frontend.
+        'packages/essential-frontend',
         'packages/static',  # packages/hub assumes this is built (for webpack dev server)
         'packages/http-api',  # depends on packages/frontend for i18n
         'packages/lite',
@@ -466,9 +469,9 @@ def test(args) -> None:
     CUR = os.path.abspath('.')
     jest_cache_root = os.environ.get("COCALC_JEST_CACHE_DIR",
                                      os.path.join(CUR, ".cache", "jest"))
-    flaky = []
-    fails = []
-    success = []
+    flaky: List[str] = []
+    fails: List[str] = []
+    success: List[str] = []
     start = time.time()
 
     def status(package: Optional[str] = None):

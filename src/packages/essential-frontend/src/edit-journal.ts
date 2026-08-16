@@ -6,6 +6,7 @@
 import { ChangeSet, Text } from "@codemirror/state";
 import {
   compressPatch,
+  diff_main,
   patch_make,
   type CompressedPatch,
 } from "@cocalc/util/dmp";
@@ -14,6 +15,33 @@ export interface CodeMirrorJournalBatch {
   base: string;
   value: string;
   patch: CompressedPatch;
+}
+
+function changesBetween(base: string, value: string): ChangeSet | undefined {
+  if (base === value) return;
+  const changes: Array<{ from: number; to: number; insert: string }> = [];
+  let cursor = 0;
+  let current: { from: number; to: number; insert: string } | undefined;
+  const flush = () => {
+    if (current != null) changes.push(current);
+    current = undefined;
+  };
+  for (const [operation, text] of diff_main(base, value)) {
+    if (operation === 0) {
+      flush();
+      cursor += text.length;
+      continue;
+    }
+    current ??= { from: cursor, to: cursor, insert: "" };
+    if (operation === -1) {
+      current.to += text.length;
+      cursor += text.length;
+    } else {
+      current.insert += text;
+    }
+  }
+  flush();
+  return ChangeSet.of(changes, base.length);
 }
 
 export class CodeMirrorEditJournal {
@@ -55,5 +83,10 @@ export class CodeMirrorEditJournal {
   reset(value: string): void {
     this.base = value;
     this.changes = undefined;
+  }
+
+  rebase(base: string, value: string): void {
+    this.base = base;
+    this.changes = changesBetween(base, value);
   }
 }

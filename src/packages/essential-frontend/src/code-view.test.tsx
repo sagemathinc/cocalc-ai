@@ -3,8 +3,16 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { createRef } from "react";
 import CodeView from "./code-view";
+import type { ExternalMergeHandle } from "./external-merge";
 import { navigate } from "./routes";
 import {
   editJournalAvailable,
@@ -53,6 +61,10 @@ jest.mock("./codemirror-editor", () => {
               },
         getValue: () => valueRef.current,
         markClean: jest.fn(),
+        rebaseValue: (_base: string, next: string) => {
+          valueRef.current = next;
+          setValue(next);
+        },
         replaceValue: setValue,
       }));
       return (
@@ -143,6 +155,69 @@ test("keeps the draft and blocks overwrite after an etag conflict", async () => 
   );
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   expect(value.filesystem.writeFileIfUnchanged).toHaveBeenCalledTimes(1);
+});
+
+test("merges independent disk edits and saves against the newer base", async () => {
+  const value = {
+    ...props(),
+    contents: "one\ntwo\nthree\n",
+  };
+  const ref = createRef<ExternalMergeHandle>();
+  render(<CodeView {...value} ref={ref} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: "Edit notes.txt" }),
+    { target: { value: "local\ntwo\nthree\n" } },
+  );
+
+  let result;
+  act(() => {
+    result = ref.current?.mergeExternal("one\ntwo\nremote\n");
+  });
+
+  expect(result).toEqual({ clean: true, dirty: true });
+  expect(screen.getByRole("textbox", { name: "Edit notes.txt" })).toHaveValue(
+    "local\ntwo\nremote\n",
+  );
+  expect(screen.getByText(/merged into your draft/i)).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(value.filesystem.writeFileIfUnchanged).toHaveBeenCalledWith(
+      "/home/user/notes.txt",
+      "local\ntwo\nremote\n",
+      "one\ntwo\nremote\n",
+      true,
+    ),
+  );
+});
+
+test("retains the draft unchanged when the same text changed on disk", async () => {
+  const value = {
+    ...props(),
+    contents: "one\ntwo\n",
+  };
+  const ref = createRef<ExternalMergeHandle>();
+  render(<CodeView {...value} ref={ref} />);
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: "Edit notes.txt" }),
+    { target: { value: "one\nlocal\n" } },
+  );
+
+  let result;
+  act(() => {
+    result = ref.current?.mergeExternal("one\nremote\n");
+  });
+
+  expect(result).toEqual({
+    clean: false,
+    message: "Automatic merging was unsafe. Your draft was retained unchanged.",
+  });
+  expect(screen.getByRole("textbox", { name: "Edit notes.txt" })).toHaveValue(
+    "one\nlocal\n",
+  );
+  expect(screen.getByText(/use Full CoCalc to resolve/i)).toBeVisible();
 });
 
 test("saves editor operations through the project-host journal", async () => {

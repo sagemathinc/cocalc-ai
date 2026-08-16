@@ -5,13 +5,17 @@
 
 import type { FilesystemClient } from "@cocalc/conat/files/fs";
 import type { AccountProjectListWindowRow } from "@cocalc/conat/hub/api/projects";
+import { checked_three_way_merge } from "@cocalc/util/dmp";
 import {
+  forwardRef,
   Fragment,
   lazy,
   Suspense,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
+  type ForwardedRef,
   type ReactNode,
 } from "react";
 import type { CodeMirrorEditorHandle } from "./codemirror-editor";
@@ -31,6 +35,10 @@ import {
 } from "./telemetry";
 import { InlineAlert, LoadingState } from "./ui";
 import useEditCheckpoint from "./use-edit-checkpoint";
+import type {
+  ExternalMergeHandle,
+  ExternalMergeResult,
+} from "./external-merge";
 
 function tokenClass(token: Prism.Token): string {
   const aliases = Array.isArray(token.alias)
@@ -146,27 +154,36 @@ const LazyMarkdownView = lazy(
     ),
 );
 
-export default function CodeView({
-  contents,
-  filesystem,
-  onDirtyChange,
-  onEditingChange,
-  onSaved,
-  path,
-  project,
-  readOnly,
-  session,
-}: {
+interface CodeViewProps {
   contents: string;
+  externalChanged?: boolean;
   filesystem: FilesystemClient;
   onDirtyChange: (dirty: boolean) => void;
   onEditingChange?: (editing: boolean) => void;
+  onExternalConflict?: () => void;
   onSaved: (contents: string) => void;
   path: string;
   project?: AccountProjectListWindowRow;
   readOnly: boolean;
   session?: UltraliteSession;
-}) {
+}
+
+function CodeView(
+  {
+    contents,
+    externalChanged = false,
+    filesystem,
+    onDirtyChange,
+    onEditingChange,
+    onExternalConflict,
+    onSaved,
+    path,
+    project,
+    readOnly,
+    session,
+  }: CodeViewProps,
+  ref: ForwardedRef<ExternalMergeHandle>,
+) {
   const [base, setBase] = useState(contents);
   const [draft, setDraft] = useState(contents);
   const editorRef = useRef<CodeMirrorEditorHandle>(null);
@@ -177,6 +194,7 @@ export default function CodeView({
   const [editRevision, setEditRevision] = useState(0);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(false);
+  const [mergeNeedsReview, setMergeNeedsReview] = useState(false);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [cursor, setCursor] = useState("Ln 1, Col 1");
@@ -188,9 +206,47 @@ export default function CodeView({
     setDraft(contents);
     setDirty(false);
     setConflict(false);
+    setMergeNeedsReview(false);
     setError(undefined);
     setNotice(undefined);
   }, [contents, path]);
+
+  useImperativeHandle(
+    ref,
+    (): ExternalMergeHandle => ({
+      mergeExternal(remote): ExternalMergeResult {
+        const local = editorRef.current?.getValue() ?? draft;
+        const result = checked_three_way_merge({ base, local, remote });
+        if (!result.clean) {
+          setConflict(true);
+          setError(
+            "Automatic merging was unsafe because both versions changed the same text. Your draft is unchanged; use Full CoCalc to resolve the conflict.",
+          );
+          setNotice(undefined);
+          return {
+            clean: false,
+            message:
+              "Automatic merging was unsafe. Your draft was retained unchanged.",
+          };
+        }
+        const nextDirty = result.merged !== remote;
+        editorRef.current?.rebaseValue(remote, result.merged);
+        setBase(remote);
+        setDraft(result.merged);
+        setDirty(nextDirty);
+        setConflict(false);
+        setMergeNeedsReview(nextDirty);
+        setError(undefined);
+        setNotice(
+          nextDirty
+            ? "Disk changes were merged into your draft. Review the result, then save it."
+            : "The latest disk version is now loaded.",
+        );
+        return { clean: true, dirty: nextDirty };
+      },
+    }),
+    [base, draft],
+  );
 
   useEffect(() => {
     onDirtyChange(dirty);
@@ -223,7 +279,7 @@ export default function CodeView({
   }, [editing, onEditingChange]);
 
   const save = async () => {
-    if (!dirty || saving || conflict || readOnly) return;
+    if (!dirty || saving || conflict || externalChanged || readOnly) return;
     const next = editorRef.current?.getValue() ?? draft;
     setSaving(true);
     setError(undefined);
@@ -271,6 +327,7 @@ export default function CodeView({
       setBase(saved);
       setDraft(saved);
       setDirty(false);
+      setMergeNeedsReview(false);
       onSaved(saved);
       setNotice("Saved.");
       recordUltraliteOutcome("editor", "file_save");
@@ -279,6 +336,7 @@ export default function CodeView({
       if (err?.code === "ETAG_MISMATCH") {
         recordUltraliteOutcome("editor", "save_conflict");
         setConflict(true);
+        onExternalConflict?.();
         setError(
           "This file changed on the server after you opened it. Your draft was not written. Reload or resolve it in full CoCalc.",
         );
@@ -290,7 +348,14 @@ export default function CodeView({
     }
   };
   useEditCheckpoint({
-    active: editing && dirty && !saving && !conflict && !readOnly,
+    active:
+      editing &&
+      dirty &&
+      !saving &&
+      !conflict &&
+      !externalChanged &&
+      !mergeNeedsReview &&
+      !readOnly,
     revision: editRevision,
     save,
   });
@@ -319,7 +384,7 @@ export default function CodeView({
             <>
               <button
                 className="ul-button"
-                disabled={!dirty || saving || conflict}
+                disabled={!dirty || saving || conflict || externalChanged}
                 onClick={() => void save()}
                 type="button"
               >
@@ -337,6 +402,7 @@ export default function CodeView({
                     setDraft(base);
                     setDirty(false);
                     setConflict(false);
+                    setMergeNeedsReview(false);
                     setError(undefined);
                   }
                 }}
@@ -378,6 +444,7 @@ export default function CodeView({
               language={language}
               onDirtyChange={(nextDirty) => {
                 setDirty(nextDirty);
+                setMergeNeedsReview(false);
                 setNotice(undefined);
               }}
               onCursorChange={setCursor}
@@ -405,3 +472,5 @@ export default function CodeView({
     </div>
   );
 }
+
+export default forwardRef(CodeView);

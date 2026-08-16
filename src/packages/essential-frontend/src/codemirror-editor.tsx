@@ -24,8 +24,9 @@ import {
 import {
   Compartment,
   EditorState,
+  Text,
+  Transaction,
   type Extension,
-  type Text,
 } from "@codemirror/state";
 import {
   drawSelection,
@@ -51,6 +52,7 @@ export interface CodeMirrorEditorHandle {
   getJournalBatch(): CodeMirrorJournalBatch | undefined;
   getValue(): string;
   markClean(): void;
+  rebaseValue(base: string, value: string): void;
   replaceValue(value: string): void;
 }
 
@@ -108,6 +110,7 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, Props>(
     const viewRef = useRef<EditorView | undefined>(undefined);
     const initialValueRef = useRef(initialValue);
     const cleanDocumentRef = useRef<Text | undefined>(undefined);
+    const suppressJournalRef = useRef(false);
     const journalRef = useRef(new CodeMirrorEditJournal(initialValue));
     const languageCompartmentRef = useRef(new Compartment());
     const readOnlyCompartmentRef = useRef(new Compartment());
@@ -153,6 +156,28 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, Props>(
           cleanDocumentRef.current = view.state.doc;
           journalRef.current.reset(view.state.doc.toString());
           callbacksRef.current.onDirtyChange(false);
+        },
+        rebaseValue: (base, value) => {
+          const view = viewRef.current;
+          initialValueRef.current = value;
+          if (view && view.state.doc.toString() !== value) {
+            suppressJournalRef.current = true;
+            try {
+              view.dispatch({
+                annotations: Transaction.addToHistory.of(false),
+                changes: {
+                  from: 0,
+                  to: view.state.doc.length,
+                  insert: value,
+                },
+              });
+            } finally {
+              suppressJournalRef.current = false;
+            }
+          }
+          journalRef.current.rebase(base, value);
+          cleanDocumentRef.current = Text.of(base.split("\n"));
+          callbacksRef.current.onDirtyChange(base !== value);
         },
         replaceValue: (value) => {
           const view = viewRef.current;
@@ -217,7 +242,7 @@ const CodeMirrorEditor = forwardRef<CodeMirrorEditorHandle, Props>(
           spellcheck: spellCheck ? "true" : "false",
         }),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) {
+          if (update.docChanged && !suppressJournalRef.current) {
             journalRef.current.record(update.changes);
             callbacksRef.current.onChange?.(update.state.doc.toString());
             callbacksRef.current.onDirtyChange(

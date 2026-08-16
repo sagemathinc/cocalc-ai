@@ -3875,11 +3875,13 @@ export class ChatStreamWriter {
     if (event.type === "status") {
       if (this.livePreviewText) {
         this.livePreviewMessageBoundary = true;
+        void this.livePreviewBatcher.flush();
         // Status is transport/control-plane information. Once manager text has
         // started, publishing every repeated "running" status turns each Codex
         // agent-message item into a separate inline activity block. Keep the
         // paragraph boundary in the cumulative text, but leave raw statuses in
-        // the full activity stream only.
+        // the full activity stream only. Flush any trailing manager text so the
+        // inline preview cannot lag behind that activity stream.
         return;
       }
       this.livePreviewBatcher.add(event, { flush: true });
@@ -3892,9 +3894,17 @@ export class ChatStreamWriter {
     if (event.type === "event" && event.event.type === "message") {
       const preview = this.buildLivePreviewMessage(event);
       if (preview) {
-        this.livePreviewBatcher.add(preview);
+        this.livePreviewBatcher.add(preview, {
+          flush: event.event.delta !== true,
+        });
       }
       return;
+    }
+    if (event.type === "event" && this.livePreviewText) {
+      // The complete activity stream can publish tool and reasoning events
+      // independently. Flush text queued before that activity so the inline
+      // transcript does not visibly trail the activity drawer.
+      void this.livePreviewBatcher.flush();
     }
   }
 

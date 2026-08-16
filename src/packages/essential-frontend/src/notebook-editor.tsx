@@ -19,7 +19,16 @@ import {
   saveNotebookJournal,
 } from "@cocalc/conat/project/edit-journal";
 import { syncdbPath } from "@cocalc/util/jupyter/names";
-import { useEffect, useRef, useState, type RefCallback } from "react";
+import { checked_notebook_three_way_merge } from "@cocalc/util/jupyter/merge";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ForwardedRef,
+  type RefCallback,
+} from "react";
 import CodeMirrorEditor, {
   type CodeMirrorEditorHandle,
   type CodeMirrorShortcut,
@@ -43,6 +52,10 @@ import {
 } from "./telemetry";
 import type { UltraliteLanguage } from "./prism-languages";
 import { sha256Text } from "./sha256";
+import type {
+  ExternalMergeHandle,
+  ExternalMergeResult,
+} from "./external-merge";
 
 const MAX_OUTPUT_TEXT = 100_000;
 const MAX_OUTPUT_IMAGE = 7 * 1024 * 1024;
@@ -228,27 +241,36 @@ function NotebookCellEditor({
   );
 }
 
-export default function NotebookEditor({
-  baseContents: initialBase,
-  filesystem,
-  notebook: initialNotebook,
-  onDirtyChange,
-  onSaved,
-  path,
-  project,
-  readOnly,
-  session,
-}: {
+interface NotebookEditorProps {
   baseContents: string;
+  externalChanged?: boolean;
   filesystem: FilesystemClient;
   notebook: NotebookDocument;
   onDirtyChange?: (dirty: boolean) => void;
+  onExternalConflict?: () => void;
   onSaved?: (notebook: NotebookDocument, contents: string) => void;
   path: string;
   project: AccountProjectListWindowRow;
   readOnly: boolean;
   session: UltraliteSession;
-}) {
+}
+
+function NotebookEditor(
+  {
+    baseContents: initialBase,
+    externalChanged = false,
+    filesystem,
+    notebook: initialNotebook,
+    onDirtyChange,
+    onExternalConflict,
+    onSaved,
+    path,
+    project,
+    readOnly,
+    session,
+  }: NotebookEditorProps,
+  ref: ForwardedRef<ExternalMergeHandle>,
+) {
   const [notebook, setNotebook] = useState(() =>
     cloneNotebook(initialNotebook),
   );
@@ -258,6 +280,7 @@ export default function NotebookEditor({
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [conflict, setConflict] = useState(false);
+  const [mergeNeedsReview, setMergeNeedsReview] = useState(false);
   const [runningCell, setRunningCell] = useState<string>();
   const [kernelStatus, setKernelStatus] = useState("not started");
   const [error, setError] = useState<string>();
@@ -265,6 +288,9 @@ export default function NotebookEditor({
   const [editorEpoch, setEditorEpoch] = useState(0);
   const jupyter = useRef<JupyterClient | undefined>(undefined);
   const cellEditors = useRef(new Map<string, CodeMirrorEditorHandle>());
+  const pendingCellRebases = useRef(
+    new Map<string, { base: string; value: string }>(),
+  );
   const journalId = useRef(crypto.randomUUID());
   const journalSequence = useRef(0);
   const completedLiveRunIds = useRef(new Set<string>());
@@ -311,9 +337,84 @@ export default function NotebookEditor({
 
   const markEdited = () => {
     setDirty(true);
+    setMergeNeedsReview(false);
     setEditRevision((value) => value + 1);
     setNotice(undefined);
   };
+
+  useImperativeHandle(
+    ref,
+    (): ExternalMergeHandle => ({
+      mergeExternal(remoteContents): ExternalMergeResult {
+        let baseNotebook: NotebookDocument;
+        let remoteNotebook: NotebookDocument;
+        try {
+          baseNotebook = parseNotebook(baseContents);
+          remoteNotebook = parseNotebook(remoteContents);
+        } catch (err) {
+          setConflict(true);
+          setError(
+            `The newer notebook could not be merged safely: ${err instanceof Error ? err.message : err}`,
+          );
+          return {
+            clean: false,
+            message: "The newer notebook could not be parsed safely.",
+          };
+        }
+        const result = checked_notebook_three_way_merge({
+          base: baseNotebook,
+          local: notebook,
+          remote: remoteNotebook,
+        });
+        if (!result.clean) {
+          setConflict(true);
+          setError(
+            "Automatic notebook merging was unsafe because the same cell or notebook setting changed in both versions. Your draft is unchanged; use Full CoCalc to resolve the conflict.",
+          );
+          setNotice(undefined);
+          return {
+            clean: false,
+            message:
+              "Automatic notebook merging was unsafe. Your draft was retained unchanged.",
+          };
+        }
+        const remoteCells = new Map(
+          remoteNotebook.cells.flatMap((cell) =>
+            cell.id ? [[cell.id, cell] as const] : [],
+          ),
+        );
+        pendingCellRebases.current = new Map(
+          result.merged.cells.flatMap((cell) =>
+            cell.id
+              ? [
+                  [
+                    cell.id,
+                    {
+                      base: sourceText(remoteCells.get(cell.id)?.source),
+                      value: sourceText(cell.source),
+                    },
+                  ] as const,
+                ]
+              : [],
+          ),
+        );
+        setBaseContents(remoteContents);
+        setNotebook(cloneNotebook(result.merged));
+        setEditorEpoch((value) => value + 1);
+        setDirty(result.dirty);
+        setConflict(false);
+        setMergeNeedsReview(result.dirty);
+        setError(undefined);
+        setNotice(
+          result.dirty
+            ? "Disk changes were merged into your notebook draft. Review the result, then save it."
+            : "The latest disk version is now loaded.",
+        );
+        return { clean: true, dirty: result.dirty };
+      },
+    }),
+    [baseContents, notebook],
+  );
 
   const updateCell = (index: number, patch: Partial<NotebookCell>) => {
     setNotebook((current) => ({
@@ -382,12 +483,22 @@ export default function NotebookEditor({
     setNotebook(savedNotebook);
     setDirty(false);
     setConflict(false);
+    setMergeNeedsReview(false);
     onSaved?.(savedNotebook, savedContents);
     return savedContents;
   };
 
   const save = async () => {
-    if (readOnly || saving || running || !dirty) return;
+    if (
+      readOnly ||
+      saving ||
+      running ||
+      conflict ||
+      externalChanged ||
+      !dirty
+    ) {
+      return;
+    }
     setSaving(true);
     setError(undefined);
     setNotice(undefined);
@@ -399,6 +510,7 @@ export default function NotebookEditor({
       recordUltraliteFailure("notebook_execute", err);
       if (err?.code === "ETAG_MISMATCH") {
         setConflict(true);
+        onExternalConflict?.();
         recordUltraliteOutcome("notebook_execute", "save_conflict");
       }
       setError(
@@ -413,7 +525,14 @@ export default function NotebookEditor({
     }
   };
   useEditCheckpoint({
-    active: dirty && !saving && !running && !conflict && !readOnly,
+    active:
+      dirty &&
+      !saving &&
+      !running &&
+      !conflict &&
+      !externalChanged &&
+      !mergeNeedsReview &&
+      !readOnly,
     revision: editRevision,
     save,
   });
@@ -469,6 +588,7 @@ export default function NotebookEditor({
     const reloadSavedNotebook = async () => {
       if (dirtyRef.current) {
         setConflict(true);
+        onExternalConflict?.();
         setError(
           "Notebook execution finished elsewhere while this draft had unsaved changes. The draft was not overwritten; reload or resolve it in full CoCalc.",
         );
@@ -771,6 +891,7 @@ export default function NotebookEditor({
     .map((cell, index) => (cell.cell_type === "code" ? index : -1))
     .filter((index) => index >= 0);
   const codeLanguage = notebookCodeLanguage(notebook);
+  const diskBlocked = conflict || externalChanged;
 
   return (
     <div>
@@ -778,7 +899,7 @@ export default function NotebookEditor({
         <div className="ul-toolbar">
           <button
             className="ul-button"
-            disabled={readOnly || !dirty || saving || running || conflict}
+            disabled={readOnly || !dirty || saving || running || diskBlocked}
             onClick={() => void save()}
             type="button"
           >
@@ -786,7 +907,7 @@ export default function NotebookEditor({
           </button>
           <button
             className="ul-button ul-button-secondary"
-            disabled={readOnly || running || conflict || !codeIndexes.length}
+            disabled={readOnly || running || diskBlocked || !codeIndexes.length}
             onClick={() => void runCells(codeIndexes)}
             type="button"
           >
@@ -847,7 +968,7 @@ export default function NotebookEditor({
                 {cell.cell_type === "code" ? (
                   <button
                     className="ul-icon-button"
-                    disabled={readOnly || running || conflict}
+                    disabled={readOnly || running || diskBlocked}
                     onClick={() => void runCells([index])}
                     type="button"
                   >
@@ -911,8 +1032,16 @@ export default function NotebookEditor({
                 autoFocus={false}
                 cell={cell}
                 editorRef={(editor) => {
-                  if (editor) cellEditors.current.set(cellKey, editor);
-                  else cellEditors.current.delete(cellKey);
+                  if (editor) {
+                    cellEditors.current.set(cellKey, editor);
+                    const rebase = pendingCellRebases.current.get(cellKey);
+                    if (rebase) {
+                      editor.rebaseValue(rebase.base, rebase.value);
+                      pendingCellRebases.current.delete(cellKey);
+                    }
+                  } else {
+                    cellEditors.current.delete(cellKey);
+                  }
                 }}
                 index={index}
                 language={codeLanguage}
@@ -962,3 +1091,5 @@ export default function NotebookEditor({
     </div>
   );
 }
+
+export default forwardRef(NotebookEditor);

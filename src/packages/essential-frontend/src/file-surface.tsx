@@ -7,6 +7,7 @@ import type { AccountProjectListWindowRow } from "@cocalc/conat/hub/api/projects
 import type { Files } from "@cocalc/conat/files/listing";
 import type { FilesystemClient } from "@cocalc/conat/files/fs";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import type { ExternalMergeHandle } from "./external-merge";
 import NotebookView, {
   parseNotebook,
   type NotebookDocument,
@@ -112,6 +113,43 @@ export function validateNewEntryName(value: string): string {
     throw new Error("This name exceeds the filesystem's 255-byte limit.");
   }
   return name;
+}
+
+export function ExternalChangeActions({
+  merging,
+  onMerge,
+  onReload,
+}: {
+  merging: boolean;
+  onMerge: () => void;
+  onReload: () => void;
+}) {
+  return (
+    <InlineAlert kind="warning">
+      <div>
+        This file changed on disk while it was open. Your current draft has been
+        retained, and saving is blocked until you reconcile it.
+      </div>
+      <div className="ul-toolbar">
+        <button
+          className="ul-button"
+          disabled={merging}
+          onClick={onMerge}
+          type="button"
+        >
+          {merging ? "Merging..." : "Merge disk changes"}
+        </button>
+        <button
+          className="ul-button ul-button-secondary"
+          disabled={merging}
+          onClick={onReload}
+          type="button"
+        >
+          Discard draft and reload
+        </button>
+      </div>
+    </InlineAlert>
+  );
 }
 
 function initialFileContents(name: string): string {
@@ -276,6 +314,8 @@ export default function FileSurface({
   const [dirty, setDirty] = useState(false);
   const [codeEditing, setCodeEditing] = useState(false);
   const [externalChanged, setExternalChanged] = useState(false);
+  const [mergingExternal, setMergingExternal] = useState(false);
+  const [externalMergeError, setExternalMergeError] = useState<string>();
   const [watchError, setWatchError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -287,6 +327,8 @@ export default function FileSurface({
   const dirtyRef = useRef(dirty);
   const editorActiveRef = useRef(codeEditing || executeNotebook);
   const localSaveUntilRef = useRef(0);
+  const codeViewRef = useRef<ExternalMergeHandle>(null);
+  const notebookEditorRef = useRef<ExternalMergeHandle>(null);
   dirtyRef.current = dirty;
   editorActiveRef.current = codeEditing || executeNotebook;
 
@@ -295,6 +337,7 @@ export default function FileSurface({
     setCodeEditing(false);
     setDirty(false);
     setExternalChanged(false);
+    setExternalMergeError(undefined);
     setWatchError(false);
     setCreateKind(undefined);
     setCreateName("");
@@ -460,7 +503,50 @@ export default function FileSurface({
     if (dirty && !window.confirm("Discard unsaved changes and reload?")) return;
     setDirty(false);
     setExternalChanged(false);
+    setExternalMergeError(undefined);
     setRefresh((value) => value + 1);
+  };
+
+  const mergeDiskChanges = async () => {
+    if (!filesystem || route.kind !== "file" || mergingExternal) return;
+    const editor = executeNotebook
+      ? notebookEditorRef.current
+      : codeViewRef.current;
+    if (!editor) {
+      setExternalMergeError("The editor is still loading. Try again shortly.");
+      return;
+    }
+    setMergingExternal(true);
+    setExternalMergeError(undefined);
+    try {
+      const notebookFile = route.path.toLowerCase().endsWith(".ipynb");
+      const limit = notebookFile ? MAX_NOTEBOOK_EDIT_BYTES : MAX_EDIT_BYTES;
+      const stats = await filesystem.stat(route.path);
+      if (stats.size > limit) {
+        throw new Error(
+          `The newer ${formatBytes(stats.size)} file exceeds the ${formatBytes(limit)} Essential editing limit. Open Full CoCalc to reconcile it.`,
+        );
+      }
+      const latest = asText(
+        (await filesystem.readFile(route.path, "utf8")) as string | Uint8Array,
+      );
+      if (!notebookFile && latest.includes("\0")) {
+        throw new Error(
+          "The newer version appears to be binary. Open Full CoCalc to reconcile it.",
+        );
+      }
+      const result = editor.mergeExternal(latest);
+      if (!result.clean) {
+        setExternalMergeError(result.message);
+        return;
+      }
+      setDirty(result.dirty);
+      setExternalChanged(false);
+    } catch (err) {
+      setExternalMergeError(err instanceof Error ? err.message : `${err}`);
+    } finally {
+      setMergingExternal(false);
+    }
   };
 
   const markLocalSave = () => {
@@ -554,11 +640,14 @@ export default function FileSurface({
       {loading ? <LoadingState label="Loading from the project host" /> : null}
       {error ? <InlineAlert kind="error">{error}</InlineAlert> : null}
       {externalChanged ? (
-        <InlineAlert kind="warning">
-          This file changed on disk while it was open. Your current editor state
-          has been retained; reload from disk to inspect the newer version. A
-          save will not overwrite an unexpected newer version.
-        </InlineAlert>
+        <ExternalChangeActions
+          merging={mergingExternal}
+          onMerge={() => void mergeDiskChanges()}
+          onReload={refreshFile}
+        />
+      ) : null}
+      {externalMergeError ? (
+        <InlineAlert kind="error">{externalMergeError}</InlineAlert>
       ) : null}
       {watchError && route.kind === "file" ? (
         <InlineAlert kind="info">
@@ -663,9 +752,11 @@ export default function FileSurface({
               </div>
               <NotebookEditor
                 baseContents={notebookContents}
+                externalChanged={externalChanged}
                 filesystem={filesystem!}
                 notebook={notebook}
                 onDirtyChange={setDirty}
+                onExternalConflict={() => setExternalChanged(true)}
                 onSaved={(savedNotebook, savedContents) => {
                   markLocalSave();
                   setNotebook(savedNotebook);
@@ -674,6 +765,7 @@ export default function FileSurface({
                 path={route.path}
                 project={project}
                 readOnly={!notebookEditable || !canWrite}
+                ref={notebookEditorRef}
                 session={session}
               />
             </Suspense>
@@ -698,9 +790,11 @@ export default function FileSurface({
           <Suspense fallback={<LoadingState label="Loading code viewer" />}>
             <CodeView
               contents={contents}
+              externalChanged={externalChanged}
               filesystem={filesystem!}
               onDirtyChange={setDirty}
               onEditingChange={setCodeEditing}
+              onExternalConflict={() => setExternalChanged(true)}
               onSaved={(saved) => {
                 markLocalSave();
                 setContents(saved);
@@ -708,6 +802,7 @@ export default function FileSurface({
               path={route.path}
               project={project}
               readOnly={!editable || !canWrite}
+              ref={codeViewRef}
               session={session}
             />
           </Suspense>

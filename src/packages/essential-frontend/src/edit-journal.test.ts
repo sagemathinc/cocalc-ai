@@ -27,4 +27,22 @@ describe("CodeMirror edit journal", () => {
     journal.reset("ab");
     expect(journal.getBatch()).toBeUndefined();
   });
+
+  it("moves the journal base forward while retaining the local delta", () => {
+    const journal = new CodeMirrorEditJournal("alpha\nbeta\ngamma\n");
+    journal.record(ChangeSet.of({ from: 5, insert: " local" }, 17));
+
+    journal.rebase(
+      "alpha\nbeta\ngamma remote\n",
+      "alpha local\nbeta\ngamma remote\n",
+    );
+
+    const batch = journal.getBatch();
+    expect(batch?.base).toBe("alpha\nbeta\ngamma remote\n");
+    expect(batch?.value).toBe("alpha local\nbeta\ngamma remote\n");
+    expect(apply_patch(batch!.patch, batch!.base)).toEqual([
+      "alpha local\nbeta\ngamma remote\n",
+      true,
+    ]);
+  });
 });

@@ -60,6 +60,13 @@ navigation. Read-only content reloads after an external change. Active editors
 retain their draft and show a changed-on-disk warning; optimistic saves remain
 the final protection against overwriting a newer version.
 
+Reconciliation is explicit. **Merge disk changes** performs a conservative
+three-way merge from the version originally opened, the current draft, and the
+new disk version. A clean merge advances the disk baseline but remains an
+unsaved draft for review. Overlapping edits never choose a winner or insert
+conflict markers: the draft remains byte-for-byte unchanged and the user can
+discard it or open Full CoCalc to resolve the conflict.
+
 CodeMirror edits are composed from its operation log and checkpointed after a
 short idle period, at a bounded maximum interval during continuous editing, and
 on explicit save. The project host records those exact patches in the ordinary
@@ -102,6 +109,13 @@ host applies only that delta to the live canonical notebook, preserving newer
 RTC changes rather than replacing the document wholesale. Standard CoCalc and
 instructor TimeTravel therefore see Essential edits, including nbgrader
 metadata, even though Essential does not download the history viewer.
+
+External notebook edits use stable cell ids for an explicit three-way merge.
+Independent cell edits, and independent source/output/metadata changes within a
+cell, merge cleanly. Concurrent source edits to the same cell are treated as
+unsafe and retain the local notebook unchanged. This is the expected path when
+a student edits one cell while an instructor or Codex changes another through
+side chat.
 
 Arbitrary HTML, JavaScript, widgets, JupyterLab plugins, and broad rich-output
 registries are intentionally omitted. Users can launch JupyterLab when they
@@ -178,6 +192,10 @@ and app-server traffic flows directly between the browser and the project
 host. The hub authorizes and routes access but does not proxy project data.
 Mobile and agent clients should share the same bounded project-host data-plane
 APIs through headless protocol packages; they must not import this React UI.
+The conservative text and notebook merge functions likewise live in
+`@cocalc/util` and operate only on strings and serializable notebook values, so
+the React Native client can use exactly the same conflict semantics without a
+browser or DOM dependency.
 
 Project-host bearer credentials stay in memory. File access is confined to the
 authorized project namespace, transfers and rendering are bounded, and writes

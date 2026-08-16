@@ -11,11 +11,13 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { createRef, type RefObject } from "react";
 import { openJupyterLiveRunStore } from "@cocalc/conat/project/jupyter/live-run";
 import NotebookEditor, {
   insertNotebookCellBelow,
   notebookOutputFromMessage,
 } from "./notebook-editor";
+import type { ExternalMergeHandle } from "./external-merge";
 
 jest.mock("@cocalc/conat/project/jupyter/live-run", () => ({
   openJupyterLiveRunStore: jest.fn(),
@@ -29,6 +31,7 @@ jest.mock("./codemirror-editor", () => {
       focus: jest.fn(),
       getValue: () => value,
       markClean: jest.fn(),
+      rebaseValue: (_base: string, next: string) => setValue(next),
       replaceValue: setValue,
     }));
     return (
@@ -84,9 +87,13 @@ const baseContents = JSON.stringify({
 });
 
 async function setup({
+  base = baseContents,
+  editorRef,
   latest = baseContents,
   snapshots = {},
 }: {
+  base?: string;
+  editorRef?: RefObject<ExternalMergeHandle | null>;
   latest?: string;
   snapshots?: Record<string, any>;
 } = {}) {
@@ -108,9 +115,9 @@ async function setup({
   await act(async () => {
     render(
       <NotebookEditor
-        baseContents={baseContents}
+        baseContents={base}
         filesystem={filesystem as any}
-        notebook={JSON.parse(baseContents)}
+        notebook={JSON.parse(base)}
         path="/home/user/test.ipynb"
         project={
           {
@@ -120,6 +127,7 @@ async function setup({
           } as any
         }
         readOnly={false}
+        ref={editorRef}
         session={session as any}
       />,
     );
@@ -152,6 +160,80 @@ test("saving uses a conflict-safe write without starting compute", async () => {
     ),
   );
   expect(session.ensureProjectRunning).not.toHaveBeenCalled();
+});
+
+test("merges independent notebook cells and saves against the newer base", async () => {
+  const base = JSON.stringify({
+    ...JSON.parse(baseContents),
+    cells: [
+      JSON.parse(baseContents).cells[0],
+      {
+        cell_type: "code",
+        execution_count: null,
+        id: "cell-2",
+        metadata: {},
+        outputs: [],
+        source: "print('second')",
+      },
+    ],
+  });
+  const remoteNotebook = JSON.parse(base);
+  remoteNotebook.cells[1].source = "print('remote')";
+  const remote = JSON.stringify(remoteNotebook);
+  const editorRef = createRef<ExternalMergeHandle>();
+  const { filesystem } = await setup({ base, editorRef });
+  fireEvent.change(screen.getByRole("textbox", { name: "Source for cell 1" }), {
+    target: { value: "print('local')" },
+  });
+
+  let result;
+  act(() => {
+    result = editorRef.current?.mergeExternal(remote);
+  });
+
+  expect(result).toEqual({ clean: true, dirty: true });
+  expect(
+    screen.getByRole("textbox", { name: "Source for cell 1" }),
+  ).toHaveValue("print('local')");
+  expect(
+    screen.getByRole("textbox", { name: "Source for cell 2" }),
+  ).toHaveValue("print('remote')");
+  expect(screen.getByText(/merged into your notebook draft/i)).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: "Save notebook" }));
+  await waitFor(() =>
+    expect(filesystem.writeFileIfUnchanged).toHaveBeenCalledWith(
+      "/home/user/test.ipynb",
+      expect.stringMatching(/print\('local'\)[\s\S]*print\('remote'\)/),
+      remote,
+      true,
+    ),
+  );
+});
+
+test("retains a notebook draft when both sides changed one cell", async () => {
+  const remoteNotebook = JSON.parse(baseContents);
+  remoteNotebook.cells[0].source = "print('remote')";
+  const editorRef = createRef<ExternalMergeHandle>();
+  await setup({ editorRef });
+  fireEvent.change(screen.getByRole("textbox", { name: "Source for cell 1" }), {
+    target: { value: "print('local')" },
+  });
+
+  let result;
+  act(() => {
+    result = editorRef.current?.mergeExternal(JSON.stringify(remoteNotebook));
+  });
+
+  expect(result).toEqual({
+    clean: false,
+    message:
+      "Automatic notebook merging was unsafe. Your draft was retained unchanged.",
+  });
+  expect(
+    screen.getByRole("textbox", { name: "Source for cell 1" }),
+  ).toHaveValue("print('local')");
+  expect(screen.getByText(/use Full CoCalc to resolve/i)).toBeVisible();
 });
 
 test("a changed canonical notebook blocks execution before compute starts", async () => {

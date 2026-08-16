@@ -1691,6 +1691,69 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("flushes trailing preview text before later activity gets ahead", async () => {
+    const previewPayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+      livePreviewStreamFactory: () =>
+        ({
+          publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+            previewPayloads.push(payload);
+            return { seq: previewPayloads.length, time: Date.now() };
+          },
+          close: () => {},
+        }) as any,
+    });
+
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "capability ledger/schema, provider decisions, dependency DAG",
+        delta: true,
+      },
+      seq: 0,
+      time: 1000,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: ", and parallelizable priorities.",
+        delta: true,
+      },
+      seq: 1,
+      time: 1010,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "terminal",
+        terminalId: "tool-1",
+        phase: "start",
+        command: "rg provider",
+      },
+      seq: 2,
+      time: 1020,
+    } as AcpStreamMessage);
+
+    expect(writer.livePreviewBatcher.snapshot().pendingItems).toBe(0);
+    await waitForCondition(() => previewPayloads.length > 0);
+    const previewEvents = flattenLivePayloads(previewPayloads);
+    expect(getLiveResponseMarkdown(previewEvents)).toBe(
+      "capability ledger/schema, provider decisions, dependency DAG, and parallelizable priorities.",
+    );
+    writer.dispose?.(true);
+  });
+
   it("keeps complete agent delta updates in one preview document", async () => {
     const previewPayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
     const { syncdb } = makeFakeSyncDB();

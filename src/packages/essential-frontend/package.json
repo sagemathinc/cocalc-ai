@@ -14,7 +14,7 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "copy-css": "mkdir -p dist && cp -v src/*.css dist/",
-    "build": "pnpm run copy-css && pnpm exec tsc --build",
+    "build": "pnpm run copy-css && pnpm exec tsc --build --force",
     "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
     "test": "pnpm exec jest",
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/jest,@types/node,@types/prismjs,@types/react,@types/react-dom,@types/webpack-env,identity-obj-proxy,jest-environment-jsdom"
