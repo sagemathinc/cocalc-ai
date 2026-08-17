@@ -1355,6 +1355,71 @@ describe("LaTeX build ownership", () => {
     expect(actions._buildToken).toBe("fresh-build");
     expect(actions._projectStopObserved).toBe(false);
   });
+
+  it("force build preempts a running build instead of queueing behind it", async () => {
+    const actions = createBuildActions();
+    let resolveA!: () => void;
+    const runA = new Promise<void>((resolve) => (resolveA = resolve));
+    actions.run_build = jest
+      .fn()
+      .mockImplementationOnce(() => runA)
+      .mockResolvedValue(undefined);
+
+    // A save-triggered build is running: its aggregate is the save time, so
+    // both clients that saved dedupe into one process.
+    const buildA = actions.buildInternal(undefined, false, false);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(actions.is_building).toBe(true);
+
+    // What force_build() resolves to: build(id, true) -> buildInternal.
+    await actions.buildInternal(undefined, true, true);
+
+    // The running build was stopped, not queued behind: a stop went out and
+    // the forced build ran, with force reaching both peers and latexmk.
+    expect(actions.buildCoordinator.requestStop).toHaveBeenCalledTimes(1);
+    expect(actions._pendingBuildRequest).toBe(false);
+    expect(actions.run_build).toHaveBeenCalledTimes(2);
+    expect(actions.run_build.mock.calls[1][1]).toBe(true);
+    expect(actions.buildCoordinator.publishBuildStart).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.any(Number),
+      true,
+      undefined,
+    );
+    // A stopped build leaves cached partial results under its aggregate, so
+    // the forced run must not reuse the save-time key it was running under.
+    const [, aggregateA] =
+      actions.buildCoordinator.publishBuildStart.mock.calls[0];
+    const [, aggregateForced] =
+      actions.buildCoordinator.publishBuildStart.mock.calls[1];
+    expect(aggregateA).toBe(actions.last_save_time());
+    expect(aggregateForced).not.toBe(aggregateA);
+
+    resolveA();
+    await buildA;
+  });
+
+  it("a plain build during a build is queued rather than preempting", async () => {
+    const actions = createBuildActions();
+    let resolveA!: () => void;
+    const runA = new Promise<void>((resolve) => (resolveA = resolve));
+    actions.run_build = jest.fn().mockImplementationOnce(() => runA);
+    actions.drainPendingBuild = jest.fn();
+
+    const buildA = actions.buildInternal(undefined, false, true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await actions.buildInternal(undefined, false, true);
+
+    expect(actions.buildCoordinator.requestStop).not.toHaveBeenCalled();
+    expect(actions.run_build).toHaveBeenCalledTimes(1);
+    expect(actions._pendingBuildRequest).toBe(true);
+
+    resolveA();
+    await buildA;
+  });
 });
 
 describe("LaTeX save-triggered builds", () => {
