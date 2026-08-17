@@ -50,6 +50,7 @@ export interface ProjectHostAuthClaims {
   jti: string;
   v: string;
   act?: ProjectHostAuthActor;
+  sid?: string;
 }
 
 export interface IssueProjectHostTokenOptions {
@@ -61,6 +62,7 @@ export interface IssueProjectHostTokenOptions {
   actor?: ProjectHostAuthActor;
   account_id?: string;
   hub_id?: string;
+  session_id?: string;
 }
 
 export interface VerifyProjectHostTokenOptions {
@@ -149,6 +151,7 @@ export function issueProjectHostAuthToken({
   actor,
   account_id,
   hub_id,
+  session_id,
 }: IssueProjectHostTokenOptions): {
   token: string;
   expires_at: number;
@@ -156,6 +159,9 @@ export function issueProjectHostAuthToken({
 } {
   ensureValidHostId(host_id);
   const identity = getActorAndSubject({ actor, account_id, hub_id });
+  if (session_id != null && !isValidUUID(session_id)) {
+    throw new Error("invalid session_id");
+  }
   const key = getPrivateKey(private_key);
   const iat = Math.floor(now_ms / 1000);
   const exp = iat + normalizeTtlSeconds(ttl_seconds);
@@ -168,6 +174,7 @@ export function issueProjectHostAuthToken({
     jti: randomUUID(),
     v: TOKEN_VERSION,
     act: identity.actor,
+    ...(session_id ? { sid: session_id } : {}),
   };
 
   const header = {
@@ -266,6 +273,9 @@ export function verifyProjectHostAuthToken({
     }
   } else if (`${claims?.sub ?? ""}`.trim().length === 0) {
     throw new Error("invalid token subject");
+  }
+  if (claims.sid != null && !isValidUUID(claims.sid)) {
+    throw new Error("invalid token session");
   }
 
   return claims;

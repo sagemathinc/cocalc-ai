@@ -204,6 +204,7 @@ test("auth login stores a dedicated browser-approved CLI session", async () => {
   const capture: { data?: any } = {};
   let config: any = { profiles: {} };
   const fetchCalls: Array<{ url: string; init: any }> = [];
+  let loginStatusAttempts = 0;
   const originalFetch = global.fetch;
   global.fetch = (async (url: string | URL | Request, init?: any) => {
     fetchCalls.push({ url: `${url}`, init });
@@ -213,11 +214,15 @@ test("auth login stores a dedicated browser-approved CLI session", async () => {
           challenge_id: "challenge-1",
           poll_token: "poll-token-1",
           approval_url: "https://hub.example.test/auth/cli-login/challenge-1",
-          expires_at: "2026-05-08T10:00:00.000Z",
+          expires_at: "2099-05-08T10:00:00.000Z",
         }),
       } as any;
     }
     if (`${url}`.endsWith("/api/v2/auth/cli/login/status")) {
+      loginStatusAttempts += 1;
+      if (loginStatusAttempts === 1) {
+        throw new TypeError("fetch failed");
+      }
       return {
         json: async () => ({
           challenge_id: "challenge-1",
@@ -256,7 +261,14 @@ test("auth login stores a dedicated browser-approved CLI session", async () => {
         },
       }),
     );
-    await program.parseAsync(["node", "test", "auth", "login"]);
+    await program.parseAsync([
+      "node",
+      "test",
+      "auth",
+      "login",
+      "--poll-ms",
+      "200ms",
+    ]);
     assert.equal(capture.data.profile, "default");
     assert.equal(capture.data.account_id, "acct-123");
     assert.equal(capture.data.api, "https://bay-2-lite4.cocalc.ai");
@@ -276,12 +288,13 @@ test("auth login stores a dedicated browser-approved CLI session", async () => {
       config.profiles.default.cookie,
       /remember_me=remember-cookie-1/,
     );
-    assert.equal(fetchCalls.length, 3);
+    assert.equal(fetchCalls.length, 4);
     assert.deepEqual(JSON.parse(fetchCalls[0].init.body), {});
     assert.deepEqual(
       fetchCalls.map((call) => call.url.replace(/^https?:\/\/[^/]+/, "")),
       [
         "/api/v2/auth/cli/login/start",
+        "/api/v2/auth/cli/login/status",
         "/api/v2/auth/cli/login/status",
         "/api/v2/auth/cli/login/redeem",
       ],

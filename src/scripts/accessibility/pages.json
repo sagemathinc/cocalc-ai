@@ -162,6 +162,15 @@
       "settleMs": 2000
     },
     {
+      "id": "ultralite-projects",
+      "title": "Constrained CoCalc projects",
+      "path": "/static/ultralite.html#/projects",
+      "authentication": "account",
+      "minimumScore": 1,
+      "readySelector": ".ul-project-table, .ul-empty",
+      "settleMs": 500
+    },
+    {
       "id": "membership",
       "title": "Membership settings",
       "path": "/settings/membership",
@@ -258,6 +267,16 @@
       "minimumScore": 1,
       "readySelector": ".smc-vfill",
       "settleMs": 2000
+    },
+    {
+      "id": "ultralite-project-files",
+      "title": "Constrained CoCalc project files",
+      "path": "/static/ultralite.html#/project/{project_id}/files?path=%2Fhome%2Fuser",
+      "authentication": "account",
+      "requiresProject": true,
+      "minimumScore": 1,
+      "readySelector": ".ul-file-list, .ul-empty",
+      "settleMs": 500
     },
     {
       "id": "project-settings",

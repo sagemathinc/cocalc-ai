@@ -327,10 +327,16 @@ describe("ChatStreamWriter", () => {
     ).toThrow("missing required message_id");
   });
 
-  it("clears generating on summary", async () => {
+  it("clears generating on summary when live preview is unavailable", async () => {
     const { syncdb, sets, setCurrent } = makeFakeSyncDB();
     setCurrent({
-      get: (key: string) => (key === "generating" ? true : undefined),
+      event: "chat",
+      date: baseMetadata.message_date,
+      sender_id: baseMetadata.sender_id,
+      message_id: baseMetadata.message_id,
+      thread_id: baseMetadata.thread_id,
+      history: [],
+      generating: true,
     });
     const writer: any = new ChatStreamWriter({
       metadata: baseMetadata,
@@ -1685,7 +1691,75 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
-  it("keeps complete agent delta updates as separate preview paragraphs", async () => {
+  it("flushes trailing preview text before later activity gets ahead", async () => {
+    const previewPayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+      livePreviewStreamFactory: () =>
+        ({
+          publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+            previewPayloads.push(payload);
+            return { seq: previewPayloads.length, time: Date.now() };
+          },
+          close: () => {},
+        }) as any,
+    });
+
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "capability ledger/schema, provider decisions, dependency DAG",
+        delta: true,
+      },
+      seq: 0,
+      time: 1000,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: ", and parallelizable priorities.",
+        delta: true,
+      },
+      seq: 1,
+      time: 1010,
+    } as AcpStreamMessage);
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "terminal",
+        terminalId: "tool-1",
+        phase: "start",
+        command: "rg provider",
+      },
+      seq: 2,
+      time: 1020,
+    } as AcpStreamMessage);
+
+    expect(writer.livePreviewBatcher.snapshot().pendingItems).toBe(0);
+    await waitForCondition(() => previewPayloads.length > 0);
+    const previewEvents = flattenLivePayloads(previewPayloads);
+    expect(
+      previewEvents.filter(
+        (event) => event.type === "event" && event.event.type === "message",
+      ),
+    ).toHaveLength(1);
+    expect(getLiveResponseMarkdown(previewEvents)).toBe(
+      "capability ledger/schema, provider decisions, dependency DAG, and parallelizable priorities.",
+    );
+    writer.dispose?.(true);
+  });
+
+  it("keeps complete agent delta updates in one preview document", async () => {
     const previewPayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
@@ -1741,6 +1815,12 @@ describe("ChatStreamWriter", () => {
     expect(getLiveResponseMarkdown(previewEvents)).toBe(
       `${first}\n\n${second}`,
     );
+    expect(getLiveResponseBlocks(previewEvents)).toEqual([
+      expect.objectContaining({
+        kind: "agent",
+        text: `${first}\n\n${second}`,
+      }),
+    ]);
     writer.dispose?.(true);
   });
 
@@ -1798,10 +1878,71 @@ describe("ChatStreamWriter", () => {
       "Initial update.\n\nI am keeping the output.",
     );
     expect(getLiveResponseBlocks(previewEvents)).toEqual([
-      expect.objectContaining({ kind: "agent", text: "Initial update." }),
       expect.objectContaining({
         kind: "agent",
-        text: "I am keeping the output.",
+        text: "Initial update.\n\nI am keeping the output.",
+      }),
+    ]);
+    writer.dispose?.(true);
+  });
+
+  it("retries a failed preview publish without waiting for more agent output", async () => {
+    const previewPayloads: Array<AcpStreamMessage | AcpStreamMessage[]> = [];
+    let publishAttempts = 0;
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+      livePreviewStreamFactory: () =>
+        ({
+          publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+            publishAttempts += 1;
+            if (publishAttempts === 1) {
+              throw new Error("transient preview transport failure");
+            }
+            previewPayloads.push(payload);
+            return { seq: previewPayloads.length, time: Date.now() };
+          },
+          close: () => {},
+        }) as any,
+    });
+    const replacementStream = {
+      publish: async (payload: AcpStreamMessage | AcpStreamMessage[]) => {
+        publishAttempts += 1;
+        previewPayloads.push(payload);
+        return { seq: previewPayloads.length, time: Date.now() };
+      },
+      close: () => {},
+    };
+    writer.getLivePreviewStream = async () =>
+      publishAttempts === 0 ? writer.livePreviewStream : replacementStream;
+
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "message",
+        text: "This snapshot must not be dropped.",
+        delta: true,
+      },
+      seq: 0,
+      time: 1000,
+    } as AcpStreamMessage);
+    await writer.waitForLivePreviewFlush();
+
+    expect(publishAttempts).toBe(2);
+    expect(flattenLivePayloads(previewPayloads)).toEqual([
+      expect.objectContaining({
+        seq: 0,
+        event: expect.objectContaining({
+          text: "This snapshot must not be dropped.",
+          delta: false,
+        }),
       }),
     ]);
     writer.dispose?.(true);
@@ -3883,6 +4024,55 @@ describe("queued ACP user message projection", () => {
     expect(
       syncdb.get_one({ event: "chat", message_id: "user-queued" })?.acp_state,
     ).toBeNull();
+  });
+});
+
+describe("cross-worker ACP guidance routing", () => {
+  it("detects a matching live turn owned by another worker", () => {
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-other-worker",
+        session_id: "session-other-worker",
+        state: "running",
+        owner_instance_id: "other-worker",
+      },
+    ]);
+
+    expect(
+      acpTestInternals.hasOtherWorkerRunningAcpTurn({
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-other-worker",
+        candidateIds: ["session-other-worker"],
+      }),
+    ).toBe(true);
+    expect(turns.listRunningAcpTurnLeases).toHaveBeenCalledWith({
+      exclude_owner_instance_id: expect.any(String),
+    });
+  });
+
+  it("does not route guidance to an unrelated live turn", () => {
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "other-project",
+        path: "chat",
+        thread_id: "thread-other-worker",
+        session_id: "session-other-worker",
+        state: "running",
+        owner_instance_id: "other-worker",
+      },
+    ]);
+
+    expect(
+      acpTestInternals.hasOtherWorkerRunningAcpTurn({
+        project_id: "p",
+        path: "chat",
+        thread_id: "thread-other-worker",
+        candidateIds: ["session-other-worker"],
+      }),
+    ).toBe(false);
   });
 });
 

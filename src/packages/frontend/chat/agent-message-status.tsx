@@ -270,6 +270,7 @@ interface AgentMessageStatusProps {
   activitySteers?: AttachedSteerMessage[];
   interruptRequested?: boolean;
   onInterrupt?: () => void;
+  onContinue?: () => void;
   activityLiveStatus?: CodexLiveLogStatus;
   activeDescendantThreadIds?: readonly string[];
   backgroundTerminalProcesses?: number;
@@ -492,6 +493,7 @@ export function AgentMessageStatus({
   onNotifyOnTurnFinishChange,
   interruptRequested = false,
   onInterrupt,
+  onContinue,
   activityLiveStatus,
   activeDescendantThreadIds,
   backgroundTerminalProcesses = 0,
@@ -679,6 +681,11 @@ export function AgentMessageStatus({
               : outstandingWork > 0
                 ? "Stop all"
                 : "Interrupt"}
+          </Button>
+        ) : null}
+        {!generating && onContinue ? (
+          <Button type="primary" size="small" onClick={onContinue}>
+            Continue
           </Button>
         ) : null}
         {generating && onNotifyOnTurnFinishChange ? (

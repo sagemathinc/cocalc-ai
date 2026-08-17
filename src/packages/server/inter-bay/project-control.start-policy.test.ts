@@ -122,9 +122,13 @@ jest.mock("@cocalc/server/conat/api/projects", () => ({
 function mockProjectRow({
   allowCollaboratorStarts,
   autostartEnabled,
+  backupRepoId,
+  provisioned,
 }: {
   allowCollaboratorStarts?: boolean | null;
   autostartEnabled?: boolean | null;
+  backupRepoId?: string | null;
+  provisioned?: boolean | null;
 }) {
   poolQueryMock.mockResolvedValue({
     rows: [
@@ -139,6 +143,8 @@ function mockProjectRow({
         },
         owning_bay_id: "bay-0",
         host_id: "host-1",
+        backup_repo_id: backupRepoId ?? null,
+        provisioned: provisioned ?? null,
       },
     ],
   });
@@ -253,6 +259,24 @@ describe("project-control runtime sponsor start policy", () => {
       project_id: "project-1",
       project_move_id: "move-1",
     });
+  });
+
+  it("reports when the owning bay must recover project storage", async () => {
+    mockProjectRow({
+      backupRepoId: "repo-1",
+      provisioned: false,
+    });
+    const { handleProjectControlCheckStartAdmission } =
+      await import("./project-control");
+
+    const admission = await handleProjectControlCheckStartAdmission({
+      project_id: "project-1",
+      account_id: "owner",
+      source_bay_id: "bay-0",
+      epoch: 0,
+    });
+
+    expect(admission).toEqual({ storage_recovery_required: true });
   });
 
   it("allows explicit manual start when automatic starts are disabled", async () => {

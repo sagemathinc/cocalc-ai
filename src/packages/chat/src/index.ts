@@ -2,6 +2,14 @@ import type { CodexThreadConfig } from "./acp";
 
 export const CHAT_SCHEMA_V2 = 2;
 export const CHAT_THREAD_META_ROW_DATE = "1970-01-01T00:00:00.000Z";
+export const CHAT_PRIMARY_KEYS = [
+  "date",
+  "sender_id",
+  "event",
+  "message_id",
+  "thread_id",
+] as const;
+export const CHAT_STRING_COLS = ["input"] as const;
 
 function normalizeThreadIdPart(threadId: string): string {
   const trimmed = `${threadId ?? ""}`.trim();

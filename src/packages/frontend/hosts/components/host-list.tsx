@@ -38,6 +38,7 @@ import type { HostLroState } from "../hooks/use-host-ops";
 import { describeBlockedHostActions } from "./host-op-progress";
 import { HostErrorDetails } from "./host-error-details";
 import { confirmBulkHostDeprovision } from "./host-confirm";
+import type { BulkHostDeprovisionResult } from "./host-confirm";
 import { isHostOpActive } from "../hooks/use-host-ops";
 import { UpgradeConfirmContent } from "./upgrade-confirmation";
 import { HostParallelOpsSummary } from "./host-parallel-ops-summary";
@@ -332,6 +333,10 @@ type HostListViewModel = {
   onDrain: (id: string, opts?: HostDrainOptions) => void;
   onBackup: (id: string) => void;
   onDelete: (id: string, opts?: HostDeleteOptions) => void;
+  onBulkDeprovision: (
+    hosts: Host[],
+    skipRunningBackups: boolean,
+  ) => Promise<BulkHostDeprovisionResult[] | undefined>;
   onToggleCreatePanel?: () => void;
   onRefresh: () => void;
   onCancelOp?: (op_id: string) => void;
@@ -425,6 +430,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     onDrain,
     onBackup,
     onDelete,
+    onBulkDeprovision,
     onToggleCreatePanel,
     onRefresh,
     onCancelOp,
@@ -988,7 +994,22 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             onClick={() =>
               confirmBulkHostDeprovision({
                 hosts: deprovisionTargets,
-                onConfirm: (host, opts) => onDelete(host.id, opts),
+                onConfirm: async (hosts, skipRunningBackups) => {
+                  const results = await onBulkDeprovision(
+                    hosts,
+                    skipRunningBackups,
+                  );
+                  if (
+                    results?.some((result) => result.status === "submitted")
+                  ) {
+                    setSelectedRowKeys(
+                      results
+                        .filter((result) => result.status === "failed")
+                        .map((result) => result.host.id),
+                    );
+                  }
+                  return results;
+                },
               })
             }
             disabled={!deprovisionTargets.length}

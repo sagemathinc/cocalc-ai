@@ -8,6 +8,7 @@ import {
   type UxTracePhaseDetails,
   type UxTraceStart,
 } from "@cocalc/frontend/monitoring/ux-latency-trace";
+import { recordSignedInSurfaceReady } from "@cocalc/frontend/app/bootstrap-ux-latency";
 
 const DIRECTORY_TRACE_INCOMPLETE_AFTER_MS = 45_000;
 const DIRECTORY_TRACE_CLEANUP_DELAY_MS = 10_000;
@@ -298,6 +299,9 @@ export function recordDirectoryListingPaint({
   };
   if (!entry.firstPainted) {
     entry.firstPainted = true;
+    if (surface_visible) {
+      recordSignedInSurfaceReady("project-directory");
+    }
     entry.trace.record(
       entry.source === "project_open"
         ? "project_directory_first_paint_v2"

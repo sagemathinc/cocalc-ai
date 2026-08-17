@@ -1,3 +1,5 @@
+import { resolveAgentTokenFromEnv } from "../../core/agent-token";
+
 export type DaemonGlobalAuthOptions = {
   api?: string;
   accountId?: string;
@@ -45,18 +47,7 @@ export function effectiveDaemonGlobals<T extends DaemonGlobalAuthOptions>(
   }
 
   if (!next.bearer) {
-    const rawBearer = env.COCALC_BEARER_TOKEN;
-    if (rawBearer !== undefined) {
-      const bearer = `${rawBearer}`.trim();
-      if (bearer) {
-        next.bearer = bearer;
-      }
-    } else {
-      const bearer = `${env.COCALC_AGENT_TOKEN ?? ""}`.trim();
-      if (bearer) {
-        next.bearer = bearer;
-      }
-    }
+    next.bearer = resolveAgentTokenFromEnv(env);
   }
 
   if (!next.hubPassword) {

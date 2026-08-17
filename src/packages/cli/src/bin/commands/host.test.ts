@@ -30,7 +30,13 @@ type Capture = {
     force_bootstrap?: boolean;
     bootstrap_scope?: "full" | "helpers" | "environment";
   }>;
-  rollouts: Array<{ id: string; components: string[]; reason?: string }>;
+  rollouts: Array<{
+    id: string;
+    components: string[];
+    desired_version?: string;
+    record_runtime_deployments?: boolean;
+    reason?: string;
+  }>;
   runtimeDeploymentReconciles: Array<{
     id: string;
     components?: string[];
@@ -284,9 +290,17 @@ function makeDeps(
             rolloutHostManagedComponents: async ({
               id,
               components,
+              desired_version,
+              record_runtime_deployments,
               reason,
             }) => {
-              capture.rollouts.push({ id, components, reason });
+              capture.rollouts.push({
+                id,
+                components,
+                desired_version,
+                record_runtime_deployments,
+                reason,
+              });
               return { op_id: `rollout-${id}` };
             },
             reconcileHostRuntimeDeployments: async ({
@@ -2871,6 +2885,8 @@ test("host rollout queues managed component rollout and waits for completion", a
     {
       id: "host-1",
       components: ["acp-worker", "project-host"],
+      desired_version: undefined,
+      record_runtime_deployments: true,
       reason: "bundle-upgrade",
     },
   ]);
@@ -2908,6 +2924,8 @@ test("host deploy restart reuses managed component rollout without changing desi
     {
       id: "host-1",
       components: ["conat-persist"],
+      desired_version: "bundle-v1",
+      record_runtime_deployments: false,
       reason: undefined,
     },
   ]);
@@ -2916,6 +2934,7 @@ test("host deploy restart reuses managed component rollout without changing desi
   assert.equal(capture.data.status, "succeeded");
   assert.deepEqual(capture.data.components, ["conat-persist"]);
   assert.deepEqual(capture.runtimeDeploymentSetRequests, []);
+  assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
 });
 
 test("host deploy status shows configured and effective desired state", async () => {

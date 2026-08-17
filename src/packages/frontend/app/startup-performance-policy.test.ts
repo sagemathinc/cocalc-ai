@@ -26,6 +26,8 @@ describe("startup performance policy", () => {
   it.each([
     [{ saveData: true }, "save-data"],
     [{ downlinkMbps: 1 }, "downlink"],
+    [{ observedTransferMbps: 2 }, "observed-transfer"],
+    [{ bootstrapModuleLoadedMs: 2_500 }, "slow-bootstrap"],
     [{ effectiveConnectionType: "2g" }, "connection:2g"],
     [{ hardwareConcurrency: 2 }, "cpu"],
     [{ deviceMemoryGb: 2 }, "memory"],

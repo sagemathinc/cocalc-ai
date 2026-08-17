@@ -21,6 +21,7 @@ const deleteMembershipTierMock = jest.fn();
 const backfillMembershipAnalyticsPurchaseEventsMock = jest.fn();
 const getMembershipAnalyticsOverviewLocalMock = jest.fn();
 const getMembershipAnalyticsEventsLocalMock = jest.fn();
+const getMembershipAllocationSeriesLocalMock = jest.fn();
 const membershipTiersQueryMock = jest.fn();
 const getMembershipTierRowsMock = jest.fn();
 const getMembershipTierUsageReportMock = jest.fn();
@@ -94,6 +95,7 @@ const interBayRefreshSiteLicenseAffiliationVerificationForAccountMock =
 const interBayGetMembershipTierUsageReportMock = jest.fn();
 const interBayGetMembershipAnalyticsOverviewMock = jest.fn();
 const interBayGetMembershipAnalyticsEventsMock = jest.fn();
+const interBayGetMembershipAllocationSeriesMock = jest.fn();
 const interBayBackfillMembershipAnalyticsPurchasesMock = jest.fn();
 const interBayBayOpsMock = jest.fn();
 const getInterBayBridgeMock = jest.fn();
@@ -188,6 +190,15 @@ jest.mock("@cocalc/server/membership/analytics", () => ({
     getMembershipAnalyticsOverviewLocalMock(...args),
   getMembershipAnalyticsEventsLocal: (...args: any[]) =>
     getMembershipAnalyticsEventsLocalMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/allocation-analytics-series", () => ({
+  getMembershipAllocationSeriesLocal: (...args: any[]) =>
+    getMembershipAllocationSeriesLocalMock(...args),
+  membershipAllocationSeriesRange: ({ start, end }: any = {}) => ({
+    start: new Date(start ?? "2025-06-01T00:00:00.000Z"),
+    end: new Date(end ?? "2026-06-01T00:00:00.000Z"),
+  }),
 }));
 
 jest.mock("@cocalc/server/membership/account-usage-overview", () => ({
@@ -295,6 +306,8 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 jest.mock("@cocalc/server/bay-directory", () => ({
   resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBayMock(...args),
   listConfiguredBays: (...args: any[]) => listConfiguredBaysMock(...args),
+  listConfiguredBaysAuthoritative: (...args: any[]) =>
+    listConfiguredBaysMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
@@ -428,6 +441,7 @@ beforeEach(() => {
   backfillMembershipAnalyticsPurchaseEventsMock.mockReset();
   getMembershipAnalyticsOverviewLocalMock.mockReset();
   getMembershipAnalyticsEventsLocalMock.mockReset();
+  getMembershipAllocationSeriesLocalMock.mockReset();
   membershipTiersQueryMock.mockReset();
   getMembershipTierRowsMock.mockReset();
   getMembershipTierUsageReportMock.mockReset();
@@ -460,6 +474,7 @@ beforeEach(() => {
   interBayGetMembershipTierUsageReportMock.mockReset();
   interBayGetMembershipAnalyticsOverviewMock.mockReset();
   interBayGetMembershipAnalyticsEventsMock.mockReset();
+  interBayGetMembershipAllocationSeriesMock.mockReset();
   interBayBackfillMembershipAnalyticsPurchasesMock.mockReset();
   interBayBayOpsMock.mockReset();
   getInterBayBridgeMock.mockReset();
@@ -493,6 +508,11 @@ beforeEach(() => {
     daily_counts: [],
   });
   getMembershipAnalyticsEventsLocalMock.mockResolvedValue([]);
+  getMembershipAllocationSeriesLocalMock.mockResolvedValue({
+    start: "2026-05-01T00:00:00.000Z",
+    end: "2026-06-01T00:00:00.000Z",
+    rows: [],
+  });
   backfillMembershipAnalyticsPurchaseEventsMock.mockResolvedValue({
     inserted: 0,
     skipped: 0,
@@ -504,6 +524,8 @@ beforeEach(() => {
       interBayGetMembershipAnalyticsOverviewMock(...args),
     getMembershipAnalyticsEvents: (...args: any[]) =>
       interBayGetMembershipAnalyticsEventsMock(...args),
+    getMembershipAllocationSeries: (...args: any[]) =>
+      interBayGetMembershipAllocationSeriesMock(...args),
     backfillMembershipAnalyticsPurchases: (...args: any[]) =>
       interBayBackfillMembershipAnalyticsPurchasesMock(...args),
   });
@@ -3690,6 +3712,98 @@ describe("purchases membership tier admin", () => {
         subscription_count: 3,
       },
     ]);
+  });
+
+  it("aggregates PII-free membership allocation rows across configured bays", async () => {
+    isAdminMock.mockResolvedValue(true);
+    listConfiguredBaysMock.mockResolvedValue([
+      { bay_id: "bay-1" },
+      { bay_id: "bay-0" },
+    ]);
+    const localRow = {
+      day: "2026-06-01",
+      channel: "personal",
+      membership_class: "standard",
+      billing_interval: "year",
+      lifecycle: "renewal",
+      previous_membership_class: null,
+      previous_billing_interval: null,
+      tier_change: "none",
+      active_memberships: 2,
+      purchased_capacity: 0,
+      revenue_cents: 120,
+      fact_count: 2,
+    };
+    getMembershipAllocationSeriesLocalMock.mockResolvedValue({
+      start: "2026-06-01T00:00:00.000Z",
+      end: "2026-06-03T00:00:00.000Z",
+      rows: [localRow],
+    });
+    interBayGetMembershipAllocationSeriesMock.mockResolvedValue({
+      checked_at: "2026-06-03T00:00:00.000Z",
+      current_bay_id: "bay-1",
+      seed_bay_id: "bay-0",
+      start: "2026-06-01T00:00:00.000Z",
+      end: "2026-06-03T00:00:00.000Z",
+      bays: [{ bay_id: "bay-1", ok: true }],
+      rows: [
+        {
+          ...localRow,
+          active_memberships: 3,
+          revenue_cents: 180,
+          fact_count: 3,
+        },
+      ],
+    });
+
+    const { getMembershipAllocationSeries } = await import("./purchases");
+    const result = await getMembershipAllocationSeries({
+      account_id: "admin-1",
+      start: "2026-06-01T00:00:00.000Z",
+      end: "2026-06-03T00:00:00.000Z",
+      channels: ["personal"],
+    });
+
+    expect(getMembershipAllocationSeriesLocalMock).toHaveBeenCalledWith({
+      query: expect.objectContaining({
+        account_id: "admin-1",
+        start: expect.any(Date),
+        end: expect.any(Date),
+        channels: ["personal"],
+      }),
+    });
+    expect(interBayGetMembershipAllocationSeriesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "admin-1",
+        start: expect.any(Date),
+        end: expect.any(Date),
+        channels: ["personal"],
+      }),
+    );
+    expect(result.bays).toEqual([
+      { bay_id: "bay-0", ok: true },
+      { bay_id: "bay-1", ok: true },
+    ]);
+    expect(result.rows).toEqual([
+      {
+        ...localRow,
+        active_memberships: 5,
+        revenue_cents: 300,
+        fact_count: 5,
+      },
+    ]);
+    expect(JSON.stringify(result.rows)).not.toContain("account_id");
+  });
+
+  it("does not report partial allocations when the authoritative bay list fails", async () => {
+    isAdminMock.mockResolvedValue(true);
+    listConfiguredBaysMock.mockRejectedValue(new Error("registry unavailable"));
+
+    const { getMembershipAllocationSeries } = await import("./purchases");
+    await expect(
+      getMembershipAllocationSeries({ account_id: "admin-1" }),
+    ).rejects.toThrow("registry unavailable");
+    expect(getMembershipAllocationSeriesLocalMock).not.toHaveBeenCalled();
   });
 
   it("sorts membership analytics events across bays before applying the limit", async () => {

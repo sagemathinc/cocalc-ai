@@ -21,12 +21,7 @@ import jsonStableStringify from "json-stable-stringify";
 
 type SharedProjectDStreamOptions = Omit<
   DStreamOptions,
-  | "client"
-  | "account_id"
-  | "host_id"
-  | "project_id"
-  | "start_seq"
-  | "start_checkpoint"
+  "client" | "account_id" | "host_id" | "project_id" | "start_checkpoint"
 > & {
   project_id: string;
   maxListeners?: number;
@@ -106,6 +101,7 @@ function cacheKey(opts: SharedProjectDStreamOptions): string {
     jsonStableStringify({
       project_id: opts.project_id,
       name: opts.name,
+      start_seq: opts.start_seq,
       config: opts.config,
       desc: opts.desc,
       ephemeral: !!opts.ephemeral,

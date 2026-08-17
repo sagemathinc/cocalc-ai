@@ -170,18 +170,32 @@ function verifyAgentScopedProjectHostBearer(
     if (claims.act !== "account" || !isValidUUID(claims.sub)) {
       return;
     }
+    const authProjectId = readAgentProjectId(socket);
+    const credentialIdentity = claims.sid
+      ? ["agent-session", claims.sub, authProjectId ?? "", claims.sid].join(
+          "\0",
+        )
+      : bearerToken;
     return {
       account_id: claims.sub,
       auth_actor: "agent",
       auth_scopes: [...DEFAULT_AGENT_SCOPES],
-      auth_project_id: readAgentProjectId(socket),
+      auth_project_id: authProjectId,
       auth_iat_s: claims.iat,
       auth_exp_s: claims.exp,
       auth_token_fingerprint: createHash("sha256")
-        .update(bearerToken)
+        .update(credentialIdentity)
         .digest("hex"),
     };
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message === "token expired") {
+      throw Object.assign(
+        new Error(
+          "project-scoped agent auth token expired; retry after the runtime refreshes its credentials",
+        ),
+        { code: "agent_auth_expired" },
+      );
+    }
     return;
   }
 }

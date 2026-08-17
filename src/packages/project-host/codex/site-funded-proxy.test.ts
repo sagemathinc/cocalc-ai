@@ -543,6 +543,62 @@ describe("site-funded Codex provider proxy", () => {
     await new Promise<void>((resolve) => upstream.close(() => resolve()));
   });
 
+  it("survives an interrupted upstream stream and accepts a retry", async () => {
+    let requestCount = 0;
+    const upstream = createServer(async (_request, response) => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.flushHeaders();
+        response.write('data: {"type":"response.output_text.delta"}\n\n');
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
+        response.socket?.destroy();
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          id: "resp-after-interruption",
+          usage: { input_tokens: 10, output_tokens: 1 },
+        }),
+      );
+    });
+    await new Promise<void>((resolve) =>
+      upstream.listen(0, "127.0.0.1", resolve),
+    );
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    const session = await startSiteFundedCodexProxySession({
+      reservation: reservation(),
+      apiKey: "real-site-key",
+      upstreamBaseUrl: `http://127.0.0.1:${address.port}/v1`,
+      onUsage: async () => {},
+    });
+    const localUrl = session.baseUrl.replace(
+      "host.containers.internal",
+      "127.0.0.1",
+    );
+    const request = async () => {
+      const response = await fetch(`${localUrl}/responses`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ input: "hello" }),
+      });
+      await response.text();
+      return response.status;
+    };
+
+    await expect(request()).resolves.toBe(200);
+    await expect(request()).resolves.toBe(200);
+    expect(requestCount).toBe(2);
+
+    session.close();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  });
+
   it("accounts for a final SSE event without a trailing newline", async () => {
     const upstream = createServer(async (_request, response) => {
       response.writeHead(200, { "content-type": "text/event-stream" });

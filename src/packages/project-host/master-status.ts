@@ -436,8 +436,9 @@ async function reportProvisionedInventory() {
 export function queueProjectProvisioned(
   project_id: string,
   provisioned: boolean,
+  opts: { forceReport?: boolean } = {},
 ) {
-  const changed = setProjectProvisioned(project_id, provisioned);
+  const changed = setProjectProvisioned(project_id, provisioned, opts);
   if (!changed) return;
   reportProjectProvisionedToMaster(project_id, provisioned).catch((err) =>
     logger.debug("reportProjectProvisionedToMaster failed", {

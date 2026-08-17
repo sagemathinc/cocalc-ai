@@ -1230,7 +1230,9 @@ async function getOrEnsureVolume(project_id: string) {
   }
   const vol = await fs.subvolumes.get(volName(project_id));
   if (!(await exists(vol.path))) {
-    return await ensureVolume(project_id);
+    return await ensureVolume(project_id, undefined, {
+      reportProvisioned: false,
+    });
   }
   const isSubvolume = await isBtrfsSubvolume(vol.path);
   if (!isSubvolume) {
@@ -2137,7 +2139,11 @@ async function mount({
   if (await exists(path)) {
     return { path };
   }
-  const vol = await ensureVolume(project_id, scratch);
+  const vol = await ensureVolume(project_id, scratch, {
+    // Resolving a data-plane path only proves that a local cache volume exists.
+    // It does not prove that an unprovisioned project's backup was recovered.
+    reportProvisioned: false,
+  });
   return { path: vol.path };
 }
 

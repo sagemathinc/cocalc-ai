@@ -98,6 +98,10 @@ import {
 } from "./directory-tree";
 import { FileDndProvider } from "./dnd/file-dnd-provider";
 import { getSortAsync, setSort } from "./config";
+import {
+  addExplorerKeyboardListeners,
+  pageHasFocusedElement,
+} from "./keyboard";
 import { DEFAULT_ACTIVE_FILE_SORT, normalizeActiveFileSort } from "./sort";
 import {
   getUserFacingListingError,
@@ -608,7 +612,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
         setShiftIsDown(true);
         return;
       }
-      if (flyout && $(":focus").length > 0) {
+      if (flyout && pageHasFocusedElement()) {
         return;
       }
       if (e.key == "ArrowUp") {
@@ -665,12 +669,7 @@ export function Explorer({ isVisible = true }: { isVisible?: boolean }) {
       }
     };
 
-    $(window).on("keydown", handleKeyDown);
-    $(window).on("keyup", handleKeyUp);
-    return () => {
-      $(window).off("keydown", handleKeyDown);
-      $(window).off("keyup", handleKeyUp);
-    };
+    return addExplorerKeyboardListeners({ handleKeyDown, handleKeyUp });
   }, [
     project_id,
     effective_current_path,

@@ -95,6 +95,13 @@ const NEBIUS_VOLUME_INCREMENT_GB = 93;
 const VM_REFRESH_BASE_MS = 12_000;
 const VM_REFRESH_JITTER_MS = 6_000;
 
+function hasProjectVmAvailabilityScope(grant: ComputeAgentGrant): boolean {
+  return (
+    grant.metadata?.approved_scope?.kind === "project-vm-availability" &&
+    grant.metadata?.approved_scope?.existing_resources_only === true
+  );
+}
+
 function documentIsVisible(): boolean {
   return (
     typeof document === "undefined" || document.visibilityState !== "hidden"
@@ -2449,23 +2456,6 @@ export function ProjectComputeVms({
     }
   };
 
-  const approveAgentGrant = async (grant: ComputeAgentGrant) => {
-    setError(undefined);
-    try {
-      const completed = await runFreshAuthAction(async () => {
-        await webapp_client.conat_client.hub.compute.approveAgentGrant({
-          grant_id: grant.grant_id,
-          browser_id: webapp_client.browser_id,
-        });
-      });
-      if (!completed) return;
-      setNotice("The pending Codex VM action is authorized for this turn.");
-      await load();
-    } catch (err) {
-      setError(`${err}`);
-    }
-  };
-
   const revokeAgentGrant = async (grant: ComputeAgentGrant) => {
     setError(undefined);
     try {
@@ -3273,61 +3263,6 @@ export function ProjectComputeVms({
         />
       )}
       {agentGrants
-        .filter((grant) => grant.metadata?.pending_request)
-        .map((grant) => {
-          const request = grant.metadata.pending_request;
-          const details = [
-            request.operation ?? request.action,
-            request.vm_id ? `VM ${request.vm_id.slice(0, 8)}` : undefined,
-            request.provider,
-            request.machine_class,
-            request.funding_mode,
-            Number(request.hourly_usd) > 0
-              ? `$${Number(request.hourly_usd).toFixed(3)}/hour maximum`
-              : undefined,
-            Number(request.total_authorized_usd) > 0
-              ? `$${Number(request.total_authorized_usd).toFixed(2)} authorized maximum`
-              : undefined,
-            Number(request.ttl_minutes) > 0
-              ? `${request.ttl_minutes} minute maximum TTL`
-              : undefined,
-          ].filter(Boolean);
-          return (
-            <Alert
-              key={grant.grant_id}
-              showIcon
-              type="warning"
-              title="Codex requests temporary VM authority"
-              description={
-                <Space direction="vertical" size={8}>
-                  <Text>{details.join(" · ")}</Text>
-                  <Text type="secondary">
-                    Approval is bound to this project and agent-turn token,
-                    expires within 30 minutes, and does not place an account
-                    session in the project.
-                  </Text>
-                  <Space>
-                    <Button
-                      type="primary"
-                      size="small"
-                      onClick={() => void approveAgentGrant(grant)}
-                    >
-                      Approve exact request
-                    </Button>
-                    <Button
-                      size="small"
-                      onClick={() => void revokeAgentGrant(grant)}
-                    >
-                      Deny
-                    </Button>
-                  </Space>
-                </Space>
-              }
-              style={{ marginBottom: 12 }}
-            />
-          );
-        })}
-      {agentGrants
         .filter(
           (grant) =>
             !grant.metadata?.pending_request &&
@@ -3336,21 +3271,29 @@ export function ProjectComputeVms({
             ),
         )
         .map((grant) => {
+          const availabilityScope = hasProjectVmAvailabilityScope(grant);
           const request = grant.metadata?.approved_request;
           return (
             <Alert
               key={grant.grant_id}
               showIcon
               type="info"
-              title="Codex has temporary VM authority"
+              title={
+                availabilityScope
+                  ? "Codex can start and stop project VMs"
+                  : "Codex has temporary VM authority"
+              }
               description={
                 <Space direction="vertical" size={8}>
                   <Text>
-                    {request?.operation ?? grant.allowed_actions.join(", ")}
-                    {request?.vm_id
-                      ? ` · resource ${request.vm_id.slice(0, 8)}`
-                      : ""}
-                    {` · expires ${new Date(grant.expires_at).toLocaleTimeString()}`}
+                    {availabilityScope
+                      ? "This turn may start and stop existing VMs in this project. Starting a VM incurs its configured price."
+                      : `${request?.operation ?? grant.allowed_actions.join(", ")}${request?.vm_id ? ` · resource ${request.vm_id.slice(0, 8)}` : ""}`}
+                  </Text>
+                  <Text type="secondary">
+                    {availabilityScope
+                      ? `Current authorization record expires ${new Date(grant.expires_at).toLocaleTimeString()} and is extended only by valid credentials from this turn.`
+                      : `Expires ${new Date(grant.expires_at).toLocaleTimeString()}.`}
                   </Text>
                   <Button
                     size="small"

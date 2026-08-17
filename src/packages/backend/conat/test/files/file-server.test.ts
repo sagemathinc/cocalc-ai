@@ -109,7 +109,7 @@ describe("create basic mocked file server and test it out", () => {
       beginRestoreStaging: async (_opts: {
         project_id: string;
         home?: string;
-        restore?: "none" | "auto" | "required";
+        restore?: "none" | "auto" | "recover" | "required";
       }): Promise<any> => {
         return null;
       },

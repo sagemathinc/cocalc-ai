@@ -583,7 +583,7 @@ export interface HostControlApi {
     run_quota?: any;
     run_quota_revision?: number;
     image?: string;
-    restore?: "none" | "auto" | "required";
+    restore?: "none" | "auto" | "recover" | "required";
     restore_backup_id?: string;
     apply_pending_copies?: boolean;
     lro_op_id?: string;
@@ -598,7 +598,7 @@ export interface HostControlApi {
     run_quota?: any;
     run_quota_revision?: number;
     image?: string;
-    restore?: "none" | "auto" | "required";
+    restore?: "none" | "auto" | "recover" | "required";
     restore_backup_id?: string;
     apply_pending_copies?: boolean;
     lro_op_id?: string;

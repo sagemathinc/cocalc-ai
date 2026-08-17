@@ -62,6 +62,7 @@
     "dev:hosts:upgrade": "bash ./scripts/dev/hub-daemon.sh upgrade-hosts",
     "dev:hosts:reconcile": "bash ./scripts/dev/hub-daemon.sh reconcile-hosts",
     "dev:stack:refresh": "bash ./scripts/dev/hub-daemon.sh refresh",
+    "dev:membership-analytics:fixtures": "pnpm --dir packages/server build && pnpm --dir packages/server membership-analytics:fixtures --apply --confirm replace-dev-fixture",
     "dev:workspace:init": "node ./scripts/dev/workspace-site.js init",
     "dev:workspace:start": "node ./scripts/dev/workspace-site.js start",
     "dev:workspace:stop": "node ./scripts/dev/workspace-site.js stop",

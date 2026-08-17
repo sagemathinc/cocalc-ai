@@ -5,6 +5,7 @@
  * commands while preserving machine-readable output contracts.
  */
 import { AsciiTable3 } from "ascii-table3";
+import { agentGrantApprovalDetails } from "./agent-grant-approval";
 
 type OutputGlobals = {
   json?: boolean;
@@ -296,7 +297,8 @@ export function emitError(
 ): void {
   const message = error instanceof Error ? error.message : `${error}`;
   const code = errorCode(error, message);
-  const details = parseHardDeleteRateLimitDetails(code, message);
+  const approval = agentGrantApprovalDetails(error);
+  const details = approval ?? parseHardDeleteRateLimitDetails(code, message);
   let api = ctx.apiBaseUrl;
   if (!api && ctx.globals?.api) {
     try {
@@ -308,7 +310,11 @@ export function emitError(
   const accountId =
     ctx.accountId ?? ctx.globals?.accountId ?? ctx.globals?.account_id;
   const hint =
-    freshAuthHint(code, message) ?? cookieAuthHint({ code, message, api });
+    freshAuthHint(code, message) ??
+    cookieAuthHint({ code, message, api }) ??
+    (approval?.approval_url
+      ? `Approve this exact VM request at ${approval.approval_url}, then retry the command.`
+      : undefined);
 
   if (ctx.globals?.json || ctx.globals?.output === "json") {
     const payload = {

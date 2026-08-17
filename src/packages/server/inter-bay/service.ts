@@ -160,6 +160,7 @@ import {
   getMembershipAnalyticsEventsLocal,
   getMembershipAnalyticsOverviewLocal,
 } from "@cocalc/server/membership/analytics";
+import { getMembershipAllocationSeriesLocal } from "@cocalc/server/membership/allocation-analytics-series";
 import { getActiveUserMapOverview } from "@cocalc/server/account-presence-locations";
 import {
   getActiveUserMapHistorySeries,
@@ -645,6 +646,13 @@ async function startBayOpsService(): Promise<void> {
         bay_id,
         query: opts,
       })),
+      current_bay_id: bay_id,
+      seed_bay_id: getConfiguredClusterSeedBayId(),
+      bays: [{ bay_id, ok: true }],
+    }),
+    getMembershipAllocationSeries: async (opts) => ({
+      ...(await getMembershipAllocationSeriesLocal({ query: opts })),
+      checked_at: new Date().toISOString(),
       current_bay_id: bay_id,
       seed_bay_id: getConfiguredClusterSeedBayId(),
       bays: [{ bay_id, ok: true }],
@@ -1701,6 +1709,8 @@ async function startAccountLocalService(): Promise<void> {
       await legacyMigration.adminReplayPublicPaths(opts),
     legacyMigrationAdminReplayRestoredPublicPaths: async (opts) =>
       await legacyMigration.adminReplayRestoredPublicPaths(opts),
+    publicDirectoryShareResolveLegacyPath: async (opts) =>
+      await publicDirectoryShares.resolveLegacyPublicDirectorySharePath(opts),
     publicDirectoryShareResolve: async (opts) =>
       await publicDirectoryShares.resolve(opts),
     publicDirectoryShareListMine: async (opts) =>
@@ -1778,7 +1788,7 @@ async function startProjectControlStartService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayProjectControlApi = {
     checkStartAdmission: async (opts) => {
-      await handleProjectControlCheckStartAdmission(opts);
+      return await handleProjectControlCheckStartAdmission(opts);
     },
     start: async (opts) => {
       await handleProjectControlStart(opts);
@@ -2372,6 +2382,7 @@ async function startHostConnectionService(): Promise<void> {
       id,
       components,
       desired_version,
+      record_runtime_deployments,
       base_url,
       reason,
     }) =>
@@ -2380,6 +2391,7 @@ async function startHostConnectionService(): Promise<void> {
         id,
         components,
         desired_version,
+        record_runtime_deployments,
         base_url,
         reason,
       }),

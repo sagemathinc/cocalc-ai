@@ -1,7 +1,8 @@
 import { map as awaitMap } from "awaiting";
 import { Checkbox, Input, InputNumber, Modal, Typography } from "antd";
 import { alert_message } from "@cocalc/frontend/alerts";
-import type { Host } from "@cocalc/conat/hub/api/hosts";
+import { isFreshAuthRequiredError } from "@cocalc/frontend/auth/fresh-auth";
+import type { Host, HostLroResponse } from "@cocalc/conat/hub/api/hosts";
 import type {
   HostDeleteOptions,
   HostDrainOptions,
@@ -10,6 +11,13 @@ import type {
 import { HostProjectsTable } from "./host-projects-table";
 
 const MAX_BULK_HOST_DEPROVISION_PARALLEL = 20;
+
+export type BulkHostDeprovisionResult = {
+  host: Host;
+  status: "submitted" | "failed";
+  op_id?: string;
+  error?: string;
+};
 
 function isHostRunningForDeprovision(status?: Host["status"]) {
   return (
@@ -42,13 +50,71 @@ export async function runBulkHostDeprovision({
 }: {
   hosts: Host[];
   skipRunningBackups: boolean;
-  onConfirm: (host: Host, opts?: HostDeleteOptions) => void | Promise<void>;
-}) {
-  await awaitMap(hosts, MAX_BULK_HOST_DEPROVISION_PARALLEL, async (host) => {
-    await onConfirm(
-      host,
-      resolveHostDeprovisionOptions(host, skipRunningBackups),
-    );
+  onConfirm: (
+    host: Host,
+    opts?: HostDeleteOptions,
+  ) => void | HostLroResponse | Promise<void | HostLroResponse>;
+}): Promise<BulkHostDeprovisionResult[]> {
+  return await awaitMap(
+    hosts,
+    MAX_BULK_HOST_DEPROVISION_PARALLEL,
+    async (host) => {
+      try {
+        const op = await onConfirm(
+          host,
+          resolveHostDeprovisionOptions(host, skipRunningBackups),
+        );
+        return {
+          host,
+          status: "submitted" as const,
+          op_id: op?.op_id,
+        };
+      } catch (err) {
+        if (isFreshAuthRequiredError(err)) {
+          throw err;
+        }
+        return {
+          host,
+          status: "failed" as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  );
+}
+
+function showBulkHostDeprovisionResults(results: BulkHostDeprovisionResult[]) {
+  const submitted = results.filter((result) => result.status === "submitted");
+  const failed = results.filter((result) => result.status === "failed");
+  Modal.info({
+    title:
+      failed.length > 0
+        ? `Submitted ${submitted.length} of ${results.length} deprovisions`
+        : `Submitted ${submitted.length} deprovision${
+            submitted.length === 1 ? "" : "s"
+          }`,
+    width: 760,
+    content: (
+      <div aria-live="polite">
+        <Typography.Paragraph>
+          Provider operations continue in the background. Their live progress is
+          shown on each host row.
+        </Typography.Paragraph>
+        <ul style={{ maxHeight: 320, overflowY: "auto" }}>
+          {results.map((result) => (
+            <li key={result.host.id}>
+              <Typography.Text
+                type={result.status === "failed" ? "danger" : undefined}
+              >
+                {result.host.name ?? result.host.id}: {result.status}
+                {result.op_id ? ` (operation ${result.op_id})` : ""}
+                {result.error ? ` - ${result.error}` : ""}
+              </Typography.Text>
+            </li>
+          ))}
+        </ul>
+      </div>
+    ),
   });
 }
 
@@ -318,7 +384,10 @@ export function confirmBulkHostDeprovision({
   onConfirm,
 }: {
   hosts: Host[];
-  onConfirm: (host: Host, opts?: HostDeleteOptions) => void | Promise<void>;
+  onConfirm: (
+    hosts: Host[],
+    skipRunningBackups: boolean,
+  ) => Promise<BulkHostDeprovisionResult[] | undefined>;
 }) {
   const count = hosts.length;
   const phrase = bulkHostDeprovisionConfirmPhrase(count);
@@ -379,11 +448,10 @@ export function confirmBulkHostDeprovision({
       if (state.text.trim().toLowerCase() !== phrase) {
         throw new Error("bulk deprovision confirmation phrase does not match");
       }
-      await runBulkHostDeprovision({
-        hosts,
-        skipRunningBackups: state.skip,
-        onConfirm,
-      });
+      const results = await onConfirm(hosts, state.skip);
+      if (results?.length) {
+        showBulkHostDeprovisionResults(results);
+      }
     },
   });
 }

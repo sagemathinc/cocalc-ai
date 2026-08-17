@@ -3138,7 +3138,20 @@ reserve_project_startup_io_capacity
                 rootctl_text,
             )
             self.assertIn(
+                f'BOOTSTRAP_LIFECYCLE_LOCK="{bootstrap.bootstrap_lock_path(cfg)}"',
+                rootctl_text,
+            )
+            self.assertIn(
                 'flock -x -w "${DAEMON_CONTROL_LOCK_WAIT_SECONDS}" 8',
+                rootctl_text,
+            )
+            self.assertIn("acquire_bootstrap_lifecycle_lock()", rootctl_text)
+            self.assertIn(
+                'flock -x -w "${BOOTSTRAP_LIFECYCLE_LOCK_WAIT_SECONDS}" 7',
+                rootctl_text,
+            )
+            self.assertIn(
+                'if [ "${cmd}" = "prepare-podman-boot" ]; then',
                 rootctl_text,
             )
             self.assertIn(

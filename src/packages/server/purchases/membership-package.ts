@@ -25,6 +25,7 @@ import {
   setMembershipPackagePurchaseId,
 } from "@cocalc/server/membership/packages";
 import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
+import { recordMembershipAllocationFact } from "@cocalc/server/membership/allocation-analytics";
 
 const logger = getLogger("purchases:membership-package");
 
@@ -142,6 +143,32 @@ export async function createMembershipPackagePurchase(
       },
       client,
     );
+  }
+
+  if (
+    quote.kind === "course" &&
+    quote.metadata?.direct_student_purchase === true
+  ) {
+    if (!quote.starts_at || !quote.expires_at) {
+      throw Error("direct student membership period is required");
+    }
+    await recordMembershipAllocationFact({
+      fact_key: `direct-student:purchase:${purchase_id}`,
+      occurred_at: quote.starts_at,
+      account_id,
+      channel: "direct-student",
+      source_kind: "purchase",
+      membership_class: quote.membership_class,
+      billing_interval: "fixed",
+      lifecycle: "first_paid",
+      allocation_start: quote.starts_at,
+      allocation_end: quote.expires_at,
+      active_memberships: quote.seat_count,
+      purchased_capacity: quote.seat_count,
+      revenue: quote.total_price,
+      purchase_id,
+      client,
+    });
   }
 
   return { package_id, purchase_id };

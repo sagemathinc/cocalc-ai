@@ -237,25 +237,40 @@ export const useHostActions = ({
     }
   };
 
-  const removeHost = async (id: string, opts?: { skip_backups?: boolean }) => {
+  const removeHost = async (
+    id: string,
+    opts?: { skip_backups?: boolean },
+    actionOpts?: { alertErrors?: boolean; refreshAfter?: boolean },
+  ): Promise<HostLroResponse> => {
+    let op: HostLroResponse;
     try {
-      const op = await hub.hosts.deleteHost({
+      op = await hub.hosts.deleteHost({
         id,
         browser_id,
         skip_backups: opts?.skip_backups,
       });
-      onHostOp?.(id, op);
-      await refresh();
     } catch (err) {
       if (isFreshAuthRequiredError(err)) {
         throw err;
       }
-      alert_message({
-        type: "error",
-        message: err instanceof Error ? err.message : String(err),
-      });
+      if (actionOpts?.alertErrors !== false) {
+        alert_message({
+          type: "error",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
       console.error(err);
+      throw err;
     }
+    onHostOp?.(id, op);
+    if (actionOpts?.refreshAfter !== false) {
+      try {
+        await refresh();
+      } catch (err) {
+        console.error("host refresh failed after deprovision submission", err);
+      }
+    }
+    return op;
   };
 
   const drainHost = async (id: string, opts?: HostDrainOptions) => {

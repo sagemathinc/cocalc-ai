@@ -3,7 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Actions, redux } from "@cocalc/frontend/app-framework";
+import {
+  Actions,
+  project_redux_name,
+  redux,
+} from "@cocalc/frontend/app-framework";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { set_window_title } from "@cocalc/frontend/browser";
 import { set_url, update_params } from "@cocalc/frontend/history";
@@ -24,6 +28,10 @@ import {
   getAdminTargetPath,
   normalizeAdminRoute,
 } from "@cocalc/frontend/admin/routing";
+import {
+  getReducedProjectState,
+  hasReducedProjectState,
+} from "@cocalc/frontend/project/reduced-runtime";
 
 const LITE_TABS = new Set(["account", "admin", "docs", "ssh"]);
 
@@ -179,16 +187,29 @@ export class PageActions extends Actions<PageState> {
     }
 
     const prev_key = this.redux.getStore("page").get("active_top_tab");
-    if (prev_key?.length === 36 || key?.length === 36) {
+    const previousProjectNeedsRuntime =
+      prev_key?.length === 36 && !hasReducedProjectState(prev_key);
+    const nextProjectNeedsRuntime =
+      key?.length === 36 && !hasReducedProjectState(key);
+    if (previousProjectNeedsRuntime || nextProjectNeedsRuntime) {
       await ensureProjectReduxRuntime();
     }
     this.setState({ active_top_tab: key });
 
-    if (prev_key !== key && prev_key?.length == 36) {
+    if (
+      prev_key !== key &&
+      prev_key?.length == 36 &&
+      !hasReducedProjectState(prev_key) &&
+      this.redux.getStore(project_redux_name(prev_key)) != null
+    ) {
       // fire hide action on project we are switching from.
       redux.getProjectActions(prev_key)?.hide();
     }
-    if (key?.length == 36) {
+    if (
+      key?.length == 36 &&
+      !hasReducedProjectState(key) &&
+      this.redux.getStore(project_redux_name(key)) != null
+    ) {
       // fire show action on project we are switching to
       redux.getProjectActions(key)?.show();
     }
@@ -277,7 +298,17 @@ export class PageActions extends Actions<PageState> {
         return;
       default:
         if (change_history) {
-          redux.getProjectActions(key)?.push_state();
+          const reducedProject = getReducedProjectState(key);
+          if (reducedProject != null) {
+            set_url(
+              getPageUrlPath({
+                page: "project",
+                target: `${key}/${reducedProject.localTarget}`,
+              }),
+            );
+          } else {
+            redux.getProjectActions(key)?.push_state();
+          }
         }
         set_window_title(`Loading ${projectLabel}`);
         var projects_store = redux.getStore("projects");

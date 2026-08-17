@@ -27,6 +27,10 @@ import { useHostRuntimeLog } from "./use-host-runtime-log";
 import { useParallelOps } from "./use-parallel-ops";
 import { formatHostUpgradeFailureMessage } from "./host-upgrade-errors";
 import {
+  runBulkHostDeprovision,
+  type BulkHostDeprovisionResult,
+} from "../components/host-confirm";
+import {
   clearStoredHostDrawerOpenRequest,
   HOST_DRAWER_OPEN_EVENT,
   readStoredHostDrawerOpenRequest,
@@ -1718,6 +1722,29 @@ export const useHostsPageViewModel = () => {
     },
     [removeHost, runFreshAuthAction],
   );
+  const bulkDeprovisionHosts = React.useCallback(
+    async (hosts: Host[], skipRunningBackups: boolean) => {
+      let results: BulkHostDeprovisionResult[] | undefined;
+      const completed = await runFreshAuthAction(async () => {
+        results = await runBulkHostDeprovision({
+          hosts,
+          skipRunningBackups,
+          onConfirm: (host, opts) =>
+            removeHost(host.id, opts, {
+              alertErrors: false,
+              refreshAfter: false,
+            }),
+        });
+        try {
+          await refresh();
+        } catch (err) {
+          console.error("host refresh failed after bulk deprovision", err);
+        }
+      });
+      return completed ? results : undefined;
+    },
+    [refresh, removeHost, runFreshAuthAction],
+  );
 
   const hostListVm = useHostListViewModel({
     hosts,
@@ -1743,6 +1770,7 @@ export const useHostsPageViewModel = () => {
       }),
     onBackup: (id: string) => backupHostProjects(id),
     onDelete: deprovisionOrDeleteHost,
+    onBulkDeprovision: bulkDeprovisionHosts,
     onRefresh: refreshHostsNow,
     onCancelOp: cancelHostOp,
     onRefreshCloudStatus: isAdmin ? refreshHostCloudState : undefined,

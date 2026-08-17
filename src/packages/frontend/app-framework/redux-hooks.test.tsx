@@ -4,10 +4,16 @@ import {
   redux,
   useRedux,
 } from "./index";
+import { project_redux_name } from "@cocalc/util/redux/name";
 
 function Value({ storeName }: { storeName: string }) {
   const value = useRedux([storeName, "value"]);
   return <span data-testid="value">{String(value ?? "")}</span>;
+}
+
+function ProjectValue({ projectId }: { projectId: string }) {
+  const value = useRedux(["value"], projectId);
+  return <span data-testid="project-value">{String(value ?? "")}</span>;
 }
 
 describe("useRedux", () => {
@@ -57,5 +63,32 @@ describe("useRedux", () => {
 
     unmount();
     expect(store.listenerCount("change")).toBe(0);
+  });
+
+  it("waits for a project store without invoking its creating accessor", async () => {
+    const projectId = "8fdffb16-29e7-4271-a5f0-c364300b8df9";
+    const storeName = project_redux_name(projectId);
+    storeNames.push(storeName);
+    const getProjectStore = jest.spyOn(redux, "getProjectStore");
+
+    render(<ProjectValue projectId={projectId} />);
+
+    expect(screen.getByTestId("project-value")).toHaveTextContent("");
+    expect(getProjectStore).not.toHaveBeenCalled();
+    expect(
+      collectReduxHookSubscriptionDiagnostics().topSubscriptions.find(
+        ({ storeName: name }) => name === storeName,
+      )?.waitingForStore,
+    ).toBe(true);
+
+    act(() => {
+      redux.createStore(storeName, { value: "ready" });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("project-value")).toHaveTextContent("ready");
+    });
+    expect(getProjectStore).not.toHaveBeenCalled();
+    getProjectStore.mockRestore();
   });
 });

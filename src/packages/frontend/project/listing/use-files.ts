@@ -66,6 +66,8 @@ const DEFAULT_THROTTLE_FILE_UPDATE = 500;
 const INITIAL_LISTING_TIMEOUT_MS = 10000;
 const INITIAL_LISTING_RETRY_DELAY_MS = 250;
 const INITIAL_LISTING_MAX_ATTEMPTS = 3;
+const INITIAL_LISTING_HEDGE_DELAYS_MS = [0, 3000, 6000] as const;
+const INITIAL_LISTING_HEDGE_DEADLINE_MS = 12000;
 const LISTING_WATCHER_RETRY_DELAYS_MS = [1000, 2000, 5000] as const;
 
 // max number of subdirs to cache right after computing the listing for a dir
@@ -335,6 +337,7 @@ export default function useFiles({
             path,
             debugContext,
             uxTrace,
+            hedge: uxTrace != null && uxContext?.surface_visible === true,
           });
           if (requestId.current !== id) return;
           const snapshotFiles = snapshot.files ?? {};
@@ -607,17 +610,27 @@ export function isStaleFilesystemClientError(err: unknown): boolean {
   );
 }
 
-async function getListingSnapshot({
+export async function getListingSnapshot({
   fs,
   path,
   debugContext,
   uxTrace,
+  hedge = false,
 }: {
   fs: FilesystemClientLike;
   path: string;
   debugContext?: FilesDebugContext;
   uxTrace?: ReturnType<typeof claimDirectoryListingTrace>;
+  hedge?: boolean;
 }): Promise<{ files: Files; truncated?: boolean; attempts: number }> {
+  if (hedge) {
+    return await getHedgedListingSnapshot({
+      fs,
+      path,
+      debugContext,
+      uxTrace,
+    });
+  }
   let lastError: unknown;
   for (let attempt = 1; attempt <= INITIAL_LISTING_MAX_ATTEMPTS; attempt++) {
     const started = Date.now();
@@ -677,6 +690,153 @@ async function getListingSnapshot({
     }
   }
   throw lastError;
+}
+
+async function getHedgedListingSnapshot({
+  fs,
+  path,
+  debugContext,
+  uxTrace,
+}: {
+  fs: FilesystemClientLike;
+  path: string;
+  debugContext?: FilesDebugContext;
+  uxTrace?: ReturnType<typeof claimDirectoryListingTrace>;
+}): Promise<{ files: Files; truncated?: boolean; attempts: number }> {
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let completedAttempts = 0;
+    let lastError: unknown;
+    const startedAttempts = new Set<number>();
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+
+    const cleanup = () => {
+      for (const timer of timers) clearTimeout(timer);
+    };
+    const rejectOnce = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+    const resolveOnce = (
+      snapshot: { files: Files; truncated?: boolean },
+      attempt: number,
+      started: number,
+    ) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      markDirectoryListingPhase(uxTrace, "snapshot_ready", {
+        attempt,
+        attempts_started: started,
+        entries: Object.keys(snapshot.files ?? {}).length,
+        truncated: snapshot.truncated === true,
+      });
+      resolve({ ...snapshot, attempts: started });
+    };
+
+    const startAttempt = (attempt: number) => {
+      if (
+        settled ||
+        startedAttempts.has(attempt) ||
+        attempt > INITIAL_LISTING_HEDGE_DELAYS_MS.length
+      ) {
+        return;
+      }
+      startedAttempts.add(attempt);
+      const started = Date.now();
+      logPublicShareFiles("info", "initial listing start", debugContext, {
+        path,
+        attempt,
+        hedged: attempt > 1,
+      });
+      markDirectoryListingPhase(uxTrace, "snapshot_attempt_start", {
+        attempt,
+        hedged: attempt > 1,
+      });
+      markDirectoryListingPhase(uxTrace, `snapshot_attempt_${attempt}_start`, {
+        hedged: attempt > 1,
+      });
+      void Promise.resolve()
+        .then(() => fs.getListing(path))
+        .then(
+          (snapshot) => {
+            logPublicShareFiles("info", "initial listing ready", debugContext, {
+              path,
+              attempt,
+              elapsed_ms: Date.now() - started,
+              entries: Object.keys(snapshot.files ?? {}).length,
+              truncated: snapshot.truncated === true,
+            });
+            resolveOnce(snapshot, attempt, startedAttempts.size);
+          },
+          (err) => {
+            if (settled) return;
+            completedAttempts += 1;
+            lastError = err;
+            const retryable = isRetryableListingError(err);
+            markDirectoryListingPhase(uxTrace, "snapshot_attempt_failed", {
+              attempt,
+              retryable,
+              error_code:
+                `${(err as ConatErrorLike | undefined)?.code ?? ""}`.slice(
+                  0,
+                  80,
+                ),
+            });
+            markDirectoryListingPhase(
+              uxTrace,
+              `snapshot_attempt_${attempt}_failed`,
+              { retryable },
+            );
+            logPublicShareFiles(
+              "warn",
+              "initial listing attempt failed",
+              debugContext,
+              {
+                path,
+                attempt,
+                elapsed_ms: Date.now() - started,
+                retryable,
+                code: (err as ConatErrorLike | undefined)?.code,
+                message: `${(err as ConatErrorLike | undefined)?.message ?? err}`,
+              },
+            );
+            if (!retryable) {
+              rejectOnce(err);
+              return;
+            }
+            startAttempt(attempt + 1);
+            if (completedAttempts === INITIAL_LISTING_HEDGE_DELAYS_MS.length) {
+              rejectOnce(err);
+            }
+          },
+        );
+    };
+
+    for (const [index, delay] of INITIAL_LISTING_HEDGE_DELAYS_MS.entries()) {
+      const attempt = index + 1;
+      if (delay === 0) {
+        startAttempt(attempt);
+      } else {
+        timers.push(setTimeout(() => startAttempt(attempt), delay));
+      }
+    }
+    timers.push(
+      setTimeout(() => {
+        const err = new Error(
+          `directory listing timed out after ${INITIAL_LISTING_HEDGE_DEADLINE_MS / 1000} seconds`,
+        ) as ConatErrorLike;
+        err.code = 408;
+        markDirectoryListingPhase(uxTrace, "snapshot_deadline_reached", {
+          attempts_started: startedAttempts.size,
+          last_error: getErrorMessage(lastError).slice(0, 160),
+        });
+        rejectOnce(err);
+      }, INITIAL_LISTING_HEDGE_DEADLINE_MS),
+    );
+  });
 }
 
 // anything in failed we don't try to update -- this is

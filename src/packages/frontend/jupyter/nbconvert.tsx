@@ -9,11 +9,10 @@ NBConvert dialog -- for running nbconvert
 import { Button, Modal } from "antd";
 import * as immutable from "immutable";
 import React, { useEffect, useRef } from "react";
-import { useIntl } from "react-intl";
 
 import { redux } from "@cocalc/frontend/app-framework";
 import { A, Icon, Loading, TimeAgo } from "@cocalc/frontend/components";
-import { labels } from "@cocalc/frontend/i18n";
+import CopyButton from "@cocalc/frontend/components/copy-button";
 import { BASE_URL } from "@cocalc/frontend/misc/base-url";
 import * as misc from "@cocalc/util/misc";
 import type { JupyterActions } from "./browser-actions";
@@ -65,15 +64,12 @@ const NAMES = {
 } as const;
 
 interface ErrorProps {
-  actions: JupyterActions;
   nbconvert?: immutable.Map<string, any>;
 }
 
 const Error: React.FC<ErrorProps> = (props: ErrorProps) => {
   const { nbconvert } = props;
   const preNode = useRef<HTMLPreElement>(null);
-  const intl = useIntl();
-  const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
 
   useEffect(() => {
     const t = setTimeout(() => scroll(), 10);
@@ -118,27 +114,42 @@ const Error: React.FC<ErrorProps> = (props: ErrorProps) => {
     return <Loading />;
   } else {
     return (
-      <span>
+      <div style={{ minWidth: 0 }}>
         <h3>Error</h3>
-        Running nbconvert failed with an error {render_time()}.{" "}
-        {error.toLowerCase().includes("exporter") ? (
-          <>
-            You probably need to <b>restart your {projectLabelLower}</b> in
-            {projectLabelLower} settings.
-          </>
-        ) : (
-          <>
-            Read the error log below, update your Jupyter notebook, then try
-            again.
-          </>
-        )}
-        <pre
-          ref={preNode}
-          style={{ maxHeight: "40vh", margin: "5px 20px", fontSize: "10px" }}
-        >
-          {error}
-        </pre>
-      </span>
+        Running nbconvert failed with an error {render_time()}. Review the
+        complete error log below. LaTeX-based PDF exports can fail when a
+        notebook contains invalid LaTeX or requires an unavailable LaTeX
+        package. Copy the full log when contacting support.
+        <div style={{ minWidth: 0, marginTop: "8px" }}>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <CopyButton
+              ariaLabel="Copy full error log"
+              size="small"
+              value={error}
+            />
+          </div>
+          <pre
+            aria-label="nbconvert error log"
+            ref={preNode}
+            role="region"
+            tabIndex={0}
+            style={{
+              boxSizing: "border-box",
+              fontSize: "12px",
+              lineHeight: 1.4,
+              margin: "4px 0 0",
+              maxHeight: "45vh",
+              maxWidth: "100%",
+              overflow: "auto",
+              padding: "12px",
+              whiteSpace: "pre",
+              width: "100%",
+            }}
+          >
+            {error}
+          </pre>
+        </div>
+      </div>
     );
   }
 };
@@ -266,7 +277,7 @@ export const NBConvert: React.FC<NBConvertProps> = React.memo(
 
     function renderError() {
       if (nbconvert?.get("error")) {
-        return <Error actions={actions} nbconvert={nbconvert} />;
+        return <Error nbconvert={nbconvert} />;
       }
     }
 

@@ -18,6 +18,7 @@ describe("HostRecoveryBanner", () => {
     render(
       <HostRecoveryBanner
         assignedHostLabel="host2"
+        canReconnectAutomatically
         hostUnavailableReason="Host heartbeat is stale."
         onCheckStatus={onCheckStatus}
         recovery={{
@@ -55,6 +56,7 @@ describe("HostRecoveryBanner", () => {
     render(
       <HostRecoveryBanner
         assignedHostLabel="host2"
+        canReconnectAutomatically
         hostUnavailableReason="Host is restarting."
         onCheckStatus={async () => {}}
         recovery={{
@@ -81,6 +83,7 @@ describe("HostRecoveryBanner", () => {
     render(
       <HostRecoveryBanner
         assignedHostLabel="host2"
+        canReconnectAutomatically
         hostUnavailableReason="Host heartbeat is stale."
         onCheckStatus={async () => {
           throw Error("network error");
@@ -93,6 +96,36 @@ describe("HostRecoveryBanner", () => {
     fireEvent.click(screen.getByRole("button", { name: /Check again/ }));
     expect(
       await screen.findByText(/Status could not be refreshed just now/),
+    ).toBeTruthy();
+  });
+
+  it("does not claim a deprovisioned host is reconnecting", () => {
+    render(
+      <HostRecoveryBanner
+        assignedHostLabel="old-host"
+        canReconnectAutomatically={false}
+        hostUnavailableReason="Assigned host is deprovisioned."
+        onCheckStatus={async () => {}}
+        recovery={{ active: false }}
+      />,
+    );
+
+    expect(screen.getByText("Project host is unavailable")).toBeTruthy();
+    expect(
+      screen.getByText("Automatic reconnection is not possible"),
+    ).toBeTruthy();
+    expect(screen.queryByText("Saved files are safe")).toBeNull();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+
+    const details = screen.getByRole("button", {
+      name: /What can I do?/,
+    });
+    fireEvent.click(details);
+    expect(
+      screen.getByText(/CoCalc cannot reconnect automatically to old-host/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/move this project to an available host/),
     ).toBeTruthy();
   });
 });

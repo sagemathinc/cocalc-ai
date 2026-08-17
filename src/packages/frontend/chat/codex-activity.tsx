@@ -35,6 +35,7 @@ import {
   highlightPrismLines,
   languageHintFromPath,
 } from "./diff-prism";
+import { CodexVmApprovalPrompt } from "./codex-vm-approval";
 
 const { Text } = Typography;
 type SubagentEvent = Extract<AcpStreamEvent, { type: "subagent" }>;
@@ -234,6 +235,18 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     () => normalizeEvents(events ?? [], activitySteers),
     [events, activitySteers],
   );
+  const waitingForVmApproval = useMemo(
+    () =>
+      generating === true &&
+      entries.some((entry) => {
+        if (entry.kind !== "terminal" || entry.completed === true) return false;
+        const input = formatTerminalInput(entry.command, entry.args) ?? "";
+        return /(?:^|\s)vm\s+(?:start|stop|create|delete|ttl|funding|machine|volume)\b/.test(
+          input,
+        );
+      }),
+    [entries, generating],
+  );
   const resolvedBasePath = useMemo(
     () => detectBasePath(basePath, entries, chatPath),
     [basePath, entries, chatPath],
@@ -327,6 +340,10 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   if (!expanded) {
     return (
       <div style={{ marginTop: 8, marginLeft: -8, marginBottom: 8 }}>
+        <CodexVmApprovalPrompt
+          projectId={projectId}
+          active={waitingForVmApproval}
+        />
         <Button size="small" type="text" onClick={() => setExpanded(true)}>
           {toggleLabel}
         </Button>
@@ -455,6 +472,10 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     >
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
         {header}
+        <CodexVmApprovalPrompt
+          projectId={projectId}
+          active={waitingForVmApproval}
+        />
         {entries.map((entry, index) => (
           <ActivityRow
             key={entry.id}

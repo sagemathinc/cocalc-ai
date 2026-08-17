@@ -172,6 +172,12 @@ function metricLabel(metric: string): string {
       return "Incomplete directory listing v2";
     case "signed_in_app_ready_v2":
       return "Signed-in application ready v2";
+    case "signed_in_surface_ready_v1":
+      return "Signed-in useful surface ready v1";
+    case "signed_in_app_incomplete_v1":
+      return "Incomplete signed-in startup v1";
+    case "signed_in_app_abandoned_v1":
+      return "Abandoned signed-in startup v1";
     case "app_bootstrap_failed_v2":
       return "Failed application bootstrap v2";
     case "jupyter_document_ready_v2":
@@ -306,6 +312,12 @@ function metricHelp(metric: string, segment?: string): string {
       return "Diagnostic version 2 directory trace that did not paint an authoritative snapshot before timeout or supersession.";
     case "signed_in_app_ready_v2":
       return "Deep trace from browser navigation start until the signed-in application, account data, site configuration, and first React paint are ready. Navigation, network, bundle/bootstrap, and account milestones are retained without URLs or user content.";
+    case "signed_in_surface_ready_v1":
+      return "Route-aware trace from browser navigation start through the next paint after the requested signed-in surface is truthful and usable. Projects and direct-project routes wait for their initial route data rather than only the common application shell.";
+    case "signed_in_app_incomplete_v1":
+      return "Unsampled diagnostic emitted when a signed-in navigation has not reached a useful route surface after 30 seconds. A later useful-surface event with the same client event id can still complete this trace.";
+    case "signed_in_app_abandoned_v1":
+      return "Unsampled diagnostic emitted when the document is hidden or unloaded before useful route readiness. Treat deployment reloads and other intentional navigations as possible causes; this is not automatically user abandonment.";
     case "app_bootstrap_failed_v2":
       return "Diagnostic browser bootstrap trace that failed while loading or mounting the application.";
     case "jupyter_document_ready_v2":

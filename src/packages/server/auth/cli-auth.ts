@@ -41,6 +41,7 @@ const CLI_LOGIN_START_IP_LIMIT_10M = 20;
 const CLI_LOGIN_START_IP_LIMIT_DAY = 100;
 
 export type CliAuthChallengeKind = "login" | "elevate";
+export type CliAuthClientKind = "cli" | "mobile";
 export type CliAuthChallengeStatus =
   | "pending"
   | "approved"
@@ -72,6 +73,10 @@ type CliAuthChallengeRow = {
 
 function cleanEmail(email: string): string {
   return `${email ?? ""}`.trim().toLowerCase();
+}
+
+function cleanAuthClientKind(value: unknown): CliAuthClientKind {
+  return value === "mobile" ? "mobile" : "cli";
 }
 
 function cleanChallengeId(challenge_id: string): string {
@@ -454,11 +459,13 @@ async function ensureChallengeOwnedByAccount({
 export async function startCliLoginChallenge({
   req,
   email,
+  client_kind = "cli",
   elevated_login = false,
   duration,
 }: {
   req: any;
   email?: string;
+  client_kind?: CliAuthClientKind;
   elevated_login?: boolean;
   duration?: FreshAuthDuration;
 }): Promise<{
@@ -482,7 +489,7 @@ export async function startCliLoginChallenge({
     requested_duration: elevated_login ? (duration ?? "default") : null,
     metadata: {
       ...(emailHint ? { email_hint: emailHint } : undefined),
-      auth_client: "cli",
+      auth_client: cleanAuthClientKind(client_kind),
       elevated_login,
       ip_key: ipKey || "unknown",
     },
@@ -649,6 +656,9 @@ export async function redeemCliLoginChallenge({
   const session = await createClusterCliLoginSession({
     account_id: row.account_id,
     approved_challenge_id: row.id,
+    ...(cleanAuthClientKind(row.metadata?.auth_client) === "mobile"
+      ? { auth_client: "mobile" as const }
+      : {}),
     ...(elevatedLogin ? { factor_level, fresh_auth_until } : {}),
     ip_address: ip_address ?? null,
     user_agent: user_agent ?? null,
@@ -723,6 +733,7 @@ export async function getCliAuthApprovalInfo({
   email_hint?: string | null;
   requested_duration?: FreshAuthDuration | null;
   elevated_login: boolean;
+  auth_client: CliAuthClientKind;
   state: CliAuthChallengeStatus;
   expires_at: Date;
 }> {
@@ -745,6 +756,7 @@ export async function getCliAuthApprovalInfo({
         : null,
     requested_duration: row.requested_duration ?? null,
     elevated_login: row.metadata?.elevated_login === true,
+    auth_client: cleanAuthClientKind(row.metadata?.auth_client),
     state: row.status,
     expires_at: new Date(row.expire),
   };

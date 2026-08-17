@@ -4,6 +4,7 @@
  */
 
 import {
+  __test__,
   rolloutHostManagedComponentsInternalHelper,
   upgradeHostSoftwareInternalHelper,
 } from "./hosts-software-execution";
@@ -36,6 +37,63 @@ function projectHostStatus({
     running_pids: [pid],
   };
 }
+
+describe("managed component convergence", () => {
+  const row = {
+    version: "artifact-v1",
+    metadata: { software: { project_host: "artifact-v1" } },
+  };
+
+  test("accepts a desired ACP worker while old workers drain", () => {
+    expect(
+      __test__.managedComponentAlignmentFailures({
+        statuses: [
+          {
+            component: "acp-worker",
+            artifact: "project-host",
+            upgrade_policy: "drain_then_replace",
+            enabled: true,
+            managed: true,
+            desired_version: "build-v2",
+            runtime_state: "running",
+            version_state: "mixed",
+            running_versions: ["build-v1", "build-v2"],
+            running_pids: [111, 222],
+          },
+        ],
+        components: ["acp-worker"],
+        desiredVersion: "artifact-v2",
+        row,
+      }),
+    ).toEqual([]);
+  });
+
+  test("rejects mixed ACP workers when the desired worker is absent", () => {
+    expect(
+      __test__.managedComponentAlignmentFailures({
+        statuses: [
+          {
+            component: "acp-worker",
+            artifact: "project-host",
+            upgrade_policy: "drain_then_replace",
+            enabled: true,
+            managed: true,
+            desired_version: "build-v2",
+            runtime_state: "running",
+            version_state: "mixed",
+            running_versions: ["build-v0", "build-v1"],
+            running_pids: [111, 222],
+          },
+        ],
+        components: ["acp-worker"],
+        desiredVersion: "artifact-v2",
+        row,
+      }),
+    ).toEqual([
+      "acp-worker: version_state=mixed, running=build-v0,build-v1, desired=build-v2",
+    ]);
+  });
+});
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   __esModule: true,

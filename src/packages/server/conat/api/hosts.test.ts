@@ -4615,6 +4615,28 @@ describe("hosts.setHostRuntimeDeployments automatic reconcile", () => {
     );
   });
 
+  it("does not reconcile ACP workers after an unrelated global tools change", async () => {
+    const { setHostRuntimeDeployments } = await import("./hosts");
+    await setHostRuntimeDeployments({
+      account_id: ACCOUNT_ID,
+      scope_type: "global",
+      deployments: [
+        {
+          target_type: "artifact",
+          target: "tools",
+          desired_version: "tools-v2",
+        },
+      ],
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(createLroMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "host-reconcile-runtime-deployments",
+      }),
+    );
+  });
+
   it("explicitly expands project-host artifact defaults and queues runtime reconcile for already-installed drifted stacks", async () => {
     const projectHostDefault = [
       {

@@ -27,6 +27,7 @@ continues to own the operational flow that executes those plans.
 
 import type {
   HostRuntimeArtifact,
+  HostRuntimeDeploymentRecord,
   HostRuntimeDeploymentReconcileResult,
   HostRuntimeDeploymentStatus,
   HostRuntimeDeploymentUpsert,
@@ -54,6 +55,66 @@ const PROJECT_HOST_RUNTIME_STACK_COMPONENTS: ManagedComponentKind[] = [
   "conat-persist",
   "acp-worker",
 ];
+
+function runtimeDeploymentConvergenceSignature(
+  deployment: HostRuntimeDeploymentUpsert,
+): string {
+  return JSON.stringify({
+    desired_version: `${deployment.desired_version ?? ""}`.trim(),
+    rollout_policy: deployment.rollout_policy ?? null,
+    drain_deadline_seconds: deployment.drain_deadline_seconds ?? null,
+    rollout_reason: `${deployment.rollout_reason ?? ""}`.trim() || null,
+    metadata: deployment.metadata ?? null,
+  });
+}
+
+export function runtimeDeploymentConvergenceScope({
+  before,
+  after,
+}: {
+  before: HostRuntimeDeploymentRecord[];
+  after: HostRuntimeDeploymentRecord[];
+}): { artifacts: boolean; components: ManagedComponentKind[] } {
+  const beforeByTarget = new Map(
+    before.map((deployment) => [
+      `${deployment.target_type}:${deployment.target}`,
+      deployment,
+    ]),
+  );
+  const afterByTarget = new Map(
+    after.map((deployment) => [
+      `${deployment.target_type}:${deployment.target}`,
+      deployment,
+    ]),
+  );
+  let artifacts = false;
+  const components = new Set<ManagedComponentKind>();
+  for (const key of new Set([
+    ...beforeByTarget.keys(),
+    ...afterByTarget.keys(),
+  ])) {
+    const previous = beforeByTarget.get(key);
+    const next = afterByTarget.get(key);
+    if (
+      previous &&
+      next &&
+      runtimeDeploymentConvergenceSignature(previous) ===
+        runtimeDeploymentConvergenceSignature(next)
+    ) {
+      continue;
+    }
+    const changed = next ?? previous;
+    if (changed?.target_type === "artifact") {
+      artifacts = true;
+    } else if (changed?.target_type === "component") {
+      components.add(changed.target as ManagedComponentKind);
+    }
+  }
+  return {
+    artifacts,
+    components: normalizeManagedComponentKindsForDedupe([...components]),
+  };
+}
 
 export function runtimeDeploymentsForAlignedProjectHostVersion({
   version,
@@ -302,6 +363,24 @@ export function computeHostRuntimeDeploymentReconcilePlan({
         component,
         decision: "skip",
         reason: "artifact_version_mismatch",
+        artifact,
+        desired_version: deployment.desired_version,
+        current_artifact_version: currentArtifactVersion,
+        observed_version_state: observedTarget?.observed_version_state,
+        running_versions: observed.running_versions,
+      });
+      continue;
+    }
+    const drainingAcpReplacementIsReady =
+      component === "acp-worker" &&
+      observed.upgrade_policy === "drain_then_replace" &&
+      !!observed.desired_version &&
+      observed.running_versions.includes(observed.desired_version);
+    if (drainingAcpReplacementIsReady) {
+      decisions.push({
+        component,
+        decision: "skip",
+        reason: "desired_worker_running_while_previous_worker_drains",
         artifact,
         desired_version: deployment.desired_version,
         current_artifact_version: currentArtifactVersion,

@@ -19,6 +19,12 @@ import {
   recordMembershipAnalyticsEvent,
   recordMembershipPurchaseCompleted,
 } from "@cocalc/server/membership/analytics";
+import {
+  getPersonalMembershipAllocationIdentity,
+  recordPersonalMembershipPeriod,
+  recordPersonalMembershipTrial,
+  recordPersonalMembershipUpgradeCredit,
+} from "@cocalc/server/membership/personal-allocation-analytics";
 import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 import {
   assertNoDueMembershipRenewal,
@@ -101,6 +107,13 @@ export async function applyMembershipChange({
       tierMap: catalogTierMap,
     });
     const chargeValue = toDecimal(change.charge);
+    const existingAllocation =
+      change.existing_subscription_id == null
+        ? undefined
+        : await getPersonalMembershipAllocationIdentity({
+            subscription_id: change.existing_subscription_id,
+            client: transaction,
+          });
 
     if (paymentAmount != null) {
       await assertPurchaseAllowed({
@@ -220,6 +233,17 @@ export async function applyMembershipChange({
           metadata: {
             type: "membership",
             class: targetClass,
+            // The lower tier is not allocated until its first renewal succeeds.
+            ...(change.change === "downgrade" && existingAllocation
+              ? {
+                  pending_plan_change: {
+                    kind: "downgrade" as const,
+                    previous_class: existingAllocation.membership_class,
+                    previous_interval: existingAllocation.billing_interval,
+                    scheduled_at: start.toISOString(),
+                  },
+                }
+              : {}),
             ...(isTrial
               ? {
                   trial: true,
@@ -319,6 +343,61 @@ export async function applyMembershipChange({
         purchase_id,
         client: transaction,
       });
+    }
+
+    if (subscription_id != null) {
+      if (isTrial) {
+        await recordPersonalMembershipTrial({
+          account_id,
+          subscription_id,
+          membership_class: targetClass,
+          allocation_start: start,
+          allocation_end: end,
+          client: transaction,
+        });
+      } else if (change.change !== "downgrade") {
+        await recordPersonalMembershipPeriod({
+          account_id,
+          subscription_id,
+          purchase_id,
+          membership_class: targetClass,
+          billing_interval: interval,
+          lifecycle: change.change === "upgrade" ? "plan_change" : "first_paid",
+          allocation_start: start,
+          allocation_end: end,
+          revenue: change.price,
+          previous_membership_class:
+            change.change === "upgrade"
+              ? (existingAllocation?.membership_class ?? null)
+              : null,
+          previous_billing_interval:
+            change.change === "upgrade"
+              ? (existingAllocation?.billing_interval ?? null)
+              : null,
+          tier_change: change.change === "upgrade" ? "upgrade" : "none",
+          client: transaction,
+        });
+      }
+
+      if (
+        change.change === "upgrade" &&
+        change.existing_subscription_id != null &&
+        existingAllocation != null &&
+        existingEnd != null
+      ) {
+        await recordPersonalMembershipUpgradeCredit({
+          account_id,
+          old_subscription_id: change.existing_subscription_id,
+          new_subscription_id: subscription_id,
+          purchase_id,
+          membership_class: existingAllocation.membership_class,
+          billing_interval: existingAllocation.billing_interval,
+          allocation_start: start,
+          allocation_end: existingEnd,
+          credit: toDecimal(change.price).sub(chargeValue),
+          client: transaction,
+        });
+      }
     }
 
     if (useTransaction) {

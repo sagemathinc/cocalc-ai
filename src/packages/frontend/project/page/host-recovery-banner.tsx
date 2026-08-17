@@ -14,6 +14,7 @@ const { Paragraph, Text } = Typography;
 
 interface HostRecoveryBannerProps {
   assignedHostLabel: string;
+  canReconnectAutomatically: boolean;
   hostUnavailableReason: string;
   onCheckStatus: () => Promise<void>;
   recovery: HostRecoveryDisplay;
@@ -21,6 +22,7 @@ interface HostRecoveryBannerProps {
 
 export function HostRecoveryBanner({
   assignedHostLabel,
+  canReconnectAutomatically,
   hostUnavailableReason,
   onCheckStatus,
   recovery,
@@ -65,7 +67,9 @@ export function HostRecoveryBanner({
           >
             <div style={{ flex: "1 1 360px", minWidth: 0 }}>
               <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.35 }}>
-                Reconnecting to your project
+                {canReconnectAutomatically
+                  ? "Reconnecting to your project"
+                  : "Project host is unavailable"}
               </div>
               <Space
                 size={7}
@@ -73,11 +77,20 @@ export function HostRecoveryBanner({
                 style={{ fontSize: 12, marginTop: 2 }}
                 wrap
               >
-                <Text style={{ color: COLORS.ANTD_GREEN_D }}>
-                  <Icon name="check-circle" /> Saved files are safe
-                </Text>
+                {canReconnectAutomatically ? (
+                  <Text style={{ color: COLORS.ANTD_GREEN_D }}>
+                    <Icon name="check-circle" /> Saved files are safe
+                  </Text>
+                ) : (
+                  <Text type="danger">
+                    <Icon name="exclamation-triangle" /> Automatic reconnection
+                    is not possible
+                  </Text>
+                )}
                 <Text type="secondary">
-                  {startedAt ? (
+                  {!canReconnectAutomatically ? (
+                    `${assignedHostLabel}: ${hostUnavailableReason}`
+                  ) : startedAt ? (
                     <>
                       Started{" "}
                       <TimeAgo click_to_toggle={false} date={startedAt} live />
@@ -95,34 +108,38 @@ export function HostRecoveryBanner({
               size="small"
               type="text"
             >
-              What's happening?{" "}
+              {canReconnectAutomatically
+                ? "What's happening?"
+                : "What can I do?"}{" "}
               <Icon name={detailsOpen ? "chevron-up" : "chevron-down"} />
             </Button>
           </div>
 
-          <div
-            aria-label="Project reconnection is in progress"
-            role="progressbar"
-            style={{
-              background: COLORS.ANTD_BG_BLUE_L,
-              borderRadius: 4,
-              height: 6,
-              marginTop: 8,
-              maxWidth: 520,
-              overflow: "hidden",
-              width: "100%",
-            }}
-          >
+          {canReconnectAutomatically ? (
             <div
-              className="cocalc-indeterminate-progress"
+              aria-label="Project reconnection is in progress"
+              role="progressbar"
               style={{
-                background: COLORS.ANTD_LINK_BLUE,
+                background: COLORS.ANTD_BG_BLUE_L,
                 borderRadius: 4,
-                height: "100%",
-                width: "45%",
+                height: 6,
+                marginTop: 8,
+                maxWidth: 520,
+                overflow: "hidden",
+                width: "100%",
               }}
-            />
-          </div>
+            >
+              <div
+                className="cocalc-indeterminate-progress"
+                style={{
+                  background: COLORS.ANTD_LINK_BLUE,
+                  borderRadius: 4,
+                  height: "100%",
+                  width: "45%",
+                }}
+              />
+            </div>
+          ) : null}
 
           {detailsOpen ? (
             <div
@@ -136,12 +153,23 @@ export function HostRecoveryBanner({
               }}
             >
               <Text strong>
-                {recovery.active
-                  ? (recovery.title ?? "CoCalc is reconnecting automatically.")
-                  : "CoCalc is reconnecting automatically."}
+                {!canReconnectAutomatically
+                  ? `CoCalc cannot reconnect automatically to ${assignedHostLabel}.`
+                  : recovery.active
+                    ? (recovery.title ??
+                      "CoCalc is reconnecting automatically.")
+                    : "CoCalc is reconnecting automatically."}
               </Text>
               <Paragraph style={{ margin: "3px 0 5px", maxWidth: 720 }}>
-                {recovery.active ? (
+                {!canReconnectAutomatically ? (
+                  <>
+                    Start the assigned host if it still exists, or open Project
+                    Settings and move this project to an available host. If the
+                    old host was deleted, moving restores the latest available
+                    backup; changes newer than that backup are not available
+                    from the deleted disk.
+                  </>
+                ) : recovery.active ? (
                   <>
                     {recovery.description ??
                       "CoCalc is restoring the computer running this project."}{" "}
@@ -155,7 +183,7 @@ export function HostRecoveryBanner({
                 Editing, terminals, and notebooks will resume when the
                 connection is restored.
               </Paragraph>
-              {recovery.timingDescription ? (
+              {canReconnectAutomatically && recovery.timingDescription ? (
                 <Paragraph style={{ margin: "0 0 6px", maxWidth: 720 }}>
                   {recovery.timingDescription}
                 </Paragraph>
@@ -167,7 +195,7 @@ export function HostRecoveryBanner({
                   </Text>
                 </div>
               ) : null}
-              {!recovery.active ? (
+              {canReconnectAutomatically && !recovery.active ? (
                 <div style={{ fontSize: 12, marginTop: 2 }}>
                   <Text type="secondary">
                     Technical status: {assignedHostLabel}:{" "}
@@ -192,7 +220,7 @@ export function HostRecoveryBanner({
           ) : null}
         </div>
       }
-      type="warning"
+      type={canReconnectAutomatically ? "warning" : "error"}
     />
   );
 }

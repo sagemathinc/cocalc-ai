@@ -80,6 +80,7 @@ import {
   displayNameFromParts,
   normalizeDisplayName,
 } from "@cocalc/util/accounts/display-name";
+import { initializeAccountProfileImage } from "@cocalc/server/accounts/initialize-profile-image";
 
 interface SsoAccountCreationContext {
   tokenInfo?: any;
@@ -91,6 +92,38 @@ const logger = getLogger("server:auth:sso:passport-login");
 function normalizedEmail(value: string | undefined): string | undefined {
   const email = `${value ?? ""}`.trim().toLowerCase();
   return email || undefined;
+}
+
+function profileImageValue(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (value == null || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.value === "string") return record.value;
+  if (typeof record.url === "string") return record.url;
+  return undefined;
+}
+
+export function imageFromSsoProfile(profile: any): string | undefined {
+  const photos = Array.isArray(profile?.photos) ? profile.photos : [];
+  const candidates = [
+    ...photos,
+    profile?.picture,
+    profile?.picture_url,
+    profile?.avatar_url,
+    profile?._json?.picture,
+    profile?._json?.picture_url,
+    profile?._json?.avatar_url,
+  ];
+  for (const candidate of candidates) {
+    const image = profileImageValue(candidate)?.trim();
+    if (!image) continue;
+    try {
+      if (new URL(image).protocol === "https:") return image;
+    } catch {
+      // Ignore malformed provider profile values.
+    }
+  }
+  return undefined;
 }
 
 function profileEmailMatches(
@@ -237,6 +270,7 @@ export class PassportLogin {
       await this.maybeCreateAccount(this.opts, locals);
       // if update_on_login is true, update the account with the new profile data
       await this.maybeUpdateAccountAndPassport(this.opts, locals);
+      await this.maybeInitializeAvatar(this.opts, locals);
       // check if user is banned?
       await this.isUserBanned(locals.account_id, locals.email_address);
       //  last step: set remember me cookie (for a  new sign in)
@@ -879,6 +913,28 @@ export class PassportLogin {
       // email_address: locals.email_address,
       passport_profile: opts.profile,
     });
+  }
+
+  private async maybeInitializeAvatar(
+    opts: PassportLoginOpts,
+    locals: PassportLoginLocals,
+  ): Promise<void> {
+    if (locals.account_id == null) return;
+    const image = imageFromSsoProfile(opts.profile);
+    if (!image) return;
+    try {
+      await initializeAccountProfileImage({
+        account_id: locals.account_id,
+        image,
+      });
+    } catch (err) {
+      // An optional avatar must never prevent an otherwise valid sign-in.
+      logger.warn("failed to initialize account avatar from SSO profile", {
+        account_id: locals.account_id,
+        strategy: opts.strategyName,
+        err,
+      });
+    }
   }
 
   // ebfore recording the sign-in below, we check if a user is banned

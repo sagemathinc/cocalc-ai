@@ -173,6 +173,7 @@ async function authorizeComputeMutation(opts: {
 }) {
   if (opts.actor.agent_auth) {
     const semanticRequest = { ...(opts.request ?? {}) };
+    const requestedOperationId = `${semanticRequest.operation_id ?? ""}`;
     delete semanticRequest.operation_id;
     const operationId = createHash("sha256")
       .update(opts.actor.agent_auth.token_fingerprint)
@@ -183,24 +184,17 @@ async function authorizeComputeMutation(opts: {
       .update("\0")
       .update(opts.vm_id ?? "")
       .update("\0")
-      .update(
-        JSON.stringify(
-          Object.fromEntries(
-            Object.entries(semanticRequest).sort(([a], [b]) =>
-              a.localeCompare(b),
-            ),
-          ),
-        ),
-      )
+      .update(`${semanticRequest.operation ?? ""}`)
+      .update("\0")
+      .update(requestedOperationId)
       .digest("hex");
-    await requireAgentComputeGrant({
+    return await requireAgentComputeGrant({
       auth: opts.actor.agent_auth,
       action: opts.action,
       project_id: opts.project_id,
       vm_id: opts.vm_id,
       request: { ...semanticRequest, operation_id: operationId },
     });
-    return;
   }
   if (opts.require_fresh_auth) {
     await requireDangerousSessionAuth({
@@ -1523,7 +1517,6 @@ export async function getProjectVm(opts: {
   const vm = await resolveProjectComputeVm({
     project_id: projectId,
     id_or_name: `${opts.id_or_name ?? ""}`.trim(),
-    include_deleted: true,
   });
   if (!vm) throw new Error(`compute VM '${opts.id_or_name}' not found`);
   await requireAgentComputeGrant({
@@ -1857,16 +1850,6 @@ async function requestState(opts: {
   if (vm.expires_at && vm.expires_at.valueOf() <= Date.now()) {
     throw new Error("compute VM lease has expired");
   }
-  if (
-    actorKind === "agent" &&
-    opts.desired_state === "running" &&
-    !vm.expires_at
-  ) {
-    throw Object.assign(
-      new Error("agent-started VMs require an explicit deletion deadline"),
-      { code: 403 },
-    );
-  }
   const action = opts.desired_state === "running" ? "start" : "stop";
   const selectedRate =
     vm.desired_pricing_model === "spot"
@@ -1888,7 +1871,7 @@ async function requestState(opts: {
           ).rows[0]?.count ?? 0,
         ) + (vm.desired_state === "running" ? 0 : 1)
       : undefined;
-  await authorizeComputeMutation({
+  const authorization = await authorizeComputeMutation({
     actor: opts,
     action: "availability",
     project_id: vm.project_id,
@@ -1910,6 +1893,19 @@ async function requestState(opts: {
     },
     require_fresh_auth: opts.desired_state === "running",
   });
+  if (
+    actorKind === "agent" &&
+    opts.desired_state === "running" &&
+    !vm.expires_at &&
+    authorization?.project_vm_availability_scope !== true
+  ) {
+    throw Object.assign(
+      new Error(
+        "agent-started VMs without a deletion deadline require approved project VM start/stop access",
+      ),
+      { code: 403 },
+    );
+  }
   const next = (await updateComputeVm(vm.id, {
     desired_state: opts.desired_state,
     state: opts.desired_state === "running" ? "starting" : "stopping",

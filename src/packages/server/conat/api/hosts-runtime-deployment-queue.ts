@@ -113,6 +113,7 @@ function uniqueHostIds(host_ids: string[]): string[] {
 export async function ensureAutomaticHostRuntimeDeploymentsReconcileInternal({
   host_id,
   reason,
+  components,
   running_statuses,
   loadHostRowForRuntimeDeploymentsInternal,
   getHostRuntimeDeploymentStatusInternal,
@@ -124,6 +125,7 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcileInternal({
 }: {
   host_id: string;
   reason?: string;
+  components?: ManagedComponentKind[];
   running_statuses: Set<string>;
   loadHostRowForRuntimeDeploymentsInternal: (
     host_id: string,
@@ -174,6 +176,7 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcileInternal({
   const plan = computeHostRuntimeDeploymentReconcilePlan({
     row,
     status,
+    components,
   });
   if (!plan.reconciled_components.length) {
     return { queued: false, host_id: row.id, reason: "no_reconcile_needed" };

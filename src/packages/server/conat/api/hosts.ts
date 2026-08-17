@@ -282,6 +282,7 @@ import {
   normalizeRuntimeDeploymentUpserts,
   runtimeDeploymentsForAlignedProjectHostVersion,
   runtimeDeploymentsForComponentRollout,
+  runtimeDeploymentConvergenceScope,
   runtimeDeploymentsForUpgradeResults,
 } from "./hosts-runtime-deployment-planning";
 import {
@@ -2578,11 +2579,13 @@ export async function issueProjectHostAgentAuthToken({
   account_id,
   project_id,
   ttl_seconds,
+  session_id,
 }: {
   host_id?: string;
   account_id: string;
   project_id: string;
   ttl_seconds?: number;
+  session_id?: string;
 }): Promise<{
   host_id: string;
   token: string;
@@ -2597,6 +2600,7 @@ export async function issueProjectHostAgentAuthToken({
     account_id,
     project_id,
     ttl_seconds,
+    session_id,
   });
 }
 
@@ -8582,13 +8586,18 @@ export async function setHostRuntimeDeployments({
   const normalized = normalizeRuntimeDeploymentUpserts(expandedDeployments);
   if (scope_type === "global") {
     const requested_by = await assertRuntimeDeploymentGlobalAccess(account_id);
+    const before = await listProjectHostRuntimeDeployments({
+      scope_type: "global",
+    });
     const result = await setProjectHostRuntimeDeployments({
       scope_type: "global",
       deployments: normalized,
       requested_by,
       replace,
     });
-    triggerAutomaticGlobalRuntimeDeploymentConvergence();
+    triggerAutomaticGlobalRuntimeDeploymentConvergence(
+      runtimeDeploymentConvergenceScope({ before, after: result }),
+    );
     return result;
   }
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id ?? "");
@@ -8605,6 +8614,10 @@ export async function setHostRuntimeDeployments({
       });
   }
   const row = await loadHostForRootfsManagement(id ?? "", account_id);
+  const before = await listProjectHostRuntimeDeployments({
+    scope_type: "host",
+    host_id: row.id,
+  });
   const result = await setProjectHostRuntimeDeployments({
     scope_type: "host",
     host_id: row.id,
@@ -8615,6 +8628,7 @@ export async function setHostRuntimeDeployments({
   triggerAutomaticRuntimeDeploymentConvergenceForHosts({
     host_ids: [row.id],
     reason: AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
+    ...runtimeDeploymentConvergenceScope({ before, after: result }),
   });
   return result;
 }
@@ -8660,9 +8674,11 @@ export async function reconcileHostRuntimeDeployments({
 export async function ensureAutomaticHostRuntimeDeploymentsReconcile({
   host_id,
   reason,
+  components,
 }: {
   host_id: string;
   reason?: string;
+  components?: ManagedComponentKind[];
 }): Promise<
   | {
       queued: false;
@@ -8684,6 +8700,7 @@ export async function ensureAutomaticHostRuntimeDeploymentsReconcile({
   return await ensureAutomaticHostRuntimeDeploymentsReconcileInternal({
     host_id,
     reason,
+    components,
     running_statuses: HOST_RUNNING_STATUSES,
     loadHostRowForRuntimeDeploymentsInternal,
     getHostRuntimeDeploymentStatusInternal: ({ id, row }) =>
@@ -8744,14 +8761,21 @@ export async function ensureAutomaticHostArtifactDeploymentsReconcile({
 async function bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
   host_ids,
   reason,
+  components,
 }: {
   host_ids: string[];
   reason?: string;
+  components?: ManagedComponentKind[];
 }): Promise<void> {
   await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHostsInternal({
     host_ids,
     reason,
-    ensureAutomaticHostRuntimeDeploymentsReconcile,
+    ensureAutomaticHostRuntimeDeploymentsReconcile: ({ host_id, reason }) =>
+      ensureAutomaticHostRuntimeDeploymentsReconcile({
+        host_id,
+        reason,
+        components,
+      }),
     logWarn: (message, payload) => logger.warn(message, payload),
   });
 }
@@ -8771,19 +8795,29 @@ async function bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
 function triggerAutomaticRuntimeDeploymentConvergenceForHosts({
   host_ids,
   reason,
+  artifacts,
+  components,
 }: {
   host_ids: string[];
   reason?: string;
+  artifacts: boolean;
+  components: ManagedComponentKind[];
 }): void {
+  if (!artifacts && components.length === 0) return;
   setImmediate(() => {
     void (async () => {
-      await bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
-        host_ids,
-      });
-      await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
-        host_ids,
-        reason,
-      });
+      if (artifacts) {
+        await bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
+          host_ids,
+        });
+      }
+      if (components.length > 0) {
+        await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
+          host_ids,
+          reason,
+          components,
+        });
+      }
     })().catch((err) => {
       logger.warn("background runtime deployment convergence fanout failed", {
         host_ids,
@@ -8794,20 +8828,32 @@ function triggerAutomaticRuntimeDeploymentConvergenceForHosts({
   });
 }
 
-function triggerAutomaticGlobalRuntimeDeploymentConvergence(): void {
+function triggerAutomaticGlobalRuntimeDeploymentConvergence({
+  artifacts,
+  components,
+}: {
+  artifacts: boolean;
+  components: ManagedComponentKind[];
+}): void {
+  if (!artifacts && components.length === 0) return;
   setImmediate(() => {
     void (async () => {
       const runningHostIds =
         await listRunningHostIdsForAutomaticRuntimeDeploymentReconcile({
           running_statuses: HOST_RUNNING_STATUSES,
         });
-      await bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
-        host_ids: runningHostIds,
-      });
-      await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
-        host_ids: runningHostIds,
-        reason: AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
-      });
+      if (artifacts) {
+        await bestEffortQueueAutomaticArtifactDeploymentReconcileForHosts({
+          host_ids: runningHostIds,
+        });
+      }
+      if (components.length > 0) {
+        await bestEffortQueueAutomaticRuntimeDeploymentReconcileForHosts({
+          host_ids: runningHostIds,
+          reason: AUTOMATIC_RUNTIME_DEPLOYMENT_RECONCILE_REASON,
+          components,
+        });
+      }
     })().catch((err) => {
       logger.warn(
         "background global runtime deployment convergence fanout failed",
@@ -8912,6 +8958,7 @@ export async function rolloutHostManagedComponents({
   id,
   components,
   desired_version,
+  record_runtime_deployments,
   base_url,
   reason,
 }: {
@@ -8919,6 +8966,7 @@ export async function rolloutHostManagedComponents({
   id: string;
   components: ManagedComponentKind[];
   desired_version?: string;
+  record_runtime_deployments?: boolean;
   base_url?: string;
   reason?: string;
 }): Promise<HostLroResponse> {
@@ -8931,6 +8979,7 @@ export async function rolloutHostManagedComponents({
         id,
         components,
         desired_version,
+        record_runtime_deployments,
         base_url,
         reason,
       });
@@ -8946,6 +8995,7 @@ export async function rolloutHostManagedComponents({
       account_id,
       components,
       desired_version,
+      record_runtime_deployments,
       base_url,
       reason,
     },
@@ -8953,6 +9003,7 @@ export async function rolloutHostManagedComponents({
       hostId: row.id,
       components,
       desiredVersion: desired_version,
+      recordRuntimeDeployments: record_runtime_deployments,
       baseUrl: base_url,
       reason,
     }),

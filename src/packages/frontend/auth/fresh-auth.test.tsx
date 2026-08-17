@@ -359,6 +359,33 @@ function FreshAuthActionHarness({ action }: { action: () => Promise<void> }) {
   );
 }
 
+function ConcurrentFreshAuthActionHarness({
+  actions,
+}: {
+  actions: Array<() => Promise<void>>;
+}) {
+  const [completed, setCompleted] = useState(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+
+  return (
+    <>
+      <button
+        onClick={async () => {
+          const results = await Promise.all(
+            actions.map((action) => runFreshAuthAction(action)),
+          );
+          setCompleted(results.every(Boolean));
+        }}
+        type="button"
+      >
+        Run concurrent actions
+      </button>
+      {completed ? <div>All actions completed</div> : null}
+      <FreshAuthModal {...freshAuthModalProps} />
+    </>
+  );
+}
+
 describe("useFreshAuthAction", () => {
   beforeEach(() => {
     jest.mocked(postAuthApi).mockReset();
@@ -430,6 +457,55 @@ describe("useFreshAuthAction", () => {
     expect(
       screen.queryByRole("heading", { name: "Confirm security action" }),
     ).toBeNull();
+  });
+
+  it("retries every concurrent action after one fresh-auth confirmation", async () => {
+    jest.mocked(postAuthApi).mockImplementation(async ({ endpoint }: any) => {
+      if (endpoint === "auth/fresh-auth-status") {
+        return {
+          mode: "account",
+          enabled: false,
+          email_address: "user@example.com",
+        };
+      }
+      if (endpoint === "auth/fresh-auth") {
+        return {};
+      }
+      throw new Error(`unexpected endpoint ${endpoint}`);
+    });
+    const freshAuthError: any = new Error("fresh auth is required");
+    freshAuthError.code = "fresh_auth_required";
+    const first = jest
+      .fn<Promise<void>, []>()
+      .mockRejectedValueOnce(freshAuthError)
+      .mockResolvedValue(undefined);
+    const second = jest
+      .fn<Promise<void>, []>()
+      .mockRejectedValueOnce(freshAuthError)
+      .mockResolvedValue(undefined);
+
+    render(<ConcurrentFreshAuthActionHarness actions={[first, second]} />);
+    fireEvent.click(screen.getByText("Run concurrent actions"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText("Enter your current password"),
+      ).toBeTruthy();
+    });
+    enterCurrentPassword();
+    await waitFor(() => {
+      expect(
+        (screen.getByRole("button", { name: "Verify" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("All actions completed")).toBeTruthy();
+    });
+    expect(first).toHaveBeenCalledTimes(2);
+    expect(second).toHaveBeenCalledTimes(2);
   });
 
   it("resolves false when fresh auth is canceled", async () => {

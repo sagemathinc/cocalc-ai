@@ -911,6 +911,12 @@ export type FilesystemClient = Omit<
     listing: (path: string) => Promise<Listing>;
     stat: (path: string) => Promise<Stats>;
     lstat: (path: string) => Promise<Stats>;
+    writeFileIfUnchanged: (
+      path: string,
+      content: string,
+      baseContents: string,
+      saveLast?: boolean,
+    ) => Promise<void>;
   };
 
 const PATCH_FALLBACK_CODES = new Set([
@@ -972,6 +978,25 @@ async function writeFileDeltaImpl(
     }
     await writeFile(path, content, saveLast);
   }
+}
+
+export async function writeFileIfUnchangedImpl(
+  writeFile: (
+    path: string,
+    data: string | Buffer | PatchWriteRequest,
+    saveLast?: boolean,
+  ) => Promise<void>,
+  path: string,
+  content: string,
+  baseContents: string,
+  saveLast?: boolean,
+): Promise<void> {
+  if (baseContents === content) return;
+  const patch = make_patch(baseContents, content);
+  const sha = await sha256Hex(baseContents);
+  // Deliberately do not fall back to a full write. A mismatch means another
+  // writer changed the file and the caller must surface a conflict.
+  await writeFile(path, { patch, sha256: sha }, saveLast);
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -1217,6 +1242,20 @@ export function fsClient({
     options?: WriteFileDeltaOptions,
   ) => {
     await writeFileDeltaImpl(call.writeFile, path, content, options);
+  };
+  call.writeFileIfUnchanged = async (
+    path: string,
+    content: string,
+    baseContents: string,
+    saveLast?: boolean,
+  ) => {
+    await writeFileIfUnchangedImpl(
+      call.writeFile,
+      path,
+      content,
+      baseContents,
+      saveLast,
+    );
   };
 
   return call;

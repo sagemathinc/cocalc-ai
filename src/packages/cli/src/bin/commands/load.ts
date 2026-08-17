@@ -11,6 +11,7 @@ import { inboxPrefix } from "@cocalc/conat/names";
 import { dstream, type DStream } from "@cocalc/conat/sync/dstream";
 
 import { durationToMs } from "../../core/utils";
+import { resolveAgentTokenFromEnv } from "../../core/agent-token";
 
 type LoadScenarioResult = Record<string, unknown> | null | undefined;
 type SeedScenarioResult = Record<string, unknown>;
@@ -1302,11 +1303,7 @@ export function registerLoadCommand(
           const bearer =
             `${
               opts.bearer ??
-              (useCookieAuth
-                ? ""
-                : (process.env.COCALC_BEARER_TOKEN ??
-                  process.env.COCALC_AGENT_TOKEN ??
-                  ""))
+              (useCookieAuth ? "" : (resolveAgentTokenFromEnv() ?? ""))
             }`.trim() || undefined;
           const projectId =
             `${opts.projectId ?? (bearer && !useCookieAuth ? process.env.COCALC_PROJECT_ID : "") ?? ""}`.trim() ||

@@ -1,0 +1,66 @@
+{
+  "name": "@cocalc/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "start": "expo start --dev-client",
+    "start:clear": "expo start --dev-client --clear",
+    "ios": "expo run:ios",
+    "ios:sim": "COCALC_MOBILE_DEV_SERVER_URL=http://localhost:8081 expo run:ios",
+    "native:prebuild": "expo prebuild",
+    "export:ios": "expo export --platform ios --output-dir dist/expo",
+    "test": "tsx --test 'src/**/*.test.ts'",
+    "build": "echo 0",
+    "typecheck": "tsc --noEmit",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/node,@types/react,buffer,expo-dev-client,react-native-worklets",
+    "doctor": "pnpm dlx expo-doctor@latest"
+  },
+  "expo": {
+    "install": {
+      "exclude": [
+        "expo",
+        "expo-constants",
+        "expo-dev-client",
+        "expo-linking",
+        "expo-router"
+      ]
+    }
+  },
+  "dependencies": {
+    "@cocalc/chat-client": "workspace:*",
+    "@cocalc/conat": "workspace:*",
+    "@cocalc/util": "workspace:*",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/netinfo": "12.0.1",
+    "buffer": "^6.0.3",
+    "expo": "57.0.12",
+    "expo-constants": "57.0.10",
+    "expo-clipboard": "57.0.1",
+    "expo-crypto": "57.0.1",
+    "expo-dev-client": "57.0.11",
+    "expo-linking": "57.0.5",
+    "expo-router": "57.0.12",
+    "expo-secure-store": "57.0.1",
+    "expo-status-bar": "57.0.1",
+    "expo-web-browser": "57.0.2",
+    "fast-text-encoding": "1.0.6",
+    "path-browserify": "^1.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-get-random-values": "1.11.0",
+    "react-native-reanimated": "4.5.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "react-native-worklets": "0.10.1",
+    "setimmediate": "1.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.10",
+    "@types/react": "^19.2.7",
+    "tsx": "4.23.12",
+    "typescript": "^6.0.3"
+  }
+}

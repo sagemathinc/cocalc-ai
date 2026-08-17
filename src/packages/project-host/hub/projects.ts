@@ -56,6 +56,7 @@ import {
 import getLogger from "@cocalc/backend/logger";
 import {
   getMasterConatClient,
+  queueProjectProvisioned,
   reportProjectStateToMaster,
 } from "../master-status";
 import callHub from "@cocalc/conat/hub/call-hub";
@@ -963,7 +964,7 @@ async function getRunnerConfig(
     | "secrets_generation"
   >,
   opts?: {
-    restore?: "none" | "auto" | "required";
+    restore?: "none" | "auto" | "recover" | "required";
     restore_backup_id?: string;
     lro_op_id?: string;
     rotate_ports?: boolean;
@@ -1102,7 +1103,9 @@ async function getOrEnsureProjectHomeVolume(project_id: string) {
     logger.info("creating missing project volume during start", {
       project_id,
     });
-    return await ensureVolume(project_id);
+    return await ensureVolume(project_id, undefined, {
+      reportProvisioned: false,
+    });
   }
 }
 
@@ -1944,7 +1947,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     run_quota?: any;
     run_quota_revision?: number;
     image?: string;
-    restore?: "none" | "auto" | "required";
+    restore?: "none" | "auto" | "recover" | "required";
     restore_backup_id?: string;
     apply_pending_copies?: boolean;
     lro_op_id?: string;
@@ -2093,7 +2096,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         // yet, while warm starts retain the O(1) SQLite fast path.
         if (!getRecordedProjectVolumeIdentity(project_id, "home")) {
           await measureQuotaDetail("ensure_home_volume", async () => {
-            await ensureVolume(project_id);
+            await ensureVolume(project_id, undefined, {
+              reportProvisioned: false,
+            });
           });
         }
         let scratchPrepared = scratchVolumeQuotaIsPrepared(project_id);
@@ -2296,6 +2301,20 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         });
       });
       const status = started.status;
+      if (status?.state === "running") {
+        // A volume is only authoritative after the restore/start lifecycle
+        // succeeds. Quota checks and file browsing may create an incidental
+        // local volume before this point and must not suppress recovery.
+        if (restore === "recover" || restore_backup_id != null) {
+          // A reprovisioned host can retain a stale local provisioning ledger
+          // even when the owning bay correctly requires recovery or an
+          // explicit restore. Force the successful restore result back to the
+          // bay instead of deduplicating it against that stale acknowledgement.
+          queueProjectProvisioned(project_id, true, { forceReport: true });
+        } else {
+          queueProjectProvisioned(project_id, true);
+        }
+      }
       if (
         status?.state === "running" &&
         startMetadata.secrets_generation != null

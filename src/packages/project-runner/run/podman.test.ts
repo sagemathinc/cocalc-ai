@@ -1349,4 +1349,49 @@ describe("project-runner podman orphan fallback", () => {
     );
     expect(status).toMatchObject({ state: "running" });
   });
+
+  it("uses recovery restore mode for an unprovisioned project", async () => {
+    mockProjectStartPodman(project1);
+    const beginRestoreStaging = jest.fn(async () => ({
+      project_id: project1,
+      home: `/tmp/project-${project1}`,
+      restore: "recover" as const,
+      homeExists: true,
+      stagingRoot: `/tmp/project-${project1}/.restore-staging`,
+      stagingPath: `/tmp/project-${project1}/.restore-staging/project-${project1}`,
+      markerPath: `/tmp/project-${project1}/.restore-staging/project-${project1}.json`,
+    }));
+    const restoreBackup = jest.fn(async () => undefined);
+    mockFileServerClient.mockReturnValue({
+      beginRestoreStaging,
+      getBackups: jest.fn(async () => [
+        {
+          id: "backup-latest",
+          time: new Date("2026-08-16T00:00:00.000Z"),
+          summary: {},
+        },
+      ]),
+      ensureRestoreStaging: jest.fn(async () => undefined),
+      restoreBackup,
+      finalizeRestoreStaging: jest.fn(async () => undefined),
+      releaseRestoreStaging: jest.fn(async () => undefined),
+    });
+
+    const status = await start({
+      project_id: project1,
+      localPath: async () => ({ home: `/tmp/project-${project1}` }),
+      config: {
+        image: "docker.io/library/ubuntu:latest",
+        restore: "recover",
+      },
+    });
+
+    expect(beginRestoreStaging).toHaveBeenCalledWith(
+      expect.objectContaining({ restore: "recover" }),
+    );
+    expect(restoreBackup).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "backup-latest" }),
+    );
+    expect(status).toMatchObject({ state: "running" });
+  });
 });

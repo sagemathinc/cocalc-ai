@@ -1,7 +1,22 @@
-import { mergeTerminalEnv0, terminalClient, terminalServer } from "./index";
+import {
+  boundedTerminalHistory,
+  mergeTerminalEnv0,
+  terminalClient,
+  terminalServer,
+} from "./index";
 import { EventEmitter } from "events";
 
 describe("mergeTerminalEnv0", () => {
+  it("bounds retained history for lightweight reconnects", () => {
+    expect(boundedTerminalHistory("abcdef", 3)).toEqual({
+      history: "def",
+      omitted: true,
+    });
+    expect(boundedTerminalHistory("abc", 3)).toEqual({
+      history: "abc",
+      omitted: false,
+    });
+  });
   it("does not leak ambient COCALC_* vars into generic terminals", () => {
     const env = mergeTerminalEnv0({
       env0: {

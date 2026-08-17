@@ -21,6 +21,7 @@ import {
   revokeMembershipPackageSeat,
   updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
+import { recordMembershipAllocationRefund } from "@cocalc/server/membership/allocation-analytics";
 
 const logger = getLogger("purchase:create-refund");
 
@@ -345,6 +346,11 @@ async function refundMembership({
       purchase,
       refundPurchaseId,
     });
+    await recordMembershipAllocationRefund({
+      original_purchase_id: purchase.id,
+      refund_purchase_id: refundPurchaseId,
+      client,
+    });
     await client.query(
       `UPDATE subscriptions
           SET current_period_end=LEAST(current_period_end, NOW()),
@@ -536,6 +542,11 @@ async function refundMembershipPackage({
       client,
     });
     await markPurchaseRefunded({ client, purchase, refundPurchaseId });
+    await recordMembershipAllocationRefund({
+      original_purchase_id: purchase.id,
+      refund_purchase_id: refundPurchaseId,
+      client,
+    });
     await client.query("COMMIT");
     await refreshAccountBalanceAndPublishBestEffort({
       account_id: purchase.account_id,

@@ -332,5 +332,8 @@ export function googleProfileFromClaims(
       familyName: claims.family_name ?? "",
     };
   }
+  if (claims.picture) {
+    profile.photos = [{ value: claims.picture }];
+  }
   return profile;
 }

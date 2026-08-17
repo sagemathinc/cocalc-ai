@@ -125,7 +125,9 @@ describe("buildCodexRuntimeEnv", () => {
           COCALC_ACCOUNT_ID: "00000000-1000-4000-8000-000000000999",
           COCALC_PROJECT_ID: "00000000-1000-4000-8000-000000000999",
           COCALC_BEARER_TOKEN: "stale-token",
+          COCALC_BEARER_TOKEN_FILE: "/tmp/stale-bearer-token",
           COCALC_AGENT_TOKEN: "stale-token",
+          COCALC_AGENT_TOKEN_FILE: "/tmp/stale-agent-token",
           COCALC_API_URL: "https://wrong.example",
           FOO: "bar",
         },
@@ -148,6 +150,8 @@ describe("buildCodexRuntimeEnv", () => {
       COCALC_AGENT_TOKEN: "issued-agent-token",
       FOO: "bar",
     });
+    expect(env.COCALC_BEARER_TOKEN_FILE).toBeUndefined();
+    expect(env.COCALC_AGENT_TOKEN_FILE).toBeUndefined();
   });
 
   it("can issue a bearer using account id from runtime env", async () => {

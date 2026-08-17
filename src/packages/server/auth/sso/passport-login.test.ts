@@ -14,6 +14,7 @@ const isAccountBannedCachedMock = jest.fn();
 const redeemRegistrationTokenMock = jest.fn();
 const restoreRedeemedRegistrationTokenMock = jest.fn();
 const setEmailAddressVerifiedMock = jest.fn();
+const setAccountProfileImageIfNotSetMock = jest.fn();
 const assertSignupEmailDomainAllowedMock = jest.fn();
 const validateRegistrationTokenMock = jest.fn();
 const getEmailAddressMock = jest.fn();
@@ -47,6 +48,11 @@ jest.mock("../../accounts/get-email-address", () => ({
 jest.mock("@cocalc/database/postgres/account/queries", () => ({
   set_email_address_verified: (...args: any[]) =>
     setEmailAddressVerifiedMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/initialize-profile-image", () => ({
+  initializeAccountProfileImage: (...args: any[]) =>
+    setAccountProfileImageIfNotSetMock(...args),
 }));
 
 jest.mock("@cocalc/database/settings/sso-policies", () => ({
@@ -111,8 +117,51 @@ describe("PassportLogin SSO account creation", () => {
       .mockReset()
       .mockResolvedValue(undefined);
     setEmailAddressVerifiedMock.mockReset().mockResolvedValue(undefined);
+    setAccountProfileImageIfNotSetMock.mockReset().mockResolvedValue(undefined);
     validateRegistrationTokenMock.mockReset().mockResolvedValue(undefined);
     setSignInCookiesMock.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("extracts pictures from standard and common SSO profile fields", async () => {
+    const { imageFromSsoProfile } = await import("./passport-login");
+
+    expect(
+      imageFromSsoProfile({
+        photos: [{ value: "https://images.example.com/standard.jpg" }],
+      }),
+    ).toBe("https://images.example.com/standard.jpg");
+    expect(
+      imageFromSsoProfile({
+        _json: { picture: "https://images.example.com/provider.jpg" },
+      }),
+    ).toBe("https://images.example.com/provider.jpg");
+    expect(
+      imageFromSsoProfile({
+        picture: "http://images.example.com/insecure.jpg",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("initializes an unset avatar from an SSO profile", async () => {
+    const { PassportLogin } = await import("./passport-login");
+    const database = {};
+    const profile = {
+      photos: [{ value: "https://images.example.com/ada.jpg" }],
+    };
+    const login = new PassportLogin({
+      database,
+      profile,
+    } as any);
+
+    await (login as any).maybeInitializeAvatar(
+      { strategyName: "oidc", profile },
+      { account_id: "11111111-1111-4111-8111-111111111111" },
+    );
+
+    expect(setAccountProfileImageIfNotSetMock).toHaveBeenCalledWith({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      image: "https://images.example.com/ada.jpg",
+    });
   });
 
   it("creates new SSO accounts through the cluster account directory path", async () => {

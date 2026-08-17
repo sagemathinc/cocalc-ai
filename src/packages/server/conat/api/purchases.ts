@@ -55,6 +55,9 @@ import type {
   MembershipAnalyticsBackfillOverview,
   MembershipAnalyticsBackfillQuery,
   MembershipAnalyticsBackfillResult,
+  MembershipAllocationDailyRow,
+  MembershipAllocationSeries,
+  MembershipAllocationSeriesQuery,
   MembershipAnalyticsEventRow,
   MembershipAnalyticsEventsQuery,
   MembershipAnalyticsEventSummaryRow,
@@ -69,6 +72,7 @@ import {
 } from "@cocalc/server/membership/resolve";
 import {
   listConfiguredBays,
+  listConfiguredBaysAuthoritative,
   resolveAccountHomeBay,
 } from "@cocalc/server/bay-directory";
 import { getClusterAccountByIdDirect } from "@cocalc/server/accounts/cluster-directory";
@@ -152,6 +156,10 @@ import {
   getMembershipAnalyticsEventsLocal,
   getMembershipAnalyticsOverviewLocal,
 } from "@cocalc/server/membership/analytics";
+import {
+  getMembershipAllocationSeriesLocal,
+  membershipAllocationSeriesRange,
+} from "@cocalc/server/membership/allocation-analytics-series";
 import type {
   MembershipPackageDetails,
   SiteLicenseAffiliationReverificationSeat,
@@ -517,6 +525,46 @@ function aggregateMembershipAnalyticsOverviews(
   };
 }
 
+function allocationRowKey(row: MembershipAllocationDailyRow): string {
+  return [
+    dateKey(row.day),
+    row.channel,
+    row.membership_class,
+    row.billing_interval,
+    row.lifecycle,
+    row.previous_membership_class ?? "",
+    row.previous_billing_interval ?? "",
+    row.tier_change,
+  ].join("\0");
+}
+
+function aggregateMembershipAllocationRows(
+  reports: Array<Pick<MembershipAllocationSeries, "rows">>,
+): MembershipAllocationDailyRow[] {
+  const rowsByKey = new Map<string, MembershipAllocationDailyRow>();
+  for (const report of reports) {
+    for (const row of report.rows) {
+      const key = allocationRowKey(row);
+      const aggregate = rowsByKey.get(key) ?? {
+        ...row,
+        day: dateKey(row.day),
+        active_memberships: 0,
+        purchased_capacity: 0,
+        revenue_cents: 0,
+        fact_count: 0,
+      };
+      aggregate.active_memberships += numberValue(row.active_memberships);
+      aggregate.purchased_capacity += numberValue(row.purchased_capacity);
+      aggregate.revenue_cents += numberValue(row.revenue_cents);
+      aggregate.fact_count += numberValue(row.fact_count);
+      rowsByKey.set(key, aggregate);
+    }
+  }
+  return [...rowsByKey.values()].sort((a, b) =>
+    allocationRowKey(a).localeCompare(allocationRowKey(b)),
+  );
+}
+
 async function getMembershipTierUsageReportForBay({
   account_id,
   bay_id,
@@ -551,6 +599,24 @@ async function getMembershipAnalyticsOverviewForBay({
     : await getInterBayBridge()
         .bayOps(bay_id, { timeout_ms: 15_000 })
         .getMembershipAnalyticsOverview({ ...query, account_id });
+}
+
+async function getMembershipAllocationSeriesForBay({
+  account_id,
+  bay_id,
+  currentBayId,
+  query,
+}: {
+  account_id?: string;
+  bay_id: string;
+  currentBayId: string;
+  query: MembershipAllocationSeriesQuery;
+}): Promise<Pick<MembershipAllocationSeries, "start" | "end" | "rows">> {
+  return bay_id === currentBayId
+    ? await getMembershipAllocationSeriesLocal({ query })
+    : await getInterBayBridge()
+        .bayOps(bay_id, { timeout_ms: 15_000 })
+        .getMembershipAllocationSeries({ ...query, account_id });
 }
 
 async function getMembershipAnalyticsEventsForBay({
@@ -878,6 +944,20 @@ async function getConfiguredBayIdsForMembershipTierOverview(): Promise<
   ].sort();
 }
 
+async function getConfiguredBayIdsForMembershipAllocationSeries(): Promise<
+  string[]
+> {
+  const currentBayId = getConfiguredBayId();
+  return [
+    ...new Set(
+      (await listConfiguredBaysAuthoritative())
+        .map((bay) => `${bay.bay_id ?? ""}`.trim())
+        .filter(Boolean)
+        .concat(currentBayId),
+    ),
+  ].sort();
+}
+
 export async function getMembershipTierAdminOverview({
   account_id,
 }: {
@@ -958,6 +1038,50 @@ export async function getMembershipAnalyticsOverview(
     end: end.toISOString(),
     bays,
     ...aggregate,
+  };
+}
+
+export async function getMembershipAllocationSeries(
+  query: MembershipAllocationSeriesQuery = {},
+): Promise<MembershipAllocationSeries> {
+  await requireAdmin(query.account_id);
+  assertMembershipTierAdminBay();
+  const currentBayId = getConfiguredBayId();
+  const seedBayId = getSeedBayId();
+  const { start, end } = membershipAllocationSeriesRange(query);
+  const seriesQuery: MembershipAllocationSeriesQuery = {
+    ...query,
+    start,
+    end,
+  };
+  const bayIds = await getConfiguredBayIdsForMembershipAllocationSeries();
+  const settled = await Promise.allSettled(
+    bayIds.map((bay_id) =>
+      getMembershipAllocationSeriesForBay({
+        account_id: query.account_id,
+        bay_id,
+        currentBayId,
+        query: seriesQuery,
+      }),
+    ),
+  );
+  const reports: Array<Pick<MembershipAllocationSeries, "rows">> = [];
+  const bays: MembershipAnalyticsOverviewBay[] = bayIds.map((bay_id, index) => {
+    const result = settled[index];
+    if (result.status === "fulfilled") {
+      reports.push(result.value);
+      return { bay_id, ok: true };
+    }
+    return { bay_id, ok: false, error: `${result.reason}` };
+  });
+  return {
+    checked_at: new Date().toISOString(),
+    current_bay_id: currentBayId,
+    seed_bay_id: seedBayId,
+    start: start.toISOString(),
+    end: end.toISOString(),
+    bays,
+    rows: aggregateMembershipAllocationRows(reports),
   };
 }
 

@@ -91,6 +91,32 @@ jest.mock("@cocalc/chat/server", () => ({
 }));
 
 describe("detached worker queue liveness", () => {
+  it("lets a draining worker claim only work pinned to itself", () => {
+    const draining = {
+      worker_id: "worker-old",
+      state: "draining",
+    } as any;
+
+    expect(
+      acpTestInternals.detachedWorkerCanClaimQueuedJob(
+        { worker_id: "worker-old" } as any,
+        draining,
+      ),
+    ).toBe(true);
+    expect(
+      acpTestInternals.detachedWorkerCanClaimQueuedJob(
+        { worker_id: null } as any,
+        draining,
+      ),
+    ).toBe(false);
+    expect(
+      acpTestInternals.detachedWorkerCanClaimQueuedJob(
+        { worker_id: "worker-new" } as any,
+        draining,
+      ),
+    ).toBe(false);
+  });
+
   it("records a successful poll even when the queued job cannot be claimed", () => {
     const context = { last_queue_progress_at: 1 } as any;
 

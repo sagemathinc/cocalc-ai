@@ -12,6 +12,7 @@ import {
   buildCookieHeader,
   resolveProjectScopedAuth,
 } from "../core/auth-cookies";
+import { resolveAgentTokenFromEnv } from "../core/agent-token";
 import { normalizeUrl } from "../core/utils";
 
 type LiteConnectionInfo = {
@@ -120,8 +121,7 @@ function resolveCurrentProjectBearer(
   apiBaseUrl: string,
   explicit?: string,
 ): string {
-  let bearer =
-    `${explicit ?? process.env.COCALC_BEARER_TOKEN ?? process.env.COCALC_AGENT_TOKEN ?? ""}`.trim();
+  let bearer = `${explicit ?? resolveAgentTokenFromEnv() ?? ""}`.trim();
   if (bearer) return bearer;
 
   let hostname = "";

@@ -39,6 +39,7 @@ and you'll always get back undefined.
 */
 
 import { is_valid_uuid_string } from "@cocalc/util/misc";
+import { project_redux_name } from "@cocalc/util/redux/name";
 import { redux, ProjectActions, ProjectStore } from "../app-framework";
 import { ProjectStoreState } from "../project/redux/store";
 import React, { useEffect, useRef } from "react";
@@ -276,9 +277,9 @@ function getReduxValue(resolved: ResolvedReduxPath) {
       return redux.getStore(name)?.getIn(subpath as any) as any;
     }
     case "project":
-      if ((redux as any).getProjectStore == null) return undefined;
+      if ((redux as any).getStore == null) return undefined;
       return redux
-        .getProjectStore(resolved.projectId)
+        .getStore(project_redux_name(resolved.projectId))
         ?.getIn(resolved.path as [string, string, string, string, string]);
     case "editor":
       if ((redux as any).getEditorStore == null) return undefined;
@@ -422,23 +423,55 @@ class SharedReduxSubscription {
 
   private startProject(): void {
     if (redux == null) return;
-    if ((redux as any).getProjectStore == null) return;
+    if ((redux as any).getStore == null) return;
     if (this.resolved.kind !== "project") return;
     const resolved = this.resolved;
-    const store = redux.getProjectStore(resolved.projectId);
-    if (store == null) return;
-    const handleChange = (obj) => {
-      if (obj == null) return;
-      this.emit(
-        obj.getIn(resolved.path as [string, string, string, string, string]),
-      );
+    let store = redux.getStore(project_redux_name(resolved.projectId));
+    let handleChange: ((obj) => void) | undefined;
+
+    const attachStore = (nextStore) => {
+      store = nextStore;
+      handleChange = (obj) => {
+        if (obj == null || !this.active) return;
+        this.emit(
+          obj.getIn(resolved.path as [string, string, string, string, string]),
+        );
+      };
+      this.waitingForStore = false;
+      this.storeAttached = true;
+      store.on("change", handleChange);
+      handleChange(store);
     };
-    store.on("change", handleChange);
-    this.storeAttached = true;
+
+    if (store != null) {
+      attachStore(store);
+      this.unsubscribeFromStore = () => {
+        if (handleChange != null) {
+          store?.removeListener("change", handleChange);
+        }
+      };
+      return;
+    }
+
+    this.waitingForStore = true;
+    if (redux.reduxStore?.subscribe == null) return;
+    const unsubscribe = redux.reduxStore.subscribe(() => {
+      if (!this.active) {
+        unsubscribe();
+        return;
+      }
+      const nextStore = redux.getStore(project_redux_name(resolved.projectId));
+      if (nextStore != null) {
+        unsubscribe();
+        attachStore(nextStore);
+      }
+    });
     this.unsubscribeFromStore = () => {
-      store.removeListener("change", handleChange);
+      unsubscribe();
+      if (handleChange != null) {
+        store?.removeListener("change", handleChange);
+      }
     };
-    handleChange(store);
   }
 
   private startEditor(): void {
@@ -535,7 +568,7 @@ function storeNameFromResolvedReduxPath(
     case "named":
       return resolved.path[0];
     case "project":
-      return `project-${resolved.projectId}`;
+      return project_redux_name(resolved.projectId);
     case "editor":
       return `editor-${resolved.projectId}-${resolved.filename}`;
   }

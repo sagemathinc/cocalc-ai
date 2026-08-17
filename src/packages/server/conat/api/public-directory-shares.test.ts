@@ -14,6 +14,7 @@ const mockPublicDirectoryShares = {
   listProject: jest.fn(),
   listDirectory: jest.fn(),
   resolve: jest.fn(),
+  resolveLegacyPublicDirectorySharePath: jest.fn(),
   update: jest.fn(),
   upsert: jest.fn(),
 };
@@ -77,6 +78,8 @@ jest.mock("@cocalc/server/public-directory-shares", () => ({
   listDirectory: (...args: any[]) =>
     mockPublicDirectoryShares.listDirectory(...args),
   resolve: (...args: any[]) => mockPublicDirectoryShares.resolve(...args),
+  resolveLegacyPublicDirectorySharePath: (...args: any[]) =>
+    mockPublicDirectoryShares.resolveLegacyPublicDirectorySharePath(...args),
   update: (...args: any[]) => mockPublicDirectoryShares.update(...args),
   upsert: (...args: any[]) => mockPublicDirectoryShares.upsert(...args),
 }));
@@ -95,6 +98,7 @@ function remoteClient() {
     publicDirectoryShareListProject: jest.fn(),
     publicDirectoryShareListDirectory: jest.fn(),
     publicDirectoryShareResolve: jest.fn(),
+    publicDirectoryShareResolveLegacyPath: jest.fn(),
     publicDirectoryShareUpdate: jest.fn(),
     publicDirectoryShareUpsert: jest.fn(),
   };
@@ -142,6 +146,63 @@ describe("public directory share conat API routing", () => {
     ).toHaveBeenCalledWith({
       account_id: "account-id",
       slug: "x3",
+    });
+  });
+
+  it("resolves a legacy URL path from another registered bay", async () => {
+    mockPublicDirectoryShares.resolveLegacyPublicDirectorySharePath.mockResolvedValue(
+      null,
+    );
+    mockRemoteClients[
+      "bay-1"
+    ].publicDirectoryShareResolveLegacyPath.mockResolvedValue({
+      path: "georeg/matrix-certificates/notebook",
+    });
+
+    await expect(
+      publicDirectoryShares.resolveLegacyPublicDirectorySharePath({
+        path: "georeg/matrix-certificates/notebook",
+      }),
+    ).resolves.toEqual({
+      path: "georeg/matrix-certificates/notebook",
+    });
+    expect(
+      mockRemoteClients["bay-1"].publicDirectoryShareResolveLegacyPath,
+    ).toHaveBeenCalledWith({
+      path: "georeg/matrix-certificates/notebook",
+    });
+    expect(mockCreateInterBayAccountLocalClient).toHaveBeenCalledWith(
+      expect.objectContaining({ dest_bay: "bay-1", timeout: 2_000 }),
+    );
+  });
+
+  it("continues legacy path lookup when one attached bay is unavailable", async () => {
+    mockRemoteClients["bay-2"] = remoteClient();
+    mockListClusterBayRegistry.mockResolvedValue([
+      { bay_id: "bay-0" },
+      { bay_id: "bay-1" },
+      { bay_id: "bay-2" },
+    ]);
+    mockPublicDirectoryShares.resolveLegacyPublicDirectorySharePath.mockResolvedValue(
+      null,
+    );
+    mockRemoteClients[
+      "bay-1"
+    ].publicDirectoryShareResolveLegacyPath.mockRejectedValue(
+      Error("bay unavailable"),
+    );
+    mockRemoteClients[
+      "bay-2"
+    ].publicDirectoryShareResolveLegacyPath.mockResolvedValue({
+      path: "georeg/matrix-certificates/notebook",
+    });
+
+    await expect(
+      publicDirectoryShares.resolveLegacyPublicDirectorySharePath({
+        path: "georeg/matrix-certificates/notebook",
+      }),
+    ).resolves.toEqual({
+      path: "georeg/matrix-certificates/notebook",
     });
   });
 

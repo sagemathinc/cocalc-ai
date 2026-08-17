@@ -1,4 +1,4 @@
-import { Map as ImmutableMap } from "immutable";
+import { List as ImmutableList, Map as ImmutableMap } from "immutable";
 
 import { ProjectsActions } from "./actions";
 import { store } from "./store";
@@ -71,6 +71,7 @@ describe("ProjectsActions project metadata updates", () => {
       ),
       _set_state: jest.fn(),
       removeActions: jest.fn(),
+      hasStore: jest.fn(() => true),
       getProjectActions: jest.fn(() => ({ async_log, log })),
     } as any;
     const actions = new ProjectsActions("projects", redux) as any;
@@ -128,6 +129,29 @@ describe("ProjectsActions project metadata updates", () => {
   afterEach(() => {
     jest.clearAllMocks();
     window.sessionStorage.clear();
+  });
+
+  it("autosaves only projects whose runtime is already initialized", () => {
+    const { actions, redux } = makeActions();
+    const save_all_files = jest.fn();
+    redux.hasStore.mockImplementation((storeName) =>
+      storeName.includes("initialized-project"),
+    );
+    redux.getProjectActions.mockReturnValue({ save_all_files });
+    mockedStore.get.mockImplementation((key) =>
+      key === "open_projects"
+        ? ImmutableList(["persisted-project", "initialized-project"])
+        : baseProjectMap,
+    );
+
+    actions.save_all_files();
+
+    expect(redux.hasStore).toHaveBeenCalledTimes(2);
+    expect(redux.getProjectActions).toHaveBeenCalledWith("initialized-project");
+    expect(redux.getProjectActions).not.toHaveBeenCalledWith(
+      "persisted-project",
+    );
+    expect(save_all_files).toHaveBeenCalledTimes(1);
   });
 
   it("contains project logging failures after a project disappears", async () => {

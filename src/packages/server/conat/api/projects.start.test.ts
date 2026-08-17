@@ -207,7 +207,9 @@ describe("projects.start", () => {
     }));
     getNameMock = jest.fn(async () => "Runtime Sponsor");
     poolQueryMock = jest.fn(async () => ({ rows: [{ "?column?": 1 }] }));
-    interBayCheckStartAdmissionMock = jest.fn(async () => undefined);
+    interBayCheckStartAdmissionMock = jest.fn(async () => ({
+      storage_recovery_required: false,
+    }));
     interBayStartMock = jest.fn(async () => undefined);
     projectControlBridgeMock = jest.fn(() => ({
       checkStartAdmission: (...args: any[]) =>
@@ -564,6 +566,34 @@ describe("projects.start", () => {
       source_bay_id: "bay-0",
       epoch: 0,
     });
+  });
+
+  it("uses the long control timeout for automatic storage recovery", async () => {
+    interBayCheckStartAdmissionMock = jest.fn(async () => ({
+      storage_recovery_required: true,
+    }));
+    const { start } = await import("./projects");
+
+    await start({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      wait: false,
+    });
+
+    await flushBackgroundStartTask();
+
+    expect(projectControlBridgeMock).toHaveBeenNthCalledWith(1, "bay-0", {
+      timeout_ms: ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS,
+    });
+    expect(projectControlBridgeMock).toHaveBeenNthCalledWith(2, "bay-0", {
+      timeout_ms: RESTORE_PROJECT_START_CONTROL_TIMEOUT_MS,
+    });
+    expect(interBayStartMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "proj-1",
+        lro_op_id: "op-1",
+      }),
+    );
   });
 
   it("forwards an internally authorized project move id", async () => {

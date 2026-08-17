@@ -14,12 +14,20 @@ import {
   removeVmSshConfigBlock,
   resolveVmRsyncEndpoint,
   vmListSummary,
+  vmLifecycleSummary,
   vmRsyncArgs,
   vmWaitProgress,
   volumeListSummary,
 } from "./vm";
 
-function harness(opts: { projectId?: string; projectAuth?: boolean } = {}) {
+function harness(
+  opts: {
+    projectId?: string;
+    projectAuth?: boolean;
+    agentAuth?: boolean;
+    callbackAttempts?: number;
+  } = {},
+) {
   const sshCalls: string[][] = [];
   const rsyncCalls: string[][] = [];
   const callbackResults: unknown[] = [];
@@ -33,97 +41,125 @@ function harness(opts: { projectId?: string; projectAuth?: boolean } = {}) {
   const projectListCalls: any[] = [];
   const catalogCalls: any[] = [];
   const rdpCalls: any[] = [];
+  const stateCalls: Array<{ action: "start" | "stop"; opts: any }> = [];
   const program = new Command();
   program.exitOverride();
   program.configureOutput({ writeOut: () => {}, writeErr: () => {} });
   registerVmCommand(program, {
     withContext: async (_command, _name, callback) => {
-      const result = await callback({
-        globals: {},
-        remote: {
-          user: opts.projectAuth ? { project_id: opts.projectId } : {},
-        },
-        hub: {
-          compute: {
-            getCatalog: async (callOpts: any) => {
-              catalogCalls.push(callOpts);
-              return {
-                provider_catalogs: { gcp: { entries: [] } },
-                defaults: { provider: "gcp" },
-                limits: { max_active_per_project: 3 },
-                funding_modes: [],
-              };
-            },
-            listVms: async (callOpts: any) => {
-              listCalls.push(callOpts);
-              return [];
-            },
-            listProjectVms: async (callOpts: any) => {
-              projectListCalls.push(callOpts);
-              return [];
-            },
-            getVm: async () => ({
-              id: "vm-id",
-              name: "build-vm",
-              state: "ready",
-              public_ip: "203.0.113.10",
-              ssh_user: "user",
-              operating_system: "windows",
-            }),
-            authorizeSshKey: async (opts: any) => {
-              sshAuthorizationCalls.push(opts);
-              return {
+      let result: unknown;
+      for (let attempt = 0; attempt < (opts.callbackAttempts ?? 1); attempt++) {
+        result = await callback({
+          globals: {},
+          remote: {
+            user: opts.agentAuth
+              ? { auth_actor: "agent", auth_project_id: opts.projectId }
+              : opts.projectAuth
+                ? { project_id: opts.projectId }
+                : {},
+          },
+          hub: {
+            compute: {
+              getCatalog: async (callOpts: any) => {
+                catalogCalls.push(callOpts);
+                return {
+                  provider_catalogs: { gcp: { entries: [] } },
+                  defaults: { provider: "gcp" },
+                  limits: { max_active_per_project: 3 },
+                  funding_modes: [],
+                };
+              },
+              listVms: async (callOpts: any) => {
+                listCalls.push(callOpts);
+                return [];
+              },
+              listProjectVms: async (callOpts: any) => {
+                projectListCalls.push(callOpts);
+                return [];
+              },
+              getVm: async () => ({
                 id: "vm-id",
                 name: "build-vm",
                 state: "ready",
                 public_ip: "203.0.113.10",
                 ssh_user: "user",
                 operating_system: "windows",
-              };
-            },
-            authorizeProjectSshKey: async (callOpts: any) => {
-              projectSshAuthorizationCalls.push(callOpts);
-              return {
-                id: "vm-id",
-                name: "build-vm",
-                state: "ready",
-                public_ip: "203.0.113.10",
-                ssh_user: "user",
-                operating_system: "windows",
-              };
-            },
-            createVm: async (opts: any) => {
-              createCalls.push(opts);
-              return { id: "vm-id", name: opts.name, state: "requested" };
-            },
-            setVmTtl: async (opts: any) => {
-              ttlCalls.push(opts);
-              return { id: "vm-id", name: "build-vm", ...opts };
-            },
-            setVmMachineType: async (opts: any) => {
-              machineCalls.push(opts);
-              return {
-                id: "vm-id",
-                name: "build-vm",
-                state: "stopped",
-                machine_type: opts.machine_type,
-              };
-            },
-            prepareWindowsRdp: async (callOpts: any) => {
-              rdpCalls.push(callOpts);
-              return {
-                id: "vm-id",
-                name: "build-vm",
-                hostname: "vm.example.test",
-                ssh_user: "user",
-                windows_user: "user",
-                windows_password: "temporary-password",
-                remote_port: 3389,
-              };
+              }),
+              authorizeSshKey: async (opts: any) => {
+                sshAuthorizationCalls.push(opts);
+                return {
+                  id: "vm-id",
+                  name: "build-vm",
+                  state: "ready",
+                  public_ip: "203.0.113.10",
+                  ssh_user: "user",
+                  operating_system: "windows",
+                };
+              },
+              authorizeProjectSshKey: async (callOpts: any) => {
+                projectSshAuthorizationCalls.push(callOpts);
+                return {
+                  id: "vm-id",
+                  name: "build-vm",
+                  state: "ready",
+                  public_ip: "203.0.113.10",
+                  ssh_user: "user",
+                  operating_system: "windows",
+                };
+              },
+              createVm: async (opts: any) => {
+                createCalls.push(opts);
+                return { id: "vm-id", name: opts.name, state: "requested" };
+              },
+              startVm: async (opts: any) => {
+                stateCalls.push({ action: "start", opts });
+                return {
+                  id: "vm-id",
+                  name: "build-vm",
+                  state: "starting",
+                  desired_state: "running",
+                  metadata: { provider_internal: true },
+                };
+              },
+              stopVm: async (opts: any) => {
+                stateCalls.push({ action: "stop", opts });
+                return {
+                  id: "vm-id",
+                  name: "build-vm",
+                  state: "stopping",
+                  desired_state: "stopped",
+                  metadata: { provider_internal: true },
+                };
+              },
+              setVmTtl: async (opts: any) => {
+                ttlCalls.push(opts);
+                return { id: "vm-id", name: "build-vm", ...opts };
+              },
+              setVmMachineType: async (opts: any) => {
+                machineCalls.push(opts);
+                return {
+                  id: "vm-id",
+                  name: "build-vm",
+                  state: "stopped",
+                  machine_type: opts.machine_type,
+                };
+              },
+              prepareWindowsRdp: async (callOpts: any) => {
+                rdpCalls.push(callOpts);
+                return {
+                  id: "vm-id",
+                  name: "build-vm",
+                  hostname: "vm.example.test",
+                  ssh_user: "user",
+                  windows_user: "user",
+                  windows_password: "temporary-password",
+                  remote_port: 3389,
+                };
+              },
             },
           },
-        },
-      });
+        });
+      }
       callbackResults.push(result);
       return result;
     },
@@ -151,6 +187,7 @@ function harness(opts: { projectId?: string; projectAuth?: boolean } = {}) {
     projectListCalls,
     catalogCalls,
     rdpCalls,
+    stateCalls,
   };
 }
 
@@ -187,6 +224,16 @@ describe("vm list scope", () => {
     assert.equal(listCalls.length, 0);
   });
 
+  it("uses the project-scoped listing for agent authentication", async () => {
+    const { program, listCalls, projectListCalls } = harness({
+      projectId: "project-id",
+      agentAuth: true,
+    });
+    await program.parseAsync(["node", "cocalc", "vm", "list"]);
+    assert.equal(projectListCalls.length, 1);
+    assert.equal(listCalls.length, 0);
+  });
+
   it("uses COCALC_PROJECT_ID as the account-authenticated default filter", async () => {
     const { program, listCalls } = harness({ projectId: "project-id" });
     await program.parseAsync(["node", "cocalc", "vm", "list"]);
@@ -197,6 +244,103 @@ describe("vm list scope", () => {
     const { program, listCalls } = harness({ projectId: "project-id" });
     await program.parseAsync(["node", "cocalc", "vm", "list", "--all"]);
     assert.equal(listCalls[0]?.project_id, undefined);
+  });
+});
+
+describe("vm availability", () => {
+  it("allows a project agent to start and stop existing VMs", async () => {
+    const { program, stateCalls } = harness({
+      projectId: "project-id",
+      agentAuth: true,
+    });
+    await program.parseAsync(["node", "cocalc", "vm", "start", "build-vm"]);
+    await program.parseAsync(["node", "cocalc", "vm", "stop", "build-vm"]);
+    assert.deepEqual(
+      stateCalls.map(({ action, opts }) => ({
+        action,
+        id_or_name: opts.id_or_name,
+      })),
+      [
+        { action: "start", id_or_name: "build-vm" },
+        { action: "stop", id_or_name: "build-vm" },
+      ],
+    );
+  });
+
+  it("keeps one mutation identity while waiting for agent approval", async () => {
+    const { program, stateCalls } = harness({
+      projectId: "project-id",
+      agentAuth: true,
+      callbackAttempts: 2,
+    });
+    await program.parseAsync(["node", "cocalc", "vm", "stop", "build-vm"]);
+    assert.equal(stateCalls.length, 2);
+    assert.equal(
+      stateCalls[0].opts.idempotency_key,
+      stateCalls[1].opts.idempotency_key,
+    );
+  });
+
+  it("summarizes lifecycle results without internal provider metadata", () => {
+    assert.deepEqual(
+      vmLifecycleSummary({
+        id: "vm-id",
+        name: "build-vm",
+        state: "ready",
+        desired_state: "running",
+        provider: "gcp",
+        machine_type: "e2-standard-2",
+        operating_system: "linux",
+        effective_pricing_model: "spot",
+        zone: "us-west1-a",
+        public_hostname: "vm.example.test",
+        public_ip: "203.0.113.10",
+        ssh_alias: "build-vm",
+        expires_at: null,
+        metadata: { large: "internal record" },
+      }),
+      {
+        id: "vm-id",
+        name: "build-vm",
+        state: "ready",
+        desired_state: "running",
+        provider: "gcp",
+        machine: "e2-standard-2",
+        os: "Linux",
+        pricing: "Spot",
+        zone: "us-west1-a",
+        hostname: "vm.example.test",
+        ip: "203.0.113.10",
+        ssh_alias: "build-vm",
+        expires: "never",
+      },
+    );
+  });
+
+  it("uses compact lifecycle output unless --long is requested", async () => {
+    const compact = harness();
+    await compact.program.parseAsync([
+      "node",
+      "cocalc",
+      "vm",
+      "start",
+      "build-vm",
+    ]);
+    assert.equal("metadata" in (compact.callbackResults[0] as object), false);
+    assert.match(compact.progressMessages[0], /Requesting start/);
+
+    const full = harness();
+    await full.program.parseAsync([
+      "node",
+      "cocalc",
+      "vm",
+      "start",
+      "build-vm",
+      "--long",
+    ]);
+    assert.deepEqual((full.callbackResults[0] as any).metadata, {
+      provider_internal: true,
+    });
   });
 });
 

@@ -173,12 +173,14 @@ export function hostManagedComponentRolloutDedupeKey({
   hostId,
   components,
   desiredVersion,
+  recordRuntimeDeployments,
   baseUrl,
   reason,
 }: {
   hostId: string;
   components: ManagedComponentKind[];
   desiredVersion?: string;
+  recordRuntimeDeployments?: boolean;
   baseUrl?: string;
   reason?: string;
 }): string {
@@ -186,6 +188,7 @@ export function hostManagedComponentRolloutDedupeKey({
     {
       components: normalizeManagedComponentKindsForDedupe(components),
       desired_version: `${desiredVersion ?? ""}`.trim() || null,
+      record_runtime_deployments: recordRuntimeDeployments !== false,
       base_url: `${baseUrl ?? ""}`.trim() || null,
       reason: `${reason ?? ""}`.trim() || null,
     },

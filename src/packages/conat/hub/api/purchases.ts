@@ -453,6 +453,66 @@ export interface MembershipAnalyticsBackfillOverview extends MembershipAnalytics
   bays: MembershipAnalyticsOverviewBay[];
 }
 
+export type MembershipAllocationChannel =
+  | "personal"
+  | "direct-student"
+  | "course"
+  | "team"
+  | "site";
+
+export type MembershipAllocationBillingInterval =
+  | "trial"
+  | "month"
+  | "year"
+  | "fixed";
+
+export type MembershipAllocationLifecycle =
+  | "trial"
+  | "first_paid"
+  | "renewal"
+  | "plan_change";
+
+export type MembershipAllocationTierChange =
+  | "none"
+  | "upgrade"
+  | "downgrade"
+  | "same";
+
+export interface MembershipAllocationDailyRow {
+  day: Date | string;
+  channel: MembershipAllocationChannel;
+  membership_class: MembershipClass;
+  billing_interval: MembershipAllocationBillingInterval;
+  lifecycle: MembershipAllocationLifecycle;
+  previous_membership_class?: MembershipClass | null;
+  previous_billing_interval?: MembershipAllocationBillingInterval | null;
+  tier_change: MembershipAllocationTierChange;
+  active_memberships: number;
+  purchased_capacity: number;
+  revenue_cents: number;
+  fact_count: number;
+}
+
+export interface MembershipAllocationSeriesQuery {
+  account_id?: string;
+  start?: Date | string;
+  end?: Date | string;
+  channels?: MembershipAllocationChannel[];
+  membership_classes?: MembershipClass[];
+  billing_intervals?: MembershipAllocationBillingInterval[];
+  lifecycles?: MembershipAllocationLifecycle[];
+}
+
+export interface MembershipAllocationSeries {
+  checked_at: string;
+  current_bay_id: string;
+  seed_bay_id: string;
+  start: Date | string;
+  end: Date | string;
+  bays: MembershipAnalyticsOverviewBay[];
+  rows: MembershipAllocationDailyRow[];
+}
+
 export interface MembershipPackageQuote {
   package_id?: string;
   kind: MembershipPackageKind;
@@ -1432,6 +1492,9 @@ export interface Purchases {
   getMembershipAnalyticsOverview: (
     opts?: MembershipAnalyticsOverviewQuery,
   ) => Promise<MembershipAnalyticsOverview>;
+  getMembershipAllocationSeries: (
+    opts?: MembershipAllocationSeriesQuery,
+  ) => Promise<MembershipAllocationSeries>;
   getMembershipAnalyticsEvents: (
     opts?: MembershipAnalyticsEventsQuery,
   ) => Promise<MembershipAnalyticsEventRow[]>;
@@ -1821,6 +1884,7 @@ export const purchases = {
   getMembershipDetails: authFirst,
   getMembershipTierAdminOverview: authFirst,
   getMembershipAnalyticsOverview: authFirst,
+  getMembershipAllocationSeries: authFirst,
   getMembershipAnalyticsEvents: authFirst,
   backfillMembershipAnalyticsPurchases: authFirst,
   createMembershipTier: authFirst,

@@ -597,13 +597,12 @@ export function useFreshAuthAction({
   // converting them into ordinary results, or this wrapper cannot open the
   // verification modal and retry the action.
   const [open, setOpen] = useState(false);
-  const pendingActionRef = useRef<PendingFreshAuthAction | null>(null);
+  const pendingActionsRef = useRef<PendingFreshAuthAction[]>([]);
 
   const cancelFreshAuth = useCallback(() => {
-    const pending = pendingActionRef.current;
-    if (pending != null) {
-      pendingActionRef.current = null;
-      pending.resolve(false);
+    const pending = pendingActionsRef.current.splice(0);
+    for (const item of pending) {
+      item.resolve(false);
     }
     setOpen(false);
   }, []);
@@ -621,7 +620,7 @@ export function useFreshAuthAction({
           throw err;
         }
         return await new Promise<boolean>((resolve, reject) => {
-          pendingActionRef.current = { action, resolve, reject };
+          pendingActionsRef.current.push({ action, resolve, reject });
           setOpen(true);
         });
       }
@@ -630,18 +629,24 @@ export function useFreshAuthAction({
   );
 
   const handleFreshAuthSuccess = useCallback(async () => {
-    const pending = pendingActionRef.current;
-    pendingActionRef.current = null;
-    if (!pending) {
+    const pending = pendingActionsRef.current.splice(0);
+    if (!pending.length) {
       setOpen(false);
       return;
     }
     setOpen(false);
-    try {
-      await pending.action();
-      pending.resolve(true);
-    } catch (err) {
-      pending.reject(err);
+    await Promise.all(
+      pending.map(async (item) => {
+        try {
+          await item.action();
+          item.resolve(true);
+        } catch (err) {
+          item.reject(err);
+        }
+      }),
+    );
+    if (pendingActionsRef.current.length) {
+      setOpen(true);
     }
   }, []);
 

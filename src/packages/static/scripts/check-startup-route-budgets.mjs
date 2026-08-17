@@ -19,10 +19,22 @@ const routes = [
     maxGzipBytes: 1840 * KiB,
   },
   {
-    label: "signed-in project",
+    label: "signed-in project reduced",
+    request: "@cocalc/frontend/project/page/reduced-page",
+    maxRawBytes: 5.3 * MiB,
+    maxGzipBytes: 1450 * KiB,
+  },
+  {
+    label: "signed-in project full",
     request: "@cocalc/frontend/project/page/page",
-    maxRawBytes: 9.2 * MiB,
-    maxGzipBytes: 2600 * KiB,
+    extraGroups: [
+      {
+        moduleSuffix: "frontend/app-framework/project-runtime.ts",
+        request: "../project/redux/store",
+      },
+    ],
+    maxRawBytes: 11.4 * MiB,
+    maxGzipBytes: 3200 * KiB,
   },
 ];
 
@@ -111,11 +123,15 @@ for (const route of routes) {
     "frontend/app/route-components.ts",
     route.request,
   );
+  const extraGroups = (route.extraGroups ?? []).map((group) =>
+    findGroup(group.moduleSuffix, group.request),
+  );
   const chunkKeys = new Set([
     "load",
     "app",
     ...shellGroup.chunks,
     ...routeGroup.chunks,
+    ...extraGroups.flatMap((group) => group.chunks),
   ]);
   const assets = collectAssets(chunkKeys);
   const totals = assets.reduce(

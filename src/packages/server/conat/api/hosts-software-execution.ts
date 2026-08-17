@@ -404,8 +404,26 @@ function managedComponentAlignmentFailures({
       failures.push(`${component}: runtime_state=${status.runtime_state}`);
       continue;
     }
+    const statusDesiredVersion = normalizeObservedVersion(
+      status.desired_version,
+    );
+    const statusRunningVersions = [
+      ...new Set(
+        (status.running_versions ?? [])
+          .map((version) => normalizeObservedVersion(version))
+          .filter((version): version is string => version != null),
+      ),
+    ];
+    // ACP workers drain live turns on the old process while a new active worker
+    // accepts new work. That intentional overlap can outlive the rollout RPC.
+    const drainingAcpReplacementIsReady =
+      component === "acp-worker" &&
+      status.upgrade_policy === "drain_then_replace" &&
+      statusDesiredVersion != null &&
+      statusRunningVersions.includes(statusDesiredVersion);
     if (
       status.version_state !== "aligned" &&
+      !drainingAcpReplacementIsReady &&
       !(stagedAuxiliaryVersion && component !== "acp-worker")
     ) {
       failures.push(
@@ -1576,3 +1594,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   }
   return response;
 }
+
+export const __test__ = {
+  managedComponentAlignmentFailures,
+};

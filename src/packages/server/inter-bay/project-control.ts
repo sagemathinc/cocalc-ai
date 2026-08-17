@@ -21,6 +21,7 @@ import type {
   ProjectControlRehomeRequest,
   ProjectControlRehomeResponse,
   ProjectControlRestartRequest,
+  ProjectControlStartAdmission,
   ProjectControlSetEntitlementOverrideRequest,
   ProjectControlSetUsageAccountRequest,
   ProjectControlSetUsageAccountResponse,
@@ -346,7 +347,7 @@ export async function handleProjectControlStart(
 
 export async function handleProjectControlCheckStartAdmission(
   req: ProjectControlStartRequest,
-): Promise<void> {
+): Promise<ProjectControlStartAdmission> {
   await assertCurrentProjectOwnership({
     project_id: req.project_id,
     epoch: req.epoch,
@@ -357,10 +358,29 @@ export async function handleProjectControlCheckStartAdmission(
   });
   await assertProjectNotHardDeleting({ project_id: req.project_id });
   const sponsor = await loadProjectRuntimeSponsor(req.project_id);
+  const storageRecoveryRequired = req.restore_backup_id
+    ? true
+    : await getPool()
+        .query<{
+          backup_repo_id: string | null;
+          provisioned: boolean | null;
+        }>(
+          `SELECT backup_repo_id, provisioned
+             FROM projects
+            WHERE project_id = $1`,
+          [req.project_id],
+        )
+        .then(({ rows }) => {
+          const row = rows[0];
+          return !!row?.backup_repo_id && row.provisioned !== true;
+        });
+  const admission = {
+    storage_recovery_required: storageRecoveryRequired,
+  };
   const bypassRuntimeSlotAdmission =
     req.managed_egress_override === "admin-host-drain";
   if (bypassRuntimeSlotAdmission) {
-    return;
+    return admission;
   }
   if (req.autostart) {
     assertProjectAutostartEnabled({ sponsor });
@@ -384,6 +404,7 @@ export async function handleProjectControlCheckStartAdmission(
   if (denial) {
     throw new RuntimeSponsorSlotsExhaustedError(denial);
   }
+  return admission;
 }
 
 export async function handleProjectControlStop(

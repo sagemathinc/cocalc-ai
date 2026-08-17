@@ -74,6 +74,7 @@ export type CodexProjectSpawner = {
   spawnCodexAppServer?: (opts: {
     projectId: string;
     accountId?: string;
+    agentSessionKey?: string;
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     touchReason?: string | false;
@@ -90,6 +91,7 @@ export type CodexProjectSpawner = {
     appServerLogin?: CodexAppServerLoginHint;
     handleAppServerRequest?: CodexAppServerRequestHandler;
     runtimeEnv?: Record<string, string>;
+    setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
     siteFundedTurn?: CodexSiteFundedTurnRuntime;
   }>;
 };

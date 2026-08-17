@@ -1,0 +1,76 @@
+/*
+ * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
+ * License: MS-RSL - see LICENSE.md for details
+ */
+
+.ul-terminal-page {
+  max-width: none;
+}
+
+.ul-terminal-meta {
+  color: var(--ul-muted);
+  font-size: 12px;
+  margin-bottom: 7px;
+}
+
+.ul-terminal-host {
+  background: var(--ul-terminal-bg);
+  border: 1px solid var(--ul-border-dark);
+  height: clamp(340px, calc(100vh - 250px), 760px);
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px;
+}
+
+.ul-terminal-host .xterm {
+  height: 100%;
+}
+
+.ul-terminal-host .xterm-viewport {
+  overflow-y: auto;
+}
+
+.ul-terminal-mobile-toolbar {
+  align-items: center;
+  background: var(--ul-rail);
+  border: 1px solid var(--ul-border-dark);
+  border-bottom: 0;
+  display: none;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 4px 5px;
+  scrollbar-width: thin;
+}
+
+.ul-terminal-mobile-toolbar button {
+  background: var(--ul-paper);
+  border: 1px solid var(--ul-border-dark);
+  border-radius: 4px;
+  color: var(--ul-ink);
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 13px;
+  min-height: 38px;
+  min-width: 38px;
+  padding: 5px 8px;
+}
+
+.ul-terminal-mobile-toolbar button:active {
+  background: var(--ul-accent-soft);
+}
+
+.ul-terminal-mobile-toolbar button:focus-visible {
+  outline: 2px solid var(--ul-focus);
+  outline-offset: 1px;
+}
+
+@media (max-width: 720px), (hover: none) and (pointer: coarse) {
+  .ul-terminal-mobile-toolbar {
+    display: flex;
+  }
+
+  .ul-terminal-host {
+    height: max(340px, calc(100vh - 325px));
+    padding: 5px;
+  }
+}

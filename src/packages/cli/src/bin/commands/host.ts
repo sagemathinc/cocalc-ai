@@ -75,6 +75,40 @@ const HOST_SHARED_SCRATCH_DISK_TYPES = new Set([
 const NEBIUS_DISK_INCREMENT_GB = 93;
 const HOST_SHARED_SCRATCH_RPC_TIMEOUT_MS = 120_000;
 
+export function desiredManagedComponentRestartVersion({
+  status,
+  components,
+}: {
+  status: Pick<HostRuntimeDeploymentStatus, "effective">;
+  components: readonly string[];
+}): string {
+  const artifactFallback = status.effective.find(
+    (record) =>
+      record.target_type === "artifact" && record.target === "project-host",
+  )?.desired_version;
+  const versions = new Set<string>();
+  for (const component of components) {
+    const desired =
+      status.effective.find(
+        (record) =>
+          record.target_type === "component" && record.target === component,
+      )?.desired_version ?? artifactFallback;
+    const version = `${desired ?? ""}`.trim();
+    if (!version) {
+      throw new Error(
+        `no effective desired version is configured for ${component}`,
+      );
+    }
+    versions.add(version);
+  }
+  if (versions.size !== 1) {
+    throw new Error(
+      `selected components target different versions (${[...versions].join(", ")}); restart them separately`,
+    );
+  }
+  return [...versions][0];
+}
+
 function parseBootstrapReconcileScope(
   value: string | undefined,
 ): HostBootstrapReconcileScope | undefined {
@@ -2590,15 +2624,26 @@ export function registerHostCommand(
       component?: string[];
       reason?: string;
       wait?: boolean;
+      preserveDesiredState?: boolean;
     },
     command: Command,
   ) {
     await withContext(command, contextLabel, async (ctx) => {
       const host = await resolveHost(ctx, hostIdentifier);
       const components = parseManagedComponentKindsOption(opts.component);
+      const desiredVersion = opts.preserveDesiredState
+        ? desiredManagedComponentRestartVersion({
+            status: await ctx.hub.hosts.getHostRuntimeDeploymentStatus({
+              id: host.id,
+            }),
+            components,
+          })
+        : undefined;
       const op = await ctx.hub.hosts.rolloutHostManagedComponents({
         id: host.id,
         components,
+        desired_version: desiredVersion,
+        record_runtime_deployments: opts.preserveDesiredState ? false : true,
         reason: `${opts.reason ?? ""}`.trim() || undefined,
       });
       if (!opts.wait) {
@@ -3524,7 +3569,7 @@ runtime actions.
         await runManagedComponentRolloutCommand(
           "host deploy restart",
           hostIdentifier,
-          opts,
+          { ...opts, preserveDesiredState: true },
           command,
         ),
     );

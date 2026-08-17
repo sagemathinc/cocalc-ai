@@ -65,6 +65,7 @@ describe("project account list window API", () => {
       include_hidden: true,
       search: "geometry",
       sort: "title",
+      project_id: undefined,
     });
   });
 
@@ -81,6 +82,7 @@ describe("project account list window API", () => {
         offset: 0,
         include_hidden: false,
         sort: "last_edited",
+        project_id: undefined,
       }),
     );
   });

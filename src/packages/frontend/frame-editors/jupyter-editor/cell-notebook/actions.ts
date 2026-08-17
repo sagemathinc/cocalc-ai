@@ -5,6 +5,7 @@
 
 import { delay } from "awaiting";
 import { Set } from "immutable";
+import $ from "jquery";
 import { isEqual } from "lodash";
 
 import { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";

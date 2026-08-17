@@ -186,6 +186,23 @@ describe("CLI auth login redemption", () => {
     });
   });
 
+  it("labels a redeemed mobile challenge as a mobile app session", async () => {
+    mockApprovedChallenge({
+      metadata: { redeem_token, auth_client: "mobile" },
+    });
+    const { redeemCliLoginChallenge } = await import("./cli-auth");
+
+    await redeemCliLoginChallenge({ challenge_id, redeem_token });
+
+    expect(createClusterCliLoginSessionMock).toHaveBeenCalledWith({
+      account_id,
+      approved_challenge_id: challenge_id,
+      auth_client: "mobile",
+      ip_address: null,
+      user_agent: null,
+    });
+  });
+
   it("surfaces an already redeemed challenge update failure", async () => {
     mockApprovedChallenge();
     queryMock.mockImplementation(async (sql) => {

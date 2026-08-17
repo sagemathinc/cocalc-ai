@@ -44,6 +44,7 @@
     "build": "../node_modules/.bin/tsc --build",
     "inter-bay:dev:fabric": "node dist/inter-bay/dev-fabric.js",
     "inter-bay:dev:listener": "node dist/inter-bay/dev-listener.js",
+    "membership-analytics:fixtures": "node dist/membership/allocation-analytics-fixtures.js",
     "publish:bootstrap": "cd cloud && ./publish-bootstrap.sh",
     "test": "pnpm test:pglite --maxWorkers=4",
     "test:psql": "NODE_NO_WARNINGS=1 TZ=UTC jest --maxWorkers=1",

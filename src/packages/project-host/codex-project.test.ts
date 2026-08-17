@@ -221,6 +221,7 @@ describe("initCodexProjectRunner", () => {
       env: {
         FOO: "bar",
         COCALC_API_URL: "http://localhost:7103",
+        COCALC_PROFILE: "prod",
       },
     });
 
@@ -243,9 +244,15 @@ describe("initCodexProjectRunner", () => {
         "-e",
         "LOGNAME=user",
         "-e",
-        "COCALC_BEARER_TOKEN=issued-project-host-token",
+        expect.stringMatching(
+          /^COCALC_BEARER_TOKEN_FILE=\/home\/user\/\.local\/share\/cocalc\/runtime\/\.cocalc-agent-[^/]+\/token$/,
+        ),
         "-e",
-        "COCALC_AGENT_TOKEN=issued-project-host-token",
+        expect.stringMatching(
+          /^COCALC_AGENT_TOKEN_FILE=\/home\/user\/\.local\/share\/cocalc\/runtime\/\.cocalc-agent-[^/]+\/token$/,
+        ),
+        "-e",
+        "COCALC_PROFILE=_env",
         "-e",
         "FOO=bar",
         "-e",
@@ -272,14 +279,26 @@ describe("initCodexProjectRunner", () => {
       },
     });
     expect(spawned.authSource).toBe("account-api-key");
-    expect(spawned.logArgs).toContain("COCALC_BEARER_TOKEN=***");
+    expect(spawned.logArgs).toContain("COCALC_BEARER_TOKEN_FILE=***");
     expect(spawned.logArgs).not.toContain("issued-project-host-token");
     expect(spawned.runtimeEnv).toMatchObject({
       COCALC_API_URL: "http://host.containers.internal:7103",
-      COCALC_BEARER_TOKEN: "issued-project-host-token",
-      COCALC_AGENT_TOKEN: "issued-project-host-token",
+      COCALC_BEARER_TOKEN_FILE: expect.stringMatching(
+        /^\/home\/user\/\.local\/share\/cocalc\/runtime\/\.cocalc-agent-[^/]+\/token$/,
+      ),
+      COCALC_AGENT_TOKEN_FILE: expect.stringMatching(
+        /^\/home\/user\/\.local\/share\/cocalc\/runtime\/\.cocalc-agent-[^/]+\/token$/,
+      ),
       COCALC_ACCOUNT_ID: "00000000-0000-4000-8000-000000000001",
+      COCALC_PROFILE: "_env",
     });
+    expect(spawned.runtimeEnv?.COCALC_BEARER_TOKEN).toBeUndefined();
+    expect(spawned.runtimeEnv?.COCALC_AGENT_TOKEN).toBeUndefined();
+    const runtimeTokenPath = spawned.runtimeEnv?.COCALC_BEARER_TOKEN_FILE;
+    expect(runtimeTokenPath).toBeTruthy();
+    expect(
+      await fs.readFile(runtimeTokenPath!.replace("/home/user", home), "utf8"),
+    ).toBe("issued-project-host-token\n");
     expect(spawned.appServerLogin).toEqual({
       type: "apiKey",
       apiKey: "secret-key",
@@ -287,6 +306,9 @@ describe("initCodexProjectRunner", () => {
     expect(hubApi.hosts.issueProjectHostAgentAuthToken).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
       project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      session_id: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ),
     });
     expect(spawned.containerPathMap).toEqual({
       rootHostPath: home,
@@ -333,22 +355,163 @@ describe("initCodexProjectRunner", () => {
     expect(args).toEqual(
       expect.arrayContaining([
         "-e",
-        "COCALC_BEARER_TOKEN=issued-project-host-token",
+        expect.stringMatching(/^COCALC_BEARER_TOKEN_FILE=\/home\/user\//),
         "-e",
-        "COCALC_AGENT_TOKEN=issued-project-host-token",
+        expect.stringMatching(/^COCALC_AGENT_TOKEN_FILE=\/home\/user\//),
         "-e",
         "COCALC_ACCOUNT_ID=00000000-0000-4000-8000-000000000001",
       ]),
     );
     expect(spawned.runtimeEnv).toMatchObject({
-      COCALC_BEARER_TOKEN: "issued-project-host-token",
-      COCALC_AGENT_TOKEN: "issued-project-host-token",
+      COCALC_BEARER_TOKEN_FILE: expect.stringMatching(
+        /^\/home\/user\/\.local\/share\/cocalc\/runtime\//,
+      ),
+      COCALC_AGENT_TOKEN_FILE: expect.stringMatching(
+        /^\/home\/user\/\.local\/share\/cocalc\/runtime\//,
+      ),
       COCALC_ACCOUNT_ID: "00000000-0000-4000-8000-000000000001",
     });
     expect(hubApi.hosts.issueProjectHostAgentAuthToken).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
       project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      session_id: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ),
     });
+  });
+
+  it("rotates and removes the project-scoped CLI token lease", async () => {
+    const scratch = await mkTempDir("codex-project-scratch-");
+    hubApi.hosts.issueProjectHostAgentAuthToken
+      .mockResolvedValueOnce({
+        token: "first-project-token",
+        expires_at: Date.now() + 60_000,
+      })
+      .mockResolvedValueOnce({
+        token: "second-project-token",
+        expires_at: Date.now() + 60_000,
+      });
+    const { createProjectCliTokenLease } =
+      await import("./codex/codex-project");
+    const lease = await createProjectCliTokenLease({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      currentEnv: {},
+      home: scratch,
+      scratch,
+      refreshMs: 10,
+    });
+    expect(lease).toBeDefined();
+    expect(lease!.containerPath).toMatch(/^\/tmp\/\.cocalc-agent-/);
+    expect(await fs.readFile(lease!.hostPath, "utf8")).toBe(
+      "first-project-token\n",
+    );
+
+    for (let i = 0; i < 20; i++) {
+      if (
+        (await fs.readFile(lease!.hostPath, "utf8")) ===
+        "second-project-token\n"
+      ) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(await fs.readFile(lease!.hostPath, "utf8")).toBe(
+      "second-project-token\n",
+    );
+    const sessionIds =
+      hubApi.hosts.issueProjectHostAgentAuthToken.mock.calls.map(
+        ([opts]) => opts.session_id,
+      );
+    expect(new Set(sessionIds).size).toBe(1);
+    expect(sessionIds[0]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+
+    await lease!.close();
+    await expect(fs.stat(lease!.hostPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("keeps token lease ownership with the rootless Podman host user", async () => {
+    const scratch = await mkTempDir("codex-project-scratch-ownership-");
+    const chown = jest
+      .spyOn(fs, "chown")
+      .mockRejectedValue(
+        Object.assign(new Error("chown denied"), { code: "EPERM" }),
+      );
+    try {
+      const { createProjectCliTokenLease } =
+        await import("./codex/codex-project");
+      const lease = await createProjectCliTokenLease({
+        projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+        accountId: "00000000-0000-4000-8000-000000000001",
+        currentEnv: {},
+        home: scratch,
+        scratch,
+        refreshMs: 60_000,
+      });
+
+      expect(lease).toBeDefined();
+      expect(chown).not.toHaveBeenCalled();
+      const directory = await fs.stat(path.dirname(lease!.hostPath));
+      const token = await fs.stat(lease!.hostPath);
+      expect(directory.mode & 0o777).toBe(0o700);
+      expect(token.mode & 0o777).toBe(0o600);
+      await lease!.close();
+    } finally {
+      chown.mockRestore();
+    }
+  });
+
+  it("keeps a turn identity across restarts and rotates it for a new turn", async () => {
+    const scratch = await mkTempDir("codex-project-turn-token-");
+    hubApi.hosts.issueProjectHostAgentAuthToken
+      .mockResolvedValueOnce({
+        token: "turn-one-token",
+        expires_at: Date.now() + 60_000,
+      })
+      .mockResolvedValueOnce({
+        token: "turn-two-token",
+        expires_at: Date.now() + 60_000,
+      })
+      .mockResolvedValueOnce({
+        token: "turn-two-restart-token",
+        expires_at: Date.now() + 60_000,
+      });
+    const { createProjectCliTokenLease } =
+      await import("./codex/codex-project");
+    const common = {
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      currentEnv: {},
+      home: scratch,
+      scratch,
+      refreshMs: 60_000,
+    };
+    const first = await createProjectCliTokenLease({
+      ...common,
+      agentSessionKey: "thread-1\0turn-1",
+    });
+    const firstSessionId =
+      hubApi.hosts.issueProjectHostAgentAuthToken.mock.calls[0][0].session_id;
+
+    await first!.setAgentSessionKey("thread-1\0turn-2");
+    const secondSessionId =
+      hubApi.hosts.issueProjectHostAgentAuthToken.mock.calls[1][0].session_id;
+    expect(secondSessionId).not.toBe(firstSessionId);
+    expect(await fs.readFile(first!.hostPath, "utf8")).toBe("turn-two-token\n");
+    await first!.close();
+
+    const restarted = await createProjectCliTokenLease({
+      ...common,
+      agentSessionKey: "thread-1\0turn-2",
+    });
+    const restartedSessionId =
+      hubApi.hosts.issueProjectHostAgentAuthToken.mock.calls[2][0].session_id;
+    expect(restartedSessionId).toBe(secondSessionId);
+    await restarted!.close();
   });
 
   it("falls back to the bundled project runtime cocalc command when no host cli is resolvable", async () => {

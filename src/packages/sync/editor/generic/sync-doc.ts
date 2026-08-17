@@ -188,6 +188,11 @@ export interface SyncOpts0 {
   // is the Set of all values.  If true, that initial big
   // change event happens, but the Set is empty.
   ignoreInitialChanges?: boolean;
+
+  // Backend-only identity for a server-owned SyncDoc that commits on behalf
+  // of an already authenticated account.  This is intentionally not exposed
+  // by the browser sync-doc factories.
+  trustedAccountId?: string;
 }
 
 export interface SyncOpts extends SyncOpts0 {
@@ -263,6 +268,7 @@ export class SyncDoc extends EventEmitter {
   private syncPath: string;
   private string_id: string;
   private my_user_id: number;
+  private readonly trustedAccountId?: string;
 
   private client: Client;
   private _from_str: (str: string) => Document; // creates a doc from a string.
@@ -449,6 +455,7 @@ export class SyncDoc extends EventEmitter {
       this.doctype.opts = { ...this.doctype.opts, cursors: true };
     }
     this._from_str = opts.from_str;
+    this.trustedAccountId = opts.trustedAccountId;
 
     // Initialize to creation time, so we don't
     // see our own cursor when we refresh the browser (before we move
@@ -970,12 +977,14 @@ export class SyncDoc extends EventEmitter {
       this.my_user_id = 1;
       return;
     }
-    const client_id = this.client_id();
+    const client_id = this.trustedAccountId ?? this.client_id();
     if (!client_id) {
       this.my_user_id = 1;
       return;
     }
-    const raw_client_id = this.rawClientId();
+    const raw_client_id = this.trustedAccountId
+      ? undefined
+      : this.rawClientId();
     let users = this.normalizedUsers(this.users);
     let changed = false;
     if (raw_client_id && raw_client_id !== client_id) {
@@ -1807,6 +1816,7 @@ export class SyncDoc extends EventEmitter {
       seq_info: null,
       parents: null,
       version: null,
+      meta: null,
     };
     if (this.doctype.patch_format != null) {
       (query as any).format = this.doctype.patch_format;
@@ -3516,6 +3526,102 @@ export class SyncDoc extends EventEmitter {
       file,
       allowDuplicate,
       meta,
+    });
+  };
+
+  /**
+   * Commit a patch that was computed from an editor operation log.
+   *
+   * This is deliberately restricted to server-owned documents with a
+   * trustedAccountId.  It avoids reconstructing the next document and then
+   * running diff-match-patch over it again: Patchflow persists the supplied
+   * patch verbatim while still applying normal branch merge semantics.
+   */
+  commitExactPatch = async (
+    patch: unknown,
+    {
+      meta,
+      source = "essential-edit-journal",
+    }: {
+      meta?: { [key: string]: JSONValue };
+      source?: string;
+    } = {},
+  ): Promise<PatchEnvelope | undefined> => {
+    if (!this.trustedAccountId) {
+      throw new Error(
+        "commitExactPatch is only available to a trusted server-owned SyncDoc",
+      );
+    }
+    this.assert_is_ready("commitExactPatch");
+    const session = this.requirePatchflowSession();
+    const codec = this.patchflowCodec;
+    if (codec == null || this.patches_table == null) {
+      throw new Error("patchflow must be initialized before committing");
+    }
+    const current = session.getDocument() as Document;
+    const next = codec.applyPatch(current, patch) as Document;
+    if (this.documentsEqual(current, next)) {
+      return;
+    }
+
+    // Session.commit normally asks the codec to diff current and next.  The
+    // editor already supplied that exact patch, so substitute it for this one
+    // synchronous call and immediately restore the codec.
+    const makePatch = codec.makePatch;
+    codec.makePatch = () => patch;
+    let env: PatchEnvelope;
+    try {
+      this.emitUserChange();
+      env = session.commit(next, { meta, source });
+    } finally {
+      codec.makePatch = makePatch;
+    }
+    this.doc = next;
+    this.last = next;
+    const myPatches = (this.my_patches = this.my_patches ?? {});
+    myPatches[env.time] = { time: env.time } as Patch;
+    await this.patches_table.save();
+    this.snapshotIfNecessary();
+    this.touchProject();
+    return env;
+  };
+
+  hasEditJournalCommit = ({
+    journalId,
+    sequence,
+  }: {
+    journalId: string;
+    sequence: number;
+  }): boolean => {
+    if (!this.patchflowReady()) return false;
+    return this.requirePatchflowSession()
+      .history({ includeSnapshots: false })
+      .some((entry) => {
+        const journal = entry.meta?.essential_edit_journal;
+        return (
+          journal != null &&
+          typeof journal === "object" &&
+          !Array.isArray(journal) &&
+          journal.journal_id === journalId &&
+          journal.sequence === sequence
+        );
+      });
+  };
+
+  reconcileTrustedDisk = async (): Promise<void> => {
+    if (!this.trustedAccountId) {
+      throw new Error(
+        "reconcileTrustedDisk is only available to a trusted server-owned SyncDoc",
+      );
+    }
+    const syncFsReconcile = (this.fs as any)?.syncFsReconcile;
+    if (typeof syncFsReconcile !== "function") {
+      throw new Error("filesystem does not support sync-fs reconciliation");
+    }
+    await syncFsReconcile(this.path, {
+      project_id: this.project_id,
+      history_epoch: this.history_epoch,
+      doctype: this.doctype,
     });
   };
 

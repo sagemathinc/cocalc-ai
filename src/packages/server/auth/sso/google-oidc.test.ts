@@ -272,6 +272,7 @@ describe("googleProfileFromClaims", () => {
       email_verified: true,
       given_name: "Ada",
       family_name: "Lovelace",
+      picture: "https://images.example.com/ada.jpg",
     });
 
     expect(profile.id).toBe("google-subject");
@@ -283,5 +284,8 @@ describe("googleProfileFromClaims", () => {
       { value: "user@example.com", verified: true },
     ]);
     expect(profile.email_verified).toBe(true);
+    expect(profile.photos).toEqual([
+      { value: "https://images.example.com/ada.jpg" },
+    ]);
   });
 });

@@ -7,6 +7,12 @@ import type { MoneyValue } from "@cocalc/util/money";
 export type Status = "active" | "canceled" | "unpaid" | "past_due";
 export type Interval = "month" | "year";
 export type MembershipClass = string;
+export interface PendingMembershipPlanChange {
+  kind: "downgrade";
+  previous_class: MembershipClass;
+  previous_interval: "trial" | Interval;
+  scheduled_at: string;
+}
 export interface MembershipMetadata {
   type: "membership";
   class: MembershipClass;
@@ -19,6 +25,7 @@ export interface MembershipMetadata {
   grant?: boolean;
   grant_days?: number;
   grant_ends_at?: string;
+  pending_plan_change?: PendingMembershipPlanChange;
 }
 export type Metadata = MembershipMetadata;
 
@@ -140,6 +147,11 @@ Table({
     primary_key: "id",
     pg_indexes: ["account_id"],
     pg_custom_indexes: [
+      {
+        name: "subscriptions_membership_trial_analytics_backfill_idx",
+        query:
+          "(created, id) WHERE metadata->>'type'='membership' AND metadata->>'trial'='true'",
+      },
       {
         name: "subscriptions_one_renewable_personal_membership_idx",
         query:

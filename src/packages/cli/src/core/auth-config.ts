@@ -139,7 +139,11 @@ export function selectedProfileName(
   env = process.env,
 ): string {
   const candidate =
-    globals.profile ?? env.COCALC_PROFILE ?? config.current_profile;
+    globals.profile ??
+    env.COCALC_PROFILE ??
+    (env.COCALC_CLI_AGENT_MODE === "1"
+      ? ENV_AUTH_PROFILE
+      : config.current_profile);
   if (isEnvAuthProfileName(candidate)) {
     return ENV_AUTH_PROFILE;
   }

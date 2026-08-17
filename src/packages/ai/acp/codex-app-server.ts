@@ -95,8 +95,12 @@ function threadConfigForSubagents(
 ): Record<string, number> | undefined {
   if (maxConcurrentSubagents == null) return;
   // Codex counts the manager in max_concurrent_threads_per_session.
+  const totalThreads = maxConcurrentSubagents + 1;
   return {
-    "agents.max_concurrent_threads_per_session": maxConcurrentSubagents + 1,
+    // V1 and V2 have separate config paths. Supplying both is accepted by
+    // Codex and prevents a feature rollout from silently bypassing the cap.
+    "agents.max_concurrent_threads_per_session": totalThreads,
+    "features.multi_agent_v2.max_concurrent_threads_per_session": totalThreads,
   };
 }
 
@@ -360,6 +364,14 @@ type CodexAppServerOptions = {
     activeDescendantThreadIds: string[];
     activeDescendants: number;
     backgroundTerminals: number;
+    maxConcurrentSubagents?: number;
+  }) => void | Promise<void>;
+  onRuntimeOwnershipChanged?: (status: {
+    state: "owned" | "released";
+    sessionId: string;
+    projectId: string;
+    accountId: string;
+    path?: string;
   }) => void | Promise<void>;
 };
 
@@ -374,8 +386,22 @@ type SpawnedCodexAppServer = {
   appServerLogin?: CodexAppServerLoginHint;
   handleAppServerRequest?: CodexAppServerRequestHandler;
   runtimeEnv?: Record<string, string>;
+  setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
   siteFundedTurn?: CodexSiteFundedTurnRuntime;
 };
+
+function agentTurnSessionKey(
+  request: AcpEvaluateRequest,
+  fallback: string,
+): string {
+  const threadId = `${request.chat?.thread_id ?? ""}`.trim();
+  const turnId =
+    `${request.chat?.user_message_date ?? ""}`.trim() ||
+    `${request.chat?.recovery_parent_op_id ?? ""}`.trim() ||
+    `${request.chat?.message_id ?? ""}`.trim() ||
+    fallback;
+  return `${threadId}\0${turnId}`;
+}
 
 function authSourceForSpawned(
   spawned: Pick<SpawnedCodexAppServer, "authSource" | "appServerLogin">,
@@ -447,6 +473,7 @@ type CodexAppServerRuntime = {
   idleTimer?: NodeJS.Timeout;
   backgroundPollTimer?: NodeJS.Timeout;
   disposed: boolean;
+  publishedOwnershipSessionId?: string;
 };
 
 type RetryableAppServerFailureKind =
@@ -1776,6 +1803,7 @@ export class CodexAppServerAgent implements AcpAgent {
     if (runtime.disposed) return;
     runtime.disposed = true;
     this.removeRuntime(runtime);
+    await this.publishRuntimeOwnership(runtime, "released");
     logger.debug("codex app-server: disposing retained runtime", {
       threadId: runtime.threadId,
       projectId: runtime.projectId,
@@ -1795,6 +1823,46 @@ export class CodexAppServerAgent implements AcpAgent {
     }
     if (runtime.spawned.proc.exitCode == null && !runtime.spawned.proc.killed) {
       runtime.spawned.proc.kill("SIGKILL");
+    }
+  }
+
+  private async publishRuntimeOwnership(
+    runtime: CodexAppServerRuntime,
+    state: "owned" | "released",
+  ): Promise<void> {
+    if (!this.opts.onRuntimeOwnershipChanged) return;
+    const sessionId =
+      state === "owned"
+        ? runtime.threadId
+        : runtime.publishedOwnershipSessionId;
+    if (!sessionId) return;
+    if (
+      state === "owned" &&
+      runtime.publishedOwnershipSessionId === sessionId
+    ) {
+      return;
+    }
+    if (state === "released") {
+      runtime.publishedOwnershipSessionId = undefined;
+    }
+    try {
+      await this.opts.onRuntimeOwnershipChanged({
+        state,
+        sessionId,
+        projectId: runtime.projectId,
+        accountId: runtime.accountId,
+        path: runtime.chat?.path,
+      });
+      if (state === "owned") {
+        runtime.publishedOwnershipSessionId = sessionId;
+      }
+    } catch (err) {
+      logger.warn("codex app-server: failed publishing runtime ownership", {
+        state,
+        sessionId,
+        projectId: runtime.projectId,
+        err: `${err}`,
+      });
     }
   }
 
@@ -1927,8 +1995,20 @@ export class CodexAppServerAgent implements AcpAgent {
       managerState: runtime.managerState,
       activeDescendantThreadIds,
       backgroundTerminals: runtime.backgroundTerminalCount,
+      maxConcurrentSubagents: runtime.maxConcurrentSubagents,
     });
     if (signature === runtime.lastOutstandingSignature) return;
+    if (
+      runtime.maxConcurrentSubagents != null &&
+      runtime.activeDescendantCount > runtime.maxConcurrentSubagents
+    ) {
+      logger.warn("codex app-server: active subagent limit exceeded", {
+        threadId: runtime.threadId,
+        activeDescendants: runtime.activeDescendantCount,
+        maxConcurrentSubagents: runtime.maxConcurrentSubagents,
+        activeDescendantThreadIds,
+      });
+    }
     try {
       await this.opts.onOutstandingWorkChanged({
         sessionId: runtime.threadId,
@@ -1939,6 +2019,7 @@ export class CodexAppServerAgent implements AcpAgent {
         activeDescendantThreadIds,
         activeDescendants: runtime.activeDescendantCount,
         backgroundTerminals: runtime.backgroundTerminalCount,
+        maxConcurrentSubagents: runtime.maxConcurrentSubagents,
       });
       runtime.lastOutstandingSignature = signature;
     } catch (err) {
@@ -1954,14 +2035,15 @@ export class CodexAppServerAgent implements AcpAgent {
     request: AcpEvaluateRequest,
     cwd: string,
   ): boolean {
+    // The subagent limit configures a Codex thread, not its owning process.
+    // Never replace a live manager (and its retained work) merely because a
+    // recovered or older client omitted the limit that a newer client sends.
     return (
       runtime.projectId === (request.chat?.project_id ?? request.project_id) &&
       runtime.accountId === request.account_id &&
       runtime.cwd === cwd &&
       (runtime.paymentSource ?? "auto") ===
-        (request.config?.paymentSource ?? "auto") &&
-      runtime.maxConcurrentSubagents ===
-        normalizeMaxConcurrentSubagents(request.config?.maxConcurrentSubagents)
+        (request.config?.paymentSource ?? "auto")
     );
   }
 
@@ -1976,6 +2058,7 @@ export class CodexAppServerAgent implements AcpAgent {
     cwd: string;
     runtimeEnv: Record<string, string>;
   }): Promise<{ runtime: CodexAppServerRuntime; created: boolean }> {
+    const agentSessionKey = agentTurnSessionKey(request, session.sessionId);
     let runtime = this.runtimesByAlias.get(session.sessionId);
     if (runtime && !this.runtimeMatchesRequest(runtime, request, cwd)) {
       let backgroundTerminalCount = runtime.backgroundTerminalCount;
@@ -2006,6 +2089,7 @@ export class CodexAppServerAgent implements AcpAgent {
         throw new Error("This Codex thread already has an active turn.");
       }
       this.clearRuntimeTimers(runtime);
+      await runtime.spawned.setAgentSessionKey?.(agentSessionKey);
       runtime.chat = request.chat;
       runtime.managerState = "completed";
       runtime.lastOutstandingSignature = undefined;
@@ -2029,6 +2113,7 @@ export class CodexAppServerAgent implements AcpAgent {
     const spawned = await this.spawnAppServer({
       projectId: request.chat?.project_id ?? request.project_id,
       accountId: request.account_id,
+      agentSessionKey,
       cwd,
       env: runtimeEnv,
       siteFundedTurn: {
@@ -2092,6 +2177,7 @@ export class CodexAppServerAgent implements AcpAgent {
     spawned.proc.once("exit", () => {
       runtime!.disposed = true;
       this.removeRuntime(runtime!);
+      void this.publishRuntimeOwnership(runtime!, "released");
     });
     return { runtime, created: true };
   }
@@ -2416,6 +2502,7 @@ export class CodexAppServerAgent implements AcpAgent {
       }
       setRunningKey(actualThreadId);
       runtime.threadId = actualThreadId;
+      await this.publishRuntimeOwnership(runtime, "owned");
       this.registerRuntimeAlias(runtime, actualThreadId);
       this.registerRuntimeAlias(runtime, requestedThreadKey);
       const sessionEntry = { sessionId: actualThreadId, cwd };
@@ -3633,6 +3720,7 @@ export class CodexAppServerAgent implements AcpAgent {
   private async spawnAppServer({
     projectId,
     accountId,
+    agentSessionKey,
     cwd,
     env,
     siteFundedTurn,
@@ -3640,6 +3728,7 @@ export class CodexAppServerAgent implements AcpAgent {
   }: {
     projectId: string;
     accountId?: string;
+    agentSessionKey?: string;
     cwd: string;
     env?: NodeJS.ProcessEnv;
     siteFundedTurn?: CodexSiteFundedTurnRequest;
@@ -3650,6 +3739,7 @@ export class CodexAppServerAgent implements AcpAgent {
       const spawned = await projectSpawner.spawnCodexAppServer({
         projectId,
         accountId,
+        agentSessionKey,
         cwd,
         env,
         siteFundedTurn,

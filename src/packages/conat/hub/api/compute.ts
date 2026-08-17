@@ -11,6 +11,8 @@ import {
 } from "./util";
 import type { HostCatalog } from "./hosts";
 
+export const COMPUTE_AGENT_GRANTS_PROJECT_DETAIL_FIELD = "compute_agent_grants";
+
 export type ComputeVmPricingModel = "spot" | "on_demand";
 export type ComputeVmDesiredState = "running" | "stopped" | "deleted";
 export type ManagedComputeProviderId = "gcp" | "nebius";

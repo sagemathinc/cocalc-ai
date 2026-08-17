@@ -85,3 +85,110 @@ export function three_way_merge(opts: {
   // @ts-ignore
   return dmp.patch_apply(dmp.patch_make(opts.base, opts.remote), opts.local)[0];
 }
+
+export type CheckedThreeWayMergeResult =
+  | { clean: true; merged: string }
+  | { clean: false; reason: "overlapping-edits" };
+
+interface StringEdit {
+  from: number;
+  to: number;
+  insert: string;
+}
+
+function stringEdits(base: string, target: string): StringEdit[] {
+  if (base === target) return [];
+  const edits: StringEdit[] = [];
+  let cursor = 0;
+  let current: StringEdit | undefined;
+  const flush = () => {
+    if (current != null) edits.push(current);
+    current = undefined;
+  };
+  for (const [operation, value] of dmp.diff_main(base, target)) {
+    if (operation === 0) {
+      flush();
+      cursor += value.length;
+      continue;
+    }
+    current ??= { from: cursor, to: cursor, insert: "" };
+    if (operation === -1) {
+      current.to += value.length;
+      cursor += value.length;
+    } else {
+      current.insert += value;
+    }
+  }
+  flush();
+  return edits;
+}
+
+function sameEdit(left: StringEdit, right: StringEdit): boolean {
+  return (
+    left.from === right.from &&
+    left.to === right.to &&
+    left.insert === right.insert
+  );
+}
+
+function editsOverlap(left: StringEdit, right: StringEdit): boolean {
+  if (sameEdit(left, right)) return false;
+  const leftInsertion = left.from === left.to;
+  const rightInsertion = right.from === right.to;
+  if (leftInsertion && rightInsertion) return left.from === right.from;
+  if (leftInsertion) {
+    return left.from > right.from && left.from < right.to;
+  }
+  if (rightInsertion) {
+    return right.from > left.from && right.from < left.to;
+  }
+  return left.from < right.to && right.from < left.to;
+}
+
+/**
+ * Conservatively merge two string edits against a common base.
+ *
+ * Unlike three_way_merge, this never uses fuzzy patch application to choose a
+ * winner. Overlapping edits are rejected so callers can retain the local draft
+ * unchanged and ask the user how to proceed.
+ */
+export function checked_three_way_merge(opts: {
+  base: string;
+  local: string;
+  remote: string;
+}): CheckedThreeWayMergeResult {
+  const localEdits = stringEdits(opts.base, opts.local);
+  const remoteEdits = stringEdits(opts.base, opts.remote);
+  for (const local of localEdits) {
+    for (const remote of remoteEdits) {
+      if (editsOverlap(local, remote)) {
+        return { clean: false, reason: "overlapping-edits" };
+      }
+    }
+  }
+
+  const edits = [...localEdits];
+  for (const remote of remoteEdits) {
+    if (!edits.some((local) => sameEdit(local, remote))) edits.push(remote);
+  }
+  edits.sort((left, right) => {
+    if (left.from !== right.from) return left.from - right.from;
+    const leftInsertion = left.from === left.to;
+    const rightInsertion = right.from === right.to;
+    if (leftInsertion !== rightInsertion) return leftInsertion ? -1 : 1;
+    return left.to - right.to;
+  });
+
+  let cursor = 0;
+  let merged = "";
+  for (const edit of edits) {
+    if (edit.from < cursor) {
+      return { clean: false, reason: "overlapping-edits" };
+    }
+    merged += opts.base.slice(cursor, edit.from);
+    merged += edit.insert;
+    cursor = edit.to;
+  }
+  merged += opts.base.slice(cursor);
+  return { clean: true, merged };
+}

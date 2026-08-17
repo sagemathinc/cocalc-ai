@@ -196,3 +196,40 @@ test("applyAuthProfile keeps ambient env auth when env auth profile is selected"
   assert.equal(result.globals.cookie, undefined);
   assert.equal(result.globals.disableEnvAuthDefaults, undefined);
 });
+
+test("applyAuthProfile defaults agent runtimes to ambient auth", () => {
+  const config: AuthConfig = {
+    current_profile: "prod",
+    profiles: {
+      prod: {
+        api: "https://cocalc.ai",
+        cookie: "remember_me=stored-account-session",
+      },
+    },
+  };
+  const result = applyAuthProfile({}, config, {
+    COCALC_CLI_AGENT_MODE: "1",
+    COCALC_API_URL: "http://project-host.internal:9102",
+    COCALC_BEARER_TOKEN: "project-agent-token",
+  } as any);
+  assert.equal(result.profile, ENV_AUTH_PROFILE);
+  assert.equal(result.fromProfile, false);
+  assert.equal(result.globals.api, undefined);
+  assert.equal(result.globals.cookie, undefined);
+  assert.equal(result.globals.disableEnvAuthDefaults, undefined);
+});
+
+test("an explicit profile overrides the agent runtime default", () => {
+  const config: AuthConfig = {
+    current_profile: "default",
+    profiles: {
+      prod: { api: "https://cocalc.ai" },
+    },
+  };
+  assert.equal(
+    selectedProfileName({ profile: "prod" }, config, {
+      COCALC_CLI_AGENT_MODE: "1",
+    } as any),
+    "prod",
+  );
+});

@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { effectiveDaemonGlobals } from "./daemon-globals";
 
@@ -60,4 +63,24 @@ test("effectiveDaemonGlobals falls back to defaultApiBaseUrl and agent token", (
   );
   assert.equal(globals.api, "http://127.0.0.1:7001");
   assert.equal(globals.bearer, "agent-token");
+});
+
+test("effectiveDaemonGlobals reads the current rotating agent token", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-daemon-token-"));
+  const tokenFile = join(dir, "token");
+  try {
+    writeFileSync(tokenFile, "rotated-token\n");
+    const globals = effectiveDaemonGlobals(
+      {},
+      {
+        env: {
+          COCALC_BEARER_TOKEN_FILE: tokenFile,
+          COCALC_BEARER_TOKEN: "stale-token",
+        },
+      },
+    );
+    assert.equal(globals.bearer, "rotated-token");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

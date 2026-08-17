@@ -35,6 +35,8 @@
     "@types/debug": "^4.1.12",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.10",
-    "jest-environment-jsdom": "^30.4.1"
+    "jest-environment-jsdom": "^30.4.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
   }
 }

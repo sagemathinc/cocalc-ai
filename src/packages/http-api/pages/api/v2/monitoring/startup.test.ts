@@ -64,6 +64,43 @@ test("records a bounded browser startup diagnostic", async () => {
   });
 });
 
+test("records allowlisted constrained-client telemetry", async () => {
+  const { req, res } = createMocks({
+    method: "POST",
+    body: {
+      metric: "constrained_surface_ready_v1",
+      duration_ms: 4_200,
+      client_event_id: "ultralite-1",
+      started_at: "2026-08-15T00:00:00.000Z",
+      segment: "files",
+      details: {
+        surface: "files",
+        request_count: 7,
+        backend_duration_ms: 812,
+        project_id: "should-not-be-recorded",
+        path: "/home/user/private.txt",
+      },
+    },
+  });
+  const { default: handler } = await import("./startup");
+  await handler(req, res);
+
+  expect(res.statusCode).toBe(204);
+  expect(mockRecordUxLatencyEvent).toHaveBeenCalledWith({
+    account_id: "14a0013f-5cb5-45a0-9836-c94963076a87",
+    event: expect.objectContaining({
+      event_type: "constrained_client",
+      metric: "constrained_surface_ready_v1",
+      segment: "files",
+      details: {
+        surface: "files",
+        request_count: 7,
+        backend_duration_ms: 812,
+      },
+    }),
+  });
+});
+
 test("silently ignores disabled telemetry and unknown metrics", async () => {
   const { default: handler } = await import("./startup");
   mockGetServerSettings.mockResolvedValueOnce({

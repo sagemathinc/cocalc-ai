@@ -17,6 +17,7 @@ import { isProjectHostManagedLocalConatRouter } from "./conat-router";
 import { isProjectHostExternalConatPersistEnabled } from "./conat-persist";
 import {
   listProjectHostAcpWorkers,
+  partitionManageableProjectHostAcpWorkers,
   workerBundleVersionOf,
   resolveProjectHostAcpWorkerLaunch,
 } from "./hub/acp/worker-manager";
@@ -258,32 +259,43 @@ function persistSnapshot(): ManagedComponentSnapshot {
   };
 }
 
-function acpWorkerSnapshot(): ManagedComponentSnapshot {
-  const launch = resolveProjectHostAcpWorkerLaunch();
-  const desired_version =
-    readProjectHostAcpWorkerTarget()?.build_id ?? currentProjectHostVersion();
-  const workers = listProjectHostAcpWorkers();
+function acpWorkerSnapshotFromProcesses({
+  desired_version,
+  workers: observedWorkers,
+  launch,
+}: Parameters<typeof partitionManageableProjectHostAcpWorkers>[0] & {
+  desired_version?: string;
+}): ManagedComponentSnapshot {
+  const { managedWorkers: workers } = partitionManageableProjectHostAcpWorkers({
+    workers: observedWorkers,
+    launch,
+  });
   return {
     enabled: true,
     managed: true,
     desired_version,
     running_versions: uniqueNonEmpty(
-      workers.map((worker) =>
-        workerBundleVersionOf(worker, {
-          command: launch.command,
-          args: launch.args,
-          nodeLike: path
-            .basename(launch.command)
-            .toLowerCase()
-            .startsWith("node"),
-          resolvedCommand: path.resolve(launch.command),
-          resolvedEntryPoint:
-            launch.args[0] != null ? path.resolve(launch.args[0]) : undefined,
-        }),
-      ),
+      workers.map((worker) => workerBundleVersionOf(worker, launch)),
     ),
     running_pids: workers.map((worker) => worker.pid),
   };
+}
+
+function acpWorkerSnapshot(): ManagedComponentSnapshot {
+  const launch = resolveProjectHostAcpWorkerLaunch();
+  return acpWorkerSnapshotFromProcesses({
+    desired_version:
+      readProjectHostAcpWorkerTarget()?.build_id ?? currentProjectHostVersion(),
+    workers: listProjectHostAcpWorkers(),
+    launch: {
+      command: launch.command,
+      args: launch.args,
+      nodeLike: path.basename(launch.command).toLowerCase().startsWith("node"),
+      resolvedCommand: path.resolve(launch.command),
+      resolvedEntryPoint:
+        launch.args[0] != null ? path.resolve(launch.args[0]) : undefined,
+    },
+  });
 }
 
 function projectHostSnapshot(): ManagedComponentSnapshot {
@@ -313,6 +325,7 @@ export function getManagedComponentStatus(): HostManagedComponentStatus[] {
 }
 
 export const __test__ = {
+  acpWorkerSnapshotFromProcesses,
   summarizeManagedComponentStatus,
   normalizeProjectHostRuntimeVersion,
   inferBundleVersionFromEntries,

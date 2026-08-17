@@ -40,6 +40,7 @@ import {
   assignMembershipPackageSeat,
   listMembershipPackageAssignments,
 } from "@cocalc/server/membership/packages";
+import { recordPersonalMembershipPeriod } from "@cocalc/server/membership/personal-allocation-analytics";
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -305,10 +306,8 @@ describe("membership admin refund", () => {
       amount: 24,
       description: { purpose: "account-credit" },
     });
-    const { subscription_id } = await createTestMembershipSubscription(
-      account_id,
-      { cost: 24 },
-    );
+    const { subscription_id, start, end, membershipClass, interval } =
+      await createTestMembershipSubscription(account_id, { cost: 24 });
     const membershipPurchaseId = await createPurchase({
       account_id,
       service: "membership",
@@ -326,8 +325,20 @@ describe("membership admin refund", () => {
       "UPDATE subscriptions SET latest_purchase_id=$2 WHERE id=$1",
       [subscription_id, membershipPurchaseId],
     );
+    await recordPersonalMembershipPeriod({
+      account_id,
+      subscription_id,
+      purchase_id: membershipPurchaseId,
+      membership_class: membershipClass,
+      billing_interval: interval,
+      lifecycle: "first_paid",
+      allocation_start: start,
+      allocation_end: end,
+      revenue: 24,
+      client: getPool(),
+    });
 
-    await createRefund({
+    const refundPurchaseId = await createRefund({
       account_id: uuid(),
       purchase_id: membershipPurchaseId,
       reason: "requested_by_customer",
@@ -344,6 +355,30 @@ describe("membership admin refund", () => {
     expect(new Date(rows[0]?.current_period_end).getTime()).toBeLessThanOrEqual(
       Date.now(),
     );
+    const { rows: allocations } = await getPool().query(
+      `SELECT purchase_id, source_kind, active_memberships, revenue_cents,
+              reverses_fact_key
+         FROM membership_allocation_facts
+        WHERE purchase_id IN ($1,$2)
+        ORDER BY active_memberships DESC`,
+      [membershipPurchaseId, refundPurchaseId],
+    );
+    expect(allocations).toEqual([
+      {
+        purchase_id: membershipPurchaseId,
+        source_kind: "purchase",
+        active_memberships: 1,
+        revenue_cents: "2400",
+        reverses_fact_key: null,
+      },
+      {
+        purchase_id: refundPurchaseId,
+        source_kind: "refund",
+        active_memberships: -1,
+        revenue_cents: "-2400",
+        reverses_fact_key: `personal:purchase:${membershipPurchaseId}:first_paid`,
+      },
+    ]);
   });
 
   it("creates an accounting reversal for another finalized service", async () => {

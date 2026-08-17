@@ -15,6 +15,7 @@ import type {
 } from "../types";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLroState } from "./use-host-ops";
+import type { BulkHostDeprovisionResult } from "../components/host-confirm";
 
 type UseHostListViewModelArgs = {
   hosts: Host[];
@@ -28,6 +29,10 @@ type UseHostListViewModelArgs = {
   onDrain: (id: string, opts?: HostDrainOptions) => void;
   onBackup: (id: string) => void;
   onDelete: (id: string, opts?: HostDeleteOptions) => void;
+  onBulkDeprovision: (
+    hosts: Host[],
+    skipRunningBackups: boolean,
+  ) => Promise<BulkHostDeprovisionResult[] | undefined>;
   onRefresh: () => void;
   onCancelOp?: (op_id: string) => void;
   onRefreshCloudStatus?: (host: Host) => void;
@@ -118,6 +123,7 @@ export const useHostListViewModel = ({
   onDrain,
   onBackup,
   onDelete,
+  onBulkDeprovision,
   onRefresh,
   onCancelOp,
   onRefreshCloudStatus,
@@ -162,6 +168,7 @@ export const useHostListViewModel = ({
     onDrain,
     onBackup,
     onDelete,
+    onBulkDeprovision,
     onRefresh,
     onCancelOp,
     onRefreshCloudStatus,

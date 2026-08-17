@@ -127,6 +127,26 @@ describe("CodexSessionsPanel", () => {
     });
   });
 
+  it("labels a reported subagent cap overrun as an anomaly", async () => {
+    listMock.mockResolvedValueOnce([
+      runningSession({
+        metadata: {
+          active_descendant_agents: 38,
+          max_concurrent_subagents: 10,
+          subagent_limit_exceeded: true,
+        },
+      }),
+    ]);
+
+    render(<CodexSessionsPanel />);
+
+    expect(
+      await screen.findByText(
+        /38 active descendant threads reported; usage may continue.*configured subagent cap 10 exceeded.*anomaly/,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("interrupts one session and confirms after refresh", async () => {
     listMock
       .mockResolvedValueOnce([runningSession()])

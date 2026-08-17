@@ -1,0 +1,35 @@
+{
+  "name": "@cocalc/chat-client",
+  "version": "0.1.0",
+  "description": "Headless collaborative chat client for CoCalc",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./*": "./dist/*.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "build": "pnpm exec tsc --build --force",
+    "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
+    "measure:browser": "node ./scripts/measure-browser-bundle.mjs",
+    "test": "pnpm exec jest",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/node,@types/jest"
+  },
+  "dependencies": {
+    "@cocalc/chat": "workspace:*",
+    "@cocalc/conat": "workspace:*",
+    "@cocalc/util": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.10.10",
+    "ts-jest": "29.4.9"
+  },
+  "license": "SEE LICENSE.md"
+}

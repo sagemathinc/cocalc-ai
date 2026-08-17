@@ -60,14 +60,20 @@ function deploymentObservedVersionState({
 function normalizeObservedComponentRunningVersions({
   observed_component,
   observed_artifact,
+  desired_artifact_version,
+  desired_runtime_version,
 }: {
   observed_component: HostManagedComponentStatus;
   observed_artifact?: HostRuntimeArtifactObservation;
+  desired_artifact_version?: string;
+  desired_runtime_version?: string;
 }): string[] {
   const currentArtifactVersion =
     `${observed_artifact?.current_version ?? ""}`.trim();
   const currentArtifactBuildId =
     `${observed_artifact?.current_build_id ?? ""}`.trim();
+  const desiredArtifactVersion = `${desired_artifact_version ?? ""}`.trim();
+  const desiredRuntimeVersion = `${desired_runtime_version ?? ""}`.trim();
   return Array.from(
     new Set(
       observed_component.running_versions.map((runningVersion) => {
@@ -78,6 +84,13 @@ function normalizeObservedComponentRunningVersions({
               runningVersion === currentArtifactBuildId))
         ) {
           return currentArtifactVersion;
+        }
+        if (
+          desiredArtifactVersion &&
+          desiredRuntimeVersion &&
+          runningVersion === desiredRuntimeVersion
+        ) {
+          return desiredArtifactVersion;
         }
         return runningVersion;
       }),
@@ -106,6 +119,9 @@ function componentDeploymentObservedVersionState({
     running_versions: normalizeObservedComponentRunningVersions({
       observed_component,
       observed_artifact,
+      desired_artifact_version: desiredArtifactVersion,
+      desired_runtime_version:
+        `${deployment.metadata?.component_runtime_versions?.[deployment.target] ?? ""}`.trim(),
     }),
   });
 }
@@ -762,6 +778,9 @@ export function summarizeObservedRuntimeDeployments({
       {
         observed_component: observed,
         observed_artifact: observedArtifact,
+        desired_artifact_version: deployment.desired_version,
+        desired_runtime_version:
+          `${deployment.metadata?.component_runtime_versions?.[deployment.target] ?? ""}`.trim(),
       },
     );
     return {

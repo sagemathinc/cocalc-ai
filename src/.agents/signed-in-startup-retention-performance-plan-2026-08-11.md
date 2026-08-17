@@ -5,6 +5,74 @@ Date: 2026-08-11
 Status: execution plan; instrumentation and staging work are the next steps.
 Production experiments and rollout require review of staging evidence.
 
+## Production Follow-Up: 2026-08-14
+
+Production `ux_latency_events` were reviewed through 2026-08-14 23:30 UTC.
+The route-aware and incomplete-start instrumentation has enough coverage to
+identify the next engineering targets, but it does not yet establish that
+startup latency causes the observed retention rate.
+
+The frontend split produced a real payload improvement:
+
+- median signed-in startup script bytes fell from 3.57 MiB on August 10-11 to
+  about 1.73-1.74 MiB on August 13-14;
+- first-day-account `signed_in_app_ready_v2` P95 improved from about 13.7
+  seconds on August 11 to 11.4 seconds on August 14; and
+- the first-day median changed much less, from about 4.0 seconds to 3.8
+  seconds.
+
+The remaining useful-surface latency is still far outside the plan's SLOs:
+
+| Cohort, August 13-14              | P50    | P95     |
+| --------------------------------- | ------ | ------- |
+| Projects route                    | 3.67 s | 11.25 s |
+| Direct project route              | 6.61 s | 21.11 s |
+| Reported downlink at least 5 Mbps | 3.43 s | 11.32 s |
+| Reported downlink below 1 Mbps    | 7.68 s | 38.64 s |
+| Adaptive full mode                | 3.59 s | 12.41 s |
+| Adaptive reduced mode             | 5.11 s | 24.23 s |
+
+Reduced mode identifies constrained clients but does not yet provide a thin
+enough startup path. The current payload cannot meet the constrained target.
+
+Phase attribution makes the next target more specific. On direct project
+loads, time from the common React root commit until useful project readiness is
+4.76 seconds at P50 and 14.90 seconds at P95. For direct-project traces taking
+more than 10 seconds, this interval alone has a 10.13-second median. On the
+Projects route, the initial projects snapshot is 2.00 seconds at P50 and 4.24
+seconds at P95, while root-to-surface is 2.32 seconds at P50 and 4.62 seconds at
+P95. Initial route chunk loading remains material in slow clients but is no
+longer the only dominant interval.
+
+The 30-second incomplete metric is a diagnostic, not a terminal outcome. A
+small number of traces emit `signed_in_app_incomplete_v1` and later reach the
+useful surface under the same client event id. Most incomplete direct-project
+traces had already committed the common React root, which independently
+confirms that direct-project convergence after common bootstrap needs study.
+
+For eligible August 13 accounts with a full 24-hour observation window, 505 of
+545 reached a measured useful surface. The 40 without a useful-surface trace
+activated within 24 hours at 45%, versus 64-67% for accounts whose first
+measured useful surface completed within six seconds. This is supportive but
+not causal: 29 of the 40 had some app-bootstrap telemetry, 11 had none, and
+high-intent users are overrepresented among people willing to wait through a
+slow startup. Latency among completed traces is still confounded by intent.
+
+Immediate follow-up decisions:
+
+1. Record the static build timestamp on success and pre-app diagnostics so
+   rollout comparisons no longer mix builds by calendar day.
+2. Add direct-project gate phases for project record, open-files state,
+   open-files order, and final useful-surface eligibility.
+3. After one full production day on one build, optimize the gate that explains
+   the direct-project post-root tail instead of guessing across several stores.
+4. Reduce the Projects route's startup snapshot and route closure toward the
+   1.2 MiB ratchet; the current approximately 1.73 MiB median is an improvement,
+   not the final thin shell.
+5. Run the account-level intent-to-treat experiment before claiming a retention
+   win. Continue reporting no-surface and incomplete outcomes independently of
+   completed latency percentiles.
+
 Related work:
 
 - `src/.agents/growth-retention-analytics-implementation-plan-2026-08-04.md`
@@ -647,6 +715,59 @@ block startup.
 with measured resource behavior, use hysteresis, allow user override, and make
 the default thin shell safe for everyone.
 
+## 2026-08-14 Implementation Update
+
+Production traces and a manual 2 Mbps Chrome profile isolated two independent
+direct-project delays:
+
+- the full project startup closure is 2.79 MiB Brotli when the project Redux
+  runtime is counted correctly; and
+- a cold directory listing could spend more than 30 seconds in three serial
+  ten-second attempts even while the project host had negligible CPU, load,
+  and IO pressure.
+
+The first reduced-data implementation now:
+
+- combines `navigator.connection` with measured bootstrap-script throughput
+  and fixed bootstrap elapsed time, without a polling loop or separate speed
+  test;
+- authorizes and resolves host routing in the ordinary projects control plane,
+  but does not initialize project editor/session Redux for an ordinary
+  directory target;
+- lists files directly from the project host through the existing scoped Conat
+  filesystem client;
+- preserves directory navigation, browser URLs, viewer restrictions, and an
+  explicit handoff to the full workspace when a file is opened;
+- falls back to the full workspace for files, backup/snapshot virtual paths,
+  archived projects, exam/kiosk mode, access edge cases, and Lite;
+- limits the fast listing to 200 rendered rows and offers an explicit full
+  workspace transition;
+- replaces serial visible-listing retries with requests hedged at three and six
+  seconds under one twelve-second deadline, while leaving background cache
+  warming and watcher catch-up conservative; and
+- records directory paint, rather than project chrome initialization, as the
+  useful project surface.
+
+The bundle guard now measures both direct-project modes, including the project
+Redux runtime in the full mode:
+
+| Route mode      | Brotli   | Gzip     | Assets |
+| --------------- | -------- | -------- | ------ |
+| Reduced project | 1.24 MiB | 1.38 MiB | 30     |
+| Full project    | 2.79 MiB | 3.08 MiB | 107    |
+
+The reduced route-specific group is only 9.6 KiB Brotli; most remaining bytes
+are the shared signed-in shell. At 2 Mbps, the ideal transfer floor falls from
+about 11.4 seconds for the correctly counted full closure to about 5.1 seconds
+for reduced mode, before latency and project data. This is a material first
+step, not the final SLO: the shared shell remains the next bundle target.
+
+The production new-account sample from 2026-08-11 through 2026-08-13 also
+showed that this cohort is not marginal: 48.4% of accounts with a browser
+estimate reported at most 2 Mbps, though the browser API is coarse and must not
+be treated as ground truth. Staging qualification must validate actual
+directory paint and fallback behavior before any production experiment.
+
 ## Immediate Work Queue
 
 1. Save reproducible production baseline queries and add the useful-surface and
@@ -681,4 +802,3 @@ This program is complete when:
 The ultimate success criterion is not merely a smaller bundle or a lower P95.
 It is a measurable increase in the fraction of new users who reach useful work
 and return.
-

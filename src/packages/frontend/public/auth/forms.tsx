@@ -245,7 +245,11 @@ function Alert({
               border: "1px solid #91caff",
               color: "#0958d9",
             };
-  return <div style={style}>{children}</div>;
+  return (
+    <div role={kind === "error" ? "alert" : undefined} style={style}>
+      {children}
+    </div>
+  );
 }
 
 function TextInput(props: {
@@ -882,6 +886,12 @@ export function PublicEmailFirstForm({
   const { termsUrl, privacyUrl } = policyUrls(publicConfig);
 
   useEffect(() => {
+    const value = validInitialEmail(initialEmail);
+    if (!value) return;
+    setEmail((current) => current || value);
+  }, [initialEmail]);
+
+  useEffect(() => {
     if (view !== "sign-up") {
       setRequiresToken(false);
       return;
@@ -1350,6 +1360,7 @@ export function PublicSignInForm({
   const [checkingSignInMethod, setCheckingSignInMethod] = useState(false);
   const [signInMethod, setSignInMethod] = useState<SignInMethod>();
   const [error, setError] = useState("");
+  const errorRef = useRef<HTMLDivElement | null>(null);
   const strategies = usePublicSsoStrategies(initialSSOStrategies);
   const googleStrategy = googleStrategyFrom(strategies);
   const publicConfig = usePublicConfig();
@@ -1369,6 +1380,24 @@ export function PublicSignInForm({
     setChallengeId(initialChallengeId ?? "");
     setMfaOrigin(initialMfaOrigin);
   }, [initialChallengeId, initialMfaOrigin]);
+
+  useEffect(() => {
+    const value = validInitialEmail(initialEmail);
+    if (!value) return;
+    setEmail((current) => current || value);
+  }, [initialEmail]);
+
+  useEffect(() => {
+    if (!error) return;
+    const frame = requestAnimationFrame(() => {
+      errorRef.current?.scrollIntoView?.({
+        behavior: "smooth",
+        block: "center",
+      });
+      errorRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [error]);
 
   const canSubmit = challengeId
     ? factorMethod === "passkey"
@@ -1543,7 +1572,11 @@ export function PublicSignInForm({
           onCreateAccount={() => createAccountFromSignIn(true)}
         />
       )}
-      {error && <Alert kind="error">{error}</Alert>}
+      {error ? (
+        <div ref={errorRef} style={{ scrollMarginTop: "180px" }} tabIndex={-1}>
+          <Alert kind="error">{error}</Alert>
+        </div>
+      ) : null}
       {initialInfo && challengeId && <Alert kind="info">{initialInfo}</Alert>}
       {!challengeId ? (
         <>

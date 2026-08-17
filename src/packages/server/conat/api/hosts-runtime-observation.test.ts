@@ -91,6 +91,91 @@ describe("summarizeObservedRuntimeDeployments", () => {
     ).toBe("aligned");
   });
 
+  it("maps a promoted auxiliary build ID to its artifact version", () => {
+    const observed = summarizeObservedRuntimeDeployments({
+      effective: [
+        {
+          scope_type: "global",
+          scope_id: "global",
+          target_type: "component",
+          target: "acp-worker",
+          desired_version: "ph-v2",
+          rollout_policy: "drain_then_replace",
+          requested_by: "account-1",
+          requested_at: "2026-04-19T01:00:00.000Z",
+          updated_at: "2026-04-19T01:00:00.000Z",
+          metadata: {
+            component_runtime_versions: { "acp-worker": "build-ph-v2" },
+          },
+        },
+      ],
+      observed_artifacts: [
+        {
+          artifact: "project-host",
+          current_version: "ph-v1",
+          current_build_id: "build-ph-v1",
+          installed_versions: ["ph-v2", "ph-v1"],
+        },
+      ],
+      observed_components: [
+        {
+          component: "acp-worker",
+          artifact: "project-host",
+          enabled: true,
+          managed: true,
+          runtime_state: "running",
+          version_state: "aligned",
+          running_versions: ["build-ph-v2"],
+          running_pids: [222],
+        } as any,
+      ],
+    })[0];
+
+    expect(observed?.observed_version_state).toBe("aligned");
+    expect(observed?.running_versions).toEqual(["ph-v2"]);
+  });
+
+  it("does not map an unexpected auxiliary build ID", () => {
+    expect(
+      summarizeObservedRuntimeDeployments({
+        effective: [
+          {
+            scope_type: "global",
+            scope_id: "global",
+            target_type: "component",
+            target: "acp-worker",
+            desired_version: "ph-v2",
+            requested_by: "account-1",
+            requested_at: "2026-04-19T01:00:00.000Z",
+            updated_at: "2026-04-19T01:00:00.000Z",
+            metadata: {
+              component_runtime_versions: { "acp-worker": "build-ph-v2" },
+            },
+          },
+        ],
+        observed_artifacts: [
+          {
+            artifact: "project-host",
+            current_version: "ph-v1",
+            installed_versions: ["ph-v2", "ph-v1"],
+          },
+        ],
+        observed_components: [
+          {
+            component: "acp-worker",
+            artifact: "project-host",
+            enabled: true,
+            managed: true,
+            runtime_state: "running",
+            version_state: "aligned",
+            running_versions: ["some-other-build"],
+            running_pids: [222],
+          } as any,
+        ],
+      })[0]?.observed_version_state,
+    ).toBe("drifted");
+  });
+
   it("normalizes build-id running versions to the artifact version", () => {
     expect(
       summarizeObservedRuntimeDeployments({

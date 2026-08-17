@@ -173,7 +173,10 @@ function assertChatIdentity(request: AcpJobRequest): {
   };
 }
 
-export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
+export function enqueueAcpJob(
+  request: AcpJobRequest,
+  opts: { preferred_worker_id?: string | null } = {},
+): AcpJobRow {
   ensureInit();
   const db = getAcpDatabase();
   const {
@@ -207,11 +210,12 @@ export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
   db.prepare(
     `INSERT INTO ${TABLE}
       (op_id, project_id, account_id, path, thread_id, user_message_id, assistant_message_id, assistant_message_date, session_id, state, send_mode, priority, worker_id, worker_bundle_version, recovery_parent_op_id, recovery_reason, recovery_count, request_json, error, created_at, updated_at, started_at, finished_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, NULL, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, NULL, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
       ON CONFLICT(project_id, path, user_message_id) DO UPDATE SET
         account_id = excluded.account_id,
         send_mode = COALESCE(excluded.send_mode, ${TABLE}.send_mode),
         priority = MAX(${TABLE}.priority, excluded.priority),
+        worker_id = COALESCE(${TABLE}.worker_id, excluded.worker_id),
         updated_at = excluded.updated_at`,
   ).run(
     op_id,
@@ -225,6 +229,7 @@ export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
     request.request_kind === "command" ? null : (request.session_id ?? null),
     send_mode,
     priority,
+    `${opts.preferred_worker_id ?? ""}`.trim() || null,
     recovery_parent_op_id,
     recovery_reason,
     recovery_count,
@@ -546,14 +551,17 @@ export function claimNextQueuedAcpJobForThread({
     const next = db
       .prepare(
         `SELECT * FROM ${TABLE}
-         WHERE project_id = ?
-           AND path = ?
-           AND thread_id = ?
-           AND state = 'queued'
-         ORDER BY ${THREAD_QUEUE_ORDER}
-         LIMIT 1`,
+       WHERE project_id = ?
+         AND path = ?
+         AND thread_id = ?
+         AND state = 'queued'
+         AND (worker_id IS NULL OR worker_id = ?)
+       ORDER BY ${THREAD_QUEUE_ORDER}
+       LIMIT 1`,
       )
-      .get(project_id, path, thread_id) as AcpJobRow | undefined;
+      .get(project_id, path, thread_id, worker_id?.trim() || null) as
+      | AcpJobRow
+      | undefined;
     if (!next) {
       db.exec("COMMIT");
       return undefined;
@@ -701,6 +709,32 @@ export function requeueRunningAcpJob({
         AND state = 'running'`,
   ).run(error ?? null, now, op_id);
   mirrorAcpJobSession(getAcpJobByOpId(op_id));
+}
+
+export function clearQueuedAcpJobWorkerAffinity({
+  op_id,
+  worker_id,
+}: {
+  op_id: string;
+  worker_id: string;
+}): boolean {
+  ensureInit();
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET worker_id = NULL,
+           worker_bundle_version = NULL,
+           updated_at = ?
+       WHERE op_id = ?
+         AND state = 'queued'
+         AND worker_id = ?`,
+    )
+    .run(Date.now(), op_id, worker_id);
+  const changed = Number(result?.changes ?? 0) > 0;
+  if (changed) {
+    mirrorAcpJobSession(getAcpJobByOpId(op_id));
+  }
+  return changed;
 }
 
 export function reprioritizeAcpJobImmediate({

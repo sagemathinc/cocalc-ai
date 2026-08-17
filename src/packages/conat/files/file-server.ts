@@ -43,7 +43,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 
 const SUBJECT = "file-server";
 
-export type RestoreMode = "none" | "auto" | "required";
+export type RestoreMode = "none" | "auto" | "recover" | "required";
 export type SnapshotRestoreMode = "home" | "rootfs" | "both";
 
 export interface BackupFindResult {

@@ -24,6 +24,7 @@ const readFile = jest.fn(async () => "");
 const callHub = jest.fn();
 const getLocalHostId = jest.fn(() => "host-1");
 const getMasterConatClient = jest.fn();
+const queueProjectProvisioned = jest.fn();
 const fileServerCreateBackup = jest.fn();
 const ensureVolume = jest.fn();
 const ensureProjectVolumeIdentity = jest.fn();
@@ -113,6 +114,7 @@ jest.mock("../sqlite/stop-policy", () => ({
 }));
 jest.mock("../master-status", () => ({
   getMasterConatClient: (...args: any[]) => getMasterConatClient(...args),
+  queueProjectProvisioned: (...args: any[]) => queueProjectProvisioned(...args),
   reportProjectStateToMaster: (...args: any[]) =>
     reportProjectStateToMaster(...args),
 }));
@@ -300,6 +302,7 @@ describe("project host start ACP rehydrate ordering", () => {
     callHub.mockReset();
     fileServerCreateBackup.mockReset();
     getMasterConatClient.mockReturnValue(undefined);
+    queueProjectProvisioned.mockReset();
     resolveProjectContainerPath.mockImplementation(
       async (_project_id: string, p: string) => `/projects/host${p}`,
     );
@@ -454,9 +457,12 @@ describe("project host start ACP rehydrate ordering", () => {
 
     await hubApi.projects.start({ project_id });
 
-    expect(ensureVolume).toHaveBeenCalledWith(project_id);
+    expect(ensureVolume).toHaveBeenCalledWith(project_id, undefined, {
+      reportProvisioned: false,
+    });
     expect(volume.quota.get).toHaveBeenCalledTimes(1);
     expect(runnerApi.start).toHaveBeenCalledTimes(1);
+    expect(queueProjectProvisioned).toHaveBeenCalledWith(project_id, true);
   });
 
   it("does not replace an invalid project volume during start", async () => {
@@ -485,6 +491,7 @@ describe("project host start ACP rehydrate ordering", () => {
       );
       expect(ensureVolume).not.toHaveBeenCalled();
       expect(runnerApi.start).not.toHaveBeenCalled();
+      expect(queueProjectProvisioned).not.toHaveBeenCalled();
     } finally {
       if (previousMode == null) {
         delete process.env.COCALC_PROJECT_QUOTA_LEDGER_MODE;
@@ -492,6 +499,59 @@ describe("project host start ACP rehydrate ordering", () => {
         process.env.COCALC_PROJECT_QUOTA_LEDGER_MODE = previousMode;
       }
     }
+  });
+
+  it("does not report a project provisioned when runner start fails", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => {
+        throw new Error("restore failed");
+      }),
+      stop: jest.fn(),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(hubApi.projects.start({ project_id })).rejects.toThrow(
+      "restore failed",
+    );
+    expect(queueProjectProvisioned).not.toHaveBeenCalled();
+  });
+
+  it("forces the provisioning report after automatic recovery", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({ state: "running" })),
+      stop: jest.fn(),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id, restore: "recover" });
+
+    expect(queueProjectProvisioned).toHaveBeenCalledWith(project_id, true, {
+      forceReport: true,
+    });
+  });
+
+  it("forces the provisioning report after an explicit restore", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({ state: "running" })),
+      stop: jest.fn(),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({
+      project_id,
+      restore: "auto",
+      restore_backup_id: "backup-1",
+    });
+
+    expect(queueProjectProvisioned).toHaveBeenCalledWith(project_id, true, {
+      forceReport: true,
+    });
   });
 
   it("materializes an unprovisioned project before reading its quota", async () => {
@@ -524,9 +584,12 @@ describe("project host start ACP rehydrate ordering", () => {
       run_quota: { disk_quota: 10_000 },
     });
 
-    expect(ensureVolume).toHaveBeenCalledWith(project_id);
+    expect(ensureVolume).toHaveBeenCalledWith(project_id, undefined, {
+      reportProvisioned: false,
+    });
     expect(order).toEqual(["ensure-volume", "read-quota"]);
     expect(runnerApi.start).toHaveBeenCalledTimes(1);
+    expect(queueProjectProvisioned).toHaveBeenCalledWith(project_id, true);
   });
 
   it("returns an existing runtime without restarting it for idempotent start", async () => {

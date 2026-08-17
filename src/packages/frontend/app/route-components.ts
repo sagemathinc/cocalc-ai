@@ -6,6 +6,7 @@
 import { lazyWithRetry } from "./lazy-with-retry";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { markStartupPhase, markStartupPhaseOnce } from "./startup-phase";
+import { getStartupPerformancePolicy } from "./startup-performance-policy";
 
 async function loadRoute<T>(
   name: string,
@@ -93,9 +94,18 @@ interface ProjectPageProps {
 export const ProjectPage = lazyWithRetry<ProjectPageProps>(
   async () =>
     loadRoute("project", async () => {
+      const policy = getStartupPerformancePolicy();
+      markStartupPhase("project_route_mode_selected", {
+        mode: policy.mode,
+        reasons: policy.reasons.join(","),
+      });
       const [, page] = await Promise.all([
-        ensureProjectReduxRuntime(),
-        import("@cocalc/frontend/project/page/page"),
+        policy.mode === "reduced"
+          ? Promise.resolve()
+          : ensureProjectReduxRuntime(),
+        policy.mode === "reduced"
+          ? import("@cocalc/frontend/project/page/reduced-page")
+          : import("@cocalc/frontend/project/page/page"),
       ]);
       return { default: page.ProjectPage };
     }),

@@ -37,6 +37,8 @@ import type {
   MembershipClass,
   MembershipAnalyticsBackfillQuery,
   MembershipAnalyticsBackfillResult,
+  MembershipAllocationSeries,
+  MembershipAllocationSeriesQuery,
   MembershipAnalyticsEventRow,
   MembershipAnalyticsEventsQuery,
   MembershipAnalyticsOverview,
@@ -83,6 +85,8 @@ import type {
   ListProjectPublicDirectorySharesOptions,
   ListPublicDirectorySharesResponse,
   PublicDirectoryShareSummary,
+  ResolveLegacyPublicDirectorySharePathOptions,
+  ResolveLegacyPublicDirectorySharePathResponse,
   ResolvePublicDirectoryShareOptions,
   ResolvedPublicDirectoryShare,
   UpdatePublicDirectoryShareOptions,
@@ -322,6 +326,10 @@ export interface ProjectControlStartRequest {
   autostart?: boolean;
   managed_egress_override?: ManagedProjectEgressOverride;
   epoch?: number;
+}
+
+export interface ProjectControlStartAdmission {
+  storage_recovery_required: boolean;
 }
 
 export interface ProjectControlStopRequest {
@@ -1244,6 +1252,7 @@ export interface AccountLocalVerifySignInPasswordResult {
 export interface AccountLocalCreateCliLoginSessionRequest {
   account_id: string;
   approved_challenge_id: string;
+  auth_client?: "cli" | "mobile";
   factor_level?: "none" | "totp" | "recovery_code" | "passkey" | "google_oidc";
   fresh_auth_until?: Date | string | number | null;
   ip_address?: string | null;
@@ -2671,6 +2680,7 @@ export type AccountLocalMethod =
   | "legacy-migration-admin-list-linked-legacy-projects"
   | "legacy-migration-admin-replay-public-paths"
   | "legacy-migration-admin-replay-restored-public-paths"
+  | "public-directory-share-resolve-legacy-path"
   | "public-directory-share-resolve"
   | "public-directory-share-list-mine"
   | "public-directory-share-list-project"
@@ -2702,6 +2712,7 @@ export type BayOpsMethod =
   | "get-membership-tiers"
   | "get-membership-tier-usage-report"
   | "get-membership-analytics-overview"
+  | "get-membership-allocation-series"
   | "get-active-user-map"
   | "get-active-user-map-history-report"
   | "get-active-user-map-history-series"
@@ -2840,7 +2851,9 @@ export interface InterBayDirectoryApi {
 }
 
 export interface InterBayProjectControlApi {
-  checkStartAdmission: (opts: ProjectControlStartRequest) => Promise<void>;
+  checkStartAdmission: (
+    opts: ProjectControlStartRequest,
+  ) => Promise<ProjectControlStartAdmission>;
   start: (opts: ProjectControlStartRequest) => Promise<void>;
   stop: (opts: ProjectControlStopRequest) => Promise<void>;
   restart: (opts: ProjectControlRestartRequest) => Promise<void>;
@@ -4255,6 +4268,9 @@ export interface InterBayAccountLocalApi {
   legacyMigrationAdminReplayRestoredPublicPaths: (
     opts: LegacyMigrationAdminReplayRestoredPublicPathsOptions,
   ) => Promise<LegacyMigrationAdminReplayRestoredPublicPathsResponse>;
+  publicDirectoryShareResolveLegacyPath: (
+    opts: ResolveLegacyPublicDirectorySharePathOptions,
+  ) => Promise<ResolveLegacyPublicDirectorySharePathResponse | null>;
   publicDirectoryShareResolve: (
     opts: ResolvePublicDirectoryShareOptions,
   ) => Promise<ResolvedPublicDirectoryShare>;
@@ -4330,6 +4346,9 @@ export interface InterBayBayOpsApi {
   getMembershipAnalyticsOverview: (
     opts: MembershipAnalyticsOverviewQuery,
   ) => Promise<MembershipAnalyticsOverview>;
+  getMembershipAllocationSeries: (
+    opts: MembershipAllocationSeriesQuery,
+  ) => Promise<MembershipAllocationSeries>;
   getActiveUserMap: (
     opts: ActiveUserMapQuery,
   ) => Promise<ActiveUserMapOverview>;
@@ -7349,6 +7368,15 @@ export function createInterBayAccountLocalClient({
         method: "legacy-migration-admin-replay-restored-public-paths",
       }),
     });
+  const publicDirectoryShareResolveLegacyPathClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "publicDirectoryShareResolveLegacyPath">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "public-directory-share-resolve-legacy-path",
+    }),
+  });
   const publicDirectoryShareResolveClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "publicDirectoryShareResolve">
   >({
@@ -7791,6 +7819,10 @@ export function createInterBayAccountLocalClient({
       ),
     legacyMigrationAdminReplayRestoredPublicPaths: async (opts) =>
       await legacyMigrationAdminReplayRestoredPublicPathsClient.legacyMigrationAdminReplayRestoredPublicPaths(
+        opts,
+      ),
+    publicDirectoryShareResolveLegacyPath: async (opts) =>
+      await publicDirectoryShareResolveLegacyPathClient.publicDirectoryShareResolveLegacyPath(
         opts,
       ),
     publicDirectoryShareResolve: async (opts) =>
@@ -9436,6 +9468,20 @@ export function createInterBayAccountLocalHandler({
       },
     }),
     createServiceHandler<
+      Pick<InterBayAccountLocalApi, "publicDirectoryShareResolveLegacyPath">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "public-directory-share-resolve-legacy-path",
+      }),
+      impl: {
+        publicDirectoryShareResolveLegacyPath: async (opts) =>
+          await impl.publicDirectoryShareResolveLegacyPath(opts),
+      },
+    }),
+    createServiceHandler<
       Pick<InterBayAccountLocalApi, "publicDirectoryShareResolve">
     >({
       ...options,
@@ -9810,6 +9856,15 @@ export function createInterBayBayOpsClient({
       method: "get-membership-analytics-overview",
     }),
   });
+  const membershipAllocationSeriesClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getMembershipAllocationSeries">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-membership-allocation-series",
+    }),
+  });
   const activeUserMapClient = createServiceClient<
     Pick<InterBayBayOpsApi, "getActiveUserMap">
   >({
@@ -9905,6 +9960,10 @@ export function createInterBayBayOpsClient({
       await membershipTierUsageReportClient.getMembershipTierUsageReport(opts),
     getMembershipAnalyticsOverview: async (opts) =>
       await membershipAnalyticsOverviewClient.getMembershipAnalyticsOverview(
+        opts,
+      ),
+    getMembershipAllocationSeries: async (opts) =>
+      await membershipAllocationSeriesClient.getMembershipAllocationSeries(
         opts,
       ),
     getActiveUserMap: async (opts) =>
@@ -10181,6 +10240,20 @@ export function createInterBayBayOpsHandlers({
       impl: {
         getMembershipAnalyticsOverview: async (opts) =>
           await impl.getMembershipAnalyticsOverview(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "getMembershipAllocationSeries">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-membership-allocation-series",
+      }),
+      impl: {
+        getMembershipAllocationSeries: async (opts) =>
+          await impl.getMembershipAllocationSeries(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getActiveUserMap">>({

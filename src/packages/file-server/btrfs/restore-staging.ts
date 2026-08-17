@@ -1,6 +1,6 @@
 // Staged restore makes project restore atomic and crash-safe by restoring into a
 // temporary subvolume, swapping on success, and cleaning stale state on reboot.
-import { join, dirname } from "node:path";
+import { join, dirname, relative, resolve, sep } from "node:path";
 import { readdir, rm, stat, writeFile } from "node:fs/promises";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
@@ -75,6 +75,67 @@ async function deleteStagingPath(path: string): Promise<void> {
       stagingPath: path,
     });
     return;
+  }
+  await btrfs({
+    args: ["subvolume", "delete", path],
+    err_on_exit: true,
+    verbose: false,
+  });
+}
+
+export function descendantSubvolumePaths({
+  stdout,
+  mountRoot,
+  parent,
+}: {
+  stdout: string;
+  mountRoot: string;
+  parent: string;
+}): string[] {
+  const resolvedParent = resolve(parent);
+  const prefix = `${resolvedParent}${sep}`;
+  const paths = new Set<string>();
+  for (const line of stdout.split("\n")) {
+    const marker = " path ";
+    const index = line.indexOf(marker);
+    if (index < 0) continue;
+    const listedPath = line.slice(index + marker.length).trim();
+    if (!listedPath) continue;
+    const candidate = resolve(mountRoot, listedPath);
+    if (candidate.startsWith(prefix)) {
+      paths.add(candidate);
+    }
+  }
+  return [...paths].sort((a, b) => {
+    const depth = relative(resolvedParent, b).split(sep).length;
+    const otherDepth = relative(resolvedParent, a).split(sep).length;
+    return depth - otherDepth || b.localeCompare(a);
+  });
+}
+
+async function deleteSubvolumeTree({
+  path,
+  mountRoot,
+}: {
+  path: string;
+  mountRoot: string;
+}): Promise<void> {
+  if (!(await exists(path))) return;
+  const listed = await btrfs({
+    args: ["subvolume", "list", "-o", path],
+    err_on_exit: true,
+    verbose: false,
+  });
+  for (const child of descendantSubvolumePaths({
+    stdout: listed.stdout,
+    mountRoot,
+    parent: path,
+  })) {
+    await btrfs({
+      args: ["subvolume", "delete", child],
+      err_on_exit: true,
+      verbose: false,
+    });
   }
   await btrfs({
     args: ["subvolume", "delete", path],
@@ -216,11 +277,17 @@ export async function finalizeRestoreStaging(
     const oldPath = `${home}.restore_old.${Date.now()}`;
     await sudo({ command: "mv", args: [home, oldPath] });
     await sudo({ command: "mv", args: [stagingPath, home] });
-    await btrfs({
-      args: ["subvolume", "delete", oldPath],
-      err_on_exit: false,
-      verbose: false,
-    }).catch(() => {});
+    await deleteSubvolumeTree({
+      path: oldPath,
+      mountRoot: dirname(home),
+    }).catch((err) => {
+      // The replacement is already authoritative. Cleanup failure must not
+      // turn a successful atomic restore into a failed lifecycle operation.
+      logger.warn("failed deleting replaced restore subvolume tree", {
+        oldPath,
+        err: `${err}`,
+      });
+    });
   } else {
     await sudo({ command: "mv", args: [stagingPath, home] });
   }

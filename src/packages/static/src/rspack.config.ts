@@ -251,6 +251,9 @@ export default function getConfig(): Configuration {
         import: [resolve("dist-ts/src/webapp-public.js")],
         dependOn: "load",
       },
+      ultralite: {
+        import: [resolve("dist-ts/src/webapp-ultralite.js")],
+      },
     },
     // The filename must include the final emitted bytes, including numeric
     // module ids assigned late in the build. chunkhash can remain unchanged

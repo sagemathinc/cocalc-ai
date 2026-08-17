@@ -381,6 +381,28 @@ export function vmListSummary(rows: any[]) {
   }));
 }
 
+export function vmLifecycleSummary(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    state: row.state,
+    desired_state: row.desired_state,
+    provider: row.provider,
+    machine: row.machine_type,
+    os:
+      (row.operating_system ?? "linux") === "windows"
+        ? "Windows 2022"
+        : "Linux",
+    pricing: row.effective_pricing_model === "spot" ? "Spot" : "Standard",
+    zone: row.zone,
+    hostname: row.public_hostname ?? "",
+    ip: row.public_ip ?? "",
+    ssh_alias: row.ssh_alias ?? "",
+    expires: row.expires_at ?? "never",
+    ...(row.error ? { error: row.error } : {}),
+  };
+}
+
 export function volumeListSummary(rows: any[]) {
   return rows.map((row) => ({
     name: row.name,
@@ -763,25 +785,40 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
         `wait for ${action === "start" ? "ready" : "stopped"}`,
         false,
       )
+      .option("--long", "show the full durable VM record", false)
       .action(
         async (
           idOrName: string,
-          opts: { wait?: boolean },
+          opts: { wait?: boolean; long?: boolean },
           command: Command,
         ) => {
+          const idempotencyKey = randomUUID();
+          let requestAnnounced = false;
           await withContext(command, `vm ${action}`, async (ctx) => {
             requireAccountAuth(ctx, `vm ${action}`);
+            if (!requestAnnounced) {
+              progress(
+                `[vm ${action}] Requesting ${action} for '${idOrName}'...`,
+              );
+              requestAnnounced = true;
+            }
             const result = await ctx.hub.compute[`${action}Vm`]({
               id_or_name: idOrName,
-              idempotency_key: randomUUID(),
+              idempotency_key: idempotencyKey,
             });
-            if (!opts.wait) return result;
-            return await waitForState(
+            if (!opts.wait) {
+              return opts.long ? result : vmLifecycleSummary(result);
+            }
+            progress(
+              `[vm ${action}] Request accepted; waiting for '${result.name ?? idOrName}' to become ${action === "start" ? "SSH-ready" : "stopped"}...`,
+            );
+            const final = await waitForState(
               (vm) => getVmForContext(ctx, vm),
               result.id,
               new Set([action === "start" ? "ready" : "stopped"]),
               5 * 60_000,
             );
+            return opts.long ? final : vmLifecycleSummary(final);
           });
         },
       );

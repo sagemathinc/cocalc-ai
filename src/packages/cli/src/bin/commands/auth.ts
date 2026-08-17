@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { describeProjectScopedAuth } from "../../core/auth-cookies";
+import { resolveAgentTokenFromEnv } from "../../core/agent-token";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
 export type AuthCommandDeps = {
@@ -115,25 +116,47 @@ export function registerAuthCommand(
     apiBaseUrl,
     endpoint,
     challenge_id,
+    expires_at,
     poll_token,
     pollMs,
   }: {
     apiBaseUrl: string;
     endpoint: string;
     challenge_id: string;
+    expires_at?: string | Date;
     poll_token: string;
     pollMs: number;
   }): Promise<CliChallengeStatus> {
+    let expiresAt = new Date(expires_at ?? "").valueOf();
+    let warned = false;
     while (true) {
-      const status = await postCliAuthApi<CliChallengeStatus>({
-        apiBaseUrl,
-        endpoint,
-        body: { challenge_id, poll_token },
-      });
+      let status: CliChallengeStatus;
+      try {
+        status = await postCliAuthApi<CliChallengeStatus>({
+          apiBaseUrl,
+          endpoint,
+          body: { challenge_id, poll_token },
+        });
+      } catch (err) {
+        if (!(err instanceof TypeError || err instanceof SyntaxError)) {
+          throw err;
+        }
+        if (Number.isFinite(expiresAt) && Date.now() >= expiresAt) {
+          throw new Error("CLI auth challenge expired before approval");
+        }
+        if (!warned) {
+          process.stderr.write(
+            "Temporary network error while waiting for CLI approval; retrying.\n",
+          );
+          warned = true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+        continue;
+      }
       if (status.state !== "pending") {
         return status;
       }
-      const expiresAt = new Date(status.expires_at).valueOf();
+      expiresAt = new Date(status.expires_at).valueOf();
       if (Number.isFinite(expiresAt) && Date.now() >= expiresAt) {
         throw new Error("CLI auth challenge expired before approval");
       }
@@ -270,7 +293,9 @@ export function registerAuthCommand(
         const effective_remote_auth = effective.cookie
           ? "cookie"
           : (effective.bearer ??
-              (allowEnvAuthDefaults ? env.COCALC_BEARER_TOKEN : undefined))
+              (allowEnvAuthDefaults
+                ? resolveAgentTokenFromEnv(env)
+                : undefined))
             ? "bearer"
             : (effective.apiKey ??
                 (allowEnvAuthDefaults ? env.COCALC_API_KEY : undefined))
@@ -396,7 +421,7 @@ export function registerAuthCommand(
           has_cookie: !!effective.cookie,
           has_bearer: !!(
             effective.bearer ??
-            (allowEnvAuthDefaults ? env.COCALC_BEARER_TOKEN : undefined)
+            (allowEnvAuthDefaults ? resolveAgentTokenFromEnv(env) : undefined)
           ),
           has_hub_password: !!normalizeSecretValue(
             effective.hubPassword ??
@@ -549,6 +574,7 @@ export function registerAuthCommand(
       apiBaseUrl,
       endpoint: "auth/cli/login/status",
       challenge_id: start.challenge_id,
+      expires_at: start.expires_at,
       poll_token: start.poll_token,
       pollMs: Math.max(200, durationToMs(opts.pollMs, 1_500)),
     });
@@ -782,6 +808,7 @@ export function registerAuthCommand(
       apiBaseUrl,
       endpoint: "auth/cli/elevate/status",
       challenge_id: start.challenge_id,
+      expires_at: start.expires_at,
       poll_token: start.poll_token,
       pollMs: Math.max(200, durationToMs(opts.pollMs, 1_500)),
     });

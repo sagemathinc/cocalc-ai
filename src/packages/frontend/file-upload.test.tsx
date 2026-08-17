@@ -10,13 +10,6 @@ const mockRouteProjectHostHttpUrl = jest.fn();
 const mockLog = jest.fn();
 const mockRecordUxLatencyEvent = jest.fn();
 
-(globalThis as any).$ = {
-  extend: (...args: any[]) => {
-    const values = args[0] === true ? args.slice(1) : args;
-    return Object.assign({}, ...values);
-  },
-};
-
 jest.mock("dropzone", () => {
   return class MockDropzone {
     options: any;

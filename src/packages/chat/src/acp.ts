@@ -7,7 +7,16 @@ import type {
   CodexReasoningLevel,
   CodexServiceTier,
   CodexPaymentSourcePreference,
+  CodexSessionConfig,
 } from "@cocalc/util/ai/codex";
+import {
+  DEFAULT_CODEX_MODEL_NAME,
+  DEFAULT_CODEX_MODELS,
+  normalizeCodexSessionId,
+  resolveCodexServiceTier,
+  resolveCodexSessionMode,
+} from "@cocalc/util/ai/codex";
+import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
 
 // Configuration stored on the chat thread root for Codex/ACP turns.
 // This is persisted as `acp_config` on the root message.
@@ -24,6 +33,124 @@ export interface CodexThreadConfig {
   codexPathOverride?: string;
   notifyOnTurnFinish?: boolean;
   paymentSource?: CodexPaymentSourcePreference;
+}
+
+export function normalizeCodexMention(model?: string): string | undefined {
+  if (!model || model === "codex-agent") return undefined;
+  return model;
+}
+
+export function resolveChatWorkingDirectory(chatPath?: string): string {
+  if (!chatPath) return ".";
+  const index = chatPath.lastIndexOf("/");
+  return index <= 0 ? "." : chatPath.slice(0, index);
+}
+
+export function buildCodexAcpConfig({
+  path,
+  config,
+  model,
+  maxConcurrentSubagents,
+}: {
+  path?: string;
+  config?: CodexThreadConfig;
+  model?: string;
+  maxConcurrentSubagents?: number;
+}): CodexSessionConfig {
+  const workingDirectory =
+    config?.workingDirectory || resolveChatWorkingDirectory(path);
+  const opts: CodexSessionConfig = { workingDirectory, maxConcurrentSubagents };
+  const defaultModel =
+    DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
+  const selectedModel = config?.model ?? model ?? defaultModel;
+  if (selectedModel) opts.model = selectedModel;
+  const modelInfo = DEFAULT_CODEX_MODELS.find(
+    (candidate) => candidate.name === selectedModel,
+  );
+  const selectedReasoning =
+    config?.reasoning ??
+    modelInfo?.reasoning?.find((level) => level.default)?.id;
+  if (
+    selectedReasoning &&
+    ["low", "medium", "high", "extra_high", "max", "ultra"].includes(
+      selectedReasoning,
+    )
+  ) {
+    opts.reasoning = selectedReasoning as CodexSessionConfig["reasoning"];
+  }
+  const sessionMode = resolveCodexSessionMode(config);
+  opts.sessionMode = sessionMode;
+  opts.allowWrite = sessionMode !== "read-only";
+  const serviceTier = resolveCodexServiceTier({
+    model: selectedModel,
+    serviceTier: config?.serviceTier,
+  });
+  if (serviceTier === "fast") opts.serviceTier = serviceTier;
+  const env: Record<string, string> = {};
+  if (config?.envHome) env.HOME = config.envHome;
+  if (config?.envPath) env.PATH = config.envPath;
+  if (Object.keys(env).length) opts.env = env;
+  if (config?.codexPathOverride) {
+    opts.codexPathOverride = config.codexPathOverride;
+  }
+  if (config?.paymentSource) opts.paymentSource = config.paymentSource;
+  const sessionId = normalizeCodexSessionId(config?.sessionId);
+  if (sessionId) opts.sessionId = sessionId;
+  return opts;
+}
+
+export function buildAcpChatContext({
+  project_id,
+  path,
+  sender_id,
+  user_message_date,
+  user_message_content,
+  user_parent_message_id,
+  api_url,
+  browser_id,
+  messageDate,
+  thread_id,
+  message_id,
+  parent_message_id,
+  sendMode,
+  notifyOnTurnFinish,
+}: {
+  project_id?: string;
+  path?: string;
+  sender_id: string;
+  user_message_date?: string;
+  user_message_content?: string;
+  user_parent_message_id?: string;
+  api_url?: string;
+  browser_id?: string;
+  messageDate: Date;
+  thread_id?: string;
+  message_id?: string;
+  parent_message_id?: string;
+  sendMode?: "immediate";
+  notifyOnTurnFinish?: boolean;
+}): AcpChatContext {
+  if (!project_id) throw new Error("Codex requires a project context to run");
+  if (!path) throw new Error("Codex requires a chat file path");
+  if (!(messageDate instanceof Date) || Number.isNaN(messageDate.valueOf())) {
+    throw new Error("Codex chat metadata missing timestamp");
+  }
+  return {
+    project_id,
+    path,
+    sender_id,
+    user_message_date,
+    user_message_content,
+    user_parent_message_id,
+    api_url,
+    browser_id,
+    message_date: messageDate.toISOString(),
+    thread_id,
+    message_id,
+    parent_message_id,
+    send_mode: sendMode,
+    notify_on_turn_finish: notifyOnTurnFinish,
+  };
 }
 
 export function appendStreamMessage(

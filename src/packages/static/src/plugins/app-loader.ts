@@ -10,6 +10,11 @@ export default function appLoaderPlugin(registerPlugin, PRODMODE: boolean) {
     publicPath?: string;
   }[] = [
     { desc: "app", filename: "app.html", chunks: ["load", "app"] },
+    {
+      desc: "ultralite",
+      filename: "ultralite.html",
+      chunks: ["ultralite"],
+    },
     { desc: "embed", filename: "embed.html", chunks: ["load", "embed"] },
     {
       desc: "public-viewer",

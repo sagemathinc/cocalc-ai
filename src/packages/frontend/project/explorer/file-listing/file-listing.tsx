@@ -103,6 +103,10 @@ const COL_W = {
 
 const NARROW_WIDTH_PX = 780;
 
+export function showFileListingDetailColumns(containerWidth: number): boolean {
+  return containerWidth >= NARROW_WIDTH_PX;
+}
+
 const TABLE_COMPONENTS = {
   Table: function ExplorerTable(
     props: React.HTMLAttributes<HTMLTableElement> & {
@@ -524,7 +528,7 @@ export function FileListing({
   const virtuosoRef = useRef<TableVirtuosoHandle>(null);
   const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null);
   const containerWidth = useContainerWidth(containerEl);
-  const isNarrow = containerWidth < NARROW_WIDTH_PX;
+  const showDetailColumns = showFileListingDetailColumns(containerWidth);
   const filesCacheVersion = useFilesCacheVersion();
   const backupsCacheVersion = useBackupsCacheVersion();
   const sortColumn = active_file_sort?.column_name;
@@ -1134,21 +1138,21 @@ export function FileListing({
             />
           </span>
         </th>
-        <th
-          style={{ ...sortableThStyle, width: COL_W.DATE }}
-          onClick={() => sort_by("time")}
-        >
-          <span style={sortLabelStyle("time")}>
-            Date Modified
-            <SortIndicator
-              columnKey="time"
-              sortColumn={sortColumn}
-              sortDescending={sortDescending}
-            />
-          </span>
-        </th>
-        {!isNarrow && (
+        {showDetailColumns && (
           <>
+            <th
+              style={{ ...sortableThStyle, width: COL_W.DATE }}
+              onClick={() => sort_by("time")}
+            >
+              <span style={sortLabelStyle("time")}>
+                Date Modified
+                <SortIndicator
+                  columnKey="time"
+                  sortColumn={sortColumn}
+                  sortDescending={sortDescending}
+                />
+              </span>
+            </th>
             <th
               style={{
                 ...sortableThStyle,
@@ -1198,30 +1202,29 @@ export function FileListing({
     intl,
     sortColumn,
     sortDescending,
-    isNarrow,
+    showDetailColumns,
     type_filter,
     typeFilterOptions,
     actions,
   ]);
 
   const numCols = useMemo(() => {
-    let n = 4; // public + type + star + name
+    let n = 3; // type + star + name
     if (
       !student_project_functionality.disableActions &&
       (!readOnly || allowReadOnlyCopy)
     ) {
       n += 1;
     }
-    n += 1; // date
-    if (!isNarrow) {
-      n += 2; // size + actions
+    if (showDetailColumns) {
+      n += 3; // date + size + actions
     }
     return n;
   }, [
     student_project_functionality.disableActions,
     readOnly,
     allowReadOnlyCopy,
-    isNarrow,
+    showDetailColumns,
   ]);
 
   const itemContent = useCallback(
@@ -1393,15 +1396,15 @@ export function FileListing({
               )}
             </div>
           </td>
-          <td style={{ ...cellStyle, width: COL_W.DATE }}>
-            {renderTimestamp({
-              mtime: record.mtime,
-              name: record.name,
-              currentPath: current_path,
-            })}
-          </td>
-          {!isNarrow && (
+          {showDetailColumns && (
             <>
+              <td style={{ ...cellStyle, width: COL_W.DATE }}>
+                {renderTimestamp({
+                  mtime: record.mtime,
+                  name: record.name,
+                  currentPath: current_path,
+                })}
+              </td>
               <td
                 style={{ ...cellStyle, width: COL_W.SIZE, textAlign: "right" }}
               >
@@ -1486,7 +1489,7 @@ export function FileListing({
       current_path,
       handleCheckboxChange,
       handleToggleStar,
-      isNarrow,
+      showDetailColumns,
       actions,
       buildContextMenu,
       foregroundProjectOnOpen,

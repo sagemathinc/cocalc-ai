@@ -16,6 +16,10 @@ import {
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import { getLogger } from "@cocalc/conat/logger";
 import { posix as path } from "node:path";
+import {
+  CHAT_PRIMARY_KEYS as SHARED_CHAT_PRIMARY_KEYS,
+  CHAT_STRING_COLS as SHARED_CHAT_STRING_COLS,
+} from "./index";
 
 const logger = getLogger("chat:server");
 const PROJECT_HOME = "/home/user";
@@ -34,14 +38,8 @@ export function canonicalChatPath(chatPath: string): string {
 
 // Keep legacy keys first, but include v2 identity keys so we can do indexed
 // lookups by message_id/thread_id without O(n) scans.
-export const CHAT_PRIMARY_KEYS = [
-  "date",
-  "sender_id",
-  "event",
-  "message_id",
-  "thread_id",
-];
-export const CHAT_STRING_COLS = ["input"];
+export const CHAT_PRIMARY_KEYS = [...SHARED_CHAT_PRIMARY_KEYS];
+export const CHAT_STRING_COLS = [...SHARED_CHAT_STRING_COLS];
 
 export interface CreateChatSyncDBOptions extends Omit<
   ImmerDBOptions,

@@ -91,6 +91,7 @@ type ChallengeInfo = {
   current_matches_account?: boolean | null;
   requested_duration?: "default" | "extended" | null;
   elevated_login?: boolean;
+  auth_client?: "cli" | "mobile";
   state: "pending" | "approved" | "redeemed" | "canceled";
   expires_at: string;
 };
@@ -200,7 +201,14 @@ function requestedAccountLabel(info: ChallengeInfo | null): string {
 
 function loginHintLabel(info: ChallengeInfo | null): string {
   const emailHint = `${info?.email_hint ?? ""}`.trim();
-  return emailHint ? ` The CLI was started with email hint ${emailHint}.` : "";
+  if (!emailHint) return "";
+  return info?.auth_client === "mobile"
+    ? ` The mobile app was started with email hint ${emailHint}.`
+    : ` The CLI was started with email hint ${emailHint}.`;
+}
+
+function isMobileLogin(info: ChallengeInfo | null): boolean {
+  return info?.auth_client === "mobile";
 }
 
 function currentAccountLabel(info: ChallengeInfo | null): string {
@@ -245,9 +253,11 @@ function InlineActionLink(props: {
 export function PublicCliLoginApprovalView({
   challengeId,
   isAuthenticated,
+  onEmailHintChange,
 }: {
   challengeId: string;
   isAuthenticated: boolean;
+  onEmailHintChange?: (email: string | undefined) => void;
 }) {
   const [info, setInfo] = useState<ChallengeInfo | null>(null);
   const [approving, setApproving] = useState(false);
@@ -263,6 +273,7 @@ export function PublicCliLoginApprovalView({
 
   useEffect(() => {
     let cancelled = false;
+    onEmailHintChange?.(undefined);
     async function load() {
       try {
         const next = await postAuthApi<ChallengeInfo>({
@@ -271,6 +282,8 @@ export function PublicCliLoginApprovalView({
         });
         if (!cancelled) {
           setInfo(next);
+          const emailHint = `${next.email_hint ?? ""}`.trim();
+          onEmailHintChange?.(emailHint || undefined);
         }
       } catch (err) {
         if (!cancelled) {
@@ -282,7 +295,7 @@ export function PublicCliLoginApprovalView({
     return () => {
       cancelled = true;
     };
-  }, [challengeId]);
+  }, [challengeId, onEmailHintChange]);
 
   async function approve() {
     setApproving(true);
@@ -331,18 +344,30 @@ export function PublicCliLoginApprovalView({
     }
   }
 
+  if (info == null) {
+    return (
+      <div style={STACK_STYLE}>
+        <Alert kind={error ? "error" : "info"}>
+          {error || "Loading sign-in request…"}
+        </Alert>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
+    const client = isMobileLogin(info) ? "mobile app" : "CLI";
     return (
       <div style={STACK_STYLE}>
         <Alert kind="info">
-          Sign in with the CoCalc account you want this CLI to use, then approve
-          the CLI login request.{loginHintLabel(info)}
+          Sign in with the CoCalc account you want this {client} to use, then
+          approve the {client} login request.{loginHintLabel(info)}
         </Alert>
       </div>
     );
   }
 
   if (isWrongSignedInAccount(info)) {
+    const client = isMobileLogin(info) ? "mobile app" : "CLI";
     return (
       <div style={STACK_STYLE}>
         {error ? <Alert kind="error">{error}</Alert> : undefined}
@@ -350,9 +375,8 @@ export function PublicCliLoginApprovalView({
           This browser is signed in as {currentAccountLabel(info)}.{" "}
           <InlineActionLink disabled={signingOut} onClick={signOut}>
             {signingOut ? "Signing out..." : "Sign out"}
-          </InlineActionLink>{" "}
-          and then sign in as {requestedAccountLabel(info)} to approve the CLI
-          login request.
+          </InlineActionLink>
+          {` and then sign in as ${requestedAccountLabel(info)} to approve the ${client} login request.`}
         </Alert>
         <Alert kind="info">
           If that is inconvenient, open this link in a new temporary incognito
@@ -370,13 +394,25 @@ export function PublicCliLoginApprovalView({
         <Alert kind="success">
           {info?.elevated_login
             ? "Elevated CLI login approved. Return to your terminal to finish signing in."
-            : "CLI login approved. Return to your terminal to finish signing in."}
+            : isMobileLogin(info)
+              ? "Mobile app login approved. Return to the CoCalc app to finish signing in."
+              : "CLI login approved. Return to your terminal to finish signing in."}
         </Alert>
       ) : (
         <Alert kind="info">
-          Approve {info?.elevated_login ? "an elevated" : "a"} CLI sign-in for{" "}
-          {currentCliLoginAccountLabel(info)}. This creates a separate CLI
-          session and does not reuse your browser session.
+          {isMobileLogin(info) ? (
+            <>
+              Approve a CoCalc mobile app sign-in for{" "}
+              {currentCliLoginAccountLabel(info)}. This creates a separate
+              mobile app session and does not reuse your browser session.
+            </>
+          ) : (
+            <>
+              Approve {info?.elevated_login ? "an elevated" : "a"} CLI sign-in
+              for {currentCliLoginAccountLabel(info)}. This creates a separate
+              CLI session and does not reuse your browser session.
+            </>
+          )}
           {info?.elevated_login && info.requested_duration === "extended"
             ? " The terminal session will stay elevated for 8 hours."
             : ""}
@@ -389,7 +425,9 @@ export function PublicCliLoginApprovalView({
             ? "Approving..."
             : info?.elevated_login
               ? "Approve Elevated CLI Login"
-              : "Approve CLI Login"}
+              : isMobileLogin(info)
+                ? "Approve Mobile App Login"
+                : "Approve CLI Login"}
         </ActionButton>
       ) : undefined}
       <FreshAuthModal {...freshAuthModalProps} />

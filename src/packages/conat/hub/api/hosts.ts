@@ -1664,6 +1664,7 @@ export interface HostManagedComponentRolloutRequest {
   id: string;
   components: ManagedComponentKind[];
   desired_version?: string;
+  record_runtime_deployments?: boolean;
   reason?: string;
 }
 
@@ -2295,6 +2296,7 @@ export interface Hosts {
     account_id: string;
     project_id: string;
     ttl_seconds?: number;
+    session_id?: string;
   }) => Promise<{
     host_id: string;
     token: string;
@@ -2467,6 +2469,7 @@ export interface Hosts {
     id: string;
     components: ManagedComponentKind[];
     desired_version?: string;
+    record_runtime_deployments?: boolean;
     base_url?: string;
     reason?: string;
   }) => Promise<HostLroResponse>;

@@ -91,7 +91,7 @@ export default {
     const url = new URL(request.url);
 
     const project = url.pathname.match(
-      /^\/projects\/([0-9a-f-]{36})(?:\/files\/(.*))?$/i
+      /^\/projects\/([0-9a-f-]{36})(?:\/files\/(.*))?$/i,
     );
     if (project) {
       const target = new URL("/settings/legacy-migration", "https://cocalc.ai");
@@ -104,6 +104,60 @@ export default {
     return Response.redirect(target.toString(), 302);
   },
 };
+```
+
+### Public-share compatibility resolver
+
+The hub now provides `/legacy/<original-path>` as a compatibility resolver.
+It checks the bounded longest prefixes of the original path against the
+cross-bay public-share slug directory. A match redirects to the corresponding
+`/share/...` route; a miss or directory lookup failure redirects to the same
+path on `cocalc.ai`, preserving the pre-resolver migration behavior.
+
+After the hub version containing that route is deployed, the `cocalc.com/*`
+Worker can remain deliberately database-free and send every path through the
+resolver:
+
+```js
+export default {
+  async fetch(request) {
+    const source = new URL(request.url);
+    const target = new URL(
+      `/legacy${source.pathname}${source.search}`,
+      "https://cocalc.ai",
+    );
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: target.toString(),
+        "Cache-Control": "no-store",
+        "X-CoCalc-Migration-Policy": "temporary",
+      },
+    });
+  },
+};
+```
+
+Deploy in this order:
+
+1. Deploy the hub `/legacy/*` route to every bay.
+2. Verify known share matches and non-share fallbacks directly on
+   `cocalc.ai/legacy/...`.
+3. Change the Worker target from `https://cocalc.ai<original-path>` to
+   `https://cocalc.ai/legacy<original-path>`.
+4. Keep both hops as `302` until production samples, Unicode/space encoding,
+   query preservation, and disabled-share behavior have been verified.
+
+Expected examples:
+
+```text
+https://cocalc.com/georeg/matrix-certificates/notebook
+  -> https://cocalc.ai/legacy/georeg/matrix-certificates/notebook
+  -> https://cocalc.ai/share/georeg/matrix-certificates/notebook
+
+https://cocalc.com/features/terminal
+  -> https://cocalc.ai/legacy/features/terminal
+  -> https://cocalc.ai/features/terminal
 ```
 
 After validation, change stable public routes from `302` to `301` or `308`.
@@ -124,19 +178,19 @@ Create a concrete mapping table from these sources:
 
 Initial redirect categories:
 
-| Old route category | Target behavior |
-| --- | --- |
-| `/` | `https://cocalc.ai/` |
-| `/features...` | preserve path on `https://cocalc.ai` |
-| `/pricing...` | preserve path on `https://cocalc.ai` |
-| `/about...` | preserve path on `https://cocalc.ai` |
-| `/software...` | preserve path if supported; otherwise nearest software landing page |
-| `/policies...` | preserve path on `https://cocalc.ai` |
-| `/support...` | preserve path when supported; otherwise support landing page |
-| `/auth/sign-in` | route to sign-in with legacy-account guidance |
-| `/auth/sign-up` | route to sign-up with legacy-account guidance |
-| `/projects/<id>/files/...` | route to a legacy project resolver or migration page |
-| public share URLs | route through the public-share resolver and preserve the file or folder path |
+| Old route category         | Target behavior                                                              |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| `/`                        | `https://cocalc.ai/`                                                         |
+| `/features...`             | preserve path on `https://cocalc.ai`                                         |
+| `/pricing...`              | preserve path on `https://cocalc.ai`                                         |
+| `/about...`                | preserve path on `https://cocalc.ai`                                         |
+| `/software...`             | preserve path if supported; otherwise nearest software landing page          |
+| `/policies...`             | preserve path on `https://cocalc.ai`                                         |
+| `/support...`              | preserve path when supported; otherwise support landing page                 |
+| `/auth/sign-in`            | route to sign-in with legacy-account guidance                                |
+| `/auth/sign-up`            | route to sign-up with legacy-account guidance                                |
+| `/projects/<id>/files/...` | route to a legacy project resolver or migration page                         |
+| public share URLs          | route through the public-share resolver and preserve the file or folder path |
 
 Any route that is not supported on `cocalc.ai` should map to the closest useful
 replacement page, not to a generic root page.

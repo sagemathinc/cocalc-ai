@@ -65,4 +65,50 @@ describe("host bulk deprovision helpers", () => {
     expect(onConfirm).toHaveBeenCalledTimes(21);
     expect(maxInFlight).toBe(20);
   });
+
+  it("returns operation ids and preserves ordinary per-host failures", async () => {
+    const hosts = [
+      { id: "host-ok", name: "Host OK", status: "off" },
+      { id: "host-failed", name: "Host Failed", status: "off" },
+    ] as Host[];
+
+    const results = await runBulkHostDeprovision({
+      hosts,
+      skipRunningBackups: false,
+      onConfirm: async (host) => {
+        if (host.id === "host-failed") {
+          throw new Error("provider rejected request");
+        }
+        return { op_id: "op-123" } as any;
+      },
+    });
+
+    expect(results).toEqual([
+      {
+        host: hosts[0],
+        status: "submitted",
+        op_id: "op-123",
+      },
+      {
+        host: hosts[1],
+        status: "failed",
+        error: "provider rejected request",
+      },
+    ]);
+  });
+
+  it("propagates fresh-auth failures so the whole batch can be retried", async () => {
+    const freshAuthError: any = new Error("fresh auth is required");
+    freshAuthError.code = "fresh_auth_required";
+
+    await expect(
+      runBulkHostDeprovision({
+        hosts: [{ id: "host-1", status: "off" } as Host],
+        skipRunningBackups: false,
+        onConfirm: async () => {
+          throw freshAuthError;
+        },
+      }),
+    ).rejects.toBe(freshAuthError);
+  });
 });

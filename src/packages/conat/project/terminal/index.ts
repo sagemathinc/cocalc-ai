@@ -170,6 +170,9 @@ export interface Options {
   handleFlowControl?: boolean;
   id?: string;
 
+  // Limit history returned to this client without reducing retained history.
+  historyLimit?: number;
+
   // ms until throw error if backend doesn't respond
   timeout?: number;
 }
@@ -178,6 +181,21 @@ const sessions: { [id: string]: any } = {};
 const sessionPaths: { [id: string]: string | undefined } = {};
 const history: { [id: string]: string } = {};
 const sizes: { [id: string]: { rows: number; cols: number }[] } = {};
+
+export function boundedTerminalHistory(
+  value: string | undefined,
+  requestedLimit?: number,
+): { history: string | undefined; omitted: boolean } {
+  if (!value || requestedLimit == null) {
+    return { history: value, omitted: false };
+  }
+  const limit = Math.max(
+    1,
+    Math.min(MAX_HISTORY_LENGTH, Math.floor(Number(requestedLimit) || 0)),
+  );
+  if (value.length <= limit) return { history: value, omitted: false };
+  return { history: value.slice(-limit), omitted: true };
+}
 
 type TerminalMessageKind = "user" | "auto";
 
@@ -702,7 +720,11 @@ export function terminalServer({
           return;
 
         case "history":
-          return history[data.id ? String(data.id) : (sessionId ?? "")];
+          const retainedHistory =
+            history[data.id ? String(data.id) : (sessionId ?? "")];
+          return data.limit == null
+            ? retainedHistory
+            : boundedTerminalHistory(retainedHistory, data.limit);
 
         case "spawn":
           removeListeners();
@@ -758,7 +780,15 @@ export function terminalServer({
             }
           }
 
-          return { pid: pty.pid, history: history[id ?? ""] };
+          const bounded = boundedTerminalHistory(
+            history[id ?? ""],
+            options.historyLimit,
+          );
+          return {
+            pid: pty.pid,
+            history: bounded.history,
+            history_omitted: bounded.omitted,
+          };
 
         default:
           throw Error(`unknown command '${cmd}'`);
@@ -788,6 +818,7 @@ export function terminalServer({
 export class TerminalClient extends EventEmitter {
   public readonly socket;
   public pid: number;
+  public historyOmitted = false;
   private getSize?: () => undefined | { rows: number; cols: number };
 
   constructor({
@@ -859,7 +890,12 @@ export class TerminalClient extends EventEmitter {
     );
     // console.log("spawned terminal with pid", data.pid);
     this.pid = data.pid;
-    return data.history;
+    const bounded = boundedTerminalHistory(
+      typeof data.history === "string" ? data.history : undefined,
+      options?.historyLimit,
+    );
+    this.historyOmitted = data.history_omitted === true || bounded.omitted;
+    return bounded.history;
   };
 
   destroy = async () => {
@@ -895,8 +931,20 @@ export class TerminalClient extends EventEmitter {
     ).data;
   };
 
-  history = async (id?: string) => {
-    return (await this.socket.request({ cmd: "history", id })).data;
+  history = async (id?: string, limit?: number) => {
+    const data = (await this.socket.request({ cmd: "history", id, limit }))
+      .data;
+    if (data != null && typeof data === "object" && "history" in data) {
+      this.historyOmitted = data.omitted === true;
+      return data.history as string | undefined;
+    }
+    // Compatibility with project hosts predating bounded history responses.
+    const bounded = boundedTerminalHistory(
+      typeof data === "string" ? data : undefined,
+      limit,
+    );
+    this.historyOmitted = bounded.omitted;
+    return bounded.history;
   };
 
   env = async () => {

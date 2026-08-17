@@ -6,6 +6,8 @@
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
+declare const BUILD_DATE: string;
+
 const INCOMPLETE_AFTER_MS = 30_000;
 const MAX_MARKS = 80;
 
@@ -87,6 +89,7 @@ function resourceDetails(): Record<string, unknown> {
     | PerformanceNavigationTiming
     | undefined;
   return {
+    build_date: typeof BUILD_DATE === "undefined" ? undefined : BUILD_DATE,
     route_segment: startupRouteSegment(),
     document_hidden: document.hidden,
     document_was_discarded: (document as any).wasDiscarded === true,

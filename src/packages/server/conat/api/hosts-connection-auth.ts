@@ -390,11 +390,13 @@ export async function issueProjectHostAgentAuthTokenInternalHelper({
   account_id,
   project_id,
   ttl_seconds,
+  session_id,
 }: {
   host_id: string;
   account_id: string;
   project_id: string;
   ttl_seconds?: number;
+  session_id?: string;
 }): Promise<{
   host_id: string;
   token: string;
@@ -413,6 +415,7 @@ export async function issueProjectHostAgentAuthTokenInternalHelper({
     account_id,
     host_id,
     ttl_seconds,
+    session_id,
     private_key: getProjectHostAuthTokenPrivateKey(),
   });
   return { host_id, token, expires_at };

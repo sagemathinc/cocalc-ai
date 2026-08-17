@@ -49,6 +49,16 @@ describe("NotebookFrameActions lifecycle", () => {
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
   });
 
+  it("stores the cell list without requiring global jQuery", () => {
+    delete (globalThis as { $?: unknown }).$;
+    const target = {} as any;
+    const node = document.createElement("div");
+
+    NotebookFrameActions.prototype.set_cell_list_div.call(target, node);
+
+    expect(target.cell_list_div.get(0)).toBe(node);
+  });
+
   it.each(["undo", "redo"] as const)(
     "routes %s through the lifecycle-aware Jupyter action",
     (operation) => {

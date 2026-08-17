@@ -146,6 +146,7 @@ const RESTORE_TEST_QUERIES: RestoreTestQuery[] = [
   },
 ];
 const RESTORE_TEST_PITR_TABLE = "public.bay_restore_test_pitr_events";
+const BACKUP_HEALTH_ALERT_DEDUP_MINUTES = 24 * 60;
 
 type BackupStrategy = "pg_basebackup" | "pg_dumpall";
 type StorageBackend = "local" | "r2" | "rustic";
@@ -926,7 +927,7 @@ export async function runBayBackupHealthCheck({
         "",
         "This check is observational only and performs no automatic restart or backup operation.",
       ].join("\n"),
-      dedupMinutes: 30,
+      dedupMinutes: BACKUP_HEALTH_ALERT_DEDUP_MINUTES,
       dedupBySubject: true,
     });
   }

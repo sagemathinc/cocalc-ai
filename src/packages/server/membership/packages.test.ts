@@ -505,6 +505,63 @@ describe("membership packages", () => {
     });
   });
 
+  it("records a fixed-term allocation for a direct student purchase", async () => {
+    const account_id = uuid();
+    const course_project_id = uuid();
+    const project_id = uuid();
+    const fulfillment_id = `direct-student-${uuid()}`;
+    await createTestAccount(account_id);
+    const product = {
+      type: "membership-package" as const,
+      kind: "course" as const,
+      membership_class: courseTier,
+      course_project_id,
+      seat_count: 1,
+      metadata: {
+        direct_student_purchase: true,
+        grant_source: "student-course-purchase",
+        project_id,
+        course_project_id,
+        course_path: "math101.course",
+        course_title: "Math 101",
+        verified_student_course_purchase: true,
+      },
+    };
+
+    const first = await purchaseMembershipPackage({
+      account_id,
+      amount: 25,
+      fulfillment_id,
+      product,
+    });
+    const second = await purchaseMembershipPackage({
+      account_id,
+      amount: 25,
+      fulfillment_id,
+      product,
+    });
+
+    expect(second).toEqual(first);
+    const { rows } = await getPool().query(
+      `SELECT channel, membership_class, billing_interval, lifecycle,
+              active_memberships, purchased_capacity, revenue_cents
+         FROM membership_allocation_facts
+        WHERE purchase_id=$1`,
+      [first.purchase_id],
+    );
+    expect(rows).toEqual([
+      {
+        channel: "direct-student",
+        membership_class: courseTier,
+        billing_interval: "fixed",
+        lifecycle: "first_paid",
+        active_memberships: 1,
+        purchased_capacity: 1,
+        revenue_cents: "2500",
+      },
+    ]);
+  });
+
   it("allows expanding an existing package without resupplying the package kind", async () => {
     const owner_account_id = uuid();
     await createTestAccount(owner_account_id);

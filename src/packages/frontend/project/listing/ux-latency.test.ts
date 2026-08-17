@@ -1,4 +1,10 @@
 const mockTraceInstances: any[] = [];
+const mockRecordSignedInSurfaceReady = jest.fn();
+
+jest.mock("@cocalc/frontend/app/bootstrap-ux-latency", () => ({
+  recordSignedInSurfaceReady: (...args: any[]) =>
+    mockRecordSignedInSurfaceReady(...args),
+}));
 
 jest.mock("@cocalc/frontend/monitoring/ux-latency-trace", () => ({
   UxLatencyTrace: class MockUxLatencyTrace {
@@ -37,6 +43,7 @@ import {
 describe("directory listing UX traces", () => {
   beforeEach(() => {
     jest.useFakeTimers();
+    mockRecordSignedInSurfaceReady.mockClear();
   });
 
   afterEach(() => {
@@ -78,6 +85,9 @@ describe("directory listing UX traces", () => {
       "project_directory_first_paint_v2",
       "directory_authoritative_paint_v2",
     ]);
+    expect(mockRecordSignedInSurfaceReady).toHaveBeenCalledWith(
+      "project-directory",
+    );
   });
 
   it("records retained content separately from authoritative content", () => {

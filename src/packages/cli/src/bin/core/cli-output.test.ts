@@ -255,3 +255,32 @@ test("emitError emits structured project hard-delete not-owner code in json mode
   const parsed = JSON.parse(output);
   assert.equal(parsed.error.code, "project_delete_not_owner");
 });
+
+test("emitError exposes structured VM approval details in json mode", () => {
+  const approvalUrl =
+    "https://cocalc.test/projects/project-id/vms?agent_grant=request-id";
+  const output = withStderrCapture(() => {
+    emitError(
+      { globals: { output: "json" } },
+      "vm stop",
+      Object.assign(new Error("temporary account approval required"), {
+        code: "agent_grant_required",
+        request_id: "request-id",
+        approval_url: approvalUrl,
+        expires_at: "2026-08-14T20:00:00.000Z",
+        project_id: "project-id",
+      }),
+      (url) => url,
+    );
+  });
+  const parsed = JSON.parse(output);
+  assert.equal(parsed.error.code, "agent_grant_required");
+  assert.deepEqual(parsed.error.details, {
+    request_id: "request-id",
+    approval_url: approvalUrl,
+    expires_at: "2026-08-14T20:00:00.000Z",
+    project_id: "project-id",
+  });
+  assert.match(parsed.error.hint, /Approve this exact VM request/);
+  assert.match(parsed.error.hint, /https:\/\/cocalc\.test/);
+});

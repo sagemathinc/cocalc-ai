@@ -26,6 +26,9 @@ function replaceExactlyOnce(
 }
 
 export function renderAppTemplate(entry = "unknown"): string {
+  if (entry === "ultralite") {
+    return readFileSync(resolve(__dirname, "../ultralite.html"), "utf8");
+  }
   const template = readFileSync(resolve(__dirname, "../app.html"), "utf8");
   return replaceExactlyOnce(
     replaceExactlyOnce(

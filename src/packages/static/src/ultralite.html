@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>CoCalc Essential</title>
+    <script>
+      try {
+        const preference = localStorage.getItem("cocalc-essential-theme");
+        const dark =
+          preference === "dark" ||
+          (preference !== "light" &&
+            matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+      } catch {}
+    </script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        background: Canvas;
+        color: CanvasText;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+      }
+      .ul-topbar {
+        align-items: center;
+        background: #315a93;
+        color: white;
+        display: grid;
+        gap: 0.85rem;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        min-height: 48px;
+        padding: 0 14px;
+      }
+      .ul-brand-mark {
+        font-size: 19px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .ul-topbar-title {
+        border-left: 1px solid rgb(255 255 255 / 35%);
+        font-size: 15px;
+        font-weight: 600;
+        padding-left: 0.85rem;
+      }
+      .ul-mode {
+        border: 1px solid rgb(255 255 255 / 45%);
+        border-radius: 3px;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        padding: 2px 6px;
+        text-transform: uppercase;
+      }
+      .ul-shell-loading {
+        background: Canvas;
+        inset: 48px 0 0;
+        margin: 0 auto;
+        padding: 24px clamp(12px, 3vw, 32px);
+        position: fixed;
+        width: 100%;
+      }
+      .ul-loading-state {
+        align-items: center;
+        color: GrayText;
+        display: flex;
+        gap: 9px;
+        padding: 20px 12px;
+      }
+      .ul-spinner {
+        border: 2px solid color-mix(in srgb, GrayText 28%, transparent);
+        border-radius: 50%;
+        border-top-color: #315a93;
+        height: 16px;
+        width: 16px;
+      }
+    </style>
+  </head>
+  <body data-cocalc-entry="ultralite">
+    <div id="cocalc-ultralite-root">
+      <header class="ul-topbar">
+        <span class="ul-brand-mark">CoCalc</span>
+        <span class="ul-topbar-title">Projects</span>
+        <span class="ul-mode">Essential</span>
+      </header>
+      <main class="ul-shell-loading">
+        <div class="ul-loading-state">
+          <span aria-hidden="true" class="ul-spinner"></span>
+          <span>Opening CoCalc</span>
+        </div>
+      </main>
+    </div>
+    <noscript>CoCalc Essential requires JavaScript.</noscript>
+  </body>
+</html>

@@ -341,6 +341,21 @@ Table({
     desc: "Purchase Log",
     primary_key: "id",
     pg_indexes: ["account_id", "time", "project_id"],
+    pg_custom_indexes: [
+      {
+        name: "purchases_membership_analytics_backfill_idx",
+        query: "(time, id) WHERE service='membership'",
+      },
+      {
+        name: "purchases_membership_subscription_history_idx",
+        query:
+          "((description->>'subscription_id'), time, id) WHERE service='membership' AND description->>'type'='membership'",
+      },
+      {
+        name: "purchases_refund_analytics_backfill_idx",
+        query: "(time, id) WHERE service='refund'",
+      },
+    ],
     pg_unique_indexes: [
       // having two entries with same invoice_id or id would be very bad, since that
       // would mean user got money twice for one payment!

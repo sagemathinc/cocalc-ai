@@ -363,6 +363,10 @@ export default function CodexSessionsPanel() {
       render: (_, group) => {
         const metadata = sessionMetadata(group.latest);
         const subagents = Number(metadata.active_descendant_agents ?? 0);
+        const maxSubagents = Number(metadata.max_concurrent_subagents ?? 0);
+        const subagentLimitExceeded =
+          metadata.subagent_limit_exceeded === true ||
+          (maxSubagents > 0 && subagents > maxSubagents);
         const commands = Number(metadata.background_terminal_processes ?? 0);
         return (
           <Space vertical size={2}>
@@ -371,14 +375,15 @@ export default function CodexSessionsPanel() {
             </Tag>
             {subagents > 0 || commands > 0 ? (
               <Text type="warning" style={{ fontSize: 12 }}>
-                {subagents > 0
-                  ? `${subagents} subagent${subagents === 1 ? "" : "s"}`
-                  : ""}
+                {subagents > 0 ? `${subagents} active descendant threads` : ""}
                 {subagents > 0 && commands > 0 ? " · " : ""}
                 {commands > 0
                   ? `${commands} command${commands === 1 ? "" : "s"}`
                   : ""}{" "}
-                still running; usage may continue
+                reported; usage may continue
+                {subagentLimitExceeded
+                  ? ` · configured subagent cap ${maxSubagents} exceeded (limiter/accounting anomaly)`
+                  : ""}
               </Text>
             ) : null}
           </Space>

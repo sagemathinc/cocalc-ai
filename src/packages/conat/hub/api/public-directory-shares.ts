@@ -78,6 +78,14 @@ export interface ResolvePublicDirectoryShareOptions {
   slug: string;
 }
 
+export interface ResolveLegacyPublicDirectorySharePathOptions {
+  path: string;
+}
+
+export interface ResolveLegacyPublicDirectorySharePathResponse {
+  path: string;
+}
+
 export interface ListPublicDirectorySharesOptions {
   account_id?: string;
   prefix?: string;

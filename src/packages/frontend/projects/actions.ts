@@ -36,6 +36,7 @@ import type {
   ProjectMetadataPatch,
 } from "@cocalc/conat/hub/api/projects";
 import { defaults, is_valid_uuid_string, uuid } from "@cocalc/util/misc";
+import { project_redux_name } from "@cocalc/util/redux/name";
 import { ProjectsState, store } from "./store";
 import { switch_to_project } from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -87,6 +88,14 @@ import {
   startProjectDirectoryOpenTrace,
 } from "@cocalc/frontend/project/listing/ux-latency";
 import { captureUxTraceStart } from "@cocalc/frontend/monitoring/ux-latency-trace";
+import { getStartupPerformancePolicy } from "@cocalc/frontend/app/startup-performance-policy";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import {
+  clearReducedProjectState,
+  getReducedProjectDirectoryPath,
+  setReducedProjectState,
+} from "@cocalc/frontend/project/reduced-runtime";
+import { lite } from "@cocalc/frontend/lite";
 
 import type {
   CourseInfo,
@@ -2613,6 +2622,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const index = x.indexOf(project_id);
     if (index !== -1) {
       webapp_client.conat_client.releaseProjectHostRouting({ project_id });
+      clearReducedProjectState(project_id);
       redux.removeProjectReferences(project_id);
       this.setState({ open_projects: x.delete(index) });
     }
@@ -2620,11 +2630,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   // Save all open files in all projects to disk
   public save_all_files(): void {
-    store.get("open_projects").filter((project_id) => {
+    store.get("open_projects").forEach((project_id) => {
       // ? is fine here since if project just got closed or collaborator
       // removed from it, etc., that would be fine.  Save all is
       // just a convenience for autosave. See
       // https://github.com/sagemathinc/cocalc/issues/4789
+      //
+      // In particular, do not initialize the lazy project runtime for a
+      // persisted project tab that has not been opened in this page.
+      if (!this.redux.hasStore(project_redux_name(project_id))) return;
       this.redux.getProjectActions(project_id)?.save_all_files();
     });
   }
@@ -3329,6 +3343,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     ignore_kiosk?: boolean; // Ignore ?fullscreen=kiosk
     change_history?: boolean; // (default: true) Whether or not to alter browser history
     restore_session?: boolean; // (default: true)  Opens up previously closed editor tabs
+    force_full_workspace?: boolean; // Internal: bypass slow-network directory-only startup.
   }) => {
     opts = defaults(opts, {
       project_id: undefined,
@@ -3338,11 +3353,93 @@ export class ProjectsActions extends Actions<ProjectsState> {
       ignore_kiosk: false,
       change_history: true,
       restore_session: true,
+      force_full_workspace: false,
     });
     if (!is_valid_uuid_string(opts.project_id)) {
       throw Error(`invalid project_id - ${opts.project_id}`);
     }
+    const projectRecord = store.getIn(["project_map", opts.project_id]);
+    const reducedRelation = store.get_my_group(opts.project_id);
+    const homeDirectory = getProjectHomeDirectory(opts.project_id);
+    const reducedDirectoryPath = getReducedProjectDirectoryPath({
+      homeDirectory,
+      target: opts.target,
+    });
+    const canUseReducedDirectory =
+      !lite &&
+      !opts.force_full_workspace &&
+      opts.switch_to !== false &&
+      redux.getStore("page")?.get("fullscreen") !== "kiosk" &&
+      !redux.getStore("customize")?.get("exam_mode") &&
+      !redux.hasProjectStore(opts.project_id) &&
+      getStartupPerformancePolicy().mode === "reduced" &&
+      reducedDirectoryPath != null &&
+      projectRecord != null &&
+      typeof projectRecord.get("host_id") === "string" &&
+      projectRecord.getIn(["state", "state"]) !== "archived" &&
+      !isProjectHardDeleteBlocked(projectRecord) &&
+      reducedRelation != null &&
+      ["owner", "collaborator", "viewer", "admin"].includes(reducedRelation);
+    if (canUseReducedDirectory) {
+      const directoryOpenIntent = captureUxTraceStart();
+      const host_id = projectRecord.get("host_id");
+      startProjectDirectoryOpenTrace({
+        project_id: opts.project_id,
+        host_id: typeof host_id === "string" ? host_id : undefined,
+        surface_visible: true,
+        start: directoryOpenIntent,
+      });
+      if (typeof host_id === "string") {
+        markProjectDirectoryOpenPhase({
+          project_id: opts.project_id,
+          phase: "host_routing_start",
+          details: { host_info_required: true, reduced_runtime: true },
+        });
+        try {
+          await this.ensure_host_info(host_id);
+        } catch (err) {
+          recordProjectDirectoryOpenIncomplete({
+            project_id: opts.project_id,
+            reason: "host_routing_failed",
+          });
+          throw err;
+        }
+      }
+      markProjectDirectoryOpenPhase({
+        project_id: opts.project_id,
+        phase: "host_routing_ready",
+        details: {
+          host_info_required: typeof host_id === "string",
+          reduced_runtime: true,
+        },
+      });
+      setReducedProjectState({
+        homeDirectory,
+        hostId: typeof host_id === "string" ? host_id : undefined,
+        path: reducedDirectoryPath,
+        projectId: opts.project_id,
+        title: projectRecord.get("title") || "Untitled Project",
+        viewer: reducedRelation === "viewer",
+      });
+      if (!this.isProjectOpen(opts.project_id)) {
+        this.setProjectOpen(opts.project_id);
+      }
+      markProjectDirectoryOpenPhase({
+        project_id: opts.project_id,
+        phase: "reduced_project_state_ready",
+      });
+      await redux
+        .getActions("page")
+        .set_active_tab(opts.project_id, opts.change_history);
+      markProjectDirectoryOpenPhase({
+        project_id: opts.project_id,
+        phase: "project_foregrounded",
+        details: { reduced_runtime: true },
+      });
+      return;
+    }
     await ensureProjectReduxRuntime();
+    clearReducedProjectState(opts.project_id);
     if (!store.getIn(["project_map", opts.project_id])) {
       if (COCALC_MINIMAL) {
         await switch_to_project(opts.project_id);

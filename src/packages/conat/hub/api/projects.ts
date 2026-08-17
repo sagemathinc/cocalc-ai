@@ -2160,7 +2160,7 @@ export interface Projects {
     run_quota?: any;
     run_quota_revision?: number;
     image?: string;
-    restore?: "none" | "auto" | "required";
+    restore?: "none" | "auto" | "recover" | "required";
     restore_backup_id?: string;
     lro_op_id?: string;
     autostart?: boolean;

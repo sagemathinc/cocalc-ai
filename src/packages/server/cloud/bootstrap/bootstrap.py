@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260811-v43"
+HELPER_SCHEMA_VERSION = "20260814-v44"
 RUNTIME_WRAPPER_VERSION = "20260724-v15"
 NVM_VERSION = "0.40.4"
 CLOUDFLARED_VERSION = "2026.7.2"
@@ -8404,6 +8404,9 @@ CONAT_ROUTER_PID_FILE="/mnt/cocalc/data/conat-router.pid"
 CONAT_PERSIST_PID_FILE="/mnt/cocalc/data/conat-persist.pid"
 DAEMON_CONTROL_LOCK="/mnt/cocalc/data/tmp/project-host-daemon-control.lock"
 DAEMON_CONTROL_LOCK_WAIT_SECONDS="${COCALC_PROJECT_HOST_CONTROL_LOCK_WAIT_SECONDS:-30}"
+BOOTSTRAP_USER="__BOOTSTRAP_USER__"
+BOOTSTRAP_LIFECYCLE_LOCK="__BOOTSTRAP_LIFECYCLE_LOCK__"
+BOOTSTRAP_LIFECYCLE_LOCK_WAIT_SECONDS="${COCALC_BOOTSTRAP_LOCK_TIMEOUT_SECS:-300}"
 FORENSICS_ROOT="/var/lib/cocalc-project-host-forensics"
 MAX_FORENSICS_DURATION_SECONDS="30"
 MAX_FORENSICS_FILE_BLOCKS="65536"
@@ -8448,6 +8451,19 @@ acquire_daemon_control_lock() {
   exec 8>"${DAEMON_CONTROL_LOCK}"
   if ! flock -x -w "${DAEMON_CONTROL_LOCK_WAIT_SECONDS}" 8; then
     echo "timed out waiting for project-host daemon control lock" >&2
+    exit 1
+  fi
+}
+
+acquire_bootstrap_lifecycle_lock() {
+  install -d -o "${BOOTSTRAP_USER}" -g "${BOOTSTRAP_USER}" -m 0700 \
+    "$(dirname "${BOOTSTRAP_LIFECYCLE_LOCK}")"
+  touch "${BOOTSTRAP_LIFECYCLE_LOCK}"
+  chown "${BOOTSTRAP_USER}:${BOOTSTRAP_USER}" "${BOOTSTRAP_LIFECYCLE_LOCK}"
+  chmod 0600 "${BOOTSTRAP_LIFECYCLE_LOCK}"
+  exec 7>>"${BOOTSTRAP_LIFECYCLE_LOCK}"
+  if ! flock -x -w "${BOOTSTRAP_LIFECYCLE_LOCK_WAIT_SECONDS}" 7; then
+    echo "timed out waiting for bootstrap lifecycle lock" >&2
     exit 1
   fi
 }
@@ -9406,6 +9422,10 @@ case "${cmd}" in
     ;;
 esac
 
+if [ "${cmd}" = "prepare-podman-boot" ]; then
+  acquire_bootstrap_lifecycle_lock
+fi
+
 case "${cmd}" in
   start|ensure)
     require_podman_boot_preparation_not_failed
@@ -9481,6 +9501,10 @@ esac
     start_ph = start_ph.replace("__RUNTIME_ROOT__", str(runtime_root))
     rootctl = rootctl.replace("__RUNTIME_ROOT__", str(runtime_root))
     rootctl = rootctl.replace("__RUNTIME_USER__", cfg.ssh_user)
+    rootctl = rootctl.replace("__BOOTSTRAP_USER__", cfg.bootstrap_user)
+    rootctl = rootctl.replace(
+        "__BOOTSTRAP_LIFECYCLE_LOCK__", str(bootstrap_lock_path(cfg))
+    )
     rootctl = rootctl.replace(
         "__OOM_ADJ_LITERAL__", f"--{abs(HOST_CRITICAL_OOM_SCORE_ADJ)}"
     )

@@ -375,6 +375,7 @@ export async function verifyClusterAccountSignInPassword({
 export async function createLocalCliLoginSession({
   account_id,
   approved_challenge_id,
+  auth_client = "cli",
   factor_level = "none",
   fresh_auth_until,
   ip_address,
@@ -409,7 +410,7 @@ export async function createLocalCliLoginSession({
     factor_level: effectiveFactorLevel,
     fresh_auth_until: validFreshAuthUntil,
     metadata: {
-      auth_client: "cli",
+      auth_client: auth_client === "mobile" ? "mobile" : "cli",
       approved_challenge_id,
       elevated_login: validFreshAuthUntil != null,
       ip_address: ip_address ?? undefined,

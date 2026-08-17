@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, basename, resolve } from "node:path";
 
 import { Command } from "commander";
+import { resolveAgentTokenFromEnv } from "../../core/agent-token";
 
 import {
   bundleToZipBuffer,
@@ -144,7 +145,7 @@ Examples:
           );
           const blobBearerToken = normalizeOptionalString(
             opts.blobBearerToken ??
-              process.env.COCALC_BEARER_TOKEN ??
+              resolveAgentTokenFromEnv() ??
               globals.bearer,
           );
           const projectId = normalizeOptionalString(
@@ -231,7 +232,7 @@ Task export bundles include:
               ),
               blobBearerToken: normalizeOptionalString(
                 opts.blobBearerToken ??
-                  process.env.COCALC_BEARER_TOKEN ??
+                  resolveAgentTokenFromEnv() ??
                   globals.bearer,
               ),
             }),
@@ -289,7 +290,7 @@ Board export bundles include:
               ),
               blobBearerToken: normalizeOptionalString(
                 opts.blobBearerToken ??
-                  process.env.COCALC_BEARER_TOKEN ??
+                  resolveAgentTokenFromEnv() ??
                   globals.bearer,
               ),
             }),
@@ -347,7 +348,7 @@ Slides export bundles include:
               ),
               blobBearerToken: normalizeOptionalString(
                 opts.blobBearerToken ??
-                  process.env.COCALC_BEARER_TOKEN ??
+                  resolveAgentTokenFromEnv() ??
                   globals.bearer,
               ),
             }),

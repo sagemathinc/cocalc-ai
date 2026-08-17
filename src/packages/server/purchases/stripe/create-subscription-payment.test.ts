@@ -26,6 +26,8 @@ const mockUseBalanceTowardSubscriptions = jest.fn();
 const mockAdminAlert = jest.fn();
 const mockRetrievePaymentIntent = jest.fn();
 const mockUpdatePaymentIntent = jest.fn();
+let renewalPaymentIntentId = "";
+let renewalInvoiceId = "";
 
 jest.mock("./create-payment-intent", () => ({
   __esModule: true,
@@ -82,17 +84,19 @@ describe("createSubscriptionPayment", () => {
   beforeEach(async () => {
     await getPool().query("DELETE FROM subscription_renewal_attempts");
     await getPool().query("DELETE FROM subscriptions");
+    renewalPaymentIntentId = `pi_${uuid()}`;
+    renewalInvoiceId = `in_${uuid()}`;
     mockCreatePaymentIntent.mockReset().mockImplementation(async (opts) => {
       await bindSubscriptionRenewalPaymentIntent({
         account_id: opts.account_id,
         attempt_id: opts.metadata.renewal_attempt_id,
-        payment_intent_id: "pi_renewal",
-        stripe_invoice_id: "in_renewal",
+        payment_intent_id: renewalPaymentIntentId,
+        stripe_invoice_id: renewalInvoiceId,
         subscription_id: Number(opts.metadata.subscription_id),
       });
       return {
         hosted_invoice_url: "https://stripe.example/invoice",
-        payment_intent: "pi_renewal",
+        payment_intent: renewalPaymentIntentId,
       };
     });
     mockGetStripeCustomerId.mockReset().mockResolvedValue("cus_123");
@@ -144,7 +148,7 @@ describe("createSubscriptionPayment", () => {
     );
     expect(rows[0].payment).toMatchObject({
       amount: cost,
-      payment_intent_id: "pi_renewal",
+      payment_intent_id: renewalPaymentIntentId,
       status: "active",
       subscription_id,
     });
@@ -374,7 +378,7 @@ describe("createSubscriptionPayment", () => {
       subscription_id,
     });
 
-    expect(result).toEqual({ payment_intent_id: "pi_renewal" });
+    expect(result).toEqual({ payment_intent_id: renewalPaymentIntentId });
     expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
       expect.objectContaining({
         lineItems: [
@@ -391,18 +395,18 @@ describe("createSubscriptionPayment", () => {
     const { rows: attempts } = await getPool().query(
       `SELECT id, balance_applied
          FROM subscription_renewal_attempts
-        WHERE subscription_id=$1 AND payment_intent_id='pi_renewal'`,
-      [subscription_id],
+        WHERE subscription_id=$1 AND payment_intent_id=$2`,
+      [subscription_id, renewalPaymentIntentId],
     );
     expect(Number(attempts[0].balance_applied)).toBe(68.78);
 
     const credit_id = await createCredit({
       account_id,
       amount: 3.22,
-      invoice_id: "pi_renewal",
+      invoice_id: renewalPaymentIntentId,
     });
     const paymentIntent = {
-      id: "pi_renewal",
+      id: renewalPaymentIntentId,
       metadata: {
         credit_id: `${credit_id}`,
         renewal_attempt_id: attempts[0].id,
@@ -475,8 +479,8 @@ describe("createSubscriptionPayment", () => {
     const { rows: attempts } = await getPool().query(
       `SELECT id
          FROM subscription_renewal_attempts
-        WHERE subscription_id=$1 AND payment_intent_id='pi_renewal'`,
-      [subscription_id],
+        WHERE subscription_id=$1 AND payment_intent_id=$2`,
+      [subscription_id, renewalPaymentIntentId],
     );
 
     await createPurchase({
@@ -489,14 +493,14 @@ describe("createSubscriptionPayment", () => {
     const credit_id = await createCredit({
       account_id,
       amount: 3.22,
-      invoice_id: "pi_renewal",
+      invoice_id: renewalPaymentIntentId,
     });
 
     await expect(
       processSubscriptionRenewal({
         account_id,
         paymentIntent: {
-          id: "pi_renewal",
+          id: renewalPaymentIntentId,
           metadata: {
             credit_id: `${credit_id}`,
             renewal_attempt_id: attempts[0].id,
@@ -557,8 +561,8 @@ describe("createSubscriptionPayment", () => {
     const { rows } = await getPool().query(
       `SELECT balance_applied
          FROM subscription_renewal_attempts
-        WHERE subscription_id=$1 AND payment_intent_id='pi_renewal'`,
-      [subscription_id],
+        WHERE subscription_id=$1 AND payment_intent_id=$2`,
+      [subscription_id, renewalPaymentIntentId],
     );
     expect(Number(rows[0].balance_applied)).toBe(0);
   });
@@ -710,6 +714,99 @@ describe("createSubscriptionPayment", () => {
       { state: "succeeded" },
       { state: "scheduled" },
     ]);
+    const { rows: allocationRows } = await getPool().query(
+      `SELECT lifecycle, active_memberships, revenue_cents
+         FROM membership_allocation_facts
+        WHERE subscription_id=$1`,
+      [subscription_id],
+    );
+    expect(allocationRows).toEqual([
+      {
+        lifecycle: "renewal",
+        active_memberships: 1,
+        revenue_cents: "7200",
+      },
+    ]);
+  });
+
+  it("records a scheduled downgrade only after its renewal succeeds", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        class: "basic",
+        cost: 72,
+        start: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
+        end: new Date(Date.now() - 60_000),
+        interval: "year",
+      },
+    );
+    await getPool().query(
+      `UPDATE subscriptions
+          SET metadata=metadata || $2::jsonb
+        WHERE id=$1`,
+      [
+        subscription_id,
+        JSON.stringify({
+          pending_plan_change: {
+            kind: "downgrade",
+            previous_class: "standard",
+            previous_interval: "year",
+            scheduled_at: new Date().toISOString(),
+          },
+        }),
+      ],
+    );
+    const { rows: attempts } = await getPool().query(
+      `SELECT id
+         FROM subscription_renewal_attempts
+        WHERE subscription_id=$1`,
+      [subscription_id],
+    );
+    const { rows: beforeRows } = await getPool().query(
+      `SELECT fact_key
+         FROM membership_allocation_facts
+        WHERE subscription_id=$1`,
+      [subscription_id],
+    );
+    expect(beforeRows).toEqual([]);
+
+    await processSubscriptionRenewal({
+      account_id,
+      paymentIntent: {
+        id: "pi_scheduled_downgrade",
+        metadata: {
+          renewal_attempt_id: attempts[0].id,
+          subscription_id: `${subscription_id}`,
+        },
+      },
+      amount: 72,
+    });
+
+    const { rows } = await getPool().query(
+      `SELECT s.metadata->'pending_plan_change' AS pending_plan_change,
+              f.lifecycle, f.membership_class,
+              f.previous_membership_class, f.previous_billing_interval,
+              f.tier_change, f.active_memberships, f.revenue_cents
+         FROM subscriptions s
+         JOIN membership_allocation_facts f
+           ON f.subscription_id=s.id
+        WHERE s.id=$1`,
+      [subscription_id],
+    );
+    expect(rows).toEqual([
+      {
+        pending_plan_change: null,
+        lifecycle: "plan_change",
+        membership_class: "basic",
+        previous_membership_class: "standard",
+        previous_billing_interval: "year",
+        tier_change: "downgrade",
+        active_memberships: 1,
+        revenue_cents: "7200",
+      },
+    ]);
   });
 
   it("ignores a callback that does not own the current renewal attempt", async () => {
@@ -836,6 +933,13 @@ describe("createSubscriptionPayment", () => {
       [subscription_id],
     );
     expect(rows).toEqual([{ state: "failed", status: "canceled" }]);
+    const { rows: allocationRows } = await getPool().query(
+      `SELECT fact_key
+         FROM membership_allocation_facts
+        WHERE subscription_id=$1`,
+      [subscription_id],
+    );
+    expect(allocationRows).toEqual([]);
     expect(mockSend).toHaveBeenCalledWith(
       expect.objectContaining({
         subject: `Subscription Id=${subscription_id} Canceled`,

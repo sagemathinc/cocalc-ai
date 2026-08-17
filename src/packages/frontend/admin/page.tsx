@@ -21,7 +21,7 @@ import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { set_url_with_search } from "@cocalc/frontend/history";
 import { COLORS } from "@cocalc/util/theme";
 import { RegistrationToken } from "./registration-token";
-import { MembershipAnalyticsAdmin } from "./membership-analytics";
+import { MembershipAnalyticsAdmin } from "./personal-membership-analytics";
 import { MembershipTiers } from "./membership-tiers";
 import SiteSettings from "./site-settings";
 import { UserSearch } from "./users/user-search";
@@ -75,6 +75,8 @@ interface AdminSectionDefinition {
   group?: AdminGroupKey;
   icon: IconName;
   key: AdminSection;
+  pageDescription?: string | null;
+  pageTitle?: string;
   title: string;
 }
 
@@ -153,12 +155,20 @@ export function AdminPage({
   const activeNavItem = navItemByKey.get(activeMenuKey);
   const activeGroupKey =
     activeNavItem?.group == null ? undefined : activeNavItem.group;
+  const activeSection =
+    route.kind === "index" && route.section != null
+      ? sectionByKey.get(route.section)
+      : undefined;
   const menuOpenKeys =
     manualOpenKeys ?? (activeGroupKey == null ? [] : [activeGroupKey]);
   const title =
     activeMenuKey === OVERVIEW_MENU_KEY
       ? "Administration"
-      : (activeNavItem?.title ?? "Administration");
+      : (activeSection?.pageTitle ?? activeNavItem?.title ?? "Administration");
+  const description =
+    activeSection?.pageDescription === undefined
+      ? activeNavItem?.description
+      : activeSection.pageDescription;
   const showSetupBanner = !(
     route.kind === "index" && route.section === "site-setup"
   );
@@ -387,9 +397,7 @@ export function AdminPage({
           <Title level={3} style={{ lineHeight: 1.2, margin: 0 }}>
             {title}
           </Title>
-          {activeNavItem?.description && (
-            <Text type="secondary">{activeNavItem.description}</Text>
-          )}
+          {description && <Text type="secondary">{description}</Text>}
         </Flex>
         {showSetupBanner ? (
           <div style={{ marginTop: "12px" }}>
@@ -547,9 +555,11 @@ function getAdminSections({
       ),
     },
     {
-      key: "membership-analytics",
-      title: "Membership Analytics",
+      key: "personal-membership-analytics",
+      title: "Personal Analytics",
       description: "Review membership counts, purchases, and lifecycle events.",
+      pageDescription: null,
+      pageTitle: "Personal Membership Analytics",
       icon: "line-chart",
       group: "commercial",
       component: () => <MembershipAnalyticsAdmin />,

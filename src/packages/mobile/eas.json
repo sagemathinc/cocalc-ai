@@ -1,0 +1,19 @@
+{
+  "cli": {
+    "version": ">= 16.0.0"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "COCALC_MOBILE_VARIANT": "development"
+      }
+    },
+    "production": {
+      "env": {
+        "COCALC_MOBILE_VARIANT": "production"
+      }
+    }
+  }
+}

@@ -92,6 +92,8 @@ import type {
   GrantTemporaryViewerAccessOptions,
   GrantTemporaryViewerAccessResponse,
   ResolvePublicDirectoryShareOptions,
+  ResolveLegacyPublicDirectorySharePathOptions,
+  ResolveLegacyPublicDirectorySharePathResponse,
   ResolvedPublicDirectoryShare,
   UpdatePublicDirectoryShareOptions,
   UpsertPublicDirectoryShareOptions,
@@ -99,6 +101,7 @@ import type {
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
+const MAX_LEGACY_PUBLIC_SHARE_ROUTE_PATH_LENGTH = 4096;
 const DEFAULT_TEMPORARY_VIEWER_GRANT_DAYS = 7;
 const DISABLED_PREVIOUS_VISIBILITY_METADATA_KEY =
   "public_share_previous_visibility";
@@ -204,6 +207,86 @@ export function normalizePublicDirectoryShareSlug(slug: string): string {
     }
   }
   return trimmed;
+}
+
+function legacyPublicDirectorySharePathSegments(path: string): string[] {
+  const trimmed = `${path ?? ""}`.replace(/^\/+|\/+$/g, "");
+  if (!trimmed) return [];
+  if (trimmed.length > MAX_LEGACY_PUBLIC_SHARE_ROUTE_PATH_LENGTH) {
+    throw Error(
+      `legacy public share path must be at most ${MAX_LEGACY_PUBLIC_SHARE_ROUTE_PATH_LENGTH} characters`,
+    );
+  }
+  if (trimmed.includes("//")) {
+    throw Error("legacy public share path must not contain duplicate slashes");
+  }
+  const segments = trimmed.split("/");
+  for (const segment of segments) {
+    if (!segment || segment === "." || segment === "..") {
+      throw Error(
+        "legacy public share path must not contain empty, '.', or '..' path segments",
+      );
+    }
+    if (/[\\\x00-\x1f\x7f]/.test(segment)) {
+      throw Error(
+        "legacy public share path must not contain backslashes or control characters",
+      );
+    }
+  }
+  return segments[0]?.toLowerCase() === "share" ? segments.slice(1) : segments;
+}
+
+/**
+ * Resolve an old cocalc.com share path against the bay-local slug directory.
+ * Callers that do not know the owning bay must query this through the
+ * cross-bay public-directory-share routing layer.
+ */
+export async function resolveLegacyPublicDirectorySharePath(
+  opts: ResolveLegacyPublicDirectorySharePathOptions,
+): Promise<ResolveLegacyPublicDirectorySharePathResponse | null> {
+  const segments = legacyPublicDirectorySharePathSegments(opts.path);
+  if (segments.length === 0) return null;
+  const candidates: string[] = [];
+  for (let i = segments.length; i >= 1; i -= 1) {
+    const candidate = segments.slice(0, i).join("/");
+    if (candidate.length > MAX_PUBLIC_DIRECTORY_SHARE_SLUG_LENGTH) continue;
+    try {
+      candidates.push(
+        normalizePublicDirectoryShareSlug(candidate).toLowerCase(),
+      );
+    } catch {
+      // A relative file suffix can contain characters that are not valid in a
+      // share slug. Shorter prefixes may still identify the published root.
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  await ensurePublicDirectorySharesSchema();
+  const { rows } = await getPool().query<{ slug: string }>(
+    `
+      WITH candidates AS (
+        SELECT slug_lower, ordinal
+          FROM unnest($1::text[]) WITH ORDINALITY
+            AS candidate(slug_lower, ordinal)
+      )
+      SELECT slugs.slug
+        FROM candidates
+        JOIN public_project_path_slugs slugs
+          ON slugs.slug_lower=candidates.slug_lower
+        JOIN public_project_paths shares
+          ON shares.id=slugs.public_project_path_id
+       WHERE slugs.disabled IS FALSE
+         AND shares.disabled IS FALSE
+         AND shares.visibility <> 'disabled'
+       ORDER BY candidates.ordinal
+       LIMIT 1
+    `,
+    [candidates],
+  );
+  const matchedSlug = rows[0]?.slug;
+  if (!matchedSlug) return null;
+  const suffix = segments.slice(matchedSlug.split("/").length);
+  return { path: [matchedSlug, ...suffix].join("/") };
 }
 
 export function normalizePublicDirectorySharePath(path: string): string {

@@ -208,7 +208,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import { normalizeCoursePath } from "@cocalc/util/course-path";
 import { normalizeStudentProjectFunctionality } from "@cocalc/util/db-schema/projects";
-import { listProjectedProjectsForAccount } from "@cocalc/database/postgres/account-project-index";
+import { listAccountProjectWindow as listAccountProjectWindowLocal } from "@cocalc/server/projects/list-account-window";
 import { validateProjectEnv } from "@cocalc/util/project-secrets";
 import type { ProjectSecretsRuntimeRefreshResult } from "@cocalc/util/project-secrets";
 import { parseRootfsConfigExport } from "@cocalc/util/rootfs-images";
@@ -320,14 +320,15 @@ import {
 const ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS = 10 * 60 * 1000;
 const RESTORE_PROJECT_START_CONTROL_TIMEOUT_MS = 8 * 60 * 60 * 1000;
 const PROJECT_MOVE_RUNTIME_SLOT_TTL_MS = 8 * 60 * 60 * 1000;
-const ACCOUNT_PROJECT_LIST_WINDOW_MAX_LIMIT = 500;
 
 function projectStartControlTimeoutMs({
   restore_backup_id,
+  storage_recovery_required,
 }: {
   restore_backup_id?: string;
+  storage_recovery_required?: boolean;
 }): number {
-  return restore_backup_id
+  return restore_backup_id || storage_recovery_required
     ? RESTORE_PROJECT_START_CONTROL_TIMEOUT_MS
     : ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS;
 }
@@ -3340,41 +3341,6 @@ export async function getAccountRuntimeSponsorStatus({
   };
 }
 
-function normalizeProjectListWindowLimit(limit?: number): number {
-  if (limit == null) {
-    return 50;
-  }
-  if (!Number.isInteger(limit) || limit <= 0) {
-    throw Error("limit must be a positive integer");
-  }
-  return Math.min(limit, ACCOUNT_PROJECT_LIST_WINDOW_MAX_LIMIT);
-}
-
-function normalizeProjectListWindowOffset(offset?: number): number {
-  if (offset == null) {
-    return 0;
-  }
-  if (!Number.isInteger(offset) || offset < 0) {
-    throw Error("offset must be a nonnegative integer");
-  }
-  return offset;
-}
-
-function normalizeProjectListWindowSort(
-  sort?: AccountProjectListWindowSort,
-): AccountProjectListWindowSort {
-  switch (sort) {
-    case undefined:
-      return "last_edited";
-    case "last_edited":
-    case "title":
-    case "state":
-      return sort;
-    default:
-      throw Error(`unsupported project list sort '${sort}'`);
-  }
-}
-
 export async function listAccountProjectWindow({
   account_id,
   limit,
@@ -3390,13 +3356,13 @@ export async function listAccountProjectWindow({
   search?: string;
   sort?: AccountProjectListWindowSort;
 }): Promise<AccountProjectListWindowRow[]> {
-  return await listProjectedProjectsForAccount({
+  return await listAccountProjectWindowLocal({
     account_id,
-    limit: normalizeProjectListWindowLimit(limit),
-    offset: normalizeProjectListWindowOffset(offset),
-    include_hidden: !!hidden,
+    limit,
+    offset,
+    hidden,
     search,
-    sort: normalizeProjectListWindowSort(sort),
+    sort,
   });
 }
 
@@ -4977,7 +4943,7 @@ export async function start({
   // not used; passed through for typing compatibility with project-host
   run_quota?: any;
   // not used; passed through for typing compatibility with project-host
-  restore?: "none" | "auto" | "required";
+  restore?: "none" | "auto" | "recover" | "required";
   restore_backup_id?: string;
   autostart?: boolean;
   managed_egress_override?: ManagedProjectEgressOverride;
@@ -5158,12 +5124,13 @@ async function runProjectStartLikeAction({
     project_move_auth === PROJECT_DANGEROUS_INTERNAL_AUTH
       ? project_move_id
       : undefined;
+  let storageRecoveryRequired = false;
   try {
     const ownership = await resolveProjectBay(project_id);
     if (ownership == null) {
       throw new Error(`project ${project_id} not found`);
     }
-    await getInterBayBridge()
+    const admission = await getInterBayBridge()
       .projectControl(ownership.bay_id, {
         timeout_ms: projectStartControlTimeoutMs({
           restore_backup_id: effectiveRestoreBackupId,
@@ -5183,6 +5150,7 @@ async function runProjectStartLikeAction({
         ...(managed_egress_override ? { managed_egress_override } : {}),
         epoch: ownership.epoch,
       });
+    storageRecoveryRequired = admission?.storage_recovery_required === true;
   } catch (err) {
     const runtimeSponsorDenial = extractRuntimeSponsorDenial(err);
     if (runtimeSponsorDenial) {
@@ -5296,6 +5264,7 @@ async function runProjectStartLikeAction({
         {
           timeout_ms: projectStartControlTimeoutMs({
             restore_backup_id: effectiveRestoreBackupId,
+            storage_recovery_required: storageRecoveryRequired,
           }),
         },
       );

@@ -13,13 +13,14 @@ export default async function cliLoginStart(req, res) {
   }
 
   try {
-    const { email, elevated_login, duration } = getParams(req);
+    const { email, elevated_login, duration, client_kind } = getParams(req);
     const elevatedLogin = elevated_login === true || elevated_login === "true";
     const requestedDuration = duration === "extended" ? "extended" : "default";
     res.json(
       await startCliLoginChallenge({
         req,
         email: `${email ?? ""}`.trim() || undefined,
+        client_kind: client_kind === "mobile" ? "mobile" : "cli",
         elevated_login: elevatedLogin,
         duration: elevatedLogin ? requestedDuration : undefined,
       }),

@@ -18,6 +18,10 @@ import {
   recordMembershipAnalyticsEvent,
   recordMembershipPurchaseCompleted,
 } from "@cocalc/server/membership/analytics";
+import {
+  consumePendingMembershipPlanChange,
+  recordPersonalMembershipPeriod,
+} from "@cocalc/server/membership/personal-allocation-analytics";
 import { refreshAccountBalanceAndPublishBestEffort } from "./refresh-balance";
 import {
   assertNoCompetingMembershipSubscription,
@@ -73,6 +77,8 @@ export default async function renewSubscription({
     });
 
     const end = addInterval(current_period_end, interval);
+    const periodStart = subtractInterval(end, interval);
+    const consumedPlanChange = consumePendingMembershipPlanChange(metadata);
     if (toDecimal(cost).gt(0)) {
       await assertPurchaseAllowed({
         account_id,
@@ -93,18 +99,19 @@ export default async function renewSubscription({
       },
       client,
       cost,
-      period_start: subtractInterval(end, interval),
+      period_start: periodStart,
       period_end: end,
     });
 
     const update = await client.query(
-      "UPDATE subscriptions SET status='active',current_period_start=$1,current_period_end=$2,latest_purchase_id=$3 WHERE id=$4 AND account_id=$5 AND status IN ('unpaid','past_due')",
+      "UPDATE subscriptions SET status='active',current_period_start=$1,current_period_end=$2,latest_purchase_id=$3,metadata=$6 WHERE id=$4 AND account_id=$5 AND status IN ('unpaid','past_due')",
       [
-        subtractInterval(end, interval),
+        periodStart,
         end,
         purchase_id,
         subscription_id,
         account_id,
+        consumedPlanChange.metadata,
       ],
     );
     if (update.rowCount != 1) {
@@ -117,6 +124,27 @@ export default async function renewSubscription({
     });
     const isTrialConversion =
       metadata.trial === true && latest_purchase_id == null;
+    await recordPersonalMembershipPeriod({
+      account_id,
+      subscription_id,
+      purchase_id,
+      membership_class: metadata.class,
+      billing_interval: interval,
+      lifecycle: isTrialConversion
+        ? "first_paid"
+        : consumedPlanChange.pending
+          ? "plan_change"
+          : "renewal",
+      allocation_start: periodStart,
+      allocation_end: end,
+      revenue: cost,
+      previous_membership_class:
+        consumedPlanChange.pending?.previous_class ?? null,
+      previous_billing_interval:
+        consumedPlanChange.pending?.previous_interval ?? null,
+      tier_change: consumedPlanChange.pending ? "downgrade" : "none",
+      client,
+    });
     await recordMembershipAnalyticsEvent({
       event_key: `subscription:${subscription_id}:renewed:${purchase_id}`,
       event_type: "membership_renewed",
@@ -127,7 +155,7 @@ export default async function renewSubscription({
       subscription_id,
       purchase_id,
       amount: cost,
-      period_start: subtractInterval(end, interval),
+      period_start: periodStart,
       period_end: end,
       trial_status: isTrialConversion ? "converted" : "none",
       client,
@@ -139,7 +167,7 @@ export default async function renewSubscription({
       membership_class: metadata.class,
       interval,
       amount: cost,
-      period_start: subtractInterval(end, interval),
+      period_start: periodStart,
       period_end: end,
       trial_status: isTrialConversion ? "converted" : "none",
       client,
@@ -154,7 +182,7 @@ export default async function renewSubscription({
         interval,
         subscription_id,
         purchase_id,
-        period_start: subtractInterval(end, interval),
+        period_start: periodStart,
         period_end: end,
         trial_days: metadata.trial_days ?? null,
         trial_status: "converted",

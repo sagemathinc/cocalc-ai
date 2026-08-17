@@ -164,6 +164,33 @@ describe("host runtime fleet rollout planning", () => {
     ).toBe(false);
   });
 
+  test("accepts the desired ACP worker while an old worker drains", () => {
+    expect(
+      __test__.runtimeObservationIsStable({
+        version: "artifact-v2",
+        components: ["acp-worker"],
+        status: {
+          host_id: "host-a",
+          configured: [],
+          effective: [],
+          observed_components: [
+            {
+              component: "acp-worker",
+              artifact: "project-host",
+              upgrade_policy: "drain_then_replace",
+              runtime_state: "running",
+              version_state: "mixed",
+              desired_version: "build-v2",
+              running_versions: ["build-v1", "build-v2"],
+              running_pids: [123, 456],
+            },
+          ],
+          observed_targets: [],
+        },
+      }),
+    ).toBe(true);
+  });
+
   test("accepts a staged auxiliary router only when it runs the requested artifact", () => {
     expect(
       __test__.runtimeObservationIsStable({
@@ -195,6 +222,79 @@ describe("host runtime fleet rollout planning", () => {
         },
       }),
     ).toBe(true);
+  });
+
+  test("records one exact runtime identity for each promoted component", () => {
+    expect(
+      __test__.componentRuntimeVersionsForPromotion({
+        components: ["acp-worker"],
+        statuses: ["host-a", "host-b"].map((host_id) => ({
+          host_id,
+          configured: [],
+          effective: [],
+          observed_components: [
+            {
+              component: "acp-worker",
+              artifact: "project-host",
+              runtime_state: "running",
+              version_state: "aligned",
+              running_versions: ["build-v2"],
+              running_pids: [456],
+            },
+          ],
+        })),
+      }),
+    ).toEqual({ "acp-worker": "build-v2" });
+  });
+
+  test("promotes the desired ACP identity while older workers drain", () => {
+    expect(
+      __test__.componentRuntimeVersionsForPromotion({
+        components: ["acp-worker"],
+        statuses: ["host-a", "host-b"].map((host_id) => ({
+          host_id,
+          configured: [],
+          effective: [],
+          observed_components: [
+            {
+              component: "acp-worker",
+              artifact: "project-host",
+              upgrade_policy: "drain_then_replace",
+              runtime_state: "running",
+              version_state: "mixed",
+              desired_version: "build-v2",
+              running_versions: ["build-v1", "build-v2"],
+              running_pids: [456, 789],
+            },
+          ],
+        })),
+      }),
+    ).toEqual({ "acp-worker": "build-v2" });
+  });
+
+  test("refuses promotion when component runtime identities differ", () => {
+    expect(() =>
+      __test__.componentRuntimeVersionsForPromotion({
+        components: ["acp-worker"],
+        statuses: ["build-v2", "unexpected-build"].map(
+          (running_version, index) => ({
+            host_id: `host-${index}`,
+            configured: [],
+            effective: [],
+            observed_components: [
+              {
+                component: "acp-worker",
+                artifact: "project-host",
+                runtime_state: "running",
+                version_state: "aligned",
+                running_versions: [running_version],
+                running_pids: [456 + index],
+              },
+            ],
+          }),
+        ),
+      }),
+    ).toThrow("hosts disagree on runtime version");
   });
 
   test("defaults old durable operations to project-host and rejects invalid input", () => {

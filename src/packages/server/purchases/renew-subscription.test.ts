@@ -103,6 +103,22 @@ describe("membership subscription renewal", () => {
     expect(rows[0].service).toBe("membership");
     expect(rows[0].description?.type).toBe("membership");
     expect(rows[0].description?.class).toBe(membershipClass);
+    const { rows: allocations } = await pool.query(
+      `SELECT lifecycle, membership_class, billing_interval,
+              active_memberships, revenue_cents
+         FROM membership_allocation_facts
+        WHERE purchase_id=$1`,
+      [purchase_id],
+    );
+    expect(allocations).toEqual([
+      {
+        lifecycle: "renewal",
+        membership_class: membershipClass,
+        billing_interval: interval,
+        active_memberships: 1,
+        revenue_cents: "1000",
+      },
+    ]);
   });
 
   it("rejects renewal when the subscription is already active", async () => {

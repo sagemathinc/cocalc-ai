@@ -47,4 +47,48 @@ describe("fsClient waitForInterest defaults", () => {
       expect.objectContaining({ waitForInterest: false }),
     );
   });
+
+  it("writes against the exact contents read without an overwrite fallback", async () => {
+    const conflict = Object.assign(new Error("changed"), {
+      code: "ETAG_MISMATCH",
+    });
+    const callStub = makeCallStub();
+    callStub.writeFile.mockRejectedValue(conflict);
+    const client = {
+      call: jest.fn(() => callStub),
+    } as any;
+    const fs = fsClient({
+      client,
+      subject: "fs.project-33333333-3333-4333-8333-333333333333",
+    });
+
+    await expect(
+      fs.writeFileIfUnchanged("/home/user/a.py", "new\n", "old\n"),
+    ).rejects.toBe(conflict);
+
+    expect(callStub.writeFile).toHaveBeenCalledTimes(1);
+    expect(callStub.writeFile).toHaveBeenCalledWith(
+      "/home/user/a.py",
+      expect.objectContaining({
+        patch: expect.anything(),
+        sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      }),
+      undefined,
+    );
+  });
+
+  it("does not write unchanged contents", async () => {
+    const callStub = makeCallStub();
+    const client = {
+      call: jest.fn(() => callStub),
+    } as any;
+    const fs = fsClient({
+      client,
+      subject: "fs.project-44444444-4444-4444-8444-444444444444",
+    });
+
+    await fs.writeFileIfUnchanged("/home/user/a.py", "same", "same");
+
+    expect(callStub.writeFile).not.toHaveBeenCalled();
+  });
 });

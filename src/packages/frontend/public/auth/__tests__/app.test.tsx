@@ -1278,6 +1278,9 @@ describe("PublicAuthApp", () => {
     expect(
       await screen.findByText(/password for 'ada@example.com' is incorrect/),
     ).not.toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "password for 'ada@example.com' is incorrect",
+    );
     expect(
       screen.getByRole("heading", { name: "Sign in to CoCalc" }),
     ).not.toBeNull();
@@ -1715,6 +1718,65 @@ describe("PublicAuthApp", () => {
     consoleError.mockRestore();
   });
 
+  it("prefills an anonymous CLI login from its email hint", async () => {
+    window.history.replaceState({}, "", "/auth/cli-login/challenge-1");
+    mockedPostAuthApi
+      .mockResolvedValueOnce({
+        challenge_id: "challenge-1",
+        kind: "login",
+        account_id: null,
+        email_address: null,
+        display_name: null,
+        email_hint: "hint@example.com",
+        current_account_id: null,
+        current_email_address: null,
+        current_display_name: null,
+        current_matches_account: null,
+        state: "pending",
+        expires_at: "2026-05-08T18:00:00.000Z",
+      } as any)
+      .mockResolvedValueOnce({
+        challenge_id: "email-challenge-1",
+        state: "pending",
+        masked_email: "hi…@example.com",
+        expires_at: "2026-05-08T18:00:00.000Z",
+        resend_available_at: "2026-05-08T17:55:30.000Z",
+      } as any);
+
+    render(
+      <PublicAuthApp
+        config={config({
+          email_authentication_mode: "email_first",
+          is_authenticated: false,
+        })}
+        initialRoute={{ challengeId: "challenge-1", kind: "auth-cli-login" }}
+      />,
+    );
+
+    expect(await screen.findByDisplayValue("hint@example.com")).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Continue with email" }),
+    ).not.toBeNull();
+    expect(screen.queryByPlaceholderText("Password")).toBeNull();
+    expect(
+      screen.queryByText(/CoCalc.com accounts do not sign in directly/),
+    ).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue with email" }),
+    );
+    await waitFor(() =>
+      expect(mockedPostAuthApi).toHaveBeenCalledWith({
+        endpoint: "auth/email/start",
+        body: {
+          email: "hint@example.com",
+          target: "/auth/cli-login/challenge-1",
+          terms: true,
+        },
+      }),
+    );
+  });
+
   it("lets the current browser account approve an unbound CLI login challenge", async () => {
     mockedPostAuthApi.mockResolvedValueOnce({
       challenge_id: "challenge-1",
@@ -1756,6 +1818,64 @@ describe("PublicAuthApp", () => {
     ).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Approve CLI Login" }));
+    await waitFor(() =>
+      expect(mockedPostAuthApi).toHaveBeenCalledWith({
+        endpoint: "auth/cli/login/approve",
+        body: {
+          challenge_id: "challenge-1",
+          approval_token: "approval-token",
+          approval_home_bay_id: "bay-0",
+        },
+      }),
+    );
+  });
+
+  it("labels mobile app login approvals without terminal or CLI wording", async () => {
+    mockedPostAuthApi.mockResolvedValueOnce({
+      challenge_id: "challenge-1",
+      kind: "login",
+      auth_client: "mobile",
+      account_id: null,
+      email_address: null,
+      display_name: null,
+      email_hint: "hint@example.com",
+      current_account_id: "acct-viewer",
+      current_email_address: "alice@example.com",
+      current_display_name: "Alice Example",
+      current_matches_account: true,
+      state: "pending",
+      expires_at: "2026-05-08T18:00:00.000Z",
+    } as any);
+    mockedPostAuthApi
+      .mockResolvedValueOnce({
+        token: "approval-token",
+        home_bay_id: "bay-0",
+      } as any)
+      .mockResolvedValueOnce({ approved: true } as any);
+
+    render(
+      <PublicAuthApp
+        config={config({ is_authenticated: true })}
+        initialRoute={{ challengeId: "challenge-1", kind: "auth-cli-login" }}
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        /Approve a CoCalc mobile app sign-in for alice@example.com \(Alice Example\)\./,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        /The mobile app was started with email hint hint@example.com\./,
+      ),
+    ).not.toBeNull();
+    expect(document.body.textContent).not.toMatch(/terminal sign-in/i);
+    expect(document.body.textContent).not.toMatch(/CLI sign-in/i);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve Mobile App Login" }),
+    );
     await waitFor(() =>
       expect(mockedPostAuthApi).toHaveBeenCalledWith({
         endpoint: "auth/cli/login/approve",

@@ -129,6 +129,30 @@ export const TABLE_OWNERSHIP = {
       "Bay-local daily membership count snapshots. These are derived from account-home membership state and aggregated across bays for admin analytics.",
   }),
 
+  ...entries(["membership_allocation_facts"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      bay_id: "Bay that recorded the allocation fact, not ownership authority.",
+    },
+    notes:
+      "Immutable membership allocation facts recorded alongside account-home membership and billing actions. Facts contain account ids only for idempotency and reconciliation; reporting uses non-PII daily projections.",
+  }),
+
+  ...entries(
+    ["membership_allocation_projections", "membership_daily_allocations"],
+    {
+      ownership: "projection",
+      authority: "local",
+      portability: "rebuildable",
+      notes:
+        "Bay-local derived membership allocation state rebuilt from immutable account-home facts and aggregated across bays for admin analytics.",
+      rebuild:
+        "Clear the projection markers and daily rows, then replay immutable membership allocation facts.",
+    },
+  ),
+
   ...entries(
     ["account_managed_egress_events", "account_managed_egress_rollups"],
     {

@@ -197,4 +197,47 @@ describe("shared project dstream cache", () => {
       resetSharedProjectDStreamCacheForTests();
     }
   });
+
+  it("keeps streams with different resume sequences separate", async () => {
+    const first = new FakeDStream();
+    const second = new FakeDStream();
+    directDstreamMock
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second);
+
+    const {
+      acquireSharedProjectDStream,
+      resetSharedProjectDStreamCacheForTests,
+    } = await import("./project-dstream");
+    try {
+      const early = await acquireSharedProjectDStream({
+        project_id: "project-1",
+        name: "feed",
+        ephemeral: true,
+        start_seq: 10,
+      });
+      const late = await acquireSharedProjectDStream({
+        project_id: "project-1",
+        name: "feed",
+        ephemeral: true,
+        start_seq: 20,
+      });
+
+      expect(early.stream).toBe(first);
+      expect(late.stream).toBe(second);
+      expect(directDstreamMock).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ start_seq: 10 }),
+      );
+      expect(directDstreamMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ start_seq: 20 }),
+      );
+
+      await early.release();
+      await late.release();
+    } finally {
+      resetSharedProjectDStreamCacheForTests();
+    }
+  });
 });

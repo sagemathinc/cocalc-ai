@@ -140,6 +140,19 @@ const MAIN_COLORS = {
 export const COLORS = {
   ...MAIN_COLORS,
 
+  // General-purpose categorical colors, ordered for adjacent contrast.
+  // Red, black, and white remain available for semantic markings and structure.
+  CATEGORICAL: [
+    "#4477AA",
+    "#CCBB44",
+    "#228833",
+    "#AA3377",
+    "#66CCEE",
+    "#996633",
+    "#44AA99",
+    "#EE9944",
+  ],
+
   // The definitions below add semantic meaning by using the colors
   // navigation bar at the top
   TOP_BAR: {

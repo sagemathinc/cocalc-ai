@@ -15,6 +15,7 @@ import {
   normalizePublicDirectoryShareSlug,
   publicDirectoryShareCopyDestinationPath,
   publicDirectoryShareReadPolicyForPath,
+  resolveLegacyPublicDirectorySharePath,
   update,
   upsertMigratedLegacyPublicDirectoryShare,
 } from "./index";
@@ -464,6 +465,60 @@ describe("public directory temporary viewer grants", () => {
         alias_kind: "legacy-public-path-route",
       },
     ]);
+  });
+
+  it("resolves legacy vanity and stable-id routes by longest active prefix", async () => {
+    await getPool().query(
+      `INSERT INTO projects (project_id, title, users, last_edited)
+       VALUES ($1, 'Legacy published project', '{}'::jsonb, NOW())
+       ON CONFLICT (project_id) DO NOTHING`,
+      [PROJECT_ID],
+    );
+    const legacyId = "7931f5463313d88f79f4624d72ca95a186b8bdec";
+    const share = await upsertMigratedLegacyPublicDirectoryShare({
+      account_id: OWNER_ID,
+      project_id: PROJECT_ID,
+      path: ".",
+      slug: "georeg/matrix-certificates/notebook",
+      legacy_public_path_id: legacyId,
+      availability_status: "available",
+      visibility: "unlisted",
+    });
+
+    await expect(
+      resolveLegacyPublicDirectorySharePath({
+        path: "GEOREG/matrix-certificates/notebook/files/result.ipynb",
+      }),
+    ).resolves.toEqual({
+      path: "georeg/matrix-certificates/notebook/files/result.ipynb",
+    });
+    await expect(
+      resolveLegacyPublicDirectorySharePath({
+        path: `share/public_paths/${legacyId}/files/result.ipynb`,
+      }),
+    ).resolves.toEqual({
+      path: `public_paths/${legacyId}/files/result.ipynb`,
+    });
+
+    await update({ account_id: OWNER_ID, id: share.id, disabled: true });
+    await expect(
+      resolveLegacyPublicDirectorySharePath({
+        path: "georeg/matrix-certificates/notebook",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("rejects unsafe legacy URL paths before querying the directory", async () => {
+    await expect(
+      resolveLegacyPublicDirectorySharePath({
+        path: "georeg/../private",
+      }),
+    ).rejects.toThrow("path segments");
+    await expect(
+      resolveLegacyPublicDirectorySharePath({
+        path: `georeg/${"x".repeat(4097)}`,
+      }),
+    ).rejects.toThrow("at most 4096 characters");
   });
 
   it("persists public share theme metadata", async () => {

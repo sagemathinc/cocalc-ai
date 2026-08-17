@@ -145,7 +145,17 @@ function runtimeObservationIsStable({
   const componentsStable = Array.from(requiredComponents).every((component) => {
     const observed = observedComponents.get(component);
     if (observed?.runtime_state !== "running") return false;
-    if (component === "project-host" || component === "acp-worker") {
+    if (component === "acp-worker") {
+      const desiredVersion = `${observed.desired_version ?? ""}`.trim();
+      const runningVersions = new Set(observed.running_versions ?? []);
+      return (
+        observed.version_state === "aligned" ||
+        (observed.upgrade_policy === "drain_then_replace" &&
+          !!desiredVersion &&
+          runningVersions.has(desiredVersion))
+      );
+    }
+    if (component === "project-host") {
       return observed.version_state === "aligned";
     }
     const runningVersions = [...new Set(observed.running_versions ?? [])];
@@ -166,6 +176,88 @@ function runtimeObservationIsStable({
     rollout?.healthy === true &&
     rollout?.phase === "promoted"
   );
+}
+
+function componentRuntimeVersionsForPromotion({
+  statuses,
+  components,
+}: {
+  statuses: Array<Awaited<ReturnType<typeof getHostRuntimeDeploymentStatus>>>;
+  components: ManagedComponentKind[];
+}): Partial<Record<ManagedComponentKind, string>> {
+  const versions: Partial<Record<ManagedComponentKind, string>> = {};
+  for (const component of components) {
+    const observedVersions = new Set<string>();
+    for (const status of statuses) {
+      const observed = (status.observed_components ?? []).find(
+        (entry) => entry.component === component,
+      );
+      let runningVersions = [
+        ...new Set(
+          (observed?.running_versions ?? [])
+            .map((version) => `${version ?? ""}`.trim())
+            .filter(Boolean),
+        ),
+      ];
+      const desiredVersion = `${observed?.desired_version ?? ""}`.trim();
+      if (
+        component === "acp-worker" &&
+        observed?.upgrade_policy === "drain_then_replace" &&
+        desiredVersion &&
+        runningVersions.includes(desiredVersion)
+      ) {
+        runningVersions = [desiredVersion];
+      }
+      if (runningVersions.length !== 1) {
+        throw new Error(
+          `cannot promote ${component}; host ${status.host_id} reports ${runningVersions.length || "no"} runtime versions`,
+        );
+      }
+      observedVersions.add(runningVersions[0]);
+    }
+    if (observedVersions.size !== 1) {
+      throw new Error(
+        `cannot promote ${component}; hosts disagree on runtime version: ${[...observedVersions].join(", ")}`,
+      );
+    }
+    versions[component] = [...observedVersions][0];
+  }
+  return versions;
+}
+
+async function observePromotionComponentRuntimeVersions({
+  account_id,
+  host_ids,
+  version,
+  components,
+}: {
+  account_id: string;
+  host_ids: string[];
+  version: string;
+  components: ManagedComponentKind[];
+}): Promise<Partial<Record<ManagedComponentKind, string>>> {
+  const statuses: Array<
+    Awaited<ReturnType<typeof getHostRuntimeDeploymentStatus>>
+  > = [];
+  for (let i = 0; i < host_ids.length; i += 5) {
+    statuses.push(
+      ...(await Promise.all(
+        host_ids
+          .slice(i, i + 5)
+          .map((host_id) =>
+            getHostRuntimeDeploymentStatus({ account_id, id: host_id }),
+          ),
+      )),
+    );
+  }
+  for (const status of statuses) {
+    if (!runtimeObservationIsStable({ status, version, components })) {
+      throw new Error(
+        `cannot promote runtime defaults; host ${status.host_id} is no longer stable on ${version}`,
+      );
+    }
+  }
+  return componentRuntimeVersionsForPromotion({ statuses, components });
 }
 
 async function waitForStableRuntime({
@@ -547,9 +639,17 @@ async function handleRollout(op: LroSummary): Promise<void> {
         message: "promoting successful rollout as the bay default",
       });
       await assertPromotionCohortStillComplete(hostIds);
+      const component_runtime_versions =
+        await observePromotionComponentRuntimeVersions({
+          account_id,
+          host_ids: hostIds,
+          version,
+          components,
+        });
       const metadata = {
         fleet_rollout_op_id: op.op_id,
         components,
+        component_runtime_versions,
         completed_at: new Date().toISOString(),
       };
       await promoteProjectHostRuntimeDeployments({
@@ -685,6 +785,7 @@ export function startHostRuntimeFleetRolloutWorker({
 
 export const __test__ = {
   buildRolloutWaves,
+  componentRuntimeVersionsForPromotion,
   normalizedRolloutComponents,
   runtimeDeploymentsForPromotion,
   runtimeObservationIsStable,

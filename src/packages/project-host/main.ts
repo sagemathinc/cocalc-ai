@@ -147,6 +147,8 @@ import { runPrivilegedRmHelper } from "./privileged-rm-helper";
 import { initProjectTouchService } from "./touch-service";
 import { initProjectStorageInfoService } from "./storage-info-service";
 import { initProjectDocumentActivityService } from "./document-activity-service";
+import { initProjectChatSessionService } from "./project-chat-session-service";
+import { initProjectEditJournalService } from "./edit-journal-service";
 import { initProjectArchiveInfoService } from "./archive-info-service";
 import {
   getProjectHostEventLoopStallStatus,
@@ -588,6 +590,8 @@ export async function main(
   if (externalPersist) {
     await waitForProjectHostConatPersistReady({ client: conatClient });
   }
+  const projectChatSessionService =
+    await initProjectChatSessionService(conatClient);
   configureAcpDetachedWorkerRunning(() =>
     // ACP uses `force: true` to mean "wake or ensure the detached worker now"
     // when new work arrives. That is not evidence of a backend restart, and
@@ -1488,6 +1492,7 @@ export async function main(
     "Serve per-project files via the fs.* conat service, mounting from the local file-server.",
   );
   const fsServer = await initFsServer({ client: conatClient });
+  const editJournalService = await initProjectEditJournalService(conatClient);
 
   logger.info("HTTP static + customize + API wiring");
   await initHttp({ app, conatClient });
@@ -1649,10 +1654,12 @@ export async function main(
     closed = true;
     persistServer?.close?.();
     fsServer?.close?.();
+    editJournalService?.close?.();
     stopProvisionedInventoryReporter();
     projectTouchService?.close?.();
     projectStorageInfoService?.close?.();
     projectDocumentActivityService?.close?.();
+    projectChatSessionService?.close?.();
     projectArchiveInfoService?.close?.();
     masterRegistration?.stop();
     stopReconciler?.();

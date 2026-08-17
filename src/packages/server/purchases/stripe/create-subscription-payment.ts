@@ -25,6 +25,14 @@ import {
   recordMembershipAnalyticsEvent,
   recordMembershipPurchaseCompleted,
 } from "@cocalc/server/membership/analytics";
+import {
+  consumePendingMembershipPlanChange,
+  recordPersonalMembershipPeriod,
+} from "@cocalc/server/membership/personal-allocation-analytics";
+import type {
+  MembershipMetadata,
+  PendingMembershipPlanChange,
+} from "@cocalc/util/db-schema/subscriptions";
 import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 import { getMembershipTierById } from "@cocalc/server/membership/tiers";
 import type { SubscriptionRenewalAttempt } from "@cocalc/util/db-schema/subscription-renewal-attempts";
@@ -200,7 +208,8 @@ function renewalMembershipTerms({
 }): {
   membershipClass: string;
   interval: "month" | "year";
-  metadata: any;
+  metadata: MembershipMetadata;
+  pendingPlanChange?: PendingMembershipPlanChange;
 } {
   if (
     metadata?.type === "membership" &&
@@ -215,22 +224,26 @@ function renewalMembershipTerms({
         metadata.renewal_interval === "year"
           ? metadata.renewal_interval
           : interval;
+      const consumed = consumePendingMembershipPlanChange({
+        ...metadata,
+        class: membershipClass,
+        grant: false,
+        legacy_migration_grant_converted_at: new Date().toISOString(),
+      });
       return {
         membershipClass,
         interval: renewalInterval,
-        metadata: {
-          ...metadata,
-          class: membershipClass,
-          grant: false,
-          legacy_migration_grant_converted_at: new Date().toISOString(),
-        },
+        metadata: consumed.metadata,
+        pendingPlanChange: consumed.pending,
       };
     }
   }
+  const consumed = consumePendingMembershipPlanChange(metadata);
   return {
     membershipClass: metadata.class,
     interval,
-    metadata,
+    metadata: consumed.metadata,
+    pendingPlanChange: consumed.pending,
   };
 }
 
@@ -791,6 +804,7 @@ export async function processSubscriptionRenewal({
     const end = attempt
       ? new Date(attempt.target_period_end)
       : new Date(payment.new_expires_ms);
+    const periodStart = subtractInterval(end, renewalTerms.interval);
     const creditId = positiveInteger(paymentIntent.metadata.credit_id);
 
     const purchase_id = await createPurchase({
@@ -805,7 +819,7 @@ export async function processSubscriptionRenewal({
       },
       client: transaction,
       cost: expectedAmount,
-      period_start: subtractInterval(end, renewalTerms.interval),
+      period_start: periodStart,
       period_end: end,
     });
 
@@ -828,7 +842,7 @@ export async function processSubscriptionRenewal({
     const update = await transaction.query(
       "UPDATE subscriptions SET payment=$5, status='active',current_period_start=$1,current_period_end=$2,latest_purchase_id=$3,metadata=$7,interval=$8 WHERE id=$4 AND account_id=$6",
       [
-        subtractInterval(end, renewalTerms.interval),
+        periodStart,
         end,
         purchase_id,
         subscriptionId,
@@ -855,6 +869,28 @@ export async function processSubscriptionRenewal({
     }
     const isTrialConversion =
       metadata.trial === true && latest_purchase_id == null;
+    const lifecycle = isTrialConversion
+      ? "first_paid"
+      : renewalTerms.pendingPlanChange
+        ? "plan_change"
+        : "renewal";
+    await recordPersonalMembershipPeriod({
+      account_id,
+      subscription_id: subscriptionId,
+      purchase_id,
+      membership_class: renewalTerms.membershipClass,
+      billing_interval: renewalTerms.interval,
+      lifecycle,
+      allocation_start: periodStart,
+      allocation_end: end,
+      revenue: expectedAmount,
+      previous_membership_class:
+        renewalTerms.pendingPlanChange?.previous_class ?? null,
+      previous_billing_interval:
+        renewalTerms.pendingPlanChange?.previous_interval ?? null,
+      tier_change: renewalTerms.pendingPlanChange ? "downgrade" : "none",
+      client: transaction,
+    });
     await recordMembershipAnalyticsEvent({
       event_key: `subscription:${subscriptionId}:renewed:${purchase_id}`,
       event_type: "membership_renewed",
@@ -865,7 +901,7 @@ export async function processSubscriptionRenewal({
       subscription_id: subscriptionId,
       purchase_id,
       amount: expectedAmount,
-      period_start: subtractInterval(end, renewalTerms.interval),
+      period_start: periodStart,
       period_end: end,
       trial_status: isTrialConversion ? "converted" : "none",
       client: transaction,
@@ -877,7 +913,7 @@ export async function processSubscriptionRenewal({
       membership_class: renewalTerms.membershipClass,
       interval: renewalTerms.interval,
       amount: expectedAmount,
-      period_start: subtractInterval(end, renewalTerms.interval),
+      period_start: periodStart,
       period_end: end,
       trial_status: isTrialConversion ? "converted" : "none",
       client: transaction,
@@ -892,7 +928,7 @@ export async function processSubscriptionRenewal({
         interval: renewalTerms.interval,
         subscription_id: subscriptionId,
         purchase_id,
-        period_start: subtractInterval(end, renewalTerms.interval),
+        period_start: periodStart,
         period_end: end,
         trial_days: metadata.trial_days ?? null,
         trial_status: "converted",

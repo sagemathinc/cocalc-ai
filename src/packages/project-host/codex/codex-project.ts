@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { basename, dirname, join, isAbsolute } from "node:path";
 import { URL } from "node:url";
@@ -84,6 +85,9 @@ const PROJECT_START_POLL_MS = Math.max(
   100,
   Number(process.env.COCALC_CODEX_PROJECT_START_POLL_MS ?? 500),
 );
+const PROJECT_CLI_TOKEN_REFRESH_MS = 4 * 60_000;
+const PROJECT_CLI_TOKEN_RETRY_MS = 15_000;
+const PROJECT_CLI_TOKEN_DEFAULT_TTL_MS = 10 * 60_000;
 
 type ContainerInfo = {
   name: string;
@@ -260,6 +264,7 @@ function applyProjectRuntimeCliEnv(
   env.COCALC_CLI_BIN = getProjectRuntimeCliPath();
   env.COCALC_CLI_CMD = getProjectRuntimeCliCommand();
   env.COCALC_CLI_AGENT_MODE = "1";
+  env.COCALC_PROFILE = "_env";
   if (accountId?.trim()) {
     env.COCALC_ACCOUNT_ID = accountId.trim();
   }
@@ -277,7 +282,9 @@ function shouldProtectResolvedRuntimeEnv({
 }): boolean {
   if (
     key !== "COCALC_BEARER_TOKEN" &&
+    key !== "COCALC_BEARER_TOKEN_FILE" &&
     key !== "COCALC_AGENT_TOKEN" &&
+    key !== "COCALC_AGENT_TOKEN_FILE" &&
     key !== "COCALC_ACCOUNT_ID"
   ) {
     return false;
@@ -409,27 +416,54 @@ async function resolveProjectCliBearer({
   accountId?: string;
   currentEnv?: NodeJS.ProcessEnv;
 }): Promise<string | undefined> {
-  const existing =
-    `${currentEnv?.COCALC_BEARER_TOKEN ?? ""}`.trim() ||
-    `${currentEnv?.COCALC_AGENT_TOKEN ?? ""}`.trim();
-  if (existing) return existing;
   const resolvedAccountId =
     `${accountId ?? ""}`.trim() ||
     `${currentEnv?.COCALC_ACCOUNT_ID ?? ""}`.trim();
-  if (!projectId.trim() || !resolvedAccountId) {
-    return;
+  if (projectId.trim() && resolvedAccountId) {
+    const issued = await issueProjectCliBearer({
+      projectId,
+      accountId: resolvedAccountId,
+    });
+    if (issued) return issued.token;
   }
+  const existing =
+    `${currentEnv?.COCALC_BEARER_TOKEN ?? ""}`.trim() ||
+    `${currentEnv?.COCALC_AGENT_TOKEN ?? ""}`.trim();
+  return existing || undefined;
+}
+
+type ProjectCliBearer = {
+  token: string;
+  expiresAt: number;
+};
+
+async function issueProjectCliBearer({
+  projectId,
+  accountId,
+  sessionId,
+}: {
+  projectId: string;
+  accountId: string;
+  sessionId?: string;
+}): Promise<ProjectCliBearer | undefined> {
   const issueAgentToken = hubApi.hosts?.issueProjectHostAgentAuthToken;
-  if (typeof issueAgentToken !== "function") {
-    return;
-  }
+  if (typeof issueAgentToken !== "function") return;
   try {
     const issued = await issueAgentToken({
-      account_id: resolvedAccountId,
+      account_id: accountId,
       project_id: projectId,
+      ...(sessionId ? { session_id: sessionId } : {}),
     });
     const token = `${issued?.token ?? ""}`.trim();
-    return token || undefined;
+    if (!token) return;
+    const expiresAt = Number(issued?.expires_at);
+    return {
+      token,
+      expiresAt:
+        Number.isFinite(expiresAt) && expiresAt > Date.now()
+          ? expiresAt
+          : Date.now() + PROJECT_CLI_TOKEN_DEFAULT_TTL_MS,
+    };
   } catch (err) {
     logger.debug("codex project: failed to issue project-host agent token", {
       projectId,
@@ -438,6 +472,189 @@ async function resolveProjectCliBearer({
     });
     return;
   }
+}
+
+export type ProjectCliTokenLease = {
+  hostPath: string;
+  containerPath: string;
+  setAgentSessionKey: (agentSessionKey: string) => Promise<void>;
+  close: () => Promise<void>;
+};
+
+export async function createProjectCliTokenLease({
+  projectId,
+  accountId,
+  agentSessionKey,
+  currentEnv,
+  home,
+  scratch,
+  refreshMs,
+}: {
+  projectId: string;
+  accountId?: string;
+  agentSessionKey?: string;
+  currentEnv?: NodeJS.ProcessEnv;
+  home: string;
+  scratch?: string;
+  refreshMs?: number;
+}): Promise<ProjectCliTokenLease | undefined> {
+  const resolvedAccountId =
+    `${accountId ?? ""}`.trim() ||
+    `${currentEnv?.COCALC_ACCOUNT_ID ?? ""}`.trim();
+  if (!projectId.trim() || !resolvedAccountId) return;
+
+  let sessionId = projectCliSessionId(agentSessionKey);
+  const issued = await issueProjectCliBearer({
+    projectId,
+    accountId: resolvedAccountId,
+    sessionId,
+  });
+  const fallbackToken =
+    `${currentEnv?.COCALC_BEARER_TOKEN ?? ""}`.trim() ||
+    `${currentEnv?.COCALC_AGENT_TOKEN ?? ""}`.trim();
+  const initialToken = issued?.token || fallbackToken;
+  if (!initialToken) return;
+
+  const leaseName = `.cocalc-agent-${randomUUID()}`;
+  const relativeHomeDir = join(
+    ".local",
+    "share",
+    "cocalc",
+    "runtime",
+    leaseName,
+  );
+  const hostDir = scratch
+    ? join(scratch, leaseName)
+    : join(home, relativeHomeDir);
+  const containerDir = scratch
+    ? join("/tmp", leaseName)
+    : join(PROJECT_RUNTIME_HOME, relativeHomeDir);
+  const hostPath = join(hostDir, "token");
+  const containerPath = join(containerDir, "token");
+
+  await fs.mkdir(hostDir, { recursive: true, mode: 0o700 });
+  await fs.chmod(hostDir, 0o700);
+
+  const writeToken = async (token: string): Promise<void> => {
+    const tempPath = join(hostDir, `.token-${randomUUID()}.tmp`);
+    try {
+      await fs.writeFile(tempPath, `${token}\n`, { mode: 0o600 });
+      await fs.chmod(tempPath, 0o600);
+      await fs.rename(tempPath, hostPath);
+    } catch (err) {
+      await fs.rm(tempPath, { force: true });
+      throw err;
+    }
+  };
+  await writeToken(initialToken);
+
+  let closed = false;
+  let generation = 0;
+  let timer: NodeJS.Timeout | undefined;
+  let refreshPromise: Promise<void> | undefined;
+
+  const scheduleRefresh = (expiresAt?: number, retry = false): void => {
+    if (closed) return;
+    const configuredDelay = Number(refreshMs);
+    const delay =
+      Number.isFinite(configuredDelay) && configuredDelay > 0
+        ? configuredDelay
+        : retry
+          ? PROJECT_CLI_TOKEN_RETRY_MS
+          : Math.max(
+              30_000,
+              Math.min(
+                PROJECT_CLI_TOKEN_REFRESH_MS,
+                Number(
+                  expiresAt ?? Date.now() + PROJECT_CLI_TOKEN_DEFAULT_TTL_MS,
+                ) -
+                  Date.now() -
+                  60_000,
+              ),
+            );
+    timer = setTimeout(() => {
+      refreshPromise = refresh();
+    }, delay);
+    timer.unref?.();
+  };
+
+  const refresh = async (): Promise<void> => {
+    if (closed) return;
+    const refreshGeneration = generation;
+    const next = await issueProjectCliBearer({
+      projectId,
+      accountId: resolvedAccountId,
+      sessionId,
+    });
+    if (closed || refreshGeneration !== generation) return;
+    if (!next) {
+      scheduleRefresh(undefined, true);
+      return;
+    }
+    try {
+      await writeToken(next.token);
+      scheduleRefresh(next.expiresAt);
+    } catch (err) {
+      logger.warn("codex project: failed to rotate CLI agent token", {
+        projectId,
+        accountId: resolvedAccountId,
+        err: `${err}`,
+      });
+      scheduleRefresh(undefined, true);
+    }
+  };
+
+  scheduleRefresh(issued?.expiresAt);
+
+  return {
+    hostPath,
+    containerPath,
+    setAgentSessionKey: async (nextAgentSessionKey: string) => {
+      const nextSessionId = projectCliSessionId(nextAgentSessionKey);
+      if (closed || nextSessionId === sessionId) return;
+      const setGeneration = ++generation;
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      await refreshPromise?.catch(() => undefined);
+      if (closed || setGeneration !== generation) return;
+      const next = await issueProjectCliBearer({
+        projectId,
+        accountId: resolvedAccountId,
+        sessionId: nextSessionId,
+      });
+      if (closed || setGeneration !== generation) return;
+      if (!next) {
+        scheduleRefresh(undefined, true);
+        throw new Error("unable to rotate the project-scoped agent token");
+      }
+      await writeToken(next.token);
+      sessionId = nextSessionId;
+      scheduleRefresh(next.expiresAt);
+    },
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      if (timer) clearTimeout(timer);
+      await refreshPromise?.catch(() => undefined);
+      await fs.rm(hostDir, { recursive: true, force: true });
+    },
+  };
+}
+
+function projectCliSessionId(agentSessionKey?: string): string {
+  const key = `${agentSessionKey ?? ""}`.trim();
+  if (!key) return randomUUID();
+  const bytes = createHash("sha256")
+    .update("cocalc-project-cli-session\0")
+    .update(key)
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 async function getOptionalCertMounts(): Promise<{
@@ -1355,6 +1572,7 @@ export async function spawnCodexInProjectContainer({
 type SpawnCodexAppServerInProjectRuntimeOptions = {
   projectId: string;
   accountId?: string;
+  agentSessionKey?: string;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   forceRefreshSiteKey?: boolean;
@@ -1375,12 +1593,14 @@ type SpawnCodexAppServerInProjectRuntimeResult = {
   appServerLogin?: CodexAppServerLoginHint;
   handleAppServerRequest?: CodexAppServerRequestHandler;
   runtimeEnv?: Record<string, string>;
+  setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
   siteFundedTurn?: CodexSiteFundedTurnRuntime;
 };
 
 async function spawnCodexAppServerInProjectRuntime({
   projectId,
   accountId,
+  agentSessionKey,
   cwd,
   env: extraEnv,
   forceRefreshSiteKey = false,
@@ -1404,11 +1624,6 @@ async function spawnCodexAppServerInProjectRuntime({
   const { home, scratch } = await localPath({ project_id: projectId });
   await scrubBrokenProjectCodexAuthArtifacts(home, authRuntime);
   const initialExecEnv = toStringEnv(extraEnv);
-  const cliBearer = await resolveProjectCliBearer({
-    projectId,
-    accountId,
-    currentEnv: initialExecEnv,
-  });
   let siteFundedTurn: CodexSiteFundedTurnRuntime | undefined;
   if (authRuntime.source === "site-api-key" && siteFundedTurnRequest) {
     if (!accountId)
@@ -1428,6 +1643,14 @@ async function spawnCodexAppServerInProjectRuntime({
     ? undefined
     : await resolveAppServerLoginHint(authRuntime);
   const name = projectContainerName(projectId);
+  const cliTokenLease = await createProjectCliTokenLease({
+    projectId,
+    accountId,
+    agentSessionKey,
+    currentEnv: initialExecEnv,
+    home,
+    scratch,
+  });
 
   const execArgs: string[] = [
     "exec",
@@ -1447,9 +1670,13 @@ async function spawnCodexAppServerInProjectRuntime({
   if (siteFundedTurn) {
     execEnv.OPENAI_API_KEY = siteFundedTurn.providerToken;
   }
-  if (cliBearer) {
-    execEnv.COCALC_BEARER_TOKEN = cliBearer;
-    execEnv.COCALC_AGENT_TOKEN = cliBearer;
+  delete execEnv.COCALC_BEARER_TOKEN;
+  delete execEnv.COCALC_AGENT_TOKEN;
+  delete execEnv.COCALC_BEARER_TOKEN_FILE;
+  delete execEnv.COCALC_AGENT_TOKEN_FILE;
+  if (cliTokenLease) {
+    execEnv.COCALC_BEARER_TOKEN_FILE = cliTokenLease.containerPath;
+    execEnv.COCALC_AGENT_TOKEN_FILE = cliTokenLease.containerPath;
   }
   if (
     appServerLogin?.type === "apiKey" &&
@@ -1465,6 +1692,12 @@ async function spawnCodexAppServerInProjectRuntime({
     ...(appServerLogin?.type === "apiKey" ? {} : authRuntime.env),
     ...execEnv,
   };
+  delete runtimeEnv.COCALC_BEARER_TOKEN;
+  delete runtimeEnv.COCALC_AGENT_TOKEN;
+  if (cliTokenLease) {
+    runtimeEnv.COCALC_BEARER_TOKEN_FILE = cliTokenLease.containerPath;
+    runtimeEnv.COCALC_AGENT_TOKEN_FILE = cliTokenLease.containerPath;
+  }
   if (siteFundedTurn) {
     // The proxy credential is only needed by the Codex process itself. Do not
     // also expose it to commands that Codex starts inside the turn.
@@ -1527,9 +1760,18 @@ async function spawnCodexAppServerInProjectRuntime({
     cmd: redactPodmanArgs(execArgs),
   });
   const launcher = projectPoolPodmanLauncher(projectId);
-  const proc = spawn(launcher.command, [...launcher.argsPrefix, ...execArgs], {
-    stdio: ["pipe", "pipe", "pipe"],
-    env: podmanEnv(),
+  let proc: ReturnType<typeof spawn>;
+  try {
+    proc = spawn(launcher.command, [...launcher.argsPrefix, ...execArgs], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: podmanEnv(),
+    });
+  } catch (err) {
+    await cliTokenLease?.close();
+    throw err;
+  }
+  proc.once("close", () => {
+    void cliTokenLease?.close();
   });
   proc.on("exit", async () => {
     try {
@@ -1557,6 +1799,7 @@ async function spawnCodexAppServerInProjectRuntime({
         }
       }
     } finally {
+      await cliTokenLease?.close();
       if (touchReason) {
         void touchProjectLastEdited(projectId, touchReason);
       }
@@ -1574,6 +1817,7 @@ async function spawnCodexAppServerInProjectRuntime({
     appServerLogin,
     handleAppServerRequest,
     runtimeEnv,
+    setAgentSessionKey: cliTokenLease?.setAgentSessionKey,
     siteFundedTurn,
   };
 }
@@ -1621,6 +1865,7 @@ export function initCodexProjectRunner(): void {
     async spawnCodexAppServer({
       projectId,
       accountId,
+      agentSessionKey,
       cwd,
       env: extraEnv,
       touchReason,
@@ -1630,6 +1875,7 @@ export function initCodexProjectRunner(): void {
       const spawned = await spawnCodexAppServerInProjectRuntime({
         projectId,
         accountId,
+        agentSessionKey,
         cwd,
         env: extraEnv,
         touchReason: touchReason ?? "codex",
@@ -1650,6 +1896,7 @@ export function initCodexProjectRunner(): void {
         appServerLogin: spawned.appServerLogin,
         handleAppServerRequest: spawned.handleAppServerRequest,
         runtimeEnv: spawned.runtimeEnv,
+        setAgentSessionKey: spawned.setAgentSessionKey,
         siteFundedTurn: spawned.siteFundedTurn,
       };
     },

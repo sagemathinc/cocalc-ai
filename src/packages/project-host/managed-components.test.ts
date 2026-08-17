@@ -86,6 +86,46 @@ describe("managed component status model", () => {
     });
   });
 
+  it("excludes ACP child processes that inherit the worker environment", () => {
+    const entryPoint = "/opt/cocalc/project-host/bundles/current/main/index.js";
+    const workerEnvironment = {
+      COCALC_PROJECT_HOST_ACP_WORKER: "1",
+      COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_VERSION: "build-v2",
+      COCALC_PROJECT_HOST_ACP_WORKER_BUNDLE_PATH:
+        "/opt/cocalc/project-host/bundles/current",
+    };
+    expect(
+      __test__.acpWorkerSnapshotFromProcesses({
+        desired_version: "build-v2",
+        launch: {
+          command: "/usr/bin/node",
+          args: [entryPoint],
+          nodeLike: true,
+          resolvedCommand: "/usr/bin/node",
+          resolvedEntryPoint: entryPoint,
+        },
+        workers: [
+          {
+            pid: 111,
+            env: workerEnvironment,
+            cmdline: ["/usr/bin/node", entryPoint],
+          },
+          {
+            pid: 222,
+            env: workerEnvironment,
+            cmdline: ["/usr/bin/node", "/opt/cocalc/bin2/cocalc-cli.js"],
+          },
+        ],
+      }),
+    ).toEqual({
+      enabled: true,
+      managed: true,
+      desired_version: "build-v2",
+      running_versions: ["build-v2"],
+      running_pids: [111],
+    });
+  });
+
   it("normalizes the current numeric project-host bundle version to its build id", () => {
     getSoftwareVersionsMock.mockReturnValue({
       project_host: "1776808579069",

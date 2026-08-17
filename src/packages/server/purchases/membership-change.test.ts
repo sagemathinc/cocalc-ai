@@ -115,6 +115,22 @@ describe("membership change payment enforcement", () => {
       [result.purchase_id],
     );
     expect(rows[0]?.description).toMatchObject({ credit_id: creditId });
+    const { rows: allocationRows } = await getPool().query(
+      `SELECT lifecycle, membership_class, billing_interval,
+              active_memberships, revenue_cents
+         FROM membership_allocation_facts
+        WHERE purchase_id=$1`,
+      [result.purchase_id],
+    );
+    expect(allocationRows).toEqual([
+      {
+        lifecycle: "first_paid",
+        membership_class: targetClass,
+        billing_interval: "month",
+        active_memberships: 1,
+        revenue_cents: "10000",
+      },
+    ]);
   });
 
   it("does not create a purchase row for zero-cost deferred downgrades", async () => {
@@ -150,15 +166,27 @@ describe("membership change payment enforcement", () => {
     expect(result.charge).toBe(0);
     expect(result.purchase_id).toBeUndefined();
     const { rows: subscriptionRows } = await getPool().query(
-      "SELECT latest_purchase_id FROM subscriptions WHERE id=$1",
+      "SELECT latest_purchase_id, metadata FROM subscriptions WHERE id=$1",
       [result.subscription_id],
     );
     expect(subscriptionRows[0]?.latest_purchase_id).toBeNull();
+    expect(subscriptionRows[0]?.metadata?.pending_plan_change).toMatchObject({
+      kind: "downgrade",
+      previous_class: highTier,
+      previous_interval: "month",
+    });
     const { rows: purchaseRows } = await getPool().query(
       "SELECT COUNT(*)::int AS count FROM purchases WHERE account_id=$1 AND service='membership'",
       [downgradeAccount],
     );
     expect(purchaseRows[0]?.count).toBe(0);
+    const { rows: allocationRows } = await getPool().query(
+      `SELECT COUNT(*)::int AS count
+         FROM membership_allocation_facts
+        WHERE subscription_id=$1`,
+      [result.subscription_id],
+    );
+    expect(allocationRows[0]?.count).toBe(0);
   });
 
   it("downgrades to a zero-cost tier without creating a subscription", async () => {
@@ -391,6 +419,92 @@ describe("membership change payment enforcement", () => {
     expect(result.subscription_id).toBeGreaterThan(0);
     expect(result.purchase_id).toBeUndefined();
     expect(result.trial_available).toBe(true);
+    const { rows: allocationRows } = await getPool().query(
+      `SELECT source_kind, lifecycle, membership_class, billing_interval,
+              active_memberships, revenue_cents
+         FROM membership_allocation_facts
+        WHERE subscription_id=$1`,
+      [result.subscription_id],
+    );
+    expect(allocationRows).toEqual([
+      {
+        source_kind: "trial",
+        lifecycle: "trial",
+        membership_class: trialTier,
+        billing_interval: "trial",
+        active_memberships: 1,
+        revenue_cents: "0",
+      },
+    ]);
+  });
+
+  it("records both sides of an immediate paid membership upgrade", async () => {
+    const upgradeAccount = uuid();
+    const oldTier = `upgrade-old-${uuid().slice(0, 8)}` as any;
+    const newTier = `upgrade-new-${uuid().slice(0, 8)}` as any;
+    await createTestAccount(upgradeAccount);
+    await createTestMembershipTier({
+      id: oldTier,
+      price_monthly: 100,
+      price_yearly: 1000,
+      priority: 10,
+    });
+    await createTestMembershipTier({
+      id: newTier,
+      price_monthly: 200,
+      price_yearly: 2000,
+      priority: 20,
+    });
+    const old = await createTestMembershipSubscription(upgradeAccount, {
+      class: oldTier,
+      cost: 100,
+      start: new Date(),
+      end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
+
+    const result = await applyTestMembershipChange({
+      account_id: upgradeAccount,
+      targetClass: newTier,
+      interval: "month",
+      paymentAmount: 200,
+    });
+
+    const { rows } = await getPool().query(
+      `SELECT source_kind, membership_class, billing_interval, lifecycle,
+              previous_membership_class, previous_billing_interval,
+              tier_change, active_memberships, revenue_cents,
+              subscription_id
+         FROM membership_allocation_facts
+        WHERE purchase_id=$1
+        ORDER BY active_memberships DESC`,
+      [result.purchase_id],
+    );
+    expect(rows).toEqual([
+      {
+        source_kind: "plan-change",
+        membership_class: newTier,
+        billing_interval: "month",
+        lifecycle: "plan_change",
+        previous_membership_class: oldTier,
+        previous_billing_interval: "month",
+        tier_change: "upgrade",
+        active_memberships: 1,
+        revenue_cents: "20000",
+        subscription_id: result.subscription_id,
+      },
+      {
+        source_kind: "plan-change-credit",
+        membership_class: oldTier,
+        billing_interval: "month",
+        lifecycle: "plan_change",
+        previous_membership_class: null,
+        previous_billing_interval: null,
+        tier_change: "upgrade",
+        active_memberships: -1,
+        revenue_cents: `${-Math.round((result.price - result.charge) * 100)}`,
+        subscription_id: old.subscription_id,
+      },
+    ]);
   });
 
   it.each(["unpaid", "past_due"] as const)(

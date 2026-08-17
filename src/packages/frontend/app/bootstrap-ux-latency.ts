@@ -12,6 +12,8 @@ import { markSignedInSurfaceReady } from "./surface-ready-state";
 import { getStartupPerformancePolicy } from "./startup-performance-policy";
 import { markStartupPhase, type StartupPhaseDetails } from "./startup-phase";
 
+declare const BUILD_DATE: string;
+
 let trace: UxLatencyTrace | undefined;
 let appReadyRecorded = false;
 let failed = false;
@@ -69,6 +71,7 @@ function getTrace(): UxLatencyTrace {
   });
   markNavigationPhases(trace, navigation);
   mergePreAppMarks(trace, early);
+  markStartupPhase("bootstrap_module_loaded");
   trace.mark("bootstrap_module_loaded");
   return trace;
 }
@@ -175,6 +178,7 @@ function timingDetails(): Record<string, unknown> {
     };
   };
   return {
+    build_date: typeof BUILD_DATE === "undefined" ? undefined : BUILD_DATE,
     navigation_type: navigation?.type,
     protocol: navigation?.nextHopProtocol,
     transfer_size: navigation?.transferSize,

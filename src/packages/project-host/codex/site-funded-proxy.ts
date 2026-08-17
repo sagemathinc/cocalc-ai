@@ -303,7 +303,16 @@ class SiteFundedCodexProxy {
     if (this.port != null) return this.port;
     if (!this.server) {
       this.server = createServer((request, response) => {
-        void this.handle(request, response);
+        void this.handle(request, response).catch((err) => {
+          logger.warn("site-funded Codex proxy request failed", {
+            err: `${err}`,
+          });
+          if (!response.headersSent) {
+            jsonResponse(response, 502, `OpenAI request failed: ${err}`);
+          } else if (!response.writableEnded) {
+            response.destroy(err instanceof Error ? err : undefined);
+          }
+        });
       });
     }
     await new Promise<void>((resolve, reject) => {

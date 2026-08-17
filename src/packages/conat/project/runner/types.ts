@@ -85,7 +85,9 @@ export interface Configuration {
   // if true, allow GPU devices to be passed through (via CDI)
   gpu?: boolean;
   // backup restore behavior when starting a project on a host
-  restore?: "none" | "auto" | "required";
+  // "recover" restores the latest backup even if an incidental local volume
+  // was created before start, but still permits a project with no backups.
+  restore?: "none" | "auto" | "recover" | "required";
   // optional explicit backup id to restore instead of resolving "latest"
   restore_backup_id?: string;
   // LRO op_id to publish progress for project start.

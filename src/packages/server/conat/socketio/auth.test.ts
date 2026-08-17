@@ -132,11 +132,12 @@ beforeEach(() => {
   (resolveProjectAccessAllowRemote as jest.Mock).mockReset();
 });
 
-function projectHostBearerToken() {
+function projectHostBearerToken(nonce?: string) {
   const encode = (value: any) =>
     Buffer.from(JSON.stringify(value)).toString("base64url");
   return `${encode({ typ: "JWT", alg: "EdDSA" })}.${encode({
     aud: `project-host:${host_id}`,
+    nonce,
   })}.signature`;
 }
 
@@ -234,6 +235,41 @@ describe("project-host bearer account auth", () => {
     expect(getAccountRevokedBeforeCachedMock).toHaveBeenCalledWith(account_id);
   });
 
+  it("keeps one agent identity across signed turn-token refreshes", async () => {
+    const sessionId = "00000000-0000-4000-8000-000000000098";
+    verifyProjectHostAuthTokenMock
+      .mockReturnValueOnce({
+        act: "account",
+        sub: account_id,
+        aud: `project-host:${host_id}`,
+        iat: 100,
+        exp: 1_000,
+        sid: sessionId,
+      })
+      .mockReturnValueOnce({
+        act: "account",
+        sub: account_id,
+        aud: `project-host:${host_id}`,
+        iat: 500,
+        exp: 1_400,
+        sid: sessionId,
+      });
+    const makeSocket = (nonce: string) => ({
+      handshake: {
+        auth: {
+          bearer: projectHostBearerToken(nonce),
+          project_id,
+        },
+        headers: {},
+      },
+    });
+
+    const first = (await getUser(makeSocket("first"))) as any;
+    const refreshed = (await getUser(makeSocket("second"))) as any;
+    expect(refreshed.auth_token_fingerprint).toBe(first.auth_token_fingerprint);
+    expect(refreshed.auth_iat_s).toBe(500);
+  });
+
   it("rejects banned accounts before accepting project-host bearer tokens", async () => {
     isAccountBannedCachedMock.mockReturnValue(true);
     const socket = {
@@ -260,6 +296,26 @@ describe("project-host bearer account auth", () => {
     };
 
     await expect(getUser(socket)).rejects.toThrow("session revoked");
+  });
+
+  it("classifies expired project-scoped agent credentials", async () => {
+    verifyProjectHostAuthTokenMock.mockImplementation(() => {
+      throw new Error("token expired");
+    });
+    const socket = {
+      handshake: {
+        auth: {
+          bearer: projectHostBearerToken(),
+          project_id,
+        },
+        headers: {},
+      },
+    };
+
+    await expect(getUser(socket)).rejects.toMatchObject({
+      message: expect.stringContaining("agent auth token expired"),
+      code: "agent_auth_expired",
+    });
   });
 });
 

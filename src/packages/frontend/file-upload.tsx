@@ -366,12 +366,10 @@ export function FileUploadWrapper({
           return;
         }
         // see https://github.com/sagemathinc/cocalc/issues/2072
-        dropzone.current.options = $.extend(
-          true,
-          {},
-          dropzone.current.options,
-          get_djs_config(),
-        );
+        dropzone.current.options = {
+          ...dropzone.current.options,
+          ...get_djs_config(),
+        };
       }
     }
   });

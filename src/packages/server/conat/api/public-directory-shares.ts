@@ -17,6 +17,8 @@ import type {
   ListPublicDirectorySharesResponse,
   ListProjectPublicDirectorySharesOptions,
   PublicDirectoryShareSummary,
+  ResolveLegacyPublicDirectorySharePathOptions,
+  ResolveLegacyPublicDirectorySharePathResponse,
   ResolvePublicDirectoryShareOptions,
   ResolvedPublicDirectoryShare,
   UpdatePublicDirectoryShareOptions,
@@ -31,11 +33,13 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import * as publicDirectoryShares from "@cocalc/server/public-directory-shares";
 
 const log = getLogger("server:conat-api:public-directory-shares");
+const LEGACY_PUBLIC_SHARE_LOOKUP_TIMEOUT_MS = 2_000;
 
-function publicDirectorySharesClient(dest_bay: string) {
+function publicDirectorySharesClient(dest_bay: string, timeout?: number) {
   return createInterBayAccountLocalClient({
     client: getInterBayFabricClient(),
     dest_bay,
+    timeout,
   });
 }
 
@@ -68,15 +72,17 @@ async function callPublicDirectoryShareBay<T>({
   bay_id,
   local,
   remote,
+  timeout,
 }: {
   bay_id: string;
   local: () => Promise<T>;
   remote: (client: InterBayAccountLocalApi) => Promise<T>;
+  timeout?: number;
 }): Promise<T> {
   if (bay_id === getConfiguredBayId()) {
     return await local();
   }
-  return await remote(publicDirectorySharesClient(bay_id));
+  return await remote(publicDirectorySharesClient(bay_id, timeout));
 }
 
 async function resolvePublicDirectoryShareWithBay(
@@ -100,6 +106,50 @@ async function resolvePublicDirectoryShareWithBay(
     }
   }
   throw lastNotFound ?? Error("public directory share not found");
+}
+
+export async function resolveLegacyPublicDirectorySharePath(
+  opts: ResolveLegacyPublicDirectorySharePathOptions,
+): Promise<ResolveLegacyPublicDirectorySharePathResponse | null> {
+  const bayIds = await publicDirectoryShareSearchBayIds();
+  // Start every lookup immediately, but consume results in directory order so
+  // duplicate legacy slugs resolve exactly like ordinary public-share slugs.
+  // A dead bay is bounded and cannot serially add the default RPC timeout.
+  const lookups = bayIds.map(async (bay_id) => {
+    try {
+      return {
+        bay_id,
+        resolved: await callPublicDirectoryShareBay({
+          bay_id,
+          timeout: LEGACY_PUBLIC_SHARE_LOOKUP_TIMEOUT_MS,
+          local: async () =>
+            await publicDirectoryShares.resolveLegacyPublicDirectorySharePath(
+              opts,
+            ),
+          remote: async (client) =>
+            await client.publicDirectoryShareResolveLegacyPath(opts),
+        }),
+        err: undefined,
+      };
+    } catch (err) {
+      return { bay_id, resolved: null, err };
+    }
+  });
+  let lastError: unknown;
+  for (const lookup of lookups) {
+    const result = await lookup;
+    if (result.err != null) {
+      lastError = result.err;
+      log.warn("legacy public share path lookup failed on bay", {
+        bay_id: result.bay_id,
+        err: `${(result.err as Error | undefined)?.message ?? result.err}`,
+      });
+      continue;
+    }
+    if (result.resolved != null) return result.resolved;
+  }
+  if (lastError != null) throw lastError;
+  return null;
 }
 
 async function projectPublicDirectoryShareBay(

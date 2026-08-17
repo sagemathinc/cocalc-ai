@@ -93,6 +93,45 @@ const errors: { [key: string]: string[] } = {};
 const finished: { [key: string]: { state: boolean; cb: () => void } } = {};
 const stateMeta: { [key: string]: { created: number; touched: number } } = {};
 
+function forwardUploadChunkStream({
+  chunkStream,
+  totalStream,
+  onError,
+  onDone,
+}: {
+  chunkStream: PassThrough;
+  totalStream: PassThrough;
+  onError: (err: unknown) => void;
+  onDone: () => void;
+}): void {
+  const finish = () => {
+    try {
+      onDone();
+    } catch (err) {
+      logger.warn("upload chunk completion callback failed", { err: `${err}` });
+    }
+  };
+  void (async () => {
+    for await (const data of chunkStream) {
+      totalStream.write(data);
+    }
+  })().then(finish, (err) => {
+    totalStream.destroy();
+    try {
+      onError(err);
+    } catch (callbackErr) {
+      logger.warn("upload chunk error callback failed", {
+        err: `${callbackErr}`,
+      });
+    }
+    finish();
+  });
+}
+
+function waitForReady(register: (cb: () => void) => void): Promise<void> {
+  return new Promise<void>((resolve) => register(resolve));
+}
+
 async function handleUploadToProject({
   account_id,
   project_id,
@@ -117,8 +156,9 @@ async function handleUploadToProject({
   }
   const done = { state: false, cb: () => {} };
   let filename = "noname.txt";
-  let stream: any | null = null;
-  let chunkStream: any | null = null;
+  let stream: PassThrough | null = null;
+  let chunkStream: PassThrough | null = null;
+  let chunkForwardError: string | undefined;
   const form = formidable({
     keepExtensions: true,
     hashAlgorithm: "sha1",
@@ -132,18 +172,42 @@ async function handleUploadToProject({
       });
       chunkStream = chunkStream0;
       stream = totalStream;
-      (async () => {
-        for await (const data of chunkStream) {
-          stream.write(data);
-        }
-        done.state = true;
-        done.cb();
-      })();
+      forwardUploadChunkStream({
+        chunkStream,
+        totalStream,
+        onError: (err) => {
+          chunkForwardError = `${err}`;
+          logger.warn("upload chunk forwarding failed", {
+            account_id,
+            project_id,
+            path,
+            filename,
+            err: chunkForwardError,
+          });
+          freeWriteStream({ project_id, path, filename });
+        },
+        onDone: () => {
+          done.state = true;
+          done.cb();
+        },
+      });
       return chunkStream;
     },
   });
 
   const [fields] = await form.parse(req);
+  if (!done.state) {
+    await waitForReady((cb) => {
+      done.cb = cb;
+    });
+  }
+  if (chunkForwardError) {
+    throw new Error(`upload chunk forwarding failed: ${chunkForwardError}`);
+  }
+  const totalStream = stream as PassThrough | null;
+  if (totalStream == null) {
+    throw new Error("upload stream not initialized");
+  }
   // console.log("form", { fields, files });
   // fields looks like this: {"dzuuid":["ce5fa828-5155-4fa0-b30a-869bd4c956a5"],"dzchunkindex":["1"],"dztotalfilesize":["10000000"],"dzchunksize":["8000000"],"dztotalchunkcount":["2"],"dzchunkbyteoffset":["8000000"]}
 
@@ -167,12 +231,11 @@ async function handleUploadToProject({
     // start brand new upload. this is the only time we clear the errors map.
     errors[key] = [];
     finished[key] = { state: false, cb: () => {} };
-    // @ts-ignore
     (async () => {
       try {
         // console.log("conat: started writing ", filename);
         await writeFileToProject({
-          stream,
+          stream: totalStream,
           project_id,
           path: join(path, fields.fullPath?.[0] ?? filename),
           maxWait: MAX_UPLOAD_TIME_MS,
@@ -194,29 +257,26 @@ async function handleUploadToProject({
       }
     })();
   }
+  let finalErrors: string[] | undefined;
   if (index == count - 1) {
     // console.log("finish");
-    if (!done.state) {
-      const f = (cb) => {
-        done.cb = cb;
-      };
-      await callback(f);
-    }
-    stream.end();
+    totalStream.end();
     if (!finished[key].state) {
       const f = (cb) => {
         finished[key].cb = cb;
       };
       await callback(f);
     }
+    finalErrors = [...(errors[key] ?? [])];
     cleanupUploadKey(key);
   }
-  if ((errors[key]?.length ?? 0) > 0) {
+  const uploadErrors = finalErrors ?? errors[key] ?? [];
+  if (uploadErrors.length > 0) {
     logger.warn("upload failed (backend write)", {
       key,
-      errors: errors[key],
+      errors: uploadErrors,
     });
-    const serviceUnavailable = errors[key].some((e) =>
+    const serviceUnavailable = uploadErrors.some((e) =>
       e.includes("Error: 503"),
     );
     res

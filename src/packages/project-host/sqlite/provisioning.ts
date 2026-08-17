@@ -33,6 +33,7 @@ function ensureProvisioningTable() {
 export function setProjectProvisioned(
   project_id: string,
   provisioned: boolean,
+  opts: { forceReport?: boolean } = {},
 ): boolean {
   ensureProvisioningTable();
   const db = getDatabase();
@@ -44,6 +45,7 @@ export function setProjectProvisioned(
     | { provisioned?: number; provisioned_reported?: number }
     | undefined;
   if (
+    !opts.forceReport &&
     existing &&
     !!existing.provisioned === provisioned &&
     existing.provisioned_reported === 1

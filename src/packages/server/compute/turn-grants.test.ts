@@ -8,6 +8,12 @@ const clientQuery = jest.fn();
 const release = jest.fn();
 const connect = jest.fn(async () => ({ query: clientQuery, release }));
 const centralLog = jest.fn(async () => undefined);
+const publishProjectDetailInvalidationBestEffort = jest.fn(
+  async () => undefined,
+);
+const siteUrl = jest.fn(
+  async (path?: string) => `https://cocalc.test/${path ?? ""}`,
+);
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -17,6 +23,16 @@ jest.mock("@cocalc/database/pool", () => ({
 jest.mock("@cocalc/database/postgres/central-log", () => ({
   __esModule: true,
   default: (...args: any[]) => centralLog(...args),
+}));
+
+jest.mock("@cocalc/server/account/project-detail-feed", () => ({
+  publishProjectDetailInvalidationBestEffort: (...args: any[]) =>
+    publishProjectDetailInvalidationBestEffort(...args),
+}));
+
+jest.mock("../hub/site-url", () => ({
+  __esModule: true,
+  default: (...args: any[]) => siteUrl(...args),
 }));
 
 import {
@@ -79,9 +95,32 @@ function approvedGrant(overrides: Record<string, unknown> = {}) {
     max_hourly_usd: 0.12,
     max_total_authorized_usd: 0.24,
     max_ttl_minutes: 120,
+    expires_at: new Date(Date.now() + 600_000),
     metadata: { approved_request: approvedRequest },
     ...overrides,
   };
+}
+
+function availabilityTurnGrant(overrides: Record<string, unknown> = {}) {
+  return approvedGrant({
+    allowed_vm_ids: [],
+    allowed_providers: [],
+    allowed_machine_classes: [],
+    funding_mode: null,
+    max_active_vms: 0,
+    max_hourly_usd: 0,
+    max_total_authorized_usd: 0,
+    max_ttl_minutes: 0,
+    metadata: {
+      approved_request: { action: "availability", ...request() },
+      approved_scope: {
+        kind: "project-vm-availability",
+        operations: ["start-vm", "stop-vm"],
+        existing_resources_only: true,
+      },
+    },
+    ...overrides,
+  });
 }
 
 beforeEach(() => {
@@ -90,6 +129,7 @@ beforeEach(() => {
   connect.mockClear();
   release.mockClear();
   centralLog.mockClear();
+  publishProjectDetailInvalidationBestEffort.mockClear();
 });
 
 it("creates a hash-only read/data-plane grant and touches it", async () => {
@@ -113,7 +153,10 @@ it("creates a hash-only read/data-plane grant and touches it", async () => {
       action: "read",
       project_id,
     }),
-  ).resolves.toBeUndefined();
+  ).resolves.toMatchObject({
+    grant_id,
+    project_vm_availability_scope: false,
+  });
   expect(query.mock.calls[1][0]).toContain(
     "INSERT INTO compute_vm_turn_grants",
   );
@@ -137,7 +180,13 @@ it("records an exact pending mutation request", async () => {
       vm_id,
       request: request(),
     }),
-  ).rejects.toMatchObject({ code: "agent_grant_required", grant_id });
+  ).rejects.toMatchObject({
+    code: "agent_grant_required",
+    request_id: grant_id,
+    grant_id,
+    approval_url: `https://cocalc.test/projects/${project_id}/vms?agent_grant=${grant_id}`,
+    project_id,
+  });
   expect(query.mock.calls[1][1][1].pending_request).toMatchObject({
     action: "availability",
     operation: "start-vm",
@@ -150,6 +199,42 @@ it("records an exact pending mutation request", async () => {
       event: "managed_compute_agent_grant_requested",
     }),
   );
+  expect(publishProjectDetailInvalidationBestEffort).toHaveBeenCalledWith({
+    project_id,
+    fields: ["compute_agent_grants"],
+  });
+});
+
+it("does not rewrite or re-log the same pending mutation request", async () => {
+  query.mockResolvedValueOnce({
+    rows: [
+      approvedGrant({
+        allowed_actions: [],
+        metadata: {
+          pending_request: {
+            action: "availability",
+            ...request(),
+            requested_at: new Date().toISOString(),
+          },
+        },
+      }),
+    ],
+  });
+
+  await expect(
+    requireAgentComputeGrant({
+      auth: auth(),
+      action: "availability",
+      project_id,
+      vm_id,
+      request: request(),
+    }),
+  ).rejects.toMatchObject({
+    code: "agent_grant_required",
+    request_id: grant_id,
+  });
+  expect(query).toHaveBeenCalledTimes(1);
+  expect(centralLog).not.toHaveBeenCalled();
 });
 
 it("requires exact operation identity and enforces the approved envelope", async () => {
@@ -189,10 +274,81 @@ it("authorizes the exact approved mutation and records its use", async () => {
       vm_id,
       request: request(),
     }),
-  ).resolves.toBeUndefined();
+  ).resolves.toMatchObject({
+    grant_id,
+    project_vm_availability_scope: false,
+  });
   expect(centralLog).toHaveBeenCalledWith(
     expect.objectContaining({ event: "managed_compute_agent_grant_used" }),
   );
+});
+
+it("authorizes repeated start and stop operations across existing project VMs", async () => {
+  const anotherVmId = "00000000-0000-4000-8000-000000000099";
+  query
+    .mockResolvedValueOnce({ rows: [availabilityTurnGrant()] })
+    .mockResolvedValueOnce({ rows: [] });
+  await expect(
+    requireAgentComputeGrant({
+      auth: auth(),
+      action: "availability",
+      project_id,
+      vm_id: anotherVmId,
+      request: request({
+        operation: "start-vm",
+        operation_id: "b".repeat(64),
+        vm_id: anotherVmId,
+        provider: "nebius",
+        machine_class: "1gpu-16vcpu-200gb",
+        funding_mode: "site-funded",
+        active_vms: 12,
+        hourly_usd: 25,
+        total_authorized_usd: 1_000,
+        ttl_minutes: 10_000,
+      }),
+    }),
+  ).resolves.toMatchObject({
+    grant_id,
+    project_vm_availability_scope: true,
+  });
+
+  query.mockReset();
+  query
+    .mockResolvedValueOnce({ rows: [availabilityTurnGrant()] })
+    .mockResolvedValueOnce({ rows: [] });
+  await expect(
+    requireAgentComputeGrant({
+      auth: auth(),
+      action: "availability",
+      project_id,
+      vm_id: anotherVmId,
+      request: request({
+        operation: "stop-vm",
+        operation_id: "c".repeat(64),
+        vm_id: anotherVmId,
+        hourly_usd: 0,
+        total_authorized_usd: 0,
+      }),
+    }),
+  ).resolves.toMatchObject({
+    grant_id,
+    project_vm_availability_scope: true,
+  });
+});
+
+it("does not broaden turn availability authority to billable mutations", async () => {
+  query
+    .mockResolvedValueOnce({ rows: [availabilityTurnGrant()] })
+    .mockResolvedValueOnce({ rows: [] });
+  await expect(
+    requireAgentComputeGrant({
+      auth: auth(),
+      action: "billable",
+      project_id,
+      vm_id,
+      request: request({ operation: "set-vm-machine-type" }),
+    }),
+  ).rejects.toMatchObject({ code: "agent_grant_required" });
 });
 
 it("approves a pending request transactionally", async () => {
@@ -221,7 +377,19 @@ it("approves a pending request transactionally", async () => {
   expect(
     clientQuery.mock.calls.map(([sql]) => sql.trim().split(/\s+/)[0]),
   ).toEqual(["BEGIN", "SELECT", "UPDATE", "COMMIT"]);
+  expect(clientQuery.mock.calls[2][1][3]).toEqual([]);
+  expect(clientQuery.mock.calls[2][1][13]).toMatchObject({
+    approved_scope: {
+      kind: "project-vm-availability",
+      operations: ["start-vm", "stop-vm"],
+      existing_resources_only: true,
+    },
+  });
   expect(release).toHaveBeenCalled();
+  expect(publishProjectDetailInvalidationBestEffort).toHaveBeenCalledWith({
+    project_id,
+    fields: ["compute_agent_grants"],
+  });
 });
 
 it("rejects expired, cross-project, and malformed mutation capabilities", async () => {
@@ -250,10 +418,14 @@ it("rejects expired, cross-project, and malformed mutation capabilities", async 
 });
 
 it("revokes only the owner's grant", async () => {
-  query.mockResolvedValueOnce({ rows: [] });
+  query.mockResolvedValueOnce({ rows: [{ project_id }] });
   await revokeAgentComputeGrant({ account_id, grant_id });
   expect(query).toHaveBeenCalledWith(
     expect.stringContaining("revoked_at=NOW()"),
     [grant_id, account_id],
   );
+  expect(publishProjectDetailInvalidationBestEffort).toHaveBeenCalledWith({
+    project_id,
+    fields: ["compute_agent_grants"],
+  });
 });

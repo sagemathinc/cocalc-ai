@@ -353,6 +353,25 @@ Actionable:
 
 ## Abuse And Egress Signals
 
+Run the read-only abuse scan during the fast pass and whenever new free-account
+compute looks suspicious:
+
+```bash
+node src/scripts/ops/abuse-health-scan.mjs
+```
+
+The scanner requires admin fresh auth. It queries every configured bay for
+recent account/project clusters, then inspects only recent top-level filename,
+size, and timestamp metadata on running site-funded project hosts. It does not
+read file contents, scan customer-funded hosts, ban accounts, stop projects, or
+change project-host services. Detection rules live in this operator script, so
+they can be updated without restarting project-host.
+
+Use `--skip-files` when host SSH is unavailable. Any incomplete bay or host scan
+must be reported as incomplete, not interpreted as a clean result. Treat
+repeated filename/size matches as triage leads rather than proof: class
+assignments and templates can legitimately produce identical files.
+
 For abuse detection pages and managed egress checks:
 
 Healthy:
@@ -368,6 +387,15 @@ Actionable:
 - A single browser/page causes repeated expensive egress history queries.
 - High egress appears for new free accounts or projects with miner-like
   process/network signals.
+- Multiple new accounts share a creation IP, exact user agent, random-looking
+  email local parts, identical project titles, and immediate running projects.
+- The same recent top-level filename and exact size appears across several
+  unrelated new projects, especially when correlated with sustained CPU.
+
+Containment is always a separate deliberate action. Confirm a candidate using
+bounded process/file inspection, billing history, and account/project metadata;
+then use audited admin ban and site-domain policy commands. Do not add automatic
+bans to the health scan.
 
 ## Host-Specific Deep Dive
 

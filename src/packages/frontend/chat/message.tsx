@@ -768,6 +768,13 @@ export default function Message({
     if (full) return full;
     return fallbackLogRefs.previewStream;
   }, [message, fallbackLogRefs.previewStream]);
+  const livePreviewIsProjection = useMemo(() => {
+    if (field<string>(message, "acp_live_preview_stream")) return true;
+    // Older turns only stored the full stream and use it as a compatibility
+    // fallback above. Derived preview refs are projections; explicit full refs
+    // are not.
+    return !field<string>(message, "acp_live_log_stream");
+  }, [message]);
   const loadPreviewBody = useMemo(() => {
     return shouldLoadCodexPreviewBody({
       showCodexActivity,
@@ -791,6 +798,7 @@ export default function Message({
     logKey,
     logSubject,
     liveLogStream: livePreviewStream,
+    liveStreamIsProjection: livePreviewIsProjection,
     generating: effectiveGenerating,
     enabled: loadPreviewBody,
   });
@@ -2158,6 +2166,20 @@ export default function Message({
           onInterrupt={
             hasRetainedWork && !read_only && retainedSessionId
               ? stopRetainedWork
+              : undefined
+          }
+          onContinue={
+            !effectiveGenerating &&
+            !acpInterrupted &&
+            !read_only &&
+            isLastMessageInThread &&
+            actions != null
+              ? () =>
+                  actions.sendReply({
+                    message,
+                    reply: "continue",
+                    noNotification: true,
+                  })
               : undefined
           }
           openDrawerToken={openActivityDrawerToken}

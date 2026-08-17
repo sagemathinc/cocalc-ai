@@ -10,6 +10,7 @@ import {
   type CodexAppServerLoginHint,
 } from "@cocalc/ai/acp";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
+import { hubApiErrorAttrs } from "@cocalc/conat/hub/api/error-attrs";
 import type {
   AccountBayLocation,
   AccountCollaboratorIndexProjectionDrainResult,
@@ -869,7 +870,7 @@ async function handleMessage(
     resp = null;
     headers = {
       error: err.message ? err.message : `${err}`,
-      error_attrs: { code: err.code, subject: err.subject },
+      error_attrs: hubApiErrorAttrs(err),
     };
   }
   try {

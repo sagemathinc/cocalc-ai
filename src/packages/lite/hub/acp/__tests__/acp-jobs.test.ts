@@ -23,6 +23,7 @@ import { automationHasActiveBackendRun } from "../active-automation-run";
 import {
   claimNextQueuedAcpJobForThread,
   cancelQueuedAcpJob,
+  clearQueuedAcpJobWorkerAffinity,
   countCreatedAcpJobsForAccountSince,
   countQueuedAcpJobsForAccount,
   countQueuedAcpJobsForThread,
@@ -93,6 +94,70 @@ afterAll(() => {
 });
 
 describe("acp job queue ordering", () => {
+  it("reserves a continuation for its retained runtime worker", () => {
+    const queued = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-affinity-1",
+        assistantMessageId: "assistant-affinity-1",
+        assistantDate: "2026-03-08T00:00:00.000Z",
+      }),
+      { preferred_worker_id: "worker-old" },
+    );
+
+    expect(queued.worker_id).toBe("worker-old");
+    expect(
+      claimNextQueuedAcpJobForThread({
+        project_id: queued.project_id,
+        path: queued.path,
+        thread_id: queued.thread_id,
+        worker_id: "worker-new",
+      }),
+    ).toBeUndefined();
+
+    const claimed = claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-old",
+      worker_bundle_version: "bundle-old",
+    });
+    expect(claimed?.op_id).toBe(queued.op_id);
+    expect(claimed?.worker_id).toBe("worker-old");
+  });
+
+  it("can release stale continuation affinity without replacing the job", () => {
+    const queued = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-affinity-2",
+        assistantMessageId: "assistant-affinity-2",
+        assistantDate: "2026-03-08T00:00:00.000Z",
+      }),
+      { preferred_worker_id: "worker-dead" },
+    );
+
+    expect(
+      clearQueuedAcpJobWorkerAffinity({
+        op_id: queued.op_id,
+        worker_id: "worker-other",
+      }),
+    ).toBe(false);
+    expect(
+      clearQueuedAcpJobWorkerAffinity({
+        op_id: queued.op_id,
+        worker_id: "worker-dead",
+      }),
+    ).toBe(true);
+
+    const claimed = claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-new",
+    });
+    expect(claimed?.op_id).toBe(queued.op_id);
+    expect(claimed?.worker_id).toBe("worker-new");
+  });
+
   it("keeps normal queued turns in FIFO order", async () => {
     const older = enqueueAcpJob(
       makeRequest({
