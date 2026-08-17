@@ -49,6 +49,7 @@ import {
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { DirectoryListingEntry } from "@cocalc/util/types";
 import { WebappClient } from "./client";
+import { isJobGoneError, shouldReattach } from "./exec-stream-reattach";
 import { isDirViaFs } from "./is-dir";
 import { throttle } from "lodash";
 import { isExamMode } from "@cocalc/frontend/customize/exam-mode";
@@ -402,6 +403,15 @@ export class ProjectClient {
     // The job cannot outlive its own timeout, so stop re-attaching after it.
     const reattachDeadline = Date.now() + ((opts.timeout ?? 300) + 60) * 1000;
     let reattachAttempt = 0;
+    // Set from the "job" event: only a runtime that advertises `attach`
+    // understands attach_job_id. An older project would treat it as just
+    // another execution option and run the build a SECOND time, so without
+    // the flag we recover through async_get instead of re-attaching.
+    let canAttach = false;
+    // A job the service says it does not have can never appear later, so
+    // re-attaching again would just burn the whole deadline (~16 min) before
+    // reporting anything.
+    let jobIsGone = false;
 
     try {
       const cn = await this.client.conat_client.projectConat({
@@ -422,7 +432,7 @@ export class ProjectClient {
           // Later passes attach to the job we already know rather than
           // re-executing the command.
           const attachJobId =
-            reattachAttempt > 0 ? execStream.job_id : undefined;
+            reattachAttempt > 0 && canAttach ? execStream.job_id : undefined;
           const req = cn.requestMany(
             subject,
             attachJobId
@@ -442,10 +452,15 @@ export class ProjectClient {
               break;
             }
 
-            const { error, type, data, seq } = resp.data;
+            const { error, type, data, seq, attach } = resp.data;
 
             if (error) {
               interruption = `exec stream error: ${error}`;
+              // "no such job" is the service telling us the job is not in
+              // its cache; it cannot come back, so stop re-attaching.
+              if (isJobGoneError(error)) {
+                jobIsGone = true;
+              }
               break;
             }
 
@@ -462,6 +477,7 @@ export class ProjectClient {
             // Handle different types of streaming data
             switch (type) {
               case "job":
+                canAttach = !!attach;
                 if (!recordedReady) {
                   recordedReady = true;
                   recordUxLatencyEvent({
@@ -510,7 +526,15 @@ export class ProjectClient {
 
         if (sawDone || ended) break;
         const reason = interruption ?? "exec stream ended before done";
-        if (execStream.job_id && Date.now() < reattachDeadline) {
+        if (
+          shouldReattach({
+            jobId: execStream.job_id,
+            canAttach,
+            jobIsGone,
+            now: Date.now(),
+            deadline: reattachDeadline,
+          })
+        ) {
           reattachAttempt += 1;
           await delay(
             Math.min(5000, 500 * 2 ** Math.min(reattachAttempt - 1, 4)),

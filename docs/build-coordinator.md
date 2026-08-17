@@ -24,7 +24,7 @@ One ephemeral conat DKV per project (`name: "build"`), keyed by file path.
 See [conat-dkv-pubsub.md](conat-dkv-pubsub.md) for the DKV primitive itself.
 
 ```
-BuildState = { buildId, status, aggregate?, force?, startedAt? }
+BuildState = { buildId, status, aggregate?, force?, startedAt?, sourceRevision? }
 status:  (no entry) → "running" → "stopping" → "finished"
 ```
 
@@ -164,10 +164,21 @@ moment the job is created, so a reconnect minutes into a build would start a
 second process.
 The editor's `runJob` replaces its buffer on that event rather than appending,
 so nothing is duplicated. A client offline for minutes therefore returns to
-the full log so far plus continuing progress. Only when there is no aggregate
-to attach by, or the job can no longer be running, does the client fall back
-to `async_get` for the final result — never to "the build failed", which
-would publish `finished` for a process that is still running.
+the full log so far plus continuing progress. The client falls back to
+`async_get` for the final result when there is no job id to attach by, when
+the service reports `no such job` (terminal — the job is not in its cache
+and cannot reappear), when the job can no longer be running, or when the
+project runtime did not advertise attach support (see below) — never to "the
+build failed", which would publish `finished` for a process that is still
+running.
+
+Re-attaching is gated on a capability flag: the service sets `attach: true`
+on the `"job"` event, and the client only sends `attach_job_id` after seeing
+it. A project process can be **older than the browser tab** — it keeps
+running across frontend rebuilds — and an older runtime would treat
+`attach_job_id` as just another execution option, running the build a second
+time. Without the flag the client recovers through `async_get`, which every
+runtime supports.
 
 The coordination DKV recovers from transient conat trouble on its own; a
 permanent close drops the reference so `ensureConnected()` opens a fresh one.
@@ -264,7 +275,8 @@ copy of the build pipeline:
    `run_sagetex`/`run_pythontex` in the LaTeX actions, and the converter
    runner in `rmd-editor/base-actions.ts`) is entangled with editor
    lifecycle state — `is_building`, `_buildToken`, `_buildWasStopped`,
-   `is_stopping`, `_pendingBuildRequest`, `_lastBuiltTime`. A worthwhile
+   `is_stopping`, `_pendingBuildRequest`, `_lastBuiltRevision` (LaTeX) /
+   `_lastBuiltHash` (Rmd/Qmd). A worthwhile
    split moves **all** of that state into a build runner that owns the
    lifecycle and exposes `build` / `stop` / `force`; moving only the
    `run_*` methods would leave the state behind and make ownership worse.

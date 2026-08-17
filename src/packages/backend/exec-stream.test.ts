@@ -743,6 +743,49 @@ describe("executeStream function - unit tests", () => {
     expect(stdoutEvents).toEqual([{ type: "stdout", data: "cond\n" }]);
     expect(jobEvent.data.stdout + "cond\n").toBe("first\nsecond\n");
   });
+
+  it("retires the index entry of a job that ended before we subscribed", async () => {
+    // The narrow race the index has to survive: a joiner indexes the job
+    // just after the originator's "finished" handler removed the entry, and
+    // then finds the job already done. No further "finished" event will
+    // reach this call, so unless the already-completed path drops the entry
+    // itself, it stays in the map for the life of the project process.
+    mockExecuteCode.mockResolvedValue({
+      type: "async",
+      job_id: "ended-job",
+      pid: 4321,
+      status: "running", // still running when the job was handed to us
+      start: Date.now(),
+    });
+    mockAsyncCache.get.mockReturnValue({
+      type: "async",
+      job_id: "ended-job",
+      status: "completed", // ... but finished by the time we snapshot it
+      stdout: "all of it\n",
+      stderr: "",
+      exit_code: 0,
+      start: Date.now(),
+      stats: [],
+    });
+
+    const { executeStream, runningJobIndexSize } =
+      await import("./exec-stream");
+    expect(runningJobIndexSize()).toBe(0);
+
+    const events: any[] = [];
+    await executeStream({
+      command: "echo hi",
+      aggregate: 4242, // an aggregate is what makes it indexable at all
+      stream: (event) => {
+        if (event != null) events.push(event);
+      },
+    });
+
+    expect(events.find((e) => e.type === "done")?.data?.status).toBe(
+      "completed",
+    );
+    expect(runningJobIndexSize()).toBe(0);
+  });
 });
 
 // Integration tests using real executeCode
@@ -1330,6 +1373,72 @@ describe("attaching to an existing job", () => {
     expect(events[0]?.error).toContain("no such job");
     expect(events.some((e) => e.type === "done")).toBe(false);
   }, 15000);
+
+  it("advertises attach support on the job event", async () => {
+    // A client may only re-attach to a runtime that sends this. An older
+    // project does not know attach_job_id and would run the command again,
+    // so the absence of the flag is what keeps mixed versions safe.
+    const { executeStream } = await import("./exec-stream");
+    const events: any[] = [];
+    await new Promise<void>((resolve) => {
+      void executeStream({
+        command: "echo hi",
+        bash: true,
+        err_on_exit: false,
+        stream: (event) => {
+          if (event == null) {
+            resolve();
+            return;
+          }
+          events.push(event);
+        },
+      });
+    });
+    expect(events.find((e) => e.type === "job")?.attach).toBe(true);
+  }, 15000);
+
+  it("does not offer an attached job under the attacher's own options", async () => {
+    // The attach request carries the attacher's options, which need not
+    // describe what the job is running; indexing them would hand the next
+    // caller a job that does something else entirely.
+    const { executeStream, runningJobIndexSize } =
+      await import("./exec-stream");
+    const started: any[] = [];
+    await new Promise<void>((resolve) => {
+      void executeStream({
+        command: "echo origin; sleep 3",
+        bash: true,
+        err_on_exit: false,
+        aggregate: 777,
+        stream: (event) => {
+          if (event != null) started.push(event);
+        },
+      });
+      setTimeout(resolve, 300);
+    });
+    const jobId = started.find((e) => e.type === "job")?.data?.job_id;
+    expect(typeof jobId).toBe("string");
+
+    const sizeBefore = runningJobIndexSize();
+    const attached = new Promise<void>((resolve) => {
+      void executeStream({
+        attach_job_id: jobId,
+        command: "echo OTHER_COMMAND",
+        bash: true,
+        err_on_exit: false,
+        aggregate: 888, // a different key than the job was started under
+        stream: (event) => {
+          if (event == null) resolve();
+        },
+      });
+    });
+    // Measured while the job is still running: the attach added nothing to
+    // the index (afterwards the entry goes away because the job ended, which
+    // would mask the difference).
+    await delay(300);
+    expect(runningJobIndexSize()).toBe(sizeBefore);
+    await attached;
+  }, 20000);
 });
 
 describe("late joiners", () => {

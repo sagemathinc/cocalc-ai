@@ -39,7 +39,7 @@ const store = await webapp_client.conat_client.dkv<MyValueType>({
 });
 
 // Account-scoped DKV (per-user settings)
-const store = await webapp_client.conat_client.dkv<MyValueType>({
+const settings = await webapp_client.conat_client.dkv<MyValueType>({
   account_id: "...",
   name: "my-settings",
 });
@@ -115,16 +115,25 @@ class MyActions {
       /* handle existing state */
     }
 
-    // Listen for remote changes
-    this.store.on("change", ({ key, value, prev }) => {
+    // Listen for remote changes. Keep the handler: DKV instances are
+    // reference counted, so close() may leave the instance alive for another
+    // holder — an inline listener would keep firing into a closed object.
+    this.changeHandler = ({ key, value, prev }) => {
       if (key !== "my-key") return;
       // Handle state transitions based on value and prev
-    });
+    };
+    this.store.on("change", this.changeHandler);
   }
 
   close() {
     this.closed = true;
-    this.store?.close();
+    const store = this.store;
+    this.store = undefined;
+    if (store && this.changeHandler) {
+      store.off("change", this.changeHandler);
+      this.changeHandler = undefined;
+    }
+    store?.close();
   }
 }
 ```
@@ -138,6 +147,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 function useMyDKV(project_id: string) {
   const [value, setValue] = useState<MyState>();
   const dkvRef = useRef<DKV<MyState>>();
+  const handlerRef = useRef<(x: { key: string; value: MyState }) => void>();
 
   useEffect(() => {
     let cancelled = false;
@@ -152,12 +162,19 @@ function useMyDKV(project_id: string) {
       }
       dkvRef.current = store;
       setValue(store.get(project_id));
-      store.on("change", ({ key, value }) => {
+      // Retained so the cleanup can detach it: close() only releases this
+      // holder's reference, and the instance survives while others hold it.
+      handlerRef.current = ({ key, value }) => {
         if (key === project_id) setValue(value);
-      });
+      };
+      store.on("change", handlerRef.current);
     })();
     return () => {
       cancelled = true;
+      if (dkvRef.current && handlerRef.current) {
+        dkvRef.current.off("change", handlerRef.current);
+        handlerRef.current = undefined;
+      }
       dkvRef.current?.close();
     };
   }, [project_id]);

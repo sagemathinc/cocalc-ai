@@ -21,6 +21,14 @@ export type StreamEvent = {
   type?: "job" | "stdout" | "stderr" | "stats" | "done" | "error";
   data?: any;
   error?: string;
+  /**
+   * Sent on the "job" event by every runtime that understands
+   * `attach_job_id`. A client must not re-attach unless it saw this: an
+   * older project runtime does not know the option, so it would treat the
+   * reconnect as an ordinary request and run the command a SECOND time.
+   * Absent flag => recover through async_get instead.
+   */
+  attach?: boolean;
 };
 
 const logger = getLogger("backend:exec-stream");
@@ -38,6 +46,16 @@ const logger = getLogger("backend:exec-stream");
  * so a finished build never captures the next one.
  */
 const runningJobByKey = new Map<string, string>();
+
+/**
+ * Number of jobs currently offered to late joiners. Exported so the
+ * "entries are retired when the job ends" invariant is testable: the index
+ * lives in a long-running project process, so a leak here is unbounded
+ * growth rather than a visible misbehavior.
+ */
+export function runningJobIndexSize(): number {
+  return runningJobByKey.size;
+}
 
 /**
  * Stable serialization of every execution-affecting option — same semantics
@@ -144,9 +162,19 @@ export async function executeStream(
     }
 
     const jobId = job.job_id;
-    if (key != null) {
-      runningJobByKey.set(key, jobId);
+    // Only a call that actually started (or joined) this job may publish it
+    // for late joiners. An explicit attach carries the *attacher's* options,
+    // which need not describe what the job is running, so indexing them
+    // would hand the next caller a job that does something else.
+    const indexKey = attach_job_id ? undefined : key;
+    if (indexKey != null) {
+      runningJobByKey.set(indexKey, jobId);
     }
+    const dropFromIndex = () => {
+      if (indexKey != null && runningJobByKey.get(indexKey) === jobId) {
+        runningJobByKey.delete(indexKey);
+      }
+    };
 
     // Snapshot the job's accumulated output NOW (synchronously, same tick as
     // the subscriptions below, so no chunk can slip between snapshot and
@@ -195,9 +223,7 @@ export async function executeStream(
     const handleFinished = (result: ExecuteCodeOutputAsync) => {
       // The job is over: stop offering it to late joiners (and keep the
       // index from growing without bound).
-      if (key != null && runningJobByKey.get(key) === jobId) {
-        runningJobByKey.delete(key);
-      }
+      dropFromIndex();
       cleanup();
       if (done) return;
       stream({ type: "done", data: result });
@@ -226,10 +252,17 @@ export async function executeStream(
       stats: currentJob?.stats ?? [],
     };
 
-    stream({ type: "job", data: initialJobInfo });
+    // `attach: true` tells the client this runtime understands
+    // attach_job_id, so a dropped stream may re-attach instead of falling
+    // back to async_get. See StreamEvent.attach.
+    stream({ type: "job", data: initialJobInfo, attach: true });
 
     // If job already completed, send done event immediately
     if (!done && currentJob && currentJob.status !== "running") {
+      // "finished" already fired (or never will for this listener), so
+      // handleFinished will not run: retire the index entry here instead,
+      // or a command that exits immediately leaks one per call.
+      dropFromIndex();
       cleanup();
       stream({ type: "done", data: currentJob });
       done = true;

@@ -103,8 +103,11 @@ async function handleMessage(mesg: Message) {
   const options = mesg.data;
 
   let seq = 0;
-  const respond = ({ type, data, error }: StreamEvent) => {
-    mesg.respondSync({ type, data, error, seq });
+  const respond = ({ type, data, error, attach }: StreamEvent) => {
+    // `attach` must be forwarded: it is how the client learns that this
+    // runtime understands attach_job_id and may re-attach after a dropped
+    // stream instead of falling back to async_get.
+    mesg.respondSync({ type, data, error, attach, seq });
     seq += 1;
   };
 
