@@ -48,7 +48,7 @@ owns the full join lifecycle:
 #### When the coordinator connects
 
 The coordinator is a **subscription**, and that dictates its lifetime. A
-collaborator who never builds anything still has to be listening *before*
+collaborator who never builds anything still has to be listening _before_
 someone else starts a build, or they see nothing — which is the whole
 feature. So editors construct it eagerly when the file opens, and never
 lazily on the first build or first save.
@@ -69,13 +69,14 @@ flight.
 This is worth stating because getting it wrong is invisible: the LaTeX editor
 used to create its coordinator in `init_config().then(...)`, and
 `init_config` awaits the aux syncdb becoming ready with no deadline. While
-the project was stopped that promise stayed *pending*, so the editor had no
+the project was stopped that promise stayed _pending_, so the editor had no
 coordinator at all — builds ran, no collaborator saw them, and every client
 spawned its own process. Nothing failed loudly; coordination was just
 silently absent. The Rmd/Qmd editors, which construct theirs synchronously,
 were unaffected. Anything the coordinator needs but does not have yet
 (for LaTeX, the build command that `init_config` produces) is waited for in
 the `join` callback rather than by delaying the subscription.
+
 - **Robustness**: operations issued before the DKV finished initializing are
   buffered and flushed; stranded `"running"` entries older than 20 minutes
   (originator crashed) are ignored and cleared using the shared **server
@@ -91,12 +92,15 @@ the `join` callback rather than by delaying the subscription.
 
 Joining clients call the _same_ build chain with the _same_ aggregate value
 (server timestamp or saved-version hash), and `exec-stream` keeps an index of
-the jobs it started, keyed by command + args + path + aggregate, so a second
-caller attaches to the running job instead of executing.
+the jobs it started, so a second caller attaches to the running job instead of
+executing. The index key is a stable serialization of _every_ option that
+affects execution — command, args, path, aggregate, but also `env`, `bash`,
+`timeout`, `err_on_exit`, `max_output` — with object keys sorted, so callers
+that differ in any of them can never share a job.
 
 That index is what makes late joining work at all. The `aggregate` wrapper
 ([aggregate.ts](../src/packages/util/aggregate.ts)) cannot do it on its own:
-it retains a *completed* call's result for 60s, and an async exec completes
+it retains a _completed_ call's result for 60s, and an async exec completes
 as soon as the job is created — so a client opening the file ten minutes into
 a build would miss the cache and start a second process. The index is honored
 only while the job is actually running (checked against `asyncCache`) and is
@@ -127,7 +131,7 @@ A build saves its own sources, and that save is what makes the syncstring
 emit `save-to-disk`, so **every** build queues a follow-up build request for
 the revision it is already compiling. `drainPendingBuild` therefore compares
 the queued revision against the one that build attempted and drops the
-duplicate. Comparing against the last *successful* build instead would
+duplicate. Comparing against the last _successful_ build instead would
 swallow a retry after a failed one.
 
 "Force Build" additionally rewrites a latexmk command to use `-gg`
@@ -141,20 +145,20 @@ The chain is sized so a build that runs for many minutes survives, and so a
 client that loses its connection mid-build catches up rather than being told
 the build failed:
 
-| bound | value | why |
-| --- | --- | --- |
-| build job timeout | 15 min (`TIMEOUT_BUILD_JOB_S`) | the build itself — LaTeX, Rmd and Qmd all use it |
-| exec-stream request `maxWait` | the job's timeout | the stream must outlive the job |
-| `async_get` recovery | job timeout + 30s | the default 30s would abandon any build longer than that |
-| re-attach deadline | job timeout + 60s | past it the job cannot still be running |
-| `asyncCache` TTL | 1 h | the result stays fetchable long after the job ends |
-| stranded-entry threshold | job timeout + 5 min | derived, so raising the timeout cannot make live builds look stranded |
+| bound                         | value                          | why                                                                   |
+| ----------------------------- | ------------------------------ | --------------------------------------------------------------------- |
+| build job timeout             | 15 min (`TIMEOUT_BUILD_JOB_S`) | the build itself — LaTeX, Rmd and Qmd all use it                      |
+| exec-stream request `maxWait` | the job's timeout              | the stream must outlive the job                                       |
+| `async_get` recovery          | job timeout + 30s              | the default 30s would abandon any build longer than that              |
+| re-attach deadline            | job timeout + 60s              | past it the job cannot still be running                               |
+| `asyncCache` TTL              | 1 h                            | the result stays fetchable long after the job ends                    |
+| stranded-entry threshold      | job timeout + 5 min            | derived, so raising the timeout cannot make live builds look stranded |
 
 A client that already knows its job id (its stream dropped) re-attaches by
 **job id** (`attach_job_id`), which never executes anything:
 the service replays that job's accumulated output as the initial `"job"`
 event and resumes live streaming. Re-issuing the original call with the same
-aggregate would *not* be equivalent — the aggregate wrapper retains a
+aggregate would _not_ be equivalent — the aggregate wrapper retains a
 completed call's result for only 60s, and an async exec "completes" the
 moment the job is created, so a reconnect minutes into a build would start a
 second process.
