@@ -913,6 +913,11 @@ export class Actions extends BaseActions<LatexEditorState> {
       const pdfExists = await this.outputFileExists(pdf_path(this.path));
       if (this._state === "closed") return;
       if (pdfExists !== false) return; // exists or unknown => don't build
+      // A build is already running — most likely a collaborator's, which we
+      // joined while opening, and which is producing the very PDF we found
+      // missing. force_build() would stop it and restart from scratch, so
+      // merely opening the file would preempt everyone else's build.
+      if (this.is_building) return;
       this.force_build();
     }
   }

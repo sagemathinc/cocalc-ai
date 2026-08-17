@@ -1643,3 +1643,37 @@ describe("LaTeX save-triggered builds", () => {
     expect(actions.run_build).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("LaTeX build on open", () => {
+  function createOpenActions(isBuilding: boolean) {
+    const actions: any = Object.create(Actions.prototype);
+    actions._state = "open";
+    actions.path = "paper.tex";
+    actions.is_building = isBuilding;
+    actions.is_likely_master = () => true;
+    actions.is_read_only_preview = () => false;
+    actions.redux = {
+      getStore: () => ({
+        waitUntilReady: async () => true,
+        getIn: () => true, // build_on_save enabled
+      }),
+    };
+    actions.outputFileExists = jest.fn(async () => false); // no PDF yet
+    actions.force_build = jest.fn();
+    return actions;
+  }
+
+  it("builds when the output is missing and nothing is running", async () => {
+    const actions = createOpenActions(false);
+    await actions.initialBuildOnOpen();
+    expect(actions.force_build).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not preempt a build that is already running", async () => {
+    // Opening the file joins a collaborator's build, which is producing the
+    // PDF we just found missing; force_build would stop and restart it.
+    const actions = createOpenActions(true);
+    await actions.initialBuildOnOpen();
+    expect(actions.force_build).not.toHaveBeenCalled();
+  });
+});
