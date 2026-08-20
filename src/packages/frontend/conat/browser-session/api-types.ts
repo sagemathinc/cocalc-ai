@@ -10,6 +10,16 @@ import type {
   BrowserTerminalHistoryOptions,
   BrowserTerminalSpawnOptions,
 } from "./exec-utils";
+import type {
+  BrowserEditorBuildOptions,
+  BrowserEditorBuildResult,
+} from "./editor-build";
+
+export type {
+  BrowserEditorBuildJob,
+  BrowserEditorBuildOptions,
+  BrowserEditorBuildResult,
+} from "./editor-build";
 
 export type BrowserExecOutput = {
   stdout: unknown;
@@ -155,6 +165,12 @@ export type BrowserExecApi = {
       previous_thread_id?: string;
       thread_id: string;
     }>;
+  };
+  editor: {
+    build: (
+      path: string,
+      opts?: BrowserEditorBuildOptions,
+    ) => Promise<BrowserEditorBuildResult>;
   };
   notebook: {
     listCells: (path: string) => Promise<

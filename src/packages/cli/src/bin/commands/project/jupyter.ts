@@ -1,3 +1,21 @@
+/*
+`cocalc project jupyter ...` -- live notebook inspection, editing and execution.
+
+NOTE: agents are told about these subcommands by name, so this file is part of a
+contract that is not enforced by the type system.  If you rename a subcommand or
+change what its flags mean, update the prompts that spell it out, or agents will
+keep calling an interface that no longer exists:
+
+- getCoCalcRuntimeGuidanceHeader in @cocalc/ai/acp/codex-app-server -- names
+  `jupyter run --path/--cell-id/--cell-index/--all-code`, `jupyter cells`,
+  `jupyter exec` and `jupyter exec-api`
+- buildNotebookErrorPrompt in
+  @cocalc/frontend/jupyter/ai/ai-error -- names `jupyter set`, `insert`, `move`,
+  `delete`, `run` and `exec`
+
+See also the same note in ./build.ts for document builds.
+*/
+
 import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -1037,6 +1055,8 @@ Saved script example:
       },
     );
 
+  // per-cell execution; these flag names appear verbatim in the agent prompts
+  // listed at the top of this file
   jupyter
     .command("run")
     .description("run selected code cells in a notebook and stream output")

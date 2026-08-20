@@ -26,6 +26,7 @@ jest.mock("../codex-site-key-governor", () => ({
 
 jest.mock("@cocalc/backend/logger", () => () => loggerMock);
 
+import { getCoCalcRuntimeGuidanceHeader } from "../codex-app-server";
 import {
   CodexAppServerAgent,
   forkCodexAppServerSession,
@@ -5650,5 +5651,26 @@ describe("CodexAppServerAgent", () => {
     } finally {
       rmSync(rootHostPath, { recursive: true, force: true });
     }
+  });
+});
+
+describe("getCoCalcRuntimeGuidanceHeader", () => {
+  const CLI = "/opt/cocalc/cli.js";
+
+  it("points document builds at the editor rather than a shell", () => {
+    // an agent that runs latexmk itself leaves the editor's build log and
+    // error panel showing the previous result
+    const header = getCoCalcRuntimeGuidanceHeader(CLI);
+    expect(header).toContain(`${CLI} project build <absolute path> --wait`);
+    expect(header).toContain("LaTeX, R Markdown, Quarto");
+    expect(header).toContain("rather than running latexmk, knitr or quarto");
+  });
+
+  it("names the per-cell notebook run and how to find cell ids", () => {
+    const header = getCoCalcRuntimeGuidanceHeader(CLI);
+    expect(header).toContain(
+      `${CLI} project jupyter run --path <notebook> --cell-id <id>`,
+    );
+    expect(header).toContain(`${CLI} project jupyter cells --path <notebook>`);
   });
 });

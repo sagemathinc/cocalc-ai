@@ -299,7 +299,16 @@ function normalizeActivityPathKey(
   return path.normalize(trimmed);
 }
 
-function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
+/*
+The preamble every agent turn carries: what the CoCalc CLI can do that a plain
+shell cannot.
+
+This names CLI commands and flags verbatim, so it goes stale silently when they
+change -- the agent just calls something that no longer exists.  The commands
+named here are defined in @cocalc/cli/bin/commands/project/{jupyter,build}.ts,
+both of which carry a note pointing back here.
+*/
+export function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
   return [
     "[CoCalc runtime capabilities]",
     "This turn may run with CoCalc CLI/browser automation context.",
@@ -312,10 +321,12 @@ function getCoCalcRuntimeGuidanceHeader(cliCommand: string): string {
     "- COCALC_BEARER_TOKEN",
     "Prefer high-signal commands over raw browser scripts when available.",
     "For notebook edits/execution that must survive browser refresh or disconnect, prefer `cocalc project jupyter -h` over `browser exec`.",
+    `To evaluate notebook cells, use \`${cliCommand} project jupyter run --path <notebook> --cell-id <id>\` (also \`--cell-index <n>\` and \`--all-code\`); \`${cliCommand} project jupyter cells --path <notebook>\` lists the ids and indexes. That runs the cell in the live kernel the user is looking at, so its output lands in the notebook rather than in your shell.`,
     "For multi-step notebook work, prefer `cocalc project jupyter exec --path ... --stdin` for ad hoc snippets or `--file <script.js>` for saved scripts instead of shelling multiple notebook commands.",
     "Use `cocalc project jupyter exec-api` to inspect the ambient notebook script API before writing a multi-step script. `api.notebook.run(...)` returns `run.run_id`.",
     "Treat the live in-memory notebook state as the source of truth for live notebook work.",
     "Do not read or edit `.ipynb` JSON directly for live notebook inspection or mutation unless the user explicitly asks for filesystem-level work.",
+    `To build a document (LaTeX, R Markdown, Quarto), use \`${cliCommand} project build <absolute path> --wait\` rather than running latexmk, knitr or quarto in a shell. The build pipeline lives in the open editor, so a shell build leaves its build log and error panel showing the previous result, and --wait returns the exit code and log that the editor actually recorded.`,
     "For live text editor content or edits, prefer backend exec with the live sync/session API over direct filesystem reads when unsaved browser state may matter.",
     `Example read: ${cliCommand} exec 'const doc = api.text.open({ path: "/home/user/file.md", projectIdentifier: process.env.COCALC_PROJECT_ID }); return await doc.read();'`,
     `Example append: ${cliCommand} exec 'const doc = api.text.open({ path: "/home/user/file.md", projectIdentifier: process.env.COCALC_PROJECT_ID }); const before = await doc.read(); return await doc.append("\\nAgent note", { expectedHash: before.hash });'`,

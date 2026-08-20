@@ -21,8 +21,13 @@ import {
 import type { FrameTree } from "../frame-tree/types";
 import { cancel_exec_job, type ExecOutput } from "../generic/client";
 import {
-  jobAggregateValue,
   watchProjectBuilds,
+  classifyBuildJob,
+  jobAggregateValue,
+  publishDocumentBuildResult,
+  untaggedBuildAggregate,
+  BuildRequestQueue,
+  type BuildAggregate,
 } from "../generic/project-builds";
 import type { ExecuteCodeOutputAsync } from "@cocalc/util/types/execute-code";
 import { Actions as MarkdownActions } from "../markdown-editor/actions";
@@ -69,6 +74,7 @@ output: html_document
 export class Actions extends MarkdownActions {
   private _last_rmd_hash: number | undefined = undefined;
   private is_building: boolean = false;
+  private build_request_queue?: BuildRequestQueue;
   private build_job_watcher?: ExecJobGroupWatcher;
   public run_rmd_converter: Function;
 
@@ -132,10 +138,52 @@ export class Actions extends MarkdownActions {
   private async follow_project_build(
     job: ExecuteCodeOutputAsync,
   ): Promise<void> {
-    const aggregate = jobAggregateValue(job);
-    if (this.is_building || this.store.get("building") || aggregate == null) {
+    const classified = classifyBuildJob(job, this.path);
+    // this editor's group is its own; a request can only be for it or absent
+    if (classified.role === "foreign-request") return;
+    if (classified.role === "stage") {
+      await this.follow_untagged_build(job);
       return;
     }
+    this.build_request_queue ??= new BuildRequestQueue(
+      async (aggregate: BuildAggregate) => {
+        this.is_building = true;
+        try {
+          // the requesting job's aggregate is shared by every client that saw
+          // it, so concurrent editors attach to one backend execution
+          await this._run_rmd_converter(aggregate ?? Date.now());
+        } finally {
+          this.is_building = false;
+        }
+      },
+      async (request_id: string) => {
+        await publishDocumentBuildResult({
+          project_id: this.project_id,
+          path: this.path,
+          request_id,
+          store: this.store,
+        });
+      },
+      () => this.is_building || !!this.store.get("building"),
+    );
+    await this.build_request_queue.handleJob(
+      classified.request_id,
+      jobAggregateValue(job),
+    );
+  }
+
+  // Follow a build another client is running, at its own aggregate, so we
+  // attach to its conversion instead of starting a competing one.
+  private async follow_untagged_build(
+    job: ExecuteCodeOutputAsync,
+  ): Promise<void> {
+    const aggregate = untaggedBuildAggregate(job, {
+      busy:
+        this.is_building ||
+        !!this.store.get("building") ||
+        !!this.build_request_queue?.isRunning(),
+    });
+    if (aggregate == null) return;
     this.is_building = true;
     try {
       await this._run_rmd_converter(aggregate);
@@ -145,6 +193,8 @@ export class Actions extends MarkdownActions {
   }
 
   close(): void {
+    this.build_request_queue?.cancel();
+    this.build_request_queue = undefined;
     this.build_job_watcher?.close();
     this.build_job_watcher = undefined;
     super.close();

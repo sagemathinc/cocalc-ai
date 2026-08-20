@@ -50,8 +50,14 @@ import {
   server_time,
 } from "@cocalc/frontend/frame-editors/generic/client";
 import {
-  jobAggregateValue,
   watchProjectBuilds,
+  classifyBuildJob,
+  isOwnPipelineStage,
+  jobAggregateValue,
+  publishDocumentBuildResult,
+  untaggedBuildAggregate,
+  BuildRequestQueue,
+  type BuildAggregate,
 } from "@cocalc/frontend/frame-editors/generic/project-builds";
 import type { ExecOutput } from "@cocalc/util/db-schema/projects";
 import {
@@ -151,6 +157,7 @@ export class Actions extends BaseActions<LatexEditorState> {
   ) => Promise<void>;
   private is_stopping: boolean = false; // if true, do not continue running any compile jobs
   private ext: string = "tex";
+  private build_request_queue?: BuildRequestQueue;
   private knitr: boolean = false; // true, if we deal with a knitr file
   private filename_knitr: string; // .rnw or .rtex
   private bad_filename: boolean; // true, if the <filename.tex> can't be processed -- see #3230
@@ -778,6 +785,8 @@ export class Actions extends BaseActions<LatexEditorState> {
       this.pdf_watcher.close();
       this.pdf_watcher = undefined;
     }
+    this.build_request_queue?.cancel();
+    this.build_request_queue = undefined;
     this.build_job_watcher?.close();
     this.build_job_watcher = undefined;
     this.chat.close();
@@ -908,13 +917,75 @@ export class Actions extends BaseActions<LatexEditorState> {
     }
   };
 
+  // knitr documents build through a generated .tex, but a request names the
+  // source the caller asked about
+  private build_logical_path(): string {
+    return this.knitr ? this.filename_knitr : this.path;
+  }
+
   private async follow_project_build(
     job: ExecuteCodeOutputAsync,
   ): Promise<void> {
-    const aggregate = jobAggregateValue(job);
-    if (this.is_building || this.is_stopping || typeof aggregate !== "number") {
+    const classified = classifyBuildJob(job, this.build_logical_path());
+    // a request for the other half of a knitr pair: not ours to run or answer
+    if (classified.role === "foreign-request") return;
+    if (classified.role === "stage") {
+      await this.follow_untagged_build(job);
       return;
     }
+    this.build_request_queue ??= new BuildRequestQueue(
+      async (aggregate: BuildAggregate) => {
+        this.is_building = true;
+        try {
+          await this.run_build(
+            typeof aggregate === "number" ? aggregate : this.last_save_time(),
+            false,
+          );
+        } catch (err) {
+          this.set_error(`${err}`);
+        } finally {
+          this.is_building = false;
+        }
+      },
+      async (request_id: string) => {
+        await publishDocumentBuildResult({
+          project_id: this.project_id,
+          path: this.build_logical_path(),
+          request_id,
+          store: this.store,
+        });
+      },
+      // is_stopping is busy, not a reason to drop: a request arriving while a
+      // build is being cancelled must still build once that settles
+      () => this.is_building || this.is_stopping,
+    );
+    await this.build_request_queue.handleJob(
+      classified.request_id,
+      jobAggregateValue(job),
+    );
+  }
+
+  // Follow a build another client is running, at its own aggregate, so we
+  // attach to its stages instead of starting a competing pipeline.
+  private async follow_untagged_build(
+    job: ExecuteCodeOutputAsync,
+  ): Promise<void> {
+    if (
+      !isOwnPipelineStage(job, {
+        logicalPath: this.build_logical_path(),
+        knitr: this.knitr,
+      })
+    ) {
+      return;
+    }
+    const aggregate = untaggedBuildAggregate(job, {
+      busy:
+        this.is_building ||
+        this.is_stopping ||
+        !!this.build_request_queue?.isRunning(),
+      numericOnly: true,
+    });
+    if (typeof aggregate !== "number") return;
     this.is_building = true;
     try {
       await this.run_build(aggregate, false);

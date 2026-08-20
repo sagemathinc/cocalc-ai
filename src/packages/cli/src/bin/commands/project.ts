@@ -12,6 +12,7 @@ import { registerProjectFileCommands } from "./project/file";
 import { registerProjectLifecycleCommands } from "./project/lifecycle";
 import { registerProjectOpsCommands } from "./project/ops";
 import { registerProjectBasicCommands } from "./project/basic";
+import { registerProjectBuildCommands } from "./project/build";
 import { registerProjectAppCommands } from "./project/app";
 import { registerProjectChatCommands } from "./project/chat";
 import { registerProjectJupyterCommands } from "./project/jupyter";
@@ -141,6 +142,7 @@ export function registerProjectCommand(
   const project = program.command("project").description("project operations");
 
   registerProjectBasicCommands(project, deps);
+  registerProjectBuildCommands(project, deps);
   registerProjectOpsCommands(project, deps);
   registerProjectSyncCommands(project, deps);
   registerProjectCodexCommands(project, deps);

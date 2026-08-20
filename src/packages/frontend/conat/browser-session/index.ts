@@ -67,6 +67,8 @@ import {
   createBrowserSessionHeartbeat,
 } from "./session-heartbeat";
 import {
+  type BrowserEditorBuildOptions,
+  type BrowserEditorBuildResult,
   type BrowserExecApi,
   type BrowserExecOutput,
   type BrowserExtensionApiSummary,
@@ -173,6 +175,11 @@ const loadBrowserExecFsApi = async () =>
 const loadBrowserProjectOpenHelpers = async () =>
   await loadWithRetry(async () => await import("./project-open-helpers"), {
     name: "browser project-open helpers",
+  });
+
+const loadBrowserEditorBuild = async () =>
+  await loadWithRetry(async () => await import("./editor-build"), {
+    name: "browser editor build helper",
   });
 
 const getQuickJSAsyncifyModule = memoizePromiseFactory(async () => {
@@ -1215,6 +1222,37 @@ export function createBrowserSessionAutomation({
           } finally {
             cleanup?.();
           }
+        },
+      },
+      editor: {
+        /*
+        Trigger the editor's own build for path (LaTeX, R Markdown, Quarto).
+
+        The file does not have to be open already: as everywhere else in this
+        API the editor is opened in the background if needed, because the whole
+        point is to refresh the build log and error panel the user sees.
+        Building is unconditional -- it does not depend on the account's
+        build-on-save setting, which may well be off.
+        */
+        build: async (
+          path: string,
+          opts?: BrowserEditorBuildOptions,
+        ): Promise<BrowserEditorBuildResult> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          const { runEditorBuild } = await loadBrowserEditorBuild();
+          const editorActions = await getEditorActionsForPath({
+            project_id,
+            path: cleanPath,
+            foreground: false,
+            foreground_project: false,
+          });
+          assertExecNotCanceled(isCanceled);
+          return await runEditorBuild({
+            editorActions,
+            path: cleanPath,
+            options: opts,
+          });
         },
       },
       notebook: {

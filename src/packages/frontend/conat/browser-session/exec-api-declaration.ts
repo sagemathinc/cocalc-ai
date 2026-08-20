@@ -18,6 +18,11 @@ export const BROWSER_EXEC_API_DECLARATION = `/**
  *   stats.sort((a, b) => (b.s?.mtimeMs ?? 0) - (a.s?.mtimeMs ?? 0));
  *   await api.openFiles(stats.slice(0, 3).map((x) => x.p));
  *
+ *   // Re-run the document build after fixing a LaTeX error, so the editor's
+ *   // build log and error panel show the repaired state:
+ *   const r = await api.editor.build("/root/paper.tex");
+ *   return { exit_code: r.exit_code, errors: r.error_count };
+ *
  *   // Install hello-world extension editor and open a demo file:
  *   await api.extensions.installHelloWorld({ ext: ".hello" });
  *   await api.fs.writeFile("/root/demo.hello", "hello extension runtime\\n");
@@ -38,6 +43,30 @@ export type BrowserOpenFileInfo = {
   project_id: string;
   title?: string;
   path: string;
+};
+
+export type BrowserEditorBuildOptions = {
+  force?: boolean;
+  wait?: boolean;
+  timeout?: number;
+};
+
+export type BrowserEditorBuildJob = {
+  name: string;
+  exit_code?: number;
+};
+
+export type BrowserEditorBuildResult = {
+  path: string;
+  ext: string;
+  started: boolean;
+  awaited: boolean;
+  timed_out?: boolean;
+  exit_code?: number;
+  error?: string;
+  error_count?: number;
+  log?: string;
+  jobs?: BrowserEditorBuildJob[];
 };
 
 export type BrowserNotebookCell = {
@@ -256,6 +285,26 @@ export type BrowserExecApi = {
       previous_thread_id?: string;
       thread_id: string;
     }>;
+  };
+  /**
+   * Run the editor's own build for a document (LaTeX, R Markdown, Quarto).
+   *
+   * Use this instead of running latexmk/quarto in api.bash: only this updates
+   * the build log and error panel the user is looking at.  The file does not
+   * have to be open -- it is opened in the background if needed -- and the
+   * build runs regardless of the account's build-on-save setting.
+   *
+   * By default the call waits for the build and reports exit_code (0 on
+   * success), error_count (parsed LaTeX errors), error and a truncated log.
+   * Pass { wait: false } to only kick the build off, { force: true } to rebuild
+   * even when nothing changed, and { timeout: seconds } to bound the wait
+   * (default 600s; on timeout the build keeps running and timed_out is true).
+   */
+  editor: {
+    build: (
+      path: string,
+      opts?: BrowserEditorBuildOptions,
+    ) => Promise<BrowserEditorBuildResult>;
   };
   notebook: {
     listCells: (path: string) => Promise<BrowserNotebookCell[]>;

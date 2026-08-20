@@ -18,6 +18,7 @@ import { encodeBase64 } from "@cocalc/conat/util";
 export const EXEC_STREAM_SERVICE = "exec-stream";
 export const EXEC_JOB_EVENTS_SERVICE = "exec-job-events";
 export const EXEC_JOB_SNAPSHOT_SERVICE = "exec-job-snapshot";
+export const DOCUMENT_BUILD_RESULT_SERVICE = "document-build-result";
 
 // nice alphanumeric string that can be used as conat subject, and very
 // unlikely to randomly collide with another browser tab from this account.

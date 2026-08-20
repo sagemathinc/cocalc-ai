@@ -3,6 +3,10 @@ import {
   dispatchNavigatorPromptIntent,
   submitNavigatorPromptInWorkspaceChat,
 } from "@cocalc/frontend/project/new/navigator-intents";
+import {
+  BUILDABLE_EXTENSIONS,
+  isBuildableDocument,
+} from "@cocalc/util/document-build";
 import { trunc, trunc_left, trunc_middle } from "@cocalc/util/misc";
 import {
   agentFileLocation,
@@ -199,6 +203,15 @@ interface CreateNavigatorIntentMessageOpts {
   buildCommand?: string;
 }
 
+/*
+The hidden prompt behind "Fix with Agent".
+
+The build instruction names `cocalc project build` and its `--wait` flag
+verbatim; that command is defined in
+@cocalc/cli/bin/commands/project/build.ts, which carries a note pointing back
+here.  Keep the two in step -- nothing checks this at build time, the agent
+simply calls a command that no longer exists.
+*/
 export function createNavigatorIntentMessage({
   message,
   project_id,
@@ -210,6 +223,11 @@ export function createNavigatorIntentMessage({
 }: CreateNavigatorIntentMessageOpts): string {
   const docLocation = agentFileLocation({ project_id, path });
   const errorLocation = location ?? docLocation;
+  // help-me-fix also runs on notebooks, scripts and terminal output, where
+  // there is no build to re-run and the instructions below are just noise
+  const buildable = isBuildableDocument(path);
+  // `cocalc project build` takes an absolute path
+  const buildPath = docLocation.absolute_path || path;
   const metadata = {
     source: "help-me-fix",
     intent: "intent:error-fix",
@@ -229,6 +247,15 @@ export function createNavigatorIntentMessage({
     },
     mutation_mode: "in-place-edit",
     permissions_hint: "workspace-write",
+    ...(buildable
+      ? {
+          post_fix_build: {
+            command: "cocalc project build <path> --wait",
+            fallback: "cocalc browser exec 'await api.editor.build(<path>)'",
+            applies_to: [...BUILDABLE_EXTENSIONS],
+          },
+        }
+      : {}),
   };
   return [
     "Handle this CoCalc help-me-fix request as an agent.",
@@ -239,6 +266,12 @@ export function createNavigatorIntentMessage({
     "Treat the live in-memory sync version of the document as the source of truth.",
     "Do not rely on the filesystem copy being current; use live document APIs when available.",
     "Apply edits directly when safe, run checks as needed, and summarize exactly what changed.",
+    buildable
+      ? `Re-run the build through the editor after applying the fix: \`cocalc project build ${JSON.stringify(buildPath)} --wait\`. Do not run latexmk, quarto or the \`build_command\` below in a shell yourself: that leaves the editor's build log and error panel showing the previous failure, so the UI would contradict your report.`
+      : undefined,
+    buildable
+      ? "That command asks the project for a build, the open editors rerun it and refresh their build log and error panel, and --wait returns the resulting exit_code and log. Use that exit code as the verification of your fix. If the CLI is unavailable, fall back to browser exec: `await api.editor.build(<path>)`."
+      : undefined,
     [
       "Intent metadata:",
       "```json",

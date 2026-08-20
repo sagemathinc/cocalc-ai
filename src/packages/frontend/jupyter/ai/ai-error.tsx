@@ -36,6 +36,14 @@ function trimForPrompt(value: string, maxLen: number): string {
   return `${trimmed.slice(0, maxLen)}\n\n[truncated]`;
 }
 
+/*
+The prompt behind the "fix this error" button on a notebook cell's output,
+shared by the classic and Studio layouts (both render CellOutput).
+
+It names `cocalc project jupyter` subcommands verbatim; those are defined in
+@cocalc/cli/bin/commands/project/jupyter.ts, which carries a note pointing back
+here.  Nothing checks this at build time.
+*/
 export function buildNotebookErrorPrompt(opts: {
   project_id?: string;
   path: string;
