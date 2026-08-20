@@ -11,13 +11,15 @@ build command, parse the logs and own the build-log / error panels.  Backend
 callers therefore *request* a build rather than running one, and the editor
 reports back what happened.
 
-Two names are shared:
+Three names are shared:
 
 - buildJobGroup(path) -- the async exec job group of a document.  Every open
   editor for that document watches it, so starting a job there is what asks for
   a rebuild.
 - documentBuildResultSubject (see @cocalc/conat/project/document-build) -- where
   the editor publishes the outcome of a requested build.
+- buildStageJobKey(...) -- the key of one stage of a build pipeline, which
+  names the logical document that pipeline belongs to.
 
 A request carries both an id and the logical path it was made for in the
 trigger job's job_key:
@@ -105,6 +107,50 @@ export function parseBuildRequest(
   }
   if (!path) return undefined;
   return { request_id, path };
+}
+
+/*
+The stages of the LaTeX build pipeline, in the order they can run.
+
+Each stage runs as one keyed exec job in the document's build group, and the
+key names the *logical* document the pipeline is for -- for a knitr document
+the .Rnw/.Rtex source, even though every stage after knitr operates on the
+generated .tex.  That is what lets an editor joining a build already in
+progress tell its own pipeline from a plain build of the generated .tex, which
+shares the same group and the same files.
+
+Rmd and Quarto have a single converter stage in a group of their own, so they
+have nothing to disambiguate and do not use this vocabulary.
+*/
+export const BUILD_STAGE_NAMES = [
+  "knitr",
+  "latex",
+  "sagetex",
+  "pythontex",
+] as const;
+
+export type BuildStageName = (typeof BUILD_STAGE_NAMES)[number];
+
+export type BuildStageTag = {
+  stage: BuildStageName;
+  // the editor's logical path, *not* the file the stage's command operates on
+  path: string;
+};
+
+export function buildStageJobKey({ stage, path }: BuildStageTag): string {
+  return `${stage}:${path}`;
+}
+
+export function parseBuildStage(job_key: unknown): BuildStageTag | undefined {
+  const clean = `${job_key ?? ""}`;
+  // a path may itself contain ":", so only the first separator counts
+  const sep = clean.indexOf(":");
+  if (sep <= 0) return undefined;
+  const stage = clean.slice(0, sep) as BuildStageName;
+  if (!BUILD_STAGE_NAMES.includes(stage)) return undefined;
+  const path = clean.slice(sep + 1);
+  if (!path) return undefined;
+  return { stage, path };
 }
 
 // What the editor reports once a requested build pipeline has finished.

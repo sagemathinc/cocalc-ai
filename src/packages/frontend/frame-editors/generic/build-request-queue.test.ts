@@ -2,6 +2,7 @@ import { buildRequestJobKey } from "@cocalc/util/document-build";
 
 import {
   BuildRequestQueue,
+  buildStageIsPastKnitr,
   classifyBuildJob,
   isOwnPipelineStage,
   jobAggregateValue,
@@ -345,9 +346,22 @@ describe("isOwnPipelineStage", () => {
     expect(
       isOwnPipelineStage(job("knitr:/root/paper.Rnw"), {
         logicalPath: "/root/paper.Rnw",
-        knitr: true,
       }),
     ).toBe(true);
+  });
+
+  it("lets a knitr editor join a peer at a later stage too", () => {
+    // this is what an editor opening or reconnecting mid-build sees: knitr is
+    // long done, and the LaTeX stage is all there is left to recognize
+    for (const key of [
+      "latex:/root/paper.Rnw",
+      "sagetex:/root/paper.Rnw",
+      "pythontex:/root/paper.Rnw",
+    ]) {
+      expect(
+        isOwnPipelineStage(job(key), { logicalPath: "/root/paper.Rnw" }),
+      ).toBe(true);
+    }
   });
 
   it("keeps a knitr editor from re-knitting under a plain LaTeX build", () => {
@@ -356,17 +370,16 @@ describe("isOwnPipelineStage", () => {
     expect(
       isOwnPipelineStage(job("latex:/root/paper.tex"), {
         logicalPath: "/root/paper.Rnw",
-        knitr: true,
       }),
     ).toBe(false);
   });
 
-  it("keeps a .tex editor from starting LaTeX while knitr is still writing", () => {
-    expect(
-      isOwnPipelineStage(job("knitr:/root/paper.Rnw"), {
-        logicalPath: "/root/paper.tex",
-      }),
-    ).toBe(false);
+  it("keeps a .tex editor out of the knitr pipeline sharing its group", () => {
+    for (const key of ["knitr:/root/paper.Rnw", "latex:/root/paper.Rnw"]) {
+      expect(
+        isOwnPipelineStage(job(key), { logicalPath: "/root/paper.tex" }),
+      ).toBe(false);
+    }
   });
 
   it("leaves editors that own their group alone", () => {
@@ -376,17 +389,48 @@ describe("isOwnPipelineStage", () => {
       }),
     ).toBe(true);
     expect(
-      isOwnPipelineStage(job("rmd:/root"), { logicalPath: "/root/a.Rmd" }),
+      isOwnPipelineStage(job("rmd:/root/a.Rmd"), {
+        logicalPath: "/root/a.Rmd",
+      }),
     ).toBe(true);
   });
 
-  it("ignores a knitr stage belonging to a different document", () => {
+  it("gives a job that names no stage to the editor the group is named for", () => {
+    // a bare trigger job identifies the group and nothing finer
+    expect(isOwnPipelineStage(job(), { logicalPath: "/root/paper.tex" })).toBe(
+      true,
+    );
+    expect(isOwnPipelineStage(job(), { logicalPath: "/root/paper.Rnw" })).toBe(
+      false,
+    );
+  });
+
+  it("ignores a stage belonging to a different document", () => {
     expect(
       isOwnPipelineStage(job("knitr:/root/other.Rnw"), {
         logicalPath: "/root/paper.Rnw",
-        knitr: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("buildStageIsPastKnitr", () => {
+  const job = (job_key?: string) => ({ job_key }) as any;
+
+  it("is false at the knitr stage itself", () => {
+    expect(buildStageIsPastKnitr(job("knitr:/root/paper.Rnw"))).toBe(false);
+  });
+
+  it("is true once the generated .tex is being compiled", () => {
+    // the joining editor must not knit again on top of that .tex
+    expect(buildStageIsPastKnitr(job("latex:/root/paper.Rnw"))).toBe(true);
+    expect(buildStageIsPastKnitr(job("sagetex:/root/paper.Rnw"))).toBe(true);
+    expect(buildStageIsPastKnitr(job("pythontex:/root/paper.Rnw"))).toBe(true);
+  });
+
+  it("is false when the job names no stage", () => {
+    expect(buildStageIsPastKnitr(job())).toBe(false);
+    expect(buildStageIsPastKnitr(job("rmd:/root/a.Rmd"))).toBe(false);
   });
 });
 

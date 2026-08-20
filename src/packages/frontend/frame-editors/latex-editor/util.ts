@@ -8,6 +8,10 @@
 import type { ExecOutput } from "@cocalc/frontend/frame-editors/generic/client";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ExecOptsBlocking } from "@cocalc/util/db-schema/projects";
+import {
+  buildStageJobKey,
+  type BuildStageName,
+} from "@cocalc/util/document-build";
 import { separate_file_extension } from "@cocalc/util/misc";
 import type { ExecuteCodeOutputAsync } from "@cocalc/util/types/execute-code";
 import { TITLE_BAR_BORDER } from "../frame-tree/style";
@@ -80,13 +84,25 @@ interface RunJobOpts {
   args?: string[];
   command: string;
   env?: { [key: string]: string };
-  jobGroup?: string;
-  jobKey: string;
   project_id: string;
   runDir: string; // a directory! (output_directory if in /tmp, or the directory of the file's path)
   set_job_info: (info: ExecuteCodeOutputAsync) => void;
+  stage: BuildStageName;
   timeout?: number;
+  // the file this stage's command operates on -- the generated .tex for every
+  // stage of a knitr build except knitr itself
   path: string;
+  /*
+  The document the pipeline belongs to: for a knitr build the .Rnw/.Rtex
+  source, otherwise the same as path.
+
+  Both the job group and the job key are derived from it, so every stage of one
+  pipeline agrees on who owns it.  That is what an editor joining a build in
+  progress goes by: the group alone cannot tell a knitr pipeline's LaTeX stage
+  from somebody compiling the generated .tex directly, since a knitr source and
+  its generated .tex deliberately share one group.
+  */
+  logicalPath: string;
 }
 
 export async function runJob(opts: RunJobOpts): Promise<ExecOutput> {
@@ -95,11 +111,11 @@ export async function runJob(opts: RunJobOpts): Promise<ExecOutput> {
     args,
     command,
     env,
-    jobGroup,
-    jobKey,
+    logicalPath,
     project_id,
     runDir,
     set_job_info,
+    stage,
     path,
   } = opts;
 
@@ -113,8 +129,8 @@ export async function runJob(opts: RunJobOpts): Promise<ExecOutput> {
     command,
     env,
     err_on_exit: false,
-    job_group: jobGroup ?? buildJobGroup(path),
-    job_key: jobKey,
+    job_group: buildJobGroup(logicalPath),
+    job_key: buildStageJobKey({ stage, path: logicalPath }),
     path: runDir,
     project_id,
     timeout: TIMEOUT_LATEX_JOB_S,

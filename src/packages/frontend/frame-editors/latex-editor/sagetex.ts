@@ -55,6 +55,8 @@ export async function sagetex(
   status: Function,
   output_directory: string | undefined,
   set_job_info: (info: ExecuteCodeOutputAsync) => void,
+  // see latexmk(): the .Rnw/.Rtex source when this is a knitr build
+  logicalPath: string = path,
 ): Promise<ExecOutput> {
   const { base, directory } = parse_path(path); // base, directory, filename
   const s = sagetex_file(base);
@@ -63,12 +65,13 @@ export async function sagetex(
   return runJob({
     project_id,
     command: "sage",
-    jobKey: `sagetex:${path}`,
+    stage: "sagetex",
     args: [s],
     set_job_info,
     runDir: output_directory || directory,
     aggregate: hash ? { value: hash } : undefined,
     path,
+    logicalPath,
   });
 }
 

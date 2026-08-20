@@ -68,7 +68,9 @@ describe("requested document builds save live editor state", () => {
     await actions.follow_project_build(stageBuild());
 
     expect(actions.save_all).not.toHaveBeenCalled();
-    expect(actions.run_build).toHaveBeenCalledWith(42, false);
+    expect(actions.run_build).toHaveBeenCalledWith(42, false, {
+      skipKnitr: false,
+    });
   });
 
   for (const { name, Actions, extension, converter } of [

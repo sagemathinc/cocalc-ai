@@ -2,10 +2,12 @@ import {
   BUILDABLE_EXTENSIONS,
   buildJobGroup,
   buildRequestJobKey,
+  buildStageJobKey,
   canonicalBuildPath,
   documentExtension,
   isBuildableDocument,
   parseBuildRequest,
+  parseBuildStage,
 } from "./document-build";
 
 describe("buildJobGroup", () => {
@@ -106,5 +108,48 @@ describe("build request tags", () => {
     expect(parseBuildRequest(undefined)).toBeUndefined();
     expect(parseBuildRequest("build-request:")).toBeUndefined();
     expect(parseBuildRequest("build-request:only-id")).toBeUndefined();
+  });
+});
+
+describe("build stage tags", () => {
+  it("round-trips the stage and the logical path", () => {
+    expect(
+      parseBuildStage(
+        buildStageJobKey({ stage: "latex", path: "/root/a.tex" }),
+      ),
+    ).toEqual({ stage: "latex", path: "/root/a.tex" });
+  });
+
+  it("survives paths containing separators and spaces", () => {
+    const path = "/root/a:b/my paper (final).Rnw";
+    expect(parseBuildStage(buildStageJobKey({ stage: "knitr", path }))).toEqual(
+      {
+        stage: "knitr",
+        path,
+      },
+    );
+  });
+
+  it("separates a knitr pipeline from a build of its generated .tex", () => {
+    // the stages run the same commands over the same files, so the key is the
+    // only thing that says which pipeline they belong to
+    expect(
+      buildStageJobKey({ stage: "latex", path: "/root/paper.Rnw" }),
+    ).not.toEqual(
+      buildStageJobKey({ stage: "latex", path: "/root/paper.tex" }),
+    );
+  });
+
+  it("ignores job keys that are not pipeline stages", () => {
+    expect(parseBuildStage(undefined)).toBeUndefined();
+    expect(parseBuildStage("latex")).toBeUndefined();
+    expect(parseBuildStage("latex:")).toBeUndefined();
+    expect(parseBuildStage(":/root/a.tex")).toBeUndefined();
+    expect(parseBuildStage("rmd:/root/a.Rmd")).toBeUndefined();
+    expect(
+      parseBuildStage(
+        buildRequestJobKey({ request_id: "r", path: "/root/a.tex" }),
+      ),
+    ).toBeUndefined();
   });
 });

@@ -9,7 +9,9 @@ import type { ExecuteCodeOutputAsync } from "@cocalc/util/types/execute-code";
 import { documentBuildResultSubject } from "@cocalc/conat/project/document-build";
 import {
   buildJobGroup,
+  canonicalBuildPath,
   parseBuildRequest,
+  parseBuildStage,
   type DocumentBuildResult,
 } from "@cocalc/util/document-build";
 
@@ -108,34 +110,53 @@ export function classifyBuildJob(
   return { role: "request", request_id: tag.request_id };
 }
 
-const KNITR_STAGE_PREFIX = "knitr:";
-
 /*
-Whether a stage job is part of *this* editor's pipeline, and so worth following.
+Which stage of *this* editor's pipeline a job is, or undefined if it is not
+ours to follow.
 
-Only matters for the knitr pair, which deliberately shares one build group.
-The knitr stage is the one stage that names the logical document
-(`knitr:<source>`); every LaTeX stage names the generated .tex whichever
-pipeline produced it.  So each side follows what it can prove is its own:
+Only matters for the knitr pair, which deliberately shares one build group: a
+`.Rnw` source and its generated `.tex` both watch `build:<doc>.tex`, so each
+side sees the other's stages and must not join them.  Re-knitting under a plain
+LaTeX build would rewrite the very file being compiled, and starting LaTeX
+under a knitr run would compile a file knitr has not finished writing.
 
-- the knitr editor joins a peer's build at its `knitr:` stage, which is where a
-  build of that document begins anyway, and ignores bare LaTeX stages -- those
-  belong to somebody compiling the generated .tex, and re-knitting under them
-  would rewrite the file being compiled;
-- a plain .tex editor ignores `knitr:` stages, which would otherwise start
-  LaTeX on a file knitr has not finished writing.
+Every stage key names the pipeline's *logical* document rather than the file
+its command runs on (see buildStageJobKey), so ownership is a path comparison
+at any point in the pipeline -- not only at the knitr stage, which is what an
+editor opening or reconnecting mid-build actually needs: by then knitr is long
+done and `latex:` is all there is to go by.
 
 Editors whose group is theirs alone (Rmd, Quarto, an ordinary .tex) have
 nothing to disambiguate.
 */
 export function isOwnPipelineStage(
   job: ExecuteCodeOutputAsync,
-  { logicalPath, knitr = false }: { logicalPath: string; knitr?: boolean },
+  { logicalPath }: { logicalPath: string },
 ): boolean {
-  const key = `${job?.job_key ?? ""}`;
-  const isKnitrStage = key.startsWith(KNITR_STAGE_PREFIX);
-  if (!knitr) return !isKnitrStage;
-  return isKnitrStage && key.slice(KNITR_STAGE_PREFIX.length) === logicalPath;
+  const stage = parseBuildStage(job?.job_key);
+  if (stage != null) return stage.path === logicalPath;
+  /*
+  Not a stage of a pipeline at all, but a bare job somebody put in this group
+  -- a build trigger that wants no reply, say.  It names the group and nothing
+  finer, so only the editor whose own path *is* the group's path can claim it:
+  for a knitr pair that is the .tex editor, as it has always been.
+  */
+  return canonicalBuildPath(logicalPath) === logicalPath;
+}
+
+/*
+Whether a stage job comes after knitr, so the generated .tex it works on has
+already been written.
+
+An editor joining a build at such a stage must not run knitr again: the best
+case is repeating work another client already did, the worst is rewriting the
+.tex underneath the LaTeX job it is joining.  The backend's completed-job cache
+happens to absorb the first case, but it is short-lived compared to a long
+LaTeX run, so it cannot be relied on for the second.
+*/
+export function buildStageIsPastKnitr(job: ExecuteCodeOutputAsync): boolean {
+  const stage = parseBuildStage(job?.job_key)?.stage;
+  return stage != null && stage !== "knitr";
 }
 
 /*

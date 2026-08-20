@@ -51,6 +51,7 @@ import {
 } from "@cocalc/frontend/frame-editors/generic/client";
 import {
   watchProjectBuilds,
+  buildStageIsPastKnitr,
   classifyBuildJob,
   isOwnPipelineStage,
   jobAggregateValue,
@@ -973,12 +974,7 @@ export class Actions extends BaseActions<LatexEditorState> {
   private async follow_untagged_build(
     job: ExecuteCodeOutputAsync,
   ): Promise<void> {
-    if (
-      !isOwnPipelineStage(job, {
-        logicalPath: this.build_logical_path(),
-        knitr: this.knitr,
-      })
-    ) {
+    if (!isOwnPipelineStage(job, { logicalPath: this.build_logical_path() })) {
       return;
     }
     const aggregate = untaggedBuildAggregate(job, {
@@ -991,7 +987,11 @@ export class Actions extends BaseActions<LatexEditorState> {
     if (typeof aggregate !== "number") return;
     this.is_building = true;
     try {
-      await this.run_build(aggregate, false);
+      // joining past knitr means the .tex this build compiles is already
+      // written; knitting it again would rewrite it under the LaTeX job
+      await this.run_build(aggregate, false, {
+        skipKnitr: buildStageIsPastKnitr(job),
+      });
     } catch (err) {
       this.set_error(`${err}`);
     } finally {
@@ -1029,7 +1029,13 @@ export class Actions extends BaseActions<LatexEditorState> {
     }
   }
 
-  private async run_build(time: number, force: boolean): Promise<void> {
+  private async run_build(
+    time: number,
+    force: boolean,
+    // set when joining a build that is already past knitr; see
+    // follow_untagged_build
+    { skipKnitr = false }: { skipKnitr?: boolean } = {},
+  ): Promise<void> {
     if (this.is_stopping) return;
     // reset state of build_logs, since it is a fresh start
     this.setState({ build_logs: IMap() });
@@ -1042,7 +1048,7 @@ export class Actions extends BaseActions<LatexEditorState> {
     }
 
     // for knitr related documents, we have to first build the derived tex file ...
-    if (this.knitr) {
+    if (this.knitr && !skipKnitr) {
       await this.run_knitr(time, force);
       if (this.store.get("knitr_error")) return;
     }
@@ -1207,6 +1213,7 @@ export class Actions extends BaseActions<LatexEditorState> {
         status,
         this.get_output_directory(),
         set_job_info,
+        this.build_logical_path(),
       );
       // console.log(output);
     } catch (err) {
@@ -1466,6 +1473,7 @@ export class Actions extends BaseActions<LatexEditorState> {
         status,
         this.get_output_directory(),
         set_job_info,
+        this.build_logical_path(),
       );
       if (!output) throw new Error("Unable to run SageTeX.");
       if (output.stderr.indexOf("sagetex.VersionError") != -1) {
@@ -1512,6 +1520,7 @@ export class Actions extends BaseActions<LatexEditorState> {
         status,
         this.get_output_directory(),
         set_job_info,
+        this.build_logical_path(),
       );
       // Now run latex again, since we had to run pythontex, which changes the inserted snippets.
       // This +2 forces re-running latex... but still deduplicates it in case of multiple users. (+1 is for sagetex)

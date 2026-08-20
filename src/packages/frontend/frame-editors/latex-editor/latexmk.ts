@@ -21,6 +21,9 @@ export async function latexmk(
   status: Function,
   output_directory: string | undefined,
   set_job_info: (info: ExecuteCodeOutputAsync) => void,
+  // the document this pipeline belongs to: the .Rnw/.Rtex source of a knitr
+  // build, whose LaTeX stage runs on the generated path above
+  logicalPath: string = path,
 ): Promise<ExecOutput> {
   const { head, tail } = path_split(path);
   let command: string;
@@ -39,12 +42,13 @@ export async function latexmk(
   const output = await runJob({
     project_id,
     command,
-    jobKey: `latex:${path}`,
+    stage: "latex",
     args,
     runDir: head,
     aggregate: time,
     set_job_info,
     path,
+    logicalPath,
   });
 
   // Step 2: do a copy operation, if we run this in an output_directory (somewhere in /tmp)
