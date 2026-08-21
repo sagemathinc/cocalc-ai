@@ -942,4 +942,56 @@ describe("open_file wait_for_ready", () => {
     expect(openProject).not.toHaveBeenCalled();
     expect(saveSession).toHaveBeenCalled();
   });
+
+  it("hydrates a background editor when readiness is requested", async () => {
+    const path = "/home/user/background.Rmd";
+    const ensureProjectIsOpen = jest.fn().mockResolvedValue(undefined);
+    const saveSession = jest.fn();
+    const initFileRedux = jest.fn().mockResolvedValue("editor-name");
+    const { open_files, store } = makeOpenFilesHarness();
+
+    jest.spyOn(redux as any, "getStore").mockImplementation((name: string) => {
+      if (name === "page") {
+        return { get: jest.fn().mockReturnValue(false) };
+      }
+      return undefined;
+    });
+    jest
+      .spyOn(redux as any, "getActions")
+      .mockImplementation((name: string) => {
+        if (name === "page") {
+          return { save_session: saveSession };
+        }
+        return {};
+      });
+
+    const actions = {
+      project_id: "project-1",
+      get_store: () => store,
+      open_files,
+      fs: () => ({
+        canonicalSyncIdentityPath: jest.fn().mockResolvedValue(path),
+      }),
+      ensureProjectIsOpen,
+      open_in_new_browser_window: jest.fn(),
+      foreground_project: jest.fn(),
+      set_active_tab: jest.fn(),
+      initFileRedux,
+      gotoFragment: jest.fn(),
+      open_chat: jest.fn(),
+      set_activity: jest.fn(),
+    } as any;
+
+    await open_file(actions, {
+      path,
+      foreground: false,
+      foreground_project: false,
+      wait_for_ready: true,
+    });
+
+    expect(initFileRedux).toHaveBeenCalledWith(path, undefined, {
+      syncIdentityPathIsCanonical: true,
+    });
+    expect(actions.set_active_tab).not.toHaveBeenCalled();
+  });
 });

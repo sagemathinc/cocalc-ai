@@ -696,7 +696,7 @@ export async function open_file(
         displayPath,
         "editor_tab_activated",
       );
-    } else if (PRELOAD_BACKGROUND_TABS) {
+    } else if (opts.wait_for_ready || PRELOAD_BACKGROUND_TABS) {
       await actions.initFileRedux(syncPath, undefined, {
         syncIdentityPathIsCanonical: true,
       });
