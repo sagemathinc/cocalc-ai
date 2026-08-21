@@ -92,6 +92,12 @@ export async function runEditorBuild({
       `editor for '${path}' is a read-only preview and will not build`,
     );
   }
+  if (typeof editorActions.wait_until_syncdoc_ready === "function") {
+    const ready = await editorActions.wait_until_syncdoc_ready();
+    if (!ready) {
+      throw Error(`editor for '${path}' did not become ready`);
+    }
+  }
   const force = options?.force ?? true;
   const wait = options?.wait ?? true;
   const base: BrowserEditorBuildResult = {

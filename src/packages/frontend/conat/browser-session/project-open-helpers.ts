@@ -7,11 +7,13 @@ export async function openFileInProject({
   path,
   foreground = true,
   foreground_project = true,
+  wait_for_ready,
 }: {
   project_id: string;
   path: string;
   foreground?: boolean;
   foreground_project?: boolean;
+  wait_for_ready?: boolean;
 }): Promise<{ ok: true }> {
   if (!isValidUUID(project_id)) {
     throw Error("project_id must be a UUID");
@@ -37,7 +39,7 @@ export async function openFileInProject({
     path: cleanPath,
     foreground: !!foreground,
     foreground_project: !!foreground_project,
-    wait_for_ready: !!foreground || !!foreground_project,
+    wait_for_ready: wait_for_ready ?? (!!foreground || !!foreground_project),
   });
   return { ok: true };
 }
@@ -69,12 +71,14 @@ export async function getEditorActionsForPath({
   path,
   foreground = false,
   foreground_project = false,
+  wait_for_ready,
   timeout_ms = 15_000,
 }: {
   project_id: string;
   path: string;
   foreground?: boolean;
   foreground_project?: boolean;
+  wait_for_ready?: boolean;
   timeout_ms?: number;
 }): Promise<any> {
   if (!isValidUUID(project_id)) {
@@ -86,6 +90,7 @@ export async function getEditorActionsForPath({
     path: cleanPath,
     foreground,
     foreground_project,
+    wait_for_ready,
   });
   const started = Date.now();
   while (Date.now() - started < timeout_ms) {

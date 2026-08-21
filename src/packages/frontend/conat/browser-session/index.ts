@@ -1246,6 +1246,7 @@ export function createBrowserSessionAutomation({
             path: cleanPath,
             foreground: false,
             foreground_project: false,
+            wait_for_ready: true,
           });
           assertExecNotCanceled(isCanceled);
           return await runEditorBuild({

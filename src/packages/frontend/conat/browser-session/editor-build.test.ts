@@ -107,6 +107,45 @@ describe("readEditorBuildOutcome", () => {
 });
 
 describe("runEditorBuild", () => {
+  it("waits for the editor syncdoc before building", async () => {
+    let ready = false;
+    const build = jest.fn(() => {
+      expect(ready).toBe(true);
+    });
+    const wait_until_syncdoc_ready = jest.fn(async () => {
+      ready = true;
+      return true;
+    });
+
+    await runEditorBuild({
+      editorActions: {
+        build,
+        wait_until_syncdoc_ready,
+        store: IMap({ build_exit: 0 }),
+      },
+      path: "/root/paper.tex",
+    });
+
+    expect(wait_until_syncdoc_ready).toHaveBeenCalledTimes(1);
+    expect(build).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not build when the editor syncdoc cannot become ready", async () => {
+    const build = jest.fn();
+
+    await expect(
+      runEditorBuild({
+        editorActions: {
+          build,
+          wait_until_syncdoc_ready: jest.fn(async () => false),
+          store: IMap(),
+        },
+        path: "/root/paper.tex",
+      }),
+    ).rejects.toThrow("did not become ready");
+    expect(build).not.toHaveBeenCalled();
+  });
+
   it("builds and reports the outcome from the editor store", async () => {
     const calls: any[][] = [];
     const editorActions = {
