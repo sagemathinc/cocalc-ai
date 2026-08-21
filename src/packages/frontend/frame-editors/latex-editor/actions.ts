@@ -937,6 +937,9 @@ export class Actions extends BaseActions<LatexEditorState> {
       async (aggregate: BuildAggregate) => {
         this.is_building = true;
         try {
+          // Requested builds must compile the current live editor state, just
+          // like builds started from the UI.  This also saves open subfiles.
+          await this.save_all(false);
           await this.run_build(
             typeof aggregate === "number" ? aggregate : this.last_save_time(),
             false,

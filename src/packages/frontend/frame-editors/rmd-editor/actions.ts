@@ -149,6 +149,9 @@ export class Actions extends MarkdownActions {
       async (aggregate: BuildAggregate) => {
         this.is_building = true;
         try {
+          // Keep requested builds aligned with build(): the converter reads
+          // the file from disk, so flush the live syncstring first.
+          await this.save(false);
           // the requesting job's aggregate is shared by every client that saw
           // it, so concurrent editors attach to one backend execution
           await this._run_rmd_converter(aggregate ?? Date.now());
