@@ -3395,6 +3395,7 @@ export interface InterBayHostConnectionApi {
       | "limit"
       | "cursor"
       | "risk_only"
+      | "free_only"
       | "state_filter"
       | "project_state"
     >,

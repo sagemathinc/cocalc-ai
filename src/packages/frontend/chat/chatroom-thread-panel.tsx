@@ -408,6 +408,7 @@ interface ChatRoomThreadPanelProps {
   path?: string;
   messages: ChatMessages;
   threadIndex?: Map<string, ThreadIndexEntry>;
+  docVersion?: number;
   acpState: immutable.Map<string, string>;
   scrollToBottomRef: React.MutableRefObject<any>;
   scrollCacheId: string;
@@ -456,6 +457,7 @@ export function ChatRoomThreadPanel({
   path,
   messages,
   threadIndex,
+  docVersion,
   acpState,
   scrollToBottomRef,
   scrollCacheId,
@@ -2693,6 +2695,7 @@ export function ChatRoomThreadPanel({
           path={path ?? ""}
           messages={messages}
           threadIndex={threadIndex}
+          docVersion={docVersion}
           acpState={acpState}
           scrollToBottomRef={scrollToBottomRef}
           scrollCacheId={scrollCacheId}

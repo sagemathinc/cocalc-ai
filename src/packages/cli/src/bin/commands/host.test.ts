@@ -46,6 +46,7 @@ type Capture = {
     id: string;
     state_filter?: string;
     project_state?: string;
+    free_only?: boolean;
     parallel?: number;
   }>;
   hostProjectRestarts?: Array<{
@@ -319,12 +320,14 @@ function makeDeps(
               id,
               state_filter,
               project_state,
+              free_only,
               parallel,
             }) => {
               capture.hostProjectStops!.push({
                 id,
                 state_filter,
                 project_state,
+                free_only,
                 parallel,
               });
               return { op_id: `stop-projects-${id}` };
@@ -2484,6 +2487,7 @@ test("host projects-stop queues a host-scoped stop action", async () => {
     "opened",
     "--parallel",
     "2",
+    "--free-only",
     "--wait",
   ]);
 
@@ -2492,6 +2496,7 @@ test("host projects-stop queues a host-scoped stop action", async () => {
       id: "host-1",
       state_filter: "all",
       project_state: "opened",
+      free_only: true,
       parallel: 2,
     },
   ]);

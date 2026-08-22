@@ -720,7 +720,14 @@ async function collectFrontdoorAffinityCookies({
     attempt++
   ) {
     const setCookies = await requestSetCookies({
-      url: new URL(`/?_cocalc_frontdoor_probe=${Date.now()}-${attempt}`, api),
+      // Public pages and content-addressed assets intentionally omit affinity
+      // cookies so shared caches cannot pin one visitor's worker assignment.
+      // The mutable app shell is private and therefore exercises the same
+      // affinity path used by an authenticated browser session.
+      url: new URL(
+        `/static/app.html?_cocalc_frontdoor_probe=${Date.now()}-${attempt}`,
+        api,
+      ),
       requestTimeoutMs,
     });
     const parsed = parseFrontdoorAffinityCookie(setCookies);

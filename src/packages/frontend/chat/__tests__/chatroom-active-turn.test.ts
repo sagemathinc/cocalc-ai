@@ -1,6 +1,7 @@
 import * as immutable from "immutable";
 import {
   appendCompletedCodexTurnNotifications,
+  chatActionsStoreName,
   getLatestThreadMessageDate,
   hasActiveAcpTurnForComposer,
   latestThreadAcpInterrupted,
@@ -8,6 +9,37 @@ import {
   resolveAgentSessionRecordStatus,
   splitCompletedCodexTurnNotifications,
 } from "../chatroom";
+
+describe("chatActionsStoreName", () => {
+  it("prefers the store that ChatActions writes through", () => {
+    const checked: string[] = [];
+    const name = chatActionsStoreName(
+      {
+        name: "frame-specific-chat-actions",
+        store: { name: "shared-chat-document" },
+      } as any,
+      (candidate) => {
+        checked.push(candidate);
+        return true;
+      },
+    );
+
+    expect(name).toBe("shared-chat-document");
+    expect(checked).toEqual(["shared-chat-document"]);
+  });
+
+  it("falls back to the actions registration when its store is unavailable", () => {
+    const name = chatActionsStoreName(
+      {
+        name: "embedded-chat-actions",
+        store: { name: "removed-document-store" },
+      } as any,
+      (candidate) => candidate === "embedded-chat-actions",
+    );
+
+    expect(name).toBe("embedded-chat-actions");
+  });
+});
 
 describe("hasActiveAcpTurnForComposer", () => {
   it("ignores stale ACP generating flags when acpState is no longer active", () => {

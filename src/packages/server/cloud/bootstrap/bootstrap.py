@@ -6093,6 +6093,16 @@ PY
     fi
     reconcile_project_network_limits
     ;;
+  prepare-project-network-policy)
+    if [ "$#" -ne 2 ] || ! is_project_uuid "$1"; then
+      echo "usage: cocalc-runtime-storage prepare-project-network-policy <project-id> <normal|disabled>" >&2
+      exit 2
+    fi
+    # Startup has not created the project cgroup yet. Persisting the policy is
+    # sufficient: prepare-project-startup-runtime-cgroup installs its rule
+    # before the launcher can exec Podman.
+    set_project_network_policy "$1" "$2"
+    ;;
   set-project-network-policy)
     if [ "$#" -ne 2 ] || ! is_project_uuid "$1"; then
       echo "usage: cocalc-runtime-storage set-project-network-policy <project-id> <normal|disabled>" >&2

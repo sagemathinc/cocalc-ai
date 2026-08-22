@@ -2705,8 +2705,20 @@ reserve_project_startup_io_capacity
             self.assertIn("ensure_project_network_rule", script)
             self.assertIn("emit_project_metadata_rules", script)
             self.assertIn("emit_project_network_rules", script)
+            self.assertIn("prepare-project-network-policy)", script)
             self.assertIn("set-project-network-policy)", script)
             self.assertIn("verify-project-network-policy)", script)
+            prepare_network_policy_body = script.split(
+                "  prepare-project-network-policy)", 1
+            )[1].split("\n    ;;", 1)[0]
+            self.assertIn(
+                'set_project_network_policy "$1" "$2"',
+                prepare_network_policy_body,
+            )
+            self.assertNotIn(
+                "reconcile_project_network_limits",
+                prepare_network_policy_body,
+            )
             self.assertIn("set-current-exam-run)", script)
             self.assertIn("poweroff-exam-host)", script)
             emit_network_body = script.split(

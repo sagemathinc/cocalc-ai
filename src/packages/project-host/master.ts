@@ -72,6 +72,10 @@ import {
   refreshProjectSecretsHostPath,
 } from "@cocalc/project-runner/run/podman";
 import { runnerConfigFromQuota } from "./run-quota";
+import {
+  projectNetworkPolicyFromRunQuota,
+  setProjectNetworkPolicy,
+} from "./network-policy";
 import { setupProjectSecretSshKey } from "./project-secret-ssh-key";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
 import { matchAppRequest } from "./app-public-access";
@@ -1548,8 +1552,45 @@ export async function startMasterRegistration({
     },
     async updateProjectRunQuota({ project_id, run_quota, run_quota_revision }) {
       await awaitReadyForControl("updateProjectRunQuota", waitUntilReady);
+      const previousRunQuota = getProject(project_id)?.run_quota;
+      const previousPolicy =
+        previousRunQuota == null
+          ? undefined
+          : projectNetworkPolicyFromRunQuota(previousRunQuota);
       upsertProject({ project_id, run_quota, run_quota_revision });
-      if (getProject(project_id)?.state !== "running") {
+      const state = getProject(project_id)?.state;
+      if (state !== "running" && state !== "starting") {
+        return { status: "not_running" };
+      }
+      const policy = projectNetworkPolicyFromRunQuota(run_quota);
+      try {
+        await setProjectNetworkPolicy({ project_id, policy });
+      } catch (err) {
+        if (policy === "disabled" && hubApi.projects?.stop) {
+          logger.error(
+            "failed to disable project network access; stopping runtime",
+            { project_id, err: `${err}` },
+          );
+          try {
+            await hubApi.projects.stop({ project_id, force: true });
+          } catch (stopErr) {
+            logger.error(
+              "failed to stop runtime after network policy failure",
+              { project_id, err: `${stopErr}` },
+            );
+          }
+        }
+        throw err;
+      }
+      if (policy === "disabled" && previousPolicy !== "disabled") {
+        logger.warn(
+          "network entitlement revoked; stopping runtime to close established connections",
+          { project_id },
+        );
+        await hubApi.projects.stop({ project_id, force: true });
+        return { status: "not_running" };
+      }
+      if (state !== "running") {
         return { status: "not_running" };
       }
       return await reconcileProjectCgroup({

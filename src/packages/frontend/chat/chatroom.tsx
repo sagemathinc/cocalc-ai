@@ -584,10 +584,23 @@ function asTrimmedString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function chatActionsStoreName(actions: ChatActions): string {
-  const name = (actions as any)?.name;
-  if (typeof name !== "string" || name.trim().length === 0) return "";
-  return redux.getStore(name) != null ? name : "";
+export function chatActionsStoreName(
+  actions: ChatActions,
+  storeExists: (name: string) => boolean = (name) =>
+    redux.getStore(name) != null,
+): string {
+  // Embedded chat actions can be registered under a frame-specific name while
+  // set_syncdb deliberately points actions.store at the shared document store.
+  // ACP updates are written through actions.store, so subscribe there first.
+  const candidates = [(actions as any)?.store?.name, (actions as any)?.name];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || candidate.trim().length === 0) {
+      continue;
+    }
+    const name = candidate.trim();
+    if (storeExists(name)) return name;
+  }
+  return "";
 }
 
 export function ChatPanel({
@@ -2519,6 +2532,7 @@ export function ChatPanel({
         path={path}
         messages={messages as ChatMessages}
         threadIndex={indexedThreads ?? threadIndex}
+        docVersion={docVersion}
         acpState={acpState}
         scrollToBottomRef={scrollToBottomRef}
         scrollCacheId={scrollCacheId}

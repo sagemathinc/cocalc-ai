@@ -53,9 +53,37 @@ export function resolveLiveCodexActivityBlocks({
   previewBlocks?: InlineCodexActivityBlock[];
   cachedBlocks?: InlineCodexActivityBlock[];
 }): InlineCodexActivityBlock[] | undefined {
+  const currentGuidanceStates = new Map<
+    string,
+    Array<InlineCodexActivityBlock["state"]>
+  >();
+  for (const block of previewBlocks ?? []) {
+    if (block.kind !== "guidance") continue;
+    const key = JSON.stringify([block.time ?? null, block.text]);
+    const states = currentGuidanceStates.get(key) ?? [];
+    states.push(block.state);
+    currentGuidanceStates.set(key, states);
+  }
+  let reconciledCachedBlocks = cachedBlocks;
+  if (cachedBlocks != null && currentGuidanceStates.size > 0) {
+    let changed = false;
+    reconciledCachedBlocks = cachedBlocks.map((block) => {
+      if (block.kind !== "guidance") return block;
+      const key = JSON.stringify([block.time ?? null, block.text]);
+      const states = currentGuidanceStates.get(key);
+      if (states == null || states.length === 0) return block;
+      const currentState = states?.shift();
+      if (currentState === block.state) return block;
+      changed = true;
+      return { ...block, state: currentState };
+    });
+    if (!changed) {
+      reconciledCachedBlocks = cachedBlocks;
+    }
+  }
   let selected: InlineCodexActivityBlock[] | undefined;
   let selectedLength = 0;
-  for (const blocks of [cachedBlocks, previewBlocks]) {
+  for (const blocks of [reconciledCachedBlocks, previewBlocks]) {
     if (!Array.isArray(blocks) || blocks.length === 0) continue;
     const length = codexActivityBlocksToSelectableMarkdown(blocks).length;
     if (length < selectedLength) continue;

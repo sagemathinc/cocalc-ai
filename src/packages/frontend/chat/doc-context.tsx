@@ -10,11 +10,12 @@
 
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useRef,
-  useState,
+  useSyncExternalStore,
 } from "react";
 import type { PlainChatMessage } from "./types";
 import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
@@ -38,8 +39,18 @@ export function ChatDocProvider({
   cache?: ChatMessageCache;
   children: React.ReactNode;
 }) {
-  const [version, setVersion] = useState<number>(-1);
   const previouslyHadCache = useRef(false);
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
+      if (!cache) return () => {};
+      cache.on("version", onStoreChange);
+      return () => cache.removeListener("version", onStoreChange);
+    },
+    [cache],
+  );
+  const getSnapshot = useCallback(() => cache?.getVersion() ?? -1, [cache]);
+
+  const version = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   useEffect(() => {
     if (!cache) {
@@ -48,15 +59,9 @@ export function ChatDocProvider({
           previous: previouslyHadCache.current,
         });
       }
-      setVersion(-1);
       return;
     }
     previouslyHadCache.current = true;
-    cache.on("version", setVersion);
-    setVersion(0);
-    return () => {
-      cache.removeListener("version", setVersion);
-    };
   }, [cache]);
 
   const value = useMemo<DocCtx>(() => {

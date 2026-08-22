@@ -278,7 +278,7 @@ describe("project host start ACP rehydrate ordering", () => {
   const project_id = "3f5d0b28-cf69-4c78-9b0a-ea747bc7acb3";
   const customImage = "ghcr.io/example/custom-rootfs:2026-03-21";
   const flushMicrotasks = async () => {
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 40; i++) {
       await Promise.resolve();
     }
   };
@@ -472,6 +472,55 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(volume.quota.get).toHaveBeenCalledTimes(1);
     expect(runnerApi.start).toHaveBeenCalledTimes(1);
     expect(queueProjectProvisioned).toHaveBeenCalledWith(project_id, true);
+  });
+
+  it("prepares the fail-closed network policy before starting a free project", async () => {
+    getProject.mockReturnValue({
+      image: DEFAULT_PROJECT_IMAGE,
+      run_quota: { network: false, disk_quota: 65_000 },
+    });
+    const runnerApi = {
+      start: jest.fn(async () => ({ state: "running" })),
+      stop: jest.fn(),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(executeCode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: [
+          "-n",
+          "/usr/local/sbin/cocalc-runtime-storage",
+          "prepare-project-network-policy",
+          project_id,
+          "disabled",
+        ],
+      }),
+    );
+    expect(runnerApi.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to start when network containment cannot be prepared", async () => {
+    executeCode.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "nft unavailable",
+      exit_code: 1,
+    });
+    const runnerApi = {
+      start: jest.fn(async () => ({ state: "running" })),
+      stop: jest.fn(),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(hubApi.projects.start({ project_id })).rejects.toThrow(
+      "nft unavailable",
+    );
+    expect(runnerApi.start).not.toHaveBeenCalled();
   });
 
   it("does not replace an invalid project volume during start", async () => {

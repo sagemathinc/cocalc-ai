@@ -357,6 +357,13 @@ describe("BaseProject.start RootFS sealing", () => {
         }
         return {};
       });
+    jest
+      .mocked(projectDefaults.getMembershipRuntimeSchedulingForAccount)
+      .mockImplementation(async (account_id?: string) =>
+        account_id === RUNTIME_SPONSOR_ID
+          ? { io_class: "member", shared_compute_priority: 2 }
+          : { io_class: "standard", shared_compute_priority: 0 },
+      );
     const quotaModule = await import("@cocalc/util/upgrades/quota");
     jest.mocked(quotaModule.quota).mockImplementation((settings: any) => ({
       memory_limit: settings?.memory ?? 0,
@@ -493,7 +500,7 @@ describe("BaseProject.start RootFS sealing", () => {
       io_class: "standard",
       shared_compute_priority: 0,
       browser_idle_timeout: 0,
-      network: true,
+      network: false,
       member_host: true,
     });
     expect(startProjectOnHostMock).not.toHaveBeenCalled();
@@ -587,7 +594,7 @@ describe("BaseProject.start RootFS sealing", () => {
             browser_idle_timeout: 600,
             io_class: "standard",
             shared_compute_priority: 0,
-            network: true,
+            network: false,
             member_host: true,
           },
         };

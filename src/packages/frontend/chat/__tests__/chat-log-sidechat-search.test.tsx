@@ -55,7 +55,7 @@ jest.mock("@cocalc/frontend/components/stateful-virtuoso", () => {
     }));
     const items = Array.from({ length: props.totalCount ?? 0 }, (_, index) => (
       <div key={index} data-item-index={index}>
-        {props.itemContent?.(index)}
+        {props.itemContent?.(index, props.data?.[index], props.context)}
       </div>
     ));
     return (
@@ -153,7 +153,7 @@ describe("ChatLog sidechat search jumps", () => {
       rangeChanged: latestVirtuosoProps.rangeChanged,
       scrollerRef: latestVirtuosoProps.scrollerRef,
     };
-    const firstContext = latestVirtuosoProps.context;
+    const firstData = latestVirtuosoProps.data;
 
     rerender(
       <MessageList
@@ -177,7 +177,8 @@ describe("ChatLog sidechat search jumps", () => {
     expect(latestVirtuosoProps).toEqual(
       expect.objectContaining(firstCallbacks),
     );
-    expect(latestVirtuosoProps.context).not.toBe(firstContext);
+    expect(latestVirtuosoProps.data).not.toBe(firstData);
+    expect(latestVirtuosoProps.data[0]).not.toBe(firstData[0]);
   });
 
   it("restores saved scroll state without a parent Virtuoso ref", async () => {

@@ -149,9 +149,15 @@ function runQuotaForRestartComparison(
 }
 
 function withCocalcAiRuntimeSemantics(run_quota: Quota): Quota {
+  const sharedComputePriority = Number(run_quota.shared_compute_priority);
   return {
     ...run_quota,
-    network: true,
+    // Free accounts have priority 0. All paid, admin, and site-license tiers
+    // have a positive priority. Derive network access from the resolved runtime
+    // account after sponsorship/course attribution instead of the legacy site
+    // default, which historically enabled internet for every project.
+    network:
+      Number.isFinite(sharedComputePriority) && sharedComputePriority > 0,
     member_host: true,
   };
 }

@@ -661,6 +661,7 @@ async function runHostProjectsAction({
       state_filter: `${input?.state_filter ?? "running"}`,
       project_state: `${input?.project_state ?? ""}`.trim() || undefined,
       risk_only: !!input?.risk_only,
+      free_only: !!input?.free_only,
       total,
       succeeded: completed,
       failed,
@@ -739,6 +740,7 @@ async function runHostProjectsAction({
     state_filter: `${input?.state_filter ?? "running"}`,
     project_state: `${input?.project_state ?? ""}`.trim() || undefined,
     risk_only: !!input?.risk_only,
+    free_only: !!input?.free_only,
     total,
     succeeded: completed,
     failed,
@@ -2193,8 +2195,7 @@ async function handleOp(op: LroSummary): Promise<void> {
         desired_version: input?.desired_version,
         base_url: input?.base_url,
         reason: input?.reason,
-        record_runtime_deployments:
-          input?.record_runtime_deployments !== false,
+        record_runtime_deployments: input?.record_runtime_deployments !== false,
         onProgress: async (update) => {
           await progressStep("waiting", update.rollout_phase_label, {
             host_id,

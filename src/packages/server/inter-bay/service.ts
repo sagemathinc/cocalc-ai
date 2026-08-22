@@ -2693,6 +2693,7 @@ async function startHostConnectionService(): Promise<void> {
       limit,
       cursor,
       risk_only,
+      free_only,
       state_filter,
       project_state,
     }) =>
@@ -2702,6 +2703,7 @@ async function startHostConnectionService(): Promise<void> {
         limit,
         cursor,
         risk_only,
+        free_only,
         state_filter,
         project_state,
       }),

@@ -1194,6 +1194,52 @@ describe("hosts.listHostProjects", () => {
     expect(riskSql).toContain("INTERVAL '1 minute'");
   });
 
+  it("adds a fail-closed free-project filter when requested", async () => {
+    const listSqls: string[] = [];
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              metadata: { owner: ACCOUNT_ID },
+            },
+          ],
+        };
+      }
+      if (sql.includes("COUNT(*) AS total")) {
+        return { rows: [SUMMARY_ROW] };
+      }
+      if (sql.includes("LEFT(COALESCE(title")) {
+        listSqls.push(sql);
+        return { rows: PROJECT_ROWS_PAGE_1.slice(0, 1) };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { listHostProjects } = await import("./hosts");
+    await listHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      limit: 1,
+      free_only: false,
+    });
+    await listHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      limit: 1,
+      free_only: true,
+    });
+
+    expect(listSqls).toHaveLength(2);
+    expect(listSqls[0]).not.toContain("shared_compute_priority");
+    expect(listSqls[1]).toContain(
+      "jsonb_typeof(run_quota->'shared_compute_priority') = 'number'",
+    );
+    expect(listSqls[1]).toContain("ELSE 0");
+    expect(listSqls[1]).toContain("END = 0");
+  });
+
   it("adds state filters when requested", async () => {
     const listSqls: string[] = [];
     queryMock.mockImplementation(async (sql: string, _params: any[]) => {

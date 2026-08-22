@@ -935,6 +935,8 @@ async function context(
       config,
       creds: {
         service_account_json: config.gcp_service_account_json,
+        // Production intentionally resolves to the legacy "cocalc-vm"
+        // prefix so existing provider resources keep their original names.
         prefix: managedComputeVmProviderPrefix(config.environment).replace(
           /-$/,
           "",

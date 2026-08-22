@@ -147,8 +147,34 @@ echo "- Build compact control-plane bundle"
   --entrypoint packages/rocket/bin/start-hub-worker.js \
   --out "$OUT/runtime/control-plane" \
   --package-filter @cocalc/rocket \
-  --include-pglite \
-  --exclude-static 'embed-*.js'
+  --include-pglite
+
+echo "- Verify frontend asset inventory"
+node - "$OUT/runtime/control-plane/static" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const root = path.resolve(process.argv[2]);
+const manifest = JSON.parse(
+  fs.readFileSync(path.join(root, "frontend-build.json"), "utf8"),
+);
+if (!Array.isArray(manifest.assets) || manifest.assets.length === 0) {
+  throw new Error("frontend build manifest has no asset inventory");
+}
+for (const value of manifest.assets) {
+  const asset = `${value ?? ""}`.replaceAll("\\", "/");
+  const filename = path.resolve(root, asset);
+  if (
+    !asset ||
+    asset.startsWith("/") ||
+    asset.split("/").includes("..") ||
+    !filename.startsWith(`${root}${path.sep}`) ||
+    !fs.statSync(filename, { throwIfNoEntry: false })?.isFile()
+  ) {
+    throw new Error(`frontend manifest asset is missing or unsafe: ${asset}`);
+  }
+}
+NODE
 
 echo "- Copy project-host daemon bundle"
 mkdir -p "$OUT/runtime/project-host"

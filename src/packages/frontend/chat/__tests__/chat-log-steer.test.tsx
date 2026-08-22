@@ -5,6 +5,7 @@ import { ChatLog } from "../chat-log";
 
 let renderedMessages: any[] = [];
 let latestVirtuosoProps: any;
+let freezeVirtuosoRows = false;
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (arg1: any, arg2?: string) => {
@@ -32,18 +33,25 @@ jest.mock("@cocalc/frontend/components/stateful-virtuoso", () => {
   const React = require("react");
   return React.forwardRef((props: any, ref: any) => {
     latestVirtuosoProps = props;
+    const frozenRowsRef = React.useRef<any>();
     React.useImperativeHandle(ref, () => ({
       scrollToIndex: jest.fn(),
       scrollIntoView: jest.fn(),
       getState: jest.fn(),
     }));
-    return (
+    const rows = (
       <div data-testid="virtuoso">
         {Array.from({ length: props.totalCount ?? 0 }, (_, index) => (
-          <div key={index}>{props.itemContent?.(index)}</div>
+          <div key={index}>
+            {props.itemContent?.(index, props.data?.[index], props.context)}
+          </div>
         ))}
       </div>
     );
+    if (!freezeVirtuosoRows || frozenRowsRef.current == null) {
+      frozenRowsRef.current = rows;
+    }
+    return frozenRowsRef.current;
   });
 });
 
@@ -73,6 +81,7 @@ describe("ChatLog immediate steer rendering", () => {
   beforeEach(() => {
     renderedMessages = [];
     latestVirtuosoProps = undefined;
+    freezeVirtuosoRows = false;
   });
 
   function lastRenderedMessageProps(messageId: string) {
@@ -237,6 +246,7 @@ describe("ChatLog immediate steer rendering", () => {
   });
 
   it("invalidates a mounted virtual row when guidance state changes", () => {
+    freezeVirtuosoRows = true;
     const messages = new Map([
       [
         "1000",
@@ -272,7 +282,12 @@ describe("ChatLog immediate steer rendering", () => {
     const { rerender } = render(
       <ChatLog {...props} acpState={new Map() as any} messages={messages} />,
     );
-    const beforeGuidance = latestVirtuosoProps.itemContent;
+    const stableItemRenderer = latestVirtuosoProps.itemContent;
+    const beforeGuidanceData = latestVirtuosoProps.data;
+    const beforeGuidanceKey = latestVirtuosoProps.computeItemKey(
+      1,
+      beforeGuidanceData[1],
+    );
     const itemCount = latestVirtuosoProps.totalCount;
 
     const sendingMessages = new Map(messages);
@@ -293,10 +308,17 @@ describe("ChatLog immediate steer rendering", () => {
         messages={sendingMessages}
       />,
     );
-    const whileSending = latestVirtuosoProps.itemContent;
+    const whileSendingData = latestVirtuosoProps.data;
+    const whileSendingKey = latestVirtuosoProps.computeItemKey(
+      1,
+      whileSendingData[1],
+    );
 
     expect(latestVirtuosoProps.totalCount).toBe(itemCount);
-    expect(whileSending).not.toBe(beforeGuidance);
+    expect(latestVirtuosoProps.data).not.toBe(beforeGuidanceData);
+    expect(latestVirtuosoProps.data[0]).not.toBe(beforeGuidanceData[0]);
+    expect(latestVirtuosoProps.itemContent).toBe(stableItemRenderer);
+    expect(whileSendingKey).not.toBe(beforeGuidanceKey);
     expect(lastRenderedMessageProps("assistant-1")?.activitySteers).toEqual([
       expect.objectContaining({ messageId: "steer-1", state: "sending" }),
     ]);
@@ -315,10 +337,105 @@ describe("ChatLog immediate steer rendering", () => {
     );
 
     expect(latestVirtuosoProps.totalCount).toBe(itemCount);
-    expect(latestVirtuosoProps.itemContent).not.toBe(whileSending);
+    expect(latestVirtuosoProps.itemContent).toBe(stableItemRenderer);
+    expect(latestVirtuosoProps.data).not.toBe(whileSendingData);
+    expect(latestVirtuosoProps.data[0]).not.toBe(whileSendingData[0]);
+    expect(
+      latestVirtuosoProps.computeItemKey(1, latestVirtuosoProps.data[1]),
+    ).not.toBe(whileSendingKey);
     expect(lastRenderedMessageProps("assistant-1")?.activitySteers).toEqual([
       expect.objectContaining({ messageId: "steer-1", state: "sent" }),
     ]);
+  });
+
+  it("recomputes sequential guidance from the stable document map", () => {
+    const messages = new Map([
+      [
+        "1000",
+        {
+          date: 1000,
+          message_id: "user-1",
+          thread_id: "thread-1",
+          sender_id: "acct-1",
+          history: [{ content: "sleep" }],
+        },
+      ],
+      [
+        "2000",
+        {
+          date: 2000,
+          message_id: "assistant-1",
+          thread_id: "thread-1",
+          parent_message_id: "user-1",
+          sender_id: "acct-codex",
+          acp_account_id: "acct-codex",
+          generating: true,
+          history: [{ content: "waiting" }],
+        },
+      ],
+      [
+        "3000",
+        {
+          date: 3000,
+          message_id: "steer-1",
+          thread_id: "thread-1",
+          sender_id: "acct-1",
+          acp_send_mode: "immediate",
+          acp_state: "sent",
+          parent_message_id: "assistant-1",
+          history: [{ content: "first guidance" }],
+        },
+      ],
+    ]) as any;
+    const acpState = new Map() as any;
+    const actions = { clearScrollRequest: jest.fn() } as any;
+    const { rerender } = render(
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        mode="standalone"
+        actions={actions}
+        selectedThread="thread-1"
+        acpState={acpState}
+        messages={messages}
+        docVersion={1}
+      />,
+    );
+    const firstKey = latestVirtuosoProps.computeItemKey(
+      1,
+      latestVirtuosoProps.data[1],
+    );
+
+    messages.set("4000", {
+      date: 4000,
+      message_id: "steer-2",
+      thread_id: "thread-1",
+      sender_id: "acct-1",
+      acp_send_mode: "immediate",
+      acp_state: "sending",
+      parent_message_id: "steer-1",
+      history: [{ content: "second guidance" }],
+    });
+    rerender(
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        mode="standalone"
+        actions={actions}
+        selectedThread="thread-1"
+        acpState={acpState}
+        messages={messages}
+        docVersion={2}
+      />,
+    );
+
+    expect(lastRenderedMessageProps("assistant-1")?.activitySteers).toEqual([
+      expect.objectContaining({ messageId: "steer-1", state: "sent" }),
+      expect.objectContaining({ messageId: "steer-2", state: "sending" }),
+    ]);
+    expect(
+      latestVirtuosoProps.computeItemKey(1, latestVirtuosoProps.data[1]),
+    ).not.toBe(firstKey);
   });
 
   it("keeps unresolved immediate guidance visible as a durable chat row", () => {

@@ -2500,6 +2500,7 @@ export function registerHostCommand(
     opts: {
       state?: string;
       status?: string;
+      freeOnly?: boolean;
       parallel?: string;
       wait?: boolean;
     },
@@ -2519,6 +2520,7 @@ export function registerHostCommand(
               id: h.id,
               state_filter,
               project_state,
+              free_only: !!opts.freeOnly,
               parallel,
             })
           : await ctx.hub.hosts.restartHostProjects({
@@ -2536,6 +2538,7 @@ export function registerHostCommand(
           status: "queued",
           state_filter,
           project_state,
+          free_only: !!opts.freeOnly,
         };
       }
 
@@ -2711,6 +2714,10 @@ export function registerHostCommand(
       "--status <status>",
       "target one exact raw project status instead of the default running bucket",
     )
+    .option(
+      "--free-only",
+      "stop only projects with zero shared-compute priority",
+    )
     .option("--parallel <n>", "maximum projects to act on in parallel")
     .option("--wait", "wait for completion")
     .action(
@@ -2719,6 +2726,7 @@ export function registerHostCommand(
         opts: {
           state?: string;
           status?: string;
+          freeOnly?: boolean;
           parallel?: string;
           wait?: boolean;
         },

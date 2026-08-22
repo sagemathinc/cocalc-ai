@@ -95,9 +95,9 @@ import { egressRateLabel, providerEgressIsFree } from "./compute-vms-egress";
 import { vmStartupExpectation } from "./compute-vms-startup";
 import { readProjectDeployPublicKey } from "./settings/project-to-project-ssh-service";
 import { NebiusCapacityPicker } from "../hosts/components/nebius-capacity-picker";
+import { getHostsPageHref, openHostsPage } from "../hosts/navigation";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
-import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { CloudServerOutlined, EnvironmentOutlined } from "@ant-design/icons";
 
 const { Paragraph, Text, Title } = Typography;
@@ -3966,13 +3966,8 @@ export function ProjectComputeVms({
               </Dropdown>
             )}
             {!accountMode && (
-              <Button
-                size="small"
-                onClick={() => {
-                  globalThis.location.href = `${getPageUrlPath({ page: "hosts" })}?tab=vms`;
-                }}
-              >
-                Manage in Compute
+              <Button size="small" onClick={() => openHostsPage("vms")}>
+                Manage account VMs
               </Button>
             )}
           </Flex>
@@ -4121,9 +4116,17 @@ export function ProjectComputeVms({
               ) : (
                 <>
                   VMs this project can access over SSH. Lifecycle,
-                  configuration, and billing are managed from your account
-                  Compute page. Project{" "}
-                  <Text code>{shortProjectId(projectId)}</Text>.
+                  configuration, and billing are managed from your account{" "}
+                  <a
+                    href={getHostsPageHref("vms")}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      openHostsPage("vms");
+                    }}
+                  >
+                    Virtual Machines page
+                  </a>
+                  . Project <Text code>{shortProjectId(projectId)}</Text>.
                 </>
               )}
             </Paragraph>

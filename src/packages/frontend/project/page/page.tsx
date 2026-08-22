@@ -128,6 +128,10 @@ import {
   browserIdleTimeoutFromRunQuota,
   BrowserRuntimeLimitBanner,
 } from "./browser-runtime-limit-banner";
+import {
+  networkAccessDisabledFromRunQuota,
+  NetworkDisabledBadge,
+} from "./network-disabled-badge";
 
 const START_BANNER = false;
 
@@ -260,10 +264,10 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     publicDirectoryShare: props.publicDirectoryShare,
   });
   const isViewer = projectCtx.projectAccess.role === "viewer";
-  const { runQuota: browserRuntimeRunQuota } = useProjectRunQuota(project_id);
-  const browserIdleTimeout = browserIdleTimeoutFromRunQuota(
-    browserRuntimeRunQuota,
-  );
+  const { runQuota: projectRunQuota } = useProjectRunQuota(project_id);
+  const browserIdleTimeout = browserIdleTimeoutFromRunQuota(projectRunQuota);
+  const networkAccessDisabled =
+    networkAccessDisabledFromRunQuota(projectRunQuota);
   const browserRuntimePresenceEnabled =
     !props.publicDirectoryShare &&
     !isViewer &&
@@ -1035,6 +1039,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
               <StartButton minimal style={{ margin: "2px 4px 0px 4px" }} />
             )
           )}
+          {networkAccessDisabled ? <NetworkDisabledBadge /> : null}
           <ProjectTabs project_id={project_id} />
         </div>
         {!isViewer && showPostSurfaceBanners ? (

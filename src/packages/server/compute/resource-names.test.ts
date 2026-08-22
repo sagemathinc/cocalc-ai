@@ -15,6 +15,7 @@ const ID = "12345678-1234-4abc-9def-123456789abc";
 
 describe("managed compute provider resource names", () => {
   it("preserves the production namespace", () => {
+    expect(managedComputeVmProviderPrefix("production")).toBe("cocalc-vm-");
     expect(managedComputeVmProviderName(ID, "production")).toBe(
       "cocalc-vm-1234567812344abc9def1234",
     );

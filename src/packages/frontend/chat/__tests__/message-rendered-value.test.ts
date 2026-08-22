@@ -36,6 +36,95 @@ describe("resolveLiveCodexActivityBlocks", () => {
       }),
     ).toEqual([{ kind: "agent", text: "The complete projected response." }]);
   });
+
+  it("updates a cached guidance block when delivery completes", () => {
+    expect(
+      resolveLiveCodexActivityBlocks({
+        previewBlocks: [
+          {
+            kind: "guidance",
+            text: "Continue with the focused test.",
+            time: 123,
+            state: "sent",
+          },
+        ],
+        cachedBlocks: [
+          {
+            kind: "guidance",
+            text: "Continue with the focused test.",
+            time: 123,
+            state: "sending",
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        kind: "guidance",
+        text: "Continue with the focused test.",
+        time: 123,
+        state: "sent",
+      },
+    ]);
+  });
+
+  it("treats an omitted preview state as sent", () => {
+    expect(
+      resolveLiveCodexActivityBlocks({
+        previewBlocks: [
+          { kind: "guidance", text: "Use the durable result.", time: 234 },
+        ],
+        cachedBlocks: [
+          {
+            kind: "guidance",
+            text: "Use the durable result.",
+            time: 234,
+            state: "sending",
+          },
+        ],
+      }),
+    ).toEqual([
+      { kind: "guidance", text: "Use the durable result.", time: 234 },
+    ]);
+  });
+
+  it("keeps fuller cached agent output while updating guidance state", () => {
+    expect(
+      resolveLiveCodexActivityBlocks({
+        previewBlocks: [
+          { kind: "agent", text: "Waiting." },
+          {
+            kind: "guidance",
+            text: "Check the second case.",
+            time: 456,
+            state: "not-sent",
+          },
+        ],
+        cachedBlocks: [
+          {
+            kind: "agent",
+            text: "Waiting while retaining the complete streamed response.",
+          },
+          {
+            kind: "guidance",
+            text: "Check the second case.",
+            time: 456,
+            state: "sending",
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        kind: "agent",
+        text: "Waiting while retaining the complete streamed response.",
+      },
+      {
+        kind: "guidance",
+        text: "Check the second case.",
+        time: 456,
+        state: "not-sent",
+      },
+    ]);
+  });
 });
 
 describe("resolveRenderedMessageValue", () => {

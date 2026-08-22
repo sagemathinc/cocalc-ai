@@ -585,6 +585,7 @@ export interface HostProjectsActionRequest {
   state_filter?: HostProjectStateFilter;
   project_state?: string;
   risk_only?: boolean;
+  free_only?: boolean;
   parallel?: number;
 }
 
@@ -601,6 +602,7 @@ export interface HostProjectsActionResult {
   state_filter: HostProjectStateFilter;
   project_state?: string;
   risk_only?: boolean;
+  free_only?: boolean;
   total: number;
   succeeded: number;
   failed: number;
@@ -1884,6 +1886,7 @@ export interface Hosts {
     limit?: number;
     cursor?: string;
     risk_only?: boolean;
+    free_only?: boolean;
     state_filter?: HostProjectStateFilter;
     project_state?: string;
   }) => Promise<HostProjectsResponse>;
@@ -1893,6 +1896,7 @@ export interface Hosts {
     state_filter?: HostProjectStateFilter;
     project_state?: string;
     risk_only?: boolean;
+    free_only?: boolean;
     parallel?: number;
   }) => Promise<HostLroResponse>;
   restartHostProjects: (opts: {

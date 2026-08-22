@@ -17,6 +17,7 @@ import {
 import { useHostsPageViewModel } from "./hooks/use-hosts-page-view-model";
 import { ProjectComputeVms } from "@cocalc/frontend/project/compute-vms";
 import { QueryParams } from "@cocalc/frontend/misc/query-params";
+import { HOSTS_PAGE_TAB_EVENT, type HostsPageTab } from "./navigation";
 
 const IS_STAR_SETUP_PROFILE = cocalc_setup_profile === "star";
 
@@ -24,6 +25,17 @@ export const HostsPage: React.FC = () => {
   const [activeTab, setActiveTab] = React.useState<"hosts" | "vms">(() =>
     QueryParams.get("tab") === "vms" ? "vms" : "hosts",
   );
+  React.useEffect(() => {
+    const handleTabNavigation = (event: Event) => {
+      const tab = (event as CustomEvent<HostsPageTab>).detail;
+      if (tab === "hosts" || tab === "vms") {
+        setActiveTab(tab);
+      }
+    };
+    window.addEventListener(HOSTS_PAGE_TAB_EVENT, handleTabNavigation);
+    return () =>
+      window.removeEventListener(HOSTS_PAGE_TAB_EVENT, handleTabNavigation);
+  }, []);
   const {
     createVm,
     hostListVm,
