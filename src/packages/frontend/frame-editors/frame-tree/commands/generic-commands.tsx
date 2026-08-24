@@ -15,6 +15,7 @@ import { Icon } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { IS_MACOS } from "@cocalc/frontend/feature";
 import { FORMAT_SOURCE_ICON } from "@cocalc/frontend/frame-editors/frame-tree/config";
+import { canRunFile } from "@cocalc/frontend/frame-editors/code-editor/run-commands";
 import {
   adjustCodeMirrorMinimapWidth,
   openCodeMirrorMinimapSettingsDialog,
@@ -708,6 +709,31 @@ addCommands({
     }),
     icon: FORMAT_SOURCE_ICON,
     keyboard: `${IS_MACOS ? "⌘" : "control"} + shift + F`,
+  },
+
+  run_code: {
+    group: "build",
+    pos: -1,
+    disable: "disableTerminals",
+    label: labels.run,
+    title: defineMessage({
+      id: "command.generic.run_code.title",
+      defaultMessage:
+        "Run this file in a terminal using the appropriate interpreter or compiler.",
+      description: "Tooltip of the Run button for a code file",
+    }),
+    icon: "play-circle",
+    keyboard: "shift + enter",
+    // NOTE: a function isVisible replaces the editor spec check, so we have
+    // to do it ourselves -- otherwise Run also shows up in the menu of, e.g.,
+    // the terminal frame of a .py file.
+    isVisible: ({ props }) =>
+      !!props.spec.commands?.["run_code"] &&
+      canRunFile(props.editor_actions?.path ?? props.path),
+    onClick: ({ props }) => {
+      // editor_actions is the file the frame shows, actions owns the frames.
+      props.actions.run_code(props.id, props.editor_actions);
+    },
   },
 
   build: {

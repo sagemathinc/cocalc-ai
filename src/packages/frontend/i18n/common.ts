@@ -337,6 +337,12 @@ export const labels = defineMessages({
     defaultMessage: "Codex",
     description: "The button to engage with the Codex dialog",
   },
+  run: {
+    id: "labels.run",
+    defaultMessage: "Run",
+    description:
+      "Label of the button that runs the code file being edited, e.g. a Python program, in a terminal",
+  },
   timetravel: {
     id: "labels.timetravel",
     defaultMessage: "TimeTravel",

@@ -65,9 +65,11 @@ import { ConnectionStatus, EditorDescription, EditorSpec } from "./types";
 import {
   frameTitleBarAgentButtonVisible,
   frameTitleBarMenuVisible,
+  frameTitleBarRunButtonVisible,
   frameTitleBarTerminalButtonVisible,
   frameTitleBarTimeTravelButtonVisible,
 } from "./read-only-title-bar";
+import RunButton from "./run-button";
 
 // Certain special frame editors (e.g., for latex) have extra
 // actions that are not defined in the base code editor actions.
@@ -619,6 +621,32 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     );
   }
 
+  function renderRunButton(noLabel): Rendered {
+    if (
+      !frameTitleBarRunButtonVisible({
+        readOnlyPreview: read_only_preview,
+        terminalsDisabled: !!student_project_functionality.disableTerminals,
+      }) ||
+      !manageCommands.isVisible("run_code")
+    ) {
+      return;
+    }
+    return (
+      <RunButton
+        key={"run-button"}
+        id={props.id}
+        // A cm frame can show a different file than the main editor (e.g. a
+        // LaTeX \input'ed subfile), and that is the file we run.
+        path={props.editor_actions?.path ?? props.path}
+        actions={props.actions}
+        documentActions={props.editor_actions}
+        noLabel={noLabel}
+        size={button_size()}
+        style={button_style()}
+      />
+    );
+  }
+
   function renderTimeTravel(noLabel): Rendered {
     if (
       !frameTitleBarTimeTravelButtonVisible({
@@ -751,6 +779,8 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     if ((x = renderSaveButton(noLabel))) v.push(x);
     if ((x = renderTimeTravel(noLabel))) v.push(x);
     if ((x = renderAssistant(noLabel, where))) v.push(x);
+    // Run goes last, so adding it does not shift the buttons users know.
+    if ((x = renderRunButton(noLabel))) v.push(x);
     if (v.length == 1) return v[0];
     if (v.length > 0) {
       return (

@@ -6,6 +6,7 @@
 import {
   frameTitleBarAgentButtonVisible,
   frameTitleBarMenuVisible,
+  frameTitleBarRunButtonVisible,
   frameTitleBarTerminalButtonVisible,
   frameTitleBarTimeTravelButtonVisible,
 } from "../read-only-title-bar";
@@ -64,6 +65,30 @@ describe("read-only preview frame title bar", () => {
         type: "terminal",
       }),
     ).toBe(false);
+  });
+
+  it("hides the Run button in read-only preview mode and without terminals", () => {
+    expect(
+      frameTitleBarRunButtonVisible({
+        readOnlyPreview: true,
+        terminalsDisabled: false,
+      }),
+    ).toBe(false);
+    expect(
+      frameTitleBarRunButtonVisible({
+        readOnlyPreview: false,
+        terminalsDisabled: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("shows the Run button in a normal editable frame", () => {
+    expect(
+      frameTitleBarRunButtonVisible({
+        readOnlyPreview: false,
+        terminalsDisabled: false,
+      }),
+    ).toBe(true);
   });
 
   it("hides TimeTravel and Agent launch affordances in read-only preview mode", () => {

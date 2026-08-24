@@ -54,6 +54,7 @@ export const cm: EditorDescription = {
     "copy",
     "undo",
     "redo",
+    "run_code",
     "terminal",
     "format",
     "auto_indent",

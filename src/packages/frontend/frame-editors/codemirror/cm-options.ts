@@ -21,6 +21,7 @@ import { get_editor_settings } from "../generic/client";
 import { defaults, filename_extension_notilde } from "@cocalc/util/misc";
 
 import { extra_alt_keys } from "./mobile";
+import { canRunFile } from "../code-editor/run-commands";
 
 import { AccountState } from "../../account/types";
 import { valid_indent } from "./util";
@@ -132,6 +133,19 @@ export function cm_options(
       }
       if (frame_tree_actions.build !== undefined) {
         frame_tree_actions.build(frame_id);
+      } else if (
+        canRunFile(filename) &&
+        typeof frame_tree_actions.run_code === "function"
+      ) {
+        // A code file has nothing to build, but it can be run in a terminal:
+        // shift+enter does what the Run button in the title bar does.
+        // editor_actions is the file this frame shows, which for a subframe
+        // is not the file of the frame tree.
+        // keepFocus: stay in the editor, so the user can keep typing and run
+        // again without reaching for the mouse.
+        frame_tree_actions.run_code(frame_id, editor_actions, {
+          keepFocus: true,
+        });
       } else {
         if (get_editor_settings().get("show_exec_warning")) {
           frame_tree_actions.set_error(

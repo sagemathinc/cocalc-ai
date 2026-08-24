@@ -28,6 +28,18 @@ export function frameTitleBarTerminalButtonVisible({
   return !readOnlyPreview && !terminalsDisabled && type !== "terminal";
 }
 
+export function frameTitleBarRunButtonVisible({
+  readOnlyPreview,
+  terminalsDisabled,
+}: {
+  readOnlyPreview: boolean;
+  terminalsDisabled: boolean;
+}): boolean {
+  // Running a file needs a terminal, and it needs the file on disk to be the
+  // file being shown -- neither holds for a read-only preview.
+  return !readOnlyPreview && !terminalsDisabled;
+}
+
 export function frameTitleBarTimeTravelButtonVisible({
   readOnlyPreview,
 }: {
