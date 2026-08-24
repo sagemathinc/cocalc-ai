@@ -84,7 +84,22 @@ import {
 } from "./stripe";
 
 const SITE = "test.cocalc.ai";
-const DUE_DATE = 1790035200;
+
+// Linking an already-prepared Stripe invoice checks its due date against
+// `now + payment_terms_days` (dueAt() in ./stripe), because at that point no
+// local invoice with a stored due_at exists yet.  These fixtures therefore
+// have to move with the clock: the hard-coded date they used before only
+// matched on the day it was written, and the suite failed every day after.
+const PAYMENT_TERMS_DAYS = 30;
+const DUE_DATE = (() => {
+  const due = new Date();
+  due.setUTCDate(due.getUTCDate() + PAYMENT_TERMS_DAYS);
+  due.setUTCHours(0, 0, 0, 0);
+  return Math.floor(due.getTime() / 1000);
+})();
+// the stored due_at of an already-created invoice, which the exact-match paths
+// compare against DUE_DATE
+const DUE_AT = new Date(DUE_DATE * 1000).toISOString();
 
 function customerFixture(changes: Record<string, unknown> = {}) {
   return {
@@ -119,7 +134,7 @@ function invoiceFixture(
     total: "3900.0000000000",
     amount_due: "3900.0000000000",
     amount_paid: "0.0000000000",
-    due_at: "2026-09-22T00:00:00.000Z",
+    due_at: DUE_AT,
     hosted_invoice_url: null,
     invoice_pdf_url: null,
     sent_at: null,
@@ -152,7 +167,7 @@ function orderFixture(changes: Partial<CommercialOrder> = {}): CommercialOrder {
     currency: "usd",
     agreed_subtotal: "3900.0000000000",
     agreed_total: "3900.0000000000",
-    payment_terms_days: 30,
+    payment_terms_days: PAYMENT_TERMS_DAYS,
     terms_snapshot: {},
     next_action: "Send invoice",
     approved_at: "2026-08-23T00:00:00.000Z",
