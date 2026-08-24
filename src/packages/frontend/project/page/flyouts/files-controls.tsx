@@ -535,8 +535,6 @@ export function FilesSelectedControls({
           selectedPaths={checked_files.toArray()}
           label="Actions"
           size="small"
-          showEllipsis={false}
-          showDown={false}
           hideFlyout
           activateFilesTab
         />

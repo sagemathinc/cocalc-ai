@@ -443,8 +443,13 @@ export function CodeBarDropdownMenu({
       mouseLeaveDelay={1.5}
       classNames={{ root: "cc-jupyter-buttonbar-dropdown" }}
     >
-      <Button type="text" size="small" style={CODE_BAR_BTN_STYLE}>
-        <Icon name="ellipsis" rotate="90" style={{ fontSize: "20px" }} />
+      <Button
+        type="text"
+        size="small"
+        aria-label="Cell actions"
+        style={CODE_BAR_BTN_STYLE}
+      >
+        <Icon name="ellipsis-vertical" style={{ fontSize: "20px" }} />
       </Button>
     </Dropdown>
   );

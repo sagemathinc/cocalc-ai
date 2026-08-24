@@ -267,7 +267,9 @@ export function ChatRoomThreadMenu({
         aria-label={buttonAriaLabel}
         data-testid={buttonTestId}
         onClick={onButtonClick}
-        icon={buttonLabel == null ? <Icon name="ellipsis" /> : undefined}
+        icon={
+          buttonLabel == null ? <Icon name="ellipsis-vertical" /> : undefined
+        }
       >
         {buttonLabel}
       </Button>

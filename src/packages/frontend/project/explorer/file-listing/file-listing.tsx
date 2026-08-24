@@ -1470,9 +1470,9 @@ export function FileListing({
                           setContextMenu({ items, x: e.clientX, y: e.clientY });
                         }
                       }}
-                      style={{ color: COLORS.TAB, padding: 0 }}
+                      style={{ color: COLORS.TAB, padding: 0, width: "100%" }}
                     >
-                      <Icon name="ellipsis" rotate="90" />
+                      <Icon name="ellipsis-vertical" />
                     </Button>
                   )}
               </td>

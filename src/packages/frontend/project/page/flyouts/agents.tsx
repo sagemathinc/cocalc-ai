@@ -1154,7 +1154,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     const buttonProps = {
       size: "small" as const,
       type: "text" as const,
-      icon: <Icon name="ellipsis" />,
+      icon: <Icon name="ellipsis-vertical" />,
       "aria-label": "Session actions",
       "data-testid": `agent-session-menu-${record.session_id}`,
     };
@@ -1252,7 +1252,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
             <Button
               size="small"
               type="text"
-              icon={<Icon name="ellipsis" />}
+              icon={<Icon name="ellipsis-vertical" />}
               aria-label={inlineSessionMenuLabel}
               disabled
             />

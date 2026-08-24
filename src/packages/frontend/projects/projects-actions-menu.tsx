@@ -35,8 +35,15 @@ export function ProjectActionsMenu(props: ProjectActionsMenuProps) {
         }}
         style={{ cursor: "pointer" }}
       >
+        {/* Deliberately not focusable: this placeholder unmounts as soon as it
+            is activated, so a keyboard user would be left with focus on
+            <body>.  Hydrating on focus is not an option either, since the
+            hydrated content mounts with the menu already open, and merely
+            tabbing past the control would pop it open.  The hydrated
+            trigger in projects-actions-menu-content.tsx is keyboard
+            operable. */}
         <span style={{ fontSize: "18px", padding: "4px 8px" }}>
-          <Icon name="ellipsis" rotate="90" />
+          <Icon name="ellipsis-vertical" />
         </span>
       </div>
     );

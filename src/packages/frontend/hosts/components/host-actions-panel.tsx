@@ -4,7 +4,6 @@ import {
   DeleteOutlined,
   EditOutlined,
   InfoCircleOutlined,
-  MoreOutlined,
   PlayCircleOutlined,
   PoweroffOutlined,
   ReloadOutlined,
@@ -13,7 +12,7 @@ import {
 } from "@ant-design/icons";
 import { Button, Popconfirm, Popover, Space, Tag, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
-import { Tooltip } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type {
   HostDeleteOptions,
@@ -520,7 +519,11 @@ export function HostActionsPanel({
           content={moreActions}
           overlayInnerStyle={{ padding: 10 }}
         >
-          <Button size="small" icon={<MoreOutlined />} />
+          <Button
+            size="small"
+            icon={<Icon name="ellipsis-vertical" />}
+            aria-label="More host actions"
+          />
         </Popover>
       </Space>
       {blockedActionsReason ? (

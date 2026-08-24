@@ -409,7 +409,7 @@ export function GitCommitDrawerTitle({
           <Button
             size="small"
             loading={reviewTransferBusy}
-            icon={<Icon name="ellipsis" />}
+            icon={<Icon name="ellipsis-vertical" />}
             aria-label="Review actions"
           />
         </Dropdown>

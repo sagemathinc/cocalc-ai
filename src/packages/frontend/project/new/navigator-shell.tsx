@@ -1338,7 +1338,7 @@ export function NavigatorShell({
             <Button
               size="small"
               type="text"
-              icon={<Icon name="ellipsis" />}
+              icon={<Icon name="ellipsis-vertical" />}
               aria-label="Agent thread actions"
               disabled
             />

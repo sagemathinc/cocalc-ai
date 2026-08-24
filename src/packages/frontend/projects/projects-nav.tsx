@@ -814,7 +814,10 @@ export function ProjectsNav(props: ProjectsNavProps) {
                     animated={false}
                     className="cocalc-project-tabs"
                     moreIcon={
-                      <Icon style={{ fontSize: "18px" }} name="ellipsis" />
+                      <Icon
+                        style={{ fontSize: "18px" }}
+                        name="ellipsis-vertical"
+                      />
                     }
                     size="small"
                     tabBarStyle={{ margin: 0 }}

@@ -1626,10 +1626,11 @@ export default function Message({
         <Button
           size="small"
           type="text"
+          aria-label="Message actions"
           style={{ color: COLORS.GRAY_M }}
           onClick={() => setShowTouchActions((prev) => !prev)}
         >
-          <Icon name="ellipsis" />
+          <Icon name="ellipsis-vertical" />
         </Button>
       );
       return (
@@ -1828,7 +1829,7 @@ export default function Message({
         <DropdownMenu
           key="more"
           items={overflowItems}
-          title={<Icon name="ellipsis" />}
+          title={<Icon name="ellipsis-vertical" />}
           size="small"
           style={{ color: COLORS.GRAY_M }}
         />,

@@ -553,6 +553,7 @@ export function VerticalFixedTabs({
           >
             <button
               type="button"
+              aria-label={hasOverflowTabs ? "More" : "Rail options"}
               style={{
                 display: "block",
                 width: "100%",
@@ -587,8 +588,7 @@ export function VerticalFixedTabs({
                 }}
               >
                 <Icon
-                  name="ellipsis"
-                  rotate="90"
+                  name="ellipsis-vertical"
                   style={{ fontSize: condensed ? "18px" : "24px" }}
                 />
                 {showActBarLabels ? (

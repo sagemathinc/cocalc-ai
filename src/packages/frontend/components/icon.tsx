@@ -143,6 +143,7 @@ import {
   MenuOutlined,
   MergeCellsOutlined,
   MinusCircleOutlined,
+  MoreOutlined,
   MinusOutlined,
   MinusSquareOutlined,
   OrderedListOutlined,
@@ -355,7 +356,12 @@ const IconSpec = {
   edit: EditOutlined,
   "edit-filled": EditFilled,
   eraser: { IconFont: "Eraser-Tool" },
+  // Horizontal "meatball" dots.  Only for indicating that content is elided /
+  // hidden at this spot.  For a "more actions" menu use "ellipsis-vertical".
   ellipsis: EllipsisOutlined,
+  // Vertical "kebab" dots: the standard trigger for a dropdown/popover of
+  // additional actions.  See docs/STYLE.md.
+  "ellipsis-vertical": MoreOutlined,
   envelope: { IconFont: "envelope" },
   exchange: { IconFont: "exchange" },
   "exclamation-circle": ExclamationCircleFilled,

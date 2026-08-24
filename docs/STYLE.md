@@ -67,6 +67,11 @@ const MyButton: React.FC<MyButtonProps> = (props) => {
   - If there is a cancel button next to another button, then cancel goes first, following the Antd convention, e.g., see Popconfirm.
   - NOTE: We wrote a lot of custom components, e.g., for number input, before switching fully to Antd, and those are still partly in use. Rewrite all of that to use Antd.
 
+- Three dots menus: a three-dots button that opens a menu or popover of extra actions uses the **vertical** kebab `⋮`, i.e. `<Icon name="ellipsis-vertical" />`.
+  - The horizontal `⋯` (`<Icon name="ellipsis" />`) is not a menu: it only marks elided or hidden content, e.g. a collapsed Jupyter cell input.
+  - Do not write `<Icon name="ellipsis" rotate="90" />`; `ellipsis-vertical` exists for that.
+  - Do not import `MoreOutlined` / `EllipsisOutlined` from `@ant-design/icons` directly; go through `Icon`.
+
 - Bootstrap:
   - CoCalc also used to use react-bootstrap, and sadly still does. Get rid of this.
 

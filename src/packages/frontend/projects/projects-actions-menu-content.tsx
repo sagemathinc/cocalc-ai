@@ -445,8 +445,19 @@ export function ProjectActionsMenuContent({
         open={open}
         onOpenChange={handleOpenChange}
       >
-        <span style={{ fontSize: "18px", padding: "4px 8px" }}>
-          <Icon name="ellipsis" rotate="90" />
+        <span
+          role="button"
+          tabIndex={0}
+          aria-label="Project actions"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              event.currentTarget.click();
+            }
+          }}
+          style={{ fontSize: "18px", padding: "4px 8px" }}
+        >
+          <Icon name="ellipsis-vertical" />
         </span>
       </Dropdown>
       <HardDeleteProjectModal

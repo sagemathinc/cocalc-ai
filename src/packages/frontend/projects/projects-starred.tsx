@@ -407,7 +407,7 @@ export function StarredProjectsBar() {
                 trigger={["click"]}
               >
                 <Button
-                  icon={<Icon name="ellipsis" />}
+                  icon={<Icon name="ellipsis-vertical" />}
                   style={{ backgroundColor: "white", marginLeft: "auto" }}
                 >
                   +{overflowProjects.length}

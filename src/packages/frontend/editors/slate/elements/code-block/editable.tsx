@@ -196,7 +196,7 @@ function FloatingActionMenu({
           aria-label="Code block actions"
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <Icon name="ellipsis" rotate="90" />
+          <Icon name="ellipsis-vertical" />
         </Button>
       </Popover>
     </div>

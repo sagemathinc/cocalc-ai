@@ -199,7 +199,7 @@ function FloatingActionMenu({
           }}
           aria-label="Code block actions"
         >
-          <Icon name="ellipsis" rotate="90" />
+          <Icon name="ellipsis-vertical" />
         </Button>
       </Popover>
     </div>

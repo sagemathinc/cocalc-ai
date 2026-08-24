@@ -519,14 +519,26 @@ function OtherOperations(opts) {
 
   return (
     <Dropdown menu={{ items: menuItems }} trigger={["click"]}>
-      <Icon
-        name="ellipsis"
-        style={{
-          padding: "12px 10px 0",
-          borderLeft: "1px solid #ccc",
-          cursor: "pointer",
+      <span
+        role="button"
+        tabIndex={0}
+        aria-label="More element actions"
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.currentTarget.click();
+          }
         }}
-      />
+      >
+        <Icon
+          name="ellipsis-vertical"
+          style={{
+            padding: "12px 10px 0",
+            borderLeft: "1px solid #ccc",
+            cursor: "pointer",
+          }}
+        />
+      </span>
     </Dropdown>
   );
 }

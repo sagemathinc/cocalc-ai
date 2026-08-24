@@ -15,14 +15,9 @@ import {
   Tag,
   Typography,
 } from "antd";
-import {
-  CodeOutlined,
-  DownOutlined,
-  MoreOutlined,
-  SyncOutlined,
-} from "@ant-design/icons";
+import { CodeOutlined, DownOutlined, SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
-import { Tooltip } from "@cocalc/frontend/components";
+import { Icon, Tooltip } from "@cocalc/frontend/components";
 import type {
   Host,
   HostRuntimeDeploymentObservedVersionState,
@@ -441,7 +436,7 @@ function MoreActions({ children }: { children: React.ReactNode }) {
         </Space>
       }
     >
-      <Button size="small" icon={<MoreOutlined />}>
+      <Button size="small" icon={<Icon name="ellipsis-vertical" />}>
         More
       </Button>
     </Popover>

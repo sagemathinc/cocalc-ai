@@ -1064,6 +1064,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         >
           <Button
             type="text"
+            aria-label="More frame actions"
             style={{
               fontSize: "14pt",
               padding: "0 5px",
@@ -1071,7 +1072,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
               background: popoverOpen ? "#eee" : undefined,
             }}
           >
-            <Icon name="ellipsis" rotate="90" />
+            <Icon name="ellipsis-vertical" />
           </Button>
         </div>
       </Popover>

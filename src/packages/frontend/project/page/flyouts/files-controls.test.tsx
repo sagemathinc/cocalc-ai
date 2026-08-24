@@ -158,8 +158,6 @@ describe("FilesSelectedControls", () => {
     expect(mockFileActionsDropdown.mock.calls.at(-1)?.[0]).toEqual(
       expect.objectContaining({
         label: "Actions",
-        showEllipsis: false,
-        showDown: false,
       }),
     );
   });
