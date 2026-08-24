@@ -99,9 +99,36 @@ describe("buildRunCommand", () => {
     expect(buildRunCommand("a.ts", { cd: false })).toBe("ts-node 'a.ts'");
   });
 
+  it("compiles an uppercase .C with g++, not gcc", () => {
+    // ".C" is C++ by convention: gcc compiles it as C++ but does not link the
+    // C++ standard library, so an iostream program fails to link.
+    expect(buildRunCommand("hello.C", { cd: false })).toBe(
+      "g++ 'hello.C' -o ./'hello' && ./'hello'",
+    );
+    expect(buildRunCommand("hello.c", { cd: false })).toBe(
+      "gcc 'hello.c' -o ./'hello' && ./'hello'",
+    );
+  });
+
+  it("names a leading-dash file as a path, so it is not read as an option", () => {
+    // python3 '-report.py' fails with "Unknown option: -r".
+    expect(buildRunCommand("-report.py", { cd: false })).toBe(
+      "python3 './-report.py'",
+    );
+    expect(buildRunCommand("dir/-report.sh", { cd: false })).toBe(
+      "bash './-report.sh'",
+    );
+    // {name} is not a path in every template (javac/java takes a class), so
+    // only the file argument gets the prefix.
+    expect(buildRunCommand("-x.c", { cd: false })).toBe(
+      "gcc './-x.c' -o ./'-x' && ./'-x'",
+    );
+  });
+
   it("has a template for every extension in the table", () => {
     for (const ext in RUN_COMMANDS) {
-      expect(ext).toBe(ext.toLowerCase());
+      // lowercase, except for the documented ".C" C++ exception
+      expect(ext === ext.toLowerCase() || ext === "C").toBe(true);
       expect(RUN_COMMANDS[ext]).toContain("{file}");
       expect(buildRunCommand(`x.${ext}`)).toBeTruthy();
     }

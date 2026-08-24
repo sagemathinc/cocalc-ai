@@ -15,7 +15,9 @@ with it).
 
 import { filename_extension, path_split } from "@cocalc/util/misc";
 
-// Maps file extensions (lowercase) to run commands.
+// Maps file extensions to run commands.  Keys are lowercase, since the lookup
+// falls back to the lowercased extension; the one exception is "C", which is
+// C++ by convention and has to win over "c" before that fallback.
 // {file} = basename (e.g. "hello.c"), {name} = basename without extension
 // (e.g. "hello").  Both are shell-escaped when substituted.
 export const RUN_COMMANDS: { [ext: string]: string } = {
@@ -35,6 +37,9 @@ export const RUN_COMMANDS: { [ext: string]: string } = {
   c: "gcc {file} -o ./{name} && ./{name}",
   cpp: "g++ {file} -o ./{name} && ./{name}",
   cc: "g++ {file} -o ./{name} && ./{name}",
+  // ".C" is C++ by convention.  gcc would compile it as C++ but not link the
+  // C++ standard library, so an iostream program fails to link.
+  C: "g++ {file} -o ./{name} && ./{name}",
   java: "javac {file} && java {name}",
   rs: "rustc {file} -o ./{name} && ./{name}",
 } as const;
@@ -45,9 +50,10 @@ export const RUN_COMMANDS: { [ext: string]: string } = {
 export const CLEAR_LINE = "\x05\x15";
 
 export function runCommandTemplate(path: string): string | undefined {
-  // Extensions are matched case insensitively, so that both "foo.r" and
-  // "foo.R" run with Rscript.
-  return RUN_COMMANDS[filename_extension(path).toLowerCase()];
+  const ext = filename_extension(path);
+  // Exact case first, so ".C" gets g++ rather than the "c" entry's gcc, then
+  // case insensitively, so that both "foo.r" and "foo.R" run with Rscript.
+  return RUN_COMMANDS[ext] ?? RUN_COMMANDS[ext.toLowerCase()];
 }
 
 // Whether the Run button/command applies to this file at all.
@@ -58,6 +64,15 @@ export function canRunFile(path: string): boolean {
 // Quote for bash: wrap in single quotes and escape any single quote.
 function shellEscape(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+// The file to run, as an argument.  Quoting stops the shell from splitting or
+// expanding it, but not the interpreter from reading a leading dash as an
+// option -- "python3 '-report.py'" fails with "Unknown option: -r".  Naming it
+// as a path fixes that, and we always cd to its directory first, so "./" is
+// the right prefix.
+function fileArg(file: string): string {
+  return shellEscape(file.startsWith("-") ? `./${file}` : file);
 }
 
 // Where to cd to before running.  Editor paths are relative to the project's
@@ -92,7 +107,7 @@ export function buildRunCommand(
   // The replacements are functions so that a filename containing "$&" or "$'"
   // is not interpreted as a replacement pattern.
   const command = template
-    .replace(/\{file\}/g, () => shellEscape(file))
+    .replace(/\{file\}/g, () => fileArg(file))
     .replace(/\{name\}/g, () => shellEscape(name));
   if (!cd) {
     return command;
