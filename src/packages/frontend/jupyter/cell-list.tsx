@@ -28,7 +28,9 @@ import { COLORS } from "@cocalc/util/theme";
 import { JupyterActions } from "./browser-actions";
 import { Cell } from "./cell";
 import HeadingTagComponent from "./heading-tag";
+import { MINIMAP_HIDE_SCROLLBAR_CLASS } from "@cocalc/frontend/components/minimap/text-rail";
 import { useNotebookMinimap } from "./minimap";
+import { minimapSettingsFor } from "./minimap-settings";
 import { StudioMinimap } from "./studio/studio-minimap";
 import {
   computeSectionBlocks,
@@ -61,6 +63,9 @@ function getSectionTitle(
 
 const LAZY_RENDER_INITIAL_CELLS = 24;
 const LAZY_RENDER_PLACEHOLDER_MIN_HEIGHT = 96;
+
+// The classic notebook view has no collapsible sections.
+const EMPTY_SECTIONS: Set<string> = new Set();
 
 export function updateLazyCellHeights(
   container: ParentNode,
@@ -967,7 +972,11 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
     hydrateVisibleCells,
   ]);
 
+  // Classic and Studio keep separate minimap preferences, matching how each
+  // view has always looked by default.
+  const minimapApi = minimapSettingsFor(cellViewMode);
   const minimap = useNotebookMinimap({
+    settingsApi: minimapApi,
     cellList: cell_list,
     cells,
     curId: cur_id,
@@ -981,17 +990,29 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
     saveScrollDebounce,
   });
 
-  // The studio view uses the same persisted minimap preference as the
-  // standard notebook view. Keep its native scrollbar when the map is hidden.
+  // Height available to a stylized minimap.  frameHeight is optional (the
+  // history viewer does not pass it), so fall back to the measured scroller —
+  // and hide the native scrollbar only when a map is actually there to replace
+  // it, or that view would end up with no way to scroll at all.
+  const stylizedMinimapHeight = cellListResize.height ?? frameHeight;
+  const showStylizedMinimap =
+    minimap.enabled &&
+    minimap.kind === "stylized" &&
+    stylizedMinimapHeight != null;
+
+  // The stylized minimap maps the whole notebook, so it replaces the native
+  // scrollbar; the text minimap is only a window onto a longer track, so there
+  // the native scrollbar stays.  Both notebook views share the preference.
+  const hideNativeScrollbar = showStylizedMinimap;
   useEffect(() => {
     const node = cellListDivRef.current;
     if (!node) return;
-    if (cellViewMode === "studio" && minimap.enabled) {
-      node.classList.add("minimap-hide-scrollbar");
+    if (hideNativeScrollbar) {
+      node.classList.add(MINIMAP_HIDE_SCROLLBAR_CLASS);
     } else {
-      node.classList.remove("minimap-hide-scrollbar");
+      node.classList.remove(MINIMAP_HIDE_SCROLLBAR_CLASS);
     }
-  }, [cellViewMode, minimap.enabled]);
+  }, [hideNativeScrollbar]);
 
   const v: (React.JSX.Element | null)[] = [];
   let index: number = 0;
@@ -1037,9 +1058,7 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
         <div
           key="cells"
           className={`smc-vfill${
-            cellViewMode === "studio" && minimap.enabled
-              ? " minimap-hide-scrollbar"
-              : ""
+            hideNativeScrollbar ? ` ${MINIMAP_HIDE_SCROLLBAR_CLASS}` : ""
           }`}
           style={{
             fontSize: `${font_size}px`,
@@ -1075,19 +1094,28 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
             />
           )}
       </div>
-      {cellViewMode === "studio"
-        ? minimap.enabled &&
-          frameHeight != null && (
+      {showStylizedMinimap
+        ? stylizedMinimapHeight != null && (
             <StudioMinimap
+              settingsApi={minimapApi}
               cellList={cell_list}
               cells={cells}
-              collapsedSections={collapsedSections}
+              collapsedSections={
+                cellViewMode === "studio" ? collapsedSections : EMPTY_SECTIONS
+              }
               scrollerRef={cellListDivRef}
-              cellHeights={studioCellHeightsRef}
-              // use the actual scroller height (the minimap's flex row), not
+              // Studio measures cells through Virtuoso (by index); the classic
+              // view has the lazy-render height cache (by id).
+              getMeasuredHeight={
+                cellViewMode === "studio"
+                  ? (_id, index) => studioCellHeightsRef.current[index]
+                  : (id) => lazyHeightsRef.current[id]
+              }
+              // the actual scroller height (the minimap's flex row), not
               // frameHeight, which includes the status bar above and would
               // make the minimap overflow the bottom of the frame
-              height={cellListResize.height ?? frameHeight}
+              height={stylizedMinimapHeight}
+              width={minimap.width}
               curId={cur_id}
               selIds={sel_ids}
             />

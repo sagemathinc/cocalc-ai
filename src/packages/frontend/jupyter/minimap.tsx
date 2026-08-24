@@ -4,6 +4,8 @@
  */
 
 /*
+The notebook "text" minimap: a tiny rendering of the actual notebook content.
+
 Design / algorithm overview:
 
 1. Build a compact "row model" from notebook cells. Each row tracks cell id, type,
@@ -15,15 +17,21 @@ Design / algorithm overview:
    - tiny syntax-highlighted text preview for input lines,
    - markers for current cell and output-heavy cells.
 4. Keep a separate viewport overlay synced to notebook scroll position.
-5. Clicking the minimap jumps to the corresponding cell (or proportional scroll position).
-6. Settings (enabled + width) are persisted in localStorage and synced through custom events.
+5. Clicking the minimap jumps to the corresponding cell; dragging the viewport
+   rectangle scrolls continuously and the wheel scrolls the notebook itself.
+6. Settings (enabled + width + kind) are persisted in localStorage and synced through
+   custom events.
+
+The canvas is taller than the rail for long notebooks, so it scrolls inside the rail;
+that inner scroller is `overflow: hidden` and only ever moved programmatically, so the
+minimap never grows a scrollbar of its own.  Geometry and pointer handling are shared
+with the CodeMirror minimap (components/minimap/text-rail).
 
 The minimap is intentionally read-only and lightweight: no cell mounts/unmounts, only one
 canvas repaint per data change.
 */
 
 import useResizeObserver from "use-resize-observer";
-import { InputNumber, Modal, Slider, Switch } from "antd";
 import * as immutable from "immutable";
 import {
   MutableRefObject,
@@ -34,19 +42,25 @@ import {
   useState,
 } from "react";
 import { React } from "@cocalc/frontend/app-framework";
-import { MinimapHideButton } from "@cocalc/frontend/components/minimap-hide-button";
+import { MinimapControls } from "@cocalc/frontend/components/minimap/controls";
 import { canvasBackingStoreSize } from "@cocalc/frontend/components/canvas-backing-store";
 import {
-  MINIMAP_MAX_WIDTH,
-  MINIMAP_MIN_WIDTH,
-  MINIMAP_OPEN_SETTINGS_EVENT,
-  MINIMAP_SETTINGS_CHANGED_EVENT,
-  MinimapSettings,
-  clampMinimapWidth,
-  readMinimapSettings,
-  setMinimapEnabled,
-  setMinimapWidth,
-} from "./minimap-settings";
+  MinimapContextMenu,
+  useMinimapSettingsModal,
+} from "@cocalc/frontend/components/minimap/settings-ui";
+import {
+  MINIMAP_HIDE_SCROLLBAR_CLASS,
+  MINIMAP_SCROLLBAR_ARIA,
+  computeTextMinimapGeometry,
+  useTextMinimapRail,
+  type TextMinimapGeometry,
+} from "@cocalc/frontend/components/minimap/text-rail";
+import { useMinimapSettings } from "@cocalc/frontend/components/minimap/settings";
+import type {
+  MinimapKind,
+  MinimapSettingsApi,
+} from "@cocalc/frontend/components/minimap/settings";
+import { NOTEBOOK_MINIMAP_LABELS } from "./minimap-settings";
 
 const MINIMAP_BASE_SCALE = 0.11;
 const MINIMAP_MIN_SCALE = 0.02;
@@ -60,7 +74,6 @@ const MINIMAP_TEXT_LEFT_PADDING_NARROW = 3;
 const MINIMAP_TEXT_RIGHT_PADDING_NARROW = 4;
 const MINIMAP_MAX_PREVIEW_LINES_PER_CELL = 180;
 const MINIMAP_MAX_DRAWN_LINES = 12_000;
-const MINIMAP_USER_SCROLL_SUPPRESS_MS = 900;
 
 const MINIMAP_CODE_TOKEN_RE =
   /(#.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b\d+(?:\.\d+)?\b)|(\b(?:and|as|assert|async|await|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield)\b)/g;
@@ -212,6 +225,8 @@ interface MinimapData {
 }
 
 interface UseNotebookMinimapArgs {
+  // preferences of the notebook view this minimap belongs to
+  settingsApi: MinimapSettingsApi;
   cellList: immutable.List<string>;
   cells: immutable.Map<string, any>;
   curId?: string;
@@ -227,6 +242,9 @@ interface UseNotebookMinimapArgs {
 
 interface UseNotebookMinimapResult {
   enabled: boolean;
+  kind: MinimapKind;
+  // width of the currently selected kind
+  width: number;
   layoutRef: MutableRefObject<any>;
   minimapNode: React.JSX.Element | null;
   settingsModal: React.JSX.Element;
@@ -256,100 +274,8 @@ function resolveNotebookScroller(base: HTMLElement | null): HTMLElement | null {
   return best ?? base;
 }
 
-let minimapSettingsModalOwner: symbol | null = null;
-// Shared listener registry: multiple notebook panes can mount minimaps, but
-// we keep exactly one browser listener per minimap event type.
-const minimapSettingsChangedCallbacks = new Set<() => void>();
-const minimapOpenSettingsCallbacks = new Set<() => void>();
-let minimapWindowListenersAttached = false;
-
-function claimMinimapSettingsModal(owner: symbol): boolean {
-  if (
-    minimapSettingsModalOwner == null ||
-    minimapSettingsModalOwner === owner
-  ) {
-    minimapSettingsModalOwner = owner;
-    return true;
-  }
-  return false;
-}
-
-function releaseMinimapSettingsModal(owner: symbol): void {
-  if (minimapSettingsModalOwner === owner) {
-    minimapSettingsModalOwner = null;
-  }
-}
-
-function emitMinimapCallbacks(callbacks: Set<() => void>): void {
-  for (const cb of Array.from(callbacks)) {
-    try {
-      cb();
-    } catch {
-      // avoid one broken subscriber preventing others from updating
-    }
-  }
-}
-
-function onWindowMinimapSettingsChanged(): void {
-  emitMinimapCallbacks(minimapSettingsChangedCallbacks);
-}
-
-function onWindowOpenMinimapSettings(): void {
-  emitMinimapCallbacks(minimapOpenSettingsCallbacks);
-}
-
-function attachMinimapWindowListeners(): void {
-  if (minimapWindowListenersAttached) return;
-  if (typeof window === "undefined") return;
-  window.addEventListener(
-    MINIMAP_SETTINGS_CHANGED_EVENT,
-    onWindowMinimapSettingsChanged,
-  );
-  window.addEventListener(
-    MINIMAP_OPEN_SETTINGS_EVENT,
-    onWindowOpenMinimapSettings,
-  );
-  minimapWindowListenersAttached = true;
-}
-
-function detachMinimapWindowListenersIfUnused(): void {
-  if (!minimapWindowListenersAttached) return;
-  if (
-    minimapSettingsChangedCallbacks.size > 0 ||
-    minimapOpenSettingsCallbacks.size > 0
-  ) {
-    return;
-  }
-  if (typeof window === "undefined") return;
-  window.removeEventListener(
-    MINIMAP_SETTINGS_CHANGED_EVENT,
-    onWindowMinimapSettingsChanged,
-  );
-  window.removeEventListener(
-    MINIMAP_OPEN_SETTINGS_EVENT,
-    onWindowOpenMinimapSettings,
-  );
-  minimapWindowListenersAttached = false;
-}
-
-function registerMinimapWindowCallbacks({
-  onSettingsChanged,
-  onOpenSettings,
-}: {
-  onSettingsChanged: () => void;
-  onOpenSettings: () => void;
-}): () => void {
-  minimapSettingsChangedCallbacks.add(onSettingsChanged);
-  minimapOpenSettingsCallbacks.add(onOpenSettings);
-  attachMinimapWindowListeners();
-  return () => {
-    minimapSettingsChangedCallbacks.delete(onSettingsChanged);
-    minimapOpenSettingsCallbacks.delete(onOpenSettings);
-    detachMinimapWindowListenersIfUnused();
-  };
-}
-
 export function useNotebookMinimap({
+  settingsApi,
   cellList,
   cells,
   curId,
@@ -362,71 +288,28 @@ export function useNotebookMinimap({
   hydrateVisibleCells,
   saveScrollDebounce,
 }: UseNotebookMinimapArgs): UseNotebookMinimapResult {
-  const [minimapSettings, setMinimapSettings] = useState<MinimapSettings>(() =>
-    readMinimapSettings(),
-  );
-  const minimapOptIn = minimapSettings.enabled;
-  const minimapWidth = minimapSettings.width;
-  const [showMinimapSettingsModal, setShowMinimapSettingsModal] =
-    useState<boolean>(false);
-  const [minimapDraftEnabled, setMinimapDraftEnabled] =
-    useState<boolean>(minimapOptIn);
-  const [minimapDraftWidth, setMinimapDraftWidth] =
-    useState<number>(minimapWidth);
-  const minimapModalOwnerRef = useRef<symbol>(
-    Symbol("jupyter-minimap-modal-owner"),
-  );
-
-  const closeMinimapSettingsModal = useCallback(() => {
-    releaseMinimapSettingsModal(minimapModalOwnerRef.current);
-    setShowMinimapSettingsModal(false);
-  }, []);
-
-  useEffect(() => {
-    const syncSettings = () => setMinimapSettings(readMinimapSettings());
-    syncSettings();
-    if (typeof window === "undefined") return;
-    const onSettingsChanged = () => syncSettings();
-    const onOpenSettings = () => {
-      if (!claimMinimapSettingsModal(minimapModalOwnerRef.current)) return;
-      const current = readMinimapSettings();
-      setMinimapDraftEnabled(current.enabled);
-      setMinimapDraftWidth(current.width);
-      setShowMinimapSettingsModal(true);
-    };
-    const unregister = registerMinimapWindowCallbacks({
-      onSettingsChanged,
-      onOpenSettings,
+  const settings = useMinimapSettings(settingsApi);
+  const minimapOptIn = settings.enabled;
+  const minimapWidth = settings.width;
+  const minimapKind = settings.kind;
+  const { modal: settingsModal, open: openSettingsModal } =
+    useMinimapSettingsModal({
+      api: settingsApi,
+      labels: NOTEBOOK_MINIMAP_LABELS,
     });
-    return () => {
-      unregister();
-      releaseMinimapSettingsModal(minimapModalOwnerRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (showMinimapSettingsModal) return;
-    setMinimapDraftEnabled(minimapOptIn);
-    setMinimapDraftWidth(minimapWidth);
-  }, [minimapOptIn, minimapWidth, showMinimapSettingsModal]);
-
-  const applyMinimapSettings = useCallback(() => {
-    setMinimapEnabled(minimapDraftEnabled);
-    setMinimapWidth(minimapDraftWidth);
-    closeMinimapSettingsModal();
-  }, [closeMinimapSettingsModal, minimapDraftEnabled, minimapDraftWidth]);
 
   const layoutRef = useRef<any>(null);
   const layoutResize = useResizeObserver({ ref: layoutRef });
 
   const minimapViewportRef = useRef<HTMLDivElement>(null);
   const minimapTrackRef = useRef<HTMLDivElement>(null);
-  const minimapRailRef = useRef<HTMLDivElement>(null);
+  const minimapRailRef = useRef<HTMLDivElement | null>(null);
   const minimapScrollRef = useRef<HTMLDivElement>(null);
   const minimapCanvasRef = useRef<HTMLCanvasElement>(null);
   const minimapViewportRafRef = useRef<number | null>(null);
-  const suppressMiniAutoUntilRef = useRef<number>(0);
-  const programmaticMiniScrollRef = useRef<boolean>(false);
+  // false while the whole notebook fits on screen: then the map is just an
+  // outline, with no viewport rectangle to drag
+  const [scrollable, setScrollable] = useState<boolean>(true);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -458,6 +341,7 @@ export function useNotebookMinimap({
         : (cellListWidth ?? 0) + minimapWidth + MINIMAP_HORIZONTAL_CHROME;
     const showMinimap =
       minimapOptIn &&
+      minimapKind === "text" &&
       viewportHeight >= MINIMAP_MIN_LAYOUT_HEIGHT &&
       layoutWidth >=
         minimapWidth +
@@ -593,7 +477,8 @@ export function useNotebookMinimap({
       1,
       Math.min(MINIMAP_MAX_TRACK_HEIGHT, scaledTotalContentHeight + 1),
     );
-    const railHeight = Math.max(180, viewportHeight - 16);
+    // never taller than the frame: a floor here would hang off the bottom
+    const railHeight = Math.max(24, viewportHeight - 16);
     const notebookContentHeight = rawTotalHeight;
     return { railHeight, totalContentHeight, notebookContentHeight, rows };
   }, [
@@ -608,6 +493,7 @@ export function useNotebookMinimap({
     lazyLayoutVersion,
     minimapWidth,
     minimapOptIn,
+    minimapKind,
     placeholderMinHeight,
   ]);
 
@@ -714,122 +600,72 @@ export function useNotebookMinimap({
     }
   }, [minimapData]);
 
-  const updateMinimapViewportNow = useCallback(() => {
-    if (minimapData == null) return;
+  const getGeometry = useCallback((): TextMinimapGeometry | null => {
+    if (minimapData == null) return null;
     const scroller = resolveNotebookScroller(
       cellListDivRef.current as HTMLElement | null,
     );
+    const rail = minimapRailRef.current;
+    const track = minimapTrackRef.current;
+    if (scroller == null || rail == null || track == null) return null;
+    return computeTextMinimapGeometry({
+      trackHeight: Math.max(
+        track.scrollHeight,
+        minimapData.totalContentHeight,
+        minimapData.railHeight,
+      ),
+      railHeight: Math.max(1, rail.clientHeight || minimapData.railHeight),
+      docContentHeight: Math.max(
+        1,
+        scroller.scrollHeight,
+        minimapData.notebookContentHeight,
+      ),
+      docClientHeight: scroller.clientHeight,
+      docScrollTop: scroller.scrollTop,
+    });
+  }, [cellListDivRef, minimapData]);
+
+  const updateMinimapViewportNow = useCallback(() => {
+    const geo = getGeometry();
     const viewport = minimapViewportRef.current;
     const rail = minimapRailRef.current;
     const miniScroll = minimapScrollRef.current;
-    const track = minimapTrackRef.current;
-    if (
-      scroller == null ||
-      viewport == null ||
-      rail == null ||
-      miniScroll == null ||
-      track == null
-    ) {
+    if (geo == null || viewport == null || rail == null || miniScroll == null) {
       return;
     }
 
-    const notebookContentHeight = Math.max(
-      1,
-      scroller.scrollHeight,
-      minimapData.notebookContentHeight,
-    );
-    const maxNotebookScroll = Math.max(
-      1,
-      notebookContentHeight - scroller.clientHeight,
-    );
-    const clampedNotebookScrollTop = Math.min(
-      Math.max(0, scroller.scrollTop),
-      maxNotebookScroll,
-    );
-    const notebookRatio = Math.min(
-      1,
-      Math.max(0, clampedNotebookScrollTop / maxNotebookScroll),
-    );
-
-    const contentHeight = Math.max(
-      track.scrollHeight,
-      minimapData.totalContentHeight,
-      minimapData.railHeight,
-    );
-    const maxMiniScroll = Math.max(0, contentHeight - minimapData.railHeight);
-    const miniScrollTop = notebookRatio * maxMiniScroll;
-    const now = Date.now();
-    const suppressMiniAuto = now < suppressMiniAutoUntilRef.current;
-    if (!suppressMiniAuto) {
-      if (Math.abs(miniScroll.scrollTop - miniScrollTop) > 0.5) {
-        programmaticMiniScrollRef.current = true;
-        miniScroll.scrollTop = miniScrollTop;
-        if (typeof window !== "undefined") {
-          window.requestAnimationFrame(() => {
-            programmaticMiniScrollRef.current = false;
-          });
-        } else {
-          programmaticMiniScrollRef.current = false;
-        }
-      }
+    // The track scrolls in lockstep with the notebook; nothing else ever
+    // moves it, so there is no user scroll to fight with here.
+    if (Math.abs(miniScroll.scrollTop - geo.miniScrollTop) > 0.5) {
+      miniScroll.scrollTop = geo.miniScrollTop;
     }
 
-    // Compute viewport size in track-space, then project it into the visible rail
-    // window. Using rail-height directly underestimates the thumb for long tracks.
-    const viewportHeightInTrack = Math.min(
-      contentHeight,
-      Math.max(
-        16,
-        (scroller.clientHeight / notebookContentHeight) * contentHeight,
-      ),
-    );
-    const viewportTravelInTrack = Math.max(
-      0,
-      contentHeight - viewportHeightInTrack,
-    );
-    const viewportTopInTrack = notebookRatio * viewportTravelInTrack;
+    setScrollable(geo.scrollable);
+    viewport.style.top = `${geo.thumbTop}px`;
+    viewport.style.height = `${geo.thumbHeight}px`;
+    rail.setAttribute("aria-valuenow", String(Math.round(geo.ratio * 100)));
 
-    const thumbHeight = Math.min(minimapData.railHeight, viewportHeightInTrack);
-    const thumbTopInRail = Math.min(
-      Math.max(0, viewportTopInTrack - miniScrollTop),
-      Math.max(0, minimapData.railHeight - thumbHeight),
-    );
-    viewport.style.top = `${thumbTopInRail}px`;
-    viewport.style.height = `${thumbHeight}px`;
-
-    rail.setAttribute(
-      "data-cocalc-jupyter-minimap-notebook-content-height",
-      String(notebookContentHeight),
-    );
     rail.setAttribute(
       "data-cocalc-jupyter-minimap-content-height",
-      String(contentHeight),
-    );
-    rail.setAttribute(
-      "data-cocalc-jupyter-minimap-notebook-client-height",
-      String(scroller.clientHeight),
-    );
-    rail.setAttribute(
-      "data-cocalc-jupyter-minimap-scroll-top",
-      String(clampedNotebookScrollTop),
+      String(geo.trackHeight),
     );
     rail.setAttribute(
       "data-cocalc-jupyter-minimap-scroll-ratio",
-      String(notebookRatio),
+      String(geo.ratio),
     );
     rail.setAttribute(
       "data-cocalc-jupyter-minimap-mini-scroll-top",
-      String(miniScrollTop),
+      String(geo.miniScrollTop),
     );
     rail.setAttribute(
       "data-cocalc-jupyter-minimap-thumb-top",
-      String(thumbTopInRail),
+      String(geo.thumbTop),
     );
     rail.setAttribute(
       "data-cocalc-jupyter-minimap-thumb-height",
-      String(thumbHeight),
+      String(geo.thumbHeight),
     );
-  }, [cellListDivRef, minimapData]);
+  }, [getGeometry]);
 
   const updateMinimapViewportNowRef = useRef(updateMinimapViewportNow);
   useEffect(() => {
@@ -838,7 +674,7 @@ export function useNotebookMinimap({
 
   const updateMinimapViewport = useCallback(() => {
     if (typeof window === "undefined") {
-      updateMinimapViewportNow();
+      updateMinimapViewportNowRef.current();
       return;
     }
     if (minimapViewportRafRef.current != null) return;
@@ -846,7 +682,7 @@ export function useNotebookMinimap({
       minimapViewportRafRef.current = null;
       updateMinimapViewportNowRef.current();
     });
-  }, [updateMinimapViewportNow]);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -859,7 +695,37 @@ export function useNotebookMinimap({
 
   useEffect(() => {
     updateMinimapViewport();
-  }, [updateMinimapViewport, cellListHeight, cellListWidth]);
+  }, [updateMinimapViewport, minimapData, cellListHeight, cellListWidth]);
+
+  const scrollNotebookTo = useCallback(
+    (top: number) => {
+      const scroller = resolveNotebookScroller(
+        cellListDivRef.current as HTMLElement | null,
+      );
+      if (scroller == null) return;
+      scroller.scrollTop = top;
+      hydrateVisibleCells();
+      updateMinimapViewport();
+      saveScrollDebounce();
+    },
+    [
+      cellListDivRef,
+      hydrateVisibleCells,
+      saveScrollDebounce,
+      updateMinimapViewport,
+    ],
+  );
+
+  const scrollNotebookBy = useCallback(
+    (delta: number) => {
+      const scroller = resolveNotebookScroller(
+        cellListDivRef.current as HTMLElement | null,
+      );
+      if (scroller == null) return;
+      scrollNotebookTo(scroller.scrollTop + delta);
+    },
+    [cellListDivRef, scrollNotebookTo],
+  );
 
   const scrollToCellById = useCallback(
     (id: string): boolean => {
@@ -875,227 +741,142 @@ export function useNotebookMinimap({
       const scrollerRect = scroller.getBoundingClientRect();
       const nodeRect = node.getBoundingClientRect();
       const nodeTop = nodeRect.top - scrollerRect.top + scroller.scrollTop;
-      scroller.scrollTop = Math.max(0, nodeTop - 24);
-      hydrateVisibleCells();
-      updateMinimapViewport();
-      saveScrollDebounce();
+      scrollNotebookTo(Math.max(0, nodeTop - 24));
       return true;
     },
-    [
-      cellListDivRef,
-      hydrateVisibleCells,
-      saveScrollDebounce,
-      updateMinimapViewport,
-    ],
+    [cellListDivRef, scrollNotebookTo],
   );
 
-  const onMinimapTrackMouseDown = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      suppressMiniAutoUntilRef.current = 0;
-      const scroller = resolveNotebookScroller(
-        cellListDivRef.current as HTMLElement | null,
-      );
-      const miniScroll = minimapScrollRef.current;
-      if (scroller == null || minimapData == null || miniScroll == null) return;
-      const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-      if (rect.height <= 0) return;
-      const y = Math.min(Math.max(0, e.clientY - rect.top), rect.height);
-      const notebookContentHeight = Math.max(
-        1,
-        scroller.scrollHeight,
-        minimapData.notebookContentHeight,
-      );
-      const maxNotebookScroll = Math.max(
-        1,
-        notebookContentHeight - scroller.clientHeight,
-      );
-      const miniScrollTop = miniScroll.scrollTop;
-      const yContent = Math.min(
-        minimapData.totalContentHeight,
-        Math.max(0, miniScrollTop + y),
-      );
+  // A plain click on the map jumps to the cell under the pointer; dragging
+  // from there falls back to smooth proportional scrolling.
+  const onTrackClick = useCallback(
+    (yInTrack: number): boolean => {
+      if (minimapData == null) return false;
       const row = minimapData.rows.find(
-        (r) => yContent >= r.top && yContent <= r.top + r.height,
+        (r) => yInTrack >= r.top && yInTrack <= r.top + r.height,
       );
-      const rowScrolled = row != null ? scrollToCellById(row.id) : false;
-      if (!rowScrolled) {
-        const targetRatio =
-          yContent / Math.max(1, minimapData.totalContentHeight);
-        scroller.scrollTop = targetRatio * maxNotebookScroll;
-        hydrateVisibleCells();
-        updateMinimapViewport();
-        saveScrollDebounce();
-      }
-      e.preventDefault();
+      return row != null ? scrollToCellById(row.id) : false;
     },
-    [
-      cellListDivRef,
-      hydrateVisibleCells,
-      minimapData,
-      saveScrollDebounce,
-      scrollToCellById,
-      updateMinimapViewport,
-    ],
+    [minimapData, scrollToCellById],
   );
 
-  useEffect(() => {
-    const miniScroll = minimapScrollRef.current;
-    if (miniScroll == null) return;
-    const markUserInteraction = () => {
-      suppressMiniAutoUntilRef.current =
-        Date.now() + MINIMAP_USER_SCROLL_SUPPRESS_MS;
-    };
-    const onMiniScroll = () => {
-      if (programmaticMiniScrollRef.current) return;
-      markUserInteraction();
-    };
-    miniScroll.addEventListener("scroll", onMiniScroll, { passive: true });
-    miniScroll.addEventListener("wheel", markUserInteraction, {
-      passive: true,
-    });
-    miniScroll.addEventListener("touchstart", markUserInteraction, {
-      passive: true,
-    });
-    miniScroll.addEventListener("pointerdown", markUserInteraction, {
-      passive: true,
-    });
-    return () => {
-      miniScroll.removeEventListener("scroll", onMiniScroll);
-      miniScroll.removeEventListener("wheel", markUserInteraction);
-      miniScroll.removeEventListener("touchstart", markUserInteraction);
-      miniScroll.removeEventListener("pointerdown", markUserInteraction);
-    };
-  }, [minimapData]);
+  const rail = useTextMinimapRail({
+    railRef: minimapRailRef,
+    getGeometry,
+    scrollDocTo: scrollNotebookTo,
+    scrollDocBy: scrollNotebookBy,
+    onTrackClick,
+    // The rail only exists once there is minimap data to draw.
+    attachKey: minimapData,
+  });
 
   const minimapNode =
-    minimapData == null ? null : (
-      <div
-        data-cocalc-jupyter-minimap-wrapper="1"
-        style={{
-          width: `${minimapWidth}px`,
-          flex: `0 0 ${minimapWidth}px`,
-          marginLeft: "8px",
-          marginRight: "6px",
-          display: "flex",
-          height: "100%",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
+    minimapData == null || minimapKind !== "text" ? null : (
+      <MinimapContextMenu
+        api={settingsApi}
+        labels={NOTEBOOK_MINIMAP_LABELS}
+        onOpenSettings={openSettingsModal}
+        style={{ alignItems: "center" }}
       >
         <div
-          ref={minimapRailRef}
-          data-cocalc-jupyter-minimap-rail="1"
-          onMouseDown={onMinimapTrackMouseDown}
+          data-cocalc-jupyter-minimap-wrapper="1"
           style={{
-            position: "relative",
-            width: "100%",
-            height: `${minimapData.railHeight}px`,
-            borderRadius: "4px",
-            background: "rgba(255,255,255,0.92)",
-            border: "1px solid rgba(148,163,184,0.68)",
-            cursor: "pointer",
-            overflow: "hidden",
+            width: `${minimapWidth}px`,
+            flex: `0 0 ${minimapWidth}px`,
+            marginLeft: "8px",
+            marginRight: "6px",
+            display: "flex",
+            height: "100%",
+            alignItems: "center",
+            justifyContent: "center",
           }}
         >
-          <MinimapHideButton onConfirm={() => setMinimapEnabled(false)} />
           <div
-            ref={minimapScrollRef}
-            data-cocalc-jupyter-minimap-scroll="1"
+            ref={minimapRailRef}
+            data-cocalc-jupyter-minimap-rail="1"
+            {...MINIMAP_SCROLLBAR_ARIA}
+            aria-label="Notebook minimap scrollbar"
+            onKeyDown={rail.onKeyDown}
+            onPointerDown={rail.onPointerDown}
+            onPointerMove={rail.onPointerMove}
+            onPointerUp={rail.onPointerUp}
+            onPointerCancel={rail.onPointerUp}
             style={{
-              position: "absolute",
-              inset: 0,
-              overflowY: "auto",
-              overflowX: "hidden",
+              position: "relative",
+              width: "100%",
+              height: `${minimapData.railHeight}px`,
+              borderRadius: "4px",
+              background: "rgba(255,255,255,0.92)",
+              border: "1px solid rgba(148,163,184,0.68)",
+              cursor: !scrollable
+                ? "default"
+                : rail.dragging
+                  ? "grabbing"
+                  : "grab",
+              overflow: "hidden",
+              touchAction: "none",
             }}
           >
+            <MinimapControls
+              api={settingsApi}
+              labels={NOTEBOOK_MINIMAP_LABELS}
+              onOpenSettings={openSettingsModal}
+            />
             <div
-              ref={minimapTrackRef}
-              data-cocalc-jupyter-minimap-track="1"
+              ref={minimapScrollRef}
+              data-cocalc-jupyter-minimap-scroll="1"
+              className={MINIMAP_HIDE_SCROLLBAR_CLASS}
               style={{
-                position: "relative",
-                height: `${minimapData.totalContentHeight}px`,
+                position: "absolute",
+                inset: 0,
+                // Scrolled programmatically only: `hidden` keeps scrollTop
+                // working while removing the second scrollbar.
+                overflow: "hidden",
               }}
             >
-              <canvas
-                ref={minimapCanvasRef}
+              <div
+                ref={minimapTrackRef}
+                data-cocalc-jupyter-minimap-track="1"
                 style={{
-                  display: "block",
-                  width: "100%",
+                  position: "relative",
                   height: `${minimapData.totalContentHeight}px`,
                 }}
-              />
+              >
+                <canvas
+                  ref={minimapCanvasRef}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    height: `${minimapData.totalContentHeight}px`,
+                  }}
+                />
+              </div>
             </div>
-          </div>
-          <div
-            ref={minimapViewportRef}
-            data-cocalc-jupyter-minimap-viewport="1"
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              top: 0,
-              height: "10px",
-              border: "1px solid rgba(37,99,235,0.75)",
-              background: "rgba(59,130,246,0.12)",
-              borderRadius: "3px",
-              pointerEvents: "none",
-            }}
-          />
-        </div>
-      </div>
-    );
-
-  const settingsModal = (
-    <Modal
-      title="Notebook Minimap"
-      open={showMinimapSettingsModal}
-      okText="Apply"
-      onOk={applyMinimapSettings}
-      onCancel={closeMinimapSettingsModal}
-    >
-      <div style={{ display: "grid", rowGap: "14px" }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <span>Show minimap</span>
-          <Switch
-            checked={minimapDraftEnabled}
-            onChange={(checked) => setMinimapDraftEnabled(checked)}
-          />
-        </div>
-        <div style={{ display: "grid", rowGap: "8px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span>Minimap width</span>
-            <InputNumber
-              min={MINIMAP_MIN_WIDTH}
-              max={MINIMAP_MAX_WIDTH}
-              value={minimapDraftWidth}
-              onChange={(value) => {
-                if (typeof value !== "number" || !Number.isFinite(value))
-                  return;
-                setMinimapDraftWidth(clampMinimapWidth(value));
+            <div
+              ref={minimapViewportRef}
+              data-cocalc-jupyter-minimap-viewport="1"
+              style={{
+                position: "absolute",
+                display: scrollable ? "block" : "none",
+                left: 0,
+                right: 0,
+                top: 0,
+                height: "10px",
+                border: "1px solid rgba(37,99,235,0.75)",
+                background: "rgba(59,130,246,0.12)",
+                borderRadius: "3px",
+                pointerEvents: "none",
               }}
             />
           </div>
-          <Slider
-            min={MINIMAP_MIN_WIDTH}
-            max={MINIMAP_MAX_WIDTH}
-            value={minimapDraftWidth}
-            onChange={(value) =>
-              setMinimapDraftWidth(clampMinimapWidth(Number(value)))
-            }
-          />
         </div>
-      </div>
-    </Modal>
-  );
+      </MinimapContextMenu>
+    );
 
   return {
     enabled: minimapOptIn,
+    kind: minimapKind,
+    width: minimapWidth,
     layoutRef,
     minimapNode,
     settingsModal,

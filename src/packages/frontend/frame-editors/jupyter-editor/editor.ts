@@ -13,6 +13,8 @@ import { createElement } from "react";
 
 import type { Command } from "@cocalc/frontend/frame-editors/frame-tree/commands";
 import { addEditorMenus } from "@cocalc/frontend/frame-editors/frame-tree/commands";
+import { minimapMenuChildren } from "@cocalc/frontend/frame-editors/frame-tree/commands/minimap-menu";
+import { minimapSettingsFor } from "@cocalc/frontend/jupyter/minimap-settings";
 import { FORMAT_SOURCE_ICON } from "@cocalc/frontend/frame-editors/frame-tree/config";
 import { labels, menu } from "@cocalc/frontend/i18n";
 import { editor, jupyter } from "@cocalc/frontend/i18n/common";
@@ -437,14 +439,15 @@ const JUPYTER_MENUS = {
           label: "Minimap",
           name: "minimap",
           icon: "bars",
-          children: [
-            "toggle minimap",
-            "show minimap",
-            "hide minimap",
-            "increase minimap width",
-            "decrease minimap width",
-            "minimap settings",
-          ],
+          // built per render, so the entries show the current preference of
+          // whichever notebook view this frame is
+          children: ({ intl, props }) =>
+            minimapMenuChildren({
+              api: minimapSettingsFor(
+                props.type === "jupyter_studio" ? "studio" : "default",
+              ),
+              intl,
+            }),
         },
       ],
     },

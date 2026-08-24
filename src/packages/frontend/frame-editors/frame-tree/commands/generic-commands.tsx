@@ -15,12 +15,8 @@ import { Icon } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { IS_MACOS } from "@cocalc/frontend/feature";
 import { FORMAT_SOURCE_ICON } from "@cocalc/frontend/frame-editors/frame-tree/config";
-import {
-  adjustCodeMirrorMinimapWidth,
-  openCodeMirrorMinimapSettingsDialog,
-  setCodeMirrorMinimapEnabled,
-  toggleCodeMirrorMinimapEnabled,
-} from "@cocalc/frontend/frame-editors/code-editor/minimap-settings";
+import { codeMirrorMinimapSettings } from "@cocalc/frontend/frame-editors/code-editor/minimap-settings";
+import { minimapMenuChildren } from "./minimap-menu";
 import {
   redo as chatRedo,
   undo as chatUndo,
@@ -327,66 +323,23 @@ addCommands({
     icon: "arrow-down",
     label: "Scroll to bottom",
   },
-  toggle_minimap: {
+  minimap: {
     group: "minimap",
     pos: 0,
     icon: "bars",
+    search: "minimap scrollbar overview map show hide width",
     label: defineMessage({
-      id: "command.generic.toggle_minimap.label",
-      defaultMessage: "Toggle Minimap",
+      id: "command.generic.minimap.label",
+      defaultMessage: "Minimap",
     }),
     title: defineMessage({
       id: "command.generic.toggle_minimap.title",
       defaultMessage: "Show or hide the code editor minimap.",
     }),
-    onClick: () => toggleCodeMirrorMinimapEnabled(),
-  },
-  show_minimap: {
-    group: "minimap",
-    pos: 1,
-    label: defineMessage({
-      id: "command.generic.show_minimap.label",
-      defaultMessage: "Show Minimap",
-    }),
-    onClick: () => setCodeMirrorMinimapEnabled(true),
-  },
-  hide_minimap: {
-    group: "minimap",
-    pos: 2,
-    label: defineMessage({
-      id: "command.generic.hide_minimap.label",
-      defaultMessage: "Hide Minimap",
-    }),
-    onClick: () => setCodeMirrorMinimapEnabled(false),
-  },
-  increase_minimap_width: {
-    group: "minimap",
-    pos: 3,
-    stayOpenOnClick: true,
-    label: defineMessage({
-      id: "command.generic.increase_minimap_width.label",
-      defaultMessage: "Increase Minimap Width",
-    }),
-    onClick: () => adjustCodeMirrorMinimapWidth(12),
-  },
-  decrease_minimap_width: {
-    group: "minimap",
-    pos: 4,
-    stayOpenOnClick: true,
-    label: defineMessage({
-      id: "command.generic.decrease_minimap_width.label",
-      defaultMessage: "Decrease Minimap Width",
-    }),
-    onClick: () => adjustCodeMirrorMinimapWidth(-12),
-  },
-  minimap_settings: {
-    group: "minimap",
-    pos: 5,
-    label: defineMessage({
-      id: "command.generic.minimap_settings.label",
-      defaultMessage: "Minimap Settings...",
-    }),
-    onClick: () => openCodeMirrorMinimapSettingsDialog(),
+    onClick: () => {},
+    // built per render, so the entries show the current preference
+    children: ({ intl }) =>
+      minimapMenuChildren({ api: codeMirrorMinimapSettings, intl }),
   },
   undo: {
     disabled: ({ readOnly }) => readOnly,

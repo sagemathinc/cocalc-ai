@@ -47,6 +47,7 @@ import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
 import { copy, field_cmp, path_split, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
+import { useMinimapSettingsRevision } from "@cocalc/frontend/components/minimap/settings";
 import { is_safari } from "../generic/browser";
 import AgentTitleBarButton from "../ai/agent-title-bar-button";
 import {
@@ -250,6 +251,10 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
   ]);
   const rtc_status: "loading" | "live" | "error" | "reconnecting" | undefined =
     useRedux([props.editor_actions.name, "rtc_status"]);
+
+  // Minimap preferences live in localStorage, not redux, so the Minimap menu
+  // needs an explicit nudge to re-render with the current state.
+  useMinimapSettingsRevision();
 
   const manageCommands = useMemo(
     () =>

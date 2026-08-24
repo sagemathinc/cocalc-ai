@@ -15,6 +15,7 @@
 @import "./profile.css";
 @import "./account.css";
 @import "./jupyter/jupyter.css";
+@import "./minimap.css";
 @import "./frame-editors/style.css";
 @import "./notifications/style.css";
 @import "./admin/style.css";

@@ -1,0 +1,35 @@
+/* Shared minimap styles: used by the notebook, studio and CodeMirror minimaps. */
+
+/* Scrollers whose scrollbar the minimap replaces (the document itself), and
+   the minimap's own inner track, which is only ever scrolled programmatically. */
+.minimap-hide-scrollbar {
+  scrollbar-width: none;
+}
+.minimap-hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Blink the bar of the actively running notebook cell. */
+@keyframes minimap-blink {
+  0% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.4;
+  }
+}
+
+.minimap-cell-running {
+  animation: minimap-blink 1s ease-in-out infinite;
+}
+
+/* The stylized minimap maps the whole document, so it fully replaces the
+   editor's own vertical scrollbar.  The text minimap only shows a window onto
+   a longer track, so there the native scrollbar stays. */
+.minimap-no-vscrollbar .CodeMirror-vscrollbar,
+.minimap-no-vscrollbar .CodeMirror-scrollbar-filler {
+  display: none !important;
+}
