@@ -1098,6 +1098,7 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
         ? stylizedMinimapHeight != null && (
             <StudioMinimap
               settingsApi={minimapApi}
+              onOpenSettings={minimap.openSettings}
               cellList={cell_list}
               cells={cells}
               collapsedSections={

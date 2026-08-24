@@ -68,6 +68,7 @@ const MAIN_COLORS = {
   BLUE_LLL: "#c7d9f5",
   BLUE_LLLL: "#e6f4ff",
   BLUE_DOC: "#4375c1", // the blue used in the documentation
+  BLUE_CURRENT: "#42a5f5", // current cell/line highlight in notebooks and minimaps
   BRWN: "#593E05",
   YELL_D: "#bf7b00",
   YELL_L: "#fbb635",

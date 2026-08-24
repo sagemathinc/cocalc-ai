@@ -22,7 +22,7 @@ CodeMirror-specific is left in here.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
-import { COLORS } from "@cocalc/util/theme";
+import { MINIMAP_COLORS } from "./colors";
 import { MINIMAP_SCROLLBAR_ARIA, scrollDeltaForKey } from "./text-rail";
 
 export const BLOCK_MINIMAP_DEFAULT_WIDTH = 40;
@@ -514,9 +514,9 @@ export const BlockMinimap: React.FC<BlockMinimapProps> = React.memo(
               left: 0,
               right: 0,
               height: vpHeight,
-              border: `1.5px solid ${COLORS.GRAY_M}`,
+              border: `1.5px solid ${MINIMAP_COLORS.stylizedViewportBorder}`,
               borderRadius: "2px",
-              backgroundColor: "rgba(0,0,0,0.04)",
+              backgroundColor: MINIMAP_COLORS.stylizedViewportFill,
               pointerEvents: "none",
             }}
           />

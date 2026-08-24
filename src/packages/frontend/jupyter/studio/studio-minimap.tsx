@@ -16,7 +16,7 @@ import type { List, Map, Set as ImmutableSet } from "immutable";
 import React, { MutableRefObject, useMemo, useRef } from "react";
 
 import { hash_string } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { MINIMAP_COLORS } from "@cocalc/frontend/components/minimap/colors";
 import { MinimapControls } from "@cocalc/frontend/components/minimap/controls";
 import { MinimapContextMenu } from "@cocalc/frontend/components/minimap/settings-ui";
 import { NOTEBOOK_MINIMAP_LABELS } from "../minimap-settings";
@@ -29,8 +29,6 @@ import {
 import type { MinimapSettingsApi } from "@cocalc/frontend/components/minimap/settings";
 
 export const JUPYTER_MINIMAP_CELL_ATTRIBUTE = "data-jupyter-lazy-cell-id";
-
-const CURRENT_COLOR = "#42a5f5"; // blue — matches gutter
 
 export type CellStatus =
   | "running"
@@ -71,13 +69,13 @@ export function getCellStatus(
 }
 
 const STATUS_COLORS: Record<CellStatus, string> = {
-  running: "#5cb85c",
-  queued: "#2e7d32",
-  error: COLORS.ANTD_RED,
-  stale: COLORS.GRAY_L, // kept for type completeness
-  dirty: COLORS.GRAY_L, // edited since last run / unexecuted — darker
-  idle: COLORS.GRAY_L0, // clean (executed, unchanged) — lighter, same as markdown
-  markdown: COLORS.GRAY_L0,
+  running: MINIMAP_COLORS.running,
+  queued: MINIMAP_COLORS.queued,
+  error: MINIMAP_COLORS.error,
+  stale: MINIMAP_COLORS.block, // kept for type completeness
+  dirty: MINIMAP_COLORS.block, // edited since last run / unexecuted — darker
+  idle: MINIMAP_COLORS.blockQuiet, // clean (executed, unchanged) — lighter
+  markdown: MINIMAP_COLORS.blockQuiet,
 };
 
 // Estimate for cells that were never rendered/measured: the lazy-render
@@ -201,7 +199,7 @@ export function minimapBlocksFromEntries(
       return {
         id,
         pixelHeight: entry.pixelHeight,
-        color: CURRENT_COLOR,
+        color: MINIMAP_COLORS.current,
         opacity: isCurrent ? 0.8 : 0.5,
       };
     }
@@ -218,6 +216,8 @@ export function minimapBlocksFromEntries(
 interface StudioMinimapProps {
   // preferences of the notebook view this minimap belongs to
   settingsApi: MinimapSettingsApi;
+  // opens the settings dialog owned by this pane
+  onOpenSettings?: () => void;
   cellList: List<string>;
   cells: Map<string, any>;
   collapsedSections: Set<string>;
@@ -237,6 +237,7 @@ interface StudioMinimapProps {
 export const StudioMinimap: React.FC<StudioMinimapProps> = React.memo(
   ({
     settingsApi,
+    onOpenSettings,
     cellList,
     cells,
     collapsedSections,
@@ -321,6 +322,7 @@ export const StudioMinimap: React.FC<StudioMinimapProps> = React.memo(
       <MinimapContextMenu
         api={settingsApi}
         labels={NOTEBOOK_MINIMAP_LABELS}
+        onOpenSettings={onOpenSettings}
         style={{ alignItems: "flex-start" }}
       >
         <BlockMinimap
@@ -331,7 +333,11 @@ export const StudioMinimap: React.FC<StudioMinimapProps> = React.memo(
           label="Notebook minimap scrollbar"
           resubscribeKey={scrollerRef.current}
         >
-          <MinimapControls api={settingsApi} labels={NOTEBOOK_MINIMAP_LABELS} />
+          <MinimapControls
+            api={settingsApi}
+            labels={NOTEBOOK_MINIMAP_LABELS}
+            onOpenSettings={onOpenSettings}
+          />
         </BlockMinimap>
       </MinimapContextMenu>
     );

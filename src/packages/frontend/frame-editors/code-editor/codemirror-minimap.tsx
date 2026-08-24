@@ -32,8 +32,11 @@ import React, {
 } from "react";
 import { throttle } from "lodash";
 
-import { COLORS } from "@cocalc/util/theme";
 import { canvasBackingStoreSize } from "@cocalc/frontend/components/canvas-backing-store";
+import {
+  MINIMAP_COLORS,
+  MINIMAP_SYNTAX,
+} from "@cocalc/frontend/components/minimap/colors";
 import { MinimapControls } from "@cocalc/frontend/components/minimap/controls";
 import {
   BlockMinimap,
@@ -108,7 +111,7 @@ function drawCodeMirrorMinimapTextLine(
 ): void {
   const line = text.slice(0, maxChars);
   if (line.length === 0) return;
-  ctx.fillStyle = "rgba(15,23,42,0.9)";
+  ctx.fillStyle = MINIMAP_SYNTAX.text;
   ctx.fillText(line, x, y);
 
   CODEMIRROR_MINIMAP_TOKEN_RE.lastIndex = 0;
@@ -116,13 +119,13 @@ function drawCodeMirrorMinimapTextLine(
   while (match != null) {
     let color = "";
     if (match[1] || match[2]) {
-      color = "rgba(21,128,61,0.96)";
+      color = MINIMAP_SYNTAX.comment;
     } else if (match[3]) {
-      color = "rgba(180,83,9,0.96)";
+      color = MINIMAP_SYNTAX.string;
     } else if (match[4]) {
-      color = "rgba(37,99,235,0.96)";
+      color = MINIMAP_SYNTAX.number;
     } else if (match[5]) {
-      color = "rgba(79,70,229,0.96)";
+      color = MINIMAP_SYNTAX.keyword;
     }
     if (color.length > 0) {
       const index = match.index ?? 0;
@@ -230,7 +233,7 @@ const CodeMirrorTextMinimap: React.FC<{
     if (ctx == null) return;
     ctx.setTransform(backingStore.scaleX, 0, 0, backingStore.scaleY, 0, 0);
     ctx.clearRect(0, 0, cssWidth, cssHeight);
-    ctx.fillStyle = "rgba(248,250,252,0.96)";
+    ctx.fillStyle = MINIMAP_COLORS.canvasBackground;
     ctx.fillRect(0, 0, cssWidth, cssHeight);
 
     ctx.font = `${metrics.fontSize}px Menlo, Monaco, "Courier New", monospace`;
@@ -303,7 +306,7 @@ const CodeMirrorTextMinimap: React.FC<{
       ((currentLineBottomPx - currentLineTopPx) / editorContentHeight) *
         cssHeight,
     );
-    ctx.fillStyle = "rgba(59,130,246,0.28)";
+    ctx.fillStyle = MINIMAP_COLORS.canvasCurrentLine;
     ctx.fillRect(0, currentY, cssWidth, currentH);
   }, [cm]);
 
@@ -464,8 +467,8 @@ const CodeMirrorTextMinimap: React.FC<{
           position: "relative",
           width: "100%",
           borderRadius: "4px",
-          background: "rgba(255,255,255,0.92)",
-          border: "1px solid rgba(148,163,184,0.68)",
+          background: MINIMAP_COLORS.railBackground,
+          border: `1px solid ${MINIMAP_COLORS.railBorder}`,
           cursor: !scrollable ? "default" : rail.dragging ? "grabbing" : "grab",
           overflow: "hidden",
           touchAction: "none",
@@ -506,8 +509,8 @@ const CodeMirrorTextMinimap: React.FC<{
             right: 0,
             top: 0,
             height: "10px",
-            border: "1px solid rgba(37,99,235,0.75)",
-            background: "rgba(59,130,246,0.12)",
+            border: `1px solid ${MINIMAP_COLORS.viewportBorder}`,
+            background: MINIMAP_COLORS.viewportFill,
             borderRadius: "3px",
             pointerEvents: "none",
           }}
@@ -520,9 +523,6 @@ const CodeMirrorTextMinimap: React.FC<{
 // --------------------------------------------------------------------------
 // "blocks" rendering
 // --------------------------------------------------------------------------
-
-const BLOCK_COLOR = COLORS.GRAY_L;
-const BLOCK_CURRENT_COLOR = "#42a5f5"; // blue — matches the notebook minimap
 
 /** Top and height of a block, in CodeMirror "local" document coordinates. */
 function blockRect(
@@ -671,7 +671,7 @@ const CodeMirrorBlockMinimap: React.FC<{
     return blocks.map((block, i) => ({
       id: block.id,
       pixelHeight: blockRect(cm, block).height,
-      color: i === currentIdx ? BLOCK_CURRENT_COLOR : BLOCK_COLOR,
+      color: i === currentIdx ? MINIMAP_COLORS.current : MINIMAP_COLORS.block,
       opacity: i === currentIdx ? 0.8 : 0.7,
     }));
   }, [blocks, cm, cursorLine]);
@@ -730,6 +730,15 @@ export const CodeMirrorMinimap: React.FC<CodeMirrorMinimapProps> = React.memo(
       wrapper.classList.toggle(MINIMAP_NO_VSCROLLBAR_CLASS, stylized);
       return () => wrapper.classList.remove(MINIMAP_NO_VSCROLLBAR_CLASS);
     }, [cm, stylized]);
+
+    // Switching style or stepping the width resizes CodeMirror's flex sibling
+    // without going through the frame's `resize` prop, so CodeMirror would keep
+    // stale wrapping and viewport measurements until some unrelated resize.
+    useEffect(() => {
+      if (typeof window === "undefined") return;
+      const raf = window.requestAnimationFrame(() => cm.refresh());
+      return () => window.cancelAnimationFrame(raf);
+    }, [cm, settings.enabled, settings.kind, settings.width]);
 
     if (!settings.enabled) return modal;
 

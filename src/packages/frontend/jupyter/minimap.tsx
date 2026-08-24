@@ -42,8 +42,14 @@ import {
   useState,
 } from "react";
 import { React } from "@cocalc/frontend/app-framework";
+import type { MinimapCellTheme } from "@cocalc/frontend/components/minimap/colors";
 import { MinimapControls } from "@cocalc/frontend/components/minimap/controls";
 import { canvasBackingStoreSize } from "@cocalc/frontend/components/canvas-backing-store";
+import {
+  MINIMAP_CELL_THEME,
+  MINIMAP_COLORS,
+  type MinimapCellKind,
+} from "@cocalc/frontend/components/minimap/colors";
 import {
   MinimapContextMenu,
   useMinimapSettingsModal,
@@ -77,52 +83,6 @@ const MINIMAP_MAX_DRAWN_LINES = 12_000;
 
 const MINIMAP_CODE_TOKEN_RE =
   /(#.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b\d+(?:\.\d+)?\b)|(\b(?:and|as|assert|async|await|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield)\b)/g;
-
-type MinimapCellKind = "code" | "markdown" | "raw" | "unknown";
-
-type MinimapTheme = {
-  cellBackground: string;
-  textColor: string;
-  keywordColor: string;
-  numberColor: string;
-  stringColor: string;
-  commentColor: string;
-};
-
-const MINIMAP_THEME: Record<MinimapCellKind, MinimapTheme> = {
-  code: {
-    cellBackground: "rgba(226,232,240,0.78)",
-    textColor: "rgba(15,23,42,0.92)",
-    keywordColor: "rgba(79,70,229,0.96)",
-    numberColor: "rgba(37,99,235,0.96)",
-    stringColor: "rgba(180,83,9,0.96)",
-    commentColor: "rgba(21,128,61,0.96)",
-  },
-  markdown: {
-    cellBackground: "rgba(220,252,231,0.82)",
-    textColor: "rgba(17,24,39,0.9)",
-    keywordColor: "rgba(5,150,105,0.96)",
-    numberColor: "rgba(4,120,87,0.96)",
-    stringColor: "rgba(180,83,9,0.96)",
-    commentColor: "rgba(21,128,61,0.96)",
-  },
-  raw: {
-    cellBackground: "rgba(243,232,255,0.82)",
-    textColor: "rgba(30,27,75,0.92)",
-    keywordColor: "rgba(109,40,217,0.96)",
-    numberColor: "rgba(124,58,237,0.96)",
-    stringColor: "rgba(180,83,9,0.96)",
-    commentColor: "rgba(126,34,206,0.9)",
-  },
-  unknown: {
-    cellBackground: "rgba(241,245,249,0.82)",
-    textColor: "rgba(30,41,59,0.9)",
-    keywordColor: "rgba(71,85,105,0.92)",
-    numberColor: "rgba(71,85,105,0.92)",
-    stringColor: "rgba(71,85,105,0.92)",
-    commentColor: "rgba(71,85,105,0.92)",
-  },
-};
 
 function getMinimapCellKind(cellType: string | undefined): MinimapCellKind {
   if (cellType === "code" || cellType === "markdown" || cellType === "raw") {
@@ -182,7 +142,7 @@ function drawMinimapTextLine(
   y: number,
   charWidth: number,
   maxChars: number,
-  theme: MinimapTheme,
+  theme: MinimapCellTheme,
 ): void {
   const line = text.slice(0, maxChars);
   if (line.length === 0) return;
@@ -242,6 +202,9 @@ interface UseNotebookMinimapArgs {
 
 interface UseNotebookMinimapResult {
   enabled: boolean;
+  // opens this pane's settings dialog, rather than whichever pane happens to
+  // claim the shared "open settings" window event first
+  openSettings: () => void;
   kind: MinimapKind;
   // width of the currently selected kind
   width: number;
@@ -538,7 +501,7 @@ export function useNotebookMinimap({
     const metrics = getMinimapTextMetrics(cssWidth);
     ctx.setTransform(backingStore.scaleX, 0, 0, backingStore.scaleY, 0, 0);
     ctx.clearRect(0, 0, cssWidth, cssHeight);
-    ctx.fillStyle = "rgba(248,250,252,0.96)";
+    ctx.fillStyle = MINIMAP_COLORS.canvasBackground;
     ctx.fillRect(0, 0, cssWidth, cssHeight);
 
     ctx.font = `${metrics.fontSize}px Menlo, Monaco, "Courier New", monospace`;
@@ -554,19 +517,19 @@ export function useNotebookMinimap({
 
     let drawnLines = 0;
     for (const row of minimapData.rows) {
-      const theme = MINIMAP_THEME[row.kind];
+      const theme = MINIMAP_CELL_THEME[row.kind];
       ctx.fillStyle = row.isCurrent
-        ? "rgba(59,130,246,0.22)"
+        ? MINIMAP_COLORS.canvasCurrentRow
         : theme.cellBackground;
       ctx.fillRect(0, row.top, cssWidth, row.height);
 
       if (row.hasOutput) {
-        ctx.fillStyle = "rgba(245,158,11,0.8)";
+        ctx.fillStyle = MINIMAP_COLORS.canvasOutputMarker;
         ctx.fillRect(cssWidth - 2, row.top, 2, row.height);
       }
 
       if (row.isCurrent) {
-        ctx.strokeStyle = "rgba(37,99,235,0.8)";
+        ctx.strokeStyle = MINIMAP_COLORS.canvasCurrentRowStroke;
         ctx.lineWidth = 0.9;
         ctx.strokeRect(
           0.5,
@@ -806,8 +769,8 @@ export function useNotebookMinimap({
               width: "100%",
               height: `${minimapData.railHeight}px`,
               borderRadius: "4px",
-              background: "rgba(255,255,255,0.92)",
-              border: "1px solid rgba(148,163,184,0.68)",
+              background: MINIMAP_COLORS.railBackground,
+              border: `1px solid ${MINIMAP_COLORS.railBorder}`,
               cursor: !scrollable
                 ? "default"
                 : rail.dragging
@@ -862,8 +825,8 @@ export function useNotebookMinimap({
                 right: 0,
                 top: 0,
                 height: "10px",
-                border: "1px solid rgba(37,99,235,0.75)",
-                background: "rgba(59,130,246,0.12)",
+                border: `1px solid ${MINIMAP_COLORS.viewportBorder}`,
+                background: MINIMAP_COLORS.viewportFill,
                 borderRadius: "3px",
                 pointerEvents: "none",
               }}
@@ -875,6 +838,7 @@ export function useNotebookMinimap({
 
   return {
     enabled: minimapOptIn,
+    openSettings: openSettingsModal,
     kind: minimapKind,
     width: minimapWidth,
     layoutRef,
