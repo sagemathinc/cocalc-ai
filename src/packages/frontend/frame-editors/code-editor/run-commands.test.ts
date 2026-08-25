@@ -61,6 +61,21 @@ describe("buildRunCommand", () => {
     );
   });
 
+  it("maps the canonical Launchpad home to the terminal's HOME", () => {
+    expect(buildRunCommand("/home/user/script123.py")).toBe(
+      `cd -- "$HOME" && python3 'script123.py'`,
+    );
+    expect(buildRunCommand("/home/user/my dir/script123.py")).toBe(
+      `cd -- "$HOME"/'my dir' && python3 'script123.py'`,
+    );
+  });
+
+  it("maps the legacy project runtime home to the terminal's HOME", () => {
+    expect(buildRunCommand("/root/work/script123.py")).toBe(
+      `cd -- "$HOME"/'work' && python3 'script123.py'`,
+    );
+  });
+
   it("omits the cd for the display form", () => {
     expect(buildRunCommand("a/b/c.py", { cd: false })).toBe("python3 'c.py'");
   });

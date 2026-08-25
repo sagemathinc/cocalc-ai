@@ -14,6 +14,7 @@ with it).
 */
 
 import { filename_extension, path_split } from "@cocalc/util/misc";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 
 // Maps file extensions to run commands.  Keys are lowercase, since the lookup
 // falls back to the lowercased extension; the one exception is "C", which is
@@ -76,6 +77,16 @@ function fileArg(file: string): string {
 // path), so a relative "cd dir" would look for "dir/dir".  A terminal we reuse
 // can be anywhere at all, which is why we always cd, even for a file in HOME.
 function cdTarget(dir: string): string {
+  // Launchpad exposes project files under the canonical /home/user (and older
+  // sessions may use /root), but a local project terminal can have a different
+  // concrete HOME. Map those runtime-home aliases back through $HOME so the
+  // command runs in the terminal's actual filesystem.
+  const runtimeHomeRelative = projectRuntimeHomeRelativePath(dir);
+  if (runtimeHomeRelative != null) {
+    return runtimeHomeRelative
+      ? `"$HOME"/${shellEscape(runtimeHomeRelative)}`
+      : `"$HOME"`;
+  }
   if (dir.startsWith("/")) {
     // absolute path -- rare, but then HOME is not the right anchor
     return shellEscape(dir);
