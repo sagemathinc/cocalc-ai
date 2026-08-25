@@ -77,6 +77,28 @@ describe("minimap settings dialog", () => {
     expect(width).toHaveValue("88");
   });
 
+  it("persists a width edit for each style, not only the active one", () => {
+    render(<Harness />);
+    const open = () => fireEvent.click(screen.getByRole("button", { name: "open" }));
+    const width = () =>
+      screen.getByRole("spinbutton", { name: /minimap width/i });
+
+    open();
+    // Text is the active style; edit it, then switch and edit Stylized too.
+    fireEvent.change(width(), { target: { value: "200" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Stylized" }));
+    fireEvent.change(width(), { target: { value: "88" } });
+    fireEvent.click(screen.getByRole("button", { name: /apply/i }));
+
+    expect(api.read().widths).toEqual({ text: 200, stylized: 88 });
+
+    // reopening shows both saved values again
+    open();
+    expect(width()).toHaveValue("88"); // Stylized is now the active style
+    fireEvent.click(screen.getByRole("radio", { name: "Text" }));
+    expect(width()).toHaveValue("200");
+  });
+
   it("only persists on Apply", () => {
     openModal();
     fireEvent.click(screen.getByRole("switch", { name: /show minimap/i }));

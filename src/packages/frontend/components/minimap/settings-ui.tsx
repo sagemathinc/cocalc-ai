@@ -36,7 +36,7 @@ import type {
   MinimapSettings,
   MinimapSettingsApi,
 } from "./settings";
-import { useMinimapSettings } from "./settings";
+import { MINIMAP_KINDS, useMinimapSettings } from "./settings";
 
 // Only one settings modal at a time, even when several editor panes each
 // mount a minimap that listens for the same "open settings" event.
@@ -119,8 +119,11 @@ export function useMinimapSettingsModal({
 
   const apply = () => {
     api.setEnabled(draft.enabled);
-    // widths are per kind, so write the one the draft is editing
-    api.setWidth(draft.width, draft.kind);
+    // The dialog lets you edit either style's width before applying — it keeps
+    // both in `draft.widths` — so write both, not just the active one.
+    for (const kind of MINIMAP_KINDS) {
+      api.setWidth(draft.widths[kind], kind);
+    }
     api.setKind(draft.kind);
     close();
   };
