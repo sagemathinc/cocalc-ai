@@ -508,6 +508,7 @@ export const BlockMinimap: React.FC<BlockMinimapProps> = React.memo(
         {/* Viewport rectangle: only when there is something to scroll */}
         {scrollable && (
           <div
+            data-cocalc-minimap-viewport="1"
             style={{
               position: "absolute",
               top: vpTop,
