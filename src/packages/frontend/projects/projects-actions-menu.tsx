@@ -3,49 +3,73 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Suspense, useState } from "react";
+import { Suspense, useCallback, useState, type ComponentType } from "react";
 
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import { CocalcErrorBoundary } from "@cocalc/frontend/app/error-boundary";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { Icon } from "@cocalc/frontend/components";
 
-import type { ProjectActionsMenuProps } from "./projects-actions-menu-content";
+import { ProjectActionsTrigger } from "./project-actions-trigger";
+import type {
+  ProjectActionsMenuContentProps,
+  ProjectActionsMenuProps,
+} from "./projects-actions-menu-content";
 
-const ProjectActionsMenuContent = lazyWithRetry<ProjectActionsMenuProps>(
-  async () => {
+let contentPromise:
+  | Promise<{ default: ComponentType<ProjectActionsMenuContentProps> }>
+  | undefined;
+
+function loadProjectActionsMenuContent() {
+  contentPromise ??= (async () => {
     const [, content] = await Promise.all([
       ensureProjectReduxRuntime(),
       import("./projects-actions-menu-content"),
     ]);
     return { default: content.ProjectActionsMenuContent };
-  },
+  })().catch((error) => {
+    contentPromise = undefined;
+    throw error;
+  });
+  return contentPromise;
+}
+
+const ProjectActionsMenuContent = lazyWithRetry<ProjectActionsMenuContentProps>(
+  loadProjectActionsMenuContent,
   "project actions menu",
 );
 
 export function ProjectActionsMenu(props: ProjectActionsMenuProps) {
   const [hydrated, setHydrated] = useState(false);
+  const [restoreFocus, setRestoreFocus] = useState(false);
+
+  const focusTrigger = useCallback(
+    (trigger: HTMLButtonElement | null) => {
+      if (trigger != null && restoreFocus) {
+        trigger.focus();
+      }
+    },
+    [restoreFocus],
+  );
+
+  function preload() {
+    void loadProjectActionsMenuContent().catch(() => {
+      // lazyWithRetry presents the loading error if activation also fails.
+    });
+  }
 
   if (!hydrated) {
     return (
-      <div
+      <ProjectActionsTrigger
+        aria-expanded={false}
+        aria-haspopup="menu"
+        onFocus={preload}
         onClick={(event) => {
           event.stopPropagation();
+          setRestoreFocus(true);
           setHydrated(true);
         }}
-        style={{ cursor: "pointer" }}
-      >
-        {/* Deliberately not focusable: this placeholder unmounts as soon as it
-            is activated, so a keyboard user would be left with focus on
-            <body>.  Hydrating on focus is not an option either, since the
-            hydrated content mounts with the menu already open, and merely
-            tabbing past the control would pop it open.  The hydrated
-            trigger in projects-actions-menu-content.tsx is keyboard
-            operable. */}
-        <span style={{ fontSize: "18px", padding: "4px 8px" }}>
-          <Icon name="ellipsis-vertical" />
-        </span>
-      </div>
+      />
     );
   }
 
@@ -55,8 +79,22 @@ export function ProjectActionsMenu(props: ProjectActionsMenuProps) {
       resetKeys={[props.record.project_id]}
       scope="projects.actions-menu"
     >
-      <Suspense fallback={<Icon name="spinner" spin />}>
-        <ProjectActionsMenuContent {...props} />
+      <Suspense
+        fallback={
+          <ProjectActionsTrigger
+            ref={focusTrigger}
+            aria-busy="true"
+            aria-expanded={false}
+            aria-haspopup="menu"
+            icon={<Icon name="spinner" spin />}
+          />
+        }
+      >
+        <ProjectActionsMenuContent
+          {...props}
+          defaultOpen
+          restoreFocus={restoreFocus}
+        />
       </Suspense>
     </CocalcErrorBoundary>
   );

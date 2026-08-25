@@ -15,8 +15,8 @@
 
 import type { ProjectTableRecord } from "./projects-table-columns";
 
-import { Dropdown, MenuProps, Modal } from "antd";
-import { useEffect, useState } from "react";
+import { Dropdown, type MenuProps, Modal } from "antd";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 
 import {
@@ -48,6 +48,7 @@ import { ArchiveProjectModal } from "./archive-project-modal";
 import { HardDeleteProjectModal } from "./hard-delete-project-modal";
 import { publicShareCountFromProjectLabels } from "./public-share-labels";
 import { confirmRemoveMyselfFromProject } from "./remove-myself";
+import { ProjectActionsTrigger } from "./project-actions-trigger";
 
 const FILES_SUBMENU_LIST_STYLE: CSS = {
   maxWidth: "80vw",
@@ -63,11 +64,19 @@ export interface ProjectActionsMenuProps {
   onToggleDetails: () => void;
 }
 
+export interface ProjectActionsMenuContentProps extends ProjectActionsMenuProps {
+  defaultOpen?: boolean;
+  restoreFocus?: boolean;
+}
+
 export function ProjectActionsMenuContent({
   record,
   onToggleDetails,
-}: ProjectActionsMenuProps) {
-  const [open, setOpen] = useState(true);
+  defaultOpen = false,
+  restoreFocus = false,
+}: ProjectActionsMenuContentProps) {
+  const [open, setOpen] = useState(defaultOpen);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [moveOpen, setMoveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -93,9 +102,13 @@ export function ProjectActionsMenuContent({
     "project_log",
   );
 
-  // Initialize project_log when menu opens if not already loaded.  This
-  // component mounts with the menu already open (lazy hydration), so the
-  // first open happens on mount rather than via onOpenChange.
+  useLayoutEffect(() => {
+    if (restoreFocus) {
+      triggerRef.current?.focus();
+    }
+  }, [restoreFocus]);
+
+  // Initialize project_log when the menu opens if it is not already loaded.
   useEffect(() => {
     if (open && project_log == null) {
       redux.getProjectActions(record.project_id)?.refresh_project_log();
@@ -445,20 +458,7 @@ export function ProjectActionsMenuContent({
         open={open}
         onOpenChange={handleOpenChange}
       >
-        <span
-          role="button"
-          tabIndex={0}
-          aria-label="Project actions"
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              event.currentTarget.click();
-            }
-          }}
-          style={{ fontSize: "18px", padding: "4px 8px" }}
-        >
-          <Icon name="ellipsis-vertical" />
-        </span>
+        <ProjectActionsTrigger ref={triggerRef} aria-expanded={open} />
       </Dropdown>
       <HardDeleteProjectModal
         open={deleteOpen}

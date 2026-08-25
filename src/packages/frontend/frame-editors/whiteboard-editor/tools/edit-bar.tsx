@@ -2,7 +2,7 @@
 Editing bar for editing one (or more) selected elements.
 */
 
-import { Button, Dropdown, InputNumber, Select, Space } from "antd";
+import { Button, InputNumber, Select, Space } from "antd";
 import { CSSProperties, ReactNode, useMemo, useState } from "react";
 const { Option } = Select;
 
@@ -32,6 +32,7 @@ import HideButton, { isHidden } from "./hide-button";
 import LockButton, { isLocked } from "./lock-button";
 import { PANEL_STYLE } from "./panel";
 import { BrushPreview } from "./pen";
+import { MoreElementActionsDropdown } from "./more-element-actions-dropdown";
 
 interface Props {
   elements: Element[]; // selected ones
@@ -518,28 +519,7 @@ function OtherOperations(opts) {
   }
 
   return (
-    <Dropdown menu={{ items: menuItems }} trigger={["click"]}>
-      <span
-        role="button"
-        tabIndex={0}
-        aria-label="More element actions"
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            event.currentTarget.click();
-          }
-        }}
-      >
-        <Icon
-          name="ellipsis-vertical"
-          style={{
-            padding: "12px 10px 0",
-            borderLeft: "1px solid #ccc",
-            cursor: "pointer",
-          }}
-        />
-      </span>
-    </Dropdown>
+    <MoreElementActionsDropdown buttonStyle={BUTTON_STYLE} items={menuItems} />
   );
 }
 
