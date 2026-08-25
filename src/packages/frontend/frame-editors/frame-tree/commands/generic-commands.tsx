@@ -331,10 +331,14 @@ addCommands({
     label: defineMessage({
       id: "command.generic.minimap.label",
       defaultMessage: "Minimap",
+      description:
+        'Label of the Minimap submenu in the editor\'s View menu. The minimap is the narrow overview of the whole document shown beside the editor; use the same word for "minimap" in every minimap string.',
     }),
     title: defineMessage({
       id: "command.generic.toggle_minimap.title",
       defaultMessage: "Show or hide the code editor minimap.",
+      description:
+        'Tooltip of the Minimap submenu in the editor\'s View menu. The minimap is the narrow overview of the whole document shown beside the editor; use the same word for "minimap" in every minimap string.',
     }),
     onClick: () => {},
     // built per render, so the entries show the current preference

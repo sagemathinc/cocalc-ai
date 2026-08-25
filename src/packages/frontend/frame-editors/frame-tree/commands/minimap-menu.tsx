@@ -42,6 +42,8 @@ export function minimapMenuChildren({
         {
           id: "command.generic.minimap.toggle.label",
           defaultMessage: "{show, select, true {Hide} other {Show}} Minimap",
+          description:
+            'Menu entry that shows or hides the minimap; it reads "Hide" while the minimap is visible. The minimap is the narrow overview of the whole document shown beside the editor; use the same word for "minimap" in every minimap string.',
         },
         { show: settings.enabled },
       ),
@@ -53,6 +55,8 @@ export function minimapMenuChildren({
       label: intl.formatMessage({
         id: "command.generic.minimap.text.label",
         defaultMessage: "Text",
+        description:
+          'Name of the minimap style that renders the document\'s actual characters, as opposed to "Stylized". The minimap is the narrow overview of the whole document shown beside the editor; use the same word for "minimap" in every minimap string.',
       }),
       onClick: () => api.setKind("text"),
     },
@@ -62,6 +66,8 @@ export function minimapMenuChildren({
       label: intl.formatMessage({
         id: "command.generic.minimap.stylized.label",
         defaultMessage: "Stylized",
+        description:
+          'Name of the minimap style that draws an outline of the document\'s blocks instead of its text, as opposed to "Text". The minimap is the narrow overview of the whole document shown beside the editor; use the same word for "minimap" in every minimap string.',
       }),
       onClick: () => api.setKind("stylized"),
     },
@@ -73,6 +79,8 @@ export function minimapMenuChildren({
         {
           id: "command.generic.minimap.wider.label",
           defaultMessage: "Wider ({width}px)",
+          description:
+            'Menu entry making the minimap wider by one step; {width} is its current width in pixels. The minimap is the narrow overview of the whole document shown beside the editor; use the same word for "minimap" in every minimap string.',
         },
         { width: settings.width },
       ),
@@ -86,6 +94,8 @@ export function minimapMenuChildren({
         {
           id: "command.generic.minimap.narrower.label",
           defaultMessage: "Narrower ({width}px)",
+          description:
+            'Menu entry making the minimap narrower by one step; {width} is its current width in pixels. The minimap is the narrow overview of the whole document shown beside the editor; use the same word for "minimap" in every minimap string.',
         },
         { width: settings.width },
       ),
@@ -96,6 +106,8 @@ export function minimapMenuChildren({
       label: intl.formatMessage({
         id: "command.generic.minimap.settings.label",
         defaultMessage: "Minimap Settings...",
+        description:
+          'Menu entry opening the minimap settings dialog. The minimap is the narrow overview of the whole document shown beside the editor; use the same word for "minimap" in every minimap string.',
       }),
       onClick: () => api.openSettingsDialog(),
     },

@@ -69,11 +69,27 @@ amended, and the German came back the same as before, still mixing du- and
 Sie-form. The likely cause is translation memory reusing the earlier result
 for an identical source string, so the model is never asked again.
 
-So delete-and-retranslate is the right move when the **English source
-changed**, but is not a way to re-roll a translation you simply dislike. To
-change an existing translation, edit it in the SimpleLocalize UI and download,
-or change the English wording as well. Amending the AI Context only affects
-strings the model is genuinely asked to translate.
+**But a changed `description` does re-roll it** (observed 2026-08-25). Eight
+`command.generic.minimap.*` keys were deleted and re-uploaded with unchanged
+English but a newly added description, and 45 of 144 language/string pairs came
+back different. So the description is part of what the model sees, and editing
+it is the lever for fixing a translation from the source code; only amending
+the AI Context alone is not.
+
+Two things to expect when you use it:
+
+- It re-rolls **every** language for that key, so strings that were already
+  fine can change too. Diff the `i18n/trans/*.json` before committing.
+- Naming the term in the description does fix cross-string inconsistency —
+  German went from "Minikarte" in the submenu title to "Minimap" everywhere,
+  matching the rest of the menu — but it does not guarantee grammar. A noun
+  stranded outside an ICU select, as in `{show, select, true {Hide} other
+{Show}} Minimap`, came back in the nominative in Russian where the verb
+  needs the accusative. If a message has that shape, say in the description
+  that the trailing noun is the object of the verb.
+
+To change a single translation without touching the source, edit it in the
+SimpleLocalize UI and download.
 
 ### Unused keys
 
