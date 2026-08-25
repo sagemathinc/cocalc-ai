@@ -31,4 +31,34 @@ describe("project file paths", () => {
       }),
     ).toBe("/home/user/notes/todo.txt");
   });
+
+  it("maps canonical runtime-home paths into the workspace home on Unix", () => {
+    const options = {
+      home: "/home/hsy/p/cocalc-ai-data/projects/497cefe7",
+      platform: "linux" as const,
+      runtimeHome: "/home/user",
+    };
+    expect(projectFilePath("/home/user/latex/tex.pdf", options)).toBe(
+      "/home/hsy/p/cocalc-ai-data/projects/497cefe7/latex/tex.pdf",
+    );
+    expect(projectFilePath("/home/user", options)).toBe(
+      "/home/hsy/p/cocalc-ai-data/projects/497cefe7",
+    );
+    expect(projectFilePath("/tmp/scratch.txt", options)).toBe(
+      "/tmp/scratch.txt",
+    );
+    expect(projectFilePath("latex/tex.pdf", options)).toBe(
+      "/home/hsy/p/cocalc-ai-data/projects/497cefe7/latex/tex.pdf",
+    );
+  });
+
+  it("passes absolute Unix paths through when no runtime home is set", () => {
+    expect(
+      projectFilePath("/home/user/latex/tex.pdf", {
+        home: "/home/user",
+        platform: "linux",
+        runtimeHome: undefined,
+      }),
+    ).toBe("/home/user/latex/tex.pdf");
+  });
 });

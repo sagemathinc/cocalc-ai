@@ -11,6 +11,9 @@ const mockResolveAuthenticatedAccountId = jest.fn();
 const mockIsPublicAppSubdomainRequest = jest.fn();
 const mockGetProjectHostRedirectUrl = jest.fn();
 const mockSetProjectHostProxyAccountId = jest.fn();
+const mockHandleFileDownload = jest.fn();
+const mockConat = jest.fn();
+const mockIsWorkspaceProjectRuntime = jest.fn();
 
 jest.mock("./version", () => ({
   versionCheckFails: (...args) => mockVersionCheckFails(...args),
@@ -44,6 +47,19 @@ jest.mock("./project-host", () => ({
     mockSetProjectHostProxyAccountId(...args),
 }));
 
+jest.mock("@cocalc/conat/files/file-download", () => ({
+  handleFileDownload: (...args) => mockHandleFileDownload(...args),
+}));
+
+jest.mock("@cocalc/backend/conat", () => ({
+  conat: (...args) => mockConat(...args),
+}));
+
+jest.mock("@cocalc/server/launchpad/project-runtime", () => ({
+  isWorkspaceProjectRuntime: (...args) =>
+    mockIsWorkspaceProjectRuntime(...args),
+}));
+
 describe("hub proxy file downloads", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -65,6 +81,81 @@ describe("hub proxy file downloads", () => {
     mockIsPublicAppSubdomainRequest.mockReset().mockReturnValue(false);
     mockGetProjectHostRedirectUrl.mockReset();
     mockSetProjectHostProxyAccountId.mockReset();
+    mockHandleFileDownload.mockReset().mockResolvedValue(undefined);
+    mockConat.mockReset().mockReturnValue({ id: "workspace-client" });
+    mockIsWorkspaceProjectRuntime.mockReset().mockReturnValue(false);
+  });
+
+  it.each(["GET", "HEAD"])(
+    "streams authenticated workspace file %s requests through Conat",
+    async (method) => {
+      mockIsWorkspaceProjectRuntime.mockReturnValue(true);
+      const workspaceClient = { id: "workspace-client" };
+      mockConat.mockReturnValue(workspaceClient);
+
+      const init = (await import("./handle-request")).default;
+      const proxyHandlers = { handleRequest: jest.fn() };
+      const handler = init({
+        isPersonal: false,
+        projectProxyHandlersPromise: Promise.resolve(proxyHandlers),
+      });
+
+      const req: any = {
+        url: "/457f20dd-59d1-45c4-b5b1-a245d0e0a629/files/home/user/latex/tex.pdf?param=1",
+        method,
+        headers: { cookie: "remember_me=secret" },
+      };
+      const res: any = {
+        statusCode: undefined,
+        setHeader: jest.fn(),
+        end: jest.fn(),
+      };
+
+      await handler(req, res);
+
+      expect(mockHasAccess).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: "457f20dd-59d1-45c4-b5b1-a245d0e0a629",
+          type: "read",
+        }),
+      );
+      expect(mockHandleFileDownload).toHaveBeenCalledWith({
+        req,
+        res,
+        url: "/457f20dd-59d1-45c4-b5b1-a245d0e0a629/files/home/user/latex/tex.pdf?param=1",
+        client: workspaceClient,
+      });
+      expect(mockGetProjectHostRedirectUrl).not.toHaveBeenCalled();
+      expect(proxyHandlers.handleRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  it("checks workspace file access before opening the Conat stream", async () => {
+    mockIsWorkspaceProjectRuntime.mockReturnValue(true);
+    mockHasAccess.mockResolvedValue(false);
+
+    const init = (await import("./handle-request")).default;
+    const proxyHandlers = { handleRequest: jest.fn() };
+    const handler = init({
+      isPersonal: false,
+      projectProxyHandlersPromise: Promise.resolve(proxyHandlers),
+    });
+    const req: any = {
+      url: "/457f20dd-59d1-45c4-b5b1-a245d0e0a629/files/home/user/private.pdf",
+      method: "GET",
+      headers: { cookie: "remember_me=secret" },
+    };
+    const res: any = {
+      writeHead: jest.fn(),
+      end: jest.fn(),
+    };
+
+    await handler(req, res);
+
+    expect(mockHasAccess).toHaveBeenCalled();
+    expect(mockHandleFileDownload).not.toHaveBeenCalled();
+    expect(mockGetProjectHostRedirectUrl).not.toHaveBeenCalled();
+    expect(proxyHandlers.handleRequest).not.toHaveBeenCalled();
   });
 
   it("redirects authenticated file downloads to the project-host", async () => {

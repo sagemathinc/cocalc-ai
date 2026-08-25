@@ -14,6 +14,9 @@ import {
   getProjectHostRedirectUrl,
   setProjectHostProxyAccountId,
 } from "./project-host";
+import { handleFileDownload } from "@cocalc/conat/files/file-download";
+import { conat } from "@cocalc/backend/conat";
+import { isWorkspaceProjectRuntime } from "@cocalc/server/launchpad/project-runtime";
 
 const logger = getLogger("proxy:handle-request");
 const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
@@ -29,6 +32,13 @@ export default function init({
   isPersonal,
   projectProxyHandlersPromise,
 }: Options) {
+  // Workspace projects deliberately have no project-host assignment.  Keep
+  // one direct client for their local project file-read services instead of
+  // sending file requests through the host-based HTTP proxy.
+  const workspaceFileDownloadClient = isWorkspaceProjectRuntime()
+    ? conat()
+    : undefined;
+
   function isPublicAppTokenBypassRequest(req): boolean {
     try {
       const url = stripBasePath(`${req.url ?? "/"}`);
@@ -113,6 +123,21 @@ export default function init({
       ) {
         throw Error(`user does not have ${route.access} access to project`);
       }
+    }
+
+    if (
+      !allowAnonymousProxyBypass &&
+      workspaceFileDownloadClient != null &&
+      type === "files" &&
+      /^(GET|HEAD)$/i.test(req.method ?? "GET")
+    ) {
+      await handleFileDownload({
+        req,
+        res,
+        url,
+        client: workspaceFileDownloadClient,
+      });
+      return;
     }
 
     if (

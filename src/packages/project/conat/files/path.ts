@@ -5,18 +5,30 @@
 
 import path from "node:path";
 
+import { projectRuntimePathForProcess } from "@cocalc/util/project-runtime";
+
 export function projectFilePath(
   requestedPath: string,
   {
     home = process.env.HOME,
     platform = process.platform,
-  }: { home?: string; platform?: NodeJS.Platform } = {},
+    runtimeHome = process.env.COCALC_RUNTIME_HOME,
+  }: { home?: string; platform?: NodeJS.Platform; runtimeHome?: string } = {},
 ): string {
   if (!home) return requestedPath;
   if (platform !== "win32") {
-    return path.isAbsolute(requestedPath)
-      ? requestedPath
-      : path.join(home, requestedPath);
+    if (path.isAbsolute(requestedPath)) {
+      // Workspace runtimes advertise a canonical home such as /home/user,
+      // while the project process uses the real workspace directory as HOME.
+      // Preserve unrelated absolute paths for VM and external runtimes.
+      return (
+        projectRuntimePathForProcess(requestedPath, {
+          COCALC_RUNTIME_HOME: runtimeHome,
+          HOME: home,
+        }) ?? requestedPath
+      );
+    }
+    return path.join(home, requestedPath);
   }
 
   if (
