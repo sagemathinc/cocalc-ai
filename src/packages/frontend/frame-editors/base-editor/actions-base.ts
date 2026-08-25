@@ -31,6 +31,7 @@ const FAST_OPEN_SYNCSTRING_STATUS = "Loading live collaboration...";
 const FAST_OPEN_HANDOFF_DIFF_STATUS =
   "Updated to the latest live collaboration state.";
 const ANCHOR_CHAT_READY_TIMEOUT_MS = 8000;
+const RUN_CODE_TERMINAL = "run_code_terminal";
 
 type ProgrammaticLineNavigation = {
   line: number;
@@ -240,7 +241,7 @@ import {
 import { DEFAULT_TERM_ENV } from "../code-editor/const";
 import * as cm_doc_cache from "../code-editor/doc";
 import { SHELLS } from "../code-editor/editor";
-import { buildRunCommand, CLEAR_LINE } from "../code-editor/run-commands";
+import { buildRunCommand } from "../code-editor/run-commands";
 import { test_line } from "../code-editor/simulate_typing";
 import { misspelled_words } from "../code-editor/spell-check";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -3993,12 +3994,13 @@ export class BaseEditorActions<
     }
 
     let terminalId = this.getRunTerminalId();
+    const reusedRunTerminal = terminalId != null;
     if (terminalId == null) {
       terminalId = this.split_frame(
         "col",
         id,
         "terminal",
-        undefined,
+        { [RUN_CODE_TERMINAL]: true },
         undefined,
         keepFocus, // no_focus
       );
@@ -4021,7 +4023,15 @@ export class BaseEditorActions<
 
     const terminal = await this.waitForTerminal(terminalId);
     if (terminal == null) return;
-    terminal.conn_write(`${CLEAR_LINE}${cmd}\n`);
+    if (reusedRunTerminal) {
+      // This terminal belongs exclusively to Run. Restarting it gives reruns
+      // deterministic semantics: stop the previous program (whether it is at
+      // a prompt or reading stdin), start a fresh shell, then run the new
+      // command. Ordinary user terminals are never selected or touched.
+      await terminal.kill();
+      if (this.isClosed() || docActions.isClosed()) return;
+    }
+    terminal.conn_write(`${cmd}\n`);
 
     if (keepFocus && id != null && this._get_active_id() == id) {
       // a terminal frame that just mounted can take the keyboard; give it back
@@ -4029,15 +4039,15 @@ export class BaseEditorActions<
     }
   }
 
-  // The terminal frame to run a file in.  Only a plain shell will do: writing
-  // "python3 foo.py" into the Python REPL that the Shell command creates
-  // would just be a syntax error.
+  // The terminal frame to run a file in. It must have been created and marked
+  // by Run itself: an ordinary terminal may contain half-typed input or a
+  // program reading stdin, and must never be cleared, killed, or written to.
   private getRunTerminalId(): string | undefined {
     return this._get_most_recent_active_frame_id((node) => {
       if (node.get("type").slice(0, 8) != "terminal") {
         return false;
       }
-      return !node.get("command");
+      return node.get(RUN_CODE_TERMINAL) === true && !node.get("command");
     });
   }
 

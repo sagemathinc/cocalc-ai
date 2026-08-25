@@ -44,11 +44,6 @@ export const RUN_COMMANDS: { [ext: string]: string } = {
   rs: "rustc {file} -o ./{name} && ./{name}",
 } as const;
 
-// Ctrl-E (move to end of line) followed by Ctrl-U (kill to start of line)
-// clears whatever the user has half-typed at the prompt, so our command is
-// not appended to it.
-export const CLEAR_LINE = "\x05\x15";
-
 export function runCommandTemplate(path: string): string | undefined {
   const ext = filename_extension(path);
   // Exact case first, so ".C" gets g++ rather than the "c" entry's gcc, then

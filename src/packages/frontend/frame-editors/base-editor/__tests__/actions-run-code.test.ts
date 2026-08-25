@@ -20,7 +20,7 @@ beforeEach(() => {
 });
 
 function terminalMock() {
-  return { conn_write: jest.fn() };
+  return { kill: jest.fn(async () => {}), conn_write: jest.fn() };
 }
 
 function runTarget(overrides: any = {}) {
@@ -41,7 +41,7 @@ function runTarget(overrides: any = {}) {
 }
 
 describe("BaseEditorActions.run_code", () => {
-  it("saves the file, then sends the run command to the terminal", async () => {
+  it("saves, restarts the owned terminal, then sends the run command", async () => {
     const terminal = terminalMock();
     const target: any = runTarget({
       waitForTerminal: jest.fn(async () => terminal),
@@ -50,9 +50,12 @@ describe("BaseEditorActions.run_code", () => {
     await BaseEditorActions.prototype.run_code.call(target, "cm-1");
 
     expect(target.save).toHaveBeenCalledWith(true);
-    // \x05\x15 = Ctrl-E Ctrl-U, i.e. clear whatever is at the prompt.
     expect(terminal.conn_write).toHaveBeenCalledWith(
-      "\x05\x15cd -- \"$HOME\"/'dir' && python3 'a.py'\n",
+      "cd -- \"$HOME\"/'dir' && python3 'a.py'\n",
+    );
+    expect(terminal.kill).toHaveBeenCalledTimes(1);
+    expect(terminal.kill.mock.invocationCallOrder[0]).toBeLessThan(
+      terminal.conn_write.mock.invocationCallOrder[0],
     );
   });
 
@@ -83,7 +86,7 @@ describe("BaseEditorActions.run_code", () => {
       "col",
       "cm-1",
       "terminal",
-      undefined,
+      { run_code_terminal: true },
       undefined,
       true,
     );
@@ -93,13 +96,59 @@ describe("BaseEditorActions.run_code", () => {
     expect(target.focus).toHaveBeenCalledWith("cm-1");
   });
 
-  it("reuses an existing terminal instead of splitting a new frame", async () => {
+  it("reuses and restarts an existing Run-owned terminal", async () => {
+    const terminal = terminalMock();
     const target: any = runTarget({
-      waitForTerminal: jest.fn(async () => terminalMock()),
+      waitForTerminal: jest.fn(async () => terminal),
     });
 
     await BaseEditorActions.prototype.run_code.call(target, "cm-1");
 
+    expect(target.split_frame).not.toHaveBeenCalled();
+    expect(terminal.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves unrelated typed and running terminals completely untouched", async () => {
+    // The action cannot inspect whether an ordinary terminal is sitting at a
+    // half-typed prompt or has a program reading stdin, so both must be
+    // excluded by ownership before we obtain a Terminal object to mutate.
+    const typedTerminal = terminalMock();
+    const runningTerminal = terminalMock();
+    const runTerminal = terminalMock();
+    const nodes = {
+      "term-typed": fromJS({ type: "terminal" }),
+      "term-running": fromJS({ type: "terminal" }),
+      "term-run": fromJS({ type: "terminal", run_code_terminal: true }),
+    };
+    const terminals = {
+      "term-typed": typedTerminal,
+      "term-running": runningTerminal,
+      "term-run": runTerminal,
+    };
+    const target: any = runTarget({
+      _get_most_recent_active_frame_id: (accept: Function) => {
+        for (const [terminalId, node] of Object.entries(nodes)) {
+          if (accept(node)) return terminalId;
+        }
+        return undefined;
+      },
+      waitForTerminal: jest.fn(
+        async (terminalId: keyof typeof terminals) => terminals[terminalId],
+      ),
+    });
+    target.getRunTerminalId = () =>
+      (BaseEditorActions as any).prototype.getRunTerminalId.call(target);
+
+    await BaseEditorActions.prototype.run_code.call(target, "cm-1");
+
+    expect(typedTerminal.kill).not.toHaveBeenCalled();
+    expect(typedTerminal.conn_write).not.toHaveBeenCalled();
+    expect(runningTerminal.kill).not.toHaveBeenCalled();
+    expect(runningTerminal.conn_write).not.toHaveBeenCalled();
+    expect(runTerminal.kill).toHaveBeenCalledTimes(1);
+    expect(runTerminal.conn_write).toHaveBeenCalledWith(
+      "cd -- \"$HOME\"/'dir' && python3 'a.py'\n",
+    );
     expect(target.split_frame).not.toHaveBeenCalled();
   });
 
@@ -116,11 +165,12 @@ describe("BaseEditorActions.run_code", () => {
       "col",
       "cm-1",
       "terminal",
-      undefined,
+      { run_code_terminal: true },
       undefined,
       undefined,
     );
     expect(target.waitForTerminal).toHaveBeenCalledWith("term-new");
+    expect(terminal.kill).not.toHaveBeenCalled();
     expect(terminal.conn_write).toHaveBeenCalled();
   });
 
@@ -148,7 +198,7 @@ describe("BaseEditorActions.run_code", () => {
     expect(documentActions.save).toHaveBeenCalledWith(true);
     expect(target.save).not.toHaveBeenCalled();
     expect(terminal.conn_write).toHaveBeenCalledWith(
-      "\x05\x15cd -- \"$HOME\"/'sub' && python3 'inner.py'\n",
+      "cd -- \"$HOME\"/'sub' && python3 'inner.py'\n",
     );
     // ... but the frames belong to the outer frame tree.
     expect(target.set_active_id).toHaveBeenCalledWith("term-1");
@@ -245,29 +295,34 @@ describe("BaseEditorActions.getRunTerminalId", () => {
     return (BaseEditorActions as any).prototype.getRunTerminalId.call(target);
   }
 
-  it("skips REPL terminals created by the Shell command", () => {
-    // "python3 foo.py" typed into a python REPL is just a syntax error, so a
-    // terminal with a command set must never be picked.
+  it("selects only a plain terminal explicitly owned by Run", () => {
     expect(
       idOf({
         "term-repl": fromJS({ type: "terminal", command: "python3" }),
         "term-plain": fromJS({ type: "terminal" }),
+        "term-run": fromJS({ type: "terminal", run_code_terminal: true }),
       }),
-    ).toBe("term-plain");
+    ).toBe("term-run");
   });
 
-  it("ignores frames that are not terminals", () => {
+  it("ignores ordinary terminal frames and non-terminals", () => {
     expect(
       idOf({
         "cm-1": fromJS({ type: "cm" }),
         "term-plain": fromJS({ type: "terminal" }),
       }),
-    ).toBe("term-plain");
+    ).toBe(undefined);
   });
 
-  it("is undefined when only REPL terminals are open", () => {
+  it("ignores an owned frame that was converted to a REPL", () => {
     expect(
-      idOf({ "term-repl": fromJS({ type: "terminal", command: "sage" }) }),
+      idOf({
+        "term-repl": fromJS({
+          type: "terminal",
+          command: "sage",
+          run_code_terminal: true,
+        }),
+      }),
     ).toBe(undefined);
   });
 });
