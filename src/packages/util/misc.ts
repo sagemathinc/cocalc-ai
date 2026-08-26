@@ -160,6 +160,15 @@ export function change_filename_extension(
   return `${name}.${new_ext}`;
 }
 
+// Check if a filename can be used for a LaTeX build. Returns true if it contains:
+// - Two or more consecutive spaces: TeX collapses them when it resolves the
+//   filename, so it looks for a file that does not exist (see cocalc#3230).
+// - A single quote: build commands are assembled as single-quoted bash strings,
+//   which a quote in the name breaks out of.
+export function is_bad_latex_filename(path: string): boolean {
+  return /\s\s+|'/.test(path);
+}
+
 // Takes parts to a path and intelligently merges them on '/'.
 // Continuous non-'/' portions of each part will have at most
 // one '/' on either side.

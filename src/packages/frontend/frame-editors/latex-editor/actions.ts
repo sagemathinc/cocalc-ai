@@ -61,6 +61,7 @@ import { project_api } from "@cocalc/frontend/frame-editors/generic/client";
 import {
   change_filename_extension,
   hash_string,
+  is_bad_latex_filename,
   path_split,
   separate_file_extension,
   sha1,
@@ -323,10 +324,9 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   private init_bad_filename(): void {
-    // #3230 two or more spaces
     // note: if there are additional reasons why a filename is bad, add it to the
     // alert msg in run_build.
-    this.bad_filename = /\s\s+/.test(this.path);
+    this.bad_filename = is_bad_latex_filename(this.path);
   }
 
   private init_ext_filename(): void {
@@ -754,7 +754,7 @@ export class Actions extends BaseActions<LatexEditorState> {
     if (this.bad_filename) {
       this.set_error(
         `ERROR: It is not possible to compile this LaTeX file with the name '${this.path}'.\n` +
-          "Please modify the filename so it does not contain two or more consecutive spaces.",
+          "Please modify the filename so it does not contain two or more consecutive spaces or a single quote (').",
       );
       return;
     }

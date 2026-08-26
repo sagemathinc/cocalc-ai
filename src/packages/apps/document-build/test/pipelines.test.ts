@@ -208,6 +208,21 @@ describe("LaTeX-family pipelines", () => {
     expect(result.state).toBe("succeeded");
   });
 
+  it.each([
+    ["two  spaces.tex", "consecutive spaces"],
+    ["author's-notes.tex", "a single quote"],
+  ])("refuses to build %s", async (path) => {
+    const runtime = new FakeRuntime();
+    runtime.files.set(path, "\\documentclass{article}");
+    const result = await runDocumentBuild({ path }, runtime);
+    expect(runtime.specs).toHaveLength(0);
+    expect(result.state).toBe("failed");
+    expect(result.diagnostics[0]).toMatchObject({
+      source: "configuration",
+      message: expect.stringContaining("not possible to compile"),
+    });
+  });
+
   it("re-runs LaTeX when the generated SageTeX input is missing", async () => {
     const runtime = new FakeRuntime();
     runtime.files.set("paper.tex", "\\documentclass{article}");

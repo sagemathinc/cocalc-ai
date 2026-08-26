@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { sha1 } from "@cocalc/util/misc";
+import { is_bad_latex_filename, sha1 } from "@cocalc/util/misc";
 
 import type {
   BuildDiagnostic,
@@ -124,9 +124,9 @@ export async function runLatexPipeline(
   let outputDirectory: string | undefined;
   try {
     source = await runtime.readText(identity.logical_path);
-    if (/\s\s+/.test(identity.logical_path)) {
+    if (is_bad_latex_filename(identity.logical_path)) {
       throw new DocumentBuildConfigError(
-        `It is not possible to compile '${identity.logical_path}' because its name contains consecutive spaces.`,
+        `It is not possible to compile '${identity.logical_path}' because its name contains consecutive spaces or a single quote (').`,
       );
     }
     outputDirectory = knitr

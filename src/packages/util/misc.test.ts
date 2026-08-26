@@ -183,6 +183,24 @@ test("EDITOR_PREFIX", () => {
   expect(misc.EDITOR_PREFIX).toBe("editor-");
 });
 
+describe("is_bad_latex_filename", () => {
+  test("allows filenames without consecutive spaces or quotes", () => {
+    expect(misc.is_bad_latex_filename("paper.tex")).toBe(false);
+    expect(misc.is_bad_latex_filename("my paper.tex")).toBe(false);
+    expect(misc.is_bad_latex_filename("folder/subfolder/file.tex")).toBe(false);
+  });
+
+  test("rejects filenames with two or more consecutive spaces", () => {
+    expect(misc.is_bad_latex_filename("my  paper.tex")).toBe(true);
+    expect(misc.is_bad_latex_filename("folder/bad  name/file.tex")).toBe(true);
+  });
+
+  test("rejects filenames with a single quote", () => {
+    expect(misc.is_bad_latex_filename("author's-notes.tex")).toBe(true);
+    expect(misc.is_bad_latex_filename("folder/author's-notes.tex")).toBe(true);
+  });
+});
+
 describe("humanSize", () => {
   it("uses decimal units by default", () => {
     expect(misc.humanSize(1536)).toBe("1.5 KB");
