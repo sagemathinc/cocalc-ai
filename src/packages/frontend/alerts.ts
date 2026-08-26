@@ -2,7 +2,7 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
-import { ReactElement } from "react";
+import { ReactElement, ReactNode } from "react";
 
 import {
   defaults,
@@ -29,9 +29,12 @@ const last_shown = {};
 interface AlertMessageOptions {
   type?: NotificationType;
   title?: string | ReactElement<any>;
-  message?: string | ReactElement<any> | Error;
+  message?: ReactNode | Error;
   block?: boolean;
   timeout?: number;
+  // Plain text to report for error tracking.  Required when `message` is a
+  // react element, since that cannot be logged or deduplicated as-is.
+  trackingMessage?: string;
 }
 
 export function alert_message(opts: AlertMessageOptions = {}) {
@@ -41,6 +44,7 @@ export function alert_message(opts: AlertMessageOptions = {}) {
     message: "",
     block: undefined,
     timeout: undefined, // time in seconds
+    trackingMessage: undefined,
   });
 
   if (opts.type == null) throw Error("bug"); // make typescript happy.
@@ -53,7 +57,7 @@ export function alert_message(opts: AlertMessageOptions = {}) {
     opts.timeout = t;
   }
 
-  const trackingMessage = opts.message;
+  const trackingMessage = opts.trackingMessage ?? opts.message;
 
   if (opts.type === "error" && typeof opts.message === "string") {
     opts.message = normalizeUserFacingError(opts.message).message;
@@ -67,8 +71,17 @@ export function alert_message(opts: AlertMessageOptions = {}) {
   if (opts.message instanceof Error) {
     opts.message = normalizeUserFacingError(opts.message).message;
   }
-  if (typeof opts.message === "string") {
-    const hash = hash_string(opts.message + opts.type);
+  // A react-element message has no text to compare, so fall back to the
+  // plain-text version the caller supplied for tracking.  Without this, rich
+  // messages silently opt out of deduplication.
+  const dedupeKey =
+    typeof opts.message === "string"
+      ? opts.message
+      : typeof trackingMessage === "string"
+        ? trackingMessage
+        : undefined;
+  if (dedupeKey != null) {
+    const hash = hash_string(dedupeKey + opts.type);
     if (last_shown[hash] >= server_seconds_ago(5)) {
       return;
     }
@@ -90,11 +103,21 @@ export function alert_message(opts: AlertMessageOptions = {}) {
   });
 
   if (opts.type === "error") {
+    // Only strings and Errors can be logged: log_error JSON.stringify()s
+    // anything else, which throws on a react element's circular fiber refs.
+    const tracked = trackingMessage ?? opts.message;
+    const loggable =
+      typeof tracked === "string" || tracked instanceof Error
+        ? tracked
+        : typeof opts.title === "string"
+          ? opts.title
+          : undefined;
+    if (loggable == null) return;
     // Send the same error message to the backend hub so
     // that us developers know what errors people are hitting.
     // There really should be no situation where users *regularly*
     // get error alert messages.
-    webapp_client.tracking_client.log_error(trackingMessage ?? opts.message);
+    webapp_client.tracking_client.log_error(loggable);
   }
 }
 

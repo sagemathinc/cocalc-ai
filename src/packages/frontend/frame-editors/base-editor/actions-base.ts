@@ -123,6 +123,7 @@ export async function saveToDiskWithFileServerRetry({
   }
 }
 
+import type { ReactNode } from "react";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
   Actions as BaseActions,
@@ -302,6 +303,25 @@ export interface CodeEditorState {
   pdf_dark_mode_disabled?: { [id: string]: boolean };
   // whether this account has a saved custom layout for this file's type
   has_custom_layout?: boolean;
+}
+
+/**
+ * An error whose toast needs more than flat text -- emphasis, line breaks.
+ * `node` is what the toast renders; `text` is the plain-text equivalent, which
+ * is what gets reported to error tracking (a react element cannot be).
+ */
+export interface RichError {
+  node: ReactNode;
+  text: string;
+}
+
+export function isRichError(x: unknown): x is RichError {
+  return (
+    x != null &&
+    typeof x === "object" &&
+    "node" in x &&
+    typeof (x as RichError).text === "string"
+  );
 }
 
 export interface BaseEditorInitOptions {
@@ -3169,7 +3189,7 @@ export class BaseEditorActions<
     }
   }
 
-  set_error(error?: object | string, _style?: ErrorStyles): void {
+  set_error(error?: object | string | RichError, _style?: ErrorStyles): void {
     // show the error at the a toast if this path is the focused one; otherwise,
     // do not show the error at all.  We have shown a lot of useless errors
     //  and now we will show less, and in a minimally harmful way.
@@ -3184,11 +3204,23 @@ export class BaseEditorActions<
     ) {
       return;
     }
+    const title = path_split(this.path).tail;
+    if (isRichError(error)) {
+      // Rich content goes to the toast untouched: formatError would flatten
+      // it, since normalizeUserFacingError collapses whitespace and stringifies.
+      alert_message({
+        type: "error",
+        title,
+        message: error.node,
+        trackingMessage: error.text,
+      });
+      return;
+    }
     const e = this.formatError(error);
     if (e) {
       alert_message({
         type: "error",
-        title: path_split(this.path).tail,
+        title,
         message: e,
       });
     }

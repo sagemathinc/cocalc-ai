@@ -62,4 +62,57 @@ describe("alert_message", () => {
     );
     expect(trackingLogError).toHaveBeenCalledWith(raw);
   });
+  it("renders a react-element message and logs the plain-text version", async () => {
+    const { alert_message } = await import("./alerts");
+    const { createElement } = await import("react");
+    const node = createElement("div", null, "boom");
+
+    alert_message({
+      type: "error",
+      title: "paper.tex",
+      message: node,
+      trackingMessage: "Building the document failed. Runaway argument?",
+    });
+
+    expect(notificationError).toHaveBeenCalledTimes(1);
+    expect(notificationError.mock.calls[0][0].description).toBe(node);
+    expect(trackingLogError).toHaveBeenCalledWith(
+      "Building the document failed. Runaway argument?",
+    );
+  });
+
+  it("deduplicates identical react-element alerts via their tracking text", async () => {
+    const { alert_message } = await import("./alerts");
+    const { createElement } = await import("react");
+    const text =
+      "It is not possible to generate a useful PDF file. Runaway argument?";
+
+    for (let i = 0; i < 2; i++) {
+      alert_message({
+        type: "error",
+        title: "paper.tex",
+        // a distinct element each time, as two separate builds would produce
+        message: createElement("div", null, `boom ${i}`),
+        trackingMessage: text,
+      });
+    }
+
+    expect(notificationError).toHaveBeenCalledTimes(1);
+  });
+
+  it("never hands a non-string message to error tracking", async () => {
+    const { alert_message } = await import("./alerts");
+    const { createElement } = await import("react");
+
+    // no trackingMessage: log_error JSON.stringify()s whatever it gets, which
+    // throws on a react element, so it must fall back to the title instead.
+    alert_message({
+      type: "error",
+      title: "paper.tex",
+      message: createElement("div", null, "boom"),
+    });
+
+    expect(notificationError).toHaveBeenCalledTimes(1);
+    expect(trackingLogError).toHaveBeenCalledWith("paper.tex");
+  });
 });
