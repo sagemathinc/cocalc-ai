@@ -140,6 +140,13 @@ export async function getEnvironment({
   return {
     ...imageEnv,
     TERM: "xterm",
+    // Ubuntu images ship no locale of their own, which leaves every project
+    // process in POSIX/C.  There readline turns on convert-meta and shreds
+    // multi-byte input -- a German user cannot type "a-umlaut" into a terminal
+    // -- and anything that trusts LC_CTYPE for its input encoding is broken
+    // the same way.  C.UTF-8 is always present and needs no locale generation.
+    // An image that names its own locale keeps it.
+    LANG: imageEnv.LANG || "C.UTF-8",
     HOME,
     DATA,
     COCALC_LOGS: DATA,

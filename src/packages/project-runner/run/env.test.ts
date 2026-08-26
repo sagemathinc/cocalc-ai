@@ -55,6 +55,33 @@ describe("project container environment", () => {
     expect(env.LOGS).toBeUndefined();
   });
 
+  it("gives projects a UTF-8 locale so multi-byte input survives", async () => {
+    const { getEnvironment } = await import("./env");
+    const env = await getEnvironment({
+      HOME: "/home/user",
+      project_id: "00000000-1000-4000-8000-000000000000",
+      image: "test-image",
+    });
+
+    expect(env.LANG).toBe("C.UTF-8");
+  });
+
+  it("keeps a locale the image chose for itself", async () => {
+    inspect.mockResolvedValue({
+      Config: {
+        Env: ["PATH=/usr/bin", "LANG=de_AT.UTF-8"],
+      },
+    });
+    const { getEnvironment } = await import("./env");
+    const env = await getEnvironment({
+      HOME: "/home/user",
+      project_id: "00000000-1000-4000-8000-000000000000",
+      image: "test-image",
+    });
+
+    expect(env.LANG).toBe("de_AT.UTF-8");
+  });
+
   it("enables project debug logging by default", async () => {
     const { getEnvironment } = await import("./env");
     const env = await getEnvironment({
