@@ -35,12 +35,32 @@ describe("Blit application catalog", () => {
     }
   });
 
+  it("launches every graphical app as a native Wayland client", () => {
+    // Blit's compositor advertises one hard-coded US-QWERTY keymap and
+    // delivers everything else -- umlauts, AltGr characters -- through
+    // zwp_text_input_v3, which X11 clients cannot bind. So an app that ends up
+    // on Xwayland silently loses non-ASCII input.
+    const emacs = BLIT_APPLICATIONS.find(({ id }) => id === "emacs");
+    expect(emacs).toMatchObject({
+      install: { kind: "apt", packages: ["emacs-pgtk"] },
+    });
+
+    for (const id of ["krita", "texstudio"]) {
+      const app = BLIT_APPLICATIONS.find((candidate) => candidate.id === id);
+      const packages =
+        app?.install?.kind === "apt" ? app.install.packages : undefined;
+      expect(packages).toContain("qt6-wayland");
+      expect(packages).toContain("qtwayland5");
+    }
+  });
+
   it("installs Chromium from the pinned XtraDeb Ubuntu repository", () => {
     const chromium = BLIT_APPLICATIONS.find(({ id }) => id === "chromium");
     expect(chromium).toMatchObject({
       command: [
         "chromium",
         "--ozone-platform=wayland",
+        "--enable-wayland-ime",
         "--no-sandbox",
         "--disable-gpu",
       ],

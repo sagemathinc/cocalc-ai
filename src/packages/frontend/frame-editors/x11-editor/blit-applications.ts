@@ -123,6 +123,11 @@ export const BLIT_APPLICATIONS = [
     command: [
       "chromium",
       "--ozone-platform=wayland",
+      // Chromium binds zwp_text_input_v3 only when its Wayland IME support is
+      // turned on. Without this it never receives a commit_string, which is
+      // how Blit delivers every character its US-QWERTY keymap cannot express
+      // -- so a German user could not type an umlaut into Chromium.
+      "--enable-wayland-ime",
       "--no-sandbox",
       "--disable-gpu",
     ],
@@ -164,7 +169,9 @@ export const BLIT_APPLICATIONS = [
     icon: "emacs",
     executable: "emacs",
     command: ["emacs"],
-    install: { kind: "apt", packages: ["emacs-gtk"] },
+    // emacs-gtk is the X11 build, and X11 clients cannot reach Blit's
+    // text-input protocol. emacs-pgtk is the same editor built for Wayland.
+    install: { kind: "apt", packages: ["emacs-pgtk"] },
   },
   {
     id: "gimp",
@@ -218,7 +225,14 @@ export const BLIT_APPLICATIONS = [
     icon: "brush",
     executable: "krita",
     command: ["krita"],
-    install: { kind: "apt", packages: ["krita"] },
+    // Blit exports QT_QPA_PLATFORM="wayland;xcb", which falls back to xcb
+    // without complaint when Qt's Wayland platform plugin is absent -- leaving
+    // the app an X11 client that cannot receive non-ASCII input. Ship both Qt
+    // generations since the packaged build switches between releases.
+    install: {
+      kind: "apt",
+      packages: ["krita", "qt6-wayland", "qtwayland5"],
+    },
   },
   {
     id: "texstudio",
@@ -227,7 +241,14 @@ export const BLIT_APPLICATIONS = [
     icon: "tex-file",
     executable: "texstudio",
     command: ["texstudio"],
-    install: { kind: "apt", packages: ["texstudio"] },
+    // Blit exports QT_QPA_PLATFORM="wayland;xcb", which falls back to xcb
+    // without complaint when Qt's Wayland platform plugin is absent -- leaving
+    // the app an X11 client that cannot receive non-ASCII input. Ship both Qt
+    // generations since the packaged build switches between releases.
+    install: {
+      kind: "apt",
+      packages: ["texstudio", "qt6-wayland", "qtwayland5"],
+    },
   },
 ] as const satisfies readonly BlitApplication[];
 
