@@ -105,6 +105,7 @@ import {
 } from "./types";
 import { pdf_path } from "./util";
 import {
+  isDiagnosticRendered,
   isDocumentBuildTerminal,
   snapshotBuildLogs,
   snapshotParsedLog,
@@ -989,20 +990,25 @@ export class Actions extends BaseActions<LatexEditorState> {
         // A pipeline-level failure (build service down, timeout, ...).  This
         // is not rendered anywhere in the output panel, so always toast it.
         this.set_error(snapshot.error);
-      } else if (
-        !this.toasted_build_ids.has(snapshot.build_id) &&
-        !this.hasVisibleErrorDisplayFrame()
-      ) {
-        // Otherwise it is just the first LaTeX diagnostic, which the problems
-        // tab and the source gutters already show.  Same reasoning as in
-        // check_for_fatal_error: do not toast what the user can already see,
-        // and do not repeat what that already reported for this build.
-        const message = snapshot.diagnostics.find(
+      } else if (!this.toasted_build_ids.has(snapshot.build_id)) {
+        // Otherwise report the first error diagnostic, unless the user can
+        // already see it.  "Can see it" is not the same as "a frame is open":
+        // a diagnostic that belongs to no stage -- a transport failure raised
+        // before any stage ran -- never reaches build_logs, so the problems
+        // tab and errors/warnings panel do not render it, and suppressing its
+        // toast would leave the failed build completely undisclosed.
+        const diagnostic = snapshot.diagnostics.find(
           ({ level }) => level === "error",
-        )?.message;
-        if (message) {
+        );
+        if (
+          diagnostic != null &&
+          !(
+            isDiagnosticRendered(snapshot, diagnostic) &&
+            this.hasVisibleErrorDisplayFrame()
+          )
+        ) {
           this.toasted_build_ids.add(snapshot.build_id);
-          this.set_error(buildErrorToast(BUILD_FAILED, message));
+          this.set_error(buildErrorToast(BUILD_FAILED, diagnostic.message));
         }
       }
     }

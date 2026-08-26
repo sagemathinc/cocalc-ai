@@ -158,16 +158,32 @@ test("cancels the active project-side build id", async () => {
 });
 
 describe("failed build toast", () => {
-  function failedSnapshot(
-    overrides: Partial<DocumentBuildSnapshot> = {},
-  ): DocumentBuildSnapshot {
-    return { ...terminalSnapshot("failed"), ...overrides };
-  }
+  // A latex stage plus a diagnostic belonging to it, i.e. one that
+  // snapshotBuildLogs() really does surface in the output panel.
+  const LATEX_STAGE = {
+    stage_id: "latex-1",
+    name: "latex",
+    state: "failed",
+    stdout: "",
+    stderr: "",
+  } as unknown as DocumentBuildSnapshot["stages"][number];
 
   const RUNAWAY = {
     level: "error" as const,
     message: "Runaway argument?",
+    stage_id: "latex-1",
   } as DocumentBuildSnapshot["diagnostics"][number];
+
+  function failedSnapshot(
+    overrides: Partial<DocumentBuildSnapshot> = {},
+  ): DocumentBuildSnapshot {
+    return {
+      ...terminalSnapshot("failed"),
+      stages: [LATEX_STAGE],
+      diagnostics: [RUNAWAY],
+      ...overrides,
+    };
+  }
 
   function createFailingActions(visibleErrorFrame: boolean) {
     const { actions } = createActions();
@@ -181,17 +197,13 @@ describe("failed build toast", () => {
 
   it("does not toast a LaTeX diagnostic that the output panel shows", () => {
     const actions = createFailingActions(true);
-    actions.apply_document_build_snapshot(
-      failedSnapshot({ diagnostics: [RUNAWAY] }),
-    );
+    actions.apply_document_build_snapshot(failedSnapshot());
     expect(actions.set_error).not.toHaveBeenCalled();
   });
 
   it("toasts the diagnostic when no error frame is visible", () => {
     const actions = createFailingActions(false);
-    actions.apply_document_build_snapshot(
-      failedSnapshot({ diagnostics: [RUNAWAY] }),
-    );
+    actions.apply_document_build_snapshot(failedSnapshot());
     const [{ text }] = actions.set_error.mock.calls[0];
     expect(text).toBe("Building the document failed. Runaway argument?");
   });
@@ -200,10 +212,42 @@ describe("failed build toast", () => {
     const actions = createFailingActions(false);
     // what check_for_fatal_error does when it toasts
     actions.toasted_build_ids.add("build-1");
-    actions.apply_document_build_snapshot(
-      failedSnapshot({ diagnostics: [RUNAWAY] }),
-    );
+    actions.apply_document_build_snapshot(failedSnapshot());
     expect(actions.set_error).not.toHaveBeenCalled();
+  });
+
+  it("still toasts a diagnostic that no stage log renders", () => {
+    // a transport failure raised before any stage ran: no stage_id, so
+    // snapshotBuildLogs() drops it and the output panel shows nothing
+    const actions = createFailingActions(true);
+    actions.apply_document_build_snapshot(
+      failedSnapshot({
+        stages: [],
+        diagnostics: [
+          {
+            level: "error",
+            source: "transport",
+            file: "/home/user/paper.sagetex.sage",
+            message: "no such file",
+          } as DocumentBuildSnapshot["diagnostics"][number],
+        ],
+      }),
+    );
+    const [{ text }] = actions.set_error.mock.calls[0];
+    expect(text).toContain("no such file");
+  });
+
+  it("toasts a stage diagnostic whose stage maps to no build log", () => {
+    // "prepare" is not one of latex/knitr/sagetex/pythontex, so
+    // snapshotBuildLogs() skips the stage entirely
+    const actions = createFailingActions(true);
+    actions.apply_document_build_snapshot(
+      failedSnapshot({
+        stages: [{ ...LATEX_STAGE, stage_id: "prepare-1", name: "prepare" }],
+        diagnostics: [{ ...RUNAWAY, stage_id: "prepare-1" }],
+      }),
+    );
+    expect(actions.set_error).toHaveBeenCalledTimes(1);
   });
 
   it("always toasts a pipeline-level failure", () => {

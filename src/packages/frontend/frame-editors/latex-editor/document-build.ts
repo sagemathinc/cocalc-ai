@@ -141,6 +141,26 @@ export function snapshotBuildLogs(
   return logs;
 }
 
+/**
+ * Whether a diagnostic actually shows up in the output panel.
+ *
+ * snapshotBuildLogs() keeps only stages that map to a build spec, and
+ * stageBuildLog() then keeps only the diagnostics belonging to that stage --
+ * and `build_logs` is what both the problems tab and the errors/warnings panel
+ * render.  So a diagnostic with no stage, such as a transport failure raised
+ * before any stage ran, is displayed nowhere and must not be suppressed.
+ */
+export function isDiagnosticRendered(
+  snapshot: DocumentBuildSnapshot,
+  diagnostic: BuildDiagnostic,
+): boolean {
+  if (diagnostic.stage_id == null) return false;
+  return snapshot.stages.some(
+    (stage) =>
+      stage.stage_id === diagnostic.stage_id && buildSpecName(stage) != null,
+  );
+}
+
 export function snapshotParsedLog(
   snapshot: DocumentBuildSnapshot,
 ): IProcessedLatexLog {
