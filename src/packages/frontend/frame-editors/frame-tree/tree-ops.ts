@@ -273,6 +273,64 @@ export function get_leaf_ids_in_order(tree: ImmutableFrameTree): string[] {
   return ids;
 }
 
+// Which child of a "tabs" node is currently shown.  This mirrors
+// TabsContainer: the tab holding the active frame wins, otherwise the
+// activeTab index stored on the node (defaulting to the first tab).
+function get_active_tab_child(
+  node: ImmutableFrameTree,
+  active_id?: string,
+): ImmutableFrameTree | undefined {
+  const children = node.get("children");
+  if (children == null || children.size === 0) return undefined;
+  let index: number | undefined;
+  if (active_id) {
+    const i = children.findIndex(
+      (child: ImmutableFrameTree) =>
+        child.get("id") === active_id || has_id(child, active_id),
+    );
+    if (i >= 0) index = i;
+  }
+  if (index == null) index = node.get("activeTab", 0);
+  return children.get(index) ?? children.get(0);
+}
+
+/**
+ * The leaf ids that are actually rendered right now, as opposed to merely
+ * present in the tree.  Two things hide a leaf: `full_id` maximizes one frame
+ * and hides everything else, and a "tabs" container only renders its active
+ * tab.  This mirrors the rules in frame-tree.tsx / tabs-container.tsx.
+ */
+export function get_visible_leaf_ids(
+  tree: ImmutableFrameTree,
+  opts: { full_id?: string; active_id?: string } = {},
+): SetMap {
+  if (tree == null) return {};
+  const { full_id, active_id } = opts;
+  const ids: SetMap = {};
+  function process(node: ImmutableFrameTree): void {
+    if (node == null) return;
+    if (is_leaf(node)) {
+      ids[node.get("id")] = true;
+      return;
+    }
+    if (node.get("type") === "tabs") {
+      const child = get_active_tab_child(node, active_id);
+      if (child != null) process(child);
+      return;
+    }
+    call_on_children(node, process);
+  }
+  if (full_id) {
+    const node = get_node(tree, full_id);
+    if (node != null) {
+      process(node);
+      return ids;
+    }
+  }
+  process(tree);
+  return ids;
+}
+
 export function getAllIds(tree: ImmutableFrameTree): Set<string> {
   const ids = new Set<string>([]);
   walk(tree, function (node) {
