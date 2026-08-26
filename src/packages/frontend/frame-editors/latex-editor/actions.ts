@@ -50,6 +50,7 @@ import {
   TableOfContentsEntryList,
 } from "@cocalc/frontend/components";
 import { saveToDiskWithFileServerRetry } from "@cocalc/frontend/frame-editors/base-editor/actions-base";
+import { BUILD_FAILED, buildErrorToast, NO_PDF } from "./error-toast";
 import {
   Actions as BaseActions,
   CodeEditorState,
@@ -180,6 +181,10 @@ export class Actions extends BaseActions<LatexEditorState> {
   private active_build_id?: string;
   private build_snapshot_seq = new Map<string, number>();
   private refreshed_build_ids = new Set<string>();
+  // A failing build has two reporting paths (check_for_fatal_error and the
+  // failed-snapshot branch of apply_document_build_snapshot).  At most one
+  // of them may toast per build, otherwise the same failure pops up twice.
+  private toasted_build_ids = new Set<string>();
   private terminal_build_snapshots = new Map<string, DocumentBuildSnapshot>();
   private build_waiters = new Map<
     string,
@@ -615,7 +620,39 @@ export class Actions extends BaseActions<LatexEditorState> {
     };
   }
 
-  check_for_fatal_error(): void {
+  // Frame types (EDITOR_SPEC keys) that already display build errors.
+  // https://github.com/sagemathinc/cocalc/issues/8659
+  private static ERROR_DISPLAY_FRAMES: readonly string[] = [
+    "output",
+    "build",
+    "error",
+  ];
+
+  // Is the user currently looking at a frame that shows build errors?  Note
+  // that being in the frame tree is not enough: a maximized frame hides its
+  // siblings, and a tabs container only renders the active tab.
+  private hasVisibleErrorDisplayFrame(): boolean {
+    try {
+      const tree = this._get_tree();
+      if (tree == null) return false;
+      const visible = tree_ops.get_visible_leaf_ids(tree, {
+        full_id: this.store.getIn(["local_view_state", "full_id"]),
+        active_id: this.get_active_frame_id(),
+      });
+      for (const id in visible) {
+        const node = tree_ops.get_node(tree, id);
+        if (
+          node != null &&
+          Actions.ERROR_DISPLAY_FRAMES.includes(node.get("type"))
+        ) {
+          return true;
+        }
+      }
+    } catch {}
+    return false;
+  }
+
+  check_for_fatal_error(build_id?: string): void {
     const build_logs: BuildLogs = this.store.get("build_logs");
     if (!build_logs) return;
     const errors = build_logs.getIn(["latex", "parse", "errors"]) as any;
@@ -632,11 +669,24 @@ export class Actions extends BaseActions<LatexEditorState> {
       if (i != -1) {
         s = s.slice(0, i + 1);
       }
-      const err =
-        "WARNING: It is not possible to generate a useful PDF file.\n" +
-        s.trim();
-      console.warn(err);
-      this.set_error(err);
+      // `s` is latex restating that no PDF came out, which is exactly what
+      // NO_PDF already says.  The first error is what actually broke the
+      // document, so report that instead -- but only when there really is an
+      // earlier, different one, otherwise the toast says the same thing twice.
+      const first: string = (errors.get(0)?.get("message") ?? "").trim();
+      const cause =
+        errors.size > 1 && first.indexOf("no output PDF") === -1 ? first : "";
+      console.warn(cause ? `${NO_PDF} ${cause}` : `${NO_PDF} ${s.trim()}`);
+      // Only toast if the error is not already on screen somewhere.  Auto-build
+      // fires while the user is still typing a command, and a popup about a
+      // half-typed \\section{...} is pure noise when the output frame next to
+      // the editor is already showing it.
+      if (this.hasVisibleErrorDisplayFrame()) return;
+      if (build_id != null) {
+        if (this.toasted_build_ids.has(build_id)) return;
+        this.toasted_build_ids.add(build_id);
+      }
+      this.set_error(buildErrorToast(NO_PDF, cause));
     }
   }
 
@@ -888,7 +938,7 @@ export class Actions extends BaseActions<LatexEditorState> {
       }
       this.update_gutters();
       void this.update_gutters_soon();
-      this.check_for_fatal_error();
+      this.check_for_fatal_error(snapshot.build_id);
     }
 
     if (!isDocumentBuildTerminal(snapshot)) {
@@ -935,10 +985,26 @@ export class Actions extends BaseActions<LatexEditorState> {
       remainingActive == null &&
       (snapshot.state === "failed" || snapshot.state === "timed_out")
     ) {
-      const message =
-        snapshot.error ??
-        snapshot.diagnostics.find(({ level }) => level === "error")?.message;
-      if (message) this.set_error(message);
+      if (snapshot.error) {
+        // A pipeline-level failure (build service down, timeout, ...).  This
+        // is not rendered anywhere in the output panel, so always toast it.
+        this.set_error(snapshot.error);
+      } else if (
+        !this.toasted_build_ids.has(snapshot.build_id) &&
+        !this.hasVisibleErrorDisplayFrame()
+      ) {
+        // Otherwise it is just the first LaTeX diagnostic, which the problems
+        // tab and the source gutters already show.  Same reasoning as in
+        // check_for_fatal_error: do not toast what the user can already see,
+        // and do not repeat what that already reported for this build.
+        const message = snapshot.diagnostics.find(
+          ({ level }) => level === "error",
+        )?.message;
+        if (message) {
+          this.toasted_build_ids.add(snapshot.build_id);
+          this.set_error(buildErrorToast(BUILD_FAILED, message));
+        }
+      }
     }
     if (
       !this.refreshed_build_ids.has(snapshot.build_id) &&

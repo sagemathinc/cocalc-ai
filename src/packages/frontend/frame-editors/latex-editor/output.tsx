@@ -40,6 +40,7 @@ import { EditorState } from "@cocalc/frontend/frame-editors/frame-tree/types";
 import { project_api } from "@cocalc/frontend/frame-editors/generic/client";
 import { editor, labels } from "@cocalc/frontend/i18n";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
+import { COLORS } from "@cocalc/util/theme";
 
 import { TITLE_BAR_BORDER } from "../frame-tree/style";
 import { Actions } from "./actions";
@@ -77,6 +78,15 @@ const LABEL_STYLE: CSS = {
   display: "flex",
   alignItems: "center",
   gap: "2px",
+} as const;
+
+// Errors are not toasted when an error-displaying frame is on screen
+// (see Actions.check_for_fatal_error), so the tab itself has to stand out
+// while the user is looking at another tab of the output panel.
+const PROBLEMS_LABEL_ERROR_STYLE: CSS = {
+  ...LABEL_STYLE,
+  backgroundColor: COLORS.ANTD_BG_RED_L,
+  borderRadius: "4px",
 } as const;
 
 const STATS_LABEL = defineMessage({
@@ -517,7 +527,7 @@ export function Output(props: OutputProps) {
     return {
       key: "problems",
       label: (
-        <span style={LABEL_STYLE}>
+        <span style={errors > 0 ? PROBLEMS_LABEL_ERROR_STYLE : LABEL_STYLE}>
           <Icon name="bug" style={{ marginRight: "0" }} />
           {intl.formatMessage(editor.errors_and_warnings_title_short)}
           {renderProblemsCounter(errors, warnings, typesetting)}

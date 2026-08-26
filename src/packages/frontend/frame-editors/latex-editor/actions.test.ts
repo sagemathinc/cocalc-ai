@@ -1,4 +1,4 @@
-import { List, Map } from "immutable";
+import { fromJS, List, Map } from "immutable";
 import * as CodeMirror from "codemirror";
 import { Actions } from "./actions";
 import { EventEmitter } from "events";
@@ -1227,5 +1227,176 @@ describe("LaTeX marker/tail pairing", () => {
     expect(deadTail.bookmark.clear).toHaveBeenCalled();
     expect(deadTail.root.unmount).toHaveBeenCalled();
     expect(liveTail.bookmark.clear).not.toHaveBeenCalled();
+  });
+});
+
+describe("LaTeX fatal build error toast", () => {
+  // check_for_fatal_error logs the same warning it may toast; keep it out of
+  // the test output.
+  let warn: jest.SpyInstance;
+  beforeEach(() => {
+    warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
+  const FATAL_BUILD_LOGS = {
+    latex: {
+      parse: {
+        errors: [
+          {
+            message: "Fatal error occurred, no output PDF file produced!",
+            content: "! Undefined control sequence.",
+          },
+        ],
+      },
+    },
+  };
+
+  function createActions(frame_tree: any, local_view_state: any = {}) {
+    const actions: any = createActionsFixture();
+    actions._state = "ready";
+    actions.store = Map({
+      build_logs: fromJS(FATAL_BUILD_LOGS),
+      local_view_state: fromJS(local_view_state),
+    });
+    const tree = fromJS(frame_tree);
+    actions._get_tree = () => tree;
+    actions.toasted_build_ids = new Set();
+    actions.set_error = jest.fn();
+    return actions;
+  }
+
+  const SOURCE_AND_OUTPUT = {
+    id: "root",
+    type: "node",
+    direction: "col",
+    children: [
+      { id: "cm", type: "cm" },
+      { id: "out", type: "output" },
+    ],
+  };
+
+  it("stays quiet when the output frame is on screen", () => {
+    const actions = createActions(SOURCE_AND_OUTPUT);
+    actions.check_for_fatal_error();
+    expect(actions.set_error).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet for the build and errors frames too", () => {
+    for (const type of ["build", "error"]) {
+      const actions = createActions({
+        id: "root",
+        type: "node",
+        direction: "col",
+        children: [
+          { id: "cm", type: "cm" },
+          { id: "other", type },
+        ],
+      });
+      actions.check_for_fatal_error();
+      expect(actions.set_error).not.toHaveBeenCalled();
+    }
+  });
+
+  it("toasts when the editor is the only frame", () => {
+    const actions = createActions({ id: "cm", type: "cm" });
+    actions.check_for_fatal_error();
+    const [{ text }] = actions.set_error.mock.calls[0];
+    expect(text).toContain("not possible to generate a useful PDF file");
+  });
+
+  it("does not repeat the missing-PDF complaint as its own cause", () => {
+    // the fixture has exactly one error: latex saying it produced no PDF
+    const actions = createActions({ id: "cm", type: "cm" });
+    actions.check_for_fatal_error();
+    const [{ text }] = actions.set_error.mock.calls[0];
+    expect(text).toBe("It is not possible to generate a useful PDF file.");
+    expect(text).not.toContain("Fatal error occurred");
+  });
+
+  it("names the first error, not just the missing-PDF complaint", () => {
+    const actions = createActions({ id: "cm", type: "cm" });
+    actions.store = actions.store.set(
+      "build_logs",
+      fromJS({
+        latex: {
+          parse: {
+            errors: [
+              { message: "Runaway argument?", content: "" },
+              {
+                message: "Fatal error occurred, no output PDF file produced!",
+                content: "",
+              },
+            ],
+          },
+        },
+      }),
+    );
+    actions.check_for_fatal_error();
+    const [{ text }] = actions.set_error.mock.calls[0];
+    expect(text).toContain("Runaway argument?");
+    expect(text).toContain("not possible to generate a useful PDF file");
+    expect(text).not.toContain("Fatal error occurred");
+  });
+
+  it("toasts at most once per build id", () => {
+    const actions = createActions({ id: "cm", type: "cm" });
+    actions.check_for_fatal_error("build-1");
+    actions.check_for_fatal_error("build-1");
+    expect(actions.set_error).toHaveBeenCalledTimes(1);
+    actions.check_for_fatal_error("build-2");
+    expect(actions.set_error).toHaveBeenCalledTimes(2);
+  });
+
+  it("toasts when the output frame is hidden behind a maximized editor", () => {
+    const actions = createActions(SOURCE_AND_OUTPUT, { full_id: "cm" });
+    actions.check_for_fatal_error();
+    expect(actions.set_error).toHaveBeenCalledTimes(1);
+  });
+
+  it("toasts when the output frame is an inactive tab", () => {
+    const actions = createActions({
+      id: "root",
+      type: "tabs",
+      activeTab: 0,
+      children: [
+        { id: "cm", type: "cm" },
+        { id: "out", type: "output" },
+      ],
+    });
+    actions.check_for_fatal_error();
+    expect(actions.set_error).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays quiet when the output tab is the active tab", () => {
+    const actions = createActions({
+      id: "root",
+      type: "tabs",
+      activeTab: 1,
+      children: [
+        { id: "cm", type: "cm" },
+        { id: "out", type: "output" },
+      ],
+    });
+    actions.check_for_fatal_error();
+    expect(actions.set_error).not.toHaveBeenCalled();
+  });
+
+  it("ignores build logs without a fatal error", () => {
+    const actions = createActions(SOURCE_AND_OUTPUT);
+    actions.store = actions.store.set(
+      "build_logs",
+      fromJS({
+        latex: {
+          parse: {
+            errors: [{ message: "Overfull \\hbox", content: "" }],
+          },
+        },
+      }),
+    );
+    actions.check_for_fatal_error();
+    expect(actions.set_error).not.toHaveBeenCalled();
   });
 });

@@ -156,3 +156,66 @@ test("cancels the active project-side build id", async () => {
   expect(actions.active_build_id).toBeUndefined();
   expect(actions.set_status).toHaveBeenLastCalledWith("");
 });
+
+describe("failed build toast", () => {
+  function failedSnapshot(
+    overrides: Partial<DocumentBuildSnapshot> = {},
+  ): DocumentBuildSnapshot {
+    return { ...terminalSnapshot("failed"), ...overrides };
+  }
+
+  const RUNAWAY = {
+    level: "error" as const,
+    message: "Runaway argument?",
+  } as DocumentBuildSnapshot["diagnostics"][number];
+
+  function createFailingActions(visibleErrorFrame: boolean) {
+    const { actions } = createActions();
+    actions.document_build_watcher = {
+      latestActiveBuildSnapshot: () => undefined,
+    };
+    actions.toasted_build_ids = new Set();
+    actions.hasVisibleErrorDisplayFrame = jest.fn(() => visibleErrorFrame);
+    return actions;
+  }
+
+  it("does not toast a LaTeX diagnostic that the output panel shows", () => {
+    const actions = createFailingActions(true);
+    actions.apply_document_build_snapshot(
+      failedSnapshot({ diagnostics: [RUNAWAY] }),
+    );
+    expect(actions.set_error).not.toHaveBeenCalled();
+  });
+
+  it("toasts the diagnostic when no error frame is visible", () => {
+    const actions = createFailingActions(false);
+    actions.apply_document_build_snapshot(
+      failedSnapshot({ diagnostics: [RUNAWAY] }),
+    );
+    const [{ text }] = actions.set_error.mock.calls[0];
+    expect(text).toBe("Building the document failed. Runaway argument?");
+  });
+
+  it("stays silent when check_for_fatal_error already reported this build", () => {
+    const actions = createFailingActions(false);
+    // what check_for_fatal_error does when it toasts
+    actions.toasted_build_ids.add("build-1");
+    actions.apply_document_build_snapshot(
+      failedSnapshot({ diagnostics: [RUNAWAY] }),
+    );
+    expect(actions.set_error).not.toHaveBeenCalled();
+  });
+
+  it("always toasts a pipeline-level failure", () => {
+    const actions = createFailingActions(true);
+    actions.apply_document_build_snapshot(
+      failedSnapshot({
+        error: "document build service is unavailable",
+        diagnostics: [RUNAWAY],
+      }),
+    );
+    expect(actions.set_error).toHaveBeenCalledWith(
+      "document build service is unavailable",
+    );
+  });
+});
