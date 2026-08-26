@@ -39,7 +39,12 @@ class FakeRuntime implements DocumentBuildRuntime {
     return this.existing.has(path);
   }
 
-  async hash(): Promise<string> {
+  async hash(path: string): Promise<string> {
+    if (!this.existing.has(path)) {
+      throw Object.assign(new Error(`ENOENT: no such file: ${path}`), {
+        code: "ENOENT",
+      });
+    }
     return "sage-hash";
   }
 
@@ -160,6 +165,7 @@ describe("LaTeX-family pipelines", () => {
       { stdout: "after sage" },
       { stdout: "final" },
     );
+    runtime.existing.add("paper.sagetex.sage");
     runtime.queue("sagetex", {
       stderr: "Sage processing complete successfully",
     });
@@ -202,9 +208,47 @@ describe("LaTeX-family pipelines", () => {
     expect(result.state).toBe("succeeded");
   });
 
+  it("re-runs LaTeX when the generated SageTeX input is missing", async () => {
+    const runtime = new FakeRuntime();
+    runtime.files.set("paper.tex", "\\documentclass{article}");
+    runtime.queue(
+      "latex",
+      { stdout: "sagetex.sty" },
+      { stdout: "regenerated sagetex.sty" },
+      { stdout: "after sage" },
+    );
+    runtime.queue("sagetex", {
+      stderr: "Sage processing complete successfully",
+    });
+
+    const result = await runDocumentBuild(
+      { path: "paper.tex", generation: "saved-17", output_directory: null },
+      runtime,
+    );
+
+    // The first LaTeX pass could be aggregated away, so a forced pass runs
+    // before sagetex instead of the build dying on the missing input.
+    expect(runtime.specs.map((spec) => spec.name)).toEqual([
+      "latex",
+      "latex",
+      "sagetex",
+      "latex",
+    ]);
+    expect(runtime.specs[0].aggregate_key).toBe("saved-17");
+    expect(runtime.specs[1].aggregate_key).toBeUndefined();
+    expect(
+      runtime.specs.find((spec) => spec.name === "sagetex")?.aggregate_key,
+    ).toBeUndefined();
+    expect(
+      result.diagnostics.filter((d) => d.source === "transport"),
+    ).toHaveLength(0);
+    expect(result.state).toBe("succeeded");
+  });
+
   it("does not run later stages after a failed preprocessor", async () => {
     const runtime = new FakeRuntime();
     runtime.files.set("paper.tex", "\\documentclass{article}");
+    runtime.existing.add("paper.sagetex.sage");
     runtime.queue("latex", { stdout: "sagetex.sty" }, { stdout: "pending" });
     runtime.queue("sagetex", { exit_code: 2, stderr: "sage failed" });
 

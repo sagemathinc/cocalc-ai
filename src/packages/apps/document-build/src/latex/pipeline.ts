@@ -267,9 +267,23 @@ export async function runLatexPipeline(
     const runDirectory =
       outputDirectory ?? path_split(identity.working_path).head;
     const sageFile = joinPath(runDirectory, sagetexFile(identity.working_path));
-    let hash: string;
+    // The generated .sagetex.sage file can be missing even though this LaTeX
+    // run reported sagetex.sty: a "clean" removes it, and the following
+    // non-forced LaTeX pass can then be served from the aggregate cache
+    // instead of regenerating it. Re-run LaTeX forced to get the file back
+    // rather than failing the whole build. See cocalc#8680.
+    let hash = "";
     try {
-      hash = await runtime.hash(sageFile);
+      if (!(await runtime.exists(sageFile))) {
+        latex = await runLatex(true);
+        if (shouldStop(latex))
+          return finishSnapshot(snapshot, runtime, callbacks);
+      }
+      // An empty hash leaves aggregate_key unset, so sagetex is never deduped
+      // against an earlier run when we could not identify its input.
+      if (await runtime.exists(sageFile)) {
+        hash = await runtime.hash(sageFile);
+      }
     } catch (error) {
       snapshot.diagnostics.push({
         level: "error",
