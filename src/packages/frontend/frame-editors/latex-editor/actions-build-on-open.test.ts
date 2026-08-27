@@ -22,10 +22,10 @@ function makeActions({
       ? undefined
       : {
           waitUntilReady: jest.fn(async () => account.ready ?? true),
+          // pass the value through verbatim, so an unset build_on_save
+          // really reaches the code under test as undefined
           getIn: jest.fn((path: string[]) =>
-            path[1] === "build_on_save"
-              ? (account.buildOnSave ?? true)
-              : undefined,
+            path[1] === "build_on_save" ? account.buildOnSave : undefined,
           ),
         };
   const exists_fn = jest.fn(async () => {
@@ -61,6 +61,19 @@ describe("LaTeX build-on-open decision", () => {
       exists: true,
     });
     expect(await shouldBuildOnOpen(actions)).toBe(false);
+  });
+
+  it("builds when build_on_save is absent (schema default is true)", async () => {
+    // An unset field must not be read as "disabled" -- accounts.ts defaults
+    // build_on_save to true, and rmd/qmd apply the same fallback.
+    const { actions, fakeAccount } = makeActions({
+      account: { ready: true },
+      exists: false,
+    });
+    expect(fakeAccount!.getIn(["editor_settings", "build_on_save"])).toBe(
+      undefined,
+    );
+    expect(await shouldBuildOnOpen(actions)).toBe(true);
   });
 
   it("does not build when build_on_save is disabled", async () => {

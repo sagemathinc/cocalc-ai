@@ -521,7 +521,11 @@ export class Actions extends BaseActions<LatexEditorState> {
     // timed out -- settings not loaded, so skip the auto build.  The
     // save listeners installed by init_build_on_save stay active.
     if (!ready) return false;
-    if (!account.getIn(["editor_settings", "build_on_save"])) return false;
+    // Absent means "not configured", and the schema default is true --
+    // do not read a missing field as "disabled".
+    const buildOnSave =
+      account.getIn(["editor_settings", "build_on_save"]) ?? true;
+    if (!buildOnSave) return false;
     const pdfExists = await this.outputFileExists(pdf_path(this.path));
     if (this._state === "closed") return false;
     // exists or unknown => don't build
