@@ -59,6 +59,13 @@ interface StripeActionFormValues {
   customer_acceptance_confirmed?: boolean;
 }
 
+function localDateTimeInputValue(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
 function quoteProvider(quote: CommercialQuote): CommercialQuoteProvider {
   return quote.provider ?? "local";
 }
@@ -718,7 +725,9 @@ export function CommercialQuotesCard({
               layout="vertical"
               clearOnDestroy
               initialValues={{
-                valid_until: preview.default_valid_until.slice(0, 16),
+                valid_until: localDateTimeInputValue(
+                  preview.default_valid_until,
+                ),
                 reason: "",
               }}
             >
