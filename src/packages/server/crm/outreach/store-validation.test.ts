@@ -6,6 +6,7 @@
 import {
   batchRow,
   canQueueOutreachBatch,
+  decodeZendeskId,
   deliveryRow,
   missingRequiredMergeFields,
   outreachProviderConfigurationErrors,
@@ -20,6 +21,28 @@ describe("CRM outreach database row decoding", () => {
     expect(() => batchRow("(id,OUT-1,queued)")).toThrow(
       "CRM outreach batch row must be a decoded database record",
     );
+  });
+
+  it("decodes Zendesk BIGINT identifiers without losing precision", () => {
+    const zendeskCommentId = "48444142181645";
+    expect(decodeZendeskId(zendeskCommentId, "comment_id", true)).toBe(
+      48_444_142_181_645,
+    );
+    expect(
+      deliveryRow({
+        opening_zendesk_comment_id: zendeskCommentId,
+        last_zendesk_comment_id: zendeskCommentId,
+      }),
+    ).toMatchObject({
+      opening_zendesk_comment_id: 48_444_142_181_645,
+      last_zendesk_comment_id: 48_444_142_181_645,
+    });
+  });
+
+  it("rejects Zendesk identifiers outside the JavaScript safe range", () => {
+    expect(() =>
+      decodeZendeskId("9007199254740992", "comment_id", true),
+    ).toThrow("comment_id must be a positive safe integer");
   });
 });
 

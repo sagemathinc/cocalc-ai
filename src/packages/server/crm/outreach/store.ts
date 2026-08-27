@@ -236,6 +236,22 @@ function isoRequired(value: unknown): string {
   return result;
 }
 
+export function decodeZendeskId(
+  value: unknown,
+  name: string,
+  required = false,
+): number | null | undefined {
+  if (value == null) {
+    if (required) throw Error(`${name} must be a positive safe integer`);
+    return value as null | undefined;
+  }
+  const result = Number(value);
+  if (!Number.isSafeInteger(result) || result <= 0) {
+    throw Error(`${name} must be a positive safe integer`);
+  }
+  return result;
+}
+
 function normalizeEmail(value: unknown): string {
   const email = bounded(value, "email", 254).toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
@@ -324,6 +340,14 @@ export function deliveryRow(row: any): CrmOutreachDelivery {
       ...row,
       template_snapshot: row.template_snapshot ?? {},
       zendesk_sync_metadata: row.zendesk_sync_metadata ?? {},
+      opening_zendesk_comment_id: decodeZendeskId(
+        row.opening_zendesk_comment_id,
+        "opening_zendesk_comment_id",
+      ),
+      last_zendesk_comment_id: decodeZendeskId(
+        row.last_zendesk_comment_id,
+        "last_zendesk_comment_id",
+      ),
     },
     [
       "first_view_observed_at",
@@ -397,10 +421,18 @@ function suppressionRow(row: any): CrmContactSuppression {
 }
 
 function engagementRow(row: any): CrmOutreachEngagementEvent {
-  return timestampFields({ ...row, provenance: row.provenance ?? {} }, [
-    "observed_at",
-    "ingested_at",
-  ]) as CrmOutreachEngagementEvent;
+  return timestampFields(
+    {
+      ...row,
+      zendesk_comment_id: decodeZendeskId(
+        row.zendesk_comment_id,
+        "zendesk_comment_id",
+        true,
+      ),
+      provenance: row.provenance ?? {},
+    },
+    ["observed_at", "ingested_at"],
+  ) as CrmOutreachEngagementEvent;
 }
 
 function providerOperationRow(row: any): CrmOutreachProviderOperation {

@@ -363,10 +363,12 @@ Table({
     zendesk_ticket_id: { type: "integer", desc: "Linked Zendesk ticket." },
     opening_zendesk_comment_id: {
       type: "integer",
+      pg_type: "BIGINT",
       desc: "Opening Zendesk comment.",
     },
     last_zendesk_comment_id: {
       type: "integer",
+      pg_type: "BIGINT",
       desc: "Latest known Zendesk comment.",
     },
     last_zendesk_status: {
@@ -677,7 +679,11 @@ Table({
       desc: "Immutable Zendesk event identifier.",
     }),
     zendesk_ticket_id: required({ type: "integer", desc: "Zendesk ticket." }),
-    zendesk_comment_id: { type: "integer", desc: "Optional Zendesk comment." },
+    zendesk_comment_id: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "Optional Zendesk comment.",
+    },
     event_type: required({ type: "string", desc: "Bounded event type." }),
     occurred_at: required({
       type: "timestamp",
@@ -756,6 +762,7 @@ Table({
     }),
     zendesk_comment_id: required({
       type: "integer",
+      pg_type: "BIGINT",
       desc: "Exact outbound comment.",
     }),
     observed_at: required({
