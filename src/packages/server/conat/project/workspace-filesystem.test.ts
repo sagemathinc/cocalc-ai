@@ -36,7 +36,7 @@ jest.mock("@cocalc/conat/files/read", () => ({
   createServer: (...args: any[]) => createReadServer(...args),
 }));
 
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -166,6 +166,24 @@ describe("workspace file download reader", () => {
         name: WORKSPACE_FILE_DOWNLOAD_READ_SERVICE,
       }),
     );
+  });
+
+  it("refuses to follow a symlink that escapes the project", async () => {
+    // The reader must open through the sandbox's verified handle rather than
+    // resolving a path and reopening it by name, so a link planted inside the
+    // project cannot be used to read the rest of the machine.
+    const outside = join(root, "outside-secret");
+    await writeFile(outside, "secret");
+    await symlink(outside, join(projectDir, "escape.txt"));
+
+    const client = {} as any;
+    await ensureWorkspaceFileDownloadReadServer({
+      client,
+      project_id: PROJECT_ID,
+      path: root,
+    });
+    const { createReadStream } = createReadServer.mock.calls[0][0] as any;
+    await expect(createReadStream("/home/user/escape.txt")).rejects.toThrow();
   });
 
   it("streams through the sandbox without any project process running", async () => {

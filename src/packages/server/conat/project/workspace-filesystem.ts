@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { createReadStream } from "node:fs";
 import { join } from "node:path";
 
 import { localPathFileserver } from "@cocalc/backend/conat/files/local-path";
@@ -88,6 +87,22 @@ export const WORKSPACE_FILE_DOWNLOAD_READ_SERVICE = ":workspace";
 // register those subjects.
 const WORKSPACE_FILE_DOWNLOAD_READ_QUEUE = "workspace-file-download-read";
 
+// `createReadServer` accounts active streams against a counter that is global to
+// the process.  Project-local readers each live in their own project process, so
+// the default budget is effectively per project; the hub-side reader serves every
+// workspace project from one process, so that same budget would be shared across
+// all of them and a few slow downloads could starve unrelated projects.  Size it
+// explicitly for a centralized service instead.
+const WORKSPACE_FILE_DOWNLOAD_MAX_ACTIVE_STREAMS = parsePositiveInt(
+  process.env.COCALC_WORKSPACE_FILE_READ_MAX_ACTIVE,
+  128,
+);
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const n = parseInt(value ?? "", 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 function requireProjectPath(path?: string): string {
   if (!path) {
     throw new Error(
@@ -136,11 +151,15 @@ export async function ensureWorkspaceFileDownloadReadServer({
       project_id,
       name: readServiceName,
       queue: WORKSPACE_FILE_DOWNLOAD_READ_QUEUE,
-      createReadStream: async (requestedPath: string, opts?: any) => {
-        const fs = workspaceProjectFilesystem({ project_id, path });
-        const absPath = await fs.safeAbsPath(requestedPath);
-        return createReadStream(absPath, opts);
-      },
+      maxActiveStreams: WORKSPACE_FILE_DOWNLOAD_MAX_ACTIVE_STREAMS,
+      // Stream through the sandbox's own verified handle.  Resolving to an
+      // absolute path and reopening it by name would leave a window in which
+      // the file could be swapped for a symlink pointing outside the project.
+      createReadStream: async (requestedPath: string, opts?: any) =>
+        await workspaceProjectFilesystem({ project_id, path }).createReadStream(
+          requestedPath,
+          opts,
+        ),
     })
       .then(() => undefined)
       .catch((err) => {

@@ -2105,6 +2105,7 @@ export class SandboxedFilesystem {
     options: {
       start?: number;
       end?: number;
+      highWaterMark?: number;
     } = {},
   ): Promise<ReadStream> => {
     const { handle } = await this.openVerifiedHandle({
@@ -2114,6 +2115,7 @@ export class SandboxedFilesystem {
     const stream = handle.createReadStream({
       start: options.start,
       end: options.end,
+      highWaterMark: options.highWaterMark,
       autoClose: true,
     });
     stream.once("close", () => {
