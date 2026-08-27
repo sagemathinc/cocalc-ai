@@ -197,6 +197,7 @@ describe("Blit application launcher", () => {
         "chromium",
         "chromium",
         "--ozone-platform=wayland",
+        "--enable-wayland-ime",
         "--no-sandbox",
         "--disable-gpu",
       ],
