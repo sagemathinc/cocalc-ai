@@ -14,15 +14,20 @@ function makeActions(
   account: { is_ready?: boolean; editor_settings?: any } | null,
 ) {
   const actions: any = Object.create(Cls.prototype);
-  actions.redux = {
-    getStore: () =>
-      account == null
-        ? undefined
-        : {
-            get: (field: string) => account[field],
-          },
-  };
-  return actions;
+  const store =
+    account == null
+      ? undefined
+      : {
+          get: (field: string) => account[field],
+          waitUntilReady: jest.fn(async () => !!account.is_ready),
+        };
+  actions._state = "open";
+  actions.redux = { getStore: () => store };
+  return { actions, store, account };
+}
+
+function bareActions(Cls: any, account: any) {
+  return makeActions(Cls, account).actions;
 }
 
 function doBuildOnSave(Cls: any, actions: any): boolean {
@@ -36,7 +41,7 @@ describe.each([
   it("is false while the account settings are still loading", () => {
     // The store holds the schema defaults (build_on_save: true) before
     // is_ready fires -- we must not act on those.
-    const actions = makeActions(Cls, {
+    const actions = bareActions(Cls, {
       is_ready: false,
       editor_settings: iMap({ build_on_save: true }),
     });
@@ -44,7 +49,7 @@ describe.each([
   });
 
   it("is false when editor_settings is null", () => {
-    const actions = makeActions(Cls, {
+    const actions = bareActions(Cls, {
       is_ready: true,
       editor_settings: null,
     });
@@ -52,16 +57,16 @@ describe.each([
   });
 
   it("is false when there is no account store", () => {
-    expect(doBuildOnSave(Cls, makeActions(Cls, null))).toBe(false);
+    expect(doBuildOnSave(Cls, bareActions(Cls, null))).toBe(false);
   });
 
   it("follows the user setting once loaded", () => {
-    const on = makeActions(Cls, {
+    const on = bareActions(Cls, {
       is_ready: true,
       editor_settings: iMap({ build_on_save: true }),
     });
     expect(doBuildOnSave(Cls, on)).toBe(true);
-    const off = makeActions(Cls, {
+    const off = bareActions(Cls, {
       is_ready: true,
       editor_settings: iMap({ build_on_save: false }),
     });
@@ -69,11 +74,80 @@ describe.each([
   });
 
   it("defaults to true when the setting is absent but settings are loaded", () => {
-    const actions = makeActions(Cls, {
+    const actions = bareActions(Cls, {
       is_ready: true,
       editor_settings: iMap({}),
     });
     expect(doBuildOnSave(Cls, actions)).toBe(true);
+  });
+});
+
+describe.each([
+  ["R Markdown", RmdActions],
+  ["Quarto", QmdActions],
+])("%s waitForBuildOnSave", (_name, Cls: any) => {
+  function waitForBuildOnSave(actions: any): Promise<boolean> {
+    return (Cls.prototype as any).waitForBuildOnSave.call(actions);
+  }
+
+  it("waits for the account settings instead of dropping the save", async () => {
+    // A save that lands before the account snapshot must not be discarded:
+    // the source on disk is already newer than the output, and there may
+    // never be another edit to retrigger the build.
+    const acct: any = {
+      is_ready: false,
+      editor_settings: iMap({ build_on_save: true }),
+    };
+    const { actions, store } = makeActions(Cls, acct);
+    store!.waitUntilReady = jest.fn(async () => {
+      acct.is_ready = true;
+      return true;
+    });
+    expect(await waitForBuildOnSave(actions)).toBe(true);
+    expect(store!.waitUntilReady).toHaveBeenCalled();
+  });
+
+  it("does not wait once the settings are loaded", async () => {
+    const { actions, store } = makeActions(Cls, {
+      is_ready: true,
+      editor_settings: iMap({ build_on_save: true }),
+    });
+    expect(await waitForBuildOnSave(actions)).toBe(true);
+    expect(store!.waitUntilReady).not.toHaveBeenCalled();
+  });
+
+  it("honours a disabled setting that only arrives later", async () => {
+    const acct: any = { is_ready: false, editor_settings: null };
+    const { actions, store } = makeActions(Cls, acct);
+    store!.waitUntilReady = jest.fn(async () => {
+      acct.is_ready = true;
+      acct.editor_settings = iMap({ build_on_save: false });
+      return true;
+    });
+    expect(await waitForBuildOnSave(actions)).toBe(false);
+  });
+
+  it("gives up when readiness times out", async () => {
+    const { actions, store } = makeActions(Cls, {
+      is_ready: false,
+      editor_settings: iMap({ build_on_save: true }),
+    });
+    store!.waitUntilReady = jest.fn(async () => false);
+    expect(await waitForBuildOnSave(actions)).toBe(false);
+  });
+
+  it("gives up when the editor closed while waiting", async () => {
+    const acct: any = {
+      is_ready: false,
+      editor_settings: iMap({ build_on_save: true }),
+    };
+    const { actions, store } = makeActions(Cls, acct);
+    store!.waitUntilReady = jest.fn(async () => {
+      acct.is_ready = true;
+      actions._state = "closed";
+      return true;
+    });
+    expect(await waitForBuildOnSave(actions)).toBe(false);
   });
 });
 

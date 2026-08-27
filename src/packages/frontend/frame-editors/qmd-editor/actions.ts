@@ -83,6 +83,20 @@ export class Actions extends MarkdownActions {
     return settings.get("build_on_save") ?? true;
   }
 
+  // Whether a build-on-save should run, waiting for the account settings if
+  // they have not loaded yet.  False if they never arrive, or if the editor
+  // was closed while waiting.
+  private async waitForBuildOnSave(): Promise<boolean> {
+    const account: AccountStore | undefined = this.redux.getStore("account");
+    if (account == null) return false;
+    if (!account.get("is_ready")) {
+      const ready = await account.waitUntilReady();
+      if (!ready) return false;
+      if (this._state === "closed") return false;
+    }
+    return this.do_build_on_save();
+  }
+
   _init_qmd_converter(): void {
     // one build takes min. a few seconds up to a minute or more
     this.run_qmd_converter = debounce(
@@ -93,7 +107,12 @@ export class Actions extends MarkdownActions {
 
     const do_build = reuseInFlight(async () => {
       if (this.explicit_build) return;
-      if (!this.do_build_on_save()) return;
+      // The account settings may still be loading.  Wait for them rather than
+      // dropping this notification: the saved source is already newer than the
+      // output, so returning here leaves it stale until the next edit -- which
+      // may never come.  reuseInFlight folds any further save events that
+      // arrive while we wait into this same pending check.
+      if (!(await this.waitForBuildOnSave())) return;
       if (this._syncstring == null) return;
       const hash = this._syncstring.hash_of_saved_version();
       if (this._last_qmd_hash != hash) {
