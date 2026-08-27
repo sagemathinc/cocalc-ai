@@ -14,6 +14,7 @@ const mockSetProjectHostProxyAccountId = jest.fn();
 const mockHandleFileDownload = jest.fn();
 const mockConat = jest.fn();
 const mockIsWorkspaceProjectRuntime = jest.fn();
+const mockEnsureWorkspaceFileDownloadReadServer = jest.fn();
 
 jest.mock("./version", () => ({
   versionCheckFails: (...args) => mockVersionCheckFails(...args),
@@ -60,6 +61,11 @@ jest.mock("@cocalc/server/launchpad/project-runtime", () => ({
     mockIsWorkspaceProjectRuntime(...args),
 }));
 
+jest.mock("@cocalc/server/conat/project/workspace-filesystem", () => ({
+  ensureWorkspaceFileDownloadReadServer: (...args) =>
+    mockEnsureWorkspaceFileDownloadReadServer(...args),
+}));
+
 describe("hub proxy file downloads", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -84,6 +90,10 @@ describe("hub proxy file downloads", () => {
     mockHandleFileDownload.mockReset().mockResolvedValue(undefined);
     mockConat.mockReset().mockReturnValue({ id: "workspace-client" });
     mockIsWorkspaceProjectRuntime.mockReset().mockReturnValue(false);
+    mockEnsureWorkspaceFileDownloadReadServer.mockReset().mockResolvedValue({
+      readServiceName: ":workspace",
+      statSubject: "fs.project-457f20dd-59d1-45c4-b5b1-a245d0e0a629",
+    });
   });
 
   it.each(["GET", "HEAD"])(
@@ -119,11 +129,19 @@ describe("hub proxy file downloads", () => {
           type: "read",
         }),
       );
+      // The hub-side reader is always available, so downloads do not depend on
+      // the project's own files:read service being up.
+      expect(mockEnsureWorkspaceFileDownloadReadServer).toHaveBeenCalledWith({
+        client: workspaceClient,
+        project_id: "457f20dd-59d1-45c4-b5b1-a245d0e0a629",
+      });
       expect(mockHandleFileDownload).toHaveBeenCalledWith({
         req,
         res,
         url: "/457f20dd-59d1-45c4-b5b1-a245d0e0a629/files/home/user/latex/tex.pdf?param=1",
         client: workspaceClient,
+        readServiceName: ":workspace",
+        statSubject: "fs.project-457f20dd-59d1-45c4-b5b1-a245d0e0a629",
       });
       expect(mockGetProjectHostRedirectUrl).not.toHaveBeenCalled();
       expect(proxyHandlers.handleRequest).not.toHaveBeenCalled();
@@ -153,6 +171,7 @@ describe("hub proxy file downloads", () => {
     await handler(req, res);
 
     expect(mockHasAccess).toHaveBeenCalled();
+    expect(mockEnsureWorkspaceFileDownloadReadServer).not.toHaveBeenCalled();
     expect(mockHandleFileDownload).not.toHaveBeenCalled();
     expect(mockGetProjectHostRedirectUrl).not.toHaveBeenCalled();
     expect(proxyHandlers.handleRequest).not.toHaveBeenCalled();

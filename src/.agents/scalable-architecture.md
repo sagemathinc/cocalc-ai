@@ -1,6 +1,6 @@
 # Scalable Control Plane
 
-![](./scalable-bay.png) 
+![](./scalable-bay.png)
 
 # Architecture
 
@@ -67,6 +67,27 @@ If a new access mode needs narrower permissions, add a project-host service,
 subject, token, or capability boundary for that mode. Do not proxy project data
 through the hub as a shortcut. For example, read-only project viewers should use
 a project-host read-only file service rather than hub-mediated file reads.
+
+### Documented exception: workspace project runtime
+
+`COCALC_PROJECT_RUNTIME=workspace` (local/dev mode) runs projects as plain
+same-UID local processes with no project host, so `projects.host_id` is NULL and
+there is nothing to redirect `/files/` to. In this runtime only, the hub serves
+project file downloads itself, from an always-on sandboxed reader alongside the
+workspace filesystem service (`server/conat/project/workspace-filesystem.ts`).
+
+This is a trusted single-machine deployment: the hub, the projects, and the
+filesystem are the same trust domain, so hub-mediated reads leak nothing that
+direct access would not. The exception is deliberately narrow:
+
+- gated on `isWorkspaceProjectRuntime()`, so hosted deployments are unaffected.
+- authenticated `GET`/`HEAD` only, after the normal `hasAccess` check.
+- reads resolve through the same `SandboxedFilesystem` boundary that serves
+  `stat` and temporary-archive cleanup, so all three agree on path resolution.
+
+Because the reader is owned by the hub rather than the project process,
+downloads also work for projects that are not running, which matches the
+project-host behaviour users expect.
 
 Terminology note:
 
@@ -289,13 +310,13 @@ without changing the higher-level control-plane design.
 
 ### Recommended Deployment Matrix
 
-| Mode | Target | Recommended Shape | Notes |
-| --- | --- | --- | --- |
-| Plus | single machine | special-case local deployment | not the focus of bay scaling |
-| Launchpad | single machine or VM | one bay, one Postgres, one local directory mapping to `bay-0` | should exercise the same bay code paths as Rocket |
-| Rocket Small | VM fleet | tiny global layer plus 1-3 bay VMs and external project hosts | preferred first self-hosted product shape |
-| Rocket Large | VM fleet | many bay VMs plus global services and many project hosts | simplest path to large scale without Kubernetes dependency |
-| Rocket Advanced | Kubernetes | global services plus bays deployed as namespaces / Helm releases | useful for organizations already invested in Kubernetes |
+| Mode            | Target               | Recommended Shape                                                | Notes                                                      |
+| --------------- | -------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------- |
+| Plus            | single machine       | special-case local deployment                                    | not the focus of bay scaling                               |
+| Launchpad       | single machine or VM | one bay, one Postgres, one local directory mapping to `bay-0`    | should exercise the same bay code paths as Rocket          |
+| Rocket Small    | VM fleet             | tiny global layer plus 1-3 bay VMs and external project hosts    | preferred first self-hosted product shape                  |
+| Rocket Large    | VM fleet             | many bay VMs plus global services and many project hosts         | simplest path to large scale without Kubernetes dependency |
+| Rocket Advanced | Kubernetes           | global services plus bays deployed as namespaces / Helm releases | useful for organizations already invested in Kubernetes    |
 
 ### Preferred Product Packaging
 
@@ -367,7 +388,7 @@ It should contain:
 - directory / placement service
 - optional global email/notification dispatch
 
-It should *not* contain:
+It should _not_ contain:
 
 - live user project lists
 - collaborator lists

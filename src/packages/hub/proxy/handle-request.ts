@@ -17,6 +17,7 @@ import {
 import { handleFileDownload } from "@cocalc/conat/files/file-download";
 import { conat } from "@cocalc/backend/conat";
 import { isWorkspaceProjectRuntime } from "@cocalc/server/launchpad/project-runtime";
+import { ensureWorkspaceFileDownloadReadServer } from "@cocalc/server/conat/project/workspace-filesystem";
 
 const logger = getLogger("proxy:handle-request");
 const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
@@ -131,11 +132,22 @@ export default function init({
       type === "files" &&
       /^(GET|HEAD)$/i.test(req.method ?? "GET")
     ) {
+      // Serve from the always-on hub-side reader rather than the project's own
+      // files:read service, which only exists while the project is running.
+      // The stat subject is the same workspace filesystem, so GET, HEAD and
+      // temporary-archive cleanup all resolve paths identically.
+      const { readServiceName, statSubject } =
+        await ensureWorkspaceFileDownloadReadServer({
+          client: workspaceFileDownloadClient,
+          project_id,
+        });
       await handleFileDownload({
         req,
         res,
         url,
         client: workspaceFileDownloadClient,
+        readServiceName,
+        statSubject,
       });
       return;
     }
