@@ -272,7 +272,8 @@ async function claimOneEffectful(): Promise<ClaimedOperation | undefined> {
     }
 
     const existingOperation = await client.query(
-      `SELECT p.*,d AS delivery,b AS batch,o.customer_number,t.state AS task_state,
+      `SELECT p.*,to_jsonb(d) AS delivery,to_jsonb(b) AS batch,
+        o.customer_number,t.state AS task_state,
         (SELECT count(*)::int FROM crm_outreach_provider_operations used
           JOIN crm_outreach_deliveries used_delivery ON used_delivery.id=used.delivery_id
          WHERE used.operation IN ('create_ticket','add_comment')
@@ -308,7 +309,7 @@ async function claimOneEffectful(): Promise<ClaimedOperation | undefined> {
     let operation = existingOperation.rows[0];
     if (!operation) {
       const deliveryResult = await client.query(
-        `SELECT d AS delivery,b AS batch,o.customer_number,
+        `SELECT to_jsonb(d) AS delivery,to_jsonb(b) AS batch,o.customer_number,
           (SELECT count(*)::int FROM crm_outreach_provider_operations used
             JOIN crm_outreach_deliveries used_delivery ON used_delivery.id=used.delivery_id
            WHERE used.operation IN ('create_ticket','add_comment')
@@ -470,7 +471,7 @@ async function claimOneReconciliation(): Promise<ClaimedOperation | undefined> {
       return;
     }
     const selected = await client.query(
-      `SELECT p.*,d AS delivery,b AS batch,o.customer_number
+      `SELECT p.*,to_jsonb(d) AS delivery,to_jsonb(b) AS batch,o.customer_number
          FROM crm_outreach_provider_operations p
          JOIN crm_outreach_deliveries d ON d.id=p.delivery_id
          JOIN crm_outreach_batches b ON b.id=d.batch_id
@@ -509,7 +510,7 @@ async function revalidateStartedFollowupClaim(
   const config = await loadOutreachConfiguration();
   return await transaction(async (client) => {
     const current = await client.query(
-      `SELECT p.state AS operation_state,p.lease_owner,d AS delivery
+      `SELECT p.state AS operation_state,p.lease_owner,to_jsonb(d) AS delivery
          FROM crm_outreach_provider_operations p
          JOIN crm_outreach_deliveries d ON d.id=p.delivery_id
         WHERE p.id=$1 FOR UPDATE OF p,d`,
@@ -1074,7 +1075,7 @@ async function resolveTargetedReconciliation(
       );
     } else if (target.attempt_number < outreachConfig.retry_max_attempts) {
       const eligibility = await client.query(
-        `SELECT d AS delivery,t.state AS task_state,
+        `SELECT to_jsonb(d) AS delivery,t.state AS task_state,
           EXISTS(SELECT 1 FROM crm_contact_suppressions s WHERE s.active AND (
             (s.scope='email' AND s.normalized_scope_value=d.normalized_email) OR
             (s.scope='domain' AND s.normalized_scope_value=d.recipient_domain) OR
@@ -1297,7 +1298,8 @@ async function processWebhookQueue(limit: number): Promise<{
     if (!event) break;
     try {
       const linked = await getPool().query(
-        `SELECT d AS delivery,b AS batch FROM crm_outreach_deliveries d
+        `SELECT to_jsonb(d) AS delivery,to_jsonb(b) AS batch
+          FROM crm_outreach_deliveries d
           JOIN crm_outreach_batches b ON b.id=d.batch_id WHERE d.zendesk_ticket_id=$1`,
         [event.zendesk_ticket_id],
       );

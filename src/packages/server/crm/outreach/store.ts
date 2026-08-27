@@ -286,7 +286,15 @@ function timestampFields<T extends Json>(row: T, fields: string[]): T {
   return result;
 }
 
+function recordRow(row: unknown, name: string): Json {
+  if (row == null || typeof row !== "object" || Array.isArray(row)) {
+    throw Error(`${name} must be a decoded database record`);
+  }
+  return row as Json;
+}
+
 function templateRow(row: any): CrmOutreachTemplate {
+  row = recordRow(row, "CRM outreach template row");
   return timestampFields(
     { ...row, required_fields: row.required_fields ?? [] },
     ["created_at", "activated_at", "retired_at"],
@@ -294,6 +302,7 @@ function templateRow(row: any): CrmOutreachTemplate {
 }
 
 export function batchRow(row: any): CrmOutreachBatch {
+  row = recordRow(row, "CRM outreach batch row");
   return timestampFields(
     { ...row, template_snapshot: row.template_snapshot ?? {} },
     [
@@ -309,6 +318,7 @@ export function batchRow(row: any): CrmOutreachBatch {
 }
 
 export function deliveryRow(row: any): CrmOutreachDelivery {
+  row = recordRow(row, "CRM outreach delivery row");
   return timestampFields(
     {
       ...row,
@@ -2283,7 +2293,8 @@ export async function listOutreachFollowups(
     );
   params.push(limit(opts.limit));
   const { rows } = await getPool().query(
-    `SELECT d AS delivery,t AS task,o.id AS organization_id,o.customer_number,o.display_name
+    `SELECT to_jsonb(d) AS delivery,to_jsonb(t) AS task,
+      o.id AS organization_id,o.customer_number,o.display_name
        FROM crm_outreach_deliveries d JOIN crm_tasks t ON t.id=d.task_id JOIN crm_organizations o ON o.id=d.organization_id
       WHERE ${where.join(" AND ")} ORDER BY t.due_at,t.id LIMIT $${params.length}`,
     params,

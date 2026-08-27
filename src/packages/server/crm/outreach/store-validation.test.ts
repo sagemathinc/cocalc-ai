@@ -4,11 +4,24 @@
  */
 
 import {
+  batchRow,
   canQueueOutreachBatch,
+  deliveryRow,
   missingRequiredMergeFields,
   outreachProviderConfigurationErrors,
   requireOutreachOptOutSecret,
 } from "./store";
+
+describe("CRM outreach database row decoding", () => {
+  it("rejects undecoded PostgreSQL composite strings", () => {
+    expect(() => deliveryRow("(id,queued,0)")).toThrow(
+      "CRM outreach delivery row must be a decoded database record",
+    );
+    expect(() => batchRow("(id,OUT-1,queued)")).toThrow(
+      "CRM outreach batch row must be a decoded database record",
+    );
+  });
+});
 
 describe("CRM outreach reviewed-content validation", () => {
   it("identifies blank required merge values", () => {
