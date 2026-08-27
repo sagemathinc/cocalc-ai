@@ -20,6 +20,10 @@ class FakeRuntime implements DocumentBuildRuntime {
   readonly files = new Map<string, string>();
   readonly existing = new Set<string>();
   readonly outputs = new Map<string, Output[]>();
+  // Files each successive run of a stage creates, keyed by stage name and
+  // consumed one entry per call like `outputs`. Lets a test show that a forced
+  // re-run regenerates an input the earlier aggregated run did not produce.
+  readonly creates = new Map<string, string[][]>();
   config?: SavedBuildConfig;
   clock = 1_000;
 
@@ -53,6 +57,9 @@ class FakeRuntime implements DocumentBuildRuntime {
     _onEvent: (event: BuildStageEvent) => void,
   ): Promise<BuildStageResult> {
     this.specs.push(spec);
+    for (const path of this.creates.get(spec.name)?.shift() ?? []) {
+      this.existing.add(path);
+    }
     const output = this.outputs.get(spec.name)?.shift() ?? {};
     return {
       ...spec,
@@ -251,6 +258,10 @@ describe("LaTeX-family pipelines", () => {
       stderr: "Sage processing complete successfully",
     });
 
+    // The first pass is aggregated away and produces nothing; only the forced
+    // second pass regenerates the SageTeX input.
+    runtime.creates.set("latex", [[], ["paper.sagetex.sage"]]);
+
     const result = await runDocumentBuild(
       { path: "paper.tex", generation: "saved-17", output_directory: null },
       runtime,
@@ -266,6 +277,34 @@ describe("LaTeX-family pipelines", () => {
     ]);
     expect(runtime.specs[0].aggregate_key).toBe("saved-17");
     expect(runtime.specs[1].aggregate_key).toBeUndefined();
+    // The regenerated file was hashed, so sagetex can aggregate normally.
+    expect(
+      runtime.specs.find((spec) => spec.name === "sagetex")?.aggregate_key,
+    ).toBe("sage-hash");
+    expect(
+      result.diagnostics.filter((d) => d.source === "transport"),
+    ).toHaveLength(0);
+    expect(result.state).toBe("succeeded");
+  });
+
+  it("still runs SageTeX when the input cannot be regenerated", async () => {
+    const runtime = new FakeRuntime();
+    runtime.files.set("paper.tex", "\\documentclass{article}");
+    runtime.queue(
+      "latex",
+      { stdout: "sagetex.sty" },
+      { stdout: "still no sagetex input" },
+      { stdout: "after sage" },
+    );
+    runtime.queue("sagetex", { stderr: "Sage processing complete" });
+
+    const result = await runDocumentBuild(
+      { path: "paper.tex", generation: "saved-17", output_directory: null },
+      runtime,
+    );
+
+    // No hash could be computed, so sagetex must not be deduped against an
+    // earlier run whose input we could not identify.
     expect(
       runtime.specs.find((spec) => spec.name === "sagetex")?.aggregate_key,
     ).toBeUndefined();
