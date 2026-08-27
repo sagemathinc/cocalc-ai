@@ -11,6 +11,7 @@ pnpm test ./read.test.ts
 import {
   before,
   after,
+  connect,
   client as testClient,
 } from "@cocalc/backend/conat/test/setup";
 
@@ -165,6 +166,63 @@ describe("do a larger test that involves multiple chunks and a different name", 
     close({ project_id, name });
     for (const f of cleanups) {
       f();
+    }
+  });
+});
+
+describe("a queue group keeps duplicate read servers from both answering", () => {
+  // Several processes can register the hub-side workspace reader for the same
+  // project.  Without a shared queue group each registrant gets its own random
+  // group, so every one of them receives the request and streams a full copy of
+  // the file, interleaving duplicate chunk sequences into a single response.
+  const project_id = "00000000-0000-4000-8000-000000000001";
+  const name = ":workspace";
+  const queue = "workspace-file-download-read";
+  const CONTENT = "duplicate-reader-check";
+
+  let source;
+  let cleanups: any[] = [];
+  const served: string[] = [];
+
+  it("creates the file to read", async () => {
+    const { path, cleanup } = await tempFile();
+    source = path;
+    await fsWriteFile(path, CONTENT);
+    cleanups.push(cleanup);
+  });
+
+  it("registers two independent servers on the same subject and queue", async () => {
+    for (const id of ["a", "b"]) {
+      await createServer({
+        project_id,
+        name,
+        queue,
+        client: connect(),
+        createReadStream: (path: string, opts?: any) => {
+          served.push(id);
+          return createReadStream(path, opts);
+        },
+      });
+    }
+  });
+
+  it("has exactly one server answer, and returns the file intact", async () => {
+    const chunks: string[] = [];
+    for await (const chunk of await readFile({
+      project_id,
+      path: source,
+      name,
+      client: testClient,
+    })) {
+      chunks.push(chunk.toString());
+    }
+    expect(chunks.join("")).toEqual(CONTENT);
+    expect(served).toHaveLength(1);
+  });
+
+  it("cleans up", async () => {
+    for (const cleanup of cleanups) {
+      cleanup();
     }
   });
 });

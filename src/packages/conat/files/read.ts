@@ -104,12 +104,21 @@ export async function createServer({
   name = "",
   client,
   maxActiveStreams,
+  queue,
 }: {
   createReadStream;
   project_id: string;
   name?: string;
   client?: ConatClient;
   maxActiveStreams?: number;
+  // Queue group for the subscription.  Leave unset when exactly one process
+  // ever serves this subject (a project serving its own files, a project-host
+  // serving one project).  Set a stable name when several processes may
+  // register the same subject, so that only one of them handles each request:
+  // without it every registrant gets a random queue group and therefore a copy
+  // of every message, which interleaves duplicate chunk sequences into one
+  // stream.
+  queue?: string;
 }) {
   const subject = getSubject({ project_id, name });
   logger.debug("createServer", { subject });
@@ -117,7 +126,7 @@ export async function createServer({
   // silently bind them to the global singleton; callers must pass the intended
   // routed client explicitly.
   const cn = requireExplicitConatClient(client);
-  const sub = await cn.subscribe(subject);
+  const sub = await cn.subscribe(subject, queue ? { queue } : undefined);
   subs[subject] = sub;
   listen({
     sub,

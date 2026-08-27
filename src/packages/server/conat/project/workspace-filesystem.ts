@@ -82,6 +82,12 @@ const WORKSPACE_HOME_ALIASES = ["/home/user"];
 // and therefore also answers for projects that are not running.
 export const WORKSPACE_FILE_DOWNLOAD_READ_SERVICE = ":workspace";
 
+// Stable queue group so that if more than one hub process ever serves the same
+// workspace, exactly one of them answers each read request.  The project-local
+// and project-host readers do not need this because only one process can ever
+// register those subjects.
+const WORKSPACE_FILE_DOWNLOAD_READ_QUEUE = "workspace-file-download-read";
+
 function requireProjectPath(path?: string): string {
   if (!path) {
     throw new Error(
@@ -129,6 +135,7 @@ export async function ensureWorkspaceFileDownloadReadServer({
       client,
       project_id,
       name: readServiceName,
+      queue: WORKSPACE_FILE_DOWNLOAD_READ_QUEUE,
       createReadStream: async (requestedPath: string, opts?: any) => {
         const fs = workspaceProjectFilesystem({ project_id, path });
         const absPath = await fs.safeAbsPath(requestedPath);
