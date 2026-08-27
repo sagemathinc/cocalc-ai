@@ -43,7 +43,13 @@ class FakeRuntime implements DocumentBuildRuntime {
     return this.existing.has(path);
   }
 
+  // Failures a hash of this path should raise instead of succeeding, for the
+  // filesystem errors that are not "the file is absent".
+  readonly hashFailures = new Map<string, Error>();
+
   async hash(path: string): Promise<string> {
+    const failure = this.hashFailures.get(path);
+    if (failure != null) throw failure;
     if (!this.existing.has(path)) {
       throw Object.assign(new Error(`ENOENT: no such file: ${path}`), {
         code: "ENOENT",
@@ -312,6 +318,65 @@ describe("LaTeX-family pipelines", () => {
       result.diagnostics.filter((d) => d.source === "transport"),
     ).toHaveLength(0);
     expect(result.state).toBe("succeeded");
+  });
+
+  it("does not re-run LaTeX for a missing SageTeX input after a forced pass", async () => {
+    const runtime = new FakeRuntime();
+    runtime.files.set("paper.tex", "\\documentclass{article}");
+    runtime.queue("latex", { stdout: "sagetex.sty" }, { stdout: "after sage" });
+    runtime.queue("sagetex", { stderr: "Sage processing complete" });
+
+    const result = await runDocumentBuild(
+      {
+        path: "paper.tex",
+        generation: "saved-17",
+        force: true,
+        output_directory: null,
+      },
+      runtime,
+    );
+
+    // A forced pass cannot have been served from the aggregate cache, so it
+    // really ran and repeating it would only spend more of the build deadline.
+    expect(runtime.specs.map((spec) => spec.name)).toEqual([
+      "latex",
+      "sagetex",
+      "latex",
+    ]);
+    expect(runtime.specs[0].aggregate_key).toBeUndefined();
+    expect(
+      runtime.specs.find((spec) => spec.name === "sagetex")?.aggregate_key,
+    ).toBeUndefined();
+    expect(result.state).toBe("succeeded");
+  });
+
+  it("reports a SageTeX input that cannot be read rather than treating it as missing", async () => {
+    const runtime = new FakeRuntime();
+    runtime.files.set("paper.tex", "\\documentclass{article}");
+    runtime.queue("latex", { stdout: "sagetex.sty" });
+    runtime.hashFailures.set(
+      "paper.sagetex.sage",
+      Object.assign(new Error("EACCES: permission denied"), {
+        code: "EACCES",
+      }),
+    );
+
+    const result = await runDocumentBuild(
+      { path: "paper.tex", generation: "saved-17", output_directory: null },
+      runtime,
+    );
+
+    // Not an absent file, so no recovery re-run and no SageTeX run with an
+    // unidentified input: the real error surfaces.
+    expect(runtime.specs.map((spec) => spec.name)).toEqual(["latex"]);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        source: "transport",
+        file: "paper.sagetex.sage",
+        message: expect.stringContaining("EACCES"),
+      }),
+    );
+    expect(result.state).toBe("failed");
   });
 
   it("does not run later stages after a failed preprocessor", async () => {

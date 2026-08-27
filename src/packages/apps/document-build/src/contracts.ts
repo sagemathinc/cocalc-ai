@@ -157,6 +157,9 @@ export interface DocumentBuildRuntime {
   readText(path: string): Promise<string>;
   readBuildConfig(path: string): Promise<SavedBuildConfig | undefined>;
   exists(path: string): Promise<boolean>;
+  // Rejects with an error whose `code` is "ENOENT" when the file is absent;
+  // every other failure (permissions, I/O) rejects with its own error, so
+  // callers can distinguish "not there" from "could not be read".
   hash(path: string): Promise<string>;
   execute(
     stage: BuildStageSpec,
