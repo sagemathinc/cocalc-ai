@@ -209,8 +209,10 @@ describe("LaTeX-family pipelines", () => {
   });
 
   it.each([
-    ["two  spaces.tex", "consecutive spaces"],
-    ["author's-notes.tex", "a single quote"],
+    ["two  spaces.tex"],
+    ["author's-notes.tex"],
+    ["sub/two  spaces.tex"],
+    ["sub/author's-notes.tex"],
   ])("refuses to build %s", async (path) => {
     const runtime = new FakeRuntime();
     runtime.files.set(path, "\\documentclass{article}");
@@ -221,6 +223,19 @@ describe("LaTeX-family pipelines", () => {
       source: "configuration",
       message: expect.stringContaining("not possible to compile"),
     });
+  });
+
+  it("builds a file whose directory contains spaces and a quote", async () => {
+    // Only the basename reaches the build command; the directory is passed as
+    // cwd, so it does not have to be shell-safe.
+    const runtime = new FakeRuntime();
+    const path = "bad  dir/author's-dir/paper.tex";
+    runtime.files.set(path, "\\documentclass{article}");
+    runtime.queue("latex", { stdout: "latexmk" });
+    const result = await runDocumentBuild({ path }, runtime);
+    expect(runtime.specs.map((spec) => spec.name)).toEqual(["latex"]);
+    expect(runtime.specs[0].cwd).toBe("bad  dir/author's-dir");
+    expect(result.state).toBe("succeeded");
   });
 
   it("re-runs LaTeX when the generated SageTeX input is missing", async () => {

@@ -192,12 +192,24 @@ describe("is_bad_latex_filename", () => {
 
   test("rejects filenames with two or more consecutive spaces", () => {
     expect(misc.is_bad_latex_filename("my  paper.tex")).toBe(true);
-    expect(misc.is_bad_latex_filename("folder/bad  name/file.tex")).toBe(true);
+    expect(misc.is_bad_latex_filename("folder/my  paper.tex")).toBe(true);
   });
 
   test("rejects filenames with a single quote", () => {
     expect(misc.is_bad_latex_filename("author's-notes.tex")).toBe(true);
     expect(misc.is_bad_latex_filename("folder/author's-notes.tex")).toBe(true);
+  });
+
+  test("ignores directory components, which never reach the build command", () => {
+    // The build command is assembled from the basename and the directory is
+    // passed separately as cwd, so only the basename has to be safe. Verified
+    // against TeX Live 2026: a .tex file inside a directory with both a double
+    // space and a quote builds fine.
+    expect(misc.is_bad_latex_filename("bad  dir/paper.tex")).toBe(false);
+    expect(misc.is_bad_latex_filename("author's-dir/paper.tex")).toBe(false);
+    expect(misc.is_bad_latex_filename("bad  dir/author's-dir/paper.tex")).toBe(
+      false,
+    );
   });
 });
 
