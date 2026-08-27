@@ -9,8 +9,10 @@ R Markdown Editor Actions
 
 // cSpell:ignore rnorm
 
+import type { Set } from "immutable";
 import { debounce } from "lodash";
 import type { DocumentBuildSnapshot } from "@cocalc/app-document-build";
+import type { AccountStore } from "@cocalc/frontend/account";
 import type { DocumentBuildWatcher } from "@cocalc/frontend/client/document-build-watcher";
 import {
   documentBuildApi,
@@ -93,11 +95,16 @@ export class Actions extends MarkdownActions {
   }
 
   private do_build_on_save(): boolean {
-    const account: any = this.redux.getStore("account");
-    if (account != null) {
-      return !!account.getIn(["editor_settings", "build_on_save"]);
-    }
-    return true;
+    const account: AccountStore | undefined = this.redux.getStore("account");
+    // Default to false until the account settings are confirmed loaded.  The
+    // store is populated with the schema defaults (build_on_save: true) before
+    // "is_ready" fires, so checking editor_settings != null is not enough --
+    // without the is_ready check we would build based on the default rather
+    // than the user's actual preference.
+    if (!account?.get("is_ready")) return false;
+    const settings = account.get("editor_settings");
+    if (settings == null) return false;
+    return settings.get("build_on_save") ?? true;
   }
 
   _init_rmd_converter(): void {
@@ -205,8 +212,10 @@ export class Actions extends MarkdownActions {
     this.setState({ building });
   }
 
-  async _check_produced_files(): Promise<void> {
-    await checkProducedFiles(this);
+  // Tri-state: a Set of the produced extensions, or null if we could not
+  // determine it.  null must never be treated as "no output exists".
+  async _check_produced_files(): Promise<Set<string> | null> {
+    return await checkProducedFiles(this);
   }
 
   // use this.run_rmd_converter

@@ -20,17 +20,19 @@ export function derive_rmd_output_filename(path, ext) {
   return join(head, fn);
 }
 
-export async function checkProducedFiles(codeEditorActions) {
-  const project_actions = codeEditorActions.redux.getProjectActions(
-    codeEditorActions.project_id,
-  );
-  if (project_actions == null) {
-    return;
-  }
-
-  let existing = Set();
-  const fs = codeEditorActions.fs();
-  const f = async (ext: string) => {
+// Determines which output files (pdf, html, nb.html) already exist for a
+// markdown-converter source file.  Tri-state result:
+//   - a Set of the extensions that were found (possibly empty),
+//   - null if we could not find out (project offline, transient error, ...).
+// Callers must treat null as "unknown", never as "output is missing" -- in
+// particular they must not auto-build based on a null result.
+// As a side effect the derived_file_types state is updated when the answer
+// is known.
+export async function checkProducedFiles(
+  codeEditorActions,
+): Promise<Set<string> | null> {
+  let existing = Set<string>();
+  const f = async (fs, ext: string) => {
     const expectedFilename = derive_rmd_output_filename(
       codeEditorActions.path,
       ext,
@@ -39,13 +41,28 @@ export async function checkProducedFiles(codeEditorActions) {
       existing = existing.add(ext);
     }
   };
-  const v = ["pdf", "html", "nb.html"].map(f);
-  await Promise.all(v);
+  try {
+    const project_actions = codeEditorActions.redux.getProjectActions(
+      codeEditorActions.project_id,
+    );
+    if (project_actions == null) {
+      return null;
+    }
+    const fs = codeEditorActions.fs();
+    const v = ["pdf", "html", "nb.html"].map((ext) => f(fs, ext));
+    await Promise.all(v);
+  } catch {
+    // Project actions or filesystem unavailable (project not running,
+    // transient error, ...).  Report "unknown" instead of pretending that
+    // nothing was produced.
+    return null;
+  }
 
   // console.log("setting derived_file_types to", existing.toJS());
   codeEditorActions.setState({
     derived_file_types: existing as any,
   });
+  return existing;
 }
 
 export function getResourceUsage(

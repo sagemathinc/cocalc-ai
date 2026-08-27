@@ -37,6 +37,7 @@ import {
   type DocumentBuildSnapshot,
   type LatexEngine,
 } from "@cocalc/app-document-build";
+import type { AccountStore } from "@cocalc/frontend/account";
 import { Store, TypedMap } from "@cocalc/frontend/app-framework";
 import type {
   DocumentBuildApi,
@@ -503,6 +504,40 @@ export class Actions extends BaseActions<LatexEditorState> {
     }
   }
 
+  // Decide whether opening this document should trigger a build.  We only
+  // build on open if all of the following hold:
+  //   - the account settings are confirmed loaded (otherwise we would decide
+  //     based on the schema defaults rather than the user's preference),
+  //   - "build on save" is enabled,
+  //   - the output PDF does not exist yet.
+  // Anything unknown (settings timed out, listing unavailable) means "don't
+  // build" -- a spurious build on every open is worse than a missing one,
+  // since the user can always build explicitly.
+  private async shouldBuildOnOpen(): Promise<boolean> {
+    const account: AccountStore | undefined = this.redux.getStore("account");
+    if (account == null) return false;
+    const ready = await account.waitUntilReady();
+    if (this._state === "closed") return false;
+    // timed out -- settings not loaded, so skip the auto build.  The
+    // save listeners installed by init_build_on_save stay active.
+    if (!ready) return false;
+    if (!account.getIn(["editor_settings", "build_on_save"])) return false;
+    const pdfExists = await this.outputFileExists(pdf_path(this.path));
+    if (this._state === "closed") return false;
+    // exists or unknown => don't build
+    return pdfExists === false;
+  }
+
+  // Tri-state: true = file exists, false = confirmed absent,
+  // null = unknown (error) -- callers must not treat null as "absent".
+  private async outputFileExists(filePath: string): Promise<boolean | null> {
+    try {
+      return await this.fs().exists(filePath);
+    } catch {
+      return null;
+    }
+  }
+
   private async init_config(): Promise<void> {
     this.setState({ build_command: "" }); // empty means not yet initialized
 
@@ -570,8 +605,11 @@ export class Actions extends BaseActions<LatexEditorState> {
 
     if (this.is_likely_master() && !this.is_read_only_preview()) {
       // We now definitely have the build command set and the document loaded,
-      // and it is likely a master latex file, so let's kick off our initial build.
-      this.force_build();
+      // and it is likely a master latex file.  Only kick off an initial build
+      // if the user actually wants one -- see shouldBuildOnOpen.
+      if (await this.shouldBuildOnOpen()) {
+        this.force_build();
+      }
     }
   }
 

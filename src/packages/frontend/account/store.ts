@@ -19,6 +19,28 @@ export class AccountStore extends Store<AccountState> {
     this.setup_selectors();
   }
 
+  // Resolves immediately if account settings are already loaded, otherwise
+  // waits for the store to emit "is_ready" (set by account/table.ts once the
+  // first account snapshot has been applied).  Times out after timeoutMs
+  // (default 60s) so that editors opened and closed before account init
+  // completes do not leak an indefinite wait.
+  // Returns true if ready, false if it timed out (settings may not be loaded).
+  async waitUntilReady(timeoutMs: number = 60000): Promise<boolean> {
+    if (this.get("is_ready")) return true;
+    return await new Promise<boolean>((resolve) => {
+      const onReady = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        // Clean up the event listener so it doesn't accumulate.
+        this.removeListener("is_ready", onReady);
+        resolve(false);
+      }, timeoutMs);
+      this.once("is_ready", onReady);
+    });
+  }
+
   get_user_type(): string {
     return this.get("user_type");
   }

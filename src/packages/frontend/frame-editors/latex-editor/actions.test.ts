@@ -537,6 +537,14 @@ describe("LaTeX initial build", () => {
     actions.force_build = forceBuild;
     actions.path = "paper.tex";
     actions.knitr = false;
+    // account settings loaded, build-on-save enabled, and no paper.pdf yet
+    actions.redux = {
+      getStore: () => ({
+        waitUntilReady: async () => true,
+        getIn: () => true,
+      }),
+    };
+    actions.fs = () => ({ exists: async () => false });
 
     const promise = (actions as any).init_config();
     await Promise.resolve();
@@ -547,6 +555,45 @@ describe("LaTeX initial build", () => {
     await promise;
 
     expect(forceBuild).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not build on open when the pdf already exists", async () => {
+    const syncstring = new EventEmitter() as any;
+    syncstring.is_fake = false;
+    syncstring.get_state = () => "ready";
+    syncstring.to_str = () =>
+      "\\documentclass{article}\n\\begin{document}Hi\n\\end{document}\n";
+
+    const syncdb = new EventEmitter() as any;
+    syncdb.is_fake = false;
+    syncdb.get_state = () => "ready";
+    syncdb.get_one = jest.fn(() => undefined);
+    syncdb.on = jest.fn();
+
+    const forceBuild = jest.fn(async () => undefined);
+    const actions: any = createActionsFixture();
+    actions._state = "open";
+    actions._syncstring = syncstring;
+    actions._syncdb = syncdb;
+    actions._init_syncdb = jest.fn();
+    actions.isClosed = () => false;
+    actions.is_read_only_preview = () => false;
+    actions.setState = jest.fn();
+    actions.set_default_build_command = jest.fn(() => ["latexmk"]);
+    actions.force_build = forceBuild;
+    actions.path = "paper.tex";
+    actions.knitr = false;
+    actions.redux = {
+      getStore: () => ({
+        waitUntilReady: async () => true,
+        getIn: () => true,
+      }),
+    };
+    actions.fs = () => ({ exists: async () => true });
+
+    await (actions as any).init_config();
+
+    expect(forceBuild).not.toHaveBeenCalled();
   });
 });
 
