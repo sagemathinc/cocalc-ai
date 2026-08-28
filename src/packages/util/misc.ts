@@ -2460,31 +2460,98 @@ export function obj_key_subs(obj: object, subs: { [key: string]: any }): void {
   }
 }
 
-// this is a helper for sanitizing html. It is used in
-// * packages/backend/misc_node → sanitize_html
-// * packages/frontend/misc-page    → sanitize_html
-export function sanitize_html_attributes($, node): void {
-  $.each(node.attributes, function () {
-    // sometimes, "this" is undefined -- #2823
-    // @ts-ignore -- no implicit this
-    if (this == null) {
-      return;
+// Characters a browser ignores while parsing a URL scheme: leading ASCII
+// controls and spaces are stripped, and tab/CR/LF are removed from anywhere.
+// We over-approximate with all JS whitespace plus ASCII 0-31, so
+// " javascript:" and "java\tscript:" are both recognized.
+const IGNORED_IN_URL_SCHEME = /[\s\x00-\x1f]/;
+
+const UNSAFE_PROTOCOLS = ["javascript:", "vbscript:"];
+
+// Does any ";"-separated segment of value start with protocol, ignoring the
+// characters a browser ignores inside a URL scheme?
+//
+// Segments matter because SVG animation attributes are lists:
+//   <animate attributeName="href" values="https://ok.example;javascript:alert(1)">
+// assigns the second value to href partway through the animation, so testing
+// only the start of the whole attribute misses it. Segmenting every attribute
+// (rather than just the list-valued ones by name) avoids relying on a list of
+// attribute names, which is exactly the kind of thing that turns out to be
+// incomplete.
+//
+// This scans in place: within a segment it bails at the first mismatching
+// character and then jumps to the next ";" with indexOf, so a multi-megabyte
+// data: URI costs a couple of character comparisons plus a native scan, rather
+// than the full-value copy an upstream-style replace().toLowerCase() makes.
+// Worst case is linear in the length of value, with no backtracking.
+//
+// Two things NOT to "optimize" here, both of which reintroduce bypasses:
+// normalizing a fixed-size prefix (padding with ignored characters pushes the
+// scheme past the window), and matching with a regex built from the protocol
+// (nested quantifiers over the ignorable class backtrack quadratically on
+// input like ";;;;" + " ".repeat(100000)).
+function hasProtocolInAnySegment(value: string, protocol: string): boolean {
+  let start = 0;
+  while (start <= value.length) {
+    let matched = 0;
+    for (let i = start; i < value.length; i++) {
+      const c = value[i];
+      if (c === ";") {
+        break;
+      }
+      if (IGNORED_IN_URL_SCHEME.test(c)) {
+        continue;
+      }
+      if (c.toLowerCase() !== protocol[matched]) {
+        break;
+      }
+      if (++matched === protocol.length) {
+        return true;
+      }
     }
-    // @ts-ignore -- no implicit this
-    const attrName = this.name;
-    // @ts-ignore -- no implicit this
-    const attrValue = this.value;
+    const nextSegment = value.indexOf(";", start);
+    if (nextSegment === -1) {
+      return false;
+    }
+    start = nextSegment + 1;
+  }
+  return false;
+}
+
+// this is a helper for sanitizing html. It is used in
+// * packages/frontend/misc/sanitize.ts → sanitize_html
+export function sanitize_html_attributes($, node): void {
+  // Use Array.from to snapshot node.attributes (a live NamedNodeMap).
+  // Iterating a live collection while removing attributes shifts indices
+  // and causes elements to be skipped -- an XSS vulnerability.
+  for (const attr of Array.from(node?.attributes ?? [])) {
+    if (attr == null) {
+      continue;
+    }
+    const attrName = (attr as Attr).name;
+    const attrValue = (attr as Attr).value;
+    const lowerName = attrName?.toLowerCase() ?? "";
     // remove attribute name start with "on", possible
     // unsafe, e.g.: onload, onerror...
-    // remove attribute value start with "javascript:" pseudo
-    // protocol, possible unsafe, e.g. href="javascript:alert(1)"
+    // remove attribute value start with a "javascript:" or "vbscript:"
+    // pseudo protocol, possible unsafe, e.g. href="javascript:alert(1)".
+    // This deliberately checks EVERY attribute, not just the obvious url
+    // sinks: an allowlist of url-valued attributes is not safe here. SVG
+    // <animate attributeName="href" values="javascript:..."> assigns an href
+    // at runtime, so `values` -- and `to`, `from`, `by`, `srcset`, `ping`,
+    // ... -- are url sinks too, and any such list will be incomplete. For the
+    // same reason every attribute is segmented on ";", not just the ones known
+    // to hold animation lists.
     if (
-      attrName?.indexOf("on") === 0 ||
-      attrValue?.indexOf("javascript:") === 0
+      lowerName.startsWith("on") ||
+      (attrValue != null &&
+        UNSAFE_PROTOCOLS.some((protocol) =>
+          hasProtocolInAnySegment(attrValue, protocol),
+        ))
     ) {
       $(node).removeAttr(attrName);
     }
-  });
+  }
 }
 
 // cocalc analytics cookie name
