@@ -25,6 +25,7 @@ import DefaultMath from "@cocalc/frontend/components/math/ssr";
 import { MathJaxConfig } from "@cocalc/util/mathjax-config";
 import { decodeHTML } from "entities";
 import {
+  enforceHtmlSafetyFloor,
   isAllowedHtmlTag,
   sanitizeHtmlAttributes,
   shouldDropHtmlTagContents,
@@ -77,7 +78,18 @@ export default function HTML({
 
     try {
       if (!(domNode instanceof Element)) return;
-      const { name, children, attribs } = domNode;
+      const { name, children } = domNode;
+
+      // The safety floor, applied before anything else and regardless of
+      // noSanitize. Written back onto domNode so it also covers the paths
+      // below that return undefined and let html-react-parser render the node
+      // as-is.
+      const floored = enforceHtmlSafetyFloor(name, domNode.attribs);
+      if (floored == null) {
+        return React.createElement(React.Fragment);
+      }
+      domNode.attribs = floored;
+      const attribs = floored;
 
       if (name == "script") {
         const type = domNode.attribs?.type?.toLowerCase();

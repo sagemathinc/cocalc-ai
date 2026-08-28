@@ -30,7 +30,29 @@ http://api.jquery.com/jQuery.parseHTML/ (expanded behavior in version 3+)
 */
 
 import { sanitize_html_attributes } from "@cocalc/util/misc";
+import { enforceHtmlSafetyFloor } from "@cocalc/frontend/components/sanitize-html";
 declare var jQuery: any;
+
+// This renderer only ever filtered attribute *values* for javascript:/vbscript:
+// -- it says nothing about dangerous tags, so an <iframe srcdoc="<script>...">
+// used to render and execute in our origin. Apply the same floor html-ssr does.
+function applySafetyFloor(sani): void {
+  sani.find("object, embed, applet, iframe").each(function (this: any) {
+    const node = this;
+    const attribs: Record<string, string> = {};
+    for (const attr of Array.from(node.attributes ?? [])) {
+      attribs[(attr as Attr).name] = (attr as Attr).value;
+    }
+    const floored = enforceHtmlSafetyFloor(node.tagName ?? "", attribs);
+    if (floored == null) {
+      jQuery(node).remove();
+      return;
+    }
+    if (floored.sandbox != null && floored.sandbox !== attribs.sandbox) {
+      jQuery(node).attr("sandbox", floored.sandbox);
+    }
+  });
+}
 
 export function sanitize_html(
   html: string,
@@ -42,6 +64,7 @@ export function sanitize_html(
     jQuery.parseHTML("<div>" + html + "</div>", null, keepScripts),
   );
   if (!keepUnsafeAttributes) {
+    applySafetyFloor(sani);
     sani.find("*").each(function (this: any) {
       return sanitize_html_attributes(jQuery, this);
     });
