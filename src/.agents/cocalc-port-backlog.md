@@ -110,17 +110,12 @@ still hold. Only line numbers drifted (noted inline).
 2. **#8815** — wanted, deferred, to be done in stages. See §4.
 3. **#8669** — priority 0, keep referenced only (one owner per project today). See Tier 7.
 
-The cheap alternative to starting #8636, if a short slot is what's available: the
-**Tier 1 pair** (#8724/#8733 + #8698) is still untouched and is genuinely a
-two-file change plus a test — the highest value-per-line left on the list.
-
 **Keep on the list, but parked** (Tier 7): **#8888** super low priority;
 **#8663** low priority and the _approach_ is unresolved (overlaps #8815's contrast
 parameter); **#8686** blocked on a design call, since both trees reworked the same
 student list after the fork.
 
-Opportunistic, whenever convenient: the Tier 1 two-liners (#8724/#8733 sanitize,
-#8698 get-random-values) and the Tier 2 small-bug batch.
+Opportunistic, whenever convenient: the Tier 2 small-bug batch.
 
 ---
 
@@ -128,14 +123,9 @@ Opportunistic, whenever convenient: the Tier 1 two-liners (#8724/#8733 sanitize,
 
 ### Tier 1 — do now: small, unambiguous, high value
 
-| PR                | What                                                                                                        | Evidence it's missing                                                                                                                                                                                                                                                                                                                                                           |
-| ----------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **#8724 + #8733** | `sanitize_html_attributes` XSS hardening (case-folding, whitespace/control-char normalization, `vbscript:`) | `util/misc.ts:2466` (was `:2454`) is the literal pre-fix version; still reachable via `frontend/misc/sanitize.ts:46`. Two tiny diffs + a 95-line test.                                                                                                                                                                                                                          |
-| **#8698**         | Drop `get-random-values` → `globalThis.crypto.getRandomValues`                                              | Still a real dep: `util/package.json:57`, `util/misc.ts:85`, call at `:833` in `secure_random_token`. Installed as `get-random-values@1.2.2`, dragging in `min-document@2.19.2`. Safe here: cocalc-ai pins `"node": ">=22"`; mobile's `react-native-get-random-values` is a _different_ package polyfilling the same global. Upstream's README/node-version hunk is not needed. |
-
-_(#8697's project half — the missing `await handleExecShellCode(mesg)` in
-`project/exec_shell_code.ts:31` — is also Tier 1, but the label is already
-removed. Don't lose it.)_
+| PR    | What                                                                     | Evidence it's missing                                                                                                                                                                      |
+| ----- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| #8697 | `project/exec_shell_code.ts` awaits nothing, so its `catch` never fires. | `project/exec_shell_code.ts:31` still calls `handleExecShellCode(mesg)` without `await`. One-word fix. The label is already removed (the Next `/api/v2/exec` half is moot); don't lose it. |
 
 ### Tier 2 — small bug batch, one PR
 
@@ -383,18 +373,20 @@ upstream doesn't have. The foundation stage is where the real design decisions a
 
 ### Already done in cocalc-ai
 
-| PR        | Evidence                                                                                                                                                                                    |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #8847     | Ported via cocalc-ai PR #225 — `frontend/chat/anchors.ts`, `jupyter/cell-chat-button.tsx` (`useAnchoredThreads`).                                                                           |
-| #8703     | Both fixes present: `conat/core/server.ts:2801` address guard, `conat/persist/client.ts` `reconnectTimer`/`scheduleReconnect`.                                                              |
-| #8745     | Moot — `app-framework/redux-hooks.ts` was rewritten (`resolveReduxPath`/`getReduxValue`) to always re-read from the store, which _is_ the fix.                                              |
-| #8824     | `projects/projects-actions-menu-content.tsx:99` already uses the `useEffect` form, with a comment about the mount-vs-`onOpenChange` case. The `file-tabs.tsx` half doesn't apply.           |
-| **#8744** | _(still labelled)_ `project/file-action-modal.tsx` exists and is wired at `project/page/page.tsx:151,1194`. Independently built.                                                            |
-| **#8756** | _(still labelled)_ **Ported 2026-08-28** — `0ef98257c2` + `f5835d37c9` + `6402a1cadc`. Full detail in Tier 4. The `exec-stream`/`aggregate` half was **not** included and stays with #8795. |
-| **#8830** | _(still labelled)_ **Ported 2026-08-28** — `b758416e55`, `93b975345d`, `732d864784`, `6e4b7611cd`, via the CLOSED-but-landed PR #297.                                                       |
-| #8875     | Independently built: `cookie-consent/index.ts` `forceConsentCount`; `public/auth/forms.tsx` "Acknowledge cookie banner to continue".                                                        |
-| #8676     | Fully ported: `util/consts/portnumber.ts`, `ConfigSSHFS.port`, and the UI (`datastore.tsx:87,120,334`).                                                                                     |
-| #8689     | Cookie table present in `frontend/public/policies/privacy.tsx:354+`.                                                                                                                        |
+| PR                | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #8847             | Ported via cocalc-ai PR #225 — `frontend/chat/anchors.ts`, `jupyter/cell-chat-button.tsx` (`useAnchoredThreads`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| #8703             | Both fixes present: `conat/core/server.ts:2801` address guard, `conat/persist/client.ts` `reconnectTimer`/`scheduleReconnect`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| #8745             | Moot — `app-framework/redux-hooks.ts` was rewritten (`resolveReduxPath`/`getReduxValue`) to always re-read from the store, which _is_ the fix.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| #8824             | `projects/projects-actions-menu-content.tsx:99` already uses the `useEffect` form, with a comment about the mount-vs-`onOpenChange` case. The `file-tabs.tsx` half doesn't apply.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **#8744**         | _(still labelled)_ `project/file-action-modal.tsx` exists and is wired at `project/page/page.tsx:151,1194`. Independently built.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **#8756**         | _(still labelled)_ **Ported 2026-08-28** — `0ef98257c2` + `f5835d37c9` + `6402a1cadc`. Full detail in Tier 4. The `exec-stream`/`aggregate` half was **not** included and stays with #8795.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **#8830**         | _(still labelled)_ **Ported 2026-08-28** — `b758416e55`, `93b975345d`, `732d864784`, `6e4b7611cd`, via the CLOSED-but-landed PR #297.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **#8724 + #8733** | _(still labelled)_ **Ported 2026-08-28** — `0db5f990c8`. Combined end state only: #8733 fixes a bypass that remained after #8724 (the live-`NamedNodeMap` skip predates both — jQuery's `$.each` snapshots `length` once), so porting #8724 alone would have shipped the hole. `util/misc.ts` `sanitize_html_attributes` now lowercases attribute names, strips whitespace + ASCII 0-31 from values before the protocol test, blocks `vbscript:` as well as `javascript:`, and snapshots the live `NamedNodeMap` with `Array.from` so consecutive `on*` attributes are no longer skipped. New `util/test/sanitize_html_attributes.test.ts` (17 tests). **Two divergences from upstream, and one attempted divergence that was withdrawn** — see §9 for both, including the SVG `animate` payload that killed the second one. Kept: `hasProtocolInAnySegment` matches per `;`-separated segment — upstream tests only the start of the whole attribute and is **still vulnerable** to `values="https://ok;javascript:..."` on SVG `animate` (§9a-bis) — and it scans in place, bailing at the first mismatching character, instead of upstream's `replace(...).toLowerCase()` over the whole value — 52ms → 5ms over twenty passes on a 4MB `data:` URI, on a path `components/html.tsx:165` already warns can crash on big documents. Do not reintroduce a fixed-size prefix window: padding with ignored characters would push the scheme past it and bypass the check. Re-verified live before porting, _not_ dead code: `util/misc.ts` → `frontend/misc/sanitize.ts:46` → `frontend/components/html.tsx:184` (`safeHTML` defaults true) and `markdown.tsx`, plus a direct call in `frontend/chat/history.tsx:76`. |
+| **#8698**         | _(still labelled)_ **Ported 2026-08-28** — `ea22ca2957`. `secure_random_token` uses `globalThis.crypto.getRandomValues`; dep gone from `util/package.json`, and `get-random-values` + `global` + `min-document` + `dom-walk` + `process` gone from the lockfile — five package nodes, which `pnpm` reports as −6 because the importer link counts too. `process` was orphaned once `global` went; upstream's diff kept it, so their tree must have had another consumer. The `min-document@<=2.19.0` override in `pnpm-workspace.yaml` stays as a supply-chain guard. `packages/mobile`'s `react-native-get-random-values` is untouched — different package, and it is what supplies the global under React Native. Upstream's README / node-version / `.claude/settings.json` hunks did not apply.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| #8875             | Independently built: `cookie-consent/index.ts` `forceConsentCount`; `public/auth/forms.tsx` "Acknowledge cookie banner to continue".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| #8676             | Fully ported: `util/consts/portnumber.ts`, `ConfigSSHFS.port`, and the UI (`datastore.tsx:87,120,334`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| #8689             | Cookie table present in `frontend/public/policies/privacy.tsx:354+`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ### Not applicable — gone or structurally replaced
 
@@ -483,3 +475,262 @@ issue tickets for these; this list _is_ the tracker.
    to name vendors without linking their policies, since those links go stale.
 6. **Dead explorer files** — `project/explorer/file-listing/file-row.tsx` and
    `file-checkbox.tsx` are unused leftovers upstream deleted in #8768.
+7. **Sanitizer policy** — two open items in §9: the protocol check deletes prose
+   such as `title="JavaScript: The Good Parts"` (fails safe; scoping it to
+   url-valued attributes is **not** the fix — that is an XSS regression), and the
+   legacy jQuery path filters protocols but never tags, so `<iframe srcdoc=...>`
+   and `<iframe src="data:text/html,...">` pass through. The second is a
+   **confirmed live cross-user XSS** — reproduced firing in a real chat message
+   2026-08-28 — caused by `project/page/content.tsx:318` setting `noSanitize: true`
+   for every editor tab, which switches `html-ssr`'s sanitization off entirely.
+   Pre-existing, unrelated to this port, and worth fixing promptly.
+8. **Retire the jQuery HTML pipeline** (`components/html.tsx` and its
+   `sanitize_html_attributes`). `components/html-ssr.tsx:11` already carries the
+   TODO: _"This should eventually completely replace ./html.tsx"_. Investigated
+   2026-08-28 and **deliberately deferred** — a spike showed it typechecks
+   repo-wide and passes 790 frontend tests, but two hazards make it its own PR,
+   not a rider on the sanitize port. See §8.
+
+---
+
+## 8. Retiring the jQuery HTML pipeline (deferred, own PR)
+
+**Why it is worth doing.** `components/html-ssr.tsx:11` says it should replace
+`components/html.tsx`. The jQuery path is nearly orphaned already: every `<HTML>`
+render site in the tree imports `html-ssr` **except** `components/markdown.tsx`.
+
+**Full consumer inventory** of `util/misc.ts sanitize_html_attributes` <-
+`frontend/misc/sanitize.ts` <- `components/html.tsx` (verified 2026-08-28):
+
+| via                                                     | sites                                                                                                                                                                                              | props actually passed              |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `<Markdown>` (`components/markdown` <- `lazy-markdown`) | 10 occurrences in 8 files: markdown TOC, LaTeX TOC, project title + description, invite messages (x2), Jupyter confirm dialog, admin site-setting hints, data-editor hint, LaTeX PDF error message | `value` only (one also `style`)    |
+| `<HTML>` directly                                       | `frame-editors/frame-tree/print.ts:96`, via `renderToStaticMarkup`                                                                                                                                 | `value`, `project_id`, `file_path` |
+| direct `sanitize_html_safe`                             | `chat/history.tsx:76`. **Not redundant** — see the `noSanitize` note below; inside a project editor this pre-pass is the only attribute/protocol sanitization chat history gets.                   | —                                  |
+
+**Two supporting findings.** The prop surface used by the legacy `<Markdown>`
+callers is `value` + `style`; `post_hook`, `content_editable`, `href_transform`,
+`reload_images`, `smc_image_scaling`, `safeHTML={false}` and `auto_render_math`
+have no caller anywhere. (`print.ts` does pass `project_id` and `file_path`, but
+their effects live in a `useEffect` that never runs under `renderToStaticMarkup`.)
+And
+`is_share_server()` is permanently false — `set_share_server` is never called
+anywhere — so html.tsx's entire unsanitized share-server branch is dead code.
+
+**The two hazards that deferred this.**
+
+1. **Do not route markdown through `html-ssr`.** Markdown converges on Slate
+   `StaticMarkdown`; only _raw HTML_ converges on `html-ssr`. Going
+   `markdown_to_html` -> `html-ssr` loses behaviour, because
+   `components/sanitize-html.ts:95` deliberately strips most `class`, `id`,
+   `style`, `data-*`, checkbox `<input>` and mention attributes. Slate understands
+   checkboxes, hashtags, mentions and other markdown tokens structurally.
+2. **`print.ts` is not an import swap.** Pointing it at `html-ssr` would strip user
+   HTML classes, ids and inline styles from printed documents. It needs a
+   deliberate print sanitization policy — decide which formatting attributes to
+   keep — and should be migrated on its own.
+
+**A third thing to settle while doing it:** `project/page/content.tsx:318` sets
+`noSanitize: true` for everything rendered inside a project page (with its own
+"temporary for backward compat" TODO). The in-project `<Markdown>` sites (both
+TOCs, Jupyter confirm dialog, data-editor hint, LaTeX PDF error) currently sanitize
+regardless; after migrating they would inherit `noSanitize`. Arguably that just
+makes them consistent with the file body they describe — a heading you can inject
+into is in a document whose body is already unsanitized — but it is a real
+behaviour change and should be an explicit decision, not a side effect. The
+out-of-project sites (project title/description, invite messages, admin hints) keep
+html-ssr's allowlist and are unaffected.
+
+The same flag is why `chat/history.tsx:76` must keep its `sanitize_html_safe` call
+for now. Chat renders under the project page's `FileContext`, so raw HTML in a
+message reaches `editors/slate/elements/html` -> `components/html-ssr`, and
+`html-ssr.tsx:110` skips `sanitizeHtmlAttributes` entirely when `noSanitize` is set.
+Verified live in Lite 2026-08-28: a `vbscript:` href survives in the editor. So that
+pre-pass is load-bearing, not belt-and-braces, until `noSanitize` is dealt with.
+
+**Order of work.**
+
+1. Move the 10 legacy `<Markdown>` occurrences to `StaticMarkdown`, keeping lazy
+   loading (repointing `components/lazy-markdown.tsx` at `static-markdown` covers
+   all 10 call sites without touching them; note its test mocks `./markdown` and
+   its plain-text fallback uses `id`/`onClick`, which `StaticMarkdown` does not
+   take).
+2. Drop chat history's `sanitize_html_safe` pass **only after** the `noSanitize`
+   policy above is resolved. Under `noSanitize: true` it is not redundant: it is
+   the only thing sanitizing attributes and protocols in chat edit history
+   inside a project editor. Removing it first would reopen raw-HTML XSS there.
+3. Migrate `print.ts` separately, with an explicit attribute policy.
+4. Then delete `html.tsx`, `markdown.tsx`, `misc/sanitize.ts`,
+   `sanitize_html_attributes` + its test, and the unused share-server flag.
+
+**Visual checks required** (this is a UI-visible change): both TOCs, project title
+and description, invite messages, modal/alert content, checkboxes, mentions, math,
+and print formatting.
+
+**Until this lands, the #8724/#8733 hardening in §5 is the safety net** — that is
+why it was kept rather than folded into this removal.
+
+---
+
+## 9. Sanitizer policy: two open questions from the #8724/#8733 review
+
+### 9a. WITHDRAWN: do not scope the protocol check to url-valued attributes
+
+Review of PR #324 flagged, correctly, that the upstream end state deletes prose:
+`title="JavaScript: The Good Parts"` normalizes to `javascript:thegoodparts` and
+the attribute is dropped. Case-folding is what made this reachable — before the
+port only a literal lowercase `javascript:` at position 0 matched.
+
+The obvious fix — only run the protocol test on `href` / `src` / `action` /
+`formaction` / `data` / `xlink:href` / … — was implemented, pushed, and then
+**withdrawn: it is an XSS regression.** Codex found the counter-example, and it
+was reproduced through the real jQuery parse → sanitize → serialize pipeline in
+Chrome:
+
+```html
+<svg>
+  <a>
+    <animate
+      attributeName="href"
+      values="javascript:alert(42)"
+      dur="1s"
+      fill="freeze"
+    />
+    <text>click</text>
+  </a>
+</svg>
+```
+
+`values` is not an "obvious" url attribute, but `animate` assigns it to `href` at
+runtime, so clicking the text runs the script. Under the upstream every-attribute
+check the payload is neutralized; under the allowlist it survived intact. The same
+applies to `to`, `from`, `by`, `srcset`, `ping`, `imagesrcset`. **Any such list is
+incomplete** — the test file carries a regression test for the `animate` case and
+the function carries a comment saying why the list is not safe.
+
+### 9a-bis. FIXED: `values` is a list, so the payload need not come first
+
+A second round of review found that restoring the every-attribute check was still
+not enough. `values` is a **`;`-separated animation list**, and upstream (like the
+first fix) only tested the start of the whole attribute, so this survived both:
+
+```html
+<animate
+  attributeName="href"
+  values="https://example.com;javascript:alert(99)"
+  dur="200ms"
+  calcMode="discrete"
+  repeatCount="indefinite"
+/>
+```
+
+The animation assigns each value to `href` in turn, so the payload runs on click
+from the second value onward. Reproduced through the real jQuery pipeline in
+Chrome. **This one is inherited from upstream** — cocalc.com is vulnerable to it
+today.
+
+Fixed by matching per `;`-separated segment (`hasProtocolInAnySegment`). Segmenting
+is applied to **every** attribute, not just the ones known by name to hold
+animation lists — the whole lesson of §9a is that such lists are incomplete.
+
+Two implementations were rejected on the way, both recorded in comments on the
+function so they are not tried again:
+
+- a **regex** built from the protocol (`j[\s]*a[\s]*v...`) backtracks
+  quadratically on input like `";".repeat(100k) + " ".repeat(100k)` — a ReDoS;
+- normalizing a **fixed-size prefix** lets padding push the scheme past the window.
+
+The shipped scanner bails at the first mismatching character within a segment and
+jumps to the next `;` with a native `indexOf`, so it is linear with no
+backtracking. Measured: 20 passes over a 4MB `data:` URI = 5ms (upstream's
+`replace().toLowerCase()` alone = 52ms), 20 passes over 200k segments = 136ms, 20
+passes over the ReDoS input = 68ms, and a payload buried after 50k safe segments is
+still caught.
+
+### 9c. OPEN (pre-existing, wider than this port): the legacy path only filters
+
+protocols, never tags
+
+An adversarial sweep through the live jQuery pipeline on 2026-08-28 confirmed the
+hardened matcher holds up: entity-encoded schemes (`&#106;avascript:`,
+`&#x6a;`, `javascript&colon;`), every C0 control and space both leading and
+interior, `xlink:href`, `<set>`, `animate` `to`/`from`/`by`, a payload in the third
+`;` segment, and an empty first segment are all neutralized.
+
+But three payloads sail straight through, because `sanitize_html_attributes` only
+ever filtered _attribute values_ for two pseudo-protocols and has nothing to say
+about dangerous _tags_:
+
+```html
+<iframe src="data:text/html,<script>alert(1)</script>"></iframe>
+<iframe srcdoc="<script>alert(1)</script>"></iframe>
+<form action="data:text/html,<script>alert(1)</script>">
+  <button>go</button>
+</form>
+```
+
+`jQuery.parseHTML(..., keepScripts=false)` drops `<script>` elements but not
+iframes, so these survive `sanitize_html_safe` intact. **`components/html-ssr.tsx`
+is not affected**: it has a tag allowlist, restricts `iframe` `src` to
+`IFRAME_HOSTNAMES` (YouTube/Vimeo), and does not allow `srcdoc` at all
+(`components/sanitize-html.ts:78,89,100`).
+
+**CONFIRMED EXPLOITABLE 2026-08-28.** Harald reproduced both payloads firing in a
+real chat message in local dev. This is a live cross-user XSS in cocalc-ai, not a
+theoretical gap, and it is pre-existing — nothing to do with the #8724/#8733 port.
+
+**Root cause: the sanitizer is not wrong, it is switched off.** With sanitization
+enabled, `components/sanitize-html.ts` blocks both payloads — `srcdoc` is not in
+`ALLOWED_ATTRIBUTES.iframe` (`:99`), and `iframe` `src` must pass
+`isAllowedIframeSrc`, i.e. YouTube/Vimeo only (`:89`, `:161`). But
+`components/html-ssr.tsx:110` puts that whole branch behind `if (!noSanitize)`, and
+`project/page/content.tsx:318` sets **`noSanitize: true` unconditionally** for every
+`editor-*` tab, with its own comment: "TODO: temporary for backward compat for now".
+So everything rendered inside a project page — chat messages, chat edit history,
+markdown, notebook output — renders with sanitization disabled.
+
+**Fix options**, in increasing order of blast radius:
+
+1. **A floor that applies even when `noSanitize` is set** — always drop `srcdoc`,
+   iframes whose `src` is not allowlisted, and the other script-executing tags
+   (`object`, `embed`, `form action="data:..."`), while still letting trusted
+   content keep its classes and styles. Surgical, preserves the backward compat
+   the TODO is protecting, and is what actually closes the hole.
+2. **Scope `noSanitize` to file content**, leaving chat — which is cross-user —
+   sanitized.
+3. **Remove `noSanitize: true`.** Correct in principle, but this is the flag's
+   entire reason for existing: Jupyter HTML output and similar rich content would
+   lose the classes/styles `sanitize-html.ts` strips.
+
+Option 1 is the recommendation: small, needs no policy decision, no rendering
+regression. Options 2 and 3 are the real cleanup and belong with §8.
+
+This also settles the `chat/history.tsx` question from §9's work order: its
+`sanitize_html_safe` pre-pass does not help against this either, since that helper
+only filters attribute _values_ for two pseudo-protocols and says nothing about
+tags. It is still load-bearing for protocol payloads, but it is not a defence here.
+
+It is also the strongest argument yet for §8: the legacy path is not merely
+redundant, it is materially weaker than the renderer meant to replace it.
+
+### 9b. OPEN: the prose false positive
+
+Still real, now recorded by a test that asserts the current (wrong-ish) behaviour:
+an attribute whose value reads "JavaScript: …" is deleted, including `title` and
+`alt`. It fails safe — text is lost, nothing is executed — so it is not urgent.
+
+Fixing it properly is a **sanitizer-policy** question, not a one-line patch, and
+the obvious shapes each have a catch:
+
+- allowlist of url attributes — **unsafe**, see §9a;
+- denylist of never-resolved attributes (`title`, `alt`) — keeps the default
+  "check everything", so it is safe in a way §9a is not, but it is a guess about
+  which attributes browsers will never resolve, and that set is not fixed;
+- match the browser's actual URL-scheme grammar instead of over-approximating
+  (upstream strips _all_ whitespace anywhere, where a browser only strips leading
+  C0/space and removes tab/CR/LF) — narrower and principled, but a behaviour
+  change to the security-relevant matcher.
+
+The right time to settle it is when the jQuery pipeline is retired (§8), since
+`components/sanitize-html.ts` already has to answer the same question for
+`html-ssr` and should not answer it twice.
