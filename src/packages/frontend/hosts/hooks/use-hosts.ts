@@ -53,6 +53,10 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
   const onErrorRef = useRef(onError);
   const hostsRef = useRef<Host[]>([]);
   const lastMembershipRef = useRef(0);
+  const membershipInflightRef = useRef<Promise<void> | undefined>(undefined);
+  const hostsInflightRef = useRef<
+    { key: string; promise: Promise<Host[]> } | undefined
+  >(undefined);
   const requestSeqRef = useRef(0);
 
   useEffect(() => {
@@ -64,55 +68,83 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
   }, [hosts]);
 
   const refreshMembership = useCallback(async () => {
+    if (membershipInflightRef.current != null) {
+      return await membershipInflightRef.current;
+    }
     const now = Date.now();
     if (now - lastMembershipRef.current < MEMBERSHIP_REFRESH_MS) {
       return;
     }
     lastMembershipRef.current = now;
+    const request = (async () => {
+      try {
+        const membership = await hub.purchases.getMembership({});
+        setMembership(membership ?? null);
+        setCanCreateHosts(
+          membership?.entitlements?.features?.create_hosts === true,
+        );
+      } catch (err) {
+        console.error("failed to load membership", err);
+        onErrorRef.current?.(err);
+      }
+    })();
+    membershipInflightRef.current = request;
     try {
-      const membership = await hub.purchases.getMembership({});
-      setMembership(membership ?? null);
-      setCanCreateHosts(
-        membership?.entitlements?.features?.create_hosts === true,
-      );
-    } catch (err) {
-      console.error("failed to load membership", err);
-      onErrorRef.current?.(err);
+      await request;
+    } finally {
+      if (membershipInflightRef.current === request) {
+        membershipInflightRef.current = undefined;
+      }
     }
   }, [hub]);
 
   const refresh = useCallback(async () => {
+    const requestKey = JSON.stringify({ adminView, includeDeleted, showAll });
+    if (hostsInflightRef.current?.key === requestKey) {
+      return await hostsInflightRef.current.promise;
+    }
     const requestSeq = ++requestSeqRef.current;
     setLoading(true);
     setError(null);
+    const request = (async () => {
+      try {
+        const list = await hub.hosts.listHosts({
+          admin_view: adminView ? true : undefined,
+          include_deleted: includeDeleted ? true : undefined,
+          show_all: showAll ? true : undefined,
+        });
+        if (requestSeq !== requestSeqRef.current) {
+          return hostsRef.current;
+        }
+        setHosts(list);
+        setLoaded(true);
+        void refreshMembership();
+        return list;
+      } catch (err) {
+        if (requestSeq !== requestSeqRef.current) {
+          return hostsRef.current;
+        }
+        setError(getErrorMessage(err));
+        setLoaded(true);
+        throw err;
+      } finally {
+        if (requestSeq === requestSeqRef.current) {
+          setLoading(false);
+        }
+      }
+    })();
+    hostsInflightRef.current = { key: requestKey, promise: request };
     try {
-      const list = await hub.hosts.listHosts({
-        admin_view: adminView ? true : undefined,
-        include_deleted: includeDeleted ? true : undefined,
-        show_all: showAll ? true : undefined,
-      });
-      if (requestSeq !== requestSeqRef.current) {
-        return hostsRef.current;
-      }
-      setHosts(list);
-      setLoaded(true);
-      void refreshMembership();
-      return list;
-    } catch (err) {
-      if (requestSeq !== requestSeqRef.current) {
-        return hostsRef.current;
-      }
-      setError(getErrorMessage(err));
-      setLoaded(true);
-      throw err;
+      return await request;
     } finally {
-      if (requestSeq === requestSeqRef.current) {
-        setLoading(false);
+      if (hostsInflightRef.current?.promise === request) {
+        hostsInflightRef.current = undefined;
       }
     }
   }, [hub, adminView, includeDeleted, showAll, refreshMembership]);
 
   useEffect(() => {
+    if (typeof document !== "undefined" && document.hidden) return;
     refresh().catch((err) => {
       console.error("failed to load hosts", err);
       onErrorRef.current?.(err);
@@ -120,6 +152,7 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
   }, [refresh]);
 
   useEffect(() => {
+    if (typeof document !== "undefined" && document.hidden) return;
     refreshMembership().catch((err) => {
       console.error("failed to load membership", err);
       onErrorRef.current?.(err);
@@ -127,13 +160,22 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
   }, [refreshMembership]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
+    const poll = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       refresh().catch((err) => {
         console.error("host refresh failed", err);
         onErrorRef.current?.(err);
       });
-    }, pollMs);
-    return () => clearInterval(timer);
+    };
+    const onVisibilityChange = () => {
+      if (!document.hidden) poll();
+    };
+    const timer = setInterval(poll, pollMs);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [refresh, pollMs]);
 
   return {

@@ -7,8 +7,11 @@ import { Alert } from "antd";
 import { useEffect, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { TeamLicenseWarning } from "@cocalc/conat/hub/api/purchases";
+import {
+  getWarningMembershipDetails,
+  shouldPollUsageWarnings,
+} from "@cocalc/frontend/account/membership-usage-cache";
 
 const REFRESH_MS = 5 * 60 * 1000;
 
@@ -23,26 +26,33 @@ export function TeamLicenseWarningBanner() {
       return;
     }
     let canceled = false;
+    let inFlight = false;
     async function load() {
+      if (canceled || inFlight || !shouldPollUsageWarnings()) return;
+      inFlight = true;
       try {
-        const details =
-          await webapp_client.conat_client.hub.purchases.getMembershipDetails(
-            {},
-          );
+        const details = await getWarningMembershipDetails();
         if (!canceled) {
-          setWarning(details.selected.team_license_warning ?? null);
+          setWarning(details?.selected.team_license_warning ?? null);
         }
       } catch (_err) {
         if (!canceled) {
           setWarning(null);
         }
+      } finally {
+        inFlight = false;
       }
     }
+    const onVisibilityChange = () => {
+      if (shouldPollUsageWarnings()) void load();
+    };
     void load();
     const interval = setInterval(() => void load(), REFRESH_MS);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       canceled = true;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [account_id, is_logged_in]);
 

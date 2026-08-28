@@ -88,6 +88,7 @@ const LOADING_STYLE: CSS = {
 
 const PROJECTS_TABLE_INITIAL_BODY_HEIGHT = 400;
 const PROJECTS_TABLE_MIN_BODY_HEIGHT = 160;
+const HOST_INFO_PREFETCH_CONCURRENCY = 4;
 const PROJECTS_TABLE_HEADER_RESERVED_PX = 48;
 
 const VISIBLE_WINDOW_REPAIR_LIMIT = 200;
@@ -468,18 +469,45 @@ export const ProjectsPage: React.FC = () => {
   }, [all_projects]);
 
   useEffect(() => {
-    if (!project_map) return;
-    const actions = redux.getActions("projects");
-    if (!actions) return;
-    const hostIds = new Set<string>();
-    project_map.forEach((project) => {
-      const hostId = project.get("host_id");
-      if (hostId) hostIds.add(hostId);
-    });
-    hostIds.forEach((hostId) => {
-      actions.ensure_host_info(hostId);
-    });
-  }, [project_map]);
+    if (!project_map || activeTopTab !== "projects") return;
+    let canceled = false;
+    let refreshGeneration = 0;
+    const refreshHostInfo = () => {
+      if (document.hidden) return;
+      const generation = ++refreshGeneration;
+      const actions = redux.getActions("projects");
+      if (!actions) return;
+      const hostIds = new Set<string>();
+      project_map.forEach((project) => {
+        const hostId = project.get("host_id");
+        if (hostId) hostIds.add(hostId);
+      });
+      const pending = [...hostIds];
+      const worker = async () => {
+        while (!canceled && generation === refreshGeneration) {
+          const hostId = pending.shift();
+          if (hostId == null) return;
+          await actions.ensure_host_info(hostId);
+        }
+      };
+      for (
+        let i = 0;
+        i < Math.min(HOST_INFO_PREFETCH_CONCURRENCY, pending.length);
+        i++
+      ) {
+        void worker();
+      }
+    };
+    const onVisibilityChange = () => {
+      if (!document.hidden) refreshHostInfo();
+    };
+    refreshHostInfo();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      canceled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [activeTopTab, project_map]);
 
   useEffect(() => {
     if (activeTopTab !== "projects" || project_map == null) return;

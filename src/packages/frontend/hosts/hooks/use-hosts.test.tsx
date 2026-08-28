@@ -60,6 +60,62 @@ describe("useHosts", () => {
     jest.clearAllMocks();
   });
 
+  it("reuses an in-flight host list request for the same view", async () => {
+    const request = deferred<Host[]>();
+    const hub = {
+      hosts: {
+        listHosts: jest.fn().mockReturnValue(request.promise),
+      },
+      purchases: {
+        getMembership: jest.fn().mockResolvedValue({}),
+      },
+    };
+    let latest: ReturnType<typeof useHosts> | undefined;
+
+    render(
+      <TestComponent
+        hub={hub}
+        onValue={(value) => {
+          latest = value;
+        }}
+      />,
+    );
+    await flush();
+
+    const refresh1 = latest!.refresh();
+    const refresh2 = latest!.refresh();
+    expect(hub.hosts.listHosts).toHaveBeenCalledTimes(1);
+
+    let results: Host[][] | undefined;
+    await act(async () => {
+      request.resolve([{ name: "host" }]);
+      results = await Promise.all([refresh1, refresh2]);
+    });
+    expect(results).toEqual([[{ name: "host" }], [{ name: "host" }]]);
+  });
+
+  it("does not poll while hidden and refreshes once on foreground", async () => {
+    const hidden = jest.spyOn(document, "hidden", "get").mockReturnValue(true);
+    const hub = {
+      hosts: {
+        listHosts: jest.fn().mockResolvedValue([]),
+      },
+      purchases: {
+        getMembership: jest.fn().mockResolvedValue({}),
+      },
+    };
+
+    render(<TestComponent hub={hub} />);
+    await flush();
+    expect(hub.hosts.listHosts).not.toHaveBeenCalled();
+
+    hidden.mockReturnValue(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await flush();
+    expect(hub.hosts.listHosts).toHaveBeenCalledTimes(1);
+    hidden.mockRestore();
+  });
+
   it("ignores stale host list responses after the view options change", async () => {
     const request1 = deferred<Host[]>();
     const request2 = deferred<Host[]>();

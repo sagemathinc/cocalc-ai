@@ -114,34 +114,46 @@ export function LegacyMigrationCtaBanner() {
       return;
     }
     let canceled = false;
+    let inFlight = false;
 
     async function load() {
-      const [financial, projects] = await Promise.allSettled([
-        webapp_client.conat_client.hub.legacyMigration.previewFinancialMigration(),
-        webapp_client.conat_client.hub.legacyMigration.listProjects({
-          include_hidden: false,
-          limit: PROJECT_CHECK_LIMIT,
-        }),
-      ]);
-      if (canceled) return;
+      if (canceled || inFlight || document.hidden) return;
+      inFlight = true;
+      try {
+        const [financial, projects] = await Promise.allSettled([
+          webapp_client.conat_client.hub.legacyMigration.previewFinancialMigration(),
+          webapp_client.conat_client.hub.legacyMigration.listProjects({
+            include_hidden: false,
+            limit: PROJECT_CHECK_LIMIT,
+          }),
+        ]);
+        if (canceled) return;
 
-      const preview =
-        financial.status === "fulfilled" ? financial.value : undefined;
-      const projectActionCount =
-        projects.status === "fulfilled"
-          ? projects.value.projects.filter(projectNeedsAction).length
-          : 0;
-      setState({
-        ...financialState(preview),
-        projectActionCount,
-      });
+        const preview =
+          financial.status === "fulfilled" ? financial.value : undefined;
+        const projectActionCount =
+          projects.status === "fulfilled"
+            ? projects.value.projects.filter(projectNeedsAction).length
+            : 0;
+        setState({
+          ...financialState(preview),
+          projectActionCount,
+        });
+      } finally {
+        inFlight = false;
+      }
     }
 
+    const onVisibilityChange = () => {
+      if (!document.hidden) void load();
+    };
     void load();
     const interval = setInterval(() => void load(), REFRESH_MS);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       canceled = true;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [account_id, is_logged_in, legacyMigrationEnabled]);
 
