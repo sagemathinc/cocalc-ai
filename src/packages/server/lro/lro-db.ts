@@ -444,6 +444,45 @@ export async function expireDueLros({
   return rows as LroSummary[];
 }
 
+export async function expireOrphanedProjectBackupLros({
+  limit = 1000,
+}: {
+  limit?: number;
+} = {}): Promise<LroSummary[]> {
+  await ensureLroSchema();
+  const boundedLimit = Math.max(1, Math.min(10_000, Math.floor(limit)));
+  const { rows } = await pool().query(
+    `
+      WITH candidates AS (
+        SELECT lro.op_id
+        FROM long_running_operations AS lro
+        WHERE lro.kind='project-backup'
+          AND lro.scope_type='project'
+          AND lro.status='queued'
+          AND lro.dismissed_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM projects
+            WHERE projects.project_id=lro.scope_id
+          )
+        ORDER BY lro.created_at
+        FOR UPDATE OF lro SKIP LOCKED
+        LIMIT $1
+      )
+      UPDATE long_running_operations
+      SET status='expired',
+          error='project no longer exists',
+          finished_at=COALESCE(finished_at, now()),
+          updated_at=now()
+      FROM candidates
+      WHERE long_running_operations.op_id = candidates.op_id
+      RETURNING long_running_operations.*
+    `,
+    [boundedLimit],
+  );
+  return rows as LroSummary[];
+}
+
 export async function getLro(op_id: string): Promise<LroSummary | undefined> {
   await ensureLroSchema();
   const { rows } = await pool().query(

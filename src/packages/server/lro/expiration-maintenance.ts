@@ -4,7 +4,7 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
-import { expireDueLros } from "./lro-db";
+import { expireDueLros, expireOrphanedProjectBackupLros } from "./lro-db";
 
 const DEFAULT_INTERVAL_MS = 30_000;
 const BATCH_SIZE = 1000;
@@ -26,12 +26,19 @@ export async function runLroExpirationMaintenanceOnce(): Promise<number> {
   let total = 0;
   try {
     for (let batch = 0; batch < MAX_BATCHES_PER_TICK; batch++) {
+      const expired = await expireOrphanedProjectBackupLros({
+        limit: BATCH_SIZE,
+      });
+      total += expired.length;
+      if (expired.length < BATCH_SIZE) break;
+    }
+    for (let batch = 0; batch < MAX_BATCHES_PER_TICK; batch++) {
       const expired = await expireDueLros({ limit: BATCH_SIZE });
       total += expired.length;
       if (expired.length < BATCH_SIZE) break;
     }
     if (total > 0) {
-      logger.info("expired due long-running operations", { count: total });
+      logger.info("expired long-running operations", { count: total });
     }
     return total;
   } catch (err) {

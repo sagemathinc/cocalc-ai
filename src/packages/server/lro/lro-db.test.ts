@@ -79,6 +79,49 @@ describe("expireDueLros", () => {
   });
 });
 
+describe("expireOrphanedProjectBackupLros", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    connectQueryMock = jest.fn(async () => ({ rows: [] }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("project no longer exists")) {
+        return {
+          rows: [
+            {
+              op_id: "11111111-1111-1111-1111-111111111111",
+              kind: "project-backup",
+              status: "expired",
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+  });
+
+  it("only expires queued project backups with no project row", async () => {
+    const { expireOrphanedProjectBackupLros } = await import("./lro-db");
+
+    await expect(
+      expireOrphanedProjectBackupLros({ limit: 25 }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        kind: "project-backup",
+        status: "expired",
+      }),
+    ]);
+
+    const expireCall = queryMock.mock.calls.find(([sql]) =>
+      `${sql}`.includes("project no longer exists"),
+    );
+    expect(expireCall?.[0]).toContain("lro.kind='project-backup'");
+    expect(expireCall?.[0]).toContain("lro.status='queued'");
+    expect(expireCall?.[0]).toContain("NOT EXISTS");
+    expect(expireCall?.[0]).toContain("projects.project_id=lro.scope_id");
+    expect(expireCall?.[1]).toEqual([25]);
+  });
+});
+
 describe("createLroDetailed", () => {
   beforeEach(() => {
     jest.resetModules();
