@@ -1461,3 +1461,247 @@ test("membership site-license sample-token defaults link expiry to 14 days", asy
     Math.floor(Date.parse("2026-06-15T00:00:00.000Z") / 1000),
   );
 });
+
+function sampleSiteLicenseOverviews() {
+  const idahoOverview = {
+    site_license: {
+      id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      name: "College Site License",
+      organization_name: "College of Idaho",
+      bay_id: "bay-0",
+      owner_account_id: "11111111-1111-1111-1111-111111111111",
+      allowed_domains: ["collegeofidaho.edu"],
+      starts_at: "2020-01-01T00:00:00.000Z",
+      expires_at: "2126-01-01T00:00:00.000Z",
+      created: "2020-01-01T00:00:00.000Z",
+      updated: "2026-05-02T00:00:00.000Z",
+    },
+    pools: [
+      {
+        id: "dddddddd-dddd-dddd-dddd-dddddddddddd",
+        kind: "site",
+        membership_class: "pro",
+        pool_name: "Faculty",
+        seat_count: 10,
+        active_assignment_count: 3,
+        available_seat_count: 7,
+        pending_request_count: 1,
+        requires_approval: false,
+        verification_policy: "email-domain",
+        exclusive_group: "default",
+      },
+    ],
+    managers: [
+      {
+        id: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+        site_license_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+        account_id: "33333333-3333-3333-3333-333333333333",
+        role: "manager",
+        revoked_at: null,
+      },
+      {
+        id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+        site_license_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+        account_id: "44444444-4444-4444-4444-444444444444",
+        role: "manager",
+        revoked_at: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        id: "55555555-5555-5555-5555-555555555555",
+        site_license_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+        account_id: "66666666-6666-6666-6666-666666666666",
+        role: "viewer",
+        revoked_at: null,
+      },
+    ],
+    pending_requests: [],
+    account_details: {
+      "11111111-1111-1111-1111-111111111111": {
+        account_id: "11111111-1111-1111-1111-111111111111",
+        email_address: "owner@collegeofidaho.edu",
+      },
+      "33333333-3333-3333-3333-333333333333": {
+        account_id: "33333333-3333-3333-3333-333333333333",
+        email_address: "manager@collegeofidaho.edu",
+      },
+    },
+  };
+  const expiredOverview = {
+    site_license: {
+      id: "99999999-9999-9999-9999-999999999999",
+      name: "Elsewhere Site License",
+      organization_name: "Elsewhere University",
+      bay_id: "bay-0",
+      owner_account_id: null,
+      allowed_domains: ["elsewhere.edu"],
+      starts_at: "2020-01-01T00:00:00.000Z",
+      expires_at: "2021-01-01T00:00:00.000Z",
+      created: "2020-01-01T00:00:00.000Z",
+      updated: "2021-01-01T00:00:00.000Z",
+    },
+    pools: [],
+    managers: [],
+    pending_requests: [],
+  };
+  return { idahoOverview, expiredOverview };
+}
+
+test("membership site-license list defaults to compact summaries", async () => {
+  let capturedArgs: any;
+  let captured: any;
+  const { idahoOverview, expiredOverview } = sampleSiteLicenseOverviews();
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          purchases: {
+            listSiteLicenseOverviews: async (opts) => {
+              capturedArgs = opts;
+              return [idahoOverview, expiredOverview];
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an explicit account");
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "list",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    account_id: "11111111-1111-1111-1111-111111111111",
+  });
+  assert.equal(captured?.length, 2);
+  assert.equal(
+    captured?.[0]?.site_license_id,
+    "cccccccc-cccc-cccc-cccc-cccccccccccc",
+  );
+  assert.equal(captured?.[0]?.active, true);
+  assert.equal(captured?.[0]?.seat_count, 10);
+  assert.equal(captured?.[0]?.active_assignment_count, 3);
+  assert.equal(captured?.[0]?.available_seat_count, 7);
+  assert.equal(captured?.[0]?.pending_request_count, 1);
+  assert.equal(captured?.[0]?.owner_email, "owner@collegeofidaho.edu");
+  assert.equal(captured?.[0]?.manager_count, 1);
+  assert.deepEqual(captured?.[0]?.manager_emails, [
+    "manager@collegeofidaho.edu",
+  ]);
+  assert.deepEqual(captured?.[0]?.pool_names, ["Faculty"]);
+  assert.equal("pools" in (captured?.[0] ?? {}), false);
+  assert.equal(captured?.[1]?.active, false);
+});
+
+test("membership site-license list --admin --search --active-only filters", async () => {
+  let capturedArgs: any;
+  let captured: any;
+  const { idahoOverview, expiredOverview } = sampleSiteLicenseOverviews();
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          purchases: {
+            listSiteLicenseOverviews: async (opts) => {
+              capturedArgs = opts;
+              return [idahoOverview, expiredOverview];
+            },
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an explicit account");
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "list",
+    "--admin",
+    "--search",
+    "Idaho",
+    "--active-only",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    account_id: "11111111-1111-1111-1111-111111111111",
+    admin: true,
+  });
+  assert.equal(captured?.length, 1);
+  assert.equal(
+    captured?.[0]?.site_license_id,
+    "cccccccc-cccc-cccc-cccc-cccccccccccc",
+  );
+});
+
+test("membership site-license list --manager filters by unrevoked managers", async () => {
+  let captured: any;
+  const { idahoOverview, expiredOverview } = sampleSiteLicenseOverviews();
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          purchases: {
+            listSiteLicenseOverviews: async () => [
+              idahoOverview,
+              expiredOverview,
+            ],
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async (_ctx, identifier) => {
+      assert.equal(identifier, "manager@collegeofidaho.edu");
+      // uppercase on purpose: the filter must lowercase before comparing
+      // against the always-lowercase uuids in overviews
+      return { account_id: "33333333-3333-3333-3333-333333333333".toUpperCase() };
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "membership",
+    "site-license",
+    "list",
+    "--manager",
+    "manager@collegeofidaho.edu",
+  ]);
+
+  assert.equal(captured?.length, 1);
+  assert.equal(
+    captured?.[0]?.site_license_id,
+    "cccccccc-cccc-cccc-cccc-cccccccccccc",
+  );
+});

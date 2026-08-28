@@ -16,6 +16,7 @@ import type {
   SiteLicenseOverview,
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
+  SiteLicenseRecord,
 } from "@cocalc/conat/hub/api/purchases";
 
 export type MembershipCommandDeps = {
@@ -500,6 +501,105 @@ function serializeSiteLicenseOverview(
     pending_requests: overview.pending_requests.map((request) =>
       serializeSiteLicenseRequest(request, toIso),
     ),
+  };
+}
+
+function toDateOrNull(value: unknown): Date | null {
+  if (value == null) return null;
+  const date = value instanceof Date ? value : new Date(`${value}`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function isSiteLicenseActiveNow(
+  record: SiteLicenseRecord,
+  now: Date,
+): boolean {
+  const starts = toDateOrNull(record.starts_at);
+  if (starts != null && starts > now) return false;
+  const expires = toDateOrNull(record.expires_at);
+  if (expires != null && expires <= now) return false;
+  return true;
+}
+
+function isSiteLicenseExpired(record: SiteLicenseRecord, now: Date): boolean {
+  const expires = toDateOrNull(record.expires_at);
+  return expires != null && expires <= now;
+}
+
+function getSiteLicenseOverviewSearchText(
+  overview: SiteLicenseOverview,
+): string {
+  const details = Object.values(overview.account_details ?? {});
+  return [
+    overview.site_license.id,
+    overview.site_license.crm_organization_id,
+    overview.site_license.name,
+    overview.site_license.organization_name,
+    overview.site_license.bay_id,
+    overview.site_license.owner_account_id,
+    ...(overview.site_license.allowed_domains ?? []),
+    ...overview.pools.map((pool) => pool.pool_name),
+    ...overview.managers.map((manager) => manager.account_id),
+    ...details.map((entry) => entry.email_address),
+    ...details.map((entry) => entry.display_name),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function serializeSiteLicenseSummary(
+  overview: SiteLicenseOverview,
+  toIso: MembershipCommandDeps["toIso"],
+  now: Date,
+) {
+  const record = overview.site_license;
+  const managers = overview.managers.filter(
+    (manager) => manager.revoked_at == null && manager.role === "manager",
+  );
+  const details = overview.account_details ?? {};
+  const owner_email = record.owner_account_id
+    ? (details[record.owner_account_id]?.email_address ?? null)
+    : null;
+  const manager_emails = [
+    ...new Set(
+      managers
+        .map((entry) => details[entry.account_id]?.email_address)
+        .filter(Boolean) as string[],
+    ),
+  ];
+  let seat_count = 0;
+  let active_assignment_count = 0;
+  let available_seat_count = 0;
+  let pending_request_count = 0;
+  for (const pool of overview.pools) {
+    seat_count += pool.seat_count ?? 0;
+    active_assignment_count += pool.active_assignment_count ?? 0;
+    available_seat_count += pool.available_seat_count ?? 0;
+    pending_request_count += pool.pending_request_count ?? 0;
+  }
+  return {
+    site_license_id: record.id,
+    name: record.name,
+    organization_name: record.organization_name,
+    bay_id: record.bay_id,
+    crm_organization_id: record.crm_organization_id ?? null,
+    owner_account_id: record.owner_account_id ?? null,
+    owner_email,
+    allowed_domains: record.allowed_domains ?? [],
+    starts_at: toIso(record.starts_at),
+    expires_at: toIso(record.expires_at),
+    active: isSiteLicenseActiveNow(record, now),
+    pool_count: overview.pools.length,
+    pool_names: overview.pools.map((pool) => pool.pool_name),
+    seat_count,
+    active_assignment_count,
+    available_seat_count,
+    pending_request_count,
+    manager_count: managers.length,
+    manager_emails,
+    created: toIso(record.created),
+    updated: toIso(record.updated),
   };
 }
 
@@ -1111,6 +1211,103 @@ export function registerMembershipCommand(
                 metadata: parseMetadataJson(opts.metadataJson) ?? null,
               }),
               toIso,
+            );
+          },
+        );
+      },
+    );
+
+  siteLicense
+    .command("list")
+    .description(
+      "list site licenses owned or managed by the current account; --admin lists all",
+    )
+    .option("--admin", "list every site license cluster-wide (requires admin)")
+    .option(
+      "--search <text>",
+      "case-insensitive substring filter over id, name, organization, bay, domains, pool names, and all associated accounts (owner, managers, seat holders, requesters — ids, emails, names)",
+    )
+    .option(
+      "--manager <account>",
+      "only site licenses where this account is the owner or an unrevoked manager/viewer",
+    )
+    .option("--active-only", "only site licenses active right now")
+    .option("--expired-only", "only site licenses whose expiry has passed")
+    .option("--full", "emit full overviews instead of one-line summaries")
+    .action(
+      async (
+        opts: {
+          admin?: boolean;
+          search?: string;
+          manager?: string;
+          activeOnly?: boolean;
+          expiredOnly?: boolean;
+          full?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "membership site-license list",
+          async (ctx) => {
+            if (opts.activeOnly && opts.expiredOnly) {
+              throw new Error(
+                "use at most one of --active-only or --expired-only",
+              );
+            }
+            const manager =
+              `${opts.manager ?? ""}`.trim() === ""
+                ? undefined
+                : await resolveAccountByIdentifier(ctx, opts.manager);
+            // account ids in overviews come from Postgres uuid columns and
+            // are always lowercase, while resolveAccountByIdentifier returns
+            // a raw UUID identifier verbatim (uppercase input stays upper).
+            const manager_account_id = `${manager?.account_id ?? ""}`
+              .trim()
+              .toLowerCase();
+            if (opts.manager && !manager_account_id) {
+              throw new Error("unable to resolve manager account");
+            }
+            let overviews: SiteLicenseOverview[] =
+              await ctx.hub.purchases.listSiteLicenseOverviews({
+                account_id: ctx.accountId,
+                ...(opts.admin ? { admin: true } : {}),
+              });
+            if (manager_account_id) {
+              overviews = overviews.filter(
+                (overview) =>
+                  overview.site_license.owner_account_id ===
+                    manager_account_id ||
+                  overview.managers.some(
+                    (entry) =>
+                      entry.account_id === manager_account_id &&
+                      entry.revoked_at == null,
+                  ),
+              );
+            }
+            const needle = `${opts.search ?? ""}`.trim().toLowerCase();
+            if (needle) {
+              overviews = overviews.filter((overview) =>
+                getSiteLicenseOverviewSearchText(overview).includes(needle),
+              );
+            }
+            const now = new Date();
+            if (opts.activeOnly) {
+              overviews = overviews.filter((overview) =>
+                isSiteLicenseActiveNow(overview.site_license, now),
+              );
+            } else if (opts.expiredOnly) {
+              overviews = overviews.filter((overview) =>
+                isSiteLicenseExpired(overview.site_license, now),
+              );
+            }
+            if (opts.full) {
+              return overviews.map((overview) =>
+                serializeSiteLicenseOverview(overview, toIso),
+              );
+            }
+            return overviews.map((overview) =>
+              serializeSiteLicenseSummary(overview, toIso, now),
             );
           },
         );
