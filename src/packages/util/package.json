@@ -54,7 +54,6 @@
     "dayjs": "^1.11.11",
     "decimal.js-light": "^2.5.1",
     "events": "3.3.0",
-    "get-random-values": "^1.2.0",
     "immutable": "^4.3.9",
     "js-base64": "^3.7.7",
     "json-stable-stringify": "^1.0.1",
