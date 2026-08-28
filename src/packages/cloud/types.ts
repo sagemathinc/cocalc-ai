@@ -155,7 +155,7 @@ export interface CloudProvider {
     runtime: HostRuntime,
     newSizeGb: number,
     creds: any,
-  ): Promise<void>;
+  ): Promise<number | void>;
   ensureSharedScratchDisk?(
     runtime: HostRuntime,
     spec: HostSpec,

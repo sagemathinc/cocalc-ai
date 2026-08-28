@@ -290,6 +290,65 @@ describe("guarded host auto-grow", () => {
     );
   });
 
+  it("repairs stale disk metadata from the provider-observed size", async () => {
+    const resizeDiskMock = jest.fn(async () => 275);
+    const growBtrfsMock = jest.fn(async () => ({ ok: true }));
+    getProviderContextMock = jest.fn(async () => ({
+      entry: { provider: { resizeDisk: resizeDiskMock } },
+      creds: {},
+    }));
+    createHostControlClientMock = jest.fn(() => ({
+      growBtrfs: growBtrfsMock,
+    }));
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-drifted",
+              region: "us-west1",
+              status: "running",
+              metadata: {
+                runtime: { instance_id: "instance-drifted" },
+                machine: {
+                  cloud: "gcp",
+                  disk_gb: 200,
+                  storage_mode: "persistent",
+                  metadata: {
+                    auto_grow: {
+                      enabled: true,
+                      max_disk_gb: 500,
+                      growth_step_gb: 50,
+                      min_grow_interval_minutes: 60,
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("UPDATE project_hosts")) {
+        expect(params[1].machine.disk_gb).toBe(275);
+        expect(params[1].machine.metadata.auto_grow.last_grow_to_disk_gb).toBe(
+          275,
+        );
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { maybeAutoGrowHostDiskForReservationFailure } =
+      await import("./auto-grow");
+    await expect(
+      maybeAutoGrowHostDiskForReservationFailure({
+        host_id: "host-drifted",
+        err: new Error("host storage reservation denied"),
+      }),
+    ).resolves.toEqual({ grown: true, next_disk_gb: 275 });
+    expect(growBtrfsMock).toHaveBeenCalledWith({ disk_gb: 275 });
+  });
+
   it("does nothing when guarded auto-grow is not enabled", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("FROM project_hosts")) {

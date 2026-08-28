@@ -7901,11 +7901,35 @@ export async function updateHostMachine({
     const { entry, creds } = await getProviderContext(machineCloud, {
       region: row.region,
     });
-    await entry.provider.resizeDisk(runtime, nextDisk, creds);
+    const observedDisk = await entry.provider.resizeDisk(
+      runtime,
+      nextDisk,
+      creds,
+    );
+    const effectiveDisk =
+      typeof observedDisk === "number" &&
+      Number.isFinite(observedDisk) &&
+      observedDisk > 0
+        ? Math.floor(observedDisk)
+        : nextDisk;
+    nextMachine.disk_gb = effectiveDisk;
+    const configuredAutoGrow = nextMachine.metadata?.auto_grow;
+    if (
+      configuredAutoGrow?.max_disk_gb != null &&
+      Number(configuredAutoGrow.max_disk_gb) < effectiveDisk
+    ) {
+      nextMachine.metadata = {
+        ...(nextMachine.metadata ?? {}),
+        auto_grow: {
+          ...configuredAutoGrow,
+          max_disk_gb: effectiveDisk,
+        },
+      };
+    }
     if (row.status !== "off") {
       const client = await hostControlClient(row.id);
       try {
-        await client.growBtrfs({ disk_gb: nextDisk });
+        await client.growBtrfs({ disk_gb: effectiveDisk });
       } catch (err) {
         resizeWarning =
           "disk resized in cloud, but online filesystem resize failed; run sudo /usr/local/sbin/cocalc-runtime-storage grow-btrfs";

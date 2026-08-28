@@ -302,6 +302,10 @@ async function updateDiskSize({
   fallbackName?: string;
 }) {
   const disk = await client.disks.get(GetDiskRequest.create({ id: diskId }));
+  const currentSizeGib = diskSizeGib(disk);
+  if (currentSizeGib != null && currentSizeGib >= sizeGib) {
+    return currentSizeGib;
+  }
   const name = `${disk?.metadata?.name ?? fallbackName ?? ""}`.trim();
   const parentId = `${disk?.metadata?.parentId ?? ""}`.trim();
   const op = await client.disks.update(
@@ -332,6 +336,7 @@ async function updateDiskSize({
       `nebius: disk resize did not take effect for ${diskId}; requested ${sizeGib} GiB, provider reports ${actualSizeGib} GiB`,
     );
   }
+  return actualSizeGib ?? sizeGib;
 }
 
 function normalizeIp(value?: string | null): string | undefined {
@@ -1565,7 +1570,7 @@ export class NebiusProvider implements CloudProvider {
     }
     const diskTypeCode = (runtime.metadata as NebiusRuntimeMeta | undefined)
       ?.diskTypeCode;
-    await updateDiskSize({
+    return await updateDiskSize({
       client,
       diskId: diskIds.data,
       diskType: diskTypeFromCode(diskTypeCode),

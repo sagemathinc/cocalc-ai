@@ -725,20 +725,30 @@ async function performAutoGrow(
   const { entry, creds } = await getProviderContext(providerId, {
     region: row.region,
   });
-  await entry.provider.resizeDisk(runtime, nextDisk, creds);
+  const observedDisk = await entry.provider.resizeDisk(
+    runtime,
+    nextDisk,
+    creds,
+  );
+  const effectiveDisk =
+    typeof observedDisk === "number" &&
+    Number.isFinite(observedDisk) &&
+    observedDisk > 0
+      ? Math.floor(observedDisk)
+      : nextDisk;
 
   let resizeWarning: string | undefined;
   const client = await getRoutedHostControlClient({
     host_id: row.id,
   });
   try {
-    await client.growBtrfs({ disk_gb: nextDisk });
+    await client.growBtrfs({ disk_gb: effectiveDisk });
   } catch (err) {
     resizeWarning =
       "disk resized in cloud, but online filesystem resize failed; run sudo /usr/local/sbin/cocalc-runtime-storage grow-btrfs";
     log.warn("auto-grow growBtrfs failed", {
       host_id: row.id,
-      nextDisk,
+      nextDisk: effectiveDisk,
       err,
     });
   }
@@ -749,19 +759,19 @@ async function performAutoGrow(
     auto_grow: {
       ...((machine.metadata ?? {}).auto_grow ?? {}),
       enabled: true,
-      max_disk_gb: config.max_disk_gb,
+      max_disk_gb: Math.max(config.max_disk_gb, effectiveDisk),
       growth_step_gb: config.growth_step_gb,
       min_grow_interval_minutes: config.min_grow_interval_minutes,
       last_grow_at: nowIso,
       last_grow_from_disk_gb: currentDisk,
-      last_grow_to_disk_gb: nextDisk,
+      last_grow_to_disk_gb: effectiveDisk,
     },
   };
   const nextMetadata = {
     ...(row.metadata ?? {}),
     machine: {
       ...machine,
-      disk_gb: nextDisk,
+      disk_gb: effectiveDisk,
       metadata: nextMachineMeta,
     },
     last_action: "auto_grow_disk",
@@ -785,13 +795,13 @@ async function performAutoGrow(
       trigger: opts?.trigger ?? "reservation_failure",
       reason: opts?.reason,
       from_disk_gb: currentDisk,
-      to_disk_gb: nextDisk,
+      to_disk_gb: effectiveDisk,
     },
   });
 
   return resizeWarning
-    ? { grown: false, next_disk_gb: nextDisk, reason: resizeWarning }
-    : { grown: true, next_disk_gb: nextDisk };
+    ? { grown: false, next_disk_gb: effectiveDisk, reason: resizeWarning }
+    : { grown: true, next_disk_gb: effectiveDisk };
 }
 
 async function performSharedScratchAutoGrow(

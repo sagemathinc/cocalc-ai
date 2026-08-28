@@ -905,6 +905,64 @@ describe("GcpProvider", () => {
     );
   });
 
+  it("reconciles a data disk that is already larger than requested", async () => {
+    diskGetMock.mockResolvedValueOnce([{ sizeGb: "225" }]);
+    const provider = new GcpProvider();
+    const runtime = {
+      provider: "gcp" as const,
+      instance_id: "ph-test",
+      zone: "us-west1-a",
+      ssh_user: "ubuntu",
+      metadata: { data_disk_name: "ph-test-data" },
+    };
+
+    await expect(
+      provider.resizeDisk(runtime, 215, {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      }),
+    ).resolves.toBe(225);
+
+    expect(diskResizeMock).not.toHaveBeenCalled();
+    expect(diskGetMock).toHaveBeenCalledWith(
+      expect.objectContaining({ disk: "ph-test-data" }),
+    );
+  });
+
+  it("returns the provider-observed size after growing a data disk", async () => {
+    diskGetMock
+      .mockResolvedValueOnce([{ sizeGb: "200" }])
+      .mockResolvedValueOnce([{ sizeGb: "250" }]);
+    diskResizeMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-resize-data", status: "DONE" } },
+    ]);
+    waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
+    const provider = new GcpProvider();
+    const runtime = {
+      provider: "gcp" as const,
+      instance_id: "ph-test",
+      zone: "us-west1-a",
+      ssh_user: "ubuntu",
+      metadata: { data_disk_name: "ph-test-data" },
+    };
+
+    await expect(
+      provider.resizeDisk(runtime, 250, {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      }),
+    ).resolves.toBe(250);
+
+    expect(diskResizeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        disk: "ph-test-data",
+        disksResizeRequestResource: { sizeGb: 250 },
+      }),
+    );
+  });
+
   it("treats start as a no-op when the instance is already running", async () => {
     getMock.mockResolvedValueOnce([{ status: "RUNNING" }]);
 

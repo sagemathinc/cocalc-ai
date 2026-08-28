@@ -1924,7 +1924,7 @@ export class GcpProvider implements CloudProvider {
     runtime: HostRuntime,
     newSizeGb: number,
     creds: any,
-  ): Promise<void> {
+  ): Promise<number> {
     const credentials = parseCredentials(creds ?? {});
     if (!runtime.zone) {
       throw new Error("gcp.resizeDisk requires zone");
@@ -1955,17 +1955,38 @@ export class GcpProvider implements CloudProvider {
     if (!diskName) {
       throw new Error("gcp.resizeDisk could not determine disk name");
     }
+    const targetSizeGb = Math.max(1, Math.ceil(newSizeGb));
+    const getObservedSizeGb = async (): Promise<number | undefined> => {
+      const [disk] = await diskClient.get({
+        project: credentials.projectId,
+        zone: runtime.zone,
+        disk: diskName,
+      });
+      const sizeGb = Number(disk?.sizeGb);
+      return Number.isFinite(sizeGb) && sizeGb > 0 ? sizeGb : undefined;
+    };
+    const currentSizeGb = await getObservedSizeGb();
+    if (currentSizeGb != null && currentSizeGb >= targetSizeGb) {
+      return currentSizeGb;
+    }
     const [response] = await diskClient.resize({
       project: credentials.projectId,
       zone: runtime.zone,
       disk: diskName,
-      disksResizeRequestResource: { sizeGb: newSizeGb },
+      disksResizeRequestResource: { sizeGb: targetSizeGb },
     });
     await waitUntilOperationComplete({
       response,
       zone: runtime.zone,
       credentials,
     });
+    const observedSizeGb = await getObservedSizeGb();
+    if (observedSizeGb != null && observedSizeGb < targetSizeGb) {
+      throw new Error(
+        `gcp.resizeDisk did not reach requested size ${targetSizeGb} GiB; provider reports ${observedSizeGb} GiB`,
+      );
+    }
+    return observedSizeGb ?? targetSizeGb;
   }
 
   async resizeSharedScratchDisk(
