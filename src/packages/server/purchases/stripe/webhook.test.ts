@@ -169,6 +169,32 @@ describe("Stripe webhook processing", () => {
     );
   });
 
+  it("retries a transient Stripe object lock without failing the webhook", async () => {
+    stripe.paymentIntents.retrieve.mockRejectedValueOnce(
+      Object.assign(
+        new Error(
+          "The object is currently being accessed by another request or process.",
+        ),
+        { code: "lock_timeout" },
+      ),
+    );
+    const { processStripeWebhookEvent } = await import("./webhook");
+
+    await expect(
+      processStripeWebhookEvent({
+        type: "payment_intent.succeeded",
+        data: { object: { id: "pi_123" } },
+      }),
+    ).resolves.toEqual({
+      processed: true,
+      type: "payment_intent.succeeded",
+      action: "payment-intent",
+    });
+
+    expect(stripe.paymentIntents.retrieve).toHaveBeenCalledTimes(2);
+    expect(mockAlertUncreditedSucceededPayment).not.toHaveBeenCalled();
+  });
+
   it("credits paid service invoices", async () => {
     const { processStripeWebhookEvent } = await import("./webhook");
 

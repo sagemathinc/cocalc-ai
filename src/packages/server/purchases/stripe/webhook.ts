@@ -25,6 +25,7 @@ import { currentStripeSite } from "./util";
 
 const logger = getLogger("purchases:stripe:webhook");
 const alertedWebhookFailures = new Set<string>();
+const STRIPE_OBJECT_LOCK_RETRY_MS = [250, 750, 1_500];
 
 export default async function stripeWebhookHandler(
   req: Request,
@@ -176,7 +177,7 @@ async function processStripeWebhookPaymentIntent({
     return { processed: false, type: eventType, action: "missing-id" };
   }
   const stripe = await getConn();
-  const latest = await stripe.paymentIntents.retrieve(id);
+  const latest = await retrievePaymentIntentWithObjectLockRetry(stripe, id);
   const site = await currentStripeSite();
   if (!(await belongsToCurrentStripeSite({ paymentIntent: latest, site }))) {
     logger.info("Stripe webhook payment intent skipped", {
@@ -224,6 +225,39 @@ async function processStripeWebhookPaymentIntent({
       stage: "process",
     });
     throw err;
+  }
+}
+
+function isStripeObjectLockError(err: unknown): boolean {
+  const candidate = err as {
+    code?: unknown;
+    message?: unknown;
+    raw?: { code?: unknown; message?: unknown };
+  };
+  const code = `${candidate?.code ?? candidate?.raw?.code ?? ""}`;
+  const message = `${candidate?.message ?? candidate?.raw?.message ?? ""}`;
+  return (
+    code === "lock_timeout" ||
+    /currently being accessed by another request or process/i.test(message)
+  );
+}
+
+async function retrievePaymentIntentWithObjectLockRetry(stripe, id: string) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await stripe.paymentIntents.retrieve(id);
+    } catch (err) {
+      const delayMs = STRIPE_OBJECT_LOCK_RETRY_MS[attempt];
+      if (delayMs == null || !isStripeObjectLockError(err)) {
+        throw err;
+      }
+      logger.info("retrying Stripe payment intent after object lock", {
+        payment_intent_id: id,
+        attempt: attempt + 1,
+        delay_ms: delayMs,
+      });
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
   }
 }
 
