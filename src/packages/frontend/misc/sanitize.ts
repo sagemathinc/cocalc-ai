@@ -63,8 +63,8 @@ export function sanitize_html(
   const sani = jQuery(
     jQuery.parseHTML("<div>" + html + "</div>", null, keepScripts),
   );
+  applySafetyFloor(sani);
   if (!keepUnsafeAttributes) {
-    applySafetyFloor(sani);
     sani.find("*").each(function (this: any) {
       return sanitize_html_attributes(jQuery, this);
     });
