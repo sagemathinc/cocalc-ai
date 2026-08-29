@@ -18,6 +18,7 @@ import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { canUseSyncDocHistory } from "@cocalc/frontend/lib/syncdoc-history";
 import { loadWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
+import { getLogger } from "@cocalc/conat/logger";
 
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ImmerDB } from "@cocalc/sync/editor/immer-db";
@@ -104,6 +105,7 @@ import type {
 import type { ChatComposerDraftAppendRequest } from "./composer-draft-types";
 
 const AUTOSAVE_INTERVAL = 15_000;
+const logger = getLogger("frontend:chat:actions");
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const warnedMissingThreadIds = new Set<string>();
 let lastGeneratedChatMessageMs = 0;
@@ -1469,6 +1471,21 @@ export class ChatActions extends Actions<ChatState> {
     await this.syncdb.save_to_disk();
   };
 
+  private autosaveToDisk = async (): Promise<void> => {
+    try {
+      await this.save_to_disk();
+    } catch (err) {
+      if (this.syncdb == null || this.syncdb.isClosed?.()) return;
+      // The SyncDoc keeps its unsaved state, so a later autosave can retry.
+      // This promise is fire-and-forget and must not become a page-level crash.
+      logger.warn("chat autosave to disk failed; will retry after changes", {
+        err: `${err}`,
+        project_id: this.store?.get?.("project_id"),
+        path: this.store?.get?.("path"),
+      });
+    }
+  };
+
   private autosave = debounce(
     (changes?: unknown): void => {
       // SyncDoc emits an initial empty change event after the ready replay.
@@ -1476,7 +1493,7 @@ export class ChatActions extends Actions<ChatState> {
       if (getChangeCount(changes) === 0) {
         return;
       }
-      void this.save_to_disk();
+      void this.autosaveToDisk();
     },
     AUTOSAVE_INTERVAL,
     {

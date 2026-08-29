@@ -1936,6 +1936,16 @@ export class SyncDoc extends EventEmitter {
       this.emitOpenPhase("cursor_presence_start");
       try {
         return await this.createCursorPresenceAdapter();
+      } catch (err) {
+        // Cursor presence is optional.  In particular, an otherwise valid
+        // document session may not have permission to subscribe to cursors.
+        // Editing and Patchflow must still initialize in that case.
+        logger.warn("cursor presence unavailable; continuing without it", {
+          err: `${err}`,
+          project_id: this.project_id,
+          path: this.path,
+        });
+        return;
       } finally {
         this.emitOpenPhase("cursor_presence_done");
       }

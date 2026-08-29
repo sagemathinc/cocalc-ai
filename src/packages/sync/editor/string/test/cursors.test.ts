@@ -134,6 +134,30 @@ describe("cursor presence emits cursor_activity", () => {
 
     await sync.close();
   });
+
+  it("continues without cursor presence when the subscription is denied", async () => {
+    const client = new Client(init_queries, "userC");
+    const sync = new SyncString({
+      project_id,
+      path,
+      client,
+      fs,
+      cursors: true,
+      string_id: "cursor-test-permission-denied",
+    });
+    await waitForReady(sync);
+    const createAdapter = jest
+      .spyOn(sync as any, "createCursorPresenceAdapter")
+      .mockRejectedValue(new Error("permission denied subscribing to cursors"));
+
+    await expect(
+      (sync as any).getCursorPresenceAdapter(),
+    ).resolves.toBeUndefined();
+    expect(sync.get_state()).toBe("ready");
+    expect(createAdapter).toHaveBeenCalledTimes(1);
+
+    await sync.close();
+  });
 });
 
 async function waitForReady(doc: SyncString): Promise<void> {

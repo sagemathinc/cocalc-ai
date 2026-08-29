@@ -2481,19 +2481,22 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
               operations = slateDiff(previousEditorValue, nextEditorValue);
             }
             preserveScrollPosition(editor, operations);
-            applyOperations(editor, operations);
+            const operationsApplied = applyOperations(editor, operations);
             // If the op-based transform fails to converge (which can happen with
             // some focused void-node states), force a direct value reset.
-            const appliedMarkdown = slate_to_markdown(editor.children, {
-              cache: editor.syncCache,
-              preserveBlankLines,
-            });
-            if (appliedMarkdown !== normalizedValue) {
+            const appliedMarkdown = operationsApplied
+              ? slate_to_markdown(editor.children, {
+                  cache: editor.syncCache,
+                  preserveBlankLines,
+                })
+              : undefined;
+            if (!operationsApplied || appliedMarkdown !== normalizedValue) {
               debugSyncLog("value-apply:mismatch-fallback", {
-                appliedLength: appliedMarkdown.length,
+                operationsApplied,
+                appliedLength: appliedMarkdown?.length,
                 targetLength: normalizedValue.length,
               });
-              onChange(nextEditorValue);
+              forceSetEditorToValue(cleanMarkdownValue);
             }
             // console.log("time to set via diff", new Date() - t);
           }

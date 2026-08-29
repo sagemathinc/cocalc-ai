@@ -26,6 +26,7 @@ function makeActions(messages: Map<string, any> = new Map()): any {
     delete: jest.fn(),
     save: jest.fn(),
     save_to_disk: jest.fn(),
+    isClosed: jest.fn(() => false),
   };
   actions.syncdb = syncdb;
   actions.store = {
@@ -578,6 +579,16 @@ describe("chat autosave", () => {
     actions.autosave([{ op: "set" }]);
 
     expect(actions.save_to_disk).toHaveBeenCalledTimes(1);
+  });
+
+  it("contains rejected fire-and-forget disk saves", async () => {
+    const actions = makeActions();
+    actions.syncdb.save_to_disk.mockRejectedValue(
+      new Error("collaborative history is not up to date"),
+    );
+
+    await expect(actions.autosaveToDisk()).resolves.toBeUndefined();
+    expect(actions.syncdb.save_to_disk).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1286,7 +1286,9 @@ function markdownAutoformatAt(
       shift_path(op, pos);
     }
 
-    applyOperations(editor, operations);
+    if (!applyOperations(editor, operations)) {
+      return false;
+    }
     // Move the cursor to the right position.
     const new_path = [...path];
     new_path[new_path.length - 1] += children.length - 1;
