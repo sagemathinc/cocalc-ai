@@ -198,9 +198,14 @@ export class StudentsActions {
     // We always remove any deleted student from all student projects and the
     // shared project when they are deleted, since this best aligns with
     // user expectations.  We do this, even if "allow collaborators" is enabled.
-    await this.course_actions.student_projects.removeFromAllStudentProjects(
-      student,
-    );
+    try {
+      await this.course_actions.student_projects.removeFromAllStudentProjects(
+        student,
+      );
+    } catch (err) {
+      this.course_actions.set_error(`Error deleting student - ${err}`);
+      return;
+    }
     this.doDeleteStudent(student, noTrash);
   }
 
@@ -219,6 +224,20 @@ export class StudentsActions {
   deleteAllStudents = async (noTrash = false): Promise<void> => {
     const store = this.get_store();
     const students = store.get_students().valueSeq().toArray();
+    try {
+      await map(
+        students,
+        store.get_copy_parallel(),
+        async (student: StudentRecord) => {
+          await this.course_actions.student_projects.removeFromAllStudentProjects(
+            student,
+          );
+        },
+      );
+    } catch (err) {
+      this.course_actions.set_error(`Error deleting students - ${err}`);
+      return;
+    }
     for (const student of students) {
       this.doDeleteStudent(student, noTrash, false);
     }

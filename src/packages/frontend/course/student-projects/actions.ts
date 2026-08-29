@@ -1056,36 +1056,53 @@ export class StudentProjectsActions {
     email_address?: string;
     status?: ProjectCollabInviteStatus;
   }): Promise<ProjectCollabInviteRow | undefined> => {
+    const rows = await this.get_course_invites({
+      student_id,
+      student_project_id,
+      email_address,
+      status,
+    });
+    const email = `${email_address ?? ""}`.trim().toLowerCase();
+    return (
+      rows.find((row) => row.context?.student_id === student_id) ??
+      rows.find(
+        (row) => row.context?.student_project_id === student_project_id,
+      ) ??
+      rows.find(
+        (row) =>
+          !!email && `${row.target_email ?? ""}`.trim().toLowerCase() === email,
+      )
+    );
+  };
+
+  private get_course_invites = async ({
+    student_id,
+    student_project_id,
+    email_address,
+    status,
+  }: {
+    student_id: string;
+    student_project_id: string;
+    email_address?: string;
+    status?: ProjectCollabInviteStatus;
+  }): Promise<ProjectCollabInviteRow[]> => {
     const rows = await webapp_client.project_collaborators.list_invites({
       project_id: student_project_id,
       direction: "outbound",
       status,
-      limit: 100,
+      limit: 1000,
       projectWide: true,
     });
     const email = `${email_address ?? ""}`.trim().toLowerCase();
-    return (
-      rows.find(
-        (row) =>
-          (row.invite_source === "email" ||
-            row.invite_source === "course_email") &&
-          row.scope === "course_student" &&
-          row.context?.student_id === student_id,
-      ) ??
-      rows.find(
-        (row) =>
-          (row.invite_source === "email" ||
-            row.invite_source === "course_email") &&
-          row.scope === "course_student" &&
-          row.context?.student_project_id === student_project_id,
-      ) ??
-      rows.find(
-        (row) =>
-          (row.invite_source === "email" ||
-            row.invite_source === "course_email") &&
-          row.scope === "course_student" &&
-          `${row.target_email ?? ""}`.trim().toLowerCase() === email,
-      )
+    return rows.filter(
+      (row) =>
+        (row.invite_source === "email" ||
+          row.invite_source === "course_email") &&
+        row.scope === "course_student" &&
+        (row.context?.student_id === student_id ||
+          row.context?.student_project_id === student_project_id ||
+          (!!email &&
+            `${row.target_email ?? ""}`.trim().toLowerCase() === email)),
     );
   };
 
@@ -1376,19 +1393,19 @@ export class StudentProjectsActions {
         project_ids: [project_id],
         quiet: false,
       });
-      const invite = await this.get_course_invite({
+      const invites = await this.get_course_invites({
         student_id: student.get("student_id"),
         student_project_id: project_id,
         email_address: student.get("email_address"),
         status: "pending",
       });
-      if (invite != null) {
+      await awaitMap(invites, MAX_PARALLEL_TASKS, async (invite) => {
         await webapp_client.project_collaborators.respond_invite({
           invite_id: invite.invite_id,
           project_id,
           action: "revoke",
         });
-      }
+      });
     }
     if (account_id) {
       if (project_id) {

@@ -286,9 +286,11 @@ describe("StudentsActions.add_students", () => {
     const cleanupError = new Error("invite cleanup failed");
     const student = iMap({ student_id: "student-1" });
     const set = jest.fn();
+    const setError = jest.fn();
     const courseActions = {
       get_store: () => ({ get_student: () => student }),
       set,
+      set_error: setError,
       student_projects: {
         removeFromAllStudentProjects: jest.fn(async () => {
           throw cleanupError;
@@ -297,10 +299,82 @@ describe("StudentsActions.add_students", () => {
     };
     const actions = new StudentsActions(courseActions as any);
 
-    await expect(actions.delete_student("student-1")).rejects.toBe(
-      cleanupError,
-    );
+    await expect(actions.delete_student("student-1")).resolves.toBeUndefined();
     expect(set).not.toHaveBeenCalled();
+    expect(setError).toHaveBeenCalledWith(
+      "Error deleting student - Error: invite cleanup failed",
+    );
+  });
+
+  it("cleans every student invite before committing a bulk deletion", async () => {
+    const students = [
+      iMap({ student_id: "student-1" }),
+      iMap({ student_id: "student-2" }),
+    ];
+    const removeFromAllStudentProjects = jest.fn(async () => undefined);
+    const configureAllProjects = jest.fn(async () => undefined);
+    const set = jest.fn();
+    const commit = jest.fn();
+    const courseActions = {
+      commit,
+      get_store: () => ({
+        get_copy_parallel: () => 2,
+        get_students: () => ({
+          valueSeq: () => ({ toArray: () => students }),
+        }),
+      }),
+      set,
+      set_error: jest.fn(),
+      student_projects: {
+        configure_all_projects: configureAllProjects,
+        removeFromAllStudentProjects,
+      },
+    };
+    const actions = new StudentsActions(courseActions as any);
+
+    const deleting = actions.deleteAllStudents();
+    await jest.advanceTimersByTimeAsync(1);
+    await deleting;
+
+    expect(removeFromAllStudentProjects).toHaveBeenCalledTimes(2);
+    expect(removeFromAllStudentProjects).toHaveBeenCalledWith(students[0]);
+    expect(removeFromAllStudentProjects).toHaveBeenCalledWith(students[1]);
+    expect(set).toHaveBeenCalledTimes(2);
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(configureAllProjects).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports bulk cleanup failure without committing roster deletions", async () => {
+    const students = [iMap({ student_id: "student-1" })];
+    const set = jest.fn();
+    const commit = jest.fn();
+    const setError = jest.fn();
+    const courseActions = {
+      commit,
+      get_store: () => ({
+        get_copy_parallel: () => 1,
+        get_students: () => ({
+          valueSeq: () => ({ toArray: () => students }),
+        }),
+      }),
+      set,
+      set_error: setError,
+      student_projects: {
+        configure_all_projects: jest.fn(async () => undefined),
+        removeFromAllStudentProjects: jest.fn(async () => {
+          throw new Error("invite cleanup failed");
+        }),
+      },
+    };
+    const actions = new StudentsActions(courseActions as any);
+
+    await expect(actions.deleteAllStudents()).resolves.toBeUndefined();
+
+    expect(set).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+    expect(setError).toHaveBeenCalledWith(
+      "Error deleting students - Error: invite cleanup failed",
+    );
   });
 
   it("clears stale invitation metadata when undeleting a student", async () => {

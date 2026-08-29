@@ -70,6 +70,28 @@ describe("StudentProjectsActions.removeFromAllStudentProjects", () => {
         status: "pending",
         target_email: "student@example.com",
       },
+      {
+        context: {
+          student_id: "student-1",
+          student_project_id: "student-project",
+        },
+        invite_id: "invite-2",
+        invite_source: "course_email",
+        scope: "course_student",
+        status: "pending",
+        target_email: "old-address@example.com",
+      },
+      {
+        context: {
+          student_id: "student-2",
+          student_project_id: "other-project",
+        },
+        invite_id: "unrelated-invite",
+        invite_source: "course_email",
+        scope: "course_student",
+        status: "pending",
+        target_email: "other@example.com",
+      },
     ]);
     const student = iMap({
       account_id: "student-account",
@@ -88,14 +110,20 @@ describe("StudentProjectsActions.removeFromAllStudentProjects", () => {
     });
     expect(listInvitesMock).toHaveBeenCalledWith({
       direction: "outbound",
-      limit: 100,
+      limit: 1000,
       projectWide: true,
       project_id: "student-project",
       status: "pending",
     });
+    expect(respondInviteMock).toHaveBeenCalledTimes(2);
     expect(respondInviteMock).toHaveBeenCalledWith({
       action: "revoke",
       invite_id: "invite-1",
+      project_id: "student-project",
+    });
+    expect(respondInviteMock).toHaveBeenCalledWith({
+      action: "revoke",
+      invite_id: "invite-2",
       project_id: "student-project",
     });
     expect(removeCollaboratorMock).toHaveBeenCalledTimes(2);
