@@ -30,21 +30,23 @@ export function applyOperations(
     return false;
   }
 
-  // Validate against a detached copy first. Slate operations are not
-  // transactional, so discovering an invalid operation halfway through the
-  // live batch would leave the editor partially updated.
-  const probe = createEditor();
-  probe.children = cloneDeep(editor.children);
-  probe.selection = cloneDeep(editor.selection);
-  try {
-    Editor.withoutNormalizing(probe, () => {
-      for (const op of applicableOperations) {
-        probe.apply(op);
-      }
-    });
-  } catch (err) {
-    warnUnableToApply(err, applicableOperations);
-    return false;
+  // Heterogeneous merge_node operations are the observed source of invalid
+  // partial batches. Validate those batches transactionally, but keep common
+  // text-only synchronization on the fast path without cloning the document.
+  if (applicableOperations.some(({ type }) => type === "merge_node")) {
+    const probe = createEditor();
+    probe.children = cloneDeep(editor.children);
+    probe.selection = cloneDeep(editor.selection);
+    try {
+      Editor.withoutNormalizing(probe, () => {
+        for (const op of applicableOperations) {
+          probe.apply(op);
+        }
+      });
+    } catch (err) {
+      warnUnableToApply(err, applicableOperations);
+      return false;
+    }
   }
 
   try {

@@ -60,3 +60,21 @@ test("a valid batch is applied after preflight", () => {
     { type: "paragraph", children: [{ text: "ab" }] },
   ]);
 });
+
+test("ordinary text operations stay on the fast path", () => {
+  const editor = createEditor() as SlateEditor;
+  editor.children = [
+    { type: "paragraph", children: [{ text: "a" }] },
+  ] as Descendant[];
+  const operation = {
+    type: "insert_text",
+    path: [0, 0],
+    offset: 1,
+    text: "b",
+  } as Operation;
+
+  expect(applyOperations(editor, [operation])).toBe(true);
+  expect(editor.children).toEqual([
+    { type: "paragraph", children: [{ text: "ab" }] },
+  ]);
+});
