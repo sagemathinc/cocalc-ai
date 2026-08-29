@@ -246,7 +246,10 @@ describe("classifyHostAvailabilitySnapshot", () => {
           ...base,
           stale_ms: 12 * 60_000,
           metadata: {
-            spot_recovery_state: { phase: "returning_to_spot" },
+            spot_recovery_state: {
+              phase: "returning_to_spot",
+              verification_started_at: new Date(now - 2 * 60_000).toISOString(),
+            },
           },
         },
         undefined,
@@ -271,16 +274,49 @@ describe("classifyHostAvailabilitySnapshot", () => {
     ).toBe("active host bootstrap");
   });
 
-  it("escalates a stale host after lifecycle suppression expires", () => {
-    expect(
-      _test.runningStaleEscalationSuppressionReason({
-        id: "12869982-da11-495e-9914-ee784ee8d5a8",
-        status: "running",
-        stale_ms: 31 * 60_000,
-        metadata: {
-          spot_recovery_state: { phase: "returning_to_spot" },
+  it("defers repair when a replacement Spot VM has no heartbeat yet", () => {
+    const now = Date.UTC(2026, 7, 29, 3, 38, 18);
+    const row = {
+      id: "7bd699f8-e20b-4b13-9dfa-f7358f85544e",
+      status: "running",
+      last_seen: null,
+      // SQL represents a NULL last_seen as age since the Unix epoch.
+      stale_ms: now,
+      metadata: {
+        spot_recovery_state: {
+          phase: "running_standard_fallback",
+          outage_started_at: new Date(now - 67_000).toISOString(),
+          fallback_started_at: new Date(now - 28_000).toISOString(),
         },
-      }),
+      },
+    };
+
+    expect(_test.runningStaleLifecycleSuppressionReason(row, now)).toBe(
+      "active spot recovery phase running_standard_fallback",
+    );
+    expect(
+      _test.runningStaleEscalationSuppressionReason(row, undefined, now),
+    ).toBe("active spot recovery phase running_standard_fallback");
+  });
+
+  it("escalates a stale host after lifecycle suppression expires", () => {
+    const now = Date.UTC(2026, 7, 29, 4, 10, 0);
+    expect(
+      _test.runningStaleEscalationSuppressionReason(
+        {
+          id: "12869982-da11-495e-9914-ee784ee8d5a8",
+          status: "running",
+          stale_ms: 31 * 60_000,
+          metadata: {
+            spot_recovery_state: {
+              phase: "running_standard_fallback",
+              fallback_started_at: new Date(now - 31 * 60_000).toISOString(),
+            },
+          },
+        },
+        undefined,
+        now,
+      ),
     ).toBeUndefined();
   });
 

@@ -832,25 +832,45 @@ function recentMetadataTransition(value: unknown, nowMs: number): boolean {
   );
 }
 
-function runningStaleEscalationSuppressionReason(
+function recentSpotRecoveryPhase(
+  metadata: Record<string, any>,
+  nowMs: number,
+): string | undefined {
+  const recovery = metadata.spot_recovery_state ?? {};
+  const phase = `${recovery.phase ?? ""}`;
+  if (
+    ![
+      "retrying_spot",
+      "running_standard_fallback",
+      "probing_spot",
+      "returning_to_spot",
+    ].includes(phase)
+  ) {
+    return undefined;
+  }
+  // Cloud recovery clears last_seen while replacing a VM. Do not derive the
+  // transition age from that nullable heartbeat: NULL is represented as the
+  // Unix epoch by the stale-host query and would trigger immediate repair.
+  const transitionTimes = [
+    recovery.machine_type_attempt_started_at,
+    recovery.verification_started_at,
+    recovery.fallback_started_at,
+    recovery.last_preempted_at,
+    recovery.outage_started_at,
+    recovery.last_probe_at,
+  ];
+  return transitionTimes.some((value) => recentMetadataTransition(value, nowMs))
+    ? phase
+    : undefined;
+}
+
+function runningStaleLifecycleSuppressionReason(
   row: RunningStaleHostRow,
-  activeOperationKind?: string,
   nowMs = Date.now(),
 ): string | undefined {
-  if (Number(row.stale_ms) < HOST_RUNNING_STALE_ESCALATION_MS) {
-    return "automatic remediation grace period";
-  }
-  if (activeOperationKind) {
-    return `active ${activeOperationKind} operation`;
-  }
   const metadata = row.metadata ?? {};
-  const spotPhase = `${metadata.spot_recovery_state?.phase ?? ""}`;
-  if (
-    ["retrying_spot", "probing_spot", "returning_to_spot"].includes(
-      spotPhase,
-    ) &&
-    Number(row.stale_ms) < HOST_RUNNING_STALE_TRANSITION_SUPPRESS_MS
-  ) {
+  const spotPhase = recentSpotRecoveryPhase(metadata, nowMs);
+  if (spotPhase) {
     return `active spot recovery phase ${spotPhase}`;
   }
   const restart = metadata.runtime_auto_recovery ?? {};
@@ -884,6 +904,20 @@ function runningStaleEscalationSuppressionReason(
     return "active bootstrap reconciliation";
   }
   return undefined;
+}
+
+function runningStaleEscalationSuppressionReason(
+  row: RunningStaleHostRow,
+  activeOperationKind?: string,
+  nowMs = Date.now(),
+): string | undefined {
+  if (Number(row.stale_ms) < HOST_RUNNING_STALE_ESCALATION_MS) {
+    return "automatic remediation grace period";
+  }
+  if (activeOperationKind) {
+    return `active ${activeOperationKind} operation`;
+  }
+  return runningStaleLifecycleSuppressionReason(row, nowMs);
 }
 
 async function getRunningStaleHosts(): Promise<RunningStaleHostRow[]> {
@@ -977,6 +1011,14 @@ async function enqueueRunningStaleHostRepairs(
   let queued = 0;
   for (const row of rows) {
     if (queued >= RUNNING_STALE_REPAIR_LIMIT) break;
+    const lifecycleSuppression = runningStaleLifecycleSuppressionReason(row);
+    if (lifecycleSuppression) {
+      logger.info("deferring stale-running host repair during recovery", {
+        host_id: row.id,
+        reason: lifecycleSuppression,
+      });
+      continue;
+    }
     const account_id = ownerAccountId(row);
     if (!account_id) {
       logger.warn("skipping stale-running host repair without owner", {
@@ -1968,5 +2010,6 @@ export const _test = {
   formatStaleDuration,
   pressureAlertRow,
   rootFilesystemAlertRow,
+  runningStaleLifecycleSuppressionReason,
   runningStaleEscalationSuppressionReason,
 };
