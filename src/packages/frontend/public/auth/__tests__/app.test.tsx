@@ -1377,6 +1377,78 @@ describe("PublicAuthApp", () => {
     ).toBeNull();
   });
 
+  it("labels and submits the recovery-only alternative to a passkey", async () => {
+    mockedApi.mockResolvedValue({
+      email: "ada@example.com",
+      password_allowed: true,
+      sso_required: false,
+    });
+    mockedIsMfaRequiredAuthResponse.mockImplementation(
+      (value: unknown): value is any =>
+        !!value && typeof value === "object" && (value as any).mfa_required,
+    );
+    mockedPostAuthApi
+      .mockResolvedValueOnce({
+        mfa_required: true,
+        challenge_id: "challenge-1",
+        methods: ["passkey", "recovery_code"],
+        home_bay_id: "bay-1",
+      } as any)
+      .mockResolvedValueOnce({
+        account_id: "account-1",
+        home_bay_url: "https://bay.example.test",
+      } as any);
+
+    render(
+      <PublicAuthApp
+        config={config()}
+        initialRoute={{ kind: "auth-form", view: "sign-in" }}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "ada@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Password"), {
+      target: { value: "correct horse battery staple" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+
+    const chooser = await screen.findByRole("group", {
+      name: "Choose second factor method",
+    });
+    fireEvent.click(
+      within(chooser).getByRole("button", { name: "Recovery code" }),
+    );
+
+    expect(
+      screen.getByText(
+        "Enter one of the recovery codes saved when your passkey was set up.",
+      ),
+    ).not.toBeNull();
+    expect(within(chooser).queryByRole("button", { name: "Code" })).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText("ABCD-EFGH-IJKL"), {
+      target: { value: "123456" },
+    });
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {
+      // jsdom does not implement full-page reloads.
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+
+    await waitFor(() =>
+      expect(mockedPostAuthApi).toHaveBeenLastCalledWith({
+        endpoint: "auth/verify-second-factor",
+        body: {
+          challenge_id: "challenge-1",
+          method: "recovery_code",
+          code: "123456",
+        },
+      }),
+    );
+    consoleError.mockRestore();
+  });
+
   it("renders an SSO second-factor challenge route", async () => {
     mockedPostAuthApi.mockResolvedValueOnce({
       account_id: "account-1",

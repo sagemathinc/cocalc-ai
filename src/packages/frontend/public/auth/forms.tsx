@@ -1388,7 +1388,13 @@ export function PublicSignInForm({
   const publicConfig = usePublicConfig();
   const showLegacyMigrationNotice =
     !challengeId && isCocalcAiPublicSite(publicConfig);
-  const codeFactorMethod = inferSecondFactorInputMethod(factorCode);
+  const hasTotp = factorMethods.includes("totp");
+  const hasRecoveryCode = factorMethods.includes("recovery_code");
+  const recoveryCodeOnly = hasRecoveryCode && !hasTotp;
+  const codeFactorMethod =
+    factorMethod === "recovery_code"
+      ? "recovery_code"
+      : inferSecondFactorInputMethod(factorCode);
   const consentReady = useEssentialConsent();
   const cookieConsentReady = !cookieBannerEnabled || consentReady;
   const policiesVisible = arePublicPoliciesVisible(publicConfig);
@@ -1736,7 +1742,7 @@ export function PublicSignInForm({
                   )
                 }
               >
-                Code
+                {recoveryCodeOnly ? "Recovery code" : "Code"}
               </button>
             ) : undefined}
           </div>
@@ -1747,14 +1753,20 @@ export function PublicSignInForm({
           ) : (
             <>
               <div style={{ color: "#666", marginBottom: "8px" }}>
-                Enter either the 6-digit authenticator code or one of your
-                recovery codes.
+                {factorMethod === "recovery_code"
+                  ? "Enter one of the recovery codes saved when your passkey was set up."
+                  : hasRecoveryCode
+                    ? "Enter either the 6-digit authenticator code or one of your recovery codes."
+                    : "Enter the 6-digit code from your authenticator app."}
               </div>
               <TextInput
                 autoComplete="one-time-code"
                 autoFocus
                 name="one-time-code"
-                placeholder={getSecondFactorPlaceholder(factorCode)}
+                placeholder={getSecondFactorPlaceholder(
+                  factorCode,
+                  codeFactorMethod,
+                )}
                 value={factorCode}
                 onChange={setFactorCode}
                 onPressEnter={verifySecondFactor}

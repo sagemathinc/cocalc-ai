@@ -16,8 +16,11 @@ export function inferSecondFactorInputMethod(
   return /^\d{6}$/.test(compact) ? "totp" : "recovery_code";
 }
 
-export function getSecondFactorPlaceholder(code: string): string {
-  return inferSecondFactorInputMethod(code) === "recovery_code"
+export function getSecondFactorPlaceholder(
+  code: string,
+  method?: SecondFactorInputMethod,
+): string {
+  return (method ?? inferSecondFactorInputMethod(code)) === "recovery_code"
     ? "ABCD-EFGH-IJKL"
     : "123456";
 }
