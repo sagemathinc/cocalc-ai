@@ -71,4 +71,30 @@ describe("EditableMarkdown external read-only values", () => {
       ).toBeTruthy();
     });
   });
+
+  it("keeps rendering after a stream crosses the direct-set threshold", async () => {
+    const { rerender } = render(<StreamingMarkdown value="Starting stream." />);
+    const longActivity = Array.from(
+      { length: 260 },
+      (_, index) => `Activity block ${index + 1}.`,
+    ).join("\n\n");
+
+    rerender(<StreamingMarkdown value={longActivity} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Activity block 260.")).toBeTruthy();
+    });
+
+    rerender(
+      <StreamingMarkdown
+        value={`${longActivity}\n\nLatest activity after direct replacement.`}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Latest activity after direct replacement."),
+      ).toBeTruthy();
+    });
+  });
 });

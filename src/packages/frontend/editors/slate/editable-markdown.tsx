@@ -2379,8 +2379,18 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
+    let directReplacementValue: Descendant[] | undefined;
     const applyExternalValue = () => {
       Editor.withoutNormalizing(editor, () => {
+        const applyDirectReplacement = () => {
+          editor.syncCausedUpdate = true;
+          // onChange publishes React state, but it does not update
+          // editor.children synchronously. Remember the authoritative tree so
+          // the read-only streaming publication below cannot overwrite it with
+          // the previous tree.
+          directReplacementValue = nextEditorValue;
+          onChange(nextEditorValue);
+        };
         try {
           if (!ReactEditor.isUsingWindowing(editor)) {
             const operationsLength = operations?.length ?? 0;
@@ -2449,11 +2459,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             // editable text acting as a preview on the right not focused, and
             // again this makes things fastest.
             // DRAWBACK: this doesn't preserve scroll position and breaks selection.
-            editor.syncCausedUpdate = true;
-            // we call "onChange" instead of setEditorValue, since
+            // We call onChange instead of only setEditorValue, since
             // we want all the change handler stuff to happen, e.g.,
             // broadcasting cursors.
-            onChange(nextEditorValue);
+            applyDirectReplacement();
             if (forceDirectSetForClear) {
               if (isFocused || ReactEditor.isFocused(editor)) {
                 window.setTimeout(() => {
@@ -2493,7 +2502,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
                 appliedLength: appliedMarkdown.length,
                 targetLength: normalizedValue.length,
               });
-              onChange(nextEditorValue);
+              applyDirectReplacement();
             }
             // console.log("time to set via diff", new Date() - t);
           }
@@ -2548,7 +2557,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       // External Slate operations may mutate the current value identity and
       // defer onChange. Publish an explicit revision so read-only streaming
       // views cannot retain an older leaf until an unrelated parent render.
-      setEditorValue([...editor.children]);
+      setEditorValue(directReplacementValue ?? [...editor.children]);
       setChange((current) => current + 1);
       ReactEditor.forceUpdate(editor);
     }
