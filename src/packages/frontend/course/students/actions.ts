@@ -195,18 +195,19 @@ export class StudentsActions {
     if (student == null) {
       return;
     }
-    this.doDeleteStudent(student, noTrash);
     // We always remove any deleted student from all student projects and the
     // shared project when they are deleted, since this best aligns with
     // user expectations.  We do this, even if "allow collaborators" is enabled.
     await this.course_actions.student_projects.removeFromAllStudentProjects(
       student,
     );
+    this.doDeleteStudent(student, noTrash);
   }
 
   undelete_student = async (student_id: string): Promise<void> => {
     this.course_actions.set({
       deleted: false,
+      last_email_invite: undefined,
       student_id,
       table: "students",
     });
@@ -247,6 +248,7 @@ export class StudentsActions {
       this.course_actions.set(
         {
           deleted: true,
+          last_email_invite: undefined,
           student_id: student.get("student_id"),
           table: "students",
         },

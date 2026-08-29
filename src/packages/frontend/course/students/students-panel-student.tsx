@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { Icon, Text, TimeAgo, Tip, Tooltip } from "@cocalc/frontend/components";
+import { copyTextToClipboard } from "@cocalc/frontend/components/copy-to-clipboard-util";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import {
   assignMembershipPackageSeat,
@@ -56,6 +57,7 @@ import * as styles from "../styles";
 import * as util from "../util";
 import { useButtonSize } from "../util";
 import DeletedAccount from "./deleted-account";
+import { CourseInviteLinkField } from "./invite-link-field";
 
 export interface StudentNameDescription {
   full: string;
@@ -175,7 +177,9 @@ export function Student({
   const [seatLoading, setSeatLoading] = useState<boolean>(false);
   const [seatError, setSeatError] = useState<string>("");
   const [sendInviteLoading, setSendInviteLoading] = useState<boolean>(false);
-  const [copyInviteLoading, setCopyInviteLoading] = useState<boolean>(false);
+  const [inviteLinkLoading, setInviteLinkLoading] = useState<boolean>(false);
+  const [inviteUrl, setInviteUrl] = useState<string>();
+  const [inviteLinkError, setInviteLinkError] = useState<string>("");
   const [revokeInviteLoading, setRevokeInviteLoading] =
     useState<boolean>(false);
   const [inviteStatusLoading, setInviteStatusLoading] =
@@ -224,6 +228,10 @@ export function Student({
   useEffect(() => {
     setNoteDraft(student.get("note") ?? "");
   }, [student.get("note")]);
+  useEffect(() => {
+    setInviteUrl(undefined);
+    setInviteLinkError("");
+  }, [courseInvite?.invite_id]);
 
   async function refreshCourseInviteStatus(): Promise<void> {
     if (hasAccount || !studentProjectId || !student.get("email_address")) {
@@ -599,19 +607,33 @@ export function Student({
     return date == null ? undefined : <TimeAgo date={date} />;
   }
 
-  async function copyInviteLink() {
-    setCopyInviteLoading(true);
+  async function revealInviteLink() {
+    setInviteLinkLoading(true);
+    setInviteLinkError("");
     try {
       const inviteUrl =
         await actions.student_projects.copy_pending_student_invite_link({
           student_id,
         });
-      await navigator.clipboard.writeText(inviteUrl);
-      void antdMessage.success("Invite link copied.");
+      setInviteUrl(inviteUrl);
     } catch (err) {
+      setInviteLinkError(`${err}`);
       void antdMessage.error(`${err}`);
     } finally {
-      setCopyInviteLoading(false);
+      setInviteLinkLoading(false);
+    }
+  }
+
+  async function copyInviteLink() {
+    if (!inviteUrl) return;
+    const copied = await copyTextToClipboard({ text: inviteUrl });
+    if (copied) {
+      void antdMessage.success("Invite link copied.");
+    } else {
+      void antdMessage.warning(
+        "Clipboard access was blocked. Select the displayed link and copy it manually.",
+        8,
+      );
     }
   }
 
@@ -840,13 +862,13 @@ export function Student({
                   </Button>
                 </Tooltip>
               )}
-              {canCopyInvite && (
+              {canCopyInvite && !inviteUrl && (
                 <Button
                   size={size}
-                  loading={copyInviteLoading}
-                  onClick={() => void copyInviteLink()}
+                  loading={inviteLinkLoading}
+                  onClick={() => void revealInviteLink()}
                 >
-                  <Icon name="copy" /> Copy invite link
+                  Reveal invite link
                 </Button>
               )}
               {canRevokeInvite && (
@@ -861,6 +883,17 @@ export function Student({
                 </Popconfirm>
               )}
             </Space>
+          )}
+          {canCopyInvite && inviteUrl && (
+            <CourseInviteLinkField
+              onCopy={() => void copyInviteLink()}
+              value={inviteUrl}
+            />
+          )}
+          {inviteLinkError && (
+            <Text role="alert" type="danger">
+              {inviteLinkError}
+            </Text>
           )}
         </Space>
       </Modal>

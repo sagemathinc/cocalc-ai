@@ -1366,12 +1366,30 @@ export class StudentProjectsActions {
     /*
     - Remove student from their project
     - Remove student from shared project
-    - TODO: Cancel any outstanding invite, in case they haven't even created their account yet.
-      This isn't even implemented yet as an api endpoint... but will cause confusion.
+    - Revoke any outstanding course invite
     */
     const shared_id = this.get_store()?.get_shared_project_id();
     const account_id = student.get("account_id");
     const project_id = student.get("project_id");
+    if (project_id) {
+      await this.ensure_course_manager_access({
+        project_ids: [project_id],
+        quiet: false,
+      });
+      const invite = await this.get_course_invite({
+        student_id: student.get("student_id"),
+        student_project_id: project_id,
+        email_address: student.get("email_address"),
+        status: "pending",
+      });
+      if (invite != null) {
+        await webapp_client.project_collaborators.respond_invite({
+          invite_id: invite.invite_id,
+          project_id,
+          action: "revoke",
+        });
+      }
+    }
     if (account_id) {
       if (project_id) {
         // remove them from their project
