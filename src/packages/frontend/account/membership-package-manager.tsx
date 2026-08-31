@@ -959,6 +959,21 @@ function canManageSiteLicenseOverview({
   );
 }
 
+function canReviewSiteLicenseRequests({
+  accountId,
+  isAdmin,
+  overview,
+}: {
+  accountId?: string;
+  isAdmin: boolean;
+  overview: SiteLicenseOverview;
+}): boolean {
+  return (
+    canManageSiteLicenseOverview({ isAdmin, overview }) ||
+    (!!accountId && overview.site_license.owner_account_id === accountId)
+  );
+}
+
 export function ClaimableMembershipPackagesPanel({
   onChanged,
   onSiteLicenseTitleChange,
@@ -1762,6 +1777,7 @@ export function SiteLicenseManager({
         />
       ) : null}
       <SiteLicenseDashboard
+        accountId={account_id}
         overviews={siteLicenseOverviews}
         loading={siteLicenseOverviewLoading}
         error={siteLicenseOverviewError}
@@ -1997,6 +2013,7 @@ export function SiteLicenseAdminPanel({
 
   const renderAdminDashboard = (dashboardOverviews: SiteLicenseOverview[]) => (
     <SiteLicenseDashboard
+      accountId={account_id}
       overviews={dashboardOverviews}
       loading={false}
       error=""
@@ -2530,6 +2547,7 @@ function SiteLicenseCustomerLink({
 }
 
 function SiteLicenseDashboard({
+  accountId,
   overviews,
   loading,
   error,
@@ -2547,6 +2565,7 @@ function SiteLicenseDashboard({
   onSetManager,
   onRemoveManager,
 }: {
+  accountId?: string;
   overviews: SiteLicenseOverview[];
   loading: boolean;
   error: string;
@@ -2675,6 +2694,11 @@ function SiteLicenseDashboard({
         );
         const canEditManagers = isAdmin;
         const canManageLicense = canManageSiteLicenseOverview({
+          isAdmin,
+          overview,
+        });
+        const canReviewRequests = canReviewSiteLicenseRequests({
+          accountId,
           isAdmin,
           overview,
         });
@@ -2851,7 +2875,7 @@ function SiteLicenseDashboard({
                                 <Text>{request.requester_note}</Text>
                               ) : null}
                             </Space>
-                            {canManageLicense ? (
+                            {canReviewRequests ? (
                               <Space>
                                 <Button
                                   type="primary"

@@ -135,9 +135,9 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
     const targetEntry = currentEntry;
     const targetLabel = targetEntry?.label?.trim() || effectiveCurrentImage;
     Modal.confirm({
-      title: "Apply RootFS image to existing course projects?",
+      title: "Apply RootFS image to existing student and shared projects?",
       width: 680,
-      okText: `Change ${existingCourseProjectCount} course project${
+      okText: `Change ${existingCourseProjectCount} student/shared project${
         existingCourseProjectCount === 1 ? "" : "s"
       }`,
       okButtonProps: { danger: true },
@@ -156,8 +156,8 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
             title="This changes the / software environment"
             description={
               <>
-                Running student projects will be restarted so the new RootFS
-                takes effect immediately. Important student data belongs in
+                Running affected projects will be restarted so the new RootFS
+                takes effect immediately. Important project data belongs in
                 <Typography.Text code> /root </Typography.Text>
                 or
                 <Typography.Text code> /tmp </Typography.Text>, not in the base
@@ -178,7 +178,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
         try {
           await actions.student_projects.set_all_student_project_rootfs();
           message.success(
-            `Changed the RootFS image for ${existingCourseProjectCount} course project${
+            `Changed the RootFS image for ${existingCourseProjectCount} student/shared project${
               existingCourseProjectCount === 1 ? "" : "s"
             }.`,
           );
@@ -194,7 +194,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
       <Card
         title={
           <>
-            <Icon name="cube" /> Course Project RootFS Image (
+            <Icon name="cube" /> Student and Shared Project RootFS Image (
             <Button
               type="link"
               size="small"
@@ -223,13 +223,20 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
           <Alert
             type="info"
             showIcon
+            title="This never changes the instructor project"
+            description="This setting applies only to student projects and the shared project. Configure the instructor project's RootFS separately in Project Settings."
+          />
+
+          <Alert
+            type="info"
+            showIcon
             title="Why use this?"
             description="Use one managed software environment across all student projects, then roll out upgrades deliberately when you are ready."
           />
 
           <Form layout="vertical">
             <Form.Item
-              label="Managed RootFS image for new course projects"
+              label="Managed RootFS image for new student and shared projects"
               style={{ marginBottom: "12px" }}
             >
               <Select
@@ -344,7 +351,7 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
               ) : (
                 <Icon name="refresh" />
               )}{" "}
-              Apply To Existing Course Projects...
+              Apply To Existing Student/Shared Projects...
             </Button>
             <Button type="link" onClick={() => setHelpOpen(true)}>
               What does this change?
@@ -369,14 +376,20 @@ export function StudentProjectRootfsConfig({ actions, name, settings }: Props) {
           <Alert
             type="info"
             showIcon
-            title="New course projects"
+            title="Instructor project is separate"
+            description="Course RootFS settings never change the instructor project that contains this .course file. Configure that project's RootFS separately in Project Settings."
+          />
+          <Alert
+            type="info"
+            showIcon
+            title="New student/shared projects"
             description="If you leave this unset, new student projects and a newly created shared project use the same RootFS image as the instructor project that contains this .course file. If you set an override here, that managed image is used instead."
           />
           <Alert
             type="warning"
             showIcon
-            title="Existing course projects"
-            description="Existing student projects and the shared project do not change automatically. Use “Apply To Existing Course Projects...” when you want to switch them."
+            title="Existing student/shared projects"
+            description="Existing student projects and the shared project do not change automatically. Use “Apply To Existing Student/Shared Projects...” when you want to switch them."
           />
           <Typography.Paragraph style={{ marginBottom: 0 }}>
             Changing the RootFS image switches the project&apos;s visible
