@@ -6,7 +6,7 @@
 import { randomUUID } from "node:crypto";
 
 import type * as Store from "./store";
-import type { CrmMutationResult } from "@cocalc/util/crm";
+import type { CrmMutationResult, CrmOpportunityKind } from "@cocalc/util/crm";
 
 const describePglite =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
@@ -65,6 +65,7 @@ describePglite("integrated CRM store", () => {
       next_action TEXT,
       next_action_due_at TIMESTAMPTZ,
       crm_organization_id UUID,
+      site_license_id UUID,
       customer_account_id UUID,
       zendesk_ticket_ids INTEGER[] DEFAULT '{}',
       stripe_customer_id TEXT,
@@ -389,6 +390,215 @@ describePglite("integrated CRM store", () => {
       "DELETE FROM crm_organizations WHERE id = ANY($1::uuid[])",
       [organizationIds],
     );
+  });
+
+  it("includes only current accepted site-license offers when requested", async () => {
+    const marker = `Site license queue ${randomUUID()}`;
+    const cases = [
+      { kind: "adoption_pilot", stage: "discovery", license: "none" },
+      { kind: "new_site_license", stage: "proposal", license: "none" },
+      { kind: "new_site_license", stage: "won", license: "current" },
+      {
+        kind: "new_site_license",
+        stage: "won",
+        license: "current_fallback",
+      },
+      { kind: "new_site_license", stage: "won", license: "unbounded" },
+      { kind: "new_site_license", stage: "won", license: "expired" },
+      { kind: "new_site_license", stage: "won", license: "future" },
+      { kind: "new_site_license", stage: "won", license: "none" },
+      { kind: "new_site_license", stage: "lost", license: "current" },
+      { kind: "renewal", stage: "won", license: "current" },
+    ] as const;
+    const rows: Array<{
+      organizationId: string;
+      opportunityId: string;
+      licenseId: string | null;
+      licenseName: string | null;
+      expected: boolean;
+    }> = [];
+
+    for (const [index, item] of cases.entries()) {
+      const organizationId = randomUUID();
+      const opportunityId = randomUUID();
+      const orderId = item.license === "none" ? null : randomUUID();
+      const licenseId = item.license === "none" ? null : randomUUID();
+      const licenseName = licenseId ? `Reviewed site license ${index}` : null;
+      await pool.query(
+        `INSERT INTO crm_organizations
+           (id,customer_number,display_name,organization_type,lifecycle_stage,
+            created_by_account_id,updated_by_account_id,created_at,updated_at,version)
+         VALUES ($1,$2,$3,'university','prospect',$4,$4,NOW(),NOW() - ($5::int * INTERVAL '1 second'),1)`,
+        [organizationId, `TEST-${organizationId}`, marker, actor, index],
+      );
+      if (orderId && licenseId) {
+        const startsAt =
+          item.license === "unbounded"
+            ? null
+            : item.license === "future"
+              ? "2100-01-01"
+              : "2020-01-01";
+        const expiresAt =
+          item.license === "unbounded"
+            ? null
+            : item.license === "expired"
+              ? "2021-01-01"
+              : "2101-01-01";
+        await pool.query(
+          `INSERT INTO site_licenses
+             (id,name,organization_name,starts_at,expires_at,metadata,crm_organization_id)
+           VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)`,
+          [
+            licenseId,
+            licenseName,
+            marker,
+            startsAt,
+            expiresAt,
+            JSON.stringify(
+              item.license === "current_fallback"
+                ? { commercial_order_id: orderId }
+                : {},
+            ),
+            item.license === "current_fallback" ? null : organizationId,
+          ],
+        );
+        await pool.query(
+          `INSERT INTO commercial_orders
+             (id,order_number,organization_name,crm_organization_id,site_license_id)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [
+            orderId,
+            `TEST-${orderId}`,
+            marker,
+            organizationId,
+            item.license === "current_fallback" ? null : licenseId,
+          ],
+        );
+      }
+      await pool.query(
+        `INSERT INTO crm_opportunities
+           (id,organization_id,name,kind,stage,owner_account_id,
+            expected_close_date,commercial_order_id,
+            created_by_account_id,updated_by_account_id,
+            created_at,updated_at,version)
+         VALUES ($1,$2,'Reviewed offer',$3,$4,$5,'2027-01-31',$6,$5,$5,NOW(),NOW(),1)`,
+        [opportunityId, organizationId, item.kind, item.stage, actor, orderId],
+      );
+      rows.push({
+        organizationId,
+        opportunityId,
+        licenseId,
+        licenseName,
+        expected:
+          (item.stage !== "won" &&
+            item.stage !== "lost" &&
+            (item.kind === "adoption_pilot" ||
+              item.kind === "new_site_license")) ||
+          (item.kind === "new_site_license" &&
+            item.stage === "won" &&
+            (item.license === "current" ||
+              item.license === "current_fallback" ||
+              item.license === "unbounded")),
+      });
+    }
+
+    const opportunityKinds: CrmOpportunityKind[] = [
+      "adoption_pilot",
+      "new_site_license",
+    ];
+    const request = {
+      account_id: actor,
+      opportunity_kinds: opportunityKinds,
+      include_won_active_site_license_offers: true,
+      reason: "review adoption and current site-license offers",
+    };
+    const listed = await store.listOrganizations(request);
+    const searched = await store.searchOrganizations({
+      ...request,
+      query: marker,
+    });
+    const expectedIds = rows
+      .filter(({ expected }) => expected)
+      .map(({ organizationId }) => organizationId)
+      .sort();
+    expect(
+      listed.organizations
+        .filter(({ display_name }) => display_name === marker)
+        .map(({ id }) => id)
+        .sort(),
+    ).toEqual(expectedIds);
+    expect(searched.organizations.map(({ id }) => id).sort()).toEqual(
+      expectedIds,
+    );
+    const fallback = rows.find(
+      (_, index) => cases[index].license === "current_fallback",
+    );
+    expect(fallback?.licenseId).toBeTruthy();
+    expect(fallback?.licenseName).toBeTruthy();
+    expect(
+      (
+        await store.searchOrganizations({
+          ...request,
+          query: fallback!.licenseName!,
+        })
+      ).organizations.map(({ id }) => id),
+    ).toEqual([fallback!.organizationId]);
+    expect(
+      (
+        await store.searchOrganizations({
+          ...request,
+          site_license_id: fallback!.licenseId!,
+        })
+      ).organizations.map(({ id }) => id),
+    ).toEqual([fallback!.organizationId]);
+    expect(
+      (
+        await store.searchOrganizations({
+          account_id: actor,
+          query: marker,
+          opportunity_kinds: opportunityKinds,
+          reason: "review only open adoption and site-license offers",
+        })
+      ).organizations.map(({ id }) => id),
+    ).not.toContain(rows[2].organizationId);
+    expect(
+      listed.organizations.find(({ id }) => id === rows[2].organizationId),
+    ).toMatchObject({
+      open_opportunity_count: 0,
+      open_opportunity_kinds: [],
+    });
+    const persisted = await pool.query<{
+      id: string;
+      stage: string;
+      version: number;
+    }>(
+      "SELECT id,stage,version FROM crm_opportunities WHERE id=ANY($1::uuid[]) ORDER BY id",
+      [rows.map(({ opportunityId }) => opportunityId)],
+    );
+    expect(persisted.rows).toEqual(
+      rows
+        .map(({ opportunityId }, index) => ({
+          id: opportunityId,
+          stage: cases[index].stage,
+          version: 1,
+        }))
+        .sort((a, b) => a.id.localeCompare(b.id)),
+    );
+
+    await pool.query(
+      "DELETE FROM crm_opportunities WHERE organization_id=ANY($1::uuid[])",
+      [rows.map(({ organizationId }) => organizationId)],
+    );
+    await pool.query(
+      "DELETE FROM commercial_orders WHERE crm_organization_id=ANY($1::uuid[])",
+      [rows.map(({ organizationId }) => organizationId)],
+    );
+    await pool.query("DELETE FROM site_licenses WHERE id=ANY($1::uuid[])", [
+      rows.flatMap(({ licenseId }) => (licenseId ? [licenseId] : [])),
+    ]);
+    await pool.query("DELETE FROM crm_organizations WHERE id=ANY($1::uuid[])", [
+      rows.map(({ organizationId }) => organizationId),
+    ]);
   });
 
   it("enforces versions and evidence-based domain identity", async () => {

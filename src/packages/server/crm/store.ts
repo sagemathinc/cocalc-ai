@@ -1010,11 +1010,33 @@ function appendOrganizationQueueFilters(
   if (opts.organization_types?.length) {
     add("o.organization_type=ANY(?::text[])", opts.organization_types);
   }
-  if (opts.opportunity_kinds?.length) {
+  const openOpportunityKinds = opts.opportunity_kinds?.length
+    ? "EXISTS (SELECT 1 FROM crm_opportunities q WHERE q.organization_id=o.id AND q.kind=ANY(?::text[]) AND q.stage NOT IN ('won','lost'))"
+    : undefined;
+  const wonActiveSiteLicenseOffer = opts.include_won_active_site_license_offers
+    ? `EXISTS (
+         SELECT 1
+           FROM crm_opportunities q
+           JOIN commercial_orders co ON co.id=q.commercial_order_id
+           JOIN site_licenses sl
+             ON sl.id=co.site_license_id
+             OR (co.site_license_id IS NULL AND sl.metadata->>'commercial_order_id'=co.id::text)
+          WHERE q.organization_id=o.id
+            AND q.kind='new_site_license'
+            AND q.stage='won'
+            AND (sl.starts_at IS NULL OR sl.starts_at<=NOW())
+            AND (sl.expires_at IS NULL OR sl.expires_at>NOW())
+       )`
+    : undefined;
+  if (openOpportunityKinds && wonActiveSiteLicenseOffer) {
     add(
-      "EXISTS (SELECT 1 FROM crm_opportunities q WHERE q.organization_id=o.id AND q.kind=ANY(?::text[]) AND q.stage NOT IN ('won','lost'))",
+      `(${openOpportunityKinds} OR ${wonActiveSiteLicenseOffer})`,
       opts.opportunity_kinds,
     );
+  } else if (openOpportunityKinds) {
+    add(openOpportunityKinds, opts.opportunity_kinds);
+  } else if (wonActiveSiteLicenseOffer) {
+    clauses.push(wonActiveSiteLicenseOffer);
   }
   if (opts.owner_account_id === null || opts.unassigned) {
     clauses.push("o.relationship_owner_account_id IS NULL");
@@ -1085,6 +1107,13 @@ export async function searchOrganizations(
   const limit = pageLimit(opts.limit);
   const values: unknown[] = [];
   const clauses: string[] = [];
+  const linkedSiteLicense = `(sl.crm_organization_id=o.id OR
+    (sl.crm_organization_id IS NULL AND EXISTS (
+      SELECT 1 FROM commercial_orders co
+       WHERE co.crm_organization_id=o.id
+         AND (co.site_license_id=sl.id OR
+              (co.site_license_id IS NULL AND sl.metadata->>'commercial_order_id'=co.id::text))
+    )))`;
   if (selector) {
     values.push(`%${selector.replace(/^@/, "")}%`);
     clauses.push(
@@ -1094,7 +1123,7 @@ export async function searchOrganizations(
         OR EXISTS (SELECT 1 FROM crm_organization_people r JOIN crm_people p ON p.id=r.person_id LEFT JOIN crm_person_emails e ON e.person_id=p.id LEFT JOIN crm_person_accounts pa ON pa.person_id=p.id WHERE r.organization_id=o.id AND (p.display_name ILIKE $1 OR e.normalized_email ILIKE $1 OR pa.account_id::text ILIKE $1))
         OR EXISTS (SELECT 1 FROM crm_external_references x WHERE x.organization_id=o.id AND (x.external_id ILIKE $1 OR x.label ILIKE $1))
         OR EXISTS (SELECT 1 FROM commercial_orders co WHERE co.crm_organization_id=o.id AND (co.id::text ILIKE $1 OR co.order_number ILIKE $1))
-        OR EXISTS (SELECT 1 FROM site_licenses sl WHERE sl.crm_organization_id=o.id AND (sl.id::text ILIKE $1 OR sl.name ILIKE $1)))`,
+        OR EXISTS (SELECT 1 FROM site_licenses sl WHERE ${linkedSiteLicense} AND (sl.id::text ILIKE $1 OR sl.name ILIKE $1)))`,
     );
   }
   if (opts.linked_account_id) {
@@ -1118,7 +1147,7 @@ export async function searchOrganizations(
   if (opts.site_license_id) {
     values.push(opts.site_license_id);
     clauses.push(
-      `EXISTS (SELECT 1 FROM site_licenses sl WHERE sl.crm_organization_id=o.id AND sl.id=$${values.length}::uuid)`,
+      `EXISTS (SELECT 1 FROM site_licenses sl WHERE ${linkedSiteLicense} AND sl.id=$${values.length}::uuid)`,
     );
   }
   appendOrganizationQueueFilters(opts, values, clauses);
