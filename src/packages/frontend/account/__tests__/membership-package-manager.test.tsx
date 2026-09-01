@@ -882,6 +882,62 @@ describe("membership package managers", () => {
     );
   });
 
+  it("prefers canonical tiers for default site-license pools", async () => {
+    isAdmin = true;
+    adminProvisionSiteLicense.mockResolvedValue({
+      site_license: {
+        id: "license-1",
+        name: "Campus site license",
+        organization_name: "Example University",
+        bay_id: "bay-0",
+        owner_account_id: null,
+        allowed_domains: [],
+      },
+      pools: [],
+      managers: [],
+      pending_requests: [],
+    });
+    const tiers = [
+      {
+        id: "student-ucla-summer-2026",
+        label: "UCLA Student Summer 2026",
+        priority: 10,
+      },
+      { id: "student", label: "Student", priority: 12 },
+      { id: "instructor", label: "Instructor", priority: 25 },
+      { id: "researcher", label: "Researcher", priority: 30 },
+    ];
+
+    render(<SiteLicenseAdminPanel tiers={tiers} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Provision site license")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText("Provision site license"));
+    fireEvent.click(screen.getByText("Provision license"));
+
+    await waitFor(() => {
+      expect(adminProvisionSiteLicense).toHaveBeenCalled();
+    });
+    const provisionCall = adminProvisionSiteLicense.mock.calls[0]?.[0];
+    expect(provisionCall.pools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pool_name: "Student",
+          membership_class: "student",
+        }),
+        expect.objectContaining({
+          pool_name: "Instructor",
+          membership_class: "instructor",
+        }),
+        expect.objectContaining({
+          pool_name: "Researcher",
+          membership_class: "researcher",
+        }),
+      ]),
+    );
+  });
+
   it("opens the selected admin site-license dashboard in a keyboard-accessible drawer", async () => {
     isAdmin = true;
     function RoutedSiteLicenseAdminPanel() {
