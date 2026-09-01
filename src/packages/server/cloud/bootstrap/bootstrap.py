@@ -9425,37 +9425,27 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
     return bundle
 
 
-def install_privileged_tool_binaries(
-    cfg: BootstrapConfig,
-    bundle: BundleSpec | None = None,
+def install_privileged_tool_binaries_from_archive(
+    archive_path: Path,
     *,
     destinations: dict[str, Path] | None = None,
     destination_uid: int = 0,
     destination_gid: int = 0,
 ) -> None:
-    """Install root-run tools outside the runtime user's writable bundle.
+    """Install root-run tools from an archive already trusted by the caller.
 
     cocalc-runtime-storage runs Rustic and BEES as root. The ordinary tools tree
     is intentionally owned by the project-host runtime account, so executing
     copies in that tree would turn a project-container escape into host root.
-    Extract privileged copies directly from the checksum-verified archive.
+    The caller must authenticate this archive or explicitly trust its contents
+    before invoking this function.
     """
 
     destinations = destinations or {
         "bin/bees": Path("/usr/local/libexec/cocalc-bees"),
         "bin/rustic": Path("/usr/local/libexec/cocalc-rustic"),
     }
-    bundle = resolve_bundle_spec(cfg, bundle or cfg.tools_bundle)
-    if not bundle.sha256 or not bundle.sha256.strip():
-        raise RuntimeError("tools bundle checksum is required for privileged tools")
-    remote = Path(bundle.remote)
-    try:
-        verify_sha256(cfg, str(remote), bundle.sha256)
-    except (FileNotFoundError, RuntimeError):
-        download_file(cfg, bundle.url, str(remote))
-        verify_sha256(cfg, str(remote), bundle.sha256)
-
-    with tarfile.open(remote, mode="r:xz") as archive:
+    with tarfile.open(archive_path, mode="r:xz") as archive:
         members = archive.getmembers()
         for member_name, destination in destinations.items():
             candidates = [
@@ -9490,6 +9480,33 @@ def install_privileged_tool_binaries(
             finally:
                 source.close()
                 tmp.unlink(missing_ok=True)
+
+
+def install_privileged_tool_binaries(
+    cfg: BootstrapConfig,
+    bundle: BundleSpec | None = None,
+    *,
+    destinations: dict[str, Path] | None = None,
+    destination_uid: int = 0,
+    destination_gid: int = 0,
+) -> None:
+    """Install trusted root-run tools from a checksum-verified tools bundle."""
+
+    bundle = resolve_bundle_spec(cfg, bundle or cfg.tools_bundle)
+    if not bundle.sha256 or not bundle.sha256.strip():
+        raise RuntimeError("tools bundle checksum is required for privileged tools")
+    remote = Path(bundle.remote)
+    try:
+        verify_sha256(cfg, str(remote), bundle.sha256)
+    except (FileNotFoundError, RuntimeError):
+        download_file(cfg, bundle.url, str(remote))
+        verify_sha256(cfg, str(remote), bundle.sha256)
+    install_privileged_tool_binaries_from_archive(
+        remote,
+        destinations=destinations,
+        destination_uid=destination_uid,
+        destination_gid=destination_gid,
+    )
 
 
 def install_node(cfg: BootstrapConfig) -> None:

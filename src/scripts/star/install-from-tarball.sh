@@ -133,6 +133,37 @@ EOF
   chmod 0644 "$dest"
 }
 
+install_privileged_runtime_tools() {
+  local source_root="$1"
+  local bootstrap_py="${source_root}/packages/server/cloud/bootstrap/bootstrap.py"
+  local -a tools_archives=("${source_root}"/packages/project/build/tools-linux-*.tar.xz)
+  if [ ! -f "${tools_archives[0]}" ]; then
+    return
+  fi
+  [ "${#tools_archives[@]}" -eq 1 ] ||
+    die "runtime payload must contain exactly one Linux tools archive"
+  [ -f "$bootstrap_py" ] ||
+    die "runtime payload with privileged tools is missing bootstrap.py"
+
+  log "installing trusted privileged tools from authenticated runtime payload"
+  python3 - "$bootstrap_py" "${tools_archives[0]}" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+bootstrap_path = Path(sys.argv[1])
+archive_path = Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "cocalc_star_release_bootstrap", bootstrap_path
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module.install_privileged_tool_binaries_from_archive(archive_path)
+PY
+}
+
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
   exit 0
@@ -265,6 +296,7 @@ trap restore_previous_release EXIT
 log "extracting $TARBALL to $release_source"
 mkdir -p "$tmp_release/source"
 tar -xzf "$TARBALL" -C "$tmp_release/source"
+install_privileged_runtime_tools "$tmp_release/source/src"
 cat >"$tmp_release/release.json" <<EOF
 {
   "release_id": "${STAR_RELEASE_ID}",

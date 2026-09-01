@@ -1020,6 +1020,32 @@ class BootstrapBundleManifestResolutionTest(unittest.TestCase):
                 self.assertEqual(destination.read_bytes(), payload)
                 self.assertEqual(destination.stat().st_mode & 0o777, 0o755)
 
+    def test_installs_privileged_tools_from_trusted_local_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            remote = Path(tmpdir) / "tools.tar.xz"
+            payload = b"#!/usr/bin/env bash\nexit 0\n"
+            with tarfile.open(remote, mode="w:xz") as archive:
+                for name in ("bin/bees", "bin/rustic"):
+                    member = tarfile.TarInfo(name)
+                    member.mode = 0o755
+                    member.size = len(payload)
+                    archive.addfile(member, io.BytesIO(payload))
+            destinations = {
+                "bin/bees": Path(tmpdir) / "trusted" / "bees",
+                "bin/rustic": Path(tmpdir) / "trusted" / "rustic",
+            }
+
+            bootstrap.install_privileged_tool_binaries_from_archive(
+                remote,
+                destinations=destinations,
+                destination_uid=os.getuid(),
+                destination_gid=os.getgid(),
+            )
+
+            for destination in destinations.values():
+                self.assertEqual(destination.read_bytes(), payload)
+                self.assertEqual(destination.stat().st_mode & 0o777, 0o755)
+
     def test_download_file_retries_curl_fallback_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
