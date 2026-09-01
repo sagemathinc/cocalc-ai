@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260825-v45"
+HELPER_SCHEMA_VERSION = "20260901-v48"
 RUNTIME_WRAPPER_VERSION = "20260825-v16"
 BOOTSTRAP_LIFECYCLE_EXPORT_DIR = Path("/var/lib/cocalc/bootstrap-lifecycle")
 NVM_VERSION = "0.40.4"
@@ -881,6 +881,18 @@ class BootstrapConfig:
     ca_cert_path: str | None
     bootstrap_done_paths: list[str]
     container_runtime_bundle: BundleSpec | None = None
+    allow_loopback_rustic_rest: bool = False
+
+
+@dataclass(frozen=True)
+class PrivilegedWrapperConfig:
+    """Minimal configuration needed outside managed cloud-host bootstrap."""
+
+    ssh_user: str
+    project_io_capacity: dict[str, Any]
+    project_io_policy: dict[str, Any]
+    container_runtime_bundle: BundleSpec | None = None
+    allow_loopback_rustic_rest: bool = False
 
 
 def _require(condition: bool, message: str) -> None:
@@ -970,6 +982,32 @@ def build_project_io_policy(capacity: dict[str, Any]) -> dict[str, Any]:
         },
         "ioCost": {"mode": "disabled"},
     }
+
+
+def standalone_privileged_wrapper_config(
+    ssh_user: str,
+) -> PrivilegedWrapperConfig:
+    """Build fail-safe wrapper settings for a standalone btrfs project host."""
+
+    _require(bool(ssh_user.strip()), "standalone runtime user must not be empty")
+    capacity = {
+        "version": 1,
+        "provider": "standalone",
+        "targets": [
+            {
+                "mountpoint": "/mnt/cocalc",
+                "discovery": "btrfs",
+                "disk_type": "unknown",
+                "required": True,
+            }
+        ],
+    }
+    return PrivilegedWrapperConfig(
+        ssh_user=ssh_user,
+        project_io_capacity=capacity,
+        project_io_policy=build_project_io_policy(capacity),
+        allow_loopback_rustic_rest=True,
+    )
 
 
 def load_config(bootstrap_dir: str) -> BootstrapConfig:
@@ -3749,6 +3787,7 @@ RUSTIC_OPTION_KEYS = {
     "root",
     "secret_access_key",
 }
+ALLOW_LOOPBACK_RUSTIC_REST = "__ALLOW_LOOPBACK_RUSTIC_REST__" == "1"
 SYS_OPENAT2 = 437
 RESOLVE_NO_MAGICLINKS = 0x02
 RESOLVE_NO_SYMLINKS = 0x04
@@ -3951,7 +3990,7 @@ def parse_rustic(argv):
     return command, values
 
 
-def read_validated_rustic_profile(rootfd, path):
+def read_validated_rustic_profile(rootfd, path, allow_loopback_rest=False):
     fd = openat2(rootfd, path, os.O_RDONLY | os.O_CLOEXEC)
     try:
         info = os.fstat(fd)
@@ -3985,26 +4024,45 @@ def read_validated_rustic_profile(rootfd, path):
     for key in ("repository", "password"):
         if not isinstance(repository[key], str):
             fail(f"Rustic profile {key} must be a string")
-    if repository["repository"] != "opendal:s3":
+    repository_url = repository["repository"]
+    if repository_url == "opendal:s3":
+        options = repository.get("options", {})
+        if not isinstance(options, dict) or set(options) != RUSTIC_OPTION_KEYS:
+            fail("Rustic profile contains unsupported repository options")
+        if any(
+            not isinstance(value, str)
+            or not value
+            or any(ord(char) < 32 or ord(char) == 127 for char in value)
+            for value in options.values()
+        ):
+            fail("Rustic repository options must be nonempty strings")
+        endpoint = urllib.parse.urlsplit(options["endpoint"])
+        if (
+            endpoint.scheme != "https"
+            or not endpoint.hostname
+            or endpoint.username is not None
+            or endpoint.password is not None
+        ):
+            fail("privileged Rustic requires an HTTPS object-store endpoint")
+    elif allow_loopback_rest and repository_url.startswith("rest:"):
+        if "options" in repository:
+            fail("loopback Rustic REST profiles do not support options")
+        endpoint = urllib.parse.urlsplit(repository_url[len("rest:") :])
+        try:
+            port = endpoint.port
+        except ValueError:
+            fail("privileged Rustic loopback REST endpoint has an invalid port")
+        if (
+            endpoint.scheme != "http"
+            or endpoint.hostname not in {"127.0.0.1", "::1"}
+            or port is None
+            or endpoint.path in {"", "/"}
+            or endpoint.query
+            or endpoint.fragment
+        ):
+            fail("privileged Rustic REST endpoint must use local loopback HTTP")
+    else:
         fail("privileged Rustic requires the managed opendal:s3 backend")
-    options = repository.get("options", {})
-    if not isinstance(options, dict) or set(options) != RUSTIC_OPTION_KEYS:
-        fail("Rustic profile contains unsupported repository options")
-    if any(
-        not isinstance(value, str)
-        or not value
-        or any(ord(char) < 32 or ord(char) == 127 for char in value)
-        for value in options.values()
-    ):
-        fail("Rustic repository options must be nonempty strings")
-    endpoint = urllib.parse.urlsplit(options["endpoint"])
-    if (
-        endpoint.scheme != "https"
-        or not endpoint.hostname
-        or endpoint.username is not None
-        or endpoint.password is not None
-    ):
-        fail("privileged Rustic requires an HTTPS object-store endpoint")
     return bytes(data)
 
 
@@ -4059,6 +4117,7 @@ def run_rustic(
     rustic_candidates=None,
     profile_run_dir="/run/cocalc-rustic-profiles",
     profile_run_dir_uid=0,
+    allow_loopback_rest=ALLOW_LOOPBACK_RUSTIC_REST,
 ):
     command, values = parse_rustic(argv)
     rootfd = open_root(values["root"], allowed_roots)
@@ -4072,7 +4131,9 @@ def run_rustic(
             O_PATH | os.O_DIRECTORY | os.O_CLOEXEC,
         )
         profile_data = read_validated_rustic_profile(
-            profile_rootfd, values["profile-path"]
+            profile_rootfd,
+            values["profile-path"],
+            allow_loopback_rest=allow_loopback_rest,
         )
         profile_path = write_private_rustic_profile(
             profile_data, profile_run_dir, profile_run_dir_uid
@@ -4583,7 +4644,7 @@ def retire_legacy_managed_project_io_override(override_path: Path) -> None:
 
 
 def write_project_io_configuration(
-    cfg: BootstrapConfig,
+    cfg: BootstrapConfig | PrivilegedWrapperConfig,
     *,
     policy_path: Path = Path("/etc/cocalc/project-io-policy.json"),
     override_path: Path = Path("/etc/cocalc/project-io-policy.override.json"),
@@ -4609,7 +4670,9 @@ def write_project_io_configuration(
     capacity_path.chmod(0o644)
 
 
-def install_privileged_wrappers(cfg: BootstrapConfig) -> None:
+def install_privileged_wrappers(
+    cfg: BootstrapConfig | PrivilegedWrapperConfig,
+) -> None:
     storage_wrapper = """#!/usr/bin/env bash
 set -euo pipefail
 if [ "$(id -u)" -ne 0 ]; then
@@ -4686,6 +4749,9 @@ CONTAINER_RUNTIME_CURRENT="/opt/cocalc/container-runtime/current"
 CONTAINER_RUNTIME_REQUIRED="__CONTAINER_RUNTIME_REQUIRED__"
 PROJECT_LEAF_POOL_HEADROOM_BYTES="$((2 * 1024 * 1024 * 1024))"
 MIN_PROJECT_LEAF_MEMORY_MAX_BYTES="$((512 * 1024 * 1024))"
+PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MIN_MB="__PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MIN_MB__"
+PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MAX_MB="__PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MAX_MB__"
+MIN_PROJECT_POOL_MEMORY_MB="__MIN_PROJECT_POOL_MEMORY_MB__"
 PROJECT_PASTA_NOFILE_LIMIT="4096"
 PROJECT_TCP_NEW_RATE="50"
 PROJECT_TCP_NEW_BURST="200"
@@ -5570,8 +5636,52 @@ project_pool_hierarchy_ready() {
   return 0
 }
 
+configure_default_project_pool_memory_limit() {
+  local memory_max parent_max total_kib total_bytes total_mb reserve_mb
+  local reserve_bytes min_pool_bytes pool_bytes high_bytes
+  memory_max="$(cat "${PROJECT_POOL_CGROUP_DEFAULT}/memory.max" 2>/dev/null || true)"
+  if echo "$memory_max" | grep -Eq '^[0-9]+$' && [ "$memory_max" -gt 0 ]; then
+    return
+  fi
+
+  total_kib="$(awk '/MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+  echo "$total_kib" | grep -Eq '^[0-9]+$' ||
+    deny "project-pool-memory-total-unavailable" "${total_kib:-missing}"
+  total_bytes="$((total_kib * 1024))"
+  parent_max="$(cat /sys/fs/cgroup/memory.max 2>/dev/null || true)"
+  if echo "$parent_max" | grep -Eq '^[0-9]+$' &&
+     [ "$parent_max" -gt 0 ] && [ "$parent_max" -lt "$total_bytes" ]; then
+    total_bytes="$parent_max"
+  fi
+  total_mb="$((total_bytes / 1024 / 1024))"
+  reserve_mb="$((total_mb / 8))"
+  if [ "$reserve_mb" -lt "$PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MIN_MB" ]; then
+    reserve_mb="$PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MIN_MB"
+  elif [ "$reserve_mb" -gt "$PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MAX_MB" ]; then
+    reserve_mb="$PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MAX_MB"
+  fi
+  if [ "$((total_mb - reserve_mb))" -lt "$MIN_PROJECT_POOL_MEMORY_MB" ]; then
+    reserve_mb="$((total_mb - MIN_PROJECT_POOL_MEMORY_MB))"
+    [ "$reserve_mb" -ge 0 ] || reserve_mb=0
+  fi
+  reserve_bytes="$((reserve_mb * 1024 * 1024))"
+  min_pool_bytes="$((MIN_PROJECT_POOL_MEMORY_MB * 1024 * 1024))"
+  pool_bytes="$((total_bytes - reserve_bytes))"
+  if [ "$pool_bytes" -lt "$min_pool_bytes" ]; then
+    pool_bytes="$total_bytes"
+  fi
+  [ "$pool_bytes" -gt 0 ] ||
+    deny "project-pool-memory-total-unavailable" "total_bytes=${total_bytes}"
+  high_bytes="$((pool_bytes * 95 / 100))"
+  printf '%s\n' "$pool_bytes" > "${PROJECT_POOL_CGROUP_DEFAULT}/memory.max"
+  if [ -w "${PROJECT_POOL_CGROUP_DEFAULT}/memory.high" ]; then
+    printf '%s\n' "$high_bytes" > "${PROJECT_POOL_CGROUP_DEFAULT}/memory.high"
+  fi
+}
+
 require_finite_project_pool_memory_max() {
   local memory_max
+  configure_default_project_pool_memory_limit
   memory_max="$(cat "${PROJECT_POOL_CGROUP_DEFAULT}/memory.max" 2>/dev/null || true)"
   if ! echo "$memory_max" | grep -Eq '^[0-9]+$' || [ "$memory_max" -le 0 ]; then
     deny "project-pool-memory-max-unbounded" "${memory_max:-missing}"
@@ -6936,7 +7046,12 @@ case "$cmd" in
       if [ -d "$startup_pool" ]; then
         move_project_startup_runtime_to_pool "$project_id" "$pool"
         release_project_startup_io_capacity
-      elif ! project_pid_is_in_pool "$project_id" "$init_pid" ||
+      fi
+      # Podman 4 may move conmon and init from the prepared leaf into a
+      # transient user-systemd scope even with container cgroups disabled.
+      # Always fall back to the trusted conmon process tree when draining the
+      # prepared leaf did not establish final containment.
+      if ! project_pid_is_in_pool "$project_id" "$init_pid" ||
         ! project_pid_is_in_pool "$project_id" "$conmon_pid"; then
         attach_pid_tree_to_project_pool_storage "$conmon_pid" "$pool" || true
       fi
@@ -7207,6 +7322,16 @@ PY
       exit 2
     fi
     clear_current_exam_run "$1"
+    ;;
+  reconcile-project-pool-memory)
+    if [ "$#" -ne 0 ]; then
+      echo "usage: cocalc-runtime-storage reconcile-project-pool-memory" >&2
+      exit 2
+    fi
+    acquire_project_cgroup_lock
+    configure_project_pool_hierarchy
+    require_finite_project_pool_memory_max
+    release_project_lock
     ;;
   poweroff-exam-host)
     if [ "$#" -ne 1 ]; then
@@ -8600,8 +8725,24 @@ esac
         "__CONTAINER_RUNTIME_REQUIRED__",
         "1" if cfg.container_runtime_bundle is not None else "0",
     )
+    storage_wrapper = storage_wrapper.replace(
+        "__PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MIN_MB__",
+        str(DYNAMIC_PROJECT_POOL_MEMORY_RESERVE_MIN_MB),
+    )
+    storage_wrapper = storage_wrapper.replace(
+        "__PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MAX_MB__",
+        str(DYNAMIC_PROJECT_POOL_MEMORY_RESERVE_MAX_MB),
+    )
+    storage_wrapper = storage_wrapper.replace(
+        "__MIN_PROJECT_POOL_MEMORY_MB__",
+        str(MIN_PROJECT_POOL_MEMORY_MB),
+    )
+    storage_path_helper = RUNTIME_STORAGE_PATH_HELPER.replace(
+        "__ALLOW_LOOPBACK_RUSTIC_REST__",
+        "1" if cfg.allow_loopback_rustic_rest else "0",
+    )
     wrappers = {
-        "/usr/local/libexec/cocalc-runtime-storage-path-helper": RUNTIME_STORAGE_PATH_HELPER,
+        "/usr/local/libexec/cocalc-runtime-storage-path-helper": storage_path_helper,
         "/usr/local/libexec/cocalc-project-io-policy": PROJECT_IO_POLICY_HELPER,
         "/usr/local/sbin/cocalc-runtime-storage": storage_wrapper,
         "/usr/local/sbin/cocalc-mount-data": mount_wrapper,
@@ -9358,37 +9499,27 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> BundleSpec:
     return bundle
 
 
-def install_privileged_tool_binaries(
-    cfg: BootstrapConfig,
-    bundle: BundleSpec | None = None,
+def install_privileged_tool_binaries_from_archive(
+    archive_path: Path,
     *,
     destinations: dict[str, Path] | None = None,
     destination_uid: int = 0,
     destination_gid: int = 0,
 ) -> None:
-    """Install root-run tools outside the runtime user's writable bundle.
+    """Install root-run tools from an archive already trusted by the caller.
 
     cocalc-runtime-storage runs Rustic and BEES as root. The ordinary tools tree
     is intentionally owned by the project-host runtime account, so executing
     copies in that tree would turn a project-container escape into host root.
-    Extract privileged copies directly from the checksum-verified archive.
+    The caller must authenticate this archive or explicitly trust its contents
+    before invoking this function.
     """
 
     destinations = destinations or {
         "bin/bees": Path("/usr/local/libexec/cocalc-bees"),
         "bin/rustic": Path("/usr/local/libexec/cocalc-rustic"),
     }
-    bundle = resolve_bundle_spec(cfg, bundle or cfg.tools_bundle)
-    if not bundle.sha256 or not bundle.sha256.strip():
-        raise RuntimeError("tools bundle checksum is required for privileged tools")
-    remote = Path(bundle.remote)
-    try:
-        verify_sha256(cfg, str(remote), bundle.sha256)
-    except (FileNotFoundError, RuntimeError):
-        download_file(cfg, bundle.url, str(remote))
-        verify_sha256(cfg, str(remote), bundle.sha256)
-
-    with tarfile.open(remote, mode="r:xz") as archive:
+    with tarfile.open(archive_path, mode="r:xz") as archive:
         members = archive.getmembers()
         for member_name, destination in destinations.items():
             candidates = [
@@ -9423,6 +9554,33 @@ def install_privileged_tool_binaries(
             finally:
                 source.close()
                 tmp.unlink(missing_ok=True)
+
+
+def install_privileged_tool_binaries(
+    cfg: BootstrapConfig,
+    bundle: BundleSpec | None = None,
+    *,
+    destinations: dict[str, Path] | None = None,
+    destination_uid: int = 0,
+    destination_gid: int = 0,
+) -> None:
+    """Install trusted root-run tools from a checksum-verified tools bundle."""
+
+    bundle = resolve_bundle_spec(cfg, bundle or cfg.tools_bundle)
+    if not bundle.sha256 or not bundle.sha256.strip():
+        raise RuntimeError("tools bundle checksum is required for privileged tools")
+    remote = Path(bundle.remote)
+    try:
+        verify_sha256(cfg, str(remote), bundle.sha256)
+    except (FileNotFoundError, RuntimeError):
+        download_file(cfg, bundle.url, str(remote))
+        verify_sha256(cfg, str(remote), bundle.sha256)
+    install_privileged_tool_binaries_from_archive(
+        remote,
+        destinations=destinations,
+        destination_uid=destination_uid,
+        destination_gid=destination_gid,
+    )
 
 
 def install_node(cfg: BootstrapConfig) -> None:

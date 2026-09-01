@@ -298,6 +298,22 @@ verify_runtime_tarball() {
     [ -f "$verify_dir/$path" ] || die "runtime tarball missing $path"
   done
 
+  python3 - "$verify_dir/src/packages/project/build/tools-linux-$(runtime_tools_arch).tar.xz" <<'PY'
+import sys
+import tarfile
+from pathlib import Path
+
+archive_path = Path(sys.argv[1])
+with tarfile.open(archive_path, mode="r:xz") as archive:
+    members = archive.getmembers()
+    for name in ("bin/bees", "bin/rustic"):
+        matches = [
+            member for member in members if member.name == name and member.isfile()
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(f"tools archive must contain exactly one regular {name}")
+PY
+
   (
     cd "$verify_dir/src"
     COCALC_STAR_HELPER_VERIFY=1 node scripts/star-poc/build/seed-star-poc/index.cjs >/dev/null

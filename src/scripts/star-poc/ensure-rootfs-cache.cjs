@@ -90,6 +90,11 @@ async function exists(path) {
   }
 }
 
+async function removeCachedRootfs(rootfsPath) {
+  if (!(await exists(rootfsPath))) return;
+  await run("sudo", ["-n", STORAGE_WRAPPER, "rm", "-rf", "--", rootfsPath]);
+}
+
 function imagePathComponent(image) {
   return encodeURIComponent(image);
 }
@@ -333,7 +338,9 @@ async function main() {
   if (cached) {
     log(`${image} already cached at ${rootfsPath}`);
   } else {
-    await rm(rootfsPath, { force: true, recursive: true });
+    // Normalization intentionally restores container numeric ownership, so a
+    // partially completed cache cannot necessarily be removed by this user.
+    await removeCachedRootfs(rootfsPath);
     await rm(metadataPath, { force: true });
     await rm(inspectPath, { force: true });
 

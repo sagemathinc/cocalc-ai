@@ -6,6 +6,7 @@ STAR_INSTALL_ROOT="${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
 STAR_INSTALL_SOURCE="${STAR_INSTALL_SOURCE:-${STAR_INSTALL_ROOT}/source}"
 STAR_RELEASES_DIR="${STAR_RELEASES_DIR:-${STAR_INSTALL_ROOT}/releases}"
 STAR_RELEASE_ID="${STAR_RELEASE_ID:-}"
+STAR_INSTALL_MIN_FREE_BYTES="${STAR_INSTALL_MIN_FREE_BYTES:-2684354560}"
 
 log() {
   printf '[star-install] %s\n' "$*" >&2
@@ -28,6 +29,9 @@ Defaults:
   STAR_INSTALL_SOURCE=$STAR_INSTALL_ROOT/source
   STAR_RELEASES_DIR=$STAR_INSTALL_ROOT/releases
   STAR_RELEASE_ID=<utc timestamp>-<tarball sha256 prefix>
+  STAR_INSTALL_MIN_FREE_BYTES=2684354560
+                       Minimum free space retained before release extraction.
+                       Old inactive releases are pruned to reach this value.
   STAR_USER=<existing Star user or cocalc-star>
   STAR_ASSUME_YES=0
   STAR_SSH_TARGET=<optional ssh target shown in access instructions>
@@ -112,6 +116,51 @@ replace_symlink() {
   ln -s "$target" "$link"
 }
 
+available_release_bytes() {
+  df -PB1 "$STAR_RELEASES_DIR" | awk 'NR == 2 { print $4 }'
+}
+
+prune_inactive_releases_for_install() {
+  local active_release="" current_release="" available release candidate
+  if ! [[ "$STAR_INSTALL_MIN_FREE_BYTES" =~ ^[0-9]+$ ]]; then
+    die "STAR_INSTALL_MIN_FREE_BYTES must be a nonnegative integer"
+  fi
+  case "$previous_source" in
+    "${STAR_RELEASES_DIR}"/*/source)
+      active_release="${previous_source%/source}"
+      ;;
+  esac
+  current_release="$(readlink -f "${STAR_INSTALL_ROOT}/current" 2>/dev/null || true)"
+
+  while true; do
+    available="$(available_release_bytes)"
+    [[ "$available" =~ ^[0-9]+$ ]] ||
+      die "could not determine free space for $STAR_RELEASES_DIR"
+    if [ "$available" -ge "$STAR_INSTALL_MIN_FREE_BYTES" ]; then
+      return
+    fi
+
+    candidate=""
+    while IFS= read -r release; do
+      [ "$release" != "$active_release" ] || continue
+      [ "$release" != "$current_release" ] || continue
+      [ -d "$release/source/src" ] || continue
+      candidate="$release"
+      break
+    done < <(
+      find "$STAR_RELEASES_DIR" -mindepth 1 -maxdepth 1 -type d \
+        ! -name '.*' -printf '%T@ %p\n' | sort -n | cut -d' ' -f2-
+    )
+    if [ -z "$candidate" ]; then
+      die "insufficient free space for release extraction: available=${available} required=${STAR_INSTALL_MIN_FREE_BYTES}"
+    fi
+    log "pruning inactive release $(basename "$candidate") to make installation space"
+    rm -rf --one-file-system "$candidate"
+    [ ! -e "$candidate" ] ||
+      die "could not completely remove inactive release $candidate"
+  done
+}
+
 write_channel_metadata() {
   local dest="${STAR_INSTALL_ROOT}/channel.env"
   if [ -z "${COCALC_STAR_CHANNEL:-}" ] &&
@@ -131,6 +180,37 @@ COCALC_STAR_PROMOTED_AT=${COCALC_STAR_PROMOTED_AT:-}
 COCALC_STAR_GIT_REVISION=${COCALC_STAR_GIT_REVISION:-}
 EOF
   chmod 0644 "$dest"
+}
+
+install_privileged_runtime_tools() {
+  local source_root="$1"
+  local bootstrap_py="${source_root}/packages/server/cloud/bootstrap/bootstrap.py"
+  local -a tools_archives=("${source_root}"/packages/project/build/tools-linux-*.tar.xz)
+  if [ ! -f "${tools_archives[0]}" ]; then
+    return
+  fi
+  [ "${#tools_archives[@]}" -eq 1 ] ||
+    die "runtime payload must contain exactly one Linux tools archive"
+  [ -f "$bootstrap_py" ] ||
+    die "runtime payload with privileged tools is missing bootstrap.py"
+
+  log "installing trusted privileged tools from authenticated runtime payload"
+  python3 - "$bootstrap_py" "${tools_archives[0]}" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+bootstrap_path = Path(sys.argv[1])
+archive_path = Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "cocalc_star_release_bootstrap", bootstrap_path
+)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module.install_privileged_tool_binaries_from_archive(archive_path)
+PY
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -191,6 +271,8 @@ fi
 if [ -e "$STAR_INSTALL_SOURCE" ] || [ -L "$STAR_INSTALL_SOURCE" ]; then
   previous_source="$(readlink -f "$STAR_INSTALL_SOURCE" || true)"
 fi
+
+prune_inactive_releases_for_install
 
 tmp_release="$(mktemp -d "${STAR_RELEASES_DIR}/.install.${STAR_RELEASE_ID}.XXXXXX")"
 rollback_state_dir="$(mktemp -d "${STAR_RELEASES_DIR}/.rollback.${STAR_RELEASE_ID}.XXXXXX")"
@@ -265,6 +347,7 @@ trap restore_previous_release EXIT
 log "extracting $TARBALL to $release_source"
 mkdir -p "$tmp_release/source"
 tar -xzf "$TARBALL" -C "$tmp_release/source"
+install_privileged_runtime_tools "$tmp_release/source/src"
 cat >"$tmp_release/release.json" <<EOF
 {
   "release_id": "${STAR_RELEASE_ID}",

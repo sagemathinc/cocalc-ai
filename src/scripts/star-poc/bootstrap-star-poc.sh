@@ -550,7 +550,7 @@ shared_scratch_host_mount() {
 }
 
 install_wrappers() {
-  python3 - "$SRC_ROOT" <<'PY'
+  python3 - "$SRC_ROOT" "$STAR_USER" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
@@ -568,7 +568,8 @@ module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
-module.install_privileged_wrappers(None)
+config = module.standalone_privileged_wrapper_config(sys.argv[2])
+module.install_privileged_wrappers(config)
 PY
   cat >/usr/local/sbin/cocalc-project-host-rootctl <<'EOF'
 #!/usr/bin/env bash
@@ -587,17 +588,21 @@ EOF
 }
 
 configure_users_and_dirs() {
+  local runtime_uid podman_runtime_dir
+  runtime_uid="$(id -u "$STAR_USER")"
+  podman_runtime_dir="$STAR_PROJECT_HOST_DATA/tmp/cocalc-podman-runtime-${runtime_uid}"
   loginctl enable-linger "$STAR_USER" || true
-  systemctl start "user@$(id -u "$STAR_USER").service" >/dev/null 2>&1 || true
+  systemctl start "user@${runtime_uid}.service" >/dev/null 2>&1 || true
   mkdir -p \
     "$STAR_DATA/secrets" \
     "$STAR_PROJECT_HOST_DATA/tmp" \
+    "$podman_runtime_dir" \
     "$STAR_PROJECT_HOST_DATA/cache/images" \
     "$STAR_PROJECT_HOST_DATA/cache/project-roots" \
     "$STAR_PROJECT_HOST_DATA/secrets" \
     "$STAR_ROOT/backup" \
     /etc/cocalc/star
-  chmod 700 "$STAR_PROJECT_HOST_DATA/tmp"
+  chmod 700 "$STAR_PROJECT_HOST_DATA/tmp" "$podman_runtime_dir"
   # Do not recursively chown STAR_ROOT. It contains cached RootFS trees whose
   # numeric ownership is part of the container runtime contract.
   chown -R "$STAR_USER:$STAR_USER" \
@@ -997,6 +1002,7 @@ WorkingDirectory=${project_host_workdir}
 EnvironmentFile=${STAR_PROJECT_HOST_ENV}
 Environment=COCALC_PROJECT_HOST_AGENT=1
 Environment=COCALC_PROJECT_HOST_AGENT_INDEX=0
+ExecStartPre=/usr/bin/sudo -n /usr/local/sbin/cocalc-runtime-storage reconcile-project-pool-memory
 ExecStart=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && ${project_host_exec}'
 ExecStop=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && ${project_host_stop}'
 Restart=always
@@ -1109,6 +1115,7 @@ start_services() {
     fi
     sleep 2
   done
+  wait_for_project_host_registration
   sync
   systemctl --no-pager --full status cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host || true
   local bootstrap_url=""
@@ -1125,6 +1132,37 @@ start_services() {
   fi
   star_web_onboarding_write_status "ready" "CoCalc Star is running. Create the first admin account to finish setup." "$bootstrap_url" "$invite_url"
   cat "$STAR_ROOT/bootstrap-result.json"
+}
+
+wait_for_project_host_registration() {
+  local registered
+  set -a
+  # shellcheck disable=SC1091
+  source /etc/cocalc/star/hub.env
+  set +a
+  log "waiting for project host registration"
+  for _ in $(seq 1 90); do
+    registered="$(
+      psql -X -Atq -v ON_ERROR_STOP=1 -v host_id="$STAR_HOST_ID" <<'SQL' 2>/dev/null || true
+SELECT 1
+  FROM project_hosts
+ WHERE id = :'host_id'::uuid
+   AND bay_id = 'bay-0'
+   AND status IN ('running', 'active')
+   AND last_seen > NOW() - INTERVAL '90 seconds'
+   AND COALESCE(
+         metadata #>> '{runtime_synthetic_probe,quarantined}',
+         'false'
+       ) <> 'true'
+ LIMIT 1;
+SQL
+    )"
+    if [ "$registered" = "1" ]; then
+      return
+    fi
+    sleep 2
+  done
+  die "project host did not register as available within 180 seconds"
 }
 
 start_rest_server_for_rootfs_publish() {
