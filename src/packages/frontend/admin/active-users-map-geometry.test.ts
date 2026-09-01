@@ -5,16 +5,20 @@
 
 import {
   activeUsersMapAssetUrl,
+  activeUsersMapRegionAssetUrl,
   projectActiveUserMapPosition,
 } from "./active-users-map-geometry";
 
 describe("active users map asset", () => {
   it("resolves below the application base path", () => {
     expect(activeUsersMapAssetUrl("/")).toBe(
-      "/public/admin/active-users-world-map-equal-earth-v1.svg",
+      "/public/admin/active-users-world-map-equal-earth-v2.svg",
     );
     expect(activeUsersMapAssetUrl("/cocalc")).toBe(
-      "/cocalc/public/admin/active-users-world-map-equal-earth-v1.svg",
+      "/cocalc/public/admin/active-users-world-map-equal-earth-v2.svg",
+    );
+    expect(activeUsersMapRegionAssetUrl("/cocalc")).toBe(
+      "/cocalc/public/admin/active-users-world-map-regions-equal-earth-v1.svg",
     );
   });
 });

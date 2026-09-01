@@ -37,7 +37,7 @@ jest.mock("antd", () => {
 });
 
 jest.mock("./projects", () => ({
-  Projects: () => null,
+  Projects: ({ account_id }: any) => <div>{`projects:${account_id}`}</div>,
 }));
 
 jest.mock("./impersonate", () => ({
@@ -233,5 +233,22 @@ describe("UserResult admin tools", () => {
 
     expect(screen.getByText("admin-billing:acct-1")).toBeTruthy();
     expect(screen.getAllByText("Billing")).toHaveLength(1);
+  });
+
+  it("can open expanded with a selected admin section", () => {
+    render(
+      <UserResult
+        first_name="Ada"
+        last_name="Lovelace"
+        email_address="ada@example.com"
+        account_id="acct-1"
+        banned={false}
+        defaultExpanded
+        defaultSection="projects"
+      />,
+    );
+
+    expect(screen.getByText("projects:acct-1")).toBeTruthy();
+    expect(screen.getByText("Projects")).toHaveAttribute("data-checked", "1");
   });
 });

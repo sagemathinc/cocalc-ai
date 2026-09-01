@@ -1,9 +1,8 @@
 import { render, screen } from "@testing-library/react";
 
-import type { ActiveUserMapUser } from "@cocalc/conat/hub/api/system";
-
+import { COLORS } from "@cocalc/util/theme";
 import {
-  activeUserEmailDomainCounts,
+  activeUsersMapDomainColors,
   ActiveUsersMapDomainChart,
 } from "./active-users-map-domains";
 
@@ -17,67 +16,35 @@ jest.mock("@cocalc/frontend/components/plotly", () => ({
   },
 }));
 
-function user(account_id: string, email_address?: string): ActiveUserMapUser {
-  return {
-    account_id,
-    email_address,
-    bay_id: "bay-1",
-    last_active: "2026-08-27T00:00:00.000Z",
-  };
-}
-
 beforeEach(() => {
   plotProps = undefined;
 });
 
-describe("activeUserEmailDomainCounts", () => {
-  it("normalizes domains and accounts for missing email addresses", () => {
-    expect(
-      activeUserEmailDomainCounts([
-        user("1", " Ada@Example.COM "),
-        user("2", "grace@example.com"),
-        user("3"),
-        user("4", "invalid"),
-      ]),
-    ).toEqual([
-      { domain: "example.com", count: 2 },
-      { domain: "Unknown", count: 2 },
-    ]);
-  });
-
-  it("combines domains below 1.5 percent and keeps the boundary", () => {
-    const users = [
-      ...Array.from({ length: 193 }, (_, index) =>
-        user(`major-${index}`, `user-${index}@major.test`),
-      ),
-      user("exact-1", "one@exact.test"),
-      user("exact-2", "two@exact.test"),
-      user("exact-3", "three@exact.test"),
-      user("small-1", "user@small-1.test"),
-      user("small-2", "user@small-2.test"),
-      user("small-3", "user@small-3.test"),
-      user("small-4", "user@small-4.test"),
-    ];
-
-    const counts = activeUserEmailDomainCounts(users);
-
-    expect(counts).toEqual([
-      { domain: "major.test", count: 193 },
-      { domain: "exact.test", count: 3 },
-      { domain: "Other", count: 4 },
-    ]);
-  });
-});
-
 describe("ActiveUsersMapDomainChart", () => {
+  it("keeps Other neutral and avoids matching colors at the pie seam", () => {
+    const withOther = Array.from({ length: 9 }, (_, index) => ({
+      domain: index === 8 ? "Other" : `domain-${index}.test`,
+      count: 9 - index,
+    }));
+    expect(activeUsersMapDomainColors(withOther).at(-1)).toBe(COLORS.GRAY);
+
+    const withoutOther = withOther.map((entry, index) => ({
+      ...entry,
+      domain: `domain-${index}.test`,
+    }));
+    const colors = activeUsersMapDomainColors(withoutOther);
+    expect(colors.at(-1)).not.toBe(colors[0]);
+    expect(colors.at(-1)).not.toBe(colors.at(-2));
+  });
+
   it("renders live domain counts with accessible chart details", () => {
     render(
       <ActiveUsersMapDomainChart
-        users={[
-          user("1", "ada@example.com"),
-          user("2", "grace@example.com"),
-          user("3", "linus@kernel.org"),
+        counts={[
+          { domain: "example.com", count: 2 },
+          { domain: "kernel.org", count: 1 },
         ]}
+        total={3}
       />,
     );
 

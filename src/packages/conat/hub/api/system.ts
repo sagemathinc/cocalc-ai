@@ -61,6 +61,7 @@ export const system = {
   setBayProjectOwnershipAdmission: authFirstRequireAccount,
   getBayLoad: authFirst,
   getActiveUserMap: authFirst,
+  getActiveUserMapDetails: authFirst,
   getActiveUserMapHistorySeries: authFirst,
   getActiveUserMapHistorySnapshot: authFirst,
   recordUxLatencyEvent: authFirst,
@@ -264,7 +265,7 @@ export interface VisitorLocationHeaderTestResult {
 }
 
 export type ActiveUserMapWindowMinutes = 5 | 15 | 60 | 1440;
-export type ActiveUserMapGrouping = "country" | "city";
+export type ActiveUserMapGrouping = "country" | "region" | "city";
 
 export interface ActiveUserMapQuery {
   account_id?: string;
@@ -315,7 +316,18 @@ export interface ActiveUserMapCountry {
   latitude: number;
   longitude: number;
   count: number;
+}
+
+export interface ActiveUserMapCountryReport extends ActiveUserMapCountry {
   users: ActiveUserMapUser[];
+}
+
+export interface ActiveUserMapBayReport extends Omit<
+  ActiveUserMapOverview,
+  "countries"
+> {
+  countries: ActiveUserMapCountryReport[];
+  unknown_users: ActiveUserMapUser[];
 }
 
 export interface ActiveUserMapOverview {
@@ -328,7 +340,37 @@ export interface ActiveUserMapOverview {
   mapped_active: number;
   unknown_location: number;
   countries: ActiveUserMapCountry[];
-  unknown_users: ActiveUserMapUser[];
+  bays: ActiveUserMapBayStatus[];
+}
+
+export type ActiveUserMapDetailScope = "all" | "group" | "unknown";
+
+export interface ActiveUserMapDetailsQuery extends ActiveUserMapQuery {
+  scope: ActiveUserMapDetailScope;
+  group_id?: string;
+}
+
+export interface ActiveUserMapEmailDomainCount {
+  domain: string;
+  count: number;
+}
+
+export interface ActiveUserMapDetailUser {
+  account_id: string;
+  bay_id: string;
+  name: string;
+  email_address: string | null;
+  last_active: string;
+  region_code: string | null;
+  region: string | null;
+  city: string | null;
+}
+
+export interface ActiveUserMapDetails {
+  checked_at: string;
+  total: number;
+  users: ActiveUserMapDetailUser[];
+  domain_counts: ActiveUserMapEmailDomainCount[];
   bays: ActiveUserMapBayStatus[];
 }
 
@@ -2083,6 +2125,10 @@ export interface System {
   getActiveUserMap: (
     opts: ActiveUserMapQuery,
   ) => Promise<ActiveUserMapOverview>;
+
+  getActiveUserMapDetails: (
+    opts: ActiveUserMapDetailsQuery,
+  ) => Promise<ActiveUserMapDetails>;
 
   getActiveUserMapHistorySeries: (
     opts: ActiveUserMapHistorySeriesRequest,

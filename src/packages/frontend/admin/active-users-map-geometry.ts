@@ -13,10 +13,13 @@ const EQUAL_EARTH_A4 = 0.003796;
 const EQUAL_EARTH_M = Math.sqrt(3) / 2;
 
 export const ACTIVE_USERS_MAP = {
-  assetFilename: "active-users-world-map-equal-earth-v1.svg",
+  assetFilename: "active-users-world-map-equal-earth-v2.svg",
+  baseLayerId: "active-users-map-base",
   height: 800,
   padding: 16,
   projection: "Equal Earth",
+  regionAssetFilename: "active-users-world-map-regions-equal-earth-v1.svg",
+  regionLayerId: "active-users-map-regions",
   width: 1600,
 } as const;
 
@@ -25,6 +28,16 @@ export function activeUsersMapAssetUrl(basePath = appBasePath): string {
 }
 
 export const ACTIVE_USERS_MAP_ASSET_URL = activeUsersMapAssetUrl();
+
+export function activeUsersMapRegionAssetUrl(basePath = appBasePath): string {
+  return joinUrlPath(
+    basePath,
+    "public/admin",
+    ACTIVE_USERS_MAP.regionAssetFilename,
+  );
+}
+
+export const ACTIVE_USERS_MAP_REGION_ASSET_URL = activeUsersMapRegionAssetUrl();
 
 function projectEqualEarthRaw({
   latitude,

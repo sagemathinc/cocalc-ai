@@ -3,10 +3,31 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { ActiveUserMapUser } from "@cocalc/conat/hub/api/system";
+
 let getServerSettingsMock: jest.Mock;
 let queryMock: jest.Mock;
 let listConfiguredBaysMock: jest.Mock;
 let getRemoteActiveUserMapMock: jest.Mock;
+
+function activeMapUser(
+  account_id: string,
+  email_address?: string,
+): ActiveUserMapUser {
+  return {
+    account_id,
+    bay_id: "bay-1",
+    display_name: null,
+    first_name: null,
+    last_name: null,
+    email_address: email_address ?? null,
+    last_active: "2026-07-14T10:00:00.000Z",
+    region_code: null,
+    region: null,
+    city: null,
+    timezone: null,
+  };
+}
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -76,6 +97,29 @@ describe("account presence locations", () => {
         longitude: "0",
       }),
     ).toBeUndefined();
+  });
+
+  it("normalizes email domains and combines shares below 1.5 percent", async () => {
+    const { activeUserMapEmailDomainCounts } =
+      await import("./account-presence-locations");
+    const users = [
+      ...Array.from({ length: 193 }, (_, index) =>
+        activeMapUser(`major-${index}`, `user-${index}@major.test`),
+      ),
+      activeMapUser("exact-1", "one@EXACT.test"),
+      activeMapUser("exact-2", "two@exact.test"),
+      activeMapUser("exact-3", "three@exact.test"),
+      activeMapUser("small-1", "user@small-1.test"),
+      activeMapUser("small-2", "user@small-2.test"),
+      activeMapUser("small-3"),
+      activeMapUser("small-4", "invalid"),
+    ];
+
+    expect(activeUserMapEmailDomainCounts(users)).toEqual([
+      { domain: "major.test", count: 193 },
+      { domain: "exact.test", count: 3 },
+      { domain: "Other", count: 4 },
+    ]);
   });
 
   it("writes one expiring location and throttles repeated heartbeats", async () => {
@@ -165,9 +209,9 @@ describe("account presence locations", () => {
         },
       ],
     });
-    const { getActiveUserMapOverview } =
+    const { getActiveUserMapReport } =
       await import("./account-presence-locations");
-    const result = await getActiveUserMapOverview({ active_minutes: 1440 });
+    const result = await getActiveUserMapReport({ active_minutes: 1440 });
     expect(queryMock.mock.calls[0][1]).toEqual([1440]);
     expect(result).toMatchObject({
       enabled: true,
@@ -192,7 +236,7 @@ describe("account presence locations", () => {
     expect(result.countries[0].users[0].bay_id).toBe("bay-1");
   });
 
-  it("groups live users by approximate city with regional fallback", async () => {
+  it("groups live users by region or city with regional fallback", async () => {
     queryMock.mockResolvedValue({
       rows: [
         {
@@ -242,9 +286,9 @@ describe("account presence locations", () => {
         },
       ],
     });
-    const { getActiveUserMapOverview } =
+    const { getActiveUserMapReport } =
       await import("./account-presence-locations");
-    const result = await getActiveUserMapOverview({
+    const result = await getActiveUserMapReport({
       active_minutes: 60,
       group_by: "city",
     });
@@ -257,6 +301,33 @@ describe("account presence locations", () => {
         region_code: "AB",
         region: "Alberta",
         city: "Calgary",
+        count: 2,
+        latitude: 51.05,
+        longitude: -114.08,
+      }),
+      expect.objectContaining({
+        group_id: "region:ca:bc",
+        granularity: "region",
+        country_code: "CA",
+        region_code: "BC",
+        region: "British Columbia",
+        city: null,
+        count: 1,
+      }),
+    ]);
+
+    const regional = await getActiveUserMapReport({
+      active_minutes: 60,
+      group_by: "region",
+    });
+    expect(regional.countries).toEqual([
+      expect.objectContaining({
+        group_id: "region:ca:ab",
+        granularity: "region",
+        country_code: "CA",
+        region_code: "AB",
+        region: "Alberta",
+        city: null,
         count: 2,
         latitude: 51.05,
         longitude: -114.08,
@@ -373,12 +444,36 @@ describe("account presence locations", () => {
     expect(result.countries[0]).toMatchObject({
       country_code: "US",
       count: 1,
+    });
+    expect(result.countries[0]).not.toHaveProperty("users");
+    expect(result).not.toHaveProperty("unknown_users");
+
+    const { getActiveUserMapDetailsAcrossBays } =
+      await import("./account-presence-locations");
+    const details = await getActiveUserMapDetailsAcrossBays({
+      account_id: "admin-1",
+      active_minutes: 60,
+      scope: "all",
+    });
+    expect(details).toMatchObject({
+      total: 2,
       users: [
         {
           account_id: "account-1",
           bay_id: "bay-2",
           city: "Phoenix",
+          name: "Ada",
         },
+        {
+          account_id: "account-2",
+          bay_id: "bay-2",
+          name: "Grace",
+        },
+      ],
+      domain_counts: [{ domain: "example.com", count: 2 }],
+      bays: [
+        { bay_id: "bay-1", ok: true, total_active: 1 },
+        { bay_id: "bay-2", ok: true, total_active: 2 },
       ],
     });
   });
@@ -402,13 +497,25 @@ describe("account presence locations", () => {
       { bay_id: "bay-1", ok: true, enabled: true, total_active: 0 },
       { bay_id: "bay-2", ok: false, error: "Error: bay offline" },
     ]);
+
+    const { getActiveUserMapDetailsAcrossBays } =
+      await import("./account-presence-locations");
+    const details = await getActiveUserMapDetailsAcrossBays({
+      account_id: "admin-1",
+      active_minutes: 15,
+      scope: "all",
+    });
+    expect(details.bays).toEqual([
+      { bay_id: "bay-1", ok: true, enabled: true, total_active: 0 },
+      { bay_id: "bay-2", ok: false, error: "Error: bay offline" },
+    ]);
   });
 
   it("rejects activity windows that are not explicitly supported", async () => {
-    const { getActiveUserMapOverview } =
+    const { getActiveUserMapReport } =
       await import("./account-presence-locations");
     await expect(
-      getActiveUserMapOverview({ active_minutes: 30 }),
+      getActiveUserMapReport({ active_minutes: 30 }),
     ).rejects.toThrow("active_minutes must be one of 5, 15, 60, or 1440");
     expect(queryMock).not.toHaveBeenCalled();
   });

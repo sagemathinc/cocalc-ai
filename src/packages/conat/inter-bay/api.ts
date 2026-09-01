@@ -150,7 +150,7 @@ import type {
 } from "@cocalc/conat/hub/api/legacy-migration";
 import type {
   AcpAdmissionDenialReport,
-  ActiveUserMapOverview,
+  ActiveUserMapBayReport,
   ActiveUserMapQuery,
   BayBackupsInfo,
   BayDrainPreflightResult,
@@ -4524,7 +4524,7 @@ export interface InterBayBayOpsApi {
   ) => Promise<ComputeRevenueSeries>;
   getActiveUserMap: (
     opts: ActiveUserMapQuery,
-  ) => Promise<ActiveUserMapOverview>;
+  ) => Promise<ActiveUserMapBayReport>;
   getActiveUserMapHistoryReport: (
     opts: ActiveUserMapHistoryReportRequest,
   ) => Promise<ActiveUserMapHistoryReport>;
