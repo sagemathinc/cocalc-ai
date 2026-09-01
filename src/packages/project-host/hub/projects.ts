@@ -2902,10 +2902,12 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   async function getCodexUsageStatus({
     account_id,
     project_id,
+    include_models,
     timeout,
   }: {
     account_id?: string;
     project_id: string;
+    include_models?: boolean;
     timeout?: number;
   }): Promise<CodexUsageStatusInfo> {
     assertHostedProjectAccess({ account_id, project_id });
@@ -2965,6 +2967,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       const status = await getCodexAppServerAccountStatus({
         projectId: project_id,
         accountId: account_id,
+        includeModels: include_models,
         timeoutMs,
       });
       return {
@@ -2976,6 +2979,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         account: status.account,
         rateLimits: status.rateLimits,
         tokenUsage: status.tokenUsage,
+        models: status.models,
         errors: status.errors,
         reason:
           !status.rateLimits && status.errors?.rateLimits

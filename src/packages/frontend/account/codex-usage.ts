@@ -168,17 +168,21 @@ export function writeCachedCodexUsageStatus({
 
 export async function getLiveCodexUsageStatus({
   projectId,
+  includeModels = false,
 }: {
   projectId?: string;
+  includeModels?: boolean;
 }): Promise<CodexUsageStatusInfo> {
   if (projectId && !lite) {
     return await webapp_client.conat_client.hub.projects.getCodexUsageStatus({
       project_id: projectId,
+      include_models: includeModels,
       timeout: CODEX_USAGE_STATUS_TIMEOUT_MS,
     });
   }
   return await webapp_client.conat_client.hub.system.getCodexUsageStatus({
     project_id: projectId || undefined,
+    include_models: includeModels,
     timeout: CODEX_USAGE_STATUS_TIMEOUT_MS,
   });
 }

@@ -16,6 +16,7 @@ import {
   type CodexSessionConfig,
 } from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
+import type { CodexModelCapabilityInfo } from "@cocalc/conat/hub/api/system";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import type {
@@ -446,10 +447,12 @@ export type CodexAppServerAccountStatus = {
   account?: any;
   rateLimits?: any;
   tokenUsage?: any;
+  models?: CodexModelCapabilityInfo[];
   errors?: {
     account?: string;
     rateLimits?: string;
     tokenUsage?: string;
+    models?: string;
   };
 };
 
@@ -1770,6 +1773,100 @@ function settledValue<T>(result: PromiseSettledResult<T>): {
   return { error: `${result.reason}` };
 }
 
+const MAX_MODEL_CATALOG_ENTRIES = 100;
+const MAX_MODEL_REASONING_EFFORTS = 20;
+const MAX_MODEL_SERVICE_TIERS = 20;
+
+function boundedCatalogText(value: unknown, maxLength = 2_000): string {
+  if (typeof value !== "string") return "";
+  const text = value.trim();
+  return text.length <= maxLength ? text : text.slice(0, maxLength);
+}
+
+function catalogLabel(value: string): string {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function catalogReasoningId(value: unknown): string {
+  const id = boundedCatalogText(value, 100);
+  return id === "xhigh" ? "extra_high" : id;
+}
+
+function normalizeCodexModelCatalog(
+  value: unknown,
+): CodexModelCapabilityInfo[] {
+  const data = (value as { data?: unknown })?.data;
+  if (!Array.isArray(data)) {
+    throw Error("model/list returned an invalid response");
+  }
+  const models: CodexModelCapabilityInfo[] = [];
+  const seen = new Set<string>();
+  for (const raw of data.slice(0, MAX_MODEL_CATALOG_ENTRIES)) {
+    if (raw == null || typeof raw !== "object") continue;
+    const entry = raw as Record<string, unknown>;
+    const model = boundedCatalogText(entry.model ?? entry.id, 200);
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    const defaultReasoningEffort = catalogReasoningId(
+      entry.defaultReasoningEffort,
+    );
+    const reasoning = Array.isArray(entry.supportedReasoningEfforts)
+      ? entry.supportedReasoningEfforts
+          .slice(0, MAX_MODEL_REASONING_EFFORTS)
+          .flatMap((rawEffort): CodexModelCapabilityInfo["reasoning"] => {
+            if (rawEffort == null || typeof rawEffort !== "object") return [];
+            const effort = rawEffort as Record<string, unknown>;
+            const id = catalogReasoningId(effort.reasoningEffort);
+            if (!id) return [];
+            return [
+              {
+                id,
+                description: boundedCatalogText(effort.description),
+                default: id === defaultReasoningEffort || undefined,
+              },
+            ];
+          })
+      : [];
+    const defaultServiceTier = boundedCatalogText(
+      entry.defaultServiceTier,
+      100,
+    );
+    const rawServiceTiers = Array.isArray(entry.serviceTiers)
+      ? entry.serviceTiers
+      : Array.isArray(entry.additionalSpeedTiers)
+        ? entry.additionalSpeedTiers.map((id) => ({ id }))
+        : [];
+    const serviceTiers = rawServiceTiers
+      .slice(0, MAX_MODEL_SERVICE_TIERS)
+      .flatMap((rawTier): CodexModelCapabilityInfo["serviceTiers"] => {
+        if (rawTier == null || typeof rawTier !== "object") return [];
+        const tier = rawTier as Record<string, unknown>;
+        const id = boundedCatalogText(tier.id, 100);
+        if (!id) return [];
+        return [
+          {
+            id,
+            label: boundedCatalogText(tier.name, 200) || catalogLabel(id),
+            description: boundedCatalogText(tier.description),
+            default: id === defaultServiceTier || undefined,
+          },
+        ];
+      });
+    models.push({
+      model,
+      displayName:
+        boundedCatalogText(entry.displayName, 200) || catalogLabel(model),
+      description: boundedCatalogText(entry.description),
+      reasoning,
+      serviceTiers,
+      default: entry.isDefault === true || undefined,
+    });
+  }
+  return models;
+}
+
 function isRateLimitsAuthError(error: string | undefined): boolean {
   const normalized = `${error ?? ""}`.toLowerCase();
   return (
@@ -1786,6 +1883,7 @@ export async function getCodexAppServerAccountStatus(opts: {
   env?: NodeJS.ProcessEnv;
   appServerLogin?: CodexAppServerLoginHint;
   includeTokenUsage?: boolean;
+  includeModels?: boolean;
   timeoutMs?: number;
 }): Promise<CodexAppServerAccountStatus> {
   const timeoutMs = opts.timeoutMs ?? ACCOUNT_STATUS_REQUEST_TIMEOUT_MS;
@@ -1864,10 +1962,30 @@ export async function getCodexAppServerAccountStatus(opts: {
     const tokenUsage = tokenUsageResult
       ? settledValue(tokenUsageResult)
       : { value: undefined };
+    let models: {
+      value?: CodexModelCapabilityInfo[];
+      error?: string;
+    } = { value: undefined };
+    if (opts.includeModels) {
+      try {
+        models = {
+          value: normalizeCodexModelCatalog(
+            await client.request(
+              "model/list",
+              { limit: MAX_MODEL_CATALOG_ENTRIES, includeHidden: false },
+              timeoutMs,
+            ),
+          ),
+        };
+      } catch (reason) {
+        models = { error: `${reason}` };
+      }
+    }
     const errors: CodexAppServerAccountStatus["errors"] = {};
     if (account.error) errors.account = account.error;
     if (rateLimits.error) errors.rateLimits = rateLimits.error;
     if (tokenUsage.error) errors.tokenUsage = tokenUsage.error;
+    if (models.error) errors.models = models.error;
     const normalizedErrors = Object.keys(errors).length ? errors : undefined;
     return {
       authentication: classifyCodexAuthentication({
@@ -1878,6 +1996,7 @@ export async function getCodexAppServerAccountStatus(opts: {
       account: account.value,
       rateLimits: rateLimits.value,
       tokenUsage: tokenUsage.value,
+      models: models.value,
       errors: normalizedErrors,
     };
   } finally {

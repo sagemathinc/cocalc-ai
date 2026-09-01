@@ -2466,6 +2466,7 @@ export interface Projects {
   getCodexUsageStatus: (opts: {
     account_id?: string;
     project_id: string;
+    include_models?: boolean;
     timeout?: number;
   }) => Promise<CodexUsageStatusInfo>;
 
