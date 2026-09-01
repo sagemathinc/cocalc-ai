@@ -13,6 +13,7 @@ import {
   managedVmReadinessCommand,
   managedVmProjectSshConfigNeedsSync,
   managedVmProjectAccessNeedsSync,
+  managedVmProjectAccessKeyFingerprint,
   managedVmProjectConfigShouldBeEnabled,
   providerComputeInstanceIsExpected,
   providerRuntimePublicAddressStatus,
@@ -247,6 +248,8 @@ describe("managed VM project SSH config reconciliation", () => {
         {
           metadata: {
             project_ssh_public_keys: ["ssh-ed25519 AAAA project-a"],
+            project_ssh_provider_key_fingerprint:
+              managedVmProjectAccessKeyFingerprint(access),
           },
         },
         access,
@@ -265,6 +268,27 @@ describe("managed VM project SSH config reconciliation", () => {
         access,
       ),
     ).toBe(true);
+    expect(
+      managedVmProjectAccessNeedsSync(
+        {
+          metadata: {
+            project_ssh_public_keys: ["ssh-ed25519 AAAA project-a"],
+          },
+        },
+        access,
+      ),
+    ).toBe(true);
+    expect(
+      managedVmProjectAccessNeedsSync(
+        {
+          metadata: {
+            project_ssh_public_keys: ["ssh-ed25519 AAAA project-a"],
+          },
+        },
+        access,
+        { require_provider_persistence: false },
+      ),
+    ).toBe(false);
     expect(
       managedVmProjectAccessNeedsSync(
         { metadata: { project_ssh_public_keys: [] } },

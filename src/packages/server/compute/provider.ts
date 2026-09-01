@@ -39,6 +39,7 @@ import { getComputeVmConfig, type ComputeVmConfig } from "./config";
 import type { ComputeVmRow, ComputeVolumeRow } from "./types";
 import { assertComputeVmSecurity } from "./security";
 import { regionFromComputeZone } from "./placement";
+import { getComputeVolumeById } from "./volume-db";
 import {
   managedComputeVmProviderPrefix,
   managedComputeVmResourceBelongsToEnvironment,
@@ -553,7 +554,12 @@ function specFor(
             }),
       ssh_user: vm.ssh_user,
       ssh_public_key: vm.ssh_public_key,
-      ssh_public_keys: vm.metadata?.ssh_public_keys,
+      ssh_public_keys: Array.from(
+        new Set([
+          ...(vm.metadata?.ssh_public_keys ?? []),
+          ...(vm.metadata?.project_ssh_public_keys ?? []),
+        ]),
+      ),
       block_project_ssh_keys: true,
       disable_service_account: true,
       subnetwork_uri: subnetwork,
@@ -652,6 +658,9 @@ export function managedVmBootstrapScript(
         vm.ssh_public_key,
         ...(Array.isArray(vm.metadata?.ssh_public_keys)
           ? vm.metadata.ssh_public_keys
+          : []),
+        ...(Array.isArray(vm.metadata?.project_ssh_public_keys)
+          ? vm.metadata.project_ssh_public_keys
           : []),
       ]
         .map((key) => `${key ?? ""}`.trim())
@@ -826,6 +835,9 @@ export function managedWindowsVmBootstrapScript(vm: ComputeVmRow): string {
     vm.ssh_public_key,
     ...(Array.isArray(vm.metadata?.ssh_public_keys)
       ? vm.metadata.ssh_public_keys
+      : []),
+    ...(Array.isArray(vm.metadata?.project_ssh_public_keys)
+      ? vm.metadata.project_ssh_public_keys
       : []),
   ]);
   return `$ErrorActionPreference = "Stop"
@@ -1592,23 +1604,37 @@ export async function ensureProviderComputeSshAccess(vm: ComputeVmRow) {
     );
     return;
   }
-  await gcpProvider.ensureSshAccess(
-    runtimeFor({
-      ...vm,
-      metadata: {
-        ...vm.metadata,
-        ssh_public_keys: Array.from(
-          new Set([
-            ...(vm.metadata?.ssh_public_keys ?? []),
-            ...(vm.metadata?.project_ssh_public_keys ?? []),
-            controller.publicKey,
-          ]),
-        ),
-        replace_managed_ssh_keys: true,
-      },
-    }),
-    creds,
-  );
+  const volume = vm.home_volume_id
+    ? await getComputeVolumeById(vm.home_volume_id)
+    : undefined;
+  if (vm.home_volume_id && !volume) {
+    throw new Error(
+      `managed compute home volume '${vm.home_volume_id}' not found`,
+    );
+  }
+  const providerVm: ComputeVmRow = {
+    ...vm,
+    metadata: {
+      ...vm.metadata,
+      ssh_public_keys: Array.from(
+        new Set([
+          ...(vm.metadata?.ssh_public_keys ?? []),
+          ...(vm.metadata?.project_ssh_public_keys ?? []),
+          controller.publicKey,
+        ]),
+      ),
+      replace_managed_ssh_keys: true,
+    },
+  };
+  const runtime = runtimeFor(providerVm);
+  runtime.metadata = {
+    ...(runtime.metadata ?? {}),
+    // GCP runs this script again after every boot. Keep its embedded key set
+    // synchronized so it cannot overwrite newly delegated project keys with
+    // the keys that existed only when the VM was first provisioned.
+    startup_script: managedVmBootstrapScript(providerVm, volume),
+  };
+  await gcpProvider.ensureSshAccess(runtime, creds);
 }
 
 export function nebiusManagedSshKeySyncArgs(opts: {

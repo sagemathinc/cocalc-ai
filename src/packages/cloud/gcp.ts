@@ -983,6 +983,7 @@ export class GcpProvider implements CloudProvider {
     }
     const client = new InstancesClient(credentials);
     await ensureSshMetadata(runtime, credentials, client);
+    await ensureStartupScriptMetadata(runtime, credentials, client);
   }
 
   async ensurePublicIngress(
