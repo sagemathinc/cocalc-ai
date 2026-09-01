@@ -56,6 +56,7 @@ import getPool from "@cocalc/database/pool";
 import siteURL from "@cocalc/database/settings/site-url";
 import centralLog from "@cocalc/database/postgres/central-log";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { detectRasterImage } from "@cocalc/server/blobs/media";
 import getZendeskClient from "@cocalc/server/support/zendesk-client";
 import { isValidUUID, uuid } from "@cocalc/util/misc";
 
@@ -1525,7 +1526,9 @@ async function fetchZendeskAttachmentImage({
       ) {
         throw new Error("Zendesk attachment URL uses an untrusted host");
       }
-      const headers: Record<string, string> = { Accept: configuredType };
+      // Zendesk attachment endpoints negotiate redirects, not image variants.
+      // A specific image Accept header can cause HTTP 406 before the redirect.
+      const headers: Record<string, string> = { Accept: "*/*" };
       if (current.hostname === `${subdomain.toLowerCase()}.zendesk.com`) {
         headers.Authorization = `Basic ${Buffer.from(`${username}/token:${token}`).toString("base64")}`;
       }
@@ -1553,10 +1556,6 @@ async function fetchZendeskAttachmentImage({
           `Zendesk image is ${responseLength} bytes; maximum is ${maxBytes}`,
         );
       }
-      const responseType = normalizedImageContentType(
-        response.headers.get("content-type"),
-      );
-      const contentType = responseType ?? configuredType;
       const reader = response.body?.getReader();
       if (!reader) throw new Error("Zendesk attachment response had no body");
       const chunks: Buffer[] = [];
@@ -1573,7 +1572,14 @@ async function fetchZendeskAttachmentImage({
         chunks.push(chunk);
       }
       if (size === 0) throw new Error("Zendesk attachment image was empty");
-      return { data: Buffer.concat(chunks, size), contentType };
+      const data = Buffer.concat(chunks, size);
+      const image = detectRasterImage(data);
+      if (!image) {
+        throw new Error(
+          "Zendesk attachment did not contain a supported raster image",
+        );
+      }
+      return { data, contentType: image.contentType };
     }
   } finally {
     clearTimeout(timer);
