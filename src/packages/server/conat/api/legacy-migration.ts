@@ -10,6 +10,7 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import * as localLegacyMigration from "@cocalc/server/legacy-migration";
 import type {
   LegacyMigrationAdminAccountSearchOptions,
+  LegacyMigrationAdminApplyProjectRemediationOptions,
   LegacyMigrationAdminLinkedProjectsOptions,
   LegacyMigrationAdminLinkLegacyAccountOptions,
   LegacyMigrationAdminLinksOptions,
@@ -147,6 +148,21 @@ export async function adminPrepareProjectRemediation(
     : await getSeedLegacyMigrationClient(
         6 * 60 * 60 * 1000,
       ).legacyMigrationAdminPrepareProjectRemediation(opts);
+}
+
+export async function adminApplyProjectRemediation(
+  opts: LegacyMigrationAdminApplyProjectRemediationOptions,
+) {
+  await requireFreshAdminAccount({
+    account_id: opts?.account_id,
+    browser_id: opts?.browser_id,
+    session_hash: opts?.session_hash,
+  });
+  return isSeedBay()
+    ? await localLegacyMigration.adminApplyProjectRemediation(opts)
+    : await getSeedLegacyMigrationClient(
+        6 * 60 * 60 * 1000,
+      ).legacyMigrationAdminApplyProjectRemediation(opts);
 }
 
 export async function applyProjectRemediation(

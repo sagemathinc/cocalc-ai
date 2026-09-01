@@ -68,6 +68,7 @@ import type {
   LegacyMigrationAdminAccountSearchOptions,
   LegacyMigrationAdminAccountSearchResponse,
   LegacyMigrationAdminAccountSummary,
+  LegacyMigrationAdminApplyProjectRemediationOptions,
   LegacyMigrationAdminLinkedProjectsOptions,
   LegacyMigrationAdminLinkedProjectsResponse,
   LegacyMigrationAdminLinkLegacyAccountOptions,
@@ -5073,6 +5074,9 @@ type ProjectRemediationMetadata = {
   skipped_file_count?: number;
   missing_archive_file_count?: number;
   duration_ms?: number;
+  applied_by_account_id?: string | null;
+  apply_reason?: string | null;
+  apply_support_reference?: string | null;
 };
 
 type ProjectRemediationRow = LegacyProjectRow & {
@@ -5551,19 +5555,21 @@ export async function adminPrepareProjectRemediation({
   });
 }
 
-export async function applyProjectRemediation({
-  account_id,
-  project_id,
+async function applyProjectRemediationForRow({
+  authority_account_id,
+  actor_account_id,
+  row,
   snapshot_name,
-}: LegacyMigrationApplyProjectRemediationOptions): Promise<LegacyMigrationProjectRemediationStatusResponse> {
-  await assertLegacyMigrationEnabled();
-  if (!account_id) {
-    throw Error("account_id is required");
-  }
-  const row = await remediationProjectForAccount({ account_id, project_id });
-  if (row == null) {
-    throw new Error("legacy project import is not available for this account");
-  }
+  reason,
+  support_reference,
+}: {
+  authority_account_id: string;
+  actor_account_id: string;
+  row: ProjectRemediationRow;
+  snapshot_name?: string;
+  reason?: string;
+  support_reference?: string;
+}): Promise<LegacyMigrationProjectRemediationStatusResponse> {
   assertProjectNeedsRemediation(row);
   const meta = remediationMetadata(row);
   const effectiveSnapshotName = assertValidSnapshotName(
@@ -5578,7 +5584,7 @@ export async function applyProjectRemediation({
   }
   const client = await connectProjectFileServerForRemediation({
     project_id: row.project_id,
-    account_id,
+    account_id: authority_account_id,
   });
   const result = await client.applyLegacyProjectArchiveRemediation({
     project_id: row.project_id,
@@ -5593,6 +5599,9 @@ export async function applyProjectRemediation({
     diff_files: result.applied_files,
     diff_file_count: result.applied_file_count,
     truncated: result.truncated,
+    applied_by_account_id: actor_account_id,
+    apply_reason: clean(reason) ?? null,
+    apply_support_reference: clean(support_reference) ?? null,
   };
   await updateProjectRemediationMetadata({
     project_id: row.project_id,
@@ -5604,6 +5613,53 @@ export async function applyProjectRemediation({
       ...(row.restore_result ?? {}),
       final_archive_remediation: metadata,
     },
+  });
+}
+
+export async function applyProjectRemediation({
+  account_id,
+  project_id,
+  snapshot_name,
+}: LegacyMigrationApplyProjectRemediationOptions): Promise<LegacyMigrationProjectRemediationStatusResponse> {
+  await assertLegacyMigrationEnabled();
+  if (!account_id) {
+    throw Error("account_id is required");
+  }
+  const row = await remediationProjectForAccount({ account_id, project_id });
+  if (row == null) {
+    throw new Error("legacy project import is not available for this account");
+  }
+  return await applyProjectRemediationForRow({
+    authority_account_id: account_id,
+    actor_account_id: account_id,
+    row,
+    snapshot_name,
+  });
+}
+
+export async function adminApplyProjectRemediation({
+  account_id,
+  project_id,
+  snapshot_name,
+  reason,
+  support_reference,
+}: LegacyMigrationAdminApplyProjectRemediationOptions): Promise<LegacyMigrationProjectRemediationStatusResponse> {
+  await assertLegacyMigrationEnabled();
+  if (!account_id) {
+    throw Error("account_id is required");
+  }
+  const auditReason = requireAuditReason(reason);
+  const row = await remediationProjectByProjectId({ project_id });
+  if (row == null) {
+    throw new Error("legacy project import is not available for this project");
+  }
+  return await applyProjectRemediationForRow({
+    authority_account_id: clean(row.owner_account_id) ?? account_id,
+    actor_account_id: account_id,
+    row,
+    snapshot_name,
+    reason: auditReason,
+    support_reference,
   });
 }
 
