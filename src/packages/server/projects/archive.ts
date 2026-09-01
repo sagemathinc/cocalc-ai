@@ -364,7 +364,7 @@ async function createFinalAutomaticArchiveBackup({
     );
   }
   const generation = Number(result.generation);
-  if (!Number.isFinite(generation) || generation <= 0) {
+  if (!Number.isSafeInteger(generation) || generation <= 0) {
     throw new Error(
       "final automatic archive backup completed without a filesystem generation",
     );
@@ -376,30 +376,28 @@ async function createFinalAutomaticArchiveBackup({
   };
 }
 
-function finalBackupCoversProject({
-  backup,
-  row,
-}: {
-  backup: ProjectArchiveLifecycleFinalBackup;
-  row: ArchiveRow;
-}): boolean {
+// A Btrfs generation identifies a volume state only within one filesystem.
+// Project moves and restores can therefore produce a valid final generation
+// below the monotonic generation retained by control-plane change tracking.
+// Destructive safety comes from the host checking this marker against both the
+// frozen source volume and the exact Rustic snapshot immediately before delete.
+function finalBackupMarkerIsValid(
+  backup: ProjectArchiveLifecycleFinalBackup,
+): boolean {
   const backupGeneration = Number(backup.generation);
-  const changedGeneration = Number(row.last_changed_generation);
-  return !(
-    !Number.isFinite(backupGeneration) ||
-    backupGeneration <= 0 ||
-    (Number.isFinite(changedGeneration) &&
-      changedGeneration > 0 &&
-      backupGeneration < changedGeneration)
+  return (
+    `${backup.id ?? ""}`.trim().length > 0 &&
+    Number.isSafeInteger(backupGeneration) &&
+    backupGeneration > 0
   );
 }
 
-function assertFinalBackupCoversProject(
-  opts: Parameters<typeof finalBackupCoversProject>[0],
+function assertFinalBackupMarkerIsValid(
+  backup: ProjectArchiveLifecycleFinalBackup,
 ): void {
-  if (!finalBackupCoversProject(opts)) {
+  if (!finalBackupMarkerIsValid(backup)) {
     throw new Error(
-      "final automatic archive backup does not cover the current filesystem generation",
+      "final automatic archive backup marker is missing a valid snapshot id or filesystem generation",
     );
   }
 }
@@ -535,7 +533,7 @@ export async function archiveProjectStorage({
       });
       finalBackup = await getProjectArchiveLifecycleFinalBackup(jobId);
       const finalBackupCurrent =
-        !!finalBackup && finalBackupCoversProject({ backup: finalBackup, row });
+        !!finalBackup && finalBackupMarkerIsValid(finalBackup);
       if (finalBackup && finalBackupCurrent) {
         expectedArchiveGeneration = Number(finalBackup.generation);
         expectedArchiveBackupId = finalBackup.id;
@@ -568,8 +566,7 @@ export async function archiveProjectStorage({
     if (automatic) {
       if (
         row.provisioned !== false &&
-        (!finalBackup ||
-          !finalBackupCoversProject({ backup: finalBackup, row }))
+        (!finalBackup || !finalBackupMarkerIsValid(finalBackup))
       ) {
         const previousFinalBackupId = finalBackup?.id ?? null;
         finalBackup = await createFinalAutomaticArchiveBackup({
@@ -606,7 +603,7 @@ export async function archiveProjectStorage({
           job_id: jobId,
           expected_host_id,
         });
-        assertFinalBackupCoversProject({ backup: finalBackup, row });
+        assertFinalBackupMarkerIsValid(finalBackup);
         await recordFinalAutomaticArchiveBackup({
           project_id,
           job_id: jobId,
@@ -624,7 +621,7 @@ export async function archiveProjectStorage({
         if (!finalBackup) {
           throw new Error("automatic archive final backup is missing");
         }
-        assertFinalBackupCoversProject({ backup: finalBackup, row });
+        assertFinalBackupMarkerIsValid(finalBackup);
         expectedArchiveGeneration = Number(finalBackup.generation);
         expectedArchiveBackupId = finalBackup.id;
       }

@@ -931,7 +931,7 @@ describe("projects.archiveProject", () => {
     expect(error.reopenSafe).toBe(false);
   });
 
-  it("automatic archive retries cleanup without backing up a deleted volume", async () => {
+  it("retries cleanup with a host-local marker after a project move", async () => {
     const jobId = "77777777-7777-4777-8777-777777777777";
     getProjectArchiveLifecycleFinalBackupMock.mockResolvedValueOnce({
       id: "final-backup-id",
@@ -949,9 +949,11 @@ describe("projects.archiveProject", () => {
           state: { state: "archiving" },
           host_status: "active",
           last_changed: new Date("2026-06-15T04:00:00.000Z"),
-          last_changed_generation: 10,
+          // This generation came from the source host and is not comparable
+          // with the persisted final backup's destination-host generation.
+          last_changed_generation: 818669,
           last_backup: new Date("2026-06-15T05:00:00.000Z"),
-          last_backup_generation: 10,
+          last_backup_generation: 818669,
           archive_lifecycle_job_id: jobId,
         },
       ],
@@ -1164,11 +1166,11 @@ describe("projects.archiveProject", () => {
     );
   });
 
-  it("automatic archive replaces a stale final-backup marker after reopening", async () => {
+  it("automatic archive replaces an invalid final-backup marker", async () => {
     const jobId = "77777777-7777-4777-8777-777777777777";
     getProjectArchiveLifecycleFinalBackupMock.mockResolvedValueOnce({
       id: "stale-final-backup-id",
-      generation: 9,
+      generation: 0,
       time: "2026-06-15T03:30:00.000Z",
     });
     poolQueryMock.mockResolvedValue({
@@ -1267,7 +1269,7 @@ describe("projects.archiveProject", () => {
     },
   );
 
-  it("automatic archive revalidates generation coverage after final backup", async () => {
+  it("uses the host-local final backup generation after a project move", async () => {
     const jobId = "77777777-7777-4777-8777-777777777777";
     const row = {
       project_id: "11111111-1111-4111-8111-111111111111",
@@ -1278,9 +1280,11 @@ describe("projects.archiveProject", () => {
       state: { state: "archiving" },
       host_status: "active",
       last_changed: new Date("2026-06-15T04:00:00.000Z"),
-      last_changed_generation: 10,
+      // Project generations are retained monotonically by the control plane,
+      // so this can be from a different Btrfs filesystem before a host move.
+      last_changed_generation: 818669,
       last_backup: new Date("2026-06-15T05:00:00.000Z"),
-      last_backup_generation: 10,
+      last_backup_generation: 818669,
       archive_lifecycle_job_id: jobId,
     };
     poolQueryMock
@@ -1291,42 +1295,41 @@ describe("projects.archiveProject", () => {
           {
             ...row,
             last_changed: new Date("2026-06-15T06:00:00.000Z"),
-            last_changed_generation: 11,
+            last_changed_generation: 818669,
             last_backup: new Date("2026-06-15T06:30:00.000Z"),
-            last_backup_generation: 11,
+            last_backup_generation: 818669,
           },
         ],
       });
 
-    const { archiveProjectStorage, ProjectArchiveStorageError } =
+    const { archiveProjectStorage } =
       await import("@cocalc/server/projects/archive");
-    const error = await archiveProjectStorage({
-      project_id: "11111111-1111-4111-8111-111111111111",
-      mode: "automatic",
+    await expect(
+      archiveProjectStorage({
+        project_id: "11111111-1111-4111-8111-111111111111",
+        mode: "automatic",
+        job_id: jobId,
+        reason: "free-inactive",
+        expected_host_id: "22222222-2222-4222-8222-222222222222",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(recordProjectArchiveLifecycleFinalBackupMock).toHaveBeenCalledWith({
       job_id: jobId,
-      reason: "free-inactive",
-      expected_host_id: "22222222-2222-4222-8222-222222222222",
-    }).catch((err) => err);
-
-    expect(error).toBeInstanceOf(ProjectArchiveStorageError);
-    expect(error.message).toContain(
-      "final automatic archive backup does not cover the current filesystem generation",
-    );
-    expect(error.reopenSafe).toBe(true);
-
-    expect(recordProjectArchiveLifecycleFinalBackupMock).not.toHaveBeenCalled();
-    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
-    expect(deleteProjectDataOnHostAfterBackupMock).not.toHaveBeenCalled();
-    expect(releaseProjectDataArchiveFreezeOnHostMock).toHaveBeenCalledWith({
-      project_id: "11111111-1111-4111-8111-111111111111",
-      host_id: "22222222-2222-4222-8222-222222222222",
-      expected_generation: 10,
-    });
-    expect(clearProjectArchiveLifecycleFinalBackupMock).toHaveBeenCalledWith({
-      job_id: "77777777-7777-4777-8777-777777777777",
       backup_id: "final-backup-id",
       backup_generation: 10,
+      backup_time: "2026-06-15T05:30:00.000Z",
+      expected_previous_backup_id: null,
     });
+    expect(deleteProjectDataOnHostAfterBackupMock).toHaveBeenCalledWith({
+      project_id: "11111111-1111-4111-8111-111111111111",
+      host_id: "22222222-2222-4222-8222-222222222222",
+      expected_backup_id: "final-backup-id",
+      expected_generation: 10,
+    });
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    expect(releaseProjectDataArchiveFreezeOnHostMock).not.toHaveBeenCalled();
+    expect(clearProjectArchiveLifecycleFinalBackupMock).not.toHaveBeenCalled();
   });
 
   it("automatic archive rejects a busy project without stopping or deleting it", async () => {
