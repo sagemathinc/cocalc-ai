@@ -191,6 +191,60 @@ describe("acp job queue ordering", () => {
     expect(listQueuedAcpJobs()).toHaveLength(2);
   });
 
+  it("uses insertion order for supersession within one millisecond", () => {
+    const older = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-same-ms-older",
+        assistantMessageId: "assistant-same-ms-older",
+        assistantDate: "2026-03-08T00:00:00.100Z",
+      }) as any,
+    );
+    const source = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-same-ms-source",
+        assistantMessageId: "assistant-same-ms-source",
+        assistantDate: "2026-03-08T00:00:00.200Z",
+      }) as any,
+    );
+    const sameTimestamp = Date.now();
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET created_at = ? WHERE op_id IN (?, ?)")
+      .run(sameTimestamp, older.op_id, source.op_id);
+    const guard = {
+      source_op_id: source.op_id,
+      source_created_at: sameTimestamp,
+    };
+
+    expect(
+      hasNewerNonRecoveryAcpJob({
+        project_id: source.project_id,
+        path: source.path,
+        thread_id: source.thread_id,
+        guard,
+      }),
+    ).toBe(false);
+
+    enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-same-ms-newer",
+        assistantMessageId: "assistant-same-ms-newer",
+        assistantDate: "2026-03-08T00:00:00.300Z",
+      }) as any,
+    );
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET created_at = ? WHERE op_id = ?")
+      .run(sameTimestamp, "assistant-same-ms-newer");
+
+    expect(
+      hasNewerNonRecoveryAcpJob({
+        project_id: source.project_id,
+        path: source.path,
+        thread_id: source.thread_id,
+        guard,
+      }),
+    ).toBe(true);
+  });
+
   it("atomically enqueues a user job while canceling queued recovery", () => {
     const recovery = enqueueAcpJob(
       {

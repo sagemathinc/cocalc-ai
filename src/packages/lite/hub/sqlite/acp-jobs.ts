@@ -215,6 +215,13 @@ function hasNewerNonRecoveryAcpJobInDatabase({
   thread_id: string;
   guard: AcpJobSupersessionGuard;
 }): boolean {
+  const source = db
+    .prepare(`SELECT rowid AS sequence FROM ${TABLE} WHERE op_id = ?`)
+    .get(guard.source_op_id) as { sequence?: number } | undefined;
+  const sourceSequence = Number(source?.sequence);
+  if (!Number.isFinite(sourceSequence)) {
+    return false;
+  }
   const row = db
     .prepare(
       `SELECT 1
@@ -223,17 +230,10 @@ function hasNewerNonRecoveryAcpJobInDatabase({
          AND path = ?
          AND thread_id = ?
          AND recovery_parent_op_id IS NULL
-         AND op_id != ?
-         AND created_at >= ?
+         AND rowid > ?
        LIMIT 1`,
     )
-    .get(
-      project_id,
-      path,
-      thread_id,
-      guard.source_op_id,
-      guard.source_created_at,
-    );
+    .get(project_id, path, thread_id, sourceSequence);
   return row != null;
 }
 
