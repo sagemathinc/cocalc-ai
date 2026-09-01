@@ -85,6 +85,51 @@ export function registerLegacyMigrationCommand(
       },
     );
 
+  remediation
+    .command("apply <project_id>")
+    .description(
+      "admin: safely copy a prepared final archive into a restored project",
+    )
+    .requiredOption("--reason <reason>", "required audit reason")
+    .option("--support-reference <reference>", "support ticket or incident")
+    .option("--snapshot-name <name>", "prepared snapshot name")
+    .action(
+      async (
+        project_id: string,
+        opts: {
+          reason: string;
+          supportReference?: string;
+          snapshotName?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "legacy-migration remediation apply",
+          async (ctx: any) => {
+            if (!isValidUUID(project_id)) {
+              throw new Error(`invalid project_id: ${project_id}`);
+            }
+            return await hubCallByName(
+              ctx,
+              "legacyMigration.adminApplyProjectRemediation",
+              [
+                {
+                  project_id,
+                  snapshot_name:
+                    `${opts.snapshotName ?? ""}`.trim() || undefined,
+                  reason: opts.reason.trim(),
+                  support_reference:
+                    `${opts.supportReference ?? ""}`.trim() || undefined,
+                },
+              ],
+              ctx.timeoutMs,
+            );
+          },
+        );
+      },
+    );
+
   const publicShares = legacyMigration
     .command("public-shares")
     .description("legacy public file and directory share operations");
