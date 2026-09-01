@@ -59,7 +59,13 @@ import * as commercialOrders from "./commercial-orders";
 import * as adminCrm from "./crm";
 
 import getLogger from "@cocalc/backend/logger";
-import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
+import {
+  type HubApi,
+  getHubApiPrincipalPolicy,
+  getUserId,
+  isHubApiPrincipalAllowed,
+  transformArgs,
+} from "@cocalc/conat/hub/api";
 import { hubApiErrorAttrs } from "@cocalc/conat/hub/api/error-attrs";
 import { conat } from "@cocalc/backend/conat";
 import { delay } from "awaiting";
@@ -75,6 +81,10 @@ import {
   startAccountSecurityStateSyncLoop,
 } from "@cocalc/server/accounts/security-state";
 import { getHubApiAdmissionDecision } from "./admission";
+import {
+  type HubApiPrincipalType,
+  recordHubApiPrincipalDenial,
+} from "./principal-policy-denials";
 
 const ssh = {} as any;
 const reflect = {} as any;
@@ -111,8 +121,6 @@ export const hubApi: HubApi = {
 const logger = getLogger("server:conat:api");
 
 const HUB_API_SUBJECTS = ["hub.*.*.api", "hub.agent.*.*.*.*.*.api"] as const;
-// Keep a transport-level guard in addition to each method's argument transform.
-const ACCOUNT_ONLY_HUB_API_GROUPS = new Set(["purchases"]);
 
 let activeApiRequests = 0;
 const activeApiRequestsByAccount = new Map<string, number>();
@@ -324,18 +332,47 @@ export async function handleApiRequest({ request, mesg }) {
       auth_exp_s,
     } = getUserId(mesg.subject);
     const { name, args, auth_session_hash } = request as any;
-    if (auth_actor === "agent" && !AGENT_HUB_API_METHODS.has(name)) {
+    const principalPolicy = getHubApiPrincipalPolicy(name);
+    if (
+      principalPolicy != null &&
+      !isHubApiPrincipalAllowed({
+        policy: principalPolicy,
+        account_id,
+        project_id,
+        host_id,
+        auth_actor,
+      })
+    ) {
+      const principal_type: HubApiPrincipalType = auth_actor
+        ? "agent"
+        : account_id
+          ? "account"
+          : project_id
+            ? "project"
+            : "host";
+      void recordHubApiPrincipalDenial({
+        principal_type,
+        account_id: principal_type === "account" ? account_id : undefined,
+        project_id:
+          principal_type === "project" || principal_type === "agent"
+            ? project_id
+            : undefined,
+        host_id: principal_type === "host" ? host_id : undefined,
+        method: name,
+        required_policy: principalPolicy,
+      });
       throw Object.assign(
-        new Error(`agent API method '${name}' is not permitted`),
+        new Error(
+          principalPolicy === "account"
+            ? `account principal required for '${name}'`
+            : `principal '${principal_type}' is not permitted for '${name}' (requires ${principalPolicy})`,
+        ),
         { code: 403 },
       );
     }
-    if (
-      ACCOUNT_ONLY_HUB_API_GROUPS.has(`${name ?? ""}`.split(".", 1)[0]) &&
-      !account_id
-    ) {
+    if (auth_actor === "agent" && !AGENT_HUB_API_METHODS.has(name)) {
       throw Object.assign(
-        new Error(`account principal required for '${name}'`),
+        new Error(`agent API method '${name}' is not permitted`),
         { code: 403 },
       );
     }

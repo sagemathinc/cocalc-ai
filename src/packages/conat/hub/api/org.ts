@@ -1,17 +1,17 @@
-import { authFirst } from "./util";
+import { authFirstRequireAccount } from "./util";
 
 export const org = {
-  getAll: authFirst,
-  create: authFirst,
-  get: authFirst,
-  set: authFirst,
-  addAdmin: authFirst,
-  addUser: authFirst,
-  createUser: authFirst,
-  getUsers: authFirst,
-  message: authFirst,
-  removeUser: authFirst,
-  removeAdmin: authFirst,
+  getAll: authFirstRequireAccount,
+  create: authFirstRequireAccount,
+  get: authFirstRequireAccount,
+  set: authFirstRequireAccount,
+  addAdmin: authFirstRequireAccount,
+  addUser: authFirstRequireAccount,
+  createUser: authFirstRequireAccount,
+  getUsers: authFirstRequireAccount,
+  message: authFirstRequireAccount,
+  removeUser: authFirstRequireAccount,
+  removeAdmin: authFirstRequireAccount,
 };
 
 export interface Org {

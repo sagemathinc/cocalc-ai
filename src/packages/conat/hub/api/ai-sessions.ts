@@ -1,4 +1,4 @@
-import { authFirstRequireAccount } from "./util";
+import { authFirstRequireAccount, declareHubApiPrincipalPolicy } from "./util";
 
 export type AiSessionState =
   | "queued"
@@ -128,34 +128,31 @@ export interface AiSessionsApi {
   ) => Promise<AiSessionInterruptAllResponse>;
 }
 
-function authForSessionPublication({
+async function authForSessionPublication({
   args,
-  account_id,
-  project_id,
   host_id,
+  auth_actor,
 }: {
   args: any[];
-  account_id?: string;
-  project_id?: string;
   host_id?: string;
+  auth_actor?: "agent";
 }) {
   if (args[0] == null) {
     args[0] = {} as any;
   }
-  if (host_id) {
-    args[0].authenticated_host_id = host_id;
-  } else if (project_id) {
-    args[0].authenticated_project_id = project_id;
-  } else if (account_id) {
-    args[0].authenticated_account_id = account_id;
-  } else {
-    throw Error("must be signed in as an account, project, or host");
+  if (!host_id || auth_actor === "agent") {
+    throw Error("AI session publication requires host authentication");
   }
+  args[0].authenticated_host_id = host_id;
   return args;
 }
 
 export const aiSessions = {
-  upsertProjectHostSession: authForSessionPublication,
+  upsertProjectHostSession: declareHubApiPrincipalPolicy(
+    "host",
+    authForSessionPublication,
+    { preservesAccountTarget: true },
+  ),
   list: authFirstRequireAccount,
   interrupt: authFirstRequireAccount,
   interruptAll: authFirstRequireAccount,
