@@ -237,6 +237,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  acpTestInternals.cancelDelayedAcpQueueWake();
   jest.restoreAllMocks();
   await disposeAllChatWritersForTests();
 });
@@ -279,6 +280,34 @@ function makeSyncdb(rows: any[] = []) {
 }
 
 describe("terminal failure recovery", () => {
+  it("schedules a same-process wakeup for a delayed continuation", () => {
+    const previous = process.env.COCALC_LITE_ACP_DETACHED_WORKER;
+    process.env.COCALC_LITE_ACP_DETACHED_WORKER = "0";
+    try {
+      const availableAt = Date.now() + 60_000;
+      enqueueAcpJob(
+        {
+          ...makeRequest(),
+          recovery_parent_op_id: "wake-parent",
+          recovery_reason: "model capacity",
+          recovery_count: 1,
+        } as any,
+        { available_at: availableAt },
+      );
+
+      acpTestInternals.scheduleNextDelayedAcpQueueWake();
+
+      expect(acpTestInternals.delayedAcpQueueWakeAt()).toBe(availableAt);
+    } finally {
+      acpTestInternals.cancelDelayedAcpQueueWake();
+      if (previous == null) {
+        delete process.env.COCALC_LITE_ACP_DETACHED_WORKER;
+      } else {
+        process.env.COCALC_LITE_ACP_DETACHED_WORKER = previous;
+      }
+    }
+  });
+
   it("persists a bounded 15-minute model-capacity continuation", async () => {
     const request = makeRequest();
     const queued = enqueueAcpJob(request as any);

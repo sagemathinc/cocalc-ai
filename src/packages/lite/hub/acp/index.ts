@@ -162,15 +162,16 @@ import {
 } from "../sqlite/acp-turns";
 import {
   cancelQueuedAcpJob,
-  cancelQueuedRecoveryJobsForThread,
   claimNextQueuedAcpJobForThread,
   clearQueuedAcpJobWorkerAffinity,
   countQueuedAcpJobsForThread,
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
   enqueueAcpJob,
+  enqueueAcpJobCancelingQueuedRecoveries,
   getAcpJob,
   getAcpJobByOpId,
+  hasNewerNonRecoveryAcpJob,
   hasQueuedOrRunningAcpJobs,
   hasRunningAcpJobForThread,
   listQueuedAcpJobThreadKeys,
@@ -178,6 +179,7 @@ import {
   listQueuedAcpJobsForThread,
   listRunningAcpJobs,
   markRunningAcpJobsInterrupted,
+  nextQueuedAcpJobAvailability,
   requeueRunningAcpJob,
   resendCanceledAcpJob,
   reprioritizeAcpJobImmediate,
@@ -8950,6 +8952,47 @@ async function prepareQueuedUserMessageForExecution({
   return { latestContent };
 }
 
+async function markRecoveryMessageSuperseded({
+  client,
+  project_id,
+  path,
+  thread_id,
+  user_message_id,
+}: {
+  client: ConatClient;
+  project_id: string;
+  path: string;
+  thread_id: string;
+  user_message_id: string;
+}): Promise<void> {
+  await withChatSyncDB({
+    client,
+    project_id,
+    path,
+    fn: async (syncdb) => {
+      const current = findChatRowByMessageId(syncdb, user_message_id);
+      const date = normalizeIsoDateString(syncdbField<string>(current, "date"));
+      const sender_id = syncdbField<string>(current, "sender_id");
+      if (!current || !date || !sender_id) return;
+      syncdb.set(
+        buildChatMessage({
+          sender_id,
+          date,
+          prevHistory: syncdbField<MessageHistory[]>(current, "history") ?? [],
+          content:
+            "System recovery canceled: a newer user turn superseded this automatic continuation.",
+          generating: false,
+          message_id: user_message_id,
+          thread_id,
+          parent_message_id: syncdbField<string>(current, "parent_message_id"),
+        }),
+      );
+      syncdb.commit();
+      await syncdb.save();
+    },
+  });
+}
+
 async function enqueueRecoveryContinuationForJob({
   client,
   job,
@@ -8990,6 +9033,20 @@ async function enqueueRecoveryContinuationForJob({
     `${request.chat?.project_id ?? request.project_id ?? sourceJob.project_id ?? ""}`.trim();
   const path = `${request.chat?.path ?? sourceJob.path ?? ""}`.trim();
   if (!project_id || !path || !thread_id || !session_id || !request.chat) {
+    return undefined;
+  }
+  const supersessionGuard = {
+    source_op_id: sourceJob.op_id,
+    source_created_at: sourceJob.created_at,
+  };
+  if (
+    hasNewerNonRecoveryAcpJob({
+      project_id,
+      path,
+      thread_id,
+      guard: supersessionGuard,
+    })
+  ) {
     return undefined;
   }
   const recoveryCount = Math.max(
@@ -9071,7 +9128,28 @@ async function enqueueRecoveryContinuationForJob({
       session_id,
     ),
     available_at: delayMs > 0 ? now + delayMs : null,
+    reject_if_newer_non_recovery_than: supersessionGuard,
   });
+  if (!queued) {
+    try {
+      await markRecoveryMessageSuperseded({
+        client,
+        project_id,
+        path,
+        thread_id,
+        user_message_id,
+      });
+    } catch (err) {
+      logger.warn("failed marking raced ACP recovery as superseded", {
+        project_id,
+        path,
+        thread_id,
+        user_message_id,
+        err,
+      });
+    }
+    return undefined;
+  }
   await persistQueuedUserMessageProjection({
     client,
     project_id,
@@ -9080,6 +9158,9 @@ async function enqueueRecoveryContinuationForJob({
     user_message_id,
     queued: true,
   });
+  if (queued.available_at != null) {
+    scheduleNextDelayedAcpQueueWake();
+  }
   return queued;
 }
 
@@ -9136,22 +9217,19 @@ async function enqueueFailureRecoveryContinuation({
   return resumed;
 }
 
-async function cancelSupersededRecoveryContinuations({
+async function clearSupersededRecoveryProjections({
   client,
   project_id,
   path,
   thread_id,
+  canceled,
 }: {
   client: ConatClient;
   project_id: string;
   path: string;
   thread_id: string;
+  canceled: AcpJobRow[];
 }): Promise<void> {
-  const canceled = cancelQueuedRecoveryJobsForThread({
-    project_id,
-    path,
-    thread_id,
-  });
   for (const row of canceled) {
     try {
       await persistQueuedUserMessageProjection({
@@ -9173,6 +9251,7 @@ async function cancelSupersededRecoveryContinuations({
     }
   }
   if (canceled.length) {
+    scheduleNextDelayedAcpQueueWake();
     logger.info("canceled ACP recovery continuations superseded by user turn", {
       project_id,
       path,
@@ -9637,6 +9716,45 @@ function kickQueuedAcpJobsForThread({
     });
 }
 
+let delayedAcpQueueWakeTimer: ReturnType<typeof setTimeout> | undefined;
+let delayedAcpQueueWakeAt: number | undefined;
+
+function cancelDelayedAcpQueueWake(): void {
+  if (delayedAcpQueueWakeTimer != null) {
+    clearTimeout(delayedAcpQueueWakeTimer);
+  }
+  delayedAcpQueueWakeTimer = undefined;
+  delayedAcpQueueWakeAt = undefined;
+}
+
+function scheduleNextDelayedAcpQueueWake(): void {
+  if (liteUseDetachedAcpWorker()) return;
+  const availableAt = nextQueuedAcpJobAvailability();
+  if (availableAt == null) {
+    cancelDelayedAcpQueueWake();
+    return;
+  }
+  if (
+    delayedAcpQueueWakeTimer != null &&
+    delayedAcpQueueWakeAt != null &&
+    delayedAcpQueueWakeAt <= availableAt
+  ) {
+    return;
+  }
+  cancelDelayedAcpQueueWake();
+  delayedAcpQueueWakeAt = availableAt;
+  delayedAcpQueueWakeTimer = setTimeout(
+    () => {
+      delayedAcpQueueWakeTimer = undefined;
+      delayedAcpQueueWakeAt = undefined;
+      kickAllQueuedAcpJobs();
+      scheduleNextDelayedAcpQueueWake();
+    },
+    Math.max(0, availableAt - Date.now()),
+  );
+  delayedAcpQueueWakeTimer.unref?.();
+}
+
 function kickAllQueuedAcpJobs(): void {
   const seen = new Set<string>();
   for (const job of listQueuedAcpJobThreadKeys()) {
@@ -10071,29 +10189,24 @@ async function enqueueChatAcpTurn({
     `${request.chat.project_id ?? request.project_id ?? ""}`.trim();
   const chatPath = `${request.chat.path ?? ""}`.trim();
   const threadId = `${request.chat.thread_id ?? ""}`.trim();
-  if (projectId && chatPath && threadId) {
-    try {
-      await cancelSupersededRecoveryContinuations({
-        client: conatClient,
-        project_id: projectId,
-        path: chatPath,
-        thread_id: threadId,
-      });
-    } catch (err) {
-      logger.warn("failed canceling ACP recovery superseded by user turn", {
-        project_id: projectId,
-        path: chatPath,
-        thread_id: threadId,
-        err,
-      });
-    }
+  const { job: row, canceled } = enqueueAcpJobCancelingQueuedRecoveries(
+    request,
+    {
+      preferred_worker_id: preferredWorkerForRetainedSession(
+        request.chat.project_id ?? request.project_id,
+        request.session_id,
+      ),
+    },
+  );
+  if (projectId && chatPath && threadId && canceled.length) {
+    await clearSupersededRecoveryProjections({
+      client: conatClient,
+      project_id: projectId,
+      path: chatPath,
+      thread_id: threadId,
+      canceled,
+    });
   }
-  const row = enqueueAcpJob(request, {
-    preferred_worker_id: preferredWorkerForRetainedSession(
-      request.chat.project_id ?? request.project_id,
-      request.session_id,
-    ),
-  });
   const projectedState = await persistQueuedUserMessageProjection({
     client: conatClient,
     project_id: row.project_id,
@@ -10498,6 +10611,7 @@ export async function init(
       startAcpInterruptPoller();
       startAcpSteerPoller();
       kickAllQueuedAcpJobs();
+      scheduleNextDelayedAcpQueueWake();
     }
   } else {
     acpExecutionOwnedByCurrentProcess = false;
@@ -10964,13 +11078,15 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
-  cancelSupersededRecoveryContinuations,
+  cancelDelayedAcpQueueWake,
   detachedWorkerCanClaimQueuedJob,
   enqueueFailureRecoveryContinuation,
   failureRecoveryDirective,
   hasOtherWorkerRunningAcpTurn,
   nextQueuedAcpJobForThread,
   noteDetachedWorkerQueuePoll,
+  scheduleNextDelayedAcpQueueWake,
+  delayedAcpQueueWakeAt: () => delayedAcpQueueWakeAt,
   persistAcpGuidanceDeliveryProjection,
   persistQueuedUserMessageProjection,
   prepareQueuedUserMessageForExecution,

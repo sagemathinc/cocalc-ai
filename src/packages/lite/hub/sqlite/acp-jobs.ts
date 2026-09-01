@@ -44,6 +44,17 @@ export interface AcpJobRow {
   finished_at?: number | null;
 }
 
+export type AcpJobSupersessionGuard = {
+  source_op_id: string;
+  source_created_at: number;
+};
+
+type EnqueueAcpJobOptions = {
+  preferred_worker_id?: string | null;
+  available_at?: number | null;
+  reject_if_newer_non_recovery_than?: AcpJobSupersessionGuard;
+};
+
 function init(): void {
   const db = getAcpDatabase();
   db.exec(`
@@ -181,13 +192,76 @@ function assertChatIdentity(request: AcpJobRequest): {
   };
 }
 
+function hasNewerNonRecoveryAcpJobInDatabase({
+  db,
+  project_id,
+  path,
+  thread_id,
+  guard,
+}: {
+  db: ReturnType<typeof getAcpDatabase>;
+  project_id: string;
+  path: string;
+  thread_id: string;
+  guard: AcpJobSupersessionGuard;
+}): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1
+       FROM ${TABLE}
+       WHERE project_id = ?
+         AND path = ?
+         AND thread_id = ?
+         AND recovery_parent_op_id IS NULL
+         AND op_id != ?
+         AND created_at >= ?
+       LIMIT 1`,
+    )
+    .get(
+      project_id,
+      path,
+      thread_id,
+      guard.source_op_id,
+      guard.source_created_at,
+    );
+  return row != null;
+}
+
+export function hasNewerNonRecoveryAcpJob({
+  project_id,
+  path,
+  thread_id,
+  guard,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  guard: AcpJobSupersessionGuard;
+}): boolean {
+  ensureInit();
+  return hasNewerNonRecoveryAcpJobInDatabase({
+    db: getAcpDatabase(),
+    project_id,
+    path,
+    thread_id,
+    guard,
+  });
+}
+
 export function enqueueAcpJob(
   request: AcpJobRequest,
-  opts: {
-    preferred_worker_id?: string | null;
-    available_at?: number | null;
-  } = {},
-): AcpJobRow {
+  opts: EnqueueAcpJobOptions & {
+    reject_if_newer_non_recovery_than: AcpJobSupersessionGuard;
+  },
+): AcpJobRow | undefined;
+export function enqueueAcpJob(
+  request: AcpJobRequest,
+  opts?: EnqueueAcpJobOptions,
+): AcpJobRow;
+export function enqueueAcpJob(
+  request: AcpJobRequest,
+  opts: EnqueueAcpJobOptions = {},
+): AcpJobRow | undefined {
   ensureInit();
   const db = getAcpDatabase();
   const {
@@ -223,42 +297,80 @@ export function enqueueAcpJob(
       : Number.isFinite(Number((request as any).recovery_count))
         ? Math.max(1, Math.floor(Number((request as any).recovery_count)))
         : null;
-  db.prepare(
-    `INSERT INTO ${TABLE}
-      (op_id, project_id, account_id, path, thread_id, user_message_id, assistant_message_id, assistant_message_date, session_id, state, available_at, send_mode, priority, worker_id, worker_bundle_version, recovery_parent_op_id, recovery_reason, recovery_count, request_json, error, created_at, updated_at, started_at, finished_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
-      ON CONFLICT(project_id, path, user_message_id) DO UPDATE SET
-        account_id = excluded.account_id,
-        send_mode = COALESCE(excluded.send_mode, ${TABLE}.send_mode),
-        priority = MAX(${TABLE}.priority, excluded.priority),
-        worker_id = COALESCE(${TABLE}.worker_id, excluded.worker_id),
-        updated_at = excluded.updated_at`,
-  ).run(
-    op_id,
-    project_id,
-    account_id,
-    path,
-    thread_id,
-    user_message_id,
-    assistant_message_id,
-    assistant_message_date,
-    request.request_kind === "command" ? null : (request.session_id ?? null),
-    available_at,
-    send_mode,
-    priority,
-    `${opts.preferred_worker_id ?? ""}`.trim() || null,
-    recovery_parent_op_id,
-    recovery_reason,
-    recovery_count,
-    request_json,
-    now,
-    now,
-  );
-  const job = getAcpJob({
-    project_id,
-    path,
-    user_message_id,
-  })!;
+  const insert = () =>
+    db
+      .prepare(
+        `INSERT INTO ${TABLE}
+        (op_id, project_id, account_id, path, thread_id, user_message_id, assistant_message_id, assistant_message_date, session_id, state, available_at, send_mode, priority, worker_id, worker_bundle_version, recovery_parent_op_id, recovery_reason, recovery_count, request_json, error, created_at, updated_at, started_at, finished_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+        ON CONFLICT(project_id, path, user_message_id) DO UPDATE SET
+          account_id = excluded.account_id,
+          send_mode = COALESCE(excluded.send_mode, ${TABLE}.send_mode),
+          priority = MAX(${TABLE}.priority, excluded.priority),
+          worker_id = COALESCE(${TABLE}.worker_id, excluded.worker_id),
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        op_id,
+        project_id,
+        account_id,
+        path,
+        thread_id,
+        user_message_id,
+        assistant_message_id,
+        assistant_message_date,
+        request.request_kind === "command"
+          ? null
+          : (request.session_id ?? null),
+        available_at,
+        send_mode,
+        priority,
+        `${opts.preferred_worker_id ?? ""}`.trim() || null,
+        recovery_parent_op_id,
+        recovery_reason,
+        recovery_count,
+        request_json,
+        now,
+        now,
+      );
+  const loadInsertedJob = () =>
+    db
+      .prepare(
+        `SELECT * FROM ${TABLE}
+         WHERE project_id = ? AND path = ? AND user_message_id = ?`,
+      )
+      .get(project_id, path, user_message_id) as AcpJobRow | undefined;
+  const guard = opts.reject_if_newer_non_recovery_than;
+  let job: AcpJobRow | undefined;
+  if (guard) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (
+        hasNewerNonRecoveryAcpJobInDatabase({
+          db,
+          project_id,
+          path,
+          thread_id,
+          guard,
+        })
+      ) {
+        db.exec("COMMIT");
+        return undefined;
+      }
+      insert();
+      job = loadInsertedJob();
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  } else {
+    insert();
+    job = loadInsertedJob();
+  }
+  if (!job) {
+    throw new Error("failed to enqueue ACP job");
+  }
   mirrorAcpJobSession(job);
   return job;
 }
@@ -369,6 +481,23 @@ export function oldestQueuedAcpJobTimestamp(): number | undefined {
     .get(Date.now()) as { oldest?: number | null } | undefined;
   const oldest = Number(row?.oldest ?? 0);
   return Number.isFinite(oldest) && oldest > 0 ? oldest : undefined;
+}
+
+export function nextQueuedAcpJobAvailability(): number | undefined {
+  ensureInit();
+  const now = Date.now();
+  const row = getAcpDatabase()
+    .prepare(
+      `SELECT MIN(available_at) AS available_at
+       FROM ${TABLE}
+       WHERE state = 'queued'
+         AND available_at > ?`,
+    )
+    .get(now) as { available_at?: number | null } | undefined;
+  const availableAt = Number(row?.available_at ?? 0);
+  return Number.isFinite(availableAt) && availableAt > now
+    ? availableAt
+    : undefined;
 }
 
 function countAcpJobsByWhere(where: string, args: unknown[]): number {
@@ -819,6 +948,52 @@ export function cancelQueuedAcpJob({
   return job;
 }
 
+function cancelQueuedRecoveryJobsForThreadInDatabase({
+  db,
+  project_id,
+  path,
+  thread_id,
+  now,
+}: {
+  db: ReturnType<typeof getAcpDatabase>;
+  project_id: string;
+  path: string;
+  thread_id: string;
+  now: number;
+}): AcpJobRow[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE project_id = ?
+         AND path = ?
+         AND thread_id = ?
+         AND state = 'queued'
+         AND recovery_parent_op_id IS NOT NULL`,
+    )
+    .all(project_id, path, thread_id) as AcpJobRow[];
+  if (rows.length) {
+    db.prepare(
+      `UPDATE ${TABLE}
+       SET state = 'canceled',
+           error = 'superseded by a newer user turn',
+           updated_at = ?,
+           finished_at = ?
+       WHERE project_id = ?
+         AND path = ?
+         AND thread_id = ?
+         AND state = 'queued'
+         AND recovery_parent_op_id IS NOT NULL`,
+    ).run(now, now, project_id, path, thread_id);
+  }
+  return rows.map((row) => ({
+    ...row,
+    state: "canceled",
+    error: "superseded by a newer user turn",
+    updated_at: now,
+    finished_at: now,
+  }));
+}
+
 export function cancelQueuedRecoveryJobsForThread({
   project_id,
   path,
@@ -834,30 +1009,13 @@ export function cancelQueuedRecoveryJobsForThread({
   const now = Date.now();
   db.exec("BEGIN IMMEDIATE");
   try {
-    rows = db
-      .prepare(
-        `SELECT * FROM ${TABLE}
-         WHERE project_id = ?
-           AND path = ?
-           AND thread_id = ?
-           AND state = 'queued'
-           AND recovery_parent_op_id IS NOT NULL`,
-      )
-      .all(project_id, path, thread_id) as AcpJobRow[];
-    if (rows.length) {
-      db.prepare(
-        `UPDATE ${TABLE}
-         SET state = 'canceled',
-             error = 'superseded by a newer user turn',
-             updated_at = ?,
-             finished_at = ?
-         WHERE project_id = ?
-           AND path = ?
-           AND thread_id = ?
-           AND state = 'queued'
-           AND recovery_parent_op_id IS NOT NULL`,
-      ).run(now, now, project_id, path, thread_id);
-    }
+    rows = cancelQueuedRecoveryJobsForThreadInDatabase({
+      db,
+      project_id,
+      path,
+      thread_id,
+      now,
+    });
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -867,13 +1025,42 @@ export function cancelQueuedRecoveryJobsForThread({
   for (const row of rows) {
     mirrorAcpJobSession(getAcpJobByOpId(row.op_id));
   }
-  return rows.map((row) => ({
-    ...row,
-    state: "canceled",
-    error: "superseded by a newer user turn",
-    updated_at: now,
-    finished_at: now,
-  }));
+  return rows;
+}
+
+export function enqueueAcpJobCancelingQueuedRecoveries(
+  request: AcpJobRequest,
+  opts: Pick<EnqueueAcpJobOptions, "preferred_worker_id"> = {},
+): { job: AcpJobRow; canceled: AcpJobRow[] } {
+  ensureInit();
+  const db = getAcpDatabase();
+  const { project_id, path, thread_id } = assertChatIdentity(request);
+  const now = Date.now();
+  let canceled: AcpJobRow[] = [];
+  let job: AcpJobRow | undefined;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    canceled = cancelQueuedRecoveryJobsForThreadInDatabase({
+      db,
+      project_id,
+      path,
+      thread_id,
+      now,
+    });
+    job = enqueueAcpJob(request, opts);
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+  if (!job) {
+    throw new Error("failed to enqueue ACP user job");
+  }
+  mirrorAcpJobSession(job);
+  for (const row of canceled) {
+    mirrorAcpJobSession(getAcpJobByOpId(row.op_id));
+  }
+  return { job, canceled };
 }
 
 export function resendCanceledAcpJob({
