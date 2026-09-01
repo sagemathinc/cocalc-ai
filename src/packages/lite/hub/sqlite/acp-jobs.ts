@@ -1181,7 +1181,9 @@ export function resendCanceledAcpJob({
           started_at = NULL,
           finished_at = NULL,
           worker_id = NULL,
-          worker_bundle_version = NULL
+          worker_bundle_version = NULL,
+          recovery_code = NULL,
+          recovery_detail = NULL
       WHERE project_id = ?
         AND path = ?
         AND user_message_id = ?

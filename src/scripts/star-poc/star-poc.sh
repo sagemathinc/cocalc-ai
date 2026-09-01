@@ -445,7 +445,7 @@ previous_release() {
 }
 
 rollback_release() {
-  local release_id="${1:-}" release_dir
+  local release_id="${1:-}" release_dir runtime_id runtime_dir
   if [ -z "$release_id" ]; then
     release_id="$(previous_release || true)"
   fi
@@ -464,17 +464,15 @@ rollback_release() {
     log "Release does not exist or is incomplete: $release_id"
     exit 1
   }
-  if star_activate_release_container_runtime "$release_dir"; then
+  if runtime_id="$(star_release_container_runtime_id "$release_dir")"; then
+    runtime_dir="${STAR_CONTAINER_RUNTIME_ROOT}/${runtime_id}"
+    sudo systemctl stop cocalc-star-project-host.service
+    star_prepare_container_runtime_activation "$runtime_dir" "$STAR_USER"
+    star_activate_container_runtime "$runtime_dir"
     log "activated managed container runtime for release ${release_id}"
     star_configure_container_runtime_env
   else
-    local runtime_status=$?
-    if [ "$runtime_status" = "2" ]; then
-      log "release ${release_id} predates managed runtime metadata; retaining the current managed runtime"
-    else
-      log "managed container runtime for release ${release_id} is unavailable or invalid"
-      exit 1
-    fi
+    log "release ${release_id} predates managed runtime metadata; retaining the current managed runtime"
   fi
   replace_symlink "$release_dir/source" "$STAR_SOURCE_LINK"
   replace_symlink "$release_dir" "${STAR_INSTALL_ROOT}/current"

@@ -1194,6 +1194,8 @@ describe("acp job queue ordering", () => {
       op_id: queued.op_id,
       state: "error",
       error: "Codex authentication expired.",
+      recovery_code: "codex_app_server_exited",
+      recovery_detail: "exit code 137",
     });
     const failed = getAcpJob({
       project_id: queued.project_id,
@@ -1208,6 +1210,11 @@ describe("acp job queue ordering", () => {
       user_message_id: queued.user_message_id,
     });
     expect(resent?.state).toBe("queued");
+    expect(resent).toMatchObject({
+      recovery_code: null,
+      recovery_detail: null,
+    });
+    expect(listAcpJobsWithRecoveryIntent()).toEqual([]);
 
     const claimed = claimNextQueuedAcpJobForThread({
       project_id: queued.project_id,
@@ -1215,5 +1222,11 @@ describe("acp job queue ordering", () => {
       thread_id: queued.thread_id,
     });
     expect(claimed?.op_id).toBe(queued.op_id);
+    setAcpJobState({
+      op_id: queued.op_id,
+      state: "error",
+      error: "The manual retry failed without a recoverable condition.",
+    });
+    expect(listAcpJobsWithRecoveryIntent()).toEqual([]);
   });
 });

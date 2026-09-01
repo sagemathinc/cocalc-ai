@@ -126,4 +126,12 @@ activate_line="$(grep -n 'star_activate_container_runtime' "$install_script" | c
 [ "$stop_line" -lt "$prepare_line" ]
 [ "$prepare_line" -lt "$activate_line" ]
 
+rollback_script="${SCRIPT_DIR}/../star-poc/star-poc.sh"
+rollback_body="$(sed -n '/^rollback_release()/,/^}/p' "$rollback_script")"
+rollback_stop_line="$(grep -n 'systemctl stop cocalc-star-project-host.service' <<<"$rollback_body" | cut -d: -f1)"
+rollback_prepare_line="$(grep -n 'star_prepare_container_runtime_activation' <<<"$rollback_body" | cut -d: -f1)"
+rollback_activate_line="$(grep -n 'star_activate_container_runtime' <<<"$rollback_body" | cut -d: -f1)"
+[ "$rollback_stop_line" -lt "$rollback_prepare_line" ]
+[ "$rollback_prepare_line" -lt "$rollback_activate_line" ]
+
 printf 'managed container-runtime tests: ok\n'
