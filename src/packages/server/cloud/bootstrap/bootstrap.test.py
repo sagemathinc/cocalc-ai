@@ -3506,6 +3506,34 @@ reserve_project_startup_io_capacity
             )
             self.assertIn("configure_project_pool_hierarchy", script)
             self.assertIn('> "$cgroup/memory.max"', script)
+            self.assertIn("configure_default_project_pool_memory_limit()", script)
+            require_pool_memory_body = script.split(
+                "require_finite_project_pool_memory_max() {", 1
+            )[1].split("\n}", 1)[0]
+            self.assertIn(
+                "configure_default_project_pool_memory_limit",
+                require_pool_memory_body,
+            )
+            self.assertIn(
+                "PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MIN_MB="
+                f'"{bootstrap.DYNAMIC_PROJECT_POOL_MEMORY_RESERVE_MIN_MB}"',
+                script,
+            )
+            self.assertIn(
+                "PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MAX_MB="
+                f'"{bootstrap.DYNAMIC_PROJECT_POOL_MEMORY_RESERVE_MAX_MB}"',
+                script,
+            )
+            reconcile_pool_memory_body = script.split(
+                "  reconcile-project-pool-memory)", 1
+            )[1].split("    ;;", 1)[0]
+            self.assertIn(
+                "configure_project_pool_hierarchy", reconcile_pool_memory_body
+            )
+            self.assertIn(
+                "require_finite_project_pool_memory_max",
+                reconcile_pool_memory_body,
+            )
             self.assertIn("effective_project_memory_max()", script)
             self.assertIn(
                 'PROJECT_LEAF_POOL_HEADROOM_BYTES="$((2 * 1024 * 1024 * 1024))"',

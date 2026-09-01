@@ -1002,6 +1002,7 @@ WorkingDirectory=${project_host_workdir}
 EnvironmentFile=${STAR_PROJECT_HOST_ENV}
 Environment=COCALC_PROJECT_HOST_AGENT=1
 Environment=COCALC_PROJECT_HOST_AGENT_INDEX=0
+ExecStartPre=/usr/bin/sudo -n /usr/local/sbin/cocalc-runtime-storage reconcile-project-pool-memory
 ExecStart=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && ${project_host_exec}'
 ExecStop=/bin/bash -lc 'source "\$HOME/.nvm/nvm.sh" && nvm use 26 >/dev/null && ${project_host_stop}'
 Restart=always
@@ -1114,6 +1115,7 @@ start_services() {
     fi
     sleep 2
   done
+  wait_for_project_host_registration
   sync
   systemctl --no-pager --full status cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host || true
   local bootstrap_url=""
@@ -1130,6 +1132,37 @@ start_services() {
   fi
   star_web_onboarding_write_status "ready" "CoCalc Star is running. Create the first admin account to finish setup." "$bootstrap_url" "$invite_url"
   cat "$STAR_ROOT/bootstrap-result.json"
+}
+
+wait_for_project_host_registration() {
+  local registered
+  set -a
+  # shellcheck disable=SC1091
+  source /etc/cocalc/star/hub.env
+  set +a
+  log "waiting for project host registration"
+  for _ in $(seq 1 90); do
+    registered="$(
+      psql -X -Atq -v ON_ERROR_STOP=1 -v host_id="$STAR_HOST_ID" <<'SQL' 2>/dev/null || true
+SELECT 1
+  FROM project_hosts
+ WHERE id = :'host_id'::uuid
+   AND bay_id = 'bay-0'
+   AND status IN ('running', 'active')
+   AND last_seen > NOW() - INTERVAL '90 seconds'
+   AND COALESCE(
+         metadata #>> '{runtime_synthetic_probe,quarantined}',
+         'false'
+       ) <> 'true'
+ LIMIT 1;
+SQL
+    )"
+    if [ "$registered" = "1" ]; then
+      return
+    fi
+    sleep 2
+  done
+  die "project host did not register as available within 180 seconds"
 }
 
 start_rest_server_for_rootfs_publish() {

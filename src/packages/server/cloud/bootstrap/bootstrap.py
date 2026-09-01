@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260901-v46"
+HELPER_SCHEMA_VERSION = "20260901-v47"
 RUNTIME_WRAPPER_VERSION = "20260825-v16"
 BOOTSTRAP_LIFECYCLE_EXPORT_DIR = Path("/var/lib/cocalc/bootstrap-lifecycle")
 NVM_VERSION = "0.40.4"
@@ -4749,6 +4749,9 @@ CONTAINER_RUNTIME_CURRENT="/opt/cocalc/container-runtime/current"
 CONTAINER_RUNTIME_REQUIRED="__CONTAINER_RUNTIME_REQUIRED__"
 PROJECT_LEAF_POOL_HEADROOM_BYTES="$((2 * 1024 * 1024 * 1024))"
 MIN_PROJECT_LEAF_MEMORY_MAX_BYTES="$((512 * 1024 * 1024))"
+PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MIN_MB="__PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MIN_MB__"
+PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MAX_MB="__PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MAX_MB__"
+MIN_PROJECT_POOL_MEMORY_MB="__MIN_PROJECT_POOL_MEMORY_MB__"
 PROJECT_PASTA_NOFILE_LIMIT="4096"
 PROJECT_TCP_NEW_RATE="50"
 PROJECT_TCP_NEW_BURST="200"
@@ -5633,8 +5636,52 @@ project_pool_hierarchy_ready() {
   return 0
 }
 
+configure_default_project_pool_memory_limit() {
+  local memory_max parent_max total_kib total_bytes total_mb reserve_mb
+  local reserve_bytes min_pool_bytes pool_bytes high_bytes
+  memory_max="$(cat "${PROJECT_POOL_CGROUP_DEFAULT}/memory.max" 2>/dev/null || true)"
+  if echo "$memory_max" | grep -Eq '^[0-9]+$' && [ "$memory_max" -gt 0 ]; then
+    return
+  fi
+
+  total_kib="$(awk '/MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+  echo "$total_kib" | grep -Eq '^[0-9]+$' ||
+    deny "project-pool-memory-total-unavailable" "${total_kib:-missing}"
+  total_bytes="$((total_kib * 1024))"
+  parent_max="$(cat /sys/fs/cgroup/memory.max 2>/dev/null || true)"
+  if echo "$parent_max" | grep -Eq '^[0-9]+$' &&
+     [ "$parent_max" -gt 0 ] && [ "$parent_max" -lt "$total_bytes" ]; then
+    total_bytes="$parent_max"
+  fi
+  total_mb="$((total_bytes / 1024 / 1024))"
+  reserve_mb="$((total_mb / 8))"
+  if [ "$reserve_mb" -lt "$PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MIN_MB" ]; then
+    reserve_mb="$PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MIN_MB"
+  elif [ "$reserve_mb" -gt "$PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MAX_MB" ]; then
+    reserve_mb="$PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MAX_MB"
+  fi
+  if [ "$((total_mb - reserve_mb))" -lt "$MIN_PROJECT_POOL_MEMORY_MB" ]; then
+    reserve_mb="$((total_mb - MIN_PROJECT_POOL_MEMORY_MB))"
+    [ "$reserve_mb" -ge 0 ] || reserve_mb=0
+  fi
+  reserve_bytes="$((reserve_mb * 1024 * 1024))"
+  min_pool_bytes="$((MIN_PROJECT_POOL_MEMORY_MB * 1024 * 1024))"
+  pool_bytes="$((total_bytes - reserve_bytes))"
+  if [ "$pool_bytes" -lt "$min_pool_bytes" ]; then
+    pool_bytes="$total_bytes"
+  fi
+  [ "$pool_bytes" -gt 0 ] ||
+    deny "project-pool-memory-total-unavailable" "total_bytes=${total_bytes}"
+  high_bytes="$((pool_bytes * 95 / 100))"
+  printf '%s\n' "$pool_bytes" > "${PROJECT_POOL_CGROUP_DEFAULT}/memory.max"
+  if [ -w "${PROJECT_POOL_CGROUP_DEFAULT}/memory.high" ]; then
+    printf '%s\n' "$high_bytes" > "${PROJECT_POOL_CGROUP_DEFAULT}/memory.high"
+  fi
+}
+
 require_finite_project_pool_memory_max() {
   local memory_max
+  configure_default_project_pool_memory_limit
   memory_max="$(cat "${PROJECT_POOL_CGROUP_DEFAULT}/memory.max" 2>/dev/null || true)"
   if ! echo "$memory_max" | grep -Eq '^[0-9]+$' || [ "$memory_max" -le 0 ]; then
     deny "project-pool-memory-max-unbounded" "${memory_max:-missing}"
@@ -7271,6 +7318,16 @@ PY
     fi
     clear_current_exam_run "$1"
     ;;
+  reconcile-project-pool-memory)
+    if [ "$#" -ne 0 ]; then
+      echo "usage: cocalc-runtime-storage reconcile-project-pool-memory" >&2
+      exit 2
+    fi
+    acquire_project_cgroup_lock
+    configure_project_pool_hierarchy
+    require_finite_project_pool_memory_max
+    release_project_lock
+    ;;
   poweroff-exam-host)
     if [ "$#" -ne 1 ]; then
       echo "usage: cocalc-runtime-storage poweroff-exam-host <run-id>" >&2
@@ -8662,6 +8719,18 @@ esac
     storage_wrapper = storage_wrapper.replace(
         "__CONTAINER_RUNTIME_REQUIRED__",
         "1" if cfg.container_runtime_bundle is not None else "0",
+    )
+    storage_wrapper = storage_wrapper.replace(
+        "__PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MIN_MB__",
+        str(DYNAMIC_PROJECT_POOL_MEMORY_RESERVE_MIN_MB),
+    )
+    storage_wrapper = storage_wrapper.replace(
+        "__PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MAX_MB__",
+        str(DYNAMIC_PROJECT_POOL_MEMORY_RESERVE_MAX_MB),
+    )
+    storage_wrapper = storage_wrapper.replace(
+        "__MIN_PROJECT_POOL_MEMORY_MB__",
+        str(MIN_PROJECT_POOL_MEMORY_MB),
     )
     storage_path_helper = RUNTIME_STORAGE_PATH_HELPER.replace(
         "__ALLOW_LOOPBACK_RUSTIC_REST__",

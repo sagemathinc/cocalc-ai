@@ -202,6 +202,8 @@ doctor() {
   check "shared scratch shared directory exists" test -d /mnt/cocalc-scratch/shared
   check "shared scratch shared directory is writable" as_star_user bash -lc 'test -w /mnt/cocalc-scratch/shared'
   check "runtime storage wrapper is installed" test -x /usr/local/sbin/cocalc-runtime-storage
+  check "project pool has a finite memory limit" bash -lc \
+    'value="$(cat /sys/fs/cgroup/cocalc-project-pool/memory.max 2>/dev/null)"; [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -gt 0 ]'
   check "project-host rootctl wrapper is installed" test -x /usr/local/sbin/cocalc-project-host-rootctl
   check "project bundle exists" test -d "${SRC_ROOT}/packages/project/build"
 
