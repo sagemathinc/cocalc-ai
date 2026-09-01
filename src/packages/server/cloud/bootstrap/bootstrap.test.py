@@ -3423,7 +3423,20 @@ reserve_project_startup_io_capacity
                 script,
             )
             self.assertIn('PROJECT_CGROUP_LOCK_WAIT_SECONDS="5"', script)
+            self.assertIn(
+                'PROJECT_STARTUP_CGROUP_LOCK_WAIT_SECONDS="120"', script
+            )
             self.assertIn("acquire_project_cgroup_shared_lock", script)
+            prepare_startup_body = script.split(
+                "  prepare-project-startup-cgroup)", 1
+            )[1].split("\n    ;;", 1)[0]
+            self.assertIn(
+                "    acquire_project_startup_cgroup_shared_lock\n",
+                prepare_startup_body,
+            )
+            self.assertNotIn(
+                "    acquire_project_cgroup_shared_lock\n", prepare_startup_body
+            )
             self.assertIn("project_pool_hierarchy_ready", script)
             self.assertIn('PROJECT_NETWORK_RECONCILE_ATTEMPTS="3"', script)
             self.assertIn(

@@ -4767,6 +4767,10 @@ PROJECT_NETWORK_NFT="/usr/sbin/nft"
 PROJECT_NETWORK_TABLE="cocalc_project_network"
 PROJECT_NETWORK_CHAIN="output"
 PROJECT_CGROUP_LOCK_WAIT_SECONDS="5"
+# A recovered host can legitimately hold the global cgroup lock while its
+# project I/O policy is reconciled. Foreground starts should wait for that
+# bounded maintenance pass instead of failing after the short mutation timeout.
+PROJECT_STARTUP_CGROUP_LOCK_WAIT_SECONDS="120"
 PROJECT_IO_RESERVATION_LOCK="/run/lock/cocalc-project-io-reservation.lock"
 PROJECT_IO_NORMAL_LIMITS_SNAPSHOT="/run/cocalc-project-pool-normal-io.max"
 PROJECT_IO_PRESSURE_MODE_STATE="/run/cocalc-project-pool-pressure-mode"
@@ -4921,6 +4925,13 @@ acquire_project_cgroup_shared_lock() {
   exec 9>/run/lock/cocalc-project-cgroups.lock
   if ! flock -s -w "$PROJECT_CGROUP_LOCK_WAIT_SECONDS" 9; then
     deny "project-cgroup-lock-timeout" "$PROJECT_CGROUP_LOCK_WAIT_SECONDS"
+  fi
+}
+
+acquire_project_startup_cgroup_shared_lock() {
+  exec 9>/run/lock/cocalc-project-cgroups.lock
+  if ! flock -s -w "$PROJECT_STARTUP_CGROUP_LOCK_WAIT_SECONDS" 9; then
+    deny "project-cgroup-lock-timeout" "$PROJECT_STARTUP_CGROUP_LOCK_WAIT_SECONDS"
   fi
 }
 
@@ -6812,7 +6823,7 @@ case "$cmd" in
     project_id="$1"
     launcher_pid="$2"
     require_runtime_owned_pid "$launcher_pid"
-    acquire_project_cgroup_shared_lock
+    acquire_project_startup_cgroup_shared_lock
     if ! project_startup_cgroup_ready; then
       release_project_lock
       acquire_project_cgroup_lock
