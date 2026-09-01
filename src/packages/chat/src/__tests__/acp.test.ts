@@ -673,6 +673,31 @@ describe("response text helpers", () => {
     ]);
   });
 
+  test("preserves completed agent-message paragraphs during interruption recovery", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "First", 1, { delta: true }),
+      textEvent("message", " update.", 2, { delta: true }),
+      { type: "status", state: "running", seq: 3 } as any,
+      {
+        type: "event",
+        seq: 4,
+        event: {
+          type: "terminal",
+          terminalId: "build",
+          phase: "exit",
+          exitStatus: { exitCode: 0 },
+        },
+      } as any,
+      textEvent("message", "Second", 5, { delta: true }),
+      textEvent("message", " update.", 6, { delta: true }),
+      { type: "status", state: "running", seq: 7 } as any,
+    ];
+
+    expect(getInterruptedResponseMarkdown(events, "Turn interrupted.")).toBe(
+      "First update.\n\nSecond update.\n\nTurn interrupted.",
+    );
+  });
+
   test("appends generated blob images to live and final response markdown", () => {
     const events: AcpStreamMessage[] = [
       textEvent("message", "Here is the generated image.", 1),

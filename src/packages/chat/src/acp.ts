@@ -1092,8 +1092,15 @@ export function getInterruptedResponseMarkdown(
   events: AcpStreamMessage[],
   interruptedText?: string,
 ): string | undefined {
+  const recoveredAgentText = getLiveResponseBlocks(events)
+    .filter(({ kind }) => kind === "agent")
+    .map(({ text }) => text)
+    .join("\n\n");
   const base =
-    getLiveResponseMarkdown(events) ?? getBestResponseText(events) ?? "";
+    appendGeneratedImageMarkdown(recoveredAgentText, events) ??
+    getLiveResponseMarkdown(events) ??
+    getBestResponseText(events) ??
+    "";
   const content = `${base}`.trim();
   const suffix = `${interruptedText ?? "Conversation interrupted."}`.trim();
   if (!content) return suffix || undefined;
