@@ -680,6 +680,61 @@ describe("GcpProvider", () => {
     );
   });
 
+  it("updates the Windows boot script used to restore SSH keys", async () => {
+    getMock.mockResolvedValueOnce([
+      {
+        metadata: {
+          fingerprint: "fingerprint-1",
+          items: [
+            {
+              key: "windows-startup-script-ps1",
+              value: "old Windows script",
+            },
+            { key: "custom", value: "preserved" },
+          ],
+        },
+      },
+    ]);
+    setMetadataMock.mockResolvedValueOnce([
+      { latestResponse: { name: "metadata-op", status: "DONE" } },
+    ]);
+    waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
+
+    const provider = new GcpProvider();
+    await provider.ensureStartupScript(
+      {
+        provider: "gcp",
+        instance_id: "compute-vm",
+        zone: "us-central1-a",
+        ssh_user: "user",
+        metadata: {
+          startup_script: "new Windows script",
+          startup_script_metadata_key: "windows-startup-script-ps1",
+        },
+      },
+      {
+        project_id: "compute-prod",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+    );
+
+    expect(setMetadataMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadataResource: {
+          fingerprint: "fingerprint-1",
+          items: [
+            { key: "custom", value: "preserved" },
+            {
+              key: "windows-startup-script-ps1",
+              value: "new Windows script",
+            },
+          ],
+        },
+      }),
+    );
+  });
+
   it("recovers a created host when insert times out after GCP accepts it", async () => {
     insertMock.mockRejectedValueOnce(
       Object.assign(new Error("read ETIMEDOUT"), { code: "ETIMEDOUT" }),

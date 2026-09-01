@@ -1566,13 +1566,36 @@ export async function ensureProviderComputeSshAccess(vm: ComputeVmRow) {
   const { creds } = await context(vm.provider, vm.region);
   const controller = await getHostOwnerBaySshIdentity();
   if ((vm.operating_system ?? "linux") === "windows") {
+    if (vm.provider !== "gcp") {
+      throw new Error("managed Windows compute currently requires GCP");
+    }
+    const providerVm: ComputeVmRow = {
+      ...vm,
+      metadata: {
+        ...vm.metadata,
+        ssh_public_keys: Array.from(
+          new Set([
+            ...(vm.metadata?.ssh_public_keys ?? []),
+            ...(vm.metadata?.project_ssh_public_keys ?? []),
+            controller.publicKey,
+          ]),
+        ),
+      },
+    };
+    const runtime = runtimeFor(providerVm);
+    runtime.metadata = {
+      ...(runtime.metadata ?? {}),
+      startup_script: managedWindowsVmBootstrapScript(providerVm),
+      startup_script_metadata_key: "windows-startup-script-ps1",
+    };
+    // Persist the same key set that is applied below. Otherwise the next boot
+    // would run stale instance metadata and overwrite authorized_keys.
+    await gcpProvider.ensureStartupScript(runtime, creds);
     await runProviderComputeWindowsPowerShell(
-      vm,
+      providerVm,
       managedWindowsSshKeysScript([
-        vm.ssh_public_key,
-        ...(vm.metadata?.ssh_public_keys ?? []),
-        ...(vm.metadata?.project_ssh_public_keys ?? []),
-        controller.publicKey,
+        providerVm.ssh_public_key,
+        ...(providerVm.metadata?.ssh_public_keys ?? []),
       ]),
       controller,
     );

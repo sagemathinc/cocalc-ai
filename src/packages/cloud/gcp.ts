@@ -986,6 +986,22 @@ export class GcpProvider implements CloudProvider {
     await ensureStartupScriptMetadata(runtime, credentials, client);
   }
 
+  async ensureStartupScript(runtime: HostRuntime, creds: any): Promise<void> {
+    logger.info("gcp.ensureStartupScript", {
+      instance_id: runtime.instance_id,
+      zone: runtime.zone,
+    });
+    const credentials = parseCredentials(creds ?? {});
+    if (!runtime.zone) {
+      throw new Error("gcp.ensureStartupScript requires zone");
+    }
+    await ensureStartupScriptMetadata(
+      runtime,
+      credentials,
+      new InstancesClient(credentials),
+    );
+  }
+
   async ensurePublicIngress(
     runtime: HostRuntime,
     spec: PublicIngressSpec,
@@ -2357,6 +2373,17 @@ async function ensureStartupScriptMetadata(
 ): Promise<void> {
   const startupScript = `${runtime.metadata?.startup_script ?? ""}`;
   if (!startupScript) return;
+  const metadataKey = `${
+    runtime.metadata?.startup_script_metadata_key ?? "startup-script"
+  }`;
+  if (
+    metadataKey !== "startup-script" &&
+    metadataKey !== "windows-startup-script-ps1"
+  ) {
+    throw new Error(
+      `gcp: invalid startup script metadata key '${metadataKey}'`,
+    );
+  }
   const zone = runtime.zone;
   if (!zone) return;
   const maxAttempts = 3;
@@ -2370,10 +2397,10 @@ async function ensureStartupScriptMetadata(
       const fingerprint = instance?.metadata?.fingerprint;
       if (!fingerprint) return;
       const items = instance?.metadata?.items ?? [];
-      const current = items.find((item) => item.key === "startup-script");
+      const current = items.find((item) => item.key === metadataKey);
       if ((current?.value ?? "") === startupScript) return;
-      const nextItems = items.filter((item) => item.key !== "startup-script");
-      nextItems.push({ key: "startup-script", value: startupScript });
+      const nextItems = items.filter((item) => item.key !== metadataKey);
+      nextItems.push({ key: metadataKey, value: startupScript });
       const [response] = await client.setMetadata({
         project: credentials.projectId,
         zone,
