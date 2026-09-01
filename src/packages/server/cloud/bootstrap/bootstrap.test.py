@@ -358,6 +358,72 @@ password-command = "id"
                     profile_run_dir_uid=os.getuid(),
                 )
 
+    def test_rustic_allows_loopback_rest_only_when_enabled(self) -> None:
+        run_rustic = self.helper_namespace()["run_rustic"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "source").mkdir()
+            profile = root / "profile.toml"
+            profile.write_text(
+                """[repository]
+repository = "rest:http://user:secret@127.0.0.1:9345/rootfs-images"
+password = "audit-password"
+""",
+                encoding="utf-8",
+            )
+            fake_rustic = root / "rustic"
+            fake_rustic.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake_rustic.chmod(0o755)
+            args = [
+                "rustic-rootfs-backup",
+                "--root",
+                str(root),
+                "--path",
+                "source",
+                "--profile-root",
+                str(root),
+                "--profile-path",
+                "profile.toml",
+                "--host",
+                "rootfs-test",
+            ]
+
+            with self.assertRaisesRegex(
+                ValueError, "managed opendal:s3 backend"
+            ):
+                run_rustic(
+                    args,
+                    allowed_roots={str(root)},
+                    rustic_candidates=[str(fake_rustic)],
+                    profile_run_dir=str(root / "run-denied"),
+                    profile_run_dir_uid=os.getuid(),
+                )
+
+            run_rustic(
+                args,
+                allowed_roots={str(root)},
+                rustic_candidates=[str(fake_rustic)],
+                profile_run_dir=str(root / "run-allowed"),
+                profile_run_dir_uid=os.getuid(),
+                allow_loopback_rest=True,
+            )
+
+            profile.write_text(
+                profile.read_text(encoding="utf-8").replace(
+                    "127.0.0.1", "169.254.169.254"
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "local loopback HTTP"):
+                run_rustic(
+                    args,
+                    allowed_roots={str(root)},
+                    rustic_candidates=[str(fake_rustic)],
+                    profile_run_dir=str(root / "run-non-loopback"),
+                    profile_run_dir_uid=os.getuid(),
+                    allow_loopback_rest=True,
+                )
+
     def test_rustic_uses_anchored_validated_profile_snapshot(self) -> None:
         run_rustic = self.helper_namespace()["run_rustic"]
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -605,6 +671,20 @@ class ProjectHostStartTest(unittest.TestCase):
 
 
 class ProjectIoConfigurationTest(unittest.TestCase):
+    def test_standalone_wrapper_configuration_disables_io_enforcement(self) -> None:
+        cfg = bootstrap.standalone_privileged_wrapper_config("star-user")
+
+        self.assertEqual(cfg.ssh_user, "star-user")
+        self.assertIsNone(cfg.container_runtime_bundle)
+        self.assertEqual(cfg.project_io_capacity["provider"], "standalone")
+        self.assertEqual(cfg.project_io_policy["mode"], "disabled")
+        self.assertEqual(cfg.project_io_policy["profile"], "unconfigured")
+        self.assertTrue(cfg.allow_loopback_rustic_rest)
+
+    def test_standalone_wrapper_configuration_requires_runtime_user(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "must not be empty"):
+            bootstrap.standalone_privileged_wrapper_config("  ")
+
     def test_derives_managed_policy_from_existing_capacity_metadata(self) -> None:
         policy = bootstrap.build_project_io_policy(
             {
@@ -931,6 +1011,32 @@ class BootstrapBundleManifestResolutionTest(unittest.TestCase):
             bootstrap.install_privileged_tool_binaries(
                 cfg,
                 bundle,
+                destinations=destinations,
+                destination_uid=os.getuid(),
+                destination_gid=os.getgid(),
+            )
+
+            for destination in destinations.values():
+                self.assertEqual(destination.read_bytes(), payload)
+                self.assertEqual(destination.stat().st_mode & 0o777, 0o755)
+
+    def test_installs_privileged_tools_from_trusted_local_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            remote = Path(tmpdir) / "tools.tar.xz"
+            payload = b"#!/usr/bin/env bash\nexit 0\n"
+            with tarfile.open(remote, mode="w:xz") as archive:
+                for name in ("bin/bees", "bin/rustic"):
+                    member = tarfile.TarInfo(name)
+                    member.mode = 0o755
+                    member.size = len(payload)
+                    archive.addfile(member, io.BytesIO(payload))
+            destinations = {
+                "bin/bees": Path(tmpdir) / "trusted" / "bees",
+                "bin/rustic": Path(tmpdir) / "trusted" / "rustic",
+            }
+
+            bootstrap.install_privileged_tool_binaries_from_archive(
+                remote,
                 destinations=destinations,
                 destination_uid=os.getuid(),
                 destination_gid=os.getgid(),
@@ -2688,6 +2794,39 @@ class ProjectIoPolicyHelperTest(unittest.TestCase):
 
 
 class BootstrapWrapperScriptTest(unittest.TestCase):
+    def test_standalone_wrapper_uses_explicit_runtime_user(self) -> None:
+        cfg = bootstrap.standalone_privileged_wrapper_config("star-user")
+        captured: dict[str, str] = {}
+
+        def capture_write(path, data, **_kwargs):
+            captured[str(path)] = data
+            return len(data)
+
+        with (
+            mock.patch.object(
+                bootstrap, "text_write_atomic", side_effect=capture_write
+            ),
+            mock.patch.object(bootstrap.os, "chmod"),
+            mock.patch.object(bootstrap.os, "chown"),
+        ):
+            bootstrap.install_privileged_wrappers(cfg)
+
+        script = captured["/usr/local/sbin/cocalc-runtime-storage"]
+        path_helper = captured[
+            "/usr/local/libexec/cocalc-runtime-storage-path-helper"
+        ]
+        self.assertIn('RUNTIME_USER="star-user"', script)
+        self.assertIn('CONTAINER_RUNTIME_REQUIRED="0"', script)
+        self.assertNotIn("__RUNTIME_USER__", script)
+        self.assertIn('ALLOW_LOOPBACK_RUSTIC_REST = "1" == "1"', path_helper)
+        self.assertNotIn("__ALLOW_LOOPBACK_RUSTIC_REST__", path_helper)
+        self.assertEqual(
+            json.loads(captured["/etc/cocalc/project-io-policy.json"])[
+                "mode"
+            ],
+            "disabled",
+        )
+
     def test_storage_wrapper_uses_xattr_overlay_mounts_and_project_rustic_commands(
         self,
     ) -> None:
@@ -2907,6 +3046,14 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn('> "$pool/io.weight"', finish_startup_body)
             self.assertIn("project-cgroup-io-weight-mismatch", finish_startup_body)
             self.assertIn("project_pid_is_in_pool", finish_startup_body)
+            self.assertIn(
+                "Podman 4 may move conmon and init",
+                finish_startup_body,
+            )
+            self.assertNotIn(
+                'elif ! project_pid_is_in_pool "$project_id" "$init_pid"',
+                finish_startup_body,
+            )
             self.assertIn('require_runtime_owned_pid "$conmon_pid"', script)
             self.assertIn("is_trusted_conmon_executable()", script)
             self.assertIn(
@@ -3367,6 +3514,34 @@ reserve_project_startup_io_capacity
             )
             self.assertIn("configure_project_pool_hierarchy", script)
             self.assertIn('> "$cgroup/memory.max"', script)
+            self.assertIn("configure_default_project_pool_memory_limit()", script)
+            require_pool_memory_body = script.split(
+                "require_finite_project_pool_memory_max() {", 1
+            )[1].split("\n}", 1)[0]
+            self.assertIn(
+                "configure_default_project_pool_memory_limit",
+                require_pool_memory_body,
+            )
+            self.assertIn(
+                "PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MIN_MB="
+                f'"{bootstrap.DYNAMIC_PROJECT_POOL_MEMORY_RESERVE_MIN_MB}"',
+                script,
+            )
+            self.assertIn(
+                "PROJECT_POOL_MEMORY_RESERVE_DYNAMIC_MAX_MB="
+                f'"{bootstrap.DYNAMIC_PROJECT_POOL_MEMORY_RESERVE_MAX_MB}"',
+                script,
+            )
+            reconcile_pool_memory_body = script.split(
+                "  reconcile-project-pool-memory)", 1
+            )[1].split("    ;;", 1)[0]
+            self.assertIn(
+                "configure_project_pool_hierarchy", reconcile_pool_memory_body
+            )
+            self.assertIn(
+                "require_finite_project_pool_memory_max",
+                reconcile_pool_memory_body,
+            )
             self.assertIn("effective_project_memory_max()", script)
             self.assertIn(
                 'PROJECT_LEAF_POOL_HEADROOM_BYTES="$((2 * 1024 * 1024 * 1024))"',
@@ -5796,6 +5971,41 @@ Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
                 bootstrap.effective_apt_packages(cfg),
                 ["curl", "libatomic1"],
             )
+
+
+class StarInstallScriptTest(unittest.TestCase):
+    @staticmethod
+    def script(name: str) -> str:
+        src_root = Path(__file__).resolve().parents[4]
+        return (src_root / "scripts" / name).read_text(encoding="utf-8")
+
+    def test_privileged_tools_are_snapshotted_before_install(self) -> None:
+        script = self.script("star/install-from-tarball.sh")
+        snapshot_body = script.split("snapshot_mutable_state() {", 1)[1].split(
+            "\n}", 1
+        )[0]
+        self.assertIn("snapshot_path /usr/local/libexec/cocalc-bees", snapshot_body)
+        self.assertIn("snapshot_path /usr/local/libexec/cocalc-rustic", snapshot_body)
+        self.assertLess(
+            script.index("\nsnapshot_mutable_state\n"),
+            script.index('install_privileged_runtime_tools "$tmp_release/source/src"'),
+        )
+
+    def test_privileged_tools_are_restored_after_failed_install(self) -> None:
+        script = self.script("star/install-from-tarball.sh")
+        restore_body = script.split("restore_mutable_state() {", 1)[1].split(
+            "\n}", 1
+        )[0]
+        self.assertIn("restore_path /usr/local/libexec/cocalc-bees", restore_body)
+        self.assertIn("restore_path /usr/local/libexec/cocalc-rustic", restore_body)
+
+    def test_registration_requires_a_post_restart_heartbeat(self) -> None:
+        script = self.script("star-poc/bootstrap-star-poc.sh")
+        self.assertLess(
+            script.index('project_host_restart_at="$(date -u'),
+            script.index("systemctl restart cocalc-star-project-host"),
+        )
+        self.assertIn("last_seen >= :'restart_at'::timestamptz", script)
 
 
 if __name__ == "__main__":

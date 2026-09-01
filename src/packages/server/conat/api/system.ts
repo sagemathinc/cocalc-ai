@@ -148,6 +148,8 @@ import type {
   UxLatencySummary,
   VisitorLocationHeaderTestResult,
   ActiveUserMapOverview,
+  ActiveUserMapDetails,
+  ActiveUserMapDetailsQuery,
   ActiveUserMapQuery,
   BrowserSessionLocation,
 } from "@cocalc/conat/hub/api/system";
@@ -246,6 +248,7 @@ import {
 } from "./browser-sessions";
 import { getLiveBrowserSessionInfo } from "./browser-sessions-live";
 import {
+  getActiveUserMapDetailsAcrossBays,
   getActiveUserMapOverviewAcrossBays,
   recordAccountPresenceLocation,
 } from "@cocalc/server/account-presence-locations";
@@ -6763,6 +6766,17 @@ export async function getActiveUserMap({
     account_id,
     active_minutes,
     group_by,
+  });
+}
+
+export async function getActiveUserMapDetails({
+  account_id,
+  ...query
+}: ActiveUserMapDetailsQuery): Promise<ActiveUserMapDetails> {
+  await assertAdmin(account_id);
+  return await getActiveUserMapDetailsAcrossBays({
+    account_id,
+    ...query,
   });
 }
 

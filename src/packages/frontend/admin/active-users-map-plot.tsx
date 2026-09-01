@@ -10,6 +10,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { ACTIVE_USERS_MAP_COUNTRY_LABELS } from "./active-users-map-country-labels";
 import {
   ACTIVE_USERS_MAP_ASSET_URL,
+  ACTIVE_USERS_MAP_REGION_ASSET_URL,
   projectActiveUserMapPosition,
 } from "./active-users-map-geometry";
 import {
@@ -98,7 +99,7 @@ export function ActiveUsersMapPlot({
   onSelect: (countryCode: string) => void;
 }) {
   const { reset, transform, viewportRef, zoomBy } = useActiveUsersMapZoom();
-  const mapTransform = `translate(${transform.x}px, ${transform.y}px) scale(${transform.k})`;
+  const showRegions = transform.k > 2;
 
   return (
     <div
@@ -116,20 +117,13 @@ export function ActiveUsersMapPlot({
         width: "100%",
       }}
     >
-      <img
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        src={ACTIVE_USERS_MAP_ASSET_URL}
-        style={{
-          height: "100%",
-          inset: 0,
-          position: "absolute",
-          transform: mapTransform,
-          transformOrigin: "0 0",
-          width: "100%",
-        }}
-      />
+      <MapLayerImage src={ACTIVE_USERS_MAP_ASSET_URL} transform={transform} />
+      {showRegions && (
+        <MapLayerImage
+          src={ACTIVE_USERS_MAP_REGION_ASSET_URL}
+          transform={transform}
+        />
+      )}
       {countries.map((country) => {
         const size = bubbleSize(country.count);
         const groupId = country.group_id ?? country.country_code;
@@ -222,5 +216,30 @@ export function ActiveUsersMapPlot({
         Scroll to zoom · Drag to pan
       </Text>
     </div>
+  );
+}
+
+function MapLayerImage({
+  src,
+  transform,
+}: {
+  src: string;
+  transform: ActiveUsersMapViewportTransform;
+}) {
+  return (
+    <img
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+      src={src}
+      style={{
+        height: `${transform.k * 100}%`,
+        left: transform.x,
+        pointerEvents: "none",
+        position: "absolute",
+        top: transform.y,
+        width: `${transform.k * 100}%`,
+      }}
+    />
   );
 }

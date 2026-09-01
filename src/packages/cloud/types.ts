@@ -140,6 +140,7 @@ export interface CloudProvider {
   ): Promise<boolean>;
   restartHost?(runtime: HostRuntime, creds: any): Promise<void>;
   hardRestartHost?(runtime: HostRuntime, creds: any): Promise<void>;
+  ensureStartupScript?(runtime: HostRuntime, creds: any): Promise<void>;
   ensureSshAccess?(runtime: HostRuntime, creds: any): Promise<void>;
   ensurePublicIngress?(
     runtime: HostRuntime,

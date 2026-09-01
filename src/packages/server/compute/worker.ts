@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import net from "node:net";
 import { promisify } from "node:util";
@@ -1715,6 +1715,7 @@ function normalizedProjectAccessKeys(
 export function managedVmProjectAccessNeedsSync(
   vm: Pick<ComputeVmRow, "metadata">,
   access: ComputeVmProjectAccessRow[],
+  opts: { require_provider_persistence?: boolean } = {},
 ): boolean {
   const desiredKeys = normalizedProjectAccessKeys(access);
   const recordedKeys = Array.from(
@@ -1724,12 +1725,29 @@ export function managedVmProjectAccessNeedsSync(
         .filter(Boolean),
     ),
   ).sort();
+  const providerFingerprint = `${
+    vm.metadata?.project_ssh_provider_key_fingerprint ?? ""
+  }`.trim();
+  const expectedProviderFingerprint =
+    managedVmProjectAccessKeyFingerprint(access);
+  const hasProjectAccessHistory = access.length > 0 || recordedKeys.length > 0;
   return (
     desiredKeys.join("\n") !== recordedKeys.join("\n") ||
+    ((opts.require_provider_persistence ?? true) &&
+      hasProjectAccessHistory &&
+      providerFingerprint !== expectedProviderFingerprint) ||
     access.some(({ revoked_at, state }) =>
       revoked_at ? state !== "revoked" : state !== "ready",
     )
   );
+}
+
+export function managedVmProjectAccessKeyFingerprint(
+  access: ComputeVmProjectAccessRow[],
+): string {
+  return createHash("sha256")
+    .update(normalizedProjectAccessKeys(access).join("\n"))
+    .digest("hex");
 }
 
 export function managedVmProjectConfigShouldBeEnabled(
@@ -1757,6 +1775,13 @@ async function syncVmProjectAccess(
     await observeVmPhase(next, "sync_project_ssh_authorized_keys", async () =>
       ensureProviderComputeSshAccess(next),
     );
+    next = (await updateComputeVm(vm.id, {
+      metadata: {
+        ...(next.metadata ?? {}),
+        project_ssh_provider_key_fingerprint:
+          managedVmProjectAccessKeyFingerprint(access),
+      },
+    }))!;
   }
   for (const grant of access) {
     const shouldEnableConfig = managedVmProjectConfigShouldBeEnabled(grant);
@@ -2481,7 +2506,11 @@ async function reconcile(vm: ComputeVmRow) {
       vm_id: vm.id,
       include_revoked: true,
     });
-    if (managedVmProjectAccessNeedsSync(vm, projectAccess)) {
+    if (
+      managedVmProjectAccessNeedsSync(vm, projectAccess, {
+        require_provider_persistence: false,
+      })
+    ) {
       vm = await syncVmProjectAccess(vm, false);
     }
     if (vm.state !== "stopped") {

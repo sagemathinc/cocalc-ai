@@ -26,7 +26,7 @@ import { ManagedEgressHistoryPanel } from "@cocalc/frontend/purchases/managed-eg
 import { AccountStatusTags } from "../account-status-tags";
 import { LegacyMigrationAdmin } from "./legacy-migration";
 
-type More =
+export type AdminUserSection =
   | "projects"
   | "billing"
   | "egress"
@@ -36,6 +36,11 @@ type More =
   | "ban"
   | "membership"
   | "migration";
+
+type UserResultProps = User & {
+  defaultExpanded?: boolean;
+  defaultSection?: AdminUserSection;
+};
 
 export function UserResult({
   display_name,
@@ -52,13 +57,19 @@ export function UserResult({
   membership_class,
   membership_label,
   membership_source,
-}: User) {
+  defaultExpanded = false,
+  defaultSection,
+}: UserResultProps) {
   const userName =
     displayNameFromAccount({ display_name, first_name, last_name }) ||
     email_address ||
     account_id;
-  const [details, setDetails] = useState<boolean>(false);
-  const [activeMore, setActiveMore] = useState<More | undefined>(undefined);
+  const [details, setDetails] = useState<boolean>(
+    defaultExpanded || defaultSection != null,
+  );
+  const [activeMore, setActiveMore] = useState<AdminUserSection | undefined>(
+    defaultSection,
+  );
 
   const renderCreated = () => {
     if (!created) {
@@ -74,7 +85,7 @@ export function UserResult({
     return <TimeAgo date={last_active} />;
   };
 
-  const renderMoreLink = (name: More) => {
+  const renderMoreLink = (name: AdminUserSection) => {
     const label = name === "password" ? "profile" : name;
     return (
       <Tag.CheckableTag

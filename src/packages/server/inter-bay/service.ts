@@ -182,7 +182,7 @@ import {
 } from "@cocalc/server/crm/feature-flags";
 import { getMembershipAllocationSeriesLocal } from "@cocalc/server/membership/allocation-analytics-series";
 import { getComputeRevenueSeriesLocal } from "@cocalc/server/purchases/compute-revenue-analytics-series";
-import { getActiveUserMapOverview } from "@cocalc/server/account-presence-locations";
+import { getActiveUserMapReport } from "@cocalc/server/account-presence-locations";
 import {
   getActiveUserMapHistorySeries,
   getActiveUserMapHistorySnapshot,
@@ -690,7 +690,7 @@ async function startBayOpsService(): Promise<void> {
       bays: [{ bay_id, ok: true }],
     }),
     getActiveUserMap: async ({ active_minutes, group_by }) =>
-      await getActiveUserMapOverview({ active_minutes, group_by }),
+      await getActiveUserMapReport({ active_minutes, group_by }),
     getActiveUserMapHistoryReport: async (opts) =>
       await getActiveUserMapHistoryReport(opts),
     getActiveUserMapHistorySeries: async (opts) => {
@@ -1780,6 +1780,8 @@ async function startAccountLocalService(): Promise<void> {
       await legacyMigration.prepareProjectRemediation(opts),
     legacyMigrationAdminPrepareProjectRemediation: async (opts) =>
       await legacyMigration.adminPrepareProjectRemediation(opts),
+    legacyMigrationAdminApplyProjectRemediation: async (opts) =>
+      await legacyMigration.adminApplyProjectRemediation(opts),
     legacyMigrationApplyProjectRemediation: async (opts) =>
       await legacyMigration.applyProjectRemediation(opts),
     legacyMigrationDismissProjectRemediation: async (opts) =>

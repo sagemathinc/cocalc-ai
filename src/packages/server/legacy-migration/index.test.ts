@@ -4,6 +4,7 @@
  */
 
 import {
+  appendProjectRemediationApplyEvent,
   MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST,
   legacyProjectArchiveUncompressedBytes,
   legacyPublicPathTargetFromRetainedRecord,
@@ -19,6 +20,36 @@ import {
 } from "./public-path-slugs";
 
 describe("legacy migration manifest helpers", () => {
+  it("preserves every remediation apply audit event", () => {
+    const first = {
+      applied_at: "2026-09-01T00:00:00.000Z",
+      actor_account_id: "admin-1",
+      authority_account_id: "owner-1",
+      reason: "Restore after support review",
+      support_reference: "Zendesk 20655",
+      snapshot_name: "final-archive",
+      safety_snapshot_name: "before-apply-1",
+      diff_counts: { add: 1 },
+      diff_file_count: 1,
+      truncated: false,
+    };
+    const second = {
+      ...first,
+      applied_at: "2026-09-01T01:00:00.000Z",
+      actor_account_id: "collaborator-1",
+      reason: null,
+      support_reference: null,
+      safety_snapshot_name: "before-apply-2",
+    };
+
+    const metadata = appendProjectRemediationApplyEvent(
+      appendProjectRemediationApplyEvent({}, first),
+      second,
+    );
+
+    expect(metadata.apply_events).toEqual([first, second]);
+  });
+
   it("extracts advisory uncompressed project archive sizes", () => {
     expect(
       legacyProjectArchiveUncompressedBytes({ uncompressed_bytes: 123 }),

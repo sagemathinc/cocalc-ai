@@ -4,11 +4,7 @@
  */
 
 import type { CrmOrganizationListRequest } from "@cocalc/conat/hub/api/crm";
-import {
-  CRM_OPPORTUNITY_KINDS,
-  type CrmOpportunityKind,
-  type CrmOrganizationSummary,
-} from "@cocalc/util/crm";
+import { CRM_OPPORTUNITY_KINDS } from "@cocalc/util/crm";
 
 export type CustomerView =
   | "active"
@@ -44,7 +40,10 @@ export function viewRequest(
     case "pipeline":
       return { opportunity_kinds: [...CRM_OPPORTUNITY_KINDS] };
     case "pilots":
-      return { opportunity_kinds: ["adoption_pilot"] };
+      return {
+        opportunity_kinds: ["adoption_pilot", "new_site_license"],
+        include_won_active_site_license_offers: true,
+      };
     case "customers":
       return { lifecycle_stages: ["customer"] };
     case "renewals":
@@ -74,43 +73,6 @@ export function queueFilterRequest(
   };
 }
 
-function hasOpenOpportunity(
-  customer: CrmOrganizationSummary,
-  kind: CrmOpportunityKind,
-): boolean {
-  return customer.open_opportunity_kinds.includes(kind);
-}
-
-export function customerMatchesView(
-  customer: CrmOrganizationSummary,
-  view: CustomerView,
-): boolean {
-  switch (view) {
-    case "prospects":
-      return customer.lifecycle_stage === "prospect";
-    case "pipeline":
-      return customer.open_opportunity_count > 0;
-    case "pilots":
-      return hasOpenOpportunity(customer, "adoption_pilot");
-    case "customers":
-      return customer.lifecycle_stage === "customer";
-    case "renewals":
-      return hasOpenOpportunity(customer, "renewal");
-    case "expansions":
-      return hasOpenOpportunity(customer, "expansion");
-    case "overdue":
-      return !!(
-        customer.next_task && new Date(customer.next_task.due_at) < new Date()
-      );
-    case "unassigned":
-      return !customer.relationship_owner_account_id;
-    case "all":
-      return true;
-    default:
-      return customer.status === "active";
-  }
-}
-
 export function viewDescription(view: CustomerView): string {
   switch (view) {
     case "prospects":
@@ -118,7 +80,7 @@ export function viewDescription(view: CustomerView): string {
     case "pipeline":
       return "Organizations with at least one open commercial opportunity.";
     case "pilots":
-      return "Organizations with an open Adoption pilot opportunity.";
+      return "Organizations with an open Adoption pilot or Site license opportunity, plus accepted Site license offers backed by a current license.";
     case "customers":
       return "Organizations whose customer lifecycle is Customer.";
     case "renewals":
@@ -147,7 +109,7 @@ export function emptyViewDescription(
     case "pipeline":
       return "There are no open commercial opportunities.";
     case "pilots":
-      return "There are no open Adoption pilot opportunities.";
+      return "There are no Adoption pilot or current Site license offers.";
     case "renewals":
       return "There are no open Renewal opportunities.";
     case "expansions":

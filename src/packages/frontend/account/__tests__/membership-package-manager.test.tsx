@@ -1883,6 +1883,56 @@ describe("membership package managers", () => {
     });
   });
 
+  it("lets a responsible owner approve their own site-license request", async () => {
+    const overview = makeSiteLicenseOverview({
+      managers: [],
+      pending_requests: [
+        {
+          id: "request-1",
+          site_license_id: "license-1",
+          package_id: "site-1",
+          account_id: "owner-1",
+          matched_email_address: "ada@example.edu",
+          canonical_identity: "ada@example.edu",
+          requested_membership_class: "pro",
+          state: "pending",
+          requested_at: new Date("2026-05-01T00:00:00Z"),
+        },
+      ],
+      pools: [
+        makeSitePackage({
+          pool_name: "Instructors",
+          requires_approval: true,
+          pending_request_count: 1,
+        }),
+      ],
+      site_license: { owner_account_id: "owner-1" },
+    });
+    listSiteLicenseOverviews.mockResolvedValue([
+      { ...overview, viewer_role: "viewer" },
+    ]);
+    reviewSiteLicensePoolRequest.mockResolvedValue({
+      id: "request-1",
+      state: "approved",
+    });
+
+    render(<SiteLicenseManager tiers={TIERS} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Approve",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(runFreshAuthAction).toHaveBeenCalledTimes(1);
+      expect(reviewSiteLicensePoolRequest).toHaveBeenCalledWith({
+        request_id: "request-1",
+        action: "approve",
+      });
+    });
+  });
+
   it("lets admins add site-license delegates with admin user search", async () => {
     isAdmin = true;
     const sitePackage = {

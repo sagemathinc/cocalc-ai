@@ -86,6 +86,7 @@ export interface CrmOrganizationQueueFilters {
   statuses?: Array<"active" | "merged" | "archived">;
   organization_types?: CrmOrganizationType[];
   opportunity_kinds?: CrmOpportunityKind[];
+  include_won_active_site_license_offers?: boolean;
   owner_account_id?: string | null;
   has_overdue_tasks?: boolean;
   unassigned?: boolean;

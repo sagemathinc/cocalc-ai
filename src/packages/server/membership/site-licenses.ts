@@ -1376,9 +1376,16 @@ async function notifySiteLicensePoolRequestCreatedBestEffort({
 }): Promise<void> {
   try {
     const managers = await listSiteLicenseManagers(siteLicense.id);
-    const targetAccountIds = managers
-      .filter((manager) => manager.role === "manager")
-      .map((manager) => manager.account_id);
+    const targetAccountIds = [
+      ...new Set(
+        [
+          siteLicense.owner_account_id,
+          ...managers
+            .filter((manager) => manager.role === "manager")
+            .map((manager) => manager.account_id),
+        ].filter((accountId): accountId is string => accountId != null),
+      ),
+    ];
     const poolName = getPackagePoolName(pkg);
     await createSiteLicenseAccountNoticeBestEffort({
       actor_account_id: request.account_id,
@@ -1814,12 +1821,14 @@ function addSiteLicenseViewerRole({
   if (admin) {
     return { ...overview, viewer_role: "admin" };
   }
-  const viewer_role: SiteLicenseViewerRole = overview.managers.some(
-    (manager) =>
-      manager.account_id === account_id && manager.role === "manager",
-  )
-    ? "manager"
-    : "viewer";
+  const viewer_role: SiteLicenseViewerRole =
+    overview.site_license.owner_account_id === account_id ||
+    overview.managers.some(
+      (manager) =>
+        manager.account_id === account_id && manager.role === "manager",
+    )
+      ? "manager"
+      : "viewer";
   return { ...overview, viewer_role };
 }
 
@@ -1959,18 +1968,16 @@ async function assertSiteLicenseManager({
   if (rows[0]) {
     return;
   }
-  if (!write) {
-    const { rows: ownerRows } = await getQueryClient(client).query(
-      `SELECT 1
-         FROM site_licenses
-        WHERE id=$1
-          AND owner_account_id=$2
-        LIMIT 1`,
-      [site_license_id, account_id],
-    );
-    if (ownerRows[0]) {
-      return;
-    }
+  const { rows: ownerRows } = await getQueryClient(client).query(
+    `SELECT 1
+       FROM site_licenses
+      WHERE id=$1
+        AND owner_account_id=$2
+      LIMIT 1`,
+    [site_license_id, account_id],
+  );
+  if (ownerRows[0]) {
+    return;
   }
   throw Error(write ? "must manage site license" : "must view site license");
 }

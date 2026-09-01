@@ -68,6 +68,7 @@ import type {
   LegacyMigrationAdminAccountSearchOptions,
   LegacyMigrationAdminAccountSearchResponse,
   LegacyMigrationAdminAccountSummary,
+  LegacyMigrationAdminApplyProjectRemediationOptions,
   LegacyMigrationAdminLinkedProjectsOptions,
   LegacyMigrationAdminLinkedProjectsResponse,
   LegacyMigrationAdminLinkLegacyAccountOptions,
@@ -5056,6 +5057,19 @@ async function importedProjectForAccount({
   return rows[0] ?? null;
 }
 
+type ProjectRemediationApplyEvent = {
+  applied_at: string;
+  actor_account_id: string;
+  authority_account_id: string;
+  reason: string | null;
+  support_reference: string | null;
+  snapshot_name: string;
+  safety_snapshot_name: string;
+  diff_counts: Record<string, number>;
+  diff_file_count: number;
+  truncated: boolean;
+};
+
 type ProjectRemediationMetadata = {
   prepared_at?: string | null;
   applied_at?: string | null;
@@ -5073,6 +5087,10 @@ type ProjectRemediationMetadata = {
   skipped_file_count?: number;
   missing_archive_file_count?: number;
   duration_ms?: number;
+  applied_by_account_id?: string | null;
+  apply_reason?: string | null;
+  apply_support_reference?: string | null;
+  apply_events?: ProjectRemediationApplyEvent[];
 };
 
 type ProjectRemediationRow = LegacyProjectRow & {
@@ -5380,6 +5398,61 @@ async function updateProjectRemediationMetadata({
   );
 }
 
+async function updateProjectRemediationApplyMetadata({
+  project_id,
+  metadata,
+  event,
+}: {
+  project_id: string;
+  metadata: ProjectRemediationMetadata;
+  event: ProjectRemediationApplyEvent;
+}): Promise<void> {
+  const { apply_events: _ignored, ...latestMetadata } = metadata;
+  await getPool().query(
+    `
+    UPDATE legacy_migration_project_imports
+       SET restore_result=jsonb_set(
+             COALESCE(restore_result, '{}'::jsonb),
+             '{final_archive_remediation}',
+             (
+               COALESCE(
+                 restore_result->'final_archive_remediation',
+                 '{}'::jsonb
+               ) || $2::jsonb
+             ) || jsonb_build_object(
+               'apply_events',
+               (
+                 CASE
+                   WHEN jsonb_typeof(
+                     restore_result->'final_archive_remediation'->'apply_events'
+                   )='array'
+                   THEN restore_result->'final_archive_remediation'->'apply_events'
+                   ELSE '[]'::jsonb
+                 END
+               ) || jsonb_build_array($3::jsonb)
+             ),
+             true
+           ),
+           updated=NOW()
+     WHERE project_id=$1
+    `,
+    [project_id, JSON.stringify(latestMetadata), JSON.stringify(event)],
+  );
+}
+
+export function appendProjectRemediationApplyEvent(
+  metadata: ProjectRemediationMetadata,
+  event: ProjectRemediationApplyEvent,
+): ProjectRemediationMetadata {
+  return {
+    ...metadata,
+    apply_events: [
+      ...(Array.isArray(metadata.apply_events) ? metadata.apply_events : []),
+      event,
+    ],
+  };
+}
+
 async function connectProjectFileServerForRemediation({
   project_id,
   account_id,
@@ -5551,19 +5624,21 @@ export async function adminPrepareProjectRemediation({
   });
 }
 
-export async function applyProjectRemediation({
-  account_id,
-  project_id,
+async function applyProjectRemediationForRow({
+  authority_account_id,
+  actor_account_id,
+  row,
   snapshot_name,
-}: LegacyMigrationApplyProjectRemediationOptions): Promise<LegacyMigrationProjectRemediationStatusResponse> {
-  await assertLegacyMigrationEnabled();
-  if (!account_id) {
-    throw Error("account_id is required");
-  }
-  const row = await remediationProjectForAccount({ account_id, project_id });
-  if (row == null) {
-    throw new Error("legacy project import is not available for this account");
-  }
+  reason,
+  support_reference,
+}: {
+  authority_account_id: string;
+  actor_account_id: string;
+  row: ProjectRemediationRow;
+  snapshot_name?: string;
+  reason?: string;
+  support_reference?: string;
+}): Promise<LegacyMigrationProjectRemediationStatusResponse> {
   assertProjectNeedsRemediation(row);
   const meta = remediationMetadata(row);
   const effectiveSnapshotName = assertValidSnapshotName(
@@ -5578,25 +5653,45 @@ export async function applyProjectRemediation({
   }
   const client = await connectProjectFileServerForRemediation({
     project_id: row.project_id,
-    account_id,
+    account_id: authority_account_id,
   });
   const result = await client.applyLegacyProjectArchiveRemediation({
     project_id: row.project_id,
     snapshot_name: effectiveSnapshotName,
   });
-  const metadata: ProjectRemediationMetadata = {
-    ...meta,
-    applied_at: new Date().toISOString(),
+  const appliedAt = new Date().toISOString();
+  const event: ProjectRemediationApplyEvent = {
+    applied_at: appliedAt,
+    actor_account_id,
+    authority_account_id,
+    reason: clean(reason) ?? null,
+    support_reference: clean(support_reference) ?? null,
     snapshot_name: result.snapshot_name,
     safety_snapshot_name: result.safety_snapshot_name,
     diff_counts: result.applied_counts,
-    diff_files: result.applied_files,
     diff_file_count: result.applied_file_count,
     truncated: result.truncated,
   };
-  await updateProjectRemediationMetadata({
+  const metadata = appendProjectRemediationApplyEvent(
+    {
+      ...meta,
+      applied_at: appliedAt,
+      snapshot_name: result.snapshot_name,
+      safety_snapshot_name: result.safety_snapshot_name,
+      diff_counts: result.applied_counts,
+      diff_files: result.applied_files,
+      diff_file_count: result.applied_file_count,
+      truncated: result.truncated,
+      applied_by_account_id: actor_account_id,
+      apply_reason: event.reason,
+      apply_support_reference: event.support_reference,
+    },
+    event,
+  );
+  await updateProjectRemediationApplyMetadata({
     project_id: row.project_id,
     metadata,
+    event,
   });
   return remediationResponse({
     ...row,
@@ -5604,6 +5699,53 @@ export async function applyProjectRemediation({
       ...(row.restore_result ?? {}),
       final_archive_remediation: metadata,
     },
+  });
+}
+
+export async function applyProjectRemediation({
+  account_id,
+  project_id,
+  snapshot_name,
+}: LegacyMigrationApplyProjectRemediationOptions): Promise<LegacyMigrationProjectRemediationStatusResponse> {
+  await assertLegacyMigrationEnabled();
+  if (!account_id) {
+    throw Error("account_id is required");
+  }
+  const row = await remediationProjectForAccount({ account_id, project_id });
+  if (row == null) {
+    throw new Error("legacy project import is not available for this account");
+  }
+  return await applyProjectRemediationForRow({
+    authority_account_id: account_id,
+    actor_account_id: account_id,
+    row,
+    snapshot_name,
+  });
+}
+
+export async function adminApplyProjectRemediation({
+  account_id,
+  project_id,
+  snapshot_name,
+  reason,
+  support_reference,
+}: LegacyMigrationAdminApplyProjectRemediationOptions): Promise<LegacyMigrationProjectRemediationStatusResponse> {
+  await assertLegacyMigrationEnabled();
+  if (!account_id) {
+    throw Error("account_id is required");
+  }
+  const auditReason = requireAuditReason(reason);
+  const row = await remediationProjectByProjectId({ project_id });
+  if (row == null) {
+    throw new Error("legacy project import is not available for this project");
+  }
+  return await applyProjectRemediationForRow({
+    authority_account_id: clean(row.owner_account_id) ?? account_id,
+    actor_account_id: account_id,
+    row,
+    snapshot_name,
+    reason: auditReason,
+    support_reference,
   });
 }
 

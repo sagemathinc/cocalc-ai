@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 
 export const ACTIVE_USERS_MAP_MIN_ZOOM = 1;
-export const ACTIVE_USERS_MAP_MAX_ZOOM = 8;
+export const ACTIVE_USERS_MAP_MAX_ZOOM = 32;
 
 export interface ActiveUsersMapViewportTransform {
   x: number;

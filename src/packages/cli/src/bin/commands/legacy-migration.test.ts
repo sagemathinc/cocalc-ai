@@ -37,6 +37,51 @@ test("legacy restore retry validates and forwards the project id", async () => {
   ]);
 });
 
+test("legacy remediation apply forwards required audit context", async () => {
+  const calls: any[] = [];
+  const projectId = "00000000-0000-4000-8000-000000000001";
+  const program = new Command();
+  registerLegacyMigrationCommand(program, {
+    isValidUUID: (value) => value === projectId,
+    hubCallByName: async (_ctx, name, args, timeoutMs) => {
+      calls.push({ name, args, timeoutMs });
+      return { applied_at: "2026-09-01T00:00:00.000Z" };
+    },
+    withContext: async (_command, label, fn) => {
+      assert.equal(label, "legacy-migration remediation apply");
+      return await fn({ timeoutMs: 60_000 });
+    },
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "legacy-migration",
+    "remediation",
+    "apply",
+    projectId,
+    "--reason",
+    "Restore final archive after support review",
+    "--support-reference",
+    "Zendesk 20655",
+  ]);
+
+  assert.deepEqual(calls, [
+    {
+      name: "legacyMigration.adminApplyProjectRemediation",
+      args: [
+        {
+          project_id: projectId,
+          snapshot_name: undefined,
+          reason: "Restore final archive after support review",
+          support_reference: "Zendesk 20655",
+        },
+      ],
+      timeoutMs: 60_000,
+    },
+  ]);
+});
+
 test("legacy public-share catch-up defaults to one dry-run batch", async () => {
   const calls: any[] = [];
   let result: any;

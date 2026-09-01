@@ -12,6 +12,7 @@ export function ActiveUsersMapSummary({
   mapped,
   usageMetricsNotEnabled,
   unavailable,
+  onShowAll,
   onShowUnavailable,
   hint,
 }: {
@@ -19,15 +20,22 @@ export function ActiveUsersMapSummary({
   mapped: number;
   usageMetricsNotEnabled?: number;
   unavailable: number;
+  onShowAll?: () => void;
   onShowUnavailable?: () => void;
   hint: string;
 }) {
   return (
     <Flex justify="space-between" align="center" wrap gap="small">
       <Space wrap>
-        <Text>
-          Active users: <Text strong>{total}</Text>
-        </Text>
+        {total > 0 && onShowAll ? (
+          <Button type="link" size="small" onClick={onShowAll}>
+            Active users: <strong>{total}</strong>
+          </Button>
+        ) : (
+          <Text>
+            Active users: <Text strong>{total}</Text>
+          </Text>
+        )}
         <Text type="secondary">·</Text>
         <Text>
           On map: <Text strong>{mapped}</Text>

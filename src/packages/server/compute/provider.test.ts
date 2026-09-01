@@ -24,6 +24,7 @@ describe("managedVmBootstrapScript", () => {
     bootstrap_revision: 2,
     metadata: {
       ssh_public_keys: ["ssh-ed25519 AAAACONTROLLER controller"],
+      project_ssh_public_keys: ["ssh-ed25519 AAAAPROJECT project"],
     },
   } as ComputeVmRow;
 
@@ -44,7 +45,7 @@ describe("managedVmBootstrapScript", () => {
     expect(script).toContain("user ALL=(ALL) NOPASSWD:ALL");
     expect(script).toContain("/home/user/.ssh/authorized_keys");
     expect(decodeBootstrapKeys(script)).toBe(
-      "ssh-ed25519 AAAAOWNER owner\nssh-ed25519 AAAACONTROLLER controller\n",
+      "ssh-ed25519 AAAAOWNER owner\nssh-ed25519 AAAACONTROLLER controller\nssh-ed25519 AAAAPROJECT project\n",
     );
     expect(script).toContain("/var/lib/cocalc-managed-vm/bootstrap-ready");
     expect(script).toContain("/run/cocalc-managed-vm/bootstrap-ready");
@@ -84,7 +85,7 @@ describe("managedVmBootstrapScript", () => {
     expect(script).toContain("Before=ssh.service sshd.service");
     expect(script).toContain("/var/lib/cocalc-managed-vm/authorized_keys");
     expect(decodeBootstrapKeys(script)).toBe(
-      "ssh-ed25519 AAAAOWNER owner\nssh-ed25519 AAAACONTROLLER controller\n",
+      "ssh-ed25519 AAAAOWNER owner\nssh-ed25519 AAAACONTROLLER controller\nssh-ed25519 AAAAPROJECT project\n",
     );
   });
 });
@@ -128,7 +129,10 @@ describe("managedWindowsVmBootstrapScript", () => {
     const script = managedWindowsVmBootstrapScript({
       ssh_public_key: "ssh-ed25519 AAAAOWNER owner",
       bootstrap_revision: 1,
-      metadata: { ssh_public_keys: ["ssh-ed25519 AAAACONTROLLER controller"] },
+      metadata: {
+        ssh_public_keys: ["ssh-ed25519 AAAACONTROLLER controller"],
+        project_ssh_public_keys: ["ssh-ed25519 AAAAPROJECT project"],
+      },
     } as ComputeVmRow);
 
     expect(script).toContain('New-LocalUser -Name "user"');
@@ -141,6 +145,10 @@ describe("managedWindowsVmBootstrapScript", () => {
     expect(script).toContain('$userHome = "C:\\Users\\user"');
     expect(script).not.toMatch(/\$home\s*=/i);
     expect(script).not.toContain("ssh-ed25519 AAAAOWNER");
+    const encoded = script.match(/FromBase64String\("([^"]+)"\)/)?.[1];
+    expect(Buffer.from(encoded!, "base64").toString("utf8")).toBe(
+      "ssh-ed25519 AAAAOWNER owner\nssh-ed25519 AAAACONTROLLER controller\nssh-ed25519 AAAAPROJECT project\n",
+    );
   });
 });
 

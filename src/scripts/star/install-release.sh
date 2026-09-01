@@ -291,4 +291,6 @@ export STAR_ASSUME_YES
 export STAR_PUBLIC_URL="${STAR_PUBLIC_URL:-}"
 export STAR_ACCESS_URL="${STAR_ACCESS_URL:-}"
 export STAR_WEB_ONBOARDING_REQUIRE_OPEN="${STAR_WEB_ONBOARDING_REQUIRE_OPEN:-}"
-exec ./install.sh
+# Do not exec: this shell owns the temporary download and extraction tree.
+./install.sh
+cd /
