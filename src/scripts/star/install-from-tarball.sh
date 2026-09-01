@@ -310,6 +310,8 @@ snapshot_mutable_state() {
 }
 
 restore_mutable_state() {
+  restore_path /usr/local/libexec/cocalc-bees
+  restore_path /usr/local/libexec/cocalc-rustic
   restore_path /etc/cocalc/star/config.env
   restore_path /etc/cocalc/star/hub.env
   restore_path /etc/cocalc/star/project-host.env

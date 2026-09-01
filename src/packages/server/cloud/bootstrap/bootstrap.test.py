@@ -5991,6 +5991,14 @@ class StarInstallScriptTest(unittest.TestCase):
             script.index('install_privileged_runtime_tools "$tmp_release/source/src"'),
         )
 
+    def test_privileged_tools_are_restored_after_failed_install(self) -> None:
+        script = self.script("star/install-from-tarball.sh")
+        restore_body = script.split("restore_mutable_state() {", 1)[1].split(
+            "\n}", 1
+        )[0]
+        self.assertIn("restore_path /usr/local/libexec/cocalc-bees", restore_body)
+        self.assertIn("restore_path /usr/local/libexec/cocalc-rustic", restore_body)
+
     def test_registration_requires_a_post_restart_heartbeat(self) -> None:
         script = self.script("star-poc/bootstrap-star-poc.sh")
         self.assertLess(
