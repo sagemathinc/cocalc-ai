@@ -3939,18 +3939,17 @@ export async function createCollabInvite({
   invite_role?: "collaborator" | "viewer";
   read_policy?: ProjectViewerReadPolicy | null;
 }) {
+  let trusted_admin = false;
   if (direct) {
     if (!account_id) {
       throw new Error("must be signed in");
     }
-    const project = await resolveProjectReferenceCollaboratorOrAdminAllowRemote(
-      {
-        account_id,
-        project_id,
-      },
-    );
-    if (project == null) {
-      throw new Error(PROJECT_COLLABORATOR_REQUIRED_ERROR);
+    // Account-authenticated hub calls run on the actor's home bay, where
+    // account groups are authoritative. The owning bay trusts this result only
+    // through the internal inter-bay request below.
+    trusted_admin = await isAdmin(account_id);
+    if (!trusted_admin) {
+      await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
     }
   } else {
     await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
@@ -3966,6 +3965,7 @@ export async function createCollabInvite({
       invitee_account_id,
       message,
       direct,
+      trusted_admin,
       invite_role,
       read_policy,
     });
@@ -3978,6 +3978,7 @@ export async function createCollabInvite({
       invitee_account_id,
       message,
       direct,
+      trusted_admin,
       invite_role,
       read_policy,
     });

@@ -510,6 +510,38 @@ describe("project collaborators local bay access", () => {
     });
   });
 
+  it("accepts a trusted home-bay admin check on the owning bay", async () => {
+    assertLocalProjectCollaboratorMock = jest.fn(async () => {
+      throw new Error("user is not a project collaborator");
+    });
+
+    const { createCollabInvite } = await import("./collaborators");
+    await expect(
+      createCollabInvite({
+        account_id: ACCOUNT_ID,
+        invitee_account_id: TARGET_ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        direct: true,
+        trusted_admin: true,
+      }),
+    ).resolves.toEqual({
+      created: true,
+      invite: expect.objectContaining({
+        invitee_account_id: TARGET_ACCOUNT_ID,
+        responder_action: "accept",
+        status: "accepted",
+      }),
+    });
+
+    expect(isAdminMock).not.toHaveBeenCalled();
+    expect(assertLocalProjectCollaboratorMock).not.toHaveBeenCalled();
+    expect(addUserToProject).toHaveBeenCalledWith({
+      account_id: TARGET_ACCOUNT_ID,
+      group: "collaborator",
+      project_id: PROJECT_ID,
+    });
+  });
+
   it("does not let a non-admin project manager directly add a collaborator", async () => {
     const { createCollabInvite } = await import("./collaborators");
     await expect(
