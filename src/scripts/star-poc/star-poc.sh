@@ -446,6 +446,7 @@ previous_release() {
 
 rollback_release() {
   local release_id="${1:-}" release_dir runtime_id runtime_dir
+  local project_host_was_active=0
   if [ -z "$release_id" ]; then
     release_id="$(previous_release || true)"
   fi
@@ -466,9 +467,24 @@ rollback_release() {
   }
   if runtime_id="$(star_release_container_runtime_id "$release_dir")"; then
     runtime_dir="${STAR_CONTAINER_RUNTIME_ROOT}/${runtime_id}"
+    if sudo systemctl is-active --quiet cocalc-star-project-host.service; then
+      project_host_was_active=1
+    fi
     sudo systemctl stop cocalc-star-project-host.service
-    star_prepare_container_runtime_activation "$runtime_dir" "$STAR_USER"
-    star_activate_container_runtime "$runtime_dir"
+    if ! star_prepare_container_runtime_activation "$runtime_dir" "$STAR_USER"; then
+      log "unable to prepare managed container runtime for release ${release_id}"
+      if [ "$project_host_was_active" = "1" ]; then
+        sudo systemctl start cocalc-star-project-host.service
+      fi
+      return 1
+    fi
+    if ! star_activate_container_runtime "$runtime_dir"; then
+      log "unable to activate managed container runtime for release ${release_id}"
+      if [ "$project_host_was_active" = "1" ]; then
+        sudo systemctl start cocalc-star-project-host.service
+      fi
+      return 1
+    fi
     log "activated managed container runtime for release ${release_id}"
     star_configure_container_runtime_env
   else

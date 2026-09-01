@@ -4242,6 +4242,19 @@ reserve_project_startup_io_capacity
         self.assertTrue(bounded["truncated"]["output_budget"])
         self.assertTrue(bounded["truncated"]["persistence"])
 
+        namespace["run"] = lambda section, args, **kwargs: (
+            [
+                'ESTAB 0 0 10.0.0.2:443 8.8.8.8:53 users:(("node",pid=123,fd=7))'
+            ]
+            if section == "network_established"
+            else []
+        )
+        network = namespace["collect_network"]({123})
+        self.assertEqual(
+            network["established"],
+            [{"count": 1, "process": "node", "local_port": "443", "peer": "8.8.8.8:53"}],
+        )
+
         main_body = bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER.split("def main():", 1)[1]
         self.assertLess(
             main_body.index("kernel_signals = collect_kernel_signals()"),

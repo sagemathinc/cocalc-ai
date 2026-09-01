@@ -351,6 +351,80 @@ describe("SubvolumeRustic.backup", () => {
     ).toBe(false);
   });
 
+  it("removes stale crash leftovers even when the backup limit is reached", async () => {
+    const now = new Date("2026-05-02T21:00:00.000Z").valueOf();
+    const stale = `${TEMP_RUSTIC_SNAPSHOT_PREFIX}-${(now - 25 * 60 * 60 * 1000).toString(36)}-atlimit`;
+    jest.spyOn(Date, "now").mockReturnValue(now);
+    readdirMock.mockResolvedValueOnce([
+      { name: stale, isDirectory: () => true },
+    ]);
+    rusticHostMock.mockResolvedValue({
+      stdout: Buffer.from(
+        JSON.stringify([
+          {
+            group_key: { hostname: "project-1" },
+            snapshots: [
+              {
+                id: "existing",
+                time: "2026-04-30T21:00:00.000Z",
+                summary: {},
+              },
+            ],
+          },
+        ]),
+      ),
+      stderr: Buffer.alloc(0),
+      code: 0,
+      truncated: false,
+    });
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+
+    await expect(rustic.backup({ limit: 1 })).rejects.toMatchObject({
+      code: 507,
+    });
+    expect(btrfsMock).toHaveBeenCalledWith({
+      args: [
+        "subvolume",
+        "delete",
+        `/mnt/test/.rustic-backup-staging/project-1/${stale}`,
+      ],
+      verbose: false,
+    });
+  });
+
+  it("defers stale scavenging during a scheduled lifecycle conflict", async () => {
+    const now = new Date("2026-05-02T21:00:00.000Z").valueOf();
+    const stale = `${TEMP_RUSTIC_SNAPSHOT_PREFIX}-${(now - 25 * 60 * 60 * 1000).toString(36)}-deferred`;
+    jest.spyOn(Date, "now").mockReturnValue(now);
+    readdirMock.mockResolvedValueOnce([
+      { name: stale, isDirectory: () => true },
+    ]);
+    configureBtrfsBackgroundMutationGuard(() => "lifecycle_active");
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+
+    await expect(
+      withBtrfsMutationContext({ priority: "scheduled" }, async () => {
+        await rustic.backup();
+      }),
+    ).rejects.toThrow("background btrfs mutation deferred: lifecycle_active");
+    expect(
+      btrfsMock.mock.calls.some(
+        ([opts]) =>
+          opts.args?.[1] === "delete" && opts.args?.[2]?.endsWith(`/${stale}`),
+      ),
+    ).toBe(false);
+  });
+
   it("bounds stale crash cleanup per backup", async () => {
     const now = new Date("2026-05-02T21:00:00.000Z").valueOf();
     const stale = Array.from(

@@ -229,22 +229,29 @@ export class SubvolumeRustic {
       }
       return { snapshotPath, generation: snapshotGeneration };
     } catch (err) {
-      await this.deleteTempBackupSnapshot(snapshotPath).catch(() => undefined);
+      await this.deleteTempBackupSnapshot(snapshotPath, {
+        mandatory: true,
+      }).catch(() => undefined);
       throw err;
     }
   }
 
-  private async deleteTempBackupSnapshot(snapshotPath: string): Promise<void> {
+  private async deleteTempBackupSnapshot(
+    snapshotPath: string,
+    { mandatory = false }: { mandatory?: boolean } = {},
+  ): Promise<void> {
     await withBtrfsMutationLock({
       mount: this.subvolume.filesystem.opts.mount,
       operation: "rustic-backup-snapshot-delete",
-      // Once a backup has created a temporary snapshot, deleting it is
-      // mandatory short cleanup rather than deferrable background work.
-      context: {
-        priority: "interactive",
-        operation_class: "rustic_backup_snapshot_cleanup",
-        checkpointable: false,
-      },
+      // Cleanup of the snapshot created by this backup is mandatory. Stale
+      // scavenging retains the caller's background mutation context.
+      context: mandatory
+        ? {
+            priority: "interactive",
+            operation_class: "rustic_backup_snapshot_cleanup",
+            checkpointable: false,
+          }
+        : undefined,
       run: async () => {
         await btrfs({
           args: ["subvolume", "delete", snapshotPath],
@@ -319,6 +326,7 @@ export class SubvolumeRustic {
     progress,
     runner,
   }: RusticBackupOptions = {}): Promise<CreatedSnapshot> => {
+    await this.cleanupStaleTempBackupSnapshots();
     if (limit != null && (await this.snapshots()).length >= limit) {
       // 507 = "insufficient storage" for http
       throw new ConatError(`there is a limit of ${limit} backups`, {
@@ -334,7 +342,6 @@ export class SubvolumeRustic {
       "--glob",
       glob,
     ]);
-    await this.cleanupStaleTempBackupSnapshots();
     const tempSnapshot = makeTempRusticSnapshotName();
     const { snapshotPath, generation: snapshotGeneration } =
       await this.createTempBackupSnapshot(tempSnapshot);
@@ -392,7 +399,7 @@ export class SubvolumeRustic {
       this.snapshotsCache = null;
       logger.debug(`backup: deleting temporary ${tempSnapshot}`);
       try {
-        await this.deleteTempBackupSnapshot(snapshotPath);
+        await this.deleteTempBackupSnapshot(snapshotPath, { mandatory: true });
       } catch (err) {
         logger.warn("backup: unable to delete temporary snapshot", {
           snapshotPath,

@@ -5061,11 +5061,12 @@ describe("CodexAppServerAgent", () => {
                 defaultReasoningEffort: "xhigh",
                 serviceTiers: [
                   {
-                    id: "fast",
-                    name: "Fast",
-                    description: "Higher speed",
+                    id: "priority",
+                    name: "Priority",
+                    description: "Priority processing",
                   },
                 ],
+                additionalSpeedTiers: ["fast"],
                 defaultServiceTier: "fast",
                 isDefault: true,
               },
@@ -5130,9 +5131,14 @@ describe("CodexAppServerAgent", () => {
         ],
         serviceTiers: [
           {
+            id: "priority",
+            label: "Priority",
+            description: "Priority processing",
+          },
+          {
             id: "fast",
             label: "Fast",
-            description: "Higher speed",
+            description: "",
             default: true,
           },
         ],

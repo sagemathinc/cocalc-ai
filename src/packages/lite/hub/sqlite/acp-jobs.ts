@@ -1126,19 +1126,29 @@ export function enqueueAcpJobCancelingQueuedRecoveries(
 ): { job: AcpJobRow; canceled: AcpJobRow[] } {
   ensureInit();
   const db = getAcpDatabase();
-  const { project_id, path, thread_id } = assertChatIdentity(request);
+  const { project_id, path, thread_id, user_message_id } =
+    assertChatIdentity(request);
   const now = Date.now();
   let canceled: AcpJobRow[] = [];
   let job: AcpJobRow | undefined;
   db.exec("BEGIN IMMEDIATE");
   try {
-    canceled = cancelQueuedRecoveryJobsForThreadInDatabase({
-      db,
-      project_id,
-      path,
-      thread_id,
-      now,
-    });
+    const existing = db
+      .prepare(
+        `SELECT 1 FROM ${TABLE}
+         WHERE project_id = ? AND path = ? AND user_message_id = ?
+         LIMIT 1`,
+      )
+      .get(project_id, path, user_message_id);
+    if (existing == null) {
+      canceled = cancelQueuedRecoveryJobsForThreadInDatabase({
+        db,
+        project_id,
+        path,
+        thread_id,
+        now,
+      });
+    }
     job = enqueueAcpJob(request, opts);
     db.exec("COMMIT");
   } catch (err) {

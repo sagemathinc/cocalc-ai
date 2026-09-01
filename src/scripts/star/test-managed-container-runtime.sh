@@ -133,5 +133,9 @@ rollback_prepare_line="$(grep -n 'star_prepare_container_runtime_activation' <<<
 rollback_activate_line="$(grep -n 'star_activate_container_runtime' <<<"$rollback_body" | cut -d: -f1)"
 [ "$rollback_stop_line" -lt "$rollback_prepare_line" ]
 [ "$rollback_prepare_line" -lt "$rollback_activate_line" ]
+grep -q 'systemctl is-active --quiet cocalc-star-project-host.service' <<<"$rollback_body"
+[ "$(grep -c 'systemctl start cocalc-star-project-host.service' <<<"$rollback_body")" -eq 2 ]
+grep -q 'if ! star_prepare_container_runtime_activation' <<<"$rollback_body"
+grep -q 'if ! star_activate_container_runtime' <<<"$rollback_body"
 
 printf 'managed container-runtime tests: ok\n'

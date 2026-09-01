@@ -276,6 +276,34 @@ describe("acp job queue ordering", () => {
     });
   });
 
+  it("does not cancel recovery when the original user enqueue is redelivered", () => {
+    const request = makeRequest({
+      userMessageId: "user-redelivered",
+      assistantMessageId: "assistant-redelivered",
+      assistantDate: "2026-03-08T00:00:00.000Z",
+    }) as any;
+    const original = enqueueAcpJob(request);
+    const recovery = enqueueAcpJob(
+      {
+        ...makeRequest({
+          userMessageId: "user-redelivery-recovery",
+          assistantMessageId: "assistant-redelivery-recovery",
+          assistantDate: "2026-03-08T00:01:00.000Z",
+        }),
+        recovery_parent_op_id: original.op_id,
+        recovery_reason: "lost turn",
+        recovery_count: 1,
+      } as any,
+      { available_at: Date.now() + 15 * 60_000 },
+    );
+
+    const result = enqueueAcpJobCancelingQueuedRecoveries(request);
+
+    expect(result.job.op_id).toBe(original.op_id);
+    expect(result.canceled).toEqual([]);
+    expect(getAcpJobByOpId(recovery.op_id)?.state).toBe("queued");
+  });
+
   it("cancels queued recovery jobs when a user turn supersedes them", () => {
     const request = {
       ...makeRequest({

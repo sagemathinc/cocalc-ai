@@ -1824,7 +1824,7 @@ function normalizeCodexModelCatalog(
               {
                 id,
                 description: boundedCatalogText(effort.description),
-                default: id === defaultReasoningEffort || undefined,
+                ...(id === defaultReasoningEffort ? { default: true } : {}),
               },
             ];
           })
@@ -1833,24 +1833,27 @@ function normalizeCodexModelCatalog(
       entry.defaultServiceTier,
       100,
     );
-    const rawServiceTiers = Array.isArray(entry.serviceTiers)
-      ? entry.serviceTiers
-      : Array.isArray(entry.additionalSpeedTiers)
+    const rawServiceTiers = [
+      ...(Array.isArray(entry.serviceTiers) ? entry.serviceTiers : []),
+      ...(Array.isArray(entry.additionalSpeedTiers)
         ? entry.additionalSpeedTiers.map((id) => ({ id }))
-        : [];
+        : []),
+    ];
+    const seenServiceTiers = new Set<string>();
     const serviceTiers = rawServiceTiers
       .slice(0, MAX_MODEL_SERVICE_TIERS)
       .flatMap((rawTier): CodexModelCapabilityInfo["serviceTiers"] => {
         if (rawTier == null || typeof rawTier !== "object") return [];
         const tier = rawTier as Record<string, unknown>;
         const id = boundedCatalogText(tier.id, 100);
-        if (!id) return [];
+        if (!id || seenServiceTiers.has(id)) return [];
+        seenServiceTiers.add(id);
         return [
           {
             id,
             label: boundedCatalogText(tier.name, 200) || catalogLabel(id),
             description: boundedCatalogText(tier.description),
-            default: id === defaultServiceTier || undefined,
+            ...(id === defaultServiceTier ? { default: true } : {}),
           },
         ];
       });

@@ -378,12 +378,12 @@ def collect_network(host_pids):
         if not pid_match or int(pid_match.group(1)) not in host_pids:
             continue
         fields = line.split()
-        if len(fields) < 4:
+        if len(fields) < 5:
             continue
         process_match = re.search(r'users:\(\("([^\"]+)\"', line)
         process = clean(process_match.group(1), 128) if process_match else "unknown"
-        local = fields[2]
-        peer = fields[3]
+        local = fields[3]
+        peer = fields[4]
         peer_host, _, peer_port = peer.rpartition(":")
         peer_host = peer_host.strip("[]")
         local_port = local.rsplit(":", 1)[-1]
