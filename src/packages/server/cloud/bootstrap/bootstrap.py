@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260901-v47"
+HELPER_SCHEMA_VERSION = "20260901-v48"
 RUNTIME_WRAPPER_VERSION = "20260825-v16"
 BOOTSTRAP_LIFECYCLE_EXPORT_DIR = Path("/var/lib/cocalc/bootstrap-lifecycle")
 NVM_VERSION = "0.40.4"
@@ -7046,7 +7046,12 @@ case "$cmd" in
       if [ -d "$startup_pool" ]; then
         move_project_startup_runtime_to_pool "$project_id" "$pool"
         release_project_startup_io_capacity
-      elif ! project_pid_is_in_pool "$project_id" "$init_pid" ||
+      fi
+      # Podman 4 may move conmon and init from the prepared leaf into a
+      # transient user-systemd scope even with container cgroups disabled.
+      # Always fall back to the trusted conmon process tree when draining the
+      # prepared leaf did not establish final containment.
+      if ! project_pid_is_in_pool "$project_id" "$init_pid" ||
         ! project_pid_is_in_pool "$project_id" "$conmon_pid"; then
         attach_pid_tree_to_project_pool_storage "$conmon_pid" "$pool" || true
       fi

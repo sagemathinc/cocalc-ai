@@ -3046,6 +3046,14 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn('> "$pool/io.weight"', finish_startup_body)
             self.assertIn("project-cgroup-io-weight-mismatch", finish_startup_body)
             self.assertIn("project_pid_is_in_pool", finish_startup_body)
+            self.assertIn(
+                "Podman 4 may move conmon and init",
+                finish_startup_body,
+            )
+            self.assertNotIn(
+                'elif ! project_pid_is_in_pool "$project_id" "$init_pid"',
+                finish_startup_body,
+            )
             self.assertIn('require_runtime_owned_pid "$conmon_pid"', script)
             self.assertIn("is_trusted_conmon_executable()", script)
             self.assertIn(
