@@ -1172,18 +1172,21 @@ export async function createCollabInvite({
   if (invitee_account_id === account_id) {
     throw new Error("cannot invite yourself");
   }
-  await assertLocalProjectCollaborator({ account_id, project_id });
-  await assertCanManageProjectCollaborators({
-    account_id,
-    action: "invite collaborators",
-    project_id,
-  });
+  const actorIsAdmin = await isAdmin(account_id);
+  if (!(direct && actorIsAdmin)) {
+    await assertLocalProjectCollaborator({ account_id, project_id });
+    await assertCanManageProjectCollaborators({
+      account_id,
+      action: "invite collaborators",
+      project_id,
+    });
+  }
   await ensureProjectCollabInviteEmailTokenSchema();
   const role = normalizeInviteRole(invite_role);
   const policy = normalizeInviteReadPolicy({ invite_role: role, read_policy });
 
   const pool = getPool();
-  const includeEmail = await isAdmin(account_id);
+  const includeEmail = actorIsAdmin;
   await expirePendingCollabInvites(pool);
   const normalizedMessage = await normalizeInviteMessageForAccount({
     account_id,

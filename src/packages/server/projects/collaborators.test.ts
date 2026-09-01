@@ -479,6 +479,55 @@ describe("project collaborators local bay access", () => {
     ).rejects.toThrow("only project owners can invite collaborators");
   });
 
+  it("lets an admin directly add a collaborator without joining the project", async () => {
+    isAdminMock = jest.fn(async () => true);
+    assertLocalProjectCollaboratorMock = jest.fn(async () => {
+      throw new Error("user is not a project collaborator");
+    });
+
+    const { createCollabInvite } = await import("./collaborators");
+    await expect(
+      createCollabInvite({
+        account_id: ACCOUNT_ID,
+        invitee_account_id: TARGET_ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        direct: true,
+      }),
+    ).resolves.toEqual({
+      created: true,
+      invite: expect.objectContaining({
+        invitee_account_id: TARGET_ACCOUNT_ID,
+        responder_action: "accept",
+        status: "accepted",
+      }),
+    });
+
+    expect(assertLocalProjectCollaboratorMock).not.toHaveBeenCalled();
+    expect(addUserToProject).toHaveBeenCalledWith({
+      account_id: TARGET_ACCOUNT_ID,
+      group: "collaborator",
+      project_id: PROJECT_ID,
+    });
+  });
+
+  it("does not let a non-admin project manager directly add a collaborator", async () => {
+    const { createCollabInvite } = await import("./collaborators");
+    await expect(
+      createCollabInvite({
+        account_id: ACCOUNT_ID,
+        invitee_account_id: TARGET_ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        direct: true,
+      }),
+    ).rejects.toThrow("direct collaborator add requires admin privileges");
+
+    expect(assertLocalProjectCollaboratorMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(addUserToProject).not.toHaveBeenCalled();
+  });
+
   it("creates pending viewer invites for existing accounts", async () => {
     const inviteId = "77777777-7777-4777-8777-777777777777";
     queryMock = jest.fn(async (sql: string) => {

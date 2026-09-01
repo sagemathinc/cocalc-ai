@@ -3939,7 +3939,22 @@ export async function createCollabInvite({
   invite_role?: "collaborator" | "viewer";
   read_policy?: ProjectViewerReadPolicy | null;
 }) {
-  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  if (direct) {
+    if (!account_id) {
+      throw new Error("must be signed in");
+    }
+    const project = await resolveProjectReferenceCollaboratorOrAdminAllowRemote(
+      {
+        account_id,
+        project_id,
+      },
+    );
+    if (project == null) {
+      throw new Error(PROJECT_COLLABORATOR_REQUIRED_ERROR);
+    }
+  } else {
+    await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  }
   const ownership = await resolveProjectBay(project_id);
   if (ownership == null) {
     throw new Error(`project ${project_id} not found`);
