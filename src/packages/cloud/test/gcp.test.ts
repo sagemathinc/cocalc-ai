@@ -640,6 +640,46 @@ describe("GcpProvider", () => {
     );
   });
 
+  it("updates the boot script while reconciling SSH access", async () => {
+    getMock.mockResolvedValueOnce([
+      {
+        metadata: {
+          fingerprint: "fingerprint-1",
+          items: [{ key: "startup-script", value: "old script" }],
+        },
+      },
+    ]);
+    setMetadataMock.mockResolvedValueOnce([
+      { latestResponse: { name: "metadata-op", status: "DONE" } },
+    ]);
+    waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
+
+    const provider = new GcpProvider();
+    await provider.ensureSshAccess(
+      {
+        provider: "gcp",
+        instance_id: "compute-vm",
+        zone: "us-central1-a",
+        ssh_user: "user",
+        metadata: { startup_script: "new script" },
+      },
+      {
+        project_id: "compute-prod",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+    );
+
+    expect(setMetadataMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadataResource: {
+          fingerprint: "fingerprint-1",
+          items: [{ key: "startup-script", value: "new script" }],
+        },
+      }),
+    );
+  });
+
   it("recovers a created host when insert times out after GCP accepts it", async () => {
     insertMock.mockRejectedValueOnce(
       Object.assign(new Error("read ETIMEDOUT"), { code: "ETIMEDOUT" }),
