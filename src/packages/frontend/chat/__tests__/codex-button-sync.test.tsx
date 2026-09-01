@@ -2,7 +2,11 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { writeCachedCodexUsageStatus } from "@cocalc/frontend/account/codex-usage";
-import { CodexConfigButton, codexThreadConfigKey } from "../codex";
+import {
+  CodexConfigButton,
+  codexModelOptionsForStatus,
+  codexThreadConfigKey,
+} from "../codex";
 
 const getCodexUsageStatus = jest.fn();
 const stableForm = {
@@ -171,6 +175,115 @@ describe("CodexConfigButton", () => {
     getCodexUsageStatus.mockReset();
     getCodexUsageStatus.mockResolvedValue({ available: true });
     window.localStorage.clear();
+  });
+
+  it("disables models absent from the authenticated ChatGPT catalog", () => {
+    const options = codexModelOptionsForStatus({
+      models: [
+        {
+          model: "gpt-5.6-luna",
+          displayName: "GPT-5.6 Luna",
+          description: "Fast account model",
+          reasoning: [
+            {
+              id: "extra_high",
+              description: "Account-supported deep reasoning",
+              default: true,
+            },
+          ],
+          serviceTiers: [
+            {
+              id: "fast",
+              label: "Fast",
+              description: "Higher speed",
+            },
+          ],
+          default: true,
+        },
+      ],
+    } as any);
+
+    expect(options[0]).toMatchObject({
+      value: "gpt-5.6-luna",
+      reasoning: [
+        {
+          id: "extra_high",
+          description: "Account-supported deep reasoning",
+          default: true,
+        },
+      ],
+      serviceTiers: ["fast"],
+    });
+    expect(options.find(({ value }) => value === "gpt-5.4")).toMatchObject({
+      disabled: true,
+      description: expect.stringContaining(
+        "Not available with the connected ChatGPT account",
+      ),
+    });
+  });
+
+  it("marks the configured model unavailable after account discovery", async () => {
+    getCodexUsageStatus.mockResolvedValue({
+      available: true,
+      models: [
+        {
+          model: "gpt-5.6-luna",
+          displayName: "GPT-5.6 Luna",
+          description: "Fast account model",
+          reasoning: [],
+          serviceTiers: [],
+        },
+      ],
+    });
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={{ model: "gpt-5.4", paymentSource: "subscription" }}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    const modelButton = screen.getByTitle("Change Codex model");
+    fireEvent.mouseEnter(modelButton);
+    await waitFor(() => {
+      expect(getCodexUsageStatus).toHaveBeenCalled();
+    });
+    fireEvent.click(modelButton);
+    await waitFor(() => {
+      expect(
+        screen
+          .getAllByRole("button", { name: "gpt-5.4" })
+          .some((button) => (button as HTMLButtonElement).disabled),
+      ).toBe(true);
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "gpt-5.6-luna",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Model unavailable for this ChatGPT account/),
+      ).toBeTruthy();
+    });
   });
 
   it("updates the closed top bar when thread config arrives after mount", async () => {
@@ -383,6 +496,7 @@ describe("CodexConfigButton", () => {
     await waitFor(() => {
       expect(getCodexUsageStatus).toHaveBeenCalledWith({
         project_id: "project-1",
+        include_models: true,
         timeout: 60_000,
       });
       expect(
@@ -661,6 +775,7 @@ describe("CodexConfigButton", () => {
     await waitFor(() => {
       expect(getCodexUsageStatus).toHaveBeenCalledWith({
         project_id: "project-1",
+        include_models: true,
         timeout: 60_000,
       });
       expect(

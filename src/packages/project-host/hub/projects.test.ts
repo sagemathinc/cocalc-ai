@@ -1206,6 +1206,15 @@ describe("project host start ACP rehydrate ordering", () => {
       account: { account: { email: "user@example.com" } },
       rateLimits: { rateLimits: true },
       tokenUsage: { tokens: 7 },
+      models: [
+        {
+          model: "gpt-5.6-luna",
+          displayName: "GPT-5.6 Luna",
+          description: "Fast account model",
+          reasoning: [],
+          serviceTiers: [],
+        },
+      ],
       errors: {},
     });
 
@@ -1215,6 +1224,7 @@ describe("project host start ACP rehydrate ordering", () => {
     const result = await hubApi.projects.getCodexUsageStatus({
       account_id: "acct-1",
       project_id,
+      include_models: true,
       timeout: 60_000,
     });
 
@@ -1225,6 +1235,7 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(getCodexAppServerAccountStatus).toHaveBeenCalledWith({
       projectId: project_id,
       accountId: "acct-1",
+      includeModels: true,
       timeoutMs: 45_000,
     });
     expect(result).toMatchObject({
@@ -1235,6 +1246,7 @@ describe("project host start ACP rehydrate ordering", () => {
       },
       authentication: { status: "connected" },
       account: { account: { email: "user@example.com" } },
+      models: [expect.objectContaining({ model: "gpt-5.6-luna" })],
     });
   });
 

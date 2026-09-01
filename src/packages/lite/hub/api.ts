@@ -676,6 +676,7 @@ async function getCodexPaymentSource(opts?: {
 async function getCodexUsageStatus(opts?: {
   account_id?: string;
   project_id?: string;
+  include_models?: boolean;
   timeout?: number;
 }): Promise<CodexUsageStatusInfo> {
   const checkedAt = new Date().toISOString();
@@ -696,6 +697,7 @@ async function getCodexUsageStatus(opts?: {
     const codexHome = resolveLiteCodexHome();
     const status = await getCodexAppServerAccountStatus({
       appServerLogin: await getLiteSubscriptionAppServerLogin(codexHome),
+      includeModels: opts?.include_models,
     });
     return {
       available: !!status.rateLimits,
@@ -706,6 +708,7 @@ async function getCodexUsageStatus(opts?: {
       account: status.account,
       rateLimits: status.rateLimits,
       tokenUsage: status.tokenUsage,
+      models: status.models,
       errors: status.errors,
       reason:
         !status.rateLimits && status.errors?.rateLimits

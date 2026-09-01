@@ -4924,6 +4924,43 @@ describe("CodexAppServerAgent", () => {
             },
           });
           break;
+        case "model/list":
+          expect(message.params).toEqual({
+            limit: 100,
+            includeHidden: false,
+          });
+          fake.sendResponse(message.id, {
+            data: [
+              {
+                id: "gpt-5.6-luna",
+                model: "gpt-5.6-luna",
+                displayName: "GPT-5.6 Luna",
+                description: "Fast account model",
+                supportedReasoningEfforts: [
+                  {
+                    reasoningEffort: "low",
+                    description: "Fast responses",
+                  },
+                  {
+                    reasoningEffort: "xhigh",
+                    description: "Deep reasoning",
+                  },
+                ],
+                defaultReasoningEffort: "xhigh",
+                serviceTiers: [
+                  {
+                    id: "fast",
+                    name: "Fast",
+                    description: "Higher speed",
+                  },
+                ],
+                defaultServiceTier: "fast",
+                isDefault: true,
+              },
+            ],
+            nextCursor: null,
+          });
+          break;
         default:
           throw new Error(`unexpected method ${message.method}`);
       }
@@ -4948,6 +4985,7 @@ describe("CodexAppServerAgent", () => {
       projectId: "project-1",
       accountId: "account-1",
       includeTokenUsage: true,
+      includeModels: true,
     });
 
     expect(spawnCodexAppServer).toHaveBeenCalledWith(
@@ -4962,6 +5000,33 @@ describe("CodexAppServerAgent", () => {
     expect(status.account?.account?.email).toBe("user@example.com");
     expect(status.rateLimits?.rateLimits?.primary?.usedPercent).toBe(42);
     expect(status.tokenUsage?.summary?.lifetimeTokens).toBe(12345);
+    expect(status.models).toEqual([
+      {
+        model: "gpt-5.6-luna",
+        displayName: "GPT-5.6 Luna",
+        description: "Fast account model",
+        reasoning: [
+          {
+            id: "low",
+            description: "Fast responses",
+          },
+          {
+            id: "extra_high",
+            description: "Deep reasoning",
+            default: true,
+          },
+        ],
+        serviceTiers: [
+          {
+            id: "fast",
+            label: "Fast",
+            description: "Higher speed",
+            default: true,
+          },
+        ],
+        default: true,
+      },
+    ]);
     expect(seen.map(({ method }) => method)).toEqual([
       "initialize",
       "initialized",
@@ -4969,7 +5034,53 @@ describe("CodexAppServerAgent", () => {
       "account/read",
       "account/rateLimits/read",
       "account/usage/read",
+      "model/list",
     ]);
+  });
+
+  it("keeps account status usable when model discovery is unsupported", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, {});
+          break;
+        case "initialized":
+          break;
+        case "account/read":
+          fake.sendResponse(message.id, {
+            account: { type: "chatgpt", planType: "basic" },
+            requiresOpenaiAuth: false,
+          });
+          break;
+        case "account/rateLimits/read":
+          fake.sendResponse(message.id, { rateLimits: { limitId: "codex" } });
+          break;
+        case "model/list":
+          fake.sendError(message.id, "Method not found: model/list");
+          break;
+        default:
+          throw new Error(`unexpected method ${message.method}`);
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: jest.fn() as any,
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        args: ["app-server"],
+        cmd: "codex",
+      }),
+    });
+
+    const status = await getCodexAppServerAccountStatus({
+      projectId: "project-1",
+      accountId: "account-1",
+      includeModels: true,
+    });
+
+    expect(status.authentication).toEqual({ status: "connected" });
+    expect(status.rateLimits).toEqual({ rateLimits: { limitId: "codex" } });
+    expect(status.models).toBeUndefined();
+    expect(status.errors?.models).toContain("Method not found: model/list");
   });
 
   it("does not read token usage during the default account status check", async () => {
