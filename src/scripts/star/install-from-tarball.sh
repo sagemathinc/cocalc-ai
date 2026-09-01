@@ -404,6 +404,10 @@ mv "$tmp_release" "$release_dir"
 release_dir_created=1
 replace_symlink "$release_source" "$STAR_INSTALL_SOURCE"
 if [ -n "$installed_container_runtime_path" ]; then
+  log "quiescing project-host before managed container-runtime activation"
+  systemctl stop cocalc-star-project-host.service >/dev/null 2>&1 || true
+  star_prepare_container_runtime_activation \
+    "$installed_container_runtime_path" "$STAR_USER"
   star_activate_container_runtime "$installed_container_runtime_path"
   star_configure_container_runtime_env
 fi

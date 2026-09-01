@@ -915,8 +915,9 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "projects.createCollabInvite": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason:
+      "direct admin collaborator grants require fresh auth; ordinary invitations retain project authorization",
   },
   "projects.createSnapshot": {
     decision: "fresh-auth-not-required",

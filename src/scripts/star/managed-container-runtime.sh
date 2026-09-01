@@ -150,6 +150,125 @@ star_validate_installed_container_runtime() {
   fi
 }
 
+star_container_runtime_contract() {
+  local runtime_dir="$1"
+  python3 - "${runtime_dir}/share/cocalc/runtime-manifest.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    manifest = json.load(stream)
+if manifest.get("schema") != "cocalc-container-runtime-v1":
+    raise RuntimeError("unsupported container-runtime manifest schema")
+contract = manifest.get("host_contract") or {}
+expected = {
+    "database_backend": "sqlite",
+    "network_backend": "netavark",
+    "cgroup_manager": "cgroupfs",
+}
+observed = {key: str(contract.get(key, "")).strip().lower() for key in expected}
+if observed != expected:
+    raise RuntimeError(
+        f"unsupported container-runtime host contract: {observed!r}"
+    )
+print("\t".join(observed[key] for key in (
+    "database_backend", "network_backend", "cgroup_manager"
+)))
+PY
+}
+
+star_run_podman_as_user() {
+  local runtime_dir="$1"
+  local star_user="$2"
+  shift 2
+  local podman_bin="" star_uid star_home
+  local -a runtime_env=()
+  if [ -n "$runtime_dir" ] && [ -x "${runtime_dir}/bin/podman" ]; then
+    podman_bin="${runtime_dir}/bin/podman"
+    runtime_env=(
+      "COCALC_CONTAINER_RUNTIME_CURRENT=${runtime_dir}"
+      "COCALC_PODMAN_BIN=${podman_bin}"
+      "CONTAINERS_CONF_OVERRIDE=${runtime_dir}/etc/containers/containers.conf"
+      "PATH=${runtime_dir}/bin:${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+    )
+  else
+    podman_bin="$(command -v podman 2>/dev/null || true)"
+  fi
+  [ -n "$podman_bin" ] || return 127
+  star_uid="$(id -u "$star_user")" || return
+  star_home="$(getent passwd "$star_user" | cut -d: -f6)"
+  [ -n "$star_home" ] || return 1
+  runuser -u "$star_user" -- env \
+    "HOME=${star_home}" \
+    "XDG_RUNTIME_DIR=/run/user/${star_uid}" \
+    "${runtime_env[@]}" \
+    "$podman_bin" "$@"
+}
+
+star_podman_info_field() {
+  local runtime_dir="$1"
+  local star_user="$2"
+  local field="$3"
+  star_run_podman_as_user "$runtime_dir" "$star_user" \
+    info --format "{{.Host.${field}}}" | tr '[:upper:]' '[:lower:]' | tr -d '\r\n'
+}
+
+# Validate existing Podman state before changing the active runtime. The caller
+# must first stop the project-host service so no new Podman operations can race
+# these checks or the subsequent symlink switch.
+star_prepare_container_runtime_activation() {
+  local runtime_dir="$1"
+  local star_user="$2"
+  local contract database_backend network_backend cgroup_manager
+  local current_runtime="" existing_database_backend existing_network_backend
+  local deadline running
+
+  star_validate_installed_container_runtime "$runtime_dir" || return
+  contract="$(star_container_runtime_contract "$runtime_dir")" || return
+  IFS=$'\t' read -r database_backend network_backend cgroup_manager <<<"$contract"
+
+  if [ -x "${STAR_CONTAINER_RUNTIME_CURRENT}/bin/podman" ]; then
+    current_runtime="$(readlink -f "$STAR_CONTAINER_RUNTIME_CURRENT")"
+  elif ! command -v podman >/dev/null 2>&1; then
+    # A fresh host has no Podman state to migrate. The installer will install
+    # runtime dependencies before starting the project-host service.
+    return 0
+  fi
+
+  existing_database_backend="$(
+    star_podman_info_field "$current_runtime" "$star_user" DatabaseBackend
+  )" || return
+  if [ "$existing_database_backend" != "$database_backend" ]; then
+    printf 'container runtime activation requires existing Podman state to use %s; found %s\n' \
+      "$database_backend" "${existing_database_backend:-unknown}" >&2
+    return 1
+  fi
+
+  existing_network_backend="$(
+    star_podman_info_field "$current_runtime" "$star_user" NetworkBackend
+  )" || return
+  if [ "$existing_network_backend" = "$network_backend" ]; then
+    return 0
+  fi
+
+  printf 'quiescing project containers for container-runtime network migration %s->%s\n' \
+    "${existing_network_backend:-unknown}" "$network_backend" >&2
+  star_run_podman_as_user "$current_runtime" "$star_user" \
+    stop --all --time 5 >/dev/null 2>&1 || true
+  deadline=$((SECONDS + 60))
+  while true; do
+    running="$(
+      star_run_podman_as_user "$current_runtime" "$star_user" ps -q
+    )" || return
+    [ -z "$running" ] && return 0
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      printf 'container runtime migration could not quiesce running containers\n' >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
 star_install_container_runtime_archive() {
   local archive="$1"
   local expected_arch="${2:-$(star_container_runtime_arch)}"

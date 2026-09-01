@@ -734,4 +734,30 @@ describe("project env helpers", () => {
       session_hash: "session-1",
     });
   });
+
+  it("requires fresh auth before a direct admin collaborator grant", async () => {
+    const error = Object.assign(new Error("fresh auth is required"), {
+      code: "fresh_auth_required",
+    });
+    requireDangerousProjectMutationAuthMock.mockRejectedValueOnce(error);
+    const { createCollabInvite } = await import("./projects");
+
+    await expect(
+      createCollabInvite({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        session_hash: "session-1",
+        project_id: PROJECT_ID,
+        invitee_account_id: TARGET_PROJECT_ID,
+        direct: true,
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: "session-1",
+    });
+    expect(isAdminMock).not.toHaveBeenCalled();
+  });
 });

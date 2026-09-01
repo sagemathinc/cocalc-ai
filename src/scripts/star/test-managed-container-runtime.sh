@@ -25,10 +25,23 @@ mkdir -p \
   "${stage}/etc/containers" \
   "${stage}/share/cocalc"
 for binary in podman conmon crun netavark aardvark-dns; do
-  cat >"${stage}/bin/${binary}" <<EOF
+  if [ "$binary" = "podman" ]; then
+    cat >"${stage}/bin/${binary}" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *DatabaseBackend*) printf 'sqlite\n' ;;
+  *NetworkBackend*) printf 'netavark\n' ;;
+  *CgroupManager*) printf 'cgroupfs\n' ;;
+  "ps -q") ;;
+  *) printf 'podman test version\n' ;;
+esac
+EOF
+  else
+    cat >"${stage}/bin/${binary}" <<EOF
 #!/usr/bin/env bash
 printf '${binary} test version\n'
 EOF
+  fi
   chmod 0755 "${stage}/bin/${binary}"
 done
 cat >"${stage}/etc/containers/containers.conf" <<'EOF'
@@ -40,7 +53,13 @@ cat >"${stage}/share/cocalc/runtime-manifest.json" <<'EOF'
   "schema": "cocalc-container-runtime-v1",
   "os": "linux",
   "arch": "amd64",
-  "components": {"podman": {"version": "5.8.6"}}
+  "components": {"podman": {"version": "5.8.6"}},
+  "host_contract": {
+    "database_backend": "sqlite",
+    "network_backend": "netavark",
+    "cgroup_manager": "cgroupfs",
+    "required_commands": []
+  }
 }
 EOF
 
@@ -66,6 +85,8 @@ runuser -u nobody -- test -r "${STAR_INSTALLED_CONTAINER_RUNTIME_PATH}/etc/conta
 runuser -u nobody -- test -x "${STAR_INSTALLED_CONTAINER_RUNTIME_PATH}/bin/podman"
 star_activate_container_runtime "$STAR_INSTALLED_CONTAINER_RUNTIME_PATH"
 [ "$(readlink -f "$STAR_CONTAINER_RUNTIME_CURRENT")" = "$STAR_INSTALLED_CONTAINER_RUNTIME_PATH" ]
+star_prepare_container_runtime_activation \
+  "$STAR_INSTALLED_CONTAINER_RUNTIME_PATH" nobody
 star_configure_container_runtime_env
 [ "$COCALC_PODMAN_BIN" = "${STAR_CONTAINER_RUNTIME_CURRENT}/bin/podman" ]
 [ "$CONTAINERS_CONF_OVERRIDE" = "${STAR_CONTAINER_RUNTIME_CURRENT}/etc/containers/containers.conf" ]
@@ -97,5 +118,12 @@ if star_configure_container_runtime_env; then
   exit 1
 fi
 [ -z "$(star_container_runtime_shell_exports)" ]
+
+install_script="${SCRIPT_DIR}/install-from-tarball.sh"
+stop_line="$(grep -n 'systemctl stop cocalc-star-project-host.service' "$install_script" | cut -d: -f1)"
+prepare_line="$(grep -n 'star_prepare_container_runtime_activation' "$install_script" | cut -d: -f1)"
+activate_line="$(grep -n 'star_activate_container_runtime' "$install_script" | cut -d: -f1)"
+[ "$stop_line" -lt "$prepare_line" ]
+[ "$prepare_line" -lt "$activate_line" ]
 
 printf 'managed container-runtime tests: ok\n'

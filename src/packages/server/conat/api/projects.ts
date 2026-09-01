@@ -17,6 +17,7 @@ import {
 } from "@cocalc/server/projects/hard-delete-state";
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import { requireDangerousProjectMutationAuth } from "./project-dangerous-auth";
 export * from "@cocalc/server/projects/collaborators";
 import {
   createCollabInvite as createCollabInviteLocal,
@@ -3924,6 +3925,8 @@ async function getAssignedDirectCoursePackageMembership({
 
 export async function createCollabInvite({
   account_id,
+  browser_id,
+  session_hash,
   project_id,
   invitee_account_id,
   message,
@@ -3932,6 +3935,8 @@ export async function createCollabInvite({
   read_policy,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   project_id: string;
   invitee_account_id: string;
   message?: string;
@@ -3944,6 +3949,11 @@ export async function createCollabInvite({
     if (!account_id) {
       throw new Error("must be signed in");
     }
+    await requireDangerousProjectMutationAuth({
+      account_id,
+      browser_id,
+      session_hash,
+    });
     // Account-authenticated hub calls run on the actor's home bay, where
     // account groups are authoritative. The owning bay trusts this result only
     // through the internal inter-bay request below.
