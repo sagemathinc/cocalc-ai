@@ -4128,6 +4128,22 @@ reserve_project_startup_io_capacity
                 rootctl.read_text(encoding="utf-8"),
             )
             self.assertIn(
+                'if [ "$#" -ne 0 ]; then\n      echo "usage: ${0} intrusion-snapshot"',
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                '"coverage": "partial" if issues or any(truncated.values()) else "complete"',
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "/usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin",
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertNotIn(
+                "__HOST_INTRUSION_SNAPSHOT_HELPER__",
+                rootctl.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
                 'printf \'CAPTURE_DIR=%s\\n\'',
                 rootctl.read_text(encoding="utf-8"),
             )
@@ -4169,6 +4185,24 @@ reserve_project_startup_io_capacity
             self.assertIn("count=1024 conv=sparse", core_handler_text)
             self.assertIn('"${kept}" -gt 3', core_handler_text)
             subprocess.run(["bash", "-n", str(core_handler)], check=True)
+
+    def test_intrusion_snapshot_helper_is_valid_bounded_python(self) -> None:
+        compile(
+            bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER,
+            "cocalc-project-host-intrusion-snapshot",
+            "exec",
+        )
+        self.assertIn("MAX_PERSISTENCE_FILES = 500", bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER)
+        self.assertIn("COLLECTOR_DEADLINE", bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER)
+        self.assertIn("os.O_NOFOLLOW", bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER)
+        self.assertIn(
+            "root-with-isolated-mount-namespace",
+            bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER,
+        )
+        self.assertIn('["/usr/bin/find",', bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER)
+        self.assertIn('["/usr/bin/journalctl",', bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER)
+        self.assertNotIn("/proc/{pid}/cmdline", bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER)
+        self.assertNotIn("/proc/{pid}/environ", bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER)
 
     def test_helper_schema_installed_reads_rootctl_marker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -27,6 +27,7 @@ import {
 } from "@cocalc/conat/project-host/api";
 import { collectAbuseProcessSnapshot } from "./abuse-process-snapshot";
 import { collectAbuseFilesystemSnapshot } from "./abuse-filesystem-snapshot";
+import { collectIntrusionSnapshot } from "./intrusion-snapshot";
 import { createCachedPodmanSnapshotReader } from "./podman-diagnostics";
 import type {
   HostPressureState,
@@ -1759,6 +1760,9 @@ export async function startMasterRegistration({
     },
     async getFilesystemSnapshot() {
       return await readFilesystemSnapshot();
+    },
+    async getIntrusionSnapshot() {
+      return await collectIntrusionSnapshot();
     },
     async getPodmanSnapshot(opts) {
       return await getPodmanSnapshot(normalizeSnapshotLimit(opts?.limit));

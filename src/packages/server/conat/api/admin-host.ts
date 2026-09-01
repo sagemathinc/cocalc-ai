@@ -23,6 +23,8 @@ import type {
   AdminHostEventsResponse,
   AdminHostFilesystemRequest,
   AdminHostFilesystemResponse,
+  AdminHostIntrusionSnapshotRequest,
+  AdminHostIntrusionSnapshotResponse,
   AdminHostLogsRequest,
   AdminHostLogsResponse,
   AdminHostNetworkRequest,
@@ -145,6 +147,7 @@ async function recordAudit({
     | "describe"
     | "events"
     | "filesystem"
+    | "intrusion-snapshot"
     | "logs"
     | "net"
     | "podman"
@@ -654,6 +657,7 @@ async function runLiveHostDiagnostic<T>({
     | "abuse-filesystems"
     | "abuse-processes"
     | "filesystem"
+    | "intrusion-snapshot"
     | "net"
     | "podman"
     | "ps";
@@ -878,6 +882,24 @@ export async function filesystem({
     mode: "filesystem",
     reason,
     run: async (client) => await client.getFilesystemSnapshot(),
+  });
+}
+
+export async function intrusionSnapshot({
+  account_id,
+  host,
+  host_id,
+  reason,
+}: AdminAuthOpts &
+  AdminHostIntrusionSnapshotRequest): Promise<AdminHostIntrusionSnapshotResponse> {
+  return await runLiveHostDiagnostic({
+    account_id,
+    host,
+    host_id,
+    mode: "intrusion-snapshot",
+    reason,
+    timeout: 120_000,
+    run: async (client) => await client.getIntrusionSnapshot(),
   });
 }
 
