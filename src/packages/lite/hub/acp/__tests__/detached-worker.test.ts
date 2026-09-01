@@ -33,6 +33,13 @@ import {
 } from "../../sqlite/acp-jobs";
 
 jest.mock("@cocalc/ai/acp", () => ({
+  CODEX_ACP_RECOVERY_ERROR_CODE: {
+    appServerExited: "codex_app_server_exited",
+    commandBlocked: "codex_command_blocked",
+    modelCapacity: "codex_model_capacity",
+    resourceKilled: "codex_resource_killed",
+    turnLost: "codex_turn_lost",
+  },
   CodexAcpAgent: class {},
   EchoAgent: class {},
 }));
@@ -270,6 +277,170 @@ function makeSyncdb(rows: any[] = []) {
     close: async () => {},
   };
 }
+
+describe("terminal failure recovery", () => {
+  it("persists a bounded 15-minute model-capacity continuation", async () => {
+    const request = makeRequest();
+    const queued = enqueueAcpJob(request as any);
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: request.chat.message_date,
+        sender_id: request.chat.sender_id,
+        message_id: request.chat.message_id,
+        thread_id: request.chat.thread_id,
+        generating: false,
+        history: [],
+      },
+    ];
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(makeSyncdb(rows));
+    const before = Date.now();
+
+    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+      client: {} as ConatClient,
+      job: { ...queued, started_at: Date.now() },
+      recoveryCode: "codex_model_capacity",
+    });
+
+    expect(resumed?.recovery_count).toBe(1);
+    expect(resumed?.available_at).toBeGreaterThanOrEqual(before + 15 * 60_000);
+    expect(resumed?.available_at).toBeLessThanOrEqual(Date.now() + 15 * 60_000);
+    const recoveryRequest = decodeAcpJobRequest(resumed!);
+    if (recoveryRequest.request_kind === "command") {
+      throw new Error("expected Codex recovery request");
+    }
+    expect(recoveryRequest.prompt).toContain("selected model was at capacity");
+    const recoveryRow = rows.find(
+      (row) => row.message_id === recoveryRequest.chat?.parent_message_id,
+    );
+    expect(recoveryRow?.history?.[0]?.content).toContain("in about 15m");
+    expect(recoveryRow?.history?.[0]?.content).toContain(
+      "unless you send another turn first",
+    );
+
+    await expect(
+      acpTestInternals.enqueueFailureRecoveryContinuation({
+        client: {} as ConatClient,
+        job: queued,
+        recoveryCode: "codex_model_capacity",
+      }),
+    ).resolves.toBeUndefined();
+    expect(
+      listAcpJobsByRecoveryParent({
+        recovery_parent_op_id: queued.op_id,
+      }),
+    ).toHaveLength(1);
+  });
+
+  it("stops failure recovery after two continuation attempts", async () => {
+    const request = {
+      ...makeRequest(),
+      recovery_parent_op_id: "recovery-parent",
+      recovery_reason: "model capacity",
+      recovery_count: 2,
+    };
+    const queued = enqueueAcpJob(request as any);
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(makeSyncdb([]));
+
+    await expect(
+      acpTestInternals.enqueueFailureRecoveryContinuation({
+        client: {} as ConatClient,
+        job: queued,
+        recoveryCode: "codex_model_capacity",
+      }),
+    ).resolves.toBeUndefined();
+    expect(
+      listAcpJobsByRecoveryParent({
+        recovery_parent_op_id: queued.op_id,
+      }),
+    ).toHaveLength(0);
+  });
+
+  it("resumes a blocked command once with explicit safer-command guidance", async () => {
+    const request = makeRequest();
+    const queued = enqueueAcpJob(request as any);
+    const rows: any[] = [];
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(makeSyncdb(rows));
+    const denial =
+      "Codex blocked a command: rm -f style commands are not permitted. Use a safer approach";
+
+    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+      client: {} as ConatClient,
+      job: { ...queued, started_at: Date.now() },
+      recoveryCode: "codex_command_blocked",
+      recoveryDetail: denial,
+    });
+
+    expect(resumed?.recovery_count).toBe(1);
+    expect(resumed?.available_at).toBeNull();
+    const recoveryRequest = decodeAcpJobRequest(resumed!);
+    if (recoveryRequest.request_kind === "command") {
+      throw new Error("expected Codex recovery request");
+    }
+    expect(recoveryRequest.prompt).toContain(denial);
+    expect(recoveryRequest.prompt).toContain(
+      "Do not repeat the rejected command or an equivalent destructive shell form",
+    );
+    const recoveryRow = rows.find(
+      (row) => row.message_id === recoveryRequest.chat?.parent_message_id,
+    );
+    expect(recoveryRow?.history?.[0]?.content).toContain("attempt 1/1");
+
+    const secondRequest = {
+      ...request,
+      chat: {
+        ...request.chat,
+        message_id: "00000000-0000-4000-8000-000000000099",
+        parent_message_id: "00000000-0000-4000-8000-000000000098",
+      },
+      recovery_parent_op_id: queued.op_id,
+      recovery_reason: "Codex command blocked by CoCalc safety policy",
+      recovery_count: 1,
+    };
+    const second = enqueueAcpJob(secondRequest as any);
+    await expect(
+      acpTestInternals.enqueueFailureRecoveryContinuation({
+        client: {} as ConatClient,
+        job: { ...second, started_at: Date.now() },
+        recoveryCode: "codex_command_blocked",
+        recoveryDetail: denial,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("delays resource-killed recovery and preserves memory guidance", async () => {
+    const request = makeRequest();
+    const queued = enqueueAcpJob(request as any);
+    const rows: any[] = [];
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(makeSyncdb(rows));
+    const detail =
+      "Codex was killed by SIGKILL (exit code 137). This is usually caused by the project running out of RAM.";
+    const before = Date.now();
+
+    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+      client: {} as ConatClient,
+      job: { ...queued, started_at: Date.now() },
+      recoveryCode: "codex_resource_killed",
+      recoveryDetail: detail,
+    });
+
+    expect(resumed?.available_at).toBeGreaterThanOrEqual(before + 5 * 60_000);
+    expect(resumed?.available_at).toBeLessThanOrEqual(Date.now() + 5 * 60_000);
+    const recoveryRequest = decodeAcpJobRequest(resumed!);
+    if (recoveryRequest.request_kind === "command") {
+      throw new Error("expected Codex recovery request");
+    }
+    expect(recoveryRequest.prompt).toContain(detail);
+    expect(recoveryRequest.prompt).toContain(
+      "inspect current workspace and memory state",
+    );
+    const recoveryRow = rows.find(
+      (row) => row.message_id === recoveryRequest.chat?.parent_message_id,
+    );
+    expect(recoveryRow?.history?.[0]?.content).toContain("in about 5m");
+    expect(recoveryRow?.history?.[0]?.content).toContain("attempt 1/2");
+  });
+});
 
 describe("recoverDetachedWorkerStartupState", () => {
   it("does not blanket-interrupt running local detached jobs", async () => {

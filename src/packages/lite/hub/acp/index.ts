@@ -9,10 +9,12 @@ import { data } from "@cocalc/backend/data";
 import { uuidsha1 } from "@cocalc/backend/misc_node";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
 import {
+  CODEX_ACP_RECOVERY_ERROR_CODE,
   CodexAppServerAgent,
   EchoAgent,
   type AcpAgent,
   type AcpEvaluateRequest,
+  type CodexAcpRecoveryErrorCode,
   forkCodexAppServerSession,
 } from "@cocalc/ai/acp";
 import { AgentTimeTravelRecorder } from "@cocalc/ai/sync";
@@ -160,6 +162,7 @@ import {
 } from "../sqlite/acp-turns";
 import {
   cancelQueuedAcpJob,
+  cancelQueuedRecoveryJobsForThread,
   claimNextQueuedAcpJobForThread,
   clearQueuedAcpJobWorkerAffinity,
   countQueuedAcpJobsForThread,
@@ -336,6 +339,14 @@ const RESTART_INTERRUPTED_NOTICE =
   "**Conversation interrupted because CoCalc had to recover the live Codex turn.**";
 const STALE_TURN_INTERRUPTED_NOTICE =
   "**Conversation interrupted because CoCalc lost the live Codex turn.**";
+const APP_SERVER_EXITED_NOTICE =
+  "**Conversation interrupted because the Codex app-server exited unexpectedly.**";
+const COMMAND_BLOCKED_NOTICE =
+  "**Codex stopped because CoCalc blocked an unsafe command pattern.**";
+const MODEL_CAPACITY_NOTICE =
+  "**Codex could not start this turn because the selected model was at capacity.**";
+const RESOURCE_KILLED_NOTICE =
+  "**Codex was killed, usually because the project temporarily ran out of RAM.**";
 const TERMINAL_STALE_TURN_INTERRUPTED_NOTICE =
   "**Conversation interrupted because CoCalc lost the final Codex turn update.**";
 const THREAD_CONFIG_EVENT = "chat-thread-config";
@@ -505,6 +516,14 @@ const ACP_AUTO_RECOVERY_MAX_RETRIES = envNumber(
   "COCALC_ACP_AUTO_RECOVERY_MAX_RETRIES",
   2,
 );
+const ACP_MODEL_CAPACITY_RECOVERY_DELAY_MS = envNumber(
+  "COCALC_ACP_MODEL_CAPACITY_RECOVERY_DELAY_MS",
+  15 * 60_000,
+);
+const ACP_RESOURCE_KILLED_RECOVERY_DELAY_MS = envNumber(
+  "COCALC_ACP_RESOURCE_KILLED_RECOVERY_DELAY_MS",
+  5 * 60_000,
+);
 const WORKER_INTERRUPTED_NOTICE =
   "**Conversation interrupted because the ACP worker stopped unexpectedly.**";
 const ACP_RECOVERY_CHAT_SENDER_ID = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
@@ -530,40 +549,135 @@ function interruptedNoticeForRecoveryReason(recoveryReason: string): string {
 function buildRecoveryContinuationContent({
   interruptedNotice,
   recoveryCount,
+  delayMs = 0,
+  maxRetries = ACP_AUTO_RECOVERY_MAX_RETRIES,
 }: {
   interruptedNotice: string;
   recoveryCount: number;
+  delayMs?: number;
+  maxRetries?: number;
 }): string {
   const plain = `${interruptedNotice ?? ""}`.replace(/^\*\*|\*\*$/g, "").trim();
-  return `${ACP_RECOVERY_VISIBLE_LABEL}: ${plain} CoCalc is automatically resuming this Codex session (attempt ${recoveryCount}).`;
+  const timing =
+    delayMs > 0
+      ? `CoCalc will automatically resume this Codex session in about ${formatQueuedDelay(delayMs)}, unless you send another turn first`
+      : "CoCalc is automatically resuming this Codex session";
+  return `${ACP_RECOVERY_VISIBLE_LABEL}: ${plain} ${timing} (attempt ${recoveryCount}/${maxRetries}).`;
 }
 
 function buildRecoveryContinuationPrompt({
   interruptedNotice,
   recoveryCount,
   originalPrompt,
+  recoveryGuidance,
 }: {
   interruptedNotice: string;
   recoveryCount: number;
   originalPrompt: string;
+  recoveryGuidance?: string;
 }): string {
   return [
-    "The previous Codex turn in this same session was interrupted.",
+    "The previous Codex turn in this same session did not complete.",
     `Recovery attempt: ${recoveryCount}.`,
     `Interruption summary: ${`${interruptedNotice ?? ""}`.replace(/\*\*/g, "").trim()}`,
     "Resume the work from the current workspace state.",
     "Before repeating any expensive, destructive, or externally visible action, inspect what already completed and avoid duplicating side effects.",
     "If commands, calculations, or scripts may have been interrupted, determine their state first and then continue safely.",
+    recoveryGuidance,
     "",
     "Original user request:",
     originalPrompt,
-  ].join("\n");
+  ]
+    .filter((line): line is string => line != null)
+    .join("\n");
+}
+
+type AcpFailureRecoveryDirective = {
+  code: CodexAcpRecoveryErrorCode;
+  interruptedNotice: string;
+  recoveryReason: string;
+  delayMs: number;
+  maxRetries: number;
+  recoveryGuidance?: string;
+};
+
+function failureRecoveryDirective(
+  code: string | undefined,
+  detail?: string,
+): AcpFailureRecoveryDirective | undefined {
+  switch (code) {
+    case CODEX_ACP_RECOVERY_ERROR_CODE.turnLost:
+      return {
+        code,
+        interruptedNotice: STALE_TURN_INTERRUPTED_NOTICE,
+        recoveryReason: "backend lost live Codex turn",
+        delayMs: 0,
+        maxRetries: ACP_AUTO_RECOVERY_MAX_RETRIES,
+      };
+    case CODEX_ACP_RECOVERY_ERROR_CODE.appServerExited:
+      return {
+        code,
+        interruptedNotice: APP_SERVER_EXITED_NOTICE,
+        recoveryReason: "Codex app-server exited unexpectedly",
+        delayMs: 0,
+        maxRetries: ACP_AUTO_RECOVERY_MAX_RETRIES,
+      };
+    case CODEX_ACP_RECOVERY_ERROR_CODE.commandBlocked: {
+      const blockedDetail = `${detail ?? ""}`
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 1_000);
+      return {
+        code,
+        interruptedNotice: COMMAND_BLOCKED_NOTICE,
+        recoveryReason: "Codex command blocked by CoCalc safety policy",
+        delayMs: 0,
+        maxRetries: Math.min(1, ACP_AUTO_RECOVERY_MAX_RETRIES),
+        recoveryGuidance: [
+          blockedDetail
+            ? `The prior turn ended with this safety denial: ${JSON.stringify(blockedDetail)}`
+            : "The prior turn ended because CoCalc rejected a command as unsafe.",
+          "Do not repeat the rejected command or an equivalent destructive shell form. Inspect the workspace, then use a safer, narrowly scoped approach that complies with the safety policy.",
+        ].join("\n"),
+      };
+    }
+    case CODEX_ACP_RECOVERY_ERROR_CODE.modelCapacity:
+      return {
+        code,
+        interruptedNotice: MODEL_CAPACITY_NOTICE,
+        recoveryReason: "Codex model capacity retry",
+        delayMs: Math.max(1_000, ACP_MODEL_CAPACITY_RECOVERY_DELAY_MS),
+        maxRetries: ACP_AUTO_RECOVERY_MAX_RETRIES,
+      };
+    case CODEX_ACP_RECOVERY_ERROR_CODE.resourceKilled: {
+      const killedDetail = `${detail ?? ""}`
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 1_000);
+      return {
+        code,
+        interruptedNotice: RESOURCE_KILLED_NOTICE,
+        recoveryReason: "Codex process killed by resource pressure",
+        delayMs: Math.max(1_000, ACP_RESOURCE_KILLED_RECOVERY_DELAY_MS),
+        maxRetries: ACP_AUTO_RECOVERY_MAX_RETRIES,
+        recoveryGuidance: [
+          killedDetail
+            ? `The prior process ended with: ${JSON.stringify(killedDetail)}`
+            : "The prior Codex process was killed, likely by memory pressure.",
+          "Before repeating a memory-intensive build or command, inspect current workspace and memory state. Reuse completed work and reduce concurrency or memory use where practical.",
+        ].join("\n"),
+      };
+    }
+    default:
+      return undefined;
+  }
 }
 
 function shouldAutoResumeRecoveredTurn({
   turn,
   job,
   now = Date.now(),
+  maxRetries = ACP_AUTO_RECOVERY_MAX_RETRIES,
 }: {
   turn: {
     started_at?: number | null;
@@ -572,12 +686,13 @@ function shouldAutoResumeRecoveredTurn({
   };
   job?: Pick<AcpJobRow, "recovery_count"> | null;
   now?: number;
+  maxRetries?: number;
 }): { ok: boolean; reason?: "expired" | "max_retries" } {
   const recoveryCount = Math.max(
     0,
     Math.floor(Number(job?.recovery_count ?? 0)) || 0,
   );
-  if (recoveryCount >= ACP_AUTO_RECOVERY_MAX_RETRIES) {
+  if (recoveryCount >= maxRetries) {
     return { ok: false, reason: "max_retries" };
   }
   const heartbeatAt = Number(turn.heartbeat_at ?? 0);
@@ -858,7 +973,9 @@ function nextQueuedAcpJobForThread({
     project_id,
     path,
     thread_id,
-  })[0];
+  }).find(
+    (job) => job.available_at == null || Number(job.available_at) <= Date.now(),
+  );
   return listed ? releaseStaleQueuedJobAffinity(listed) : undefined;
 }
 
@@ -7197,6 +7314,8 @@ function agentsForProject(projectId: string): AcpAgent[] {
 
 type AcpExecutionResult = {
   terminalState: "completed" | "error" | "interrupted";
+  recoveryCode?: CodexAcpRecoveryErrorCode;
+  recoveryDetail?: string;
 };
 
 function paymentSourceFromAuthSource({
@@ -7345,6 +7464,15 @@ async function executeAcpRequest({
       })
     : null;
 
+  let recoveryCode: CodexAcpRecoveryErrorCode | undefined;
+  let recoveryDetail: string | undefined;
+  const captureRecoveryCode = (payload?: AcpStreamPayload | null) => {
+    if (payload?.type !== "error") return;
+    const directive = failureRecoveryDirective(payload.code, payload.error);
+    if (!directive || recoveryCode) return;
+    recoveryCode = directive.code;
+    recoveryDetail = `${payload.error ?? ""}`.trim() || undefined;
+  };
   let wrappedStream;
   stream({ type: "status", state: "init" });
   if (chatWriter != null) {
@@ -7355,6 +7483,7 @@ async function executeAcpRequest({
       );
     }
     wrappedStream = async (payload?: AcpStreamPayload | null) => {
+      captureRecoveryCode(payload);
       try {
         await chatWriter.handle(payload);
       } catch (err) {
@@ -7365,7 +7494,10 @@ async function executeAcpRequest({
       }
     };
   } else {
-    wrappedStream = stream;
+    wrappedStream = async (payload?: AcpStreamPayload | null) => {
+      captureRecoveryCode(payload);
+      await stream(payload);
+    };
   }
 
   let terminalState: AcpExecutionResult["terminalState"] = "completed";
@@ -7441,7 +7573,7 @@ async function executeAcpRequest({
     }
     await cleanup();
   }
-  return { terminalState };
+  return { terminalState, recoveryCode, recoveryDetail };
 }
 
 async function waitForChatWriterDisposal(
@@ -7477,7 +7609,7 @@ function maybeDecorateQueuedPromptForJob({
   job,
 }: {
   prompt: string;
-  job: Pick<AcpJobRow, "created_at" | "send_mode">;
+  job: Pick<AcpJobRow, "created_at" | "recovery_parent_op_id" | "send_mode">;
 }): string {
   if (job.send_mode === "immediate") return prompt;
   const delayMs = Date.now() - job.created_at;
@@ -7488,9 +7620,9 @@ function maybeDecorateQueuedPromptForJob({
     return prompt;
   }
   return [
-    `System note: this message was queued for ${formatQueuedDelay(
-      delayMs,
-    )} while another turn was active, and is being sent automatically now.`,
+    job.recovery_parent_op_id
+      ? `System note: this automatic recovery continuation waited ${formatQueuedDelay(delayMs)} before running.`
+      : `System note: this message was queued for ${formatQueuedDelay(delayMs)} while another turn was active, and is being sent automatically now.`,
     "",
     prompt,
   ].join("\n");
@@ -8823,11 +8955,17 @@ async function enqueueRecoveryContinuationForJob({
   job,
   interruptedNotice,
   recoveryReason,
+  delayMs = 0,
+  maxRetries = ACP_AUTO_RECOVERY_MAX_RETRIES,
+  recoveryGuidance,
 }: {
   client: ConatClient;
   job: AcpJobRow;
   interruptedNotice: string;
   recoveryReason: string;
+  delayMs?: number;
+  maxRetries?: number;
+  recoveryGuidance?: string;
 }): Promise<AcpJobRow | undefined> {
   const parentOpId = `${job.op_id ?? ""}`.trim();
   if (!parentOpId) return undefined;
@@ -8880,6 +9018,8 @@ async function enqueueRecoveryContinuationForJob({
           content: buildRecoveryContinuationContent({
             interruptedNotice,
             recoveryCount,
+            delayMs,
+            maxRetries,
           }),
           generating: false,
           message_id: user_message_id,
@@ -8897,6 +9037,7 @@ async function enqueueRecoveryContinuationForJob({
       interruptedNotice,
       recoveryCount,
       originalPrompt: request.prompt,
+      recoveryGuidance,
     }),
     session_id,
     recovery_parent_op_id: parentOpId,
@@ -8929,6 +9070,7 @@ async function enqueueRecoveryContinuationForJob({
       project_id,
       session_id,
     ),
+    available_at: delayMs > 0 ? now + delayMs : null,
   });
   await persistQueuedUserMessageProjection({
     client,
@@ -8939,6 +9081,105 @@ async function enqueueRecoveryContinuationForJob({
     queued: true,
   });
   return queued;
+}
+
+async function enqueueFailureRecoveryContinuation({
+  client,
+  job,
+  recoveryCode,
+  recoveryDetail,
+}: {
+  client: ConatClient;
+  job: AcpJobRow;
+  recoveryCode?: CodexAcpRecoveryErrorCode;
+  recoveryDetail?: string;
+}): Promise<AcpJobRow | undefined> {
+  const directive = failureRecoveryDirective(recoveryCode, recoveryDetail);
+  if (!directive) return undefined;
+  const decision = shouldAutoResumeRecoveredTurn({
+    turn: {
+      started_at: job.started_at,
+      message_date: job.assistant_message_date,
+    },
+    job,
+    maxRetries: directive.maxRetries,
+  });
+  if (!decision.ok) {
+    logger.warn("skipping ACP failure recovery continuation", {
+      op_id: job.op_id,
+      code: directive.code,
+      reason: decision.reason,
+      recovery_count: job.recovery_count ?? 0,
+    });
+    return undefined;
+  }
+  const resumed = await enqueueRecoveryContinuationForJob({
+    client,
+    job,
+    interruptedNotice: directive.interruptedNotice,
+    recoveryReason: directive.recoveryReason,
+    delayMs: directive.delayMs,
+    maxRetries: directive.maxRetries,
+    recoveryGuidance: directive.recoveryGuidance,
+  });
+  if (resumed) {
+    logger.warn("queued ACP failure recovery continuation", {
+      failed_op_id: job.op_id,
+      resumed_op_id: resumed.op_id,
+      code: directive.code,
+      delay_ms: directive.delayMs,
+      available_at: resumed.available_at ?? null,
+      recovery_count: resumed.recovery_count,
+      thread_id: resumed.thread_id,
+    });
+  }
+  return resumed;
+}
+
+async function cancelSupersededRecoveryContinuations({
+  client,
+  project_id,
+  path,
+  thread_id,
+}: {
+  client: ConatClient;
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): Promise<void> {
+  const canceled = cancelQueuedRecoveryJobsForThread({
+    project_id,
+    path,
+    thread_id,
+  });
+  for (const row of canceled) {
+    try {
+      await persistQueuedUserMessageProjection({
+        client,
+        project_id,
+        path,
+        thread_id,
+        user_message_id: row.user_message_id,
+        queued: false,
+      });
+    } catch (err) {
+      logger.warn("failed clearing superseded ACP recovery projection", {
+        project_id,
+        path,
+        thread_id,
+        op_id: row.op_id,
+        err,
+      });
+    }
+  }
+  if (canceled.length) {
+    logger.info("canceled ACP recovery continuations superseded by user turn", {
+      project_id,
+      path,
+      thread_id,
+      canceled_op_ids: canceled.map((row) => row.op_id),
+    });
+  }
 }
 
 async function writeQueuedJobFailureToChat({
@@ -9245,6 +9486,22 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       state: result.terminalState,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
     });
+    if (result.terminalState === "error" && result.recoveryCode) {
+      try {
+        await enqueueFailureRecoveryContinuation({
+          client: conatClient,
+          job: getAcpJobByOpId(job.op_id) ?? job,
+          recoveryCode: result.recoveryCode,
+          recoveryDetail: result.recoveryDetail,
+        });
+      } catch (err) {
+        logger.warn("failed to enqueue ACP failure recovery continuation", {
+          op_id: job.op_id,
+          recovery_code: result.recoveryCode,
+          err,
+        });
+      }
+    }
   } catch (err) {
     const message = `ACP queued job failed: ${(err as Error)?.message ?? err}`;
     logger.warn("queued acp job execution failed", {
@@ -9810,6 +10067,27 @@ async function enqueueChatAcpTurn({
     "chat",
   );
   await acknowledgeAutomationFromHumanTurn(request);
+  const projectId =
+    `${request.chat.project_id ?? request.project_id ?? ""}`.trim();
+  const chatPath = `${request.chat.path ?? ""}`.trim();
+  const threadId = `${request.chat.thread_id ?? ""}`.trim();
+  if (projectId && chatPath && threadId) {
+    try {
+      await cancelSupersededRecoveryContinuations({
+        client: conatClient,
+        project_id: projectId,
+        path: chatPath,
+        thread_id: threadId,
+      });
+    } catch (err) {
+      logger.warn("failed canceling ACP recovery superseded by user turn", {
+        project_id: projectId,
+        path: chatPath,
+        thread_id: threadId,
+        err,
+      });
+    }
+  }
   const row = enqueueAcpJob(request, {
     preferred_worker_id: preferredWorkerForRetainedSession(
       request.chat.project_id ?? request.project_id,
@@ -10686,7 +10964,10 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  cancelSupersededRecoveryContinuations,
   detachedWorkerCanClaimQueuedJob,
+  enqueueFailureRecoveryContinuation,
+  failureRecoveryDirective,
   hasOtherWorkerRunningAcpTurn,
   nextQueuedAcpJobForThread,
   noteDetachedWorkerQueuePoll,

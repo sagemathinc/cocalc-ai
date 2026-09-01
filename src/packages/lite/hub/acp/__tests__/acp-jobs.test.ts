@@ -23,6 +23,7 @@ import { automationHasActiveBackendRun } from "../active-automation-run";
 import {
   claimNextQueuedAcpJobForThread,
   cancelQueuedAcpJob,
+  cancelQueuedRecoveryJobsForThread,
   clearQueuedAcpJobWorkerAffinity,
   countCreatedAcpJobsForAccountSince,
   countQueuedAcpJobsForAccount,
@@ -36,6 +37,7 @@ import {
   getAcpJobByOpId,
   listAcpJobsByRecoveryParent,
   listQueuedAcpJobs,
+  listQueuedAcpJobThreadKeys,
   listQueuedAcpJobsForThread,
   oldestQueuedAcpJobTimestamp,
   resendCanceledAcpJob,
@@ -94,6 +96,74 @@ afterAll(() => {
 });
 
 describe("acp job queue ordering", () => {
+  it("does not claim a delayed recovery until its availability time", () => {
+    const request = {
+      ...makeRequest({
+        userMessageId: "user-delayed-recovery",
+        assistantMessageId: "assistant-delayed-recovery",
+        assistantDate: "2026-03-08T00:00:00.000Z",
+      }),
+      recovery_parent_op_id: "parent-delayed-recovery",
+      recovery_reason: "model capacity",
+      recovery_count: 1,
+    };
+    const availableAt = Date.now() + 15 * 60_000;
+    const queued = enqueueAcpJob(request as any, {
+      available_at: availableAt,
+    });
+
+    expect(queued.available_at).toBe(availableAt);
+    expect(listQueuedAcpJobs()).toHaveLength(1);
+    expect(listQueuedAcpJobThreadKeys()).toHaveLength(0);
+    expect(
+      claimNextQueuedAcpJobForThread({
+        project_id: queued.project_id,
+        path: queued.path,
+        thread_id: queued.thread_id,
+      }),
+    ).toBeUndefined();
+
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET available_at = ? WHERE op_id = ?")
+      .run(Date.now() - 1, queued.op_id);
+    expect(listQueuedAcpJobThreadKeys()).toHaveLength(1);
+    expect(
+      claimNextQueuedAcpJobForThread({
+        project_id: queued.project_id,
+        path: queued.path,
+        thread_id: queued.thread_id,
+      })?.op_id,
+    ).toBe(queued.op_id);
+  });
+
+  it("cancels queued recovery jobs when a user turn supersedes them", () => {
+    const request = {
+      ...makeRequest({
+        userMessageId: "user-canceled-recovery",
+        assistantMessageId: "assistant-canceled-recovery",
+        assistantDate: "2026-03-08T00:00:00.000Z",
+      }),
+      recovery_parent_op_id: "parent-canceled-recovery",
+      recovery_reason: "model capacity",
+      recovery_count: 1,
+    };
+    const queued = enqueueAcpJob(request as any, {
+      available_at: Date.now() + 15 * 60_000,
+    });
+
+    const canceled = cancelQueuedRecoveryJobsForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+    });
+
+    expect(canceled.map((row) => row.op_id)).toEqual([queued.op_id]);
+    expect(getAcpJobByOpId(queued.op_id)).toMatchObject({
+      state: "canceled",
+      error: "superseded by a newer user turn",
+    });
+  });
+
   it("reserves a continuation for its retained runtime worker", () => {
     const queued = enqueueAcpJob(
       makeRequest({

@@ -20,9 +20,11 @@ export type {
 
 export { EchoAgent, echoAgent } from "./echo";
 export {
+  CODEX_ACP_RECOVERY_ERROR_CODE,
   CodexAppServerAgent,
   forkCodexAppServerSession,
   getCodexAppServerAccountStatus,
+  type CodexAcpRecoveryErrorCode,
   type CodexAppServerAccountStatus,
 } from "./codex-app-server";
 export {
