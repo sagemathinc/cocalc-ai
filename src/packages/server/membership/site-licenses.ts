@@ -1377,12 +1377,14 @@ async function notifySiteLicensePoolRequestCreatedBestEffort({
   try {
     const managers = await listSiteLicenseManagers(siteLicense.id);
     const targetAccountIds = [
-      ...new Set([
-        siteLicense.owner_account_id,
-        ...managers
-          .filter((manager) => manager.role === "manager")
-          .map((manager) => manager.account_id),
-      ]),
+      ...new Set(
+        [
+          siteLicense.owner_account_id,
+          ...managers
+            .filter((manager) => manager.role === "manager")
+            .map((manager) => manager.account_id),
+        ].filter((accountId): accountId is string => accountId != null),
+      ),
     ];
     const poolName = getPackagePoolName(pkg);
     await createSiteLicenseAccountNoticeBestEffort({
