@@ -51,37 +51,45 @@ cocalc_tools_cache_key() {
 cocalc_tools_restore_cache() {
   local cache_dir="$1"
   local work_dir="$2"
-  if [ ! -d "$cache_dir/bin" ]; then
-    return 1
-  fi
-  # Directory mtime is the cache's LRU signal. Touch before and after the copy
-  # so a concurrent build's pruning pass treats this entry as active.
-  touch "$cache_dir"
-  rm -rf "$work_dir/bin" "$work_dir/share"
-  mkdir -p "$work_dir"
-  cp -a "$cache_dir/bin" "$work_dir/bin"
-  if [ -d "$cache_dir/share" ]; then
-    cp -a "$cache_dir/share" "$work_dir/share"
-  else
-    mkdir -p "$work_dir/share"
-  fi
-  touch "$cache_dir"
-  return 0
+  local cache_root
+  cache_root="$(dirname "$cache_dir")"
+  mkdir -p "$cache_root"
+  (
+    flock -s 9
+    if [ ! -d "$cache_dir/bin" ]; then
+      return 1
+    fi
+    touch "$cache_dir"
+    rm -rf "$work_dir/bin" "$work_dir/share"
+    mkdir -p "$work_dir"
+    cp -a "$cache_dir/bin" "$work_dir/bin"
+    if [ -d "$cache_dir/share" ]; then
+      cp -a "$cache_dir/share" "$work_dir/share"
+    else
+      mkdir -p "$work_dir/share"
+    fi
+    touch "$cache_dir"
+  ) 9>"$cache_root/.cache.lock"
 }
 
 cocalc_tools_save_cache() {
   local cache_dir="$1"
   local work_dir="$2"
+  local cache_root
+  cache_root="$(dirname "$cache_dir")"
   local tmp_dir="${cache_dir}.tmp.$$"
-  rm -rf "$tmp_dir"
-  mkdir -p "$tmp_dir"
-  cp -a "$work_dir/bin" "$tmp_dir/bin"
-  if [ -d "$work_dir/share" ]; then
-    cp -a "$work_dir/share" "$tmp_dir/share"
-  fi
-  mkdir -p "$(dirname "$cache_dir")"
-  rm -rf "$cache_dir"
-  mv "$tmp_dir" "$cache_dir"
+  mkdir -p "$cache_root"
+  (
+    flock -x 9
+    rm -rf "$tmp_dir"
+    mkdir -p "$tmp_dir"
+    cp -a "$work_dir/bin" "$tmp_dir/bin"
+    if [ -d "$work_dir/share" ]; then
+      cp -a "$work_dir/share" "$tmp_dir/share"
+    fi
+    rm -rf "$cache_dir"
+    mv "$tmp_dir" "$cache_dir"
+  ) 9>"$cache_root/.cache.lock"
 }
 
 cocalc_tools_prune_cache() {
@@ -90,8 +98,12 @@ cocalc_tools_prune_cache() {
   if [ "${COCALC_PROJECT_TOOLS_CACHE_PRUNE:-1}" = "0" ]; then
     return
   fi
-  if ! node "$COCALC_TOOLS_CACHE_HELPERS_DIR/tools-cache-prune.cjs" \
-    "$cache_root" "$@"; then
+  mkdir -p "$cache_root"
+  if ! (
+    flock -x 9
+    node "$COCALC_TOOLS_CACHE_HELPERS_DIR/tools-cache-prune.cjs" \
+      "$cache_root" "$@"
+  ) 9>"$cache_root/.cache.lock"; then
     echo "Warning: unable to prune project tools cache at $cache_root" >&2
   fi
 }

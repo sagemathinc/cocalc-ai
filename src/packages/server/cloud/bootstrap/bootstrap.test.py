@@ -4204,6 +4204,37 @@ reserve_project_startup_io_capacity
         self.assertNotIn("/proc/{pid}/cmdline", bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER)
         self.assertNotIn("/proc/{pid}/environ", bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER)
 
+        namespace = {"__name__": "intrusion_snapshot_test"}
+        exec(bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER, namespace)
+        oversized = {
+            "coverage": "complete",
+            "accounts": {"uid_zero": [], "interactive": []},
+            "host_processes": {"summary": [], "findings": []},
+            "persistence": {"files": ["x" * 2000 for _ in range(500)]},
+            "privileged_files": {
+                "writable": [],
+                "suid_sgid": [],
+                "capabilities": [],
+            },
+            "services": {"enabled": [], "failed": []},
+            "network": {"listeners": [], "established": []},
+            "authentication_7d": {"accepted": []},
+            "package_integrity": {"differences": []},
+            "truncated": {},
+        }
+        bounded = namespace["bound_output"](oversized)
+        encoded = json.dumps(bounded, sort_keys=True, separators=(",", ":")).encode()
+        self.assertLessEqual(len(encoded), 500 * 1024)
+        self.assertEqual(bounded["coverage"], "partial")
+        self.assertTrue(bounded["truncated"]["output_budget"])
+        self.assertTrue(bounded["truncated"]["persistence"])
+
+        main_body = bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER.split("def main():", 1)[1]
+        self.assertLess(
+            main_body.index("kernel_signals = collect_kernel_signals()"),
+            main_body.index('"coverage": "partial"'),
+        )
+
     def test_helper_schema_installed_reads_rootctl_marker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)

@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   existsSync,
@@ -10,6 +11,7 @@ const {
 } = require("node:fs");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
+const { spawn } = require("node:child_process");
 const { afterEach, test } = require("node:test");
 
 const { pruneCache } = require("./tools-cache-prune.cjs");
@@ -36,6 +38,35 @@ function makeEntry(root, name, { ageMs, bytes, now }) {
   const time = new Date(now - ageMs);
   utimesSync(directory, time, time);
   return directory;
+}
+
+function waitForChild(child) {
+  return new Promise((resolve, reject) => {
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => (stderr += chunk));
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(
+          new Error(
+            `child exited with ${code ?? signal}: ${stderr.trim() || "no stderr"}`,
+          ),
+        );
+      }
+    });
+  });
+}
+
+async function waitForPath(filePath, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(filePath)) {
+    if (Date.now() >= deadline) {
+      throw new Error(`timed out waiting for ${filePath}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 test("retains the newest cache generations in each family", async () => {
@@ -170,4 +201,66 @@ test("ignores unknown directories, temporary directories, and symlinks", async (
 
   assert.equal(result.removed.length, 0);
   assert.equal(result.entryCount, 0);
+});
+
+test("pruning waits for an active cache restore", async () => {
+  const root = makeRoot();
+  const cachePath = makeEntry(root, `tools-linux-amd64-all-${HASHES[0]}`, {
+    ageMs: 60_000,
+    bytes: 100,
+    now: Date.now(),
+  });
+  const workPath = path.join(root, "work");
+  const fakeBin = path.join(root, "fake-bin");
+  const copyStarted = path.join(root, "copy-started");
+  const helper = path.join(__dirname, "tools-cache.sh");
+  mkdirSync(fakeBin);
+  const fakeCp = path.join(fakeBin, "cp");
+  writeFileSync(
+    fakeCp,
+    `#!/usr/bin/env bash\ntouch "$COPY_STARTED"\nsleep 0.5\nexec /bin/cp "$@"\n`,
+  );
+  chmodSync(fakeCp, 0o755);
+  const env = {
+    ...process.env,
+    COPY_STARTED: copyStarted,
+    PATH: `${fakeBin}:${process.env.PATH}`,
+    COCALC_PROJECT_TOOLS_CACHE_RETENTION_COUNT: "0",
+    COCALC_PROJECT_TOOLS_CACHE_MAX_BYTES: "0",
+    COCALC_PROJECT_TOOLS_CACHE_MIN_AGE_MS: "0",
+  };
+  const restore = spawn(
+    "bash",
+    [
+      "-c",
+      'source "$1"; cocalc_tools_restore_cache "$2" "$3"',
+      "cache-restore",
+      helper,
+      cachePath,
+      workPath,
+    ],
+    { env, stdio: ["ignore", "ignore", "pipe"] },
+  );
+  const restoreDone = waitForChild(restore);
+  await waitForPath(copyStarted);
+  const prune = spawn(
+    "bash",
+    [
+      "-c",
+      'source "$1"; cocalc_tools_prune_cache "$2"',
+      "cache-prune",
+      helper,
+      root,
+    ],
+    { env, stdio: ["ignore", "ignore", "pipe"] },
+  );
+  const pruneDone = waitForChild(prune);
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(prune.exitCode, null);
+  assert.equal(existsSync(cachePath), true);
+  await restoreDone;
+  await pruneDone;
+  assert.equal(existsSync(path.join(workPath, "bin", "tool")), true);
+  assert.equal(existsSync(cachePath), false);
 });

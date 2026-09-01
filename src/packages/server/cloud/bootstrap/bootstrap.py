@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260901-v49"
+HELPER_SCHEMA_VERSION = "20260901-v50"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -58,6 +58,7 @@ import time
 
 MAX_ITEMS = 500
 MAX_PERSISTENCE_FILES = 500
+MAX_OUTPUT_BYTES = 500 * 1024
 COLLECTOR_DEADLINE = time.monotonic() + 105
 PERSISTENCE_ROOTS = [
     "/etc/systemd/system",
@@ -446,6 +447,44 @@ def collect_kernel_signals():
     return dict(sorted(counts.items()))
 
 
+def bound_output(output):
+    encoded = json.dumps(output, sort_keys=True, separators=(",", ":")).encode()
+    if len(encoded) <= MAX_OUTPUT_BYTES:
+        return output
+
+    output["coverage"] = "partial"
+    output["truncated"]["output_budget"] = True
+    sections = [
+        (output["persistence"], "files", "persistence"),
+        (output["host_processes"], "summary", "process_summary"),
+        (output["host_processes"], "findings", "process_findings"),
+        (output["privileged_files"], "writable", "privileged_writable"),
+        (output["privileged_files"], "suid_sgid", "suid_sgid"),
+        (output["privileged_files"], "capabilities", "file_capabilities"),
+        (output["services"], "enabled", "enabled_services"),
+        (output["services"], "failed", "failed_services"),
+        (output["network"], "listeners", "network_listeners"),
+        (output["network"], "established", "network_established"),
+        (output["authentication_7d"], "accepted", "authentication"),
+        (output["package_integrity"], "differences", "package_integrity"),
+        (output["accounts"], "interactive", "interactive_accounts"),
+        (output["accounts"], "uid_zero", "uid_zero_accounts"),
+    ]
+    while len(encoded) > MAX_OUTPUT_BYTES:
+        candidates = [
+            (len(container[key]), container, key, name)
+            for container, key, name in sections
+            if container[key]
+        ]
+        if not candidates:
+            raise RuntimeError("intrusion snapshot metadata exceeded output budget")
+        length, container, key, name = max(candidates, key=lambda item: item[0])
+        del container[key][-max(1, length // 4):]
+        output["truncated"][name] = True
+        encoded = json.dumps(output, sort_keys=True, separators=(",", ":")).encode()
+    return output
+
+
 def main():
     started = time.monotonic()
     captured_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -482,16 +521,20 @@ def main():
         timeout=90,
         max_lines=200,
     )
+    accounts = collect_accounts()
+    network = collect_network(host_pids)
+    authentication = collect_authentication()
+    kernel_signals = collect_kernel_signals()
     boot_id = clean(read_text("/proc/sys/kernel/random/boot_id", 256).strip(), 128)
     output = {
         "version": 1,
         "captured_at": captured_at,
-        "duration_ms": int((time.monotonic() - started) * 1000),
+        "duration_ms": 0,
         "hostname": clean(os.uname().nodename, 256),
         "kernel": clean(os.uname().release, 256),
         "boot_id": boot_id,
         "coverage": "partial" if issues or any(truncated.values()) else "complete",
-        "accounts": collect_accounts(),
+        "accounts": accounts,
         "host_processes": processes,
         "persistence": {"files": persistence_files, "truncated": persistence_truncated},
         "privileged_files": {
@@ -500,13 +543,15 @@ def main():
             "capabilities": capabilities,
         },
         "services": {"enabled": enabled, "failed": failed},
-        "network": collect_network(host_pids),
-        "authentication_7d": collect_authentication(),
-        "kernel_signals_7d": collect_kernel_signals(),
+        "network": network,
+        "authentication_7d": authentication,
+        "kernel_signals_7d": kernel_signals,
         "package_integrity": {"manager": "dpkg", "differences": package_differences},
         "issues": issues,
         "truncated": truncated,
     }
+    bound_output(output)
+    output["duration_ms"] = int((time.monotonic() - started) * 1000)
     print(json.dumps(output, sort_keys=True, separators=(",", ":")))
 
 
