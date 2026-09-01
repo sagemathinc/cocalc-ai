@@ -358,6 +358,72 @@ password-command = "id"
                     profile_run_dir_uid=os.getuid(),
                 )
 
+    def test_rustic_allows_loopback_rest_only_when_enabled(self) -> None:
+        run_rustic = self.helper_namespace()["run_rustic"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "source").mkdir()
+            profile = root / "profile.toml"
+            profile.write_text(
+                """[repository]
+repository = "rest:http://user:secret@127.0.0.1:9345/rootfs-images"
+password = "audit-password"
+""",
+                encoding="utf-8",
+            )
+            fake_rustic = root / "rustic"
+            fake_rustic.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake_rustic.chmod(0o755)
+            args = [
+                "rustic-rootfs-backup",
+                "--root",
+                str(root),
+                "--path",
+                "source",
+                "--profile-root",
+                str(root),
+                "--profile-path",
+                "profile.toml",
+                "--host",
+                "rootfs-test",
+            ]
+
+            with self.assertRaisesRegex(
+                ValueError, "managed opendal:s3 backend"
+            ):
+                run_rustic(
+                    args,
+                    allowed_roots={str(root)},
+                    rustic_candidates=[str(fake_rustic)],
+                    profile_run_dir=str(root / "run-denied"),
+                    profile_run_dir_uid=os.getuid(),
+                )
+
+            run_rustic(
+                args,
+                allowed_roots={str(root)},
+                rustic_candidates=[str(fake_rustic)],
+                profile_run_dir=str(root / "run-allowed"),
+                profile_run_dir_uid=os.getuid(),
+                allow_loopback_rest=True,
+            )
+
+            profile.write_text(
+                profile.read_text(encoding="utf-8").replace(
+                    "127.0.0.1", "169.254.169.254"
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "local loopback HTTP"):
+                run_rustic(
+                    args,
+                    allowed_roots={str(root)},
+                    rustic_candidates=[str(fake_rustic)],
+                    profile_run_dir=str(root / "run-non-loopback"),
+                    profile_run_dir_uid=os.getuid(),
+                    allow_loopback_rest=True,
+                )
+
     def test_rustic_uses_anchored_validated_profile_snapshot(self) -> None:
         run_rustic = self.helper_namespace()["run_rustic"]
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -613,6 +679,7 @@ class ProjectIoConfigurationTest(unittest.TestCase):
         self.assertEqual(cfg.project_io_capacity["provider"], "standalone")
         self.assertEqual(cfg.project_io_policy["mode"], "disabled")
         self.assertEqual(cfg.project_io_policy["profile"], "unconfigured")
+        self.assertTrue(cfg.allow_loopback_rustic_rest)
 
     def test_standalone_wrapper_configuration_requires_runtime_user(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "must not be empty"):
@@ -2719,9 +2786,14 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             bootstrap.install_privileged_wrappers(cfg)
 
         script = captured["/usr/local/sbin/cocalc-runtime-storage"]
+        path_helper = captured[
+            "/usr/local/libexec/cocalc-runtime-storage-path-helper"
+        ]
         self.assertIn('RUNTIME_USER="star-user"', script)
         self.assertIn('CONTAINER_RUNTIME_REQUIRED="0"', script)
         self.assertNotIn("__RUNTIME_USER__", script)
+        self.assertIn('ALLOW_LOOPBACK_RUSTIC_REST = "1" == "1"', path_helper)
+        self.assertNotIn("__ALLOW_LOOPBACK_RUSTIC_REST__", path_helper)
         self.assertEqual(
             json.loads(captured["/etc/cocalc/project-io-policy.json"])[
                 "mode"

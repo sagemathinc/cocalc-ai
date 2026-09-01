@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260825-v45"
+HELPER_SCHEMA_VERSION = "20260901-v46"
 RUNTIME_WRAPPER_VERSION = "20260825-v16"
 BOOTSTRAP_LIFECYCLE_EXPORT_DIR = Path("/var/lib/cocalc/bootstrap-lifecycle")
 NVM_VERSION = "0.40.4"
@@ -881,6 +881,7 @@ class BootstrapConfig:
     ca_cert_path: str | None
     bootstrap_done_paths: list[str]
     container_runtime_bundle: BundleSpec | None = None
+    allow_loopback_rustic_rest: bool = False
 
 
 @dataclass(frozen=True)
@@ -891,6 +892,7 @@ class PrivilegedWrapperConfig:
     project_io_capacity: dict[str, Any]
     project_io_policy: dict[str, Any]
     container_runtime_bundle: BundleSpec | None = None
+    allow_loopback_rustic_rest: bool = False
 
 
 def _require(condition: bool, message: str) -> None:
@@ -1004,6 +1006,7 @@ def standalone_privileged_wrapper_config(
         ssh_user=ssh_user,
         project_io_capacity=capacity,
         project_io_policy=build_project_io_policy(capacity),
+        allow_loopback_rustic_rest=True,
     )
 
 
@@ -3784,6 +3787,7 @@ RUSTIC_OPTION_KEYS = {
     "root",
     "secret_access_key",
 }
+ALLOW_LOOPBACK_RUSTIC_REST = "__ALLOW_LOOPBACK_RUSTIC_REST__" == "1"
 SYS_OPENAT2 = 437
 RESOLVE_NO_MAGICLINKS = 0x02
 RESOLVE_NO_SYMLINKS = 0x04
@@ -3986,7 +3990,7 @@ def parse_rustic(argv):
     return command, values
 
 
-def read_validated_rustic_profile(rootfd, path):
+def read_validated_rustic_profile(rootfd, path, allow_loopback_rest=False):
     fd = openat2(rootfd, path, os.O_RDONLY | os.O_CLOEXEC)
     try:
         info = os.fstat(fd)
@@ -4020,26 +4024,45 @@ def read_validated_rustic_profile(rootfd, path):
     for key in ("repository", "password"):
         if not isinstance(repository[key], str):
             fail(f"Rustic profile {key} must be a string")
-    if repository["repository"] != "opendal:s3":
+    repository_url = repository["repository"]
+    if repository_url == "opendal:s3":
+        options = repository.get("options", {})
+        if not isinstance(options, dict) or set(options) != RUSTIC_OPTION_KEYS:
+            fail("Rustic profile contains unsupported repository options")
+        if any(
+            not isinstance(value, str)
+            or not value
+            or any(ord(char) < 32 or ord(char) == 127 for char in value)
+            for value in options.values()
+        ):
+            fail("Rustic repository options must be nonempty strings")
+        endpoint = urllib.parse.urlsplit(options["endpoint"])
+        if (
+            endpoint.scheme != "https"
+            or not endpoint.hostname
+            or endpoint.username is not None
+            or endpoint.password is not None
+        ):
+            fail("privileged Rustic requires an HTTPS object-store endpoint")
+    elif allow_loopback_rest and repository_url.startswith("rest:"):
+        if "options" in repository:
+            fail("loopback Rustic REST profiles do not support options")
+        endpoint = urllib.parse.urlsplit(repository_url[len("rest:") :])
+        try:
+            port = endpoint.port
+        except ValueError:
+            fail("privileged Rustic loopback REST endpoint has an invalid port")
+        if (
+            endpoint.scheme != "http"
+            or endpoint.hostname not in {"127.0.0.1", "::1"}
+            or port is None
+            or endpoint.path in {"", "/"}
+            or endpoint.query
+            or endpoint.fragment
+        ):
+            fail("privileged Rustic REST endpoint must use local loopback HTTP")
+    else:
         fail("privileged Rustic requires the managed opendal:s3 backend")
-    options = repository.get("options", {})
-    if not isinstance(options, dict) or set(options) != RUSTIC_OPTION_KEYS:
-        fail("Rustic profile contains unsupported repository options")
-    if any(
-        not isinstance(value, str)
-        or not value
-        or any(ord(char) < 32 or ord(char) == 127 for char in value)
-        for value in options.values()
-    ):
-        fail("Rustic repository options must be nonempty strings")
-    endpoint = urllib.parse.urlsplit(options["endpoint"])
-    if (
-        endpoint.scheme != "https"
-        or not endpoint.hostname
-        or endpoint.username is not None
-        or endpoint.password is not None
-    ):
-        fail("privileged Rustic requires an HTTPS object-store endpoint")
     return bytes(data)
 
 
@@ -4094,6 +4117,7 @@ def run_rustic(
     rustic_candidates=None,
     profile_run_dir="/run/cocalc-rustic-profiles",
     profile_run_dir_uid=0,
+    allow_loopback_rest=ALLOW_LOOPBACK_RUSTIC_REST,
 ):
     command, values = parse_rustic(argv)
     rootfd = open_root(values["root"], allowed_roots)
@@ -4107,7 +4131,9 @@ def run_rustic(
             O_PATH | os.O_DIRECTORY | os.O_CLOEXEC,
         )
         profile_data = read_validated_rustic_profile(
-            profile_rootfd, values["profile-path"]
+            profile_rootfd,
+            values["profile-path"],
+            allow_loopback_rest=allow_loopback_rest,
         )
         profile_path = write_private_rustic_profile(
             profile_data, profile_run_dir, profile_run_dir_uid
@@ -8637,8 +8663,12 @@ esac
         "__CONTAINER_RUNTIME_REQUIRED__",
         "1" if cfg.container_runtime_bundle is not None else "0",
     )
+    storage_path_helper = RUNTIME_STORAGE_PATH_HELPER.replace(
+        "__ALLOW_LOOPBACK_RUSTIC_REST__",
+        "1" if cfg.allow_loopback_rustic_rest else "0",
+    )
     wrappers = {
-        "/usr/local/libexec/cocalc-runtime-storage-path-helper": RUNTIME_STORAGE_PATH_HELPER,
+        "/usr/local/libexec/cocalc-runtime-storage-path-helper": storage_path_helper,
         "/usr/local/libexec/cocalc-project-io-policy": PROJECT_IO_POLICY_HELPER,
         "/usr/local/sbin/cocalc-runtime-storage": storage_wrapper,
         "/usr/local/sbin/cocalc-mount-data": mount_wrapper,
