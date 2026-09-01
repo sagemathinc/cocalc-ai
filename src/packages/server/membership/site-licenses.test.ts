@@ -330,6 +330,61 @@ describe("site license seat pools", () => {
     );
   });
 
+  it("lets a responsible owner approve their own pool request", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const domain = `owner-review-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(owner_account_id);
+    await markAdmin(admin_account_id);
+    await markVerifiedEmail(owner_account_id, `owner@${domain}`);
+
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Owner Review Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Instructors",
+          membership_class: instructorTier,
+          seat_count: 20,
+          requires_approval: true,
+          verification_policy: "manager-approval",
+        },
+      ],
+    });
+    expect(overview.managers).toEqual([]);
+
+    const request = await requestSiteLicensePool({
+      account_id: owner_account_id,
+      package_id: overview.pools[0]!.id,
+    });
+    await expect(
+      reviewSiteLicensePoolRequest({
+        actor_account_id: owner_account_id,
+        request_id: request.id,
+        action: "approve",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        account_id: owner_account_id,
+        reviewer_account_id: owner_account_id,
+        state: "approved",
+      }),
+    );
+
+    await expect(
+      listMembershipPackageAssignments({
+        package_id: overview.pools[0]!.id,
+        include_revoked: false,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ account_id: owner_account_id }),
+    ]);
+  });
+
   it("lists site licenses for admins, responsible owners, and delegated managers", async () => {
     const admin_account_id = uuid();
     const owner_account_id = uuid();

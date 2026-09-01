@@ -1932,11 +1932,13 @@ async function assertSiteLicenseManager({
   account_id,
   site_license_id,
   write = false,
+  allow_owner_write = false,
   client,
 }: {
   account_id: string;
   site_license_id: string;
   write?: boolean;
+  allow_owner_write?: boolean;
   client?: PoolClient;
 }): Promise<void> {
   await ensureSiteLicenseSchema(client);
@@ -1959,7 +1961,7 @@ async function assertSiteLicenseManager({
   if (rows[0]) {
     return;
   }
-  if (!write) {
+  if (!write || allow_owner_write) {
     const { rows: ownerRows } = await getQueryClient(client).query(
       `SELECT 1
          FROM site_licenses
@@ -4196,6 +4198,9 @@ export async function reviewSiteLicensePoolRequest({
           account_id: actorAccountId,
           site_license_id: siteLicense.id,
           write: true,
+          // The responsible owner can review membership requests without
+          // receiving broader delegated-manager write permissions.
+          allow_owner_write: true,
           client,
         });
         if (request.state !== "pending") {
