@@ -34,12 +34,13 @@ export const requireAccount = ({ args, account_id }) => {
 export const authFirstRequireAccount = async ({
   args,
   account_id,
+  auth_actor,
   auth_session_hash,
 }) => {
   if (args[0] == null) {
     args[0] = {} as any;
   }
-  if (!account_id) {
+  if (!account_id || auth_actor === "agent") {
     throw Error("user must be signed in");
   }
   args[0].account_id = account_id;

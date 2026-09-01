@@ -111,6 +111,8 @@ export const hubApi: HubApi = {
 const logger = getLogger("server:conat:api");
 
 const HUB_API_SUBJECTS = ["hub.*.*.api", "hub.agent.*.*.*.*.*.api"] as const;
+// Keep a transport-level guard in addition to each method's argument transform.
+const ACCOUNT_ONLY_HUB_API_GROUPS = new Set(["purchases"]);
 
 let activeApiRequests = 0;
 const activeApiRequestsByAccount = new Map<string, number>();
@@ -325,6 +327,15 @@ export async function handleApiRequest({ request, mesg }) {
     if (auth_actor === "agent" && !AGENT_HUB_API_METHODS.has(name)) {
       throw Object.assign(
         new Error(`agent API method '${name}' is not permitted`),
+        { code: 403 },
+      );
+    }
+    if (
+      ACCOUNT_ONLY_HUB_API_GROUPS.has(`${name ?? ""}`.split(".", 1)[0]) &&
+      !account_id
+    ) {
+      throw Object.assign(
+        new Error(`account principal required for '${name}'`),
         { code: 403 },
       );
     }

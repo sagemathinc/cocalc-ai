@@ -1,4 +1,5 @@
 import { initHubApi, transformArgs } from "./index";
+import { purchases } from "./purchases";
 
 describe("hub API response handling", () => {
   it("returns failed LRO summaries instead of throwing their operation error", async () => {
@@ -24,6 +25,50 @@ describe("hub API response handling", () => {
 });
 
 describe("hub API argument transforms", () => {
+  it("binds every purchases RPC to the authenticated account principal", async () => {
+    for (const functionName of Object.keys(purchases)) {
+      const name = `purchases.${functionName}`;
+      const accountArgs = await transformArgs({
+        name,
+        args: [
+          {
+            account_id: "victim-account",
+            session_hash: "caller-session",
+          },
+        ],
+        account_id: "caller-account",
+      });
+      expect(accountArgs[0].account_id).toBe("caller-account");
+
+      await expect(
+        transformArgs({
+          name,
+          args: [{ account_id: "victim-account" }],
+          project_id: "caller-project",
+        }),
+      ).rejects.toThrow("user must be signed in");
+      await expect(
+        transformArgs({
+          name,
+          args: [{ account_id: "victim-account" }],
+          host_id: "caller-host",
+        }),
+      ).rejects.toThrow("user must be signed in");
+      await expect(
+        transformArgs({
+          name,
+          args: [{ account_id: "victim-account" }],
+          account_id: "agent-owner",
+          project_id: "caller-project",
+          auth_actor: "agent",
+          auth_token_fingerprint: "a".repeat(64),
+          auth_iat_s: 100,
+          auth_exp_s: 1000,
+        }),
+      ).rejects.toThrow("user must be signed in");
+    }
+  });
+
   it("injects CLI auth_session_hash as session_hash for fresh-auth RPCs", async () => {
     const cases = [
       {
