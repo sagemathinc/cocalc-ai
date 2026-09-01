@@ -735,6 +735,29 @@ describe("GcpProvider", () => {
     );
   });
 
+  it("fails startup-script persistence without a metadata fingerprint", async () => {
+    getMock.mockResolvedValueOnce([{ metadata: { items: [] } }]);
+
+    const provider = new GcpProvider();
+    await expect(
+      provider.ensureStartupScript(
+        {
+          provider: "gcp",
+          instance_id: "compute-vm",
+          zone: "us-central1-a",
+          ssh_user: "user",
+          metadata: { startup_script: "new script" },
+        },
+        {
+          project_id: "compute-prod",
+          client_email: "svc@example.com",
+          private_key: "key",
+        },
+      ),
+    ).rejects.toThrow("has no metadata version token");
+    expect(setMetadataMock).not.toHaveBeenCalled();
+  });
+
   it("recovers a created host when insert times out after GCP accepts it", async () => {
     insertMock.mockRejectedValueOnce(
       Object.assign(new Error("read ETIMEDOUT"), { code: "ETIMEDOUT" }),

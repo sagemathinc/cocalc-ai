@@ -2314,7 +2314,11 @@ async function ensureSshMetadata(
         instance: runtime.instance_id,
       });
       const fingerprint = instance?.metadata?.fingerprint;
-      if (!fingerprint) return;
+      if (!fingerprint) {
+        throw new Error(
+          `gcp: instance '${runtime.instance_id}' has no metadata version token`,
+        );
+      }
       const items = instance?.metadata?.items ?? [];
       const current = items.find((item) => item.key === "ssh-keys");
       const replaceManagedKeys =
@@ -2395,7 +2399,11 @@ async function ensureStartupScriptMetadata(
         instance: runtime.instance_id,
       });
       const fingerprint = instance?.metadata?.fingerprint;
-      if (!fingerprint) return;
+      if (!fingerprint) {
+        throw new Error(
+          `gcp: instance '${runtime.instance_id}' has no metadata version token`,
+        );
+      }
       const items = instance?.metadata?.items ?? [];
       const current = items.find((item) => item.key === metadataKey);
       if ((current?.value ?? "") === startupScript) return;
