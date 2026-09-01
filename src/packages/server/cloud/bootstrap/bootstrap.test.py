@@ -605,6 +605,19 @@ class ProjectHostStartTest(unittest.TestCase):
 
 
 class ProjectIoConfigurationTest(unittest.TestCase):
+    def test_standalone_wrapper_configuration_disables_io_enforcement(self) -> None:
+        cfg = bootstrap.standalone_privileged_wrapper_config("star-user")
+
+        self.assertEqual(cfg.ssh_user, "star-user")
+        self.assertIsNone(cfg.container_runtime_bundle)
+        self.assertEqual(cfg.project_io_capacity["provider"], "standalone")
+        self.assertEqual(cfg.project_io_policy["mode"], "disabled")
+        self.assertEqual(cfg.project_io_policy["profile"], "unconfigured")
+
+    def test_standalone_wrapper_configuration_requires_runtime_user(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "must not be empty"):
+            bootstrap.standalone_privileged_wrapper_config("  ")
+
     def test_derives_managed_policy_from_existing_capacity_metadata(self) -> None:
         policy = bootstrap.build_project_io_policy(
             {
@@ -2688,6 +2701,34 @@ class ProjectIoPolicyHelperTest(unittest.TestCase):
 
 
 class BootstrapWrapperScriptTest(unittest.TestCase):
+    def test_standalone_wrapper_uses_explicit_runtime_user(self) -> None:
+        cfg = bootstrap.standalone_privileged_wrapper_config("star-user")
+        captured: dict[str, str] = {}
+
+        def capture_write(path, data, **_kwargs):
+            captured[str(path)] = data
+            return len(data)
+
+        with (
+            mock.patch.object(
+                bootstrap, "text_write_atomic", side_effect=capture_write
+            ),
+            mock.patch.object(bootstrap.os, "chmod"),
+            mock.patch.object(bootstrap.os, "chown"),
+        ):
+            bootstrap.install_privileged_wrappers(cfg)
+
+        script = captured["/usr/local/sbin/cocalc-runtime-storage"]
+        self.assertIn('RUNTIME_USER="star-user"', script)
+        self.assertIn('CONTAINER_RUNTIME_REQUIRED="0"', script)
+        self.assertNotIn("__RUNTIME_USER__", script)
+        self.assertEqual(
+            json.loads(captured["/etc/cocalc/project-io-policy.json"])[
+                "mode"
+            ],
+            "disabled",
+        )
+
     def test_storage_wrapper_uses_xattr_overlay_mounts_and_project_rustic_commands(
         self,
     ) -> None:

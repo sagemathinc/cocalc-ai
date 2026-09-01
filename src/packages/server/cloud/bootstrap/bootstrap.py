@@ -883,6 +883,16 @@ class BootstrapConfig:
     container_runtime_bundle: BundleSpec | None = None
 
 
+@dataclass(frozen=True)
+class PrivilegedWrapperConfig:
+    """Minimal configuration needed outside managed cloud-host bootstrap."""
+
+    ssh_user: str
+    project_io_capacity: dict[str, Any]
+    project_io_policy: dict[str, Any]
+    container_runtime_bundle: BundleSpec | None = None
+
+
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
@@ -970,6 +980,31 @@ def build_project_io_policy(capacity: dict[str, Any]) -> dict[str, Any]:
         },
         "ioCost": {"mode": "disabled"},
     }
+
+
+def standalone_privileged_wrapper_config(
+    ssh_user: str,
+) -> PrivilegedWrapperConfig:
+    """Build fail-safe wrapper settings for a standalone btrfs project host."""
+
+    _require(bool(ssh_user.strip()), "standalone runtime user must not be empty")
+    capacity = {
+        "version": 1,
+        "provider": "standalone",
+        "targets": [
+            {
+                "mountpoint": "/mnt/cocalc",
+                "discovery": "btrfs",
+                "disk_type": "unknown",
+                "required": True,
+            }
+        ],
+    }
+    return PrivilegedWrapperConfig(
+        ssh_user=ssh_user,
+        project_io_capacity=capacity,
+        project_io_policy=build_project_io_policy(capacity),
+    )
 
 
 def load_config(bootstrap_dir: str) -> BootstrapConfig:
@@ -4583,7 +4618,7 @@ def retire_legacy_managed_project_io_override(override_path: Path) -> None:
 
 
 def write_project_io_configuration(
-    cfg: BootstrapConfig,
+    cfg: BootstrapConfig | PrivilegedWrapperConfig,
     *,
     policy_path: Path = Path("/etc/cocalc/project-io-policy.json"),
     override_path: Path = Path("/etc/cocalc/project-io-policy.override.json"),
@@ -4609,7 +4644,9 @@ def write_project_io_configuration(
     capacity_path.chmod(0o644)
 
 
-def install_privileged_wrappers(cfg: BootstrapConfig) -> None:
+def install_privileged_wrappers(
+    cfg: BootstrapConfig | PrivilegedWrapperConfig,
+) -> None:
     storage_wrapper = """#!/usr/bin/env bash
 set -euo pipefail
 if [ "$(id -u)" -ne 0 ]; then

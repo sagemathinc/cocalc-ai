@@ -550,7 +550,7 @@ shared_scratch_host_mount() {
 }
 
 install_wrappers() {
-  python3 - "$SRC_ROOT" <<'PY'
+  python3 - "$SRC_ROOT" "$STAR_USER" <<'PY'
 import importlib.util
 import sys
 from pathlib import Path
@@ -568,7 +568,8 @@ module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
-module.install_privileged_wrappers(None)
+config = module.standalone_privileged_wrapper_config(sys.argv[2])
+module.install_privileged_wrappers(config)
 PY
   cat >/usr/local/sbin/cocalc-project-host-rootctl <<'EOF'
 #!/usr/bin/env bash
