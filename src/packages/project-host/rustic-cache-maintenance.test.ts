@@ -138,6 +138,28 @@ describe("Rustic cache maintenance", () => {
     expect(removed).toEqual(["oldest", "newest"]);
   });
 
+  it("shortens the age floor under warning-level root pressure", async () => {
+    const { dependencies: deps, removed } = dependencies({
+      entries: [entry("recent", 2 * GIB, 0.5)],
+      rootAvailableBytes: 4.5 * GIB,
+    });
+
+    await runRusticCacheSweep(config(), deps);
+
+    expect(removed).toEqual(["recent"]);
+  });
+
+  it("preserves cache from the current maintenance interval under warning pressure", async () => {
+    const { dependencies: deps, removed } = dependencies({
+      entries: [entry("in-flight-window", 2 * GIB, 0.1)],
+      rootAvailableBytes: 4.5 * GIB,
+    });
+
+    await runRusticCacheSweep(config(), deps);
+
+    expect(removed).toEqual([]);
+  });
+
   it("does not evict while Rustic is active", async () => {
     const { dependencies: deps, removed } = dependencies({
       entries: [entry("repo-a", 5 * GIB, 10)],

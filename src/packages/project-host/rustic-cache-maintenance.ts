@@ -349,14 +349,21 @@ export async function runRusticCacheSweep(
   if (bytesToFree <= 0 || entries.length === 0) return;
 
   const now = dependencies.now();
+  const warningRootPressure =
+    rootAvailableBytes != null && rootAvailableBytes < config.minRootFreeBytes;
   const urgentPressure =
     totalBytes > config.hardMaxBytes ||
     (rootAvailableBytes != null &&
       rootAvailableBytes < config.criticalRootFreeBytes);
+  // Under root pressure, preserve only the current maintenance interval. A
+  // full-day age floor can otherwise leave a busy host paging indefinitely.
+  const minimumEntryAgeMs = warningRootPressure
+    ? Math.min(config.minEntryAgeMs, config.intervalMs)
+    : config.minEntryAgeMs;
   let freedBytes = 0;
   let repositoryCount = entries.length;
   for (const entry of [...entries].sort((a, b) => a.mtimeMs - b.mtimeMs)) {
-    if (!urgentPressure && now - entry.mtimeMs < config.minEntryAgeMs) {
+    if (!urgentPressure && now - entry.mtimeMs < minimumEntryAgeMs) {
       continue;
     }
     // Recheck immediately before each destructive operation. This deliberately
