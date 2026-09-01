@@ -52,6 +52,9 @@ export interface DisposableRestoreWorkerConfig {
   require_conat: boolean;
   minimum_free_bytes: number;
   worker_timeout_seconds?: number;
+  archive_get_timeout_seconds?: number;
+  archive_get_attempts?: number;
+  wal_replay_stall_timeout_seconds?: number;
 }
 
 export interface DisposableRestoreWorkerResult {
@@ -96,6 +99,20 @@ export interface DisposableGcpRestoreResult {
   machine_type: string;
   boot_disk_gb: number;
   cleanup: "deleted" | "already-deleted";
+}
+
+export function isRetryableDisposablePitrWalFailure(
+  worker: DisposableRestoreWorkerResult,
+): boolean {
+  return (
+    worker.status === "failed" &&
+    worker.stage === "postgres-pitr" &&
+    /WAL replay stalled|archive-get/i.test(`${worker.error ?? ""}`)
+  );
+}
+
+export function disposableRestoreInstanceName(run_id: string): string {
+  return `cocalc-restore-${run_id.replace(/-/g, "").slice(0, 20)}`;
 }
 
 type GcpAuth = {
@@ -233,6 +250,12 @@ STAGE = "bootstrap"
 with open(CONFIG_PATH, "r", encoding="utf-8") as handle:
     CONFIG = json.load(handle)
 REPOSITORY_TYPE = CONFIG.get("repository_type", "legacy-rustic")
+ARCHIVE_GET_TIMEOUT_SECONDS = max(30, int(CONFIG.get("archive_get_timeout_seconds", 120)))
+ARCHIVE_GET_ATTEMPTS = max(1, min(5, int(CONFIG.get("archive_get_attempts", 3))))
+WAL_REPLAY_STALL_TIMEOUT_SECONDS = max(
+    ARCHIVE_GET_TIMEOUT_SECONDS * ARCHIVE_GET_ATTEMPTS + 30,
+    int(CONFIG.get("wal_replay_stall_timeout_seconds", 600)),
+)
 
 def bounded(value, limit=2000):
     text = str(value)
@@ -318,6 +341,27 @@ def postgres_diagnostics(container):
     suppressed = len(lines) - len(filtered)
     suffix = f"\n[suppressed {suppressed} repeated readiness failures]" if suppressed else ""
     return bounded("\n".join(filtered[-80:]) + suffix, 3000)
+
+def archive_get_state(container):
+    try:
+        completed = subprocess.run(
+            ["podman", "exec", container, "cat", "/tmp/cocalc-pgbackrest-archive-get.state"],
+            check=False,
+            timeout=10,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if completed.returncode != 0:
+        return None
+    state = {}
+    for line in completed.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            state[key] = value
+    return state or None
 
 postgres_result = None
 conat_result = None
@@ -460,6 +504,15 @@ try:
         pgbackrest_config = pathlib.Path("/etc/pgbackrest/pgbackrest.conf")
         pgbackrest_config.parent.mkdir(parents=True, exist_ok=True)
         endpoint = CONFIG["r2_endpoint"].removeprefix("https://").removeprefix("http://").rstrip("/")
+        # pgBackRest's own I/O timeout only bounds individual socket operations.
+        # The restore_command wrapper below also bounds the complete archive-get
+        # process, which protects recovery from a wedged protocol state.
+        io_timeout = max(10, min(60, ARCHIVE_GET_TIMEOUT_SECONDS // 2))
+        # Keep the documented pgBackRest database/protocol relationship
+        # explicit without shortening the large base-restore budget. The
+        # restore_command wrapper supplies the stricter per-WAL process bound.
+        db_timeout = 1800
+        protocol_timeout = 1830
         pgbackrest_config.write_text("\n".join([
             "[global]",
             "repo1-type=s3",
@@ -470,6 +523,9 @@ try:
             "repo1-s3-uri-style=path",
             "repo1-cipher-type=aes-256-cbc",
             "process-max=2",
+            "io-timeout=" + str(io_timeout),
+            "db-timeout=" + str(db_timeout),
+            "protocol-timeout=" + str(protocol_timeout),
             "log-level-console=info",
             "",
             "[" + CONFIG["pgbackrest_stanza"] + "]",
@@ -526,21 +582,69 @@ rm -f "${"$"}{destination}.tmp"
 curl "${"$"}{common[@]}" --fail "$base" -o "$destination"
 ''', encoding="utf-8")
     os.chmod(restore_script, 0o700)
+    pgbackrest_archive_get_script = ROOT / "cocalc-pgbackrest-archive-get"
+    pgbackrest_archive_get_script.write_text(r'''#!/bin/bash
+set -uo pipefail
+
+segment="$1"
+destination="$2"
+timeout_seconds="${"$"}{COCALC_ARCHIVE_GET_TIMEOUT_SECONDS:-120}"
+max_attempts="${"$"}{COCALC_ARCHIVE_GET_ATTEMPTS:-3}"
+state_file=/tmp/cocalc-pgbackrest-archive-get.state
+
+write_state() {
+  local status="$1"
+  local attempt="$2"
+  local exit_code="$3"
+  local temporary="${"$"}{state_file}.$$"
+  printf 'segment=%s\nstatus=%s\nattempt=%s\nupdated_epoch=%s\nexit_code=%s\n' \
+    "$segment" "$status" "$attempt" "$(date +%s)" "$exit_code" > "$temporary"
+  mv -f "$temporary" "$state_file"
+}
+
+last_exit=1
+for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+  write_state running "$attempt" 0
+  echo "restore-drill: archive-get begin segment=$segment attempt=$attempt/$max_attempts timeout_seconds=$timeout_seconds" >&2
+  timeout --foreground --signal=TERM --kill-after=10s "$timeout_seconds" \
+    /usr/local/bin/pgbackrest \
+    --config=/etc/pgbackrest/pgbackrest.conf \
+    --stanza="${"$"}{COCALC_PGBACKREST_STANZA}" \
+    archive-get "$segment" "$destination"
+  last_exit=$?
+  if [[ "$last_exit" -eq 0 && -e "$destination" ]]; then
+    write_state succeeded "$attempt" 0
+    echo "restore-drill: archive-get succeeded segment=$segment attempt=$attempt/$max_attempts" >&2
+    exit 0
+  fi
+  if [[ "$last_exit" -eq 0 ]]; then
+    last_exit=70
+  fi
+  rm -f "$destination"
+  write_state failed "$attempt" "$last_exit"
+  echo "restore-drill: archive-get failed segment=$segment attempt=$attempt/$max_attempts exit_code=$last_exit" >&2
+  if (( attempt < max_attempts )); then
+    sleep "$attempt"
+  fi
+done
+
+exit "$last_exit"
+''', encoding="utf-8")
+    os.chmod(pgbackrest_archive_get_script, 0o700)
     auto_conf = pgdata / "postgresql.auto.conf"
     if REPOSITORY_TYPE == "pgbackrest":
         auto_conf_text = auto_conf.read_text(encoding="utf-8")
         if "restore_command" not in auto_conf_text:
             raise RuntimeError("pgBackRest restore did not configure restore_command")
-        # pgBackRest records the worker's host-side pg1-path in restore_command.
-        # PostgreSQL sees the restored tree at the container mount point instead.
-        auto_conf.write_text(
-            auto_conf_text.replace(str(pgdata), "/var/lib/postgresql/data"),
-            encoding="utf-8",
-        )
     with auto_conf.open("a", encoding="utf-8") as handle:
         handle.write("\n# cocalc disposable restore drill\n")
         handle.write("archive_mode = 'off'\n")
         handle.write("archive_command = '/bin/false'\n")
+        if REPOSITORY_TYPE == "pgbackrest":
+            # Override pgBackRest's generated command with a bounded wrapper.
+            # PostgreSQL retries a nonzero restore_command, while the worker's
+            # replay watchdog escalates a repeatedly failing segment.
+            handle.write("restore_command = '/usr/local/bin/cocalc-pgbackrest-archive-get %f %p'\n")
         if CONFIG["restore_mode"] == "pitr" and REPOSITORY_TYPE != "pgbackrest":
             if not CONFIG.get("target_time") or not CONFIG.get("pitr_run_id") or not CONFIG.get("wal_object_prefix"):
                 raise RuntimeError("PITR mode requires target time, sentinel run, and WAL prefix")
@@ -561,11 +665,13 @@ curl "${"$"}{common[@]}" --fail "$base" -o "$destination"
     if REPOSITORY_TYPE == "pgbackrest":
         shutil.copy2("/usr/local/bin/pgbackrest", context / "pgbackrest")
         shutil.copy2(pgbackrest_config, context / "pgbackrest.conf")
+        shutil.copy2(pgbackrest_archive_get_script, context / "cocalc-pgbackrest-archive-get")
         containerfile.extend([
-            "RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libbz2-1.0 liblz4-1 libpq5 libssh2-1 libssl3 libsystemd0 libxml2 libzstd1 zlib1g && rm -rf /var/lib/apt/lists/*",
+            "RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates coreutils libbz2-1.0 liblz4-1 libpq5 libssh2-1 libssl3 libsystemd0 libxml2 libzstd1 zlib1g && rm -rf /var/lib/apt/lists/*",
             "COPY pgbackrest /usr/local/bin/pgbackrest",
             "COPY pgbackrest.conf /etc/pgbackrest/pgbackrest.conf",
-            "RUN chmod 755 /usr/local/bin/pgbackrest && chmod 644 /etc/pgbackrest/pgbackrest.conf",
+            "COPY cocalc-pgbackrest-archive-get /usr/local/bin/cocalc-pgbackrest-archive-get",
+            "RUN chmod 755 /usr/local/bin/pgbackrest /usr/local/bin/cocalc-pgbackrest-archive-get && chmod 644 /etc/pgbackrest/pgbackrest.conf",
         ])
     else:
         containerfile.extend([
@@ -618,6 +724,9 @@ curl "${"$"}{common[@]}" --fail "$base" -o "$destination"
             "--env", "PGBACKREST_REPO1_S3_KEY_SECRET=" + CONFIG["r2_secret_access_key"],
             "--env", "PGBACKREST_REPO1_S3_TOKEN=" + CONFIG["r2_session_token"],
             "--env", "PGBACKREST_REPO1_CIPHER_PASS=" + CONFIG["pgbackrest_cipher_pass"],
+            "--env", "COCALC_PGBACKREST_STANZA=" + CONFIG["pgbackrest_stanza"],
+            "--env", "COCALC_ARCHIVE_GET_TIMEOUT_SECONDS=" + str(ARCHIVE_GET_TIMEOUT_SECONDS),
+            "--env", "COCALC_ARCHIVE_GET_ATTEMPTS=" + str(ARCHIVE_GET_ATTEMPTS),
         ]
         postgres_args.extend(["-c", "archive_mode=off", "-c", "archive_command=/bin/false"])
     if CONFIG["restore_mode"] == "snapshot":
@@ -634,6 +743,10 @@ curl "${"$"}{common[@]}" --fail "$base" -o "$destination"
     counts = None
     postgres_ready = False
     next_recovery_diagnostic = time.time() + 300
+    next_archive_get_check = time.time()
+    stalled_wal_segment = None
+    stalled_wal_since = None
+    last_archive_get = None
     if CONFIG["restore_mode"] == "snapshot":
         deadline = time.time() + 600
     else:
@@ -679,11 +792,41 @@ curl "${"$"}{common[@]}" --fail "$base" -o "$destination"
                     "PostgreSQL container exited before readiness: " +
                     last_error + " logs=" + postgres_diagnostics(container)
                 )
+        if (
+            CONFIG["restore_mode"] == "pitr" and
+            REPOSITORY_TYPE == "pgbackrest" and
+            time.time() >= next_archive_get_check
+        ):
+            next_archive_get_check = time.time() + 10
+            archive_state = archive_get_state(container)
+            if archive_state:
+                last_archive_get = archive_state
+                segment = archive_state.get("segment")
+                status = archive_state.get("status")
+                if status == "succeeded":
+                    stalled_wal_segment = None
+                    stalled_wal_since = None
+                elif segment:
+                    if segment != stalled_wal_segment:
+                        stalled_wal_segment = segment
+                        stalled_wal_since = time.time()
+                    elif (
+                        stalled_wal_since is not None and
+                        time.time() - stalled_wal_since >= WAL_REPLAY_STALL_TIMEOUT_SECONDS
+                    ):
+                        raise RuntimeError(
+                            "WAL replay stalled on segment " + segment +
+                            " for " + str(int(time.time() - stalled_wal_since)) +
+                            " seconds; archive-get status=" + str(status) +
+                            " attempt=" + str(archive_state.get("attempt")) +
+                            " exit_code=" + str(archive_state.get("exit_code"))
+                        )
         if time.time() >= next_recovery_diagnostic:
             print(
                 "restore-drill: PostgreSQL recovery still in progress " +
                 "elapsed_seconds=" + str(int(time.time() - STARTED)) +
                 " sentinel_counts=" + str(counts),
+                " archive_get=" + str(last_archive_get),
                 flush=True,
             )
             print(postgres_diagnostics(container), flush=True)
@@ -872,7 +1015,7 @@ export async function runDisposableGcpRestoreWorker({
 }): Promise<DisposableGcpRestoreResult> {
   const auth = parseGcpServiceAccount(service_account_json);
   const clients = providedClients ?? defaultClients(auth);
-  const instance_name = `cocalc-restore-${config.run_id.replace(/-/g, "").slice(0, 20)}`;
+  const instance_name = disposableRestoreInstanceName(config.run_id);
   const region = zone.replace(/-[a-z]$/, "");
   const startupScript = buildDisposableRestoreStartupScript({
     ...config,

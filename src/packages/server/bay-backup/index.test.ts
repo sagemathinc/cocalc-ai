@@ -678,6 +678,43 @@ describe("bay-backup runner", () => {
     );
   });
 
+  it("reports an active pgBackRest restore drill without preserving a gold star", async () => {
+    const stateDir = join(backupRoot, "application-state-running");
+    mkdirSync(stateDir, { recursive: true });
+    process.env.COCALC_BAY_STATE_DIR = stateDir;
+    process.env.COCALC_BAY_PGBACKREST_ENABLED = "1";
+    const startedAt = new Date().toISOString();
+    writeFileSync(
+      join(stateDir, "pgbackrest-status.json"),
+      JSON.stringify({
+        level: "ok",
+        generated_at: startedAt,
+        backup: { latest_label: "20260901-082221D" },
+      }),
+    );
+    writeFileSync(
+      join(stateDir, "pgbackrest-restore-test-status.json"),
+      JSON.stringify({
+        level: "running",
+        started_at: startedAt,
+        backup_label: "20260901-082221D",
+        attempt: 1,
+        max_attempts: 2,
+      }),
+    );
+
+    const { getBayBackupStatus } = await import("./index");
+    const status = await getBayBackupStatus();
+
+    expect(status.restore_readiness.latest_backup_pitr_test_status).toBe(
+      "stale",
+    );
+    expect(status.restore_readiness.gold_star).toBe(false);
+    expect(status.restore_readiness.summary).toContain(
+      "has been running since",
+    );
+  });
+
   it("does not start a full backup when another process owns the bay backup lock", async () => {
     const pool = makeMockPool(async () => ({ rows: [] }), {
       lockAvailable: false,
@@ -2243,6 +2280,30 @@ describe("bay-backup runner", () => {
     await expect(
       runBayBackupHealthCheck({ send_alert: false }),
     ).resolves.toEqual([]);
+
+    writeFileSync(
+      join(stateDir, "pgbackrest-restore-test-status.json"),
+      JSON.stringify({ level: "running", started_at: now }),
+    );
+    await expect(
+      runBayBackupHealthCheck({ send_alert: false }),
+    ).resolves.toEqual([]);
+
+    const stalledAt = new Date(Date.now() - 10 * 60 * 60_000).toISOString();
+    writeFileSync(
+      join(stateDir, "pgbackrest-restore-test-status.json"),
+      JSON.stringify({ level: "running", started_at: stalledAt }),
+    );
+    const stalledIssues = await runBayBackupHealthCheck({ send_alert: false });
+    expect(stalledIssues).toHaveLength(1);
+    expect(stalledIssues[0]).toContain(
+      "disposable PITR restore drill: running restore drill is stalled",
+    );
+
+    writeFileSync(
+      join(stateDir, "pgbackrest-restore-test-status.json"),
+      JSON.stringify({ level: "ok", tested_at: now }),
+    );
 
     writeFileSync(
       join(stateDir, "pgbackrest-status.json"),
