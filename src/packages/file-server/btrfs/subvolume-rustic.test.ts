@@ -3,6 +3,11 @@ let sudoMock: jest.Mock;
 let sandboxedFilesystemMock: jest.Mock;
 let backupFsRusticMock: jest.Mock;
 let rusticHostMock: jest.Mock;
+let readdirMock: jest.Mock;
+
+jest.mock("node:fs/promises", () => ({
+  readdir: (...args: any[]) => readdirMock(...args),
+}));
 
 jest.mock("./util", () => ({
   btrfs: (...args: any[]) => btrfsMock(...args),
@@ -24,7 +29,12 @@ import {
   parseRusticSnapshotsOutput,
   SubvolumeRustic,
 } from "./subvolume-rustic";
-import { clearBtrfsOperationCachesForTest } from "./operation-cache";
+import {
+  clearBtrfsOperationCachesForTest,
+  configureBtrfsBackgroundMutationGuard,
+  withBtrfsMutationContext,
+} from "./operation-cache";
+import { TEMP_RUSTIC_SNAPSHOT_PREFIX } from "./snapshots";
 
 describe("parseRusticSnapshotsOutput", () => {
   it("parses grouped rustic snapshot JSON", () => {
@@ -77,6 +87,10 @@ describe("parseRusticSnapshotsOutput", () => {
 });
 
 describe("SubvolumeRustic.backup", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   beforeEach(() => {
     clearBtrfsOperationCachesForTest();
     btrfsMock = jest.fn(async ({ args }) =>
@@ -85,6 +99,7 @@ describe("SubvolumeRustic.backup", () => {
         : undefined,
     );
     sudoMock = jest.fn(async () => undefined);
+    readdirMock = jest.fn(async () => []);
     rusticHostMock = jest.fn();
     backupFsRusticMock = jest.fn(async (_args, _opts) => {
       return {
@@ -255,9 +270,116 @@ describe("SubvolumeRustic.backup", () => {
           /^\/mnt\/test\/\.rustic-backup-staging\/project-1\/temp-rustic-snapshot-/,
         ),
       ],
-      err_on_exit: false,
       verbose: false,
     });
+  });
+
+  it("does not defer required cleanup after a scheduled backup", async () => {
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+    let lifecycleActive = false;
+    configureBtrfsBackgroundMutationGuard(() =>
+      lifecycleActive ? "lifecycle_active" : undefined,
+    );
+    backupFsRusticMock.mockImplementationOnce(async () => {
+      lifecycleActive = true;
+      return {
+        stdout: Buffer.from(
+          JSON.stringify({
+            time: "2026-04-30T21:00:00.000Z",
+            id: "snap-1",
+            summary: { files_new: 1 },
+          }),
+        ),
+        stderr: Buffer.alloc(0),
+        code: 0,
+        truncated: false,
+      };
+    });
+
+    await withBtrfsMutationContext({ priority: "scheduled" }, async () => {
+      await rustic.backup();
+    });
+
+    expect(btrfsMock).toHaveBeenLastCalledWith({
+      args: [
+        "subvolume",
+        "delete",
+        expect.stringMatching(
+          /^\/mnt\/test\/\.rustic-backup-staging\/project-1\/temp-rustic-snapshot-/,
+        ),
+      ],
+      verbose: false,
+    });
+  });
+
+  it("removes stale crash leftovers before creating a backup", async () => {
+    const now = new Date("2026-05-02T21:00:00.000Z").valueOf();
+    const stale = `${TEMP_RUSTIC_SNAPSHOT_PREFIX}-${(now - 25 * 60 * 60 * 1000).toString(36)}-stale123`;
+    const fresh = `${TEMP_RUSTIC_SNAPSHOT_PREFIX}-${(now - 60 * 1000).toString(36)}-fresh123`;
+    jest.spyOn(Date, "now").mockReturnValue(now);
+    readdirMock.mockResolvedValueOnce([
+      { name: stale, isDirectory: () => true },
+      { name: fresh, isDirectory: () => true },
+      { name: "unrelated", isDirectory: () => true },
+    ]);
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+
+    await rustic.backup();
+
+    expect(btrfsMock).toHaveBeenNthCalledWith(1, {
+      args: [
+        "subvolume",
+        "delete",
+        `/mnt/test/.rustic-backup-staging/project-1/${stale}`,
+      ],
+      verbose: false,
+    });
+    expect(
+      btrfsMock.mock.calls.some(([opts]) =>
+        opts.args?.at(-1)?.endsWith(`/${fresh}`),
+      ),
+    ).toBe(false);
+  });
+
+  it("bounds stale crash cleanup per backup", async () => {
+    const now = new Date("2026-05-02T21:00:00.000Z").valueOf();
+    const stale = Array.from(
+      { length: 33 },
+      (_, index) =>
+        `${TEMP_RUSTIC_SNAPSHOT_PREFIX}-${(
+          now -
+          (25 * 60 * 60 * 1000 + index)
+        ).toString(36)}-stale${index.toString(36)}`,
+    );
+    jest.spyOn(Date, "now").mockReturnValue(now);
+    readdirMock.mockResolvedValueOnce(
+      stale.map((name) => ({ name, isDirectory: () => true })),
+    );
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+
+    await rustic.backup();
+
+    const staleDeletes = btrfsMock.mock.calls.filter(
+      ([opts]) =>
+        opts.args?.[1] === "delete" &&
+        stale.some((name) => opts.args?.[2]?.endsWith(`/${name}`)),
+    );
+    expect(staleDeletes).toHaveLength(32);
   });
 
   it("passes an explicit parent snapshot to rustic backup", async () => {

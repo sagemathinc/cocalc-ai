@@ -19,6 +19,8 @@ Instead of using btrfs send/recv for backups, we use Rustic because:
 */
 
 import { type Subvolume } from "./subvolume";
+import type { Dirent } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { join } from "path";
 import getLogger from "@cocalc/backend/logger";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
@@ -57,10 +59,21 @@ const DEFAULT_SNAPSHOTS_MAX_SIZE = Math.max(
 );
 const BACKUP_EXCLUDE_GLOBS = ["!.snapshots", "!.snapshots/**"] as const;
 const RUSTIC_BACKUP_STAGING_DIR = ".rustic-backup-staging";
+const STALE_TEMP_RUSTIC_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
+const MAX_STALE_TEMP_RUSTIC_SNAPSHOTS_PER_BACKUP = 32;
 
 function makeTempRusticSnapshotName(): string {
   const rand = Math.random().toString(36).slice(2, 10);
   return `${TEMP_RUSTIC_SNAPSHOT_PREFIX}-${Date.now().toString(36)}-${rand}`;
+}
+
+function tempRusticSnapshotCreatedAt(name: string): number | undefined {
+  const match = name.match(
+    new RegExp(`^${TEMP_RUSTIC_SNAPSHOT_PREFIX}-([0-9a-z]+)-[0-9a-z]+$`),
+  );
+  if (!match?.[1]) return;
+  const time = Number.parseInt(match[1], 36);
+  return Number.isFinite(time) ? time : undefined;
 }
 
 interface Snapshot {
@@ -225,16 +238,65 @@ export class SubvolumeRustic {
     await withBtrfsMutationLock({
       mount: this.subvolume.filesystem.opts.mount,
       operation: "rustic-backup-snapshot-delete",
+      // Once a backup has created a temporary snapshot, deleting it is
+      // mandatory short cleanup rather than deferrable background work.
+      context: {
+        priority: "interactive",
+        operation_class: "rustic_backup_snapshot_cleanup",
+        checkpointable: false,
+      },
       run: async () => {
         await btrfs({
           args: ["subvolume", "delete", snapshotPath],
-          err_on_exit: false,
           verbose: false,
         });
         invalidateBtrfsSubvolumeShow(snapshotPath);
         invalidateBtrfsQgroupShowRaw(this.subvolume.filesystem.opts.mount);
       },
     });
+  }
+
+  private async cleanupStaleTempBackupSnapshots(
+    now = Date.now(),
+  ): Promise<void> {
+    const stagingRoot = this.backupStagingRoot();
+    let entries: Dirent[];
+    try {
+      entries = await readdir(stagingRoot, { withFileTypes: true });
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return;
+      logger.warn("backup: unable to inspect temporary snapshot staging", {
+        stagingRoot,
+        err: `${err}`,
+      });
+      return;
+    }
+    const stale = entries
+      .filter((entry) => entry.isDirectory())
+      .flatMap((entry) => {
+        const createdAt = tempRusticSnapshotCreatedAt(entry.name);
+        return createdAt != null &&
+          now - createdAt > STALE_TEMP_RUSTIC_SNAPSHOT_MS
+          ? [{ entry, createdAt }]
+          : [];
+      })
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(0, MAX_STALE_TEMP_RUSTIC_SNAPSHOTS_PER_BACKUP);
+    for (const { entry, createdAt } of stale) {
+      const snapshotPath = join(stagingRoot, entry.name);
+      try {
+        await this.deleteTempBackupSnapshot(snapshotPath);
+        logger.info("backup: removed stale temporary snapshot", {
+          snapshotPath,
+          age_ms: now - createdAt,
+        });
+      } catch (err) {
+        logger.warn("backup: unable to remove stale temporary snapshot", {
+          snapshotPath,
+          err: `${err}`,
+        });
+      }
+    }
   }
 
   private rusticHost = async (
@@ -272,6 +334,7 @@ export class SubvolumeRustic {
       "--glob",
       glob,
     ]);
+    await this.cleanupStaleTempBackupSnapshots();
     const tempSnapshot = makeTempRusticSnapshotName();
     const { snapshotPath, generation: snapshotGeneration } =
       await this.createTempBackupSnapshot(tempSnapshot);
@@ -330,7 +393,12 @@ export class SubvolumeRustic {
       logger.debug(`backup: deleting temporary ${tempSnapshot}`);
       try {
         await this.deleteTempBackupSnapshot(snapshotPath);
-      } catch {}
+      } catch (err) {
+        logger.warn("backup: unable to delete temporary snapshot", {
+          snapshotPath,
+          err: `${err}`,
+        });
+      }
     }
   };
 
