@@ -90,7 +90,9 @@ const PODMAN_TIMEOUT_MS = Math.max(
 );
 const PROJECT_START_TIMEOUT_MS = Math.max(
   10_000,
-  Number(process.env.COCALC_CODEX_PROJECT_START_TIMEOUT_MS ?? 90_000),
+  // Recovered hosts may spend up to 120 seconds waiting for boot-time cgroup
+  // reconciliation before project startup can proceed.
+  Number(process.env.COCALC_CODEX_PROJECT_START_TIMEOUT_MS ?? 180_000),
 );
 const PROJECT_START_POLL_MS = Math.max(
   100,

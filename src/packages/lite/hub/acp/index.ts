@@ -9167,6 +9167,9 @@ async function enqueueRecoveryContinuationForJob({
     }
     return undefined;
   }
+  if (queued.available_at != null) {
+    scheduleNextDelayedAcpQueueWake();
+  }
   await persistQueuedUserMessageProjection({
     client,
     project_id,
@@ -9175,9 +9178,6 @@ async function enqueueRecoveryContinuationForJob({
     user_message_id,
     queued: true,
   });
-  if (queued.available_at != null) {
-    scheduleNextDelayedAcpQueueWake();
-  }
   return queued;
 }
 
