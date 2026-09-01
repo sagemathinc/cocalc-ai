@@ -550,14 +550,14 @@ async function insertPackageAssignment(
     `INSERT INTO membership_packages
        (id, owner_account_id, kind, membership_class, seat_count,
         starts_at, metadata, created, updated)
-     VALUES ($1,$2,'site',$3,1,NOW() - INTERVAL '2 days','{}'::jsonb,
+     VALUES ($1,$2,'site',$3,1,date_trunc('month', NOW()),'{}'::jsonb,
              NOW(),NOW())`,
     [packageId, uuid(), opts.membership_class],
   );
   await client.query(
     `INSERT INTO membership_package_assignments
        (id, package_id, account_id, assigned_at, metadata, created, updated)
-     VALUES ($1,$2,$3,NOW() - INTERVAL '1 day','{}'::jsonb,NOW(),NOW())`,
+     VALUES ($1,$2,$3,date_trunc('month', NOW()),'{}'::jsonb,NOW(),NOW())`,
     [uuid(), packageId, opts.account_id],
   );
 }
