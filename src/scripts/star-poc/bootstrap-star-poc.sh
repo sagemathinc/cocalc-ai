@@ -588,17 +588,21 @@ EOF
 }
 
 configure_users_and_dirs() {
+  local runtime_uid podman_runtime_dir
+  runtime_uid="$(id -u "$STAR_USER")"
+  podman_runtime_dir="$STAR_PROJECT_HOST_DATA/tmp/cocalc-podman-runtime-${runtime_uid}"
   loginctl enable-linger "$STAR_USER" || true
-  systemctl start "user@$(id -u "$STAR_USER").service" >/dev/null 2>&1 || true
+  systemctl start "user@${runtime_uid}.service" >/dev/null 2>&1 || true
   mkdir -p \
     "$STAR_DATA/secrets" \
     "$STAR_PROJECT_HOST_DATA/tmp" \
+    "$podman_runtime_dir" \
     "$STAR_PROJECT_HOST_DATA/cache/images" \
     "$STAR_PROJECT_HOST_DATA/cache/project-roots" \
     "$STAR_PROJECT_HOST_DATA/secrets" \
     "$STAR_ROOT/backup" \
     /etc/cocalc/star
-  chmod 700 "$STAR_PROJECT_HOST_DATA/tmp"
+  chmod 700 "$STAR_PROJECT_HOST_DATA/tmp" "$podman_runtime_dir"
   # Do not recursively chown STAR_ROOT. It contains cached RootFS trees whose
   # numeric ownership is part of the container runtime contract.
   chown -R "$STAR_USER:$STAR_USER" \
