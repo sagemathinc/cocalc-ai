@@ -5973,5 +5973,32 @@ Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
             )
 
 
+class StarInstallScriptTest(unittest.TestCase):
+    @staticmethod
+    def script(name: str) -> str:
+        src_root = Path(__file__).resolve().parents[4]
+        return (src_root / "scripts" / name).read_text(encoding="utf-8")
+
+    def test_privileged_tools_are_snapshotted_before_install(self) -> None:
+        script = self.script("star/install-from-tarball.sh")
+        snapshot_body = script.split("snapshot_mutable_state() {", 1)[1].split(
+            "\n}", 1
+        )[0]
+        self.assertIn("snapshot_path /usr/local/libexec/cocalc-bees", snapshot_body)
+        self.assertIn("snapshot_path /usr/local/libexec/cocalc-rustic", snapshot_body)
+        self.assertLess(
+            script.index("\nsnapshot_mutable_state\n"),
+            script.index('install_privileged_runtime_tools "$tmp_release/source/src"'),
+        )
+
+    def test_registration_requires_a_post_restart_heartbeat(self) -> None:
+        script = self.script("star-poc/bootstrap-star-poc.sh")
+        self.assertLess(
+            script.index('project_host_restart_at="$(date -u'),
+            script.index("systemctl restart cocalc-star-project-host"),
+        )
+        self.assertIn("last_seen >= :'restart_at'::timestamptz", script)
+
+
 if __name__ == "__main__":
     unittest.main()

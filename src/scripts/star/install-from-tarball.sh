@@ -299,6 +299,8 @@ restore_path() {
 }
 
 snapshot_mutable_state() {
+  snapshot_path /usr/local/libexec/cocalc-bees
+  snapshot_path /usr/local/libexec/cocalc-rustic
   snapshot_path /etc/cocalc/star/config.env
   snapshot_path /etc/cocalc/star/hub.env
   snapshot_path /etc/cocalc/star/project-host.env
@@ -343,6 +345,7 @@ restore_previous_release() {
   exit "$status"
 }
 trap restore_previous_release EXIT
+snapshot_mutable_state
 
 log "extracting $TARBALL to $release_source"
 mkdir -p "$tmp_release/source"
@@ -369,7 +372,6 @@ INSTALLER="${STAR_INSTALL_SOURCE}/src/scripts/star/install-star.sh"
 [ -x "$INSTALLER" ] || die "missing installer in tarball: $INSTALLER"
 
 log "running installer as STAR_USER=$STAR_USER release=$STAR_RELEASE_ID"
-snapshot_mutable_state
 export SRC_ROOT="${SRC_ROOT:-${STAR_INSTALL_SOURCE}/src}"
 export STAR_ASSUME_YES=1
 export STAR_INSTALL_ROOT

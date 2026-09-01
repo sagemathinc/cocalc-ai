@@ -1102,11 +1102,13 @@ remove_broad_sudoers_for_star_user() {
 }
 
 start_services() {
+  local project_host_restart_at
   star_web_onboarding_write_status "starting-services" "Starting CoCalc Star services and waiting for the hub to answer." ""
   systemctl restart caddy
   star_web_onboarding_stop_server
   systemctl restart cocalc-star-hub
   systemctl restart cocalc-star-rest-server
+  project_host_restart_at="$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)"
   systemctl restart cocalc-star-project-host
   log "waiting for ${STAR_BASE_URL}/customize"
   for _ in $(seq 1 60); do
@@ -1115,7 +1117,7 @@ start_services() {
     fi
     sleep 2
   done
-  wait_for_project_host_registration
+  wait_for_project_host_registration "$project_host_restart_at"
   sync
   systemctl --no-pager --full status cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host || true
   local bootstrap_url=""
@@ -1135,7 +1137,8 @@ start_services() {
 }
 
 wait_for_project_host_registration() {
-  local registered
+  local restart_at="$1" registered
+  [ -n "$restart_at" ] || die "project host restart timestamp is missing"
   set -a
   # shellcheck disable=SC1091
   source /etc/cocalc/star/hub.env
@@ -1143,13 +1146,15 @@ wait_for_project_host_registration() {
   log "waiting for project host registration"
   for _ in $(seq 1 90); do
     registered="$(
-      psql -X -Atq -v ON_ERROR_STOP=1 -v host_id="$STAR_HOST_ID" <<'SQL' 2>/dev/null || true
+      psql -X -Atq -v ON_ERROR_STOP=1 \
+        -v host_id="$STAR_HOST_ID" \
+        -v restart_at="$restart_at" <<'SQL' 2>/dev/null || true
 SELECT 1
   FROM project_hosts
  WHERE id = :'host_id'::uuid
    AND bay_id = 'bay-0'
    AND status IN ('running', 'active')
-   AND last_seen > NOW() - INTERVAL '90 seconds'
+   AND last_seen >= :'restart_at'::timestamptz
    AND COALESCE(
          metadata #>> '{runtime_synthetic_probe,quarantined}',
          'false'
