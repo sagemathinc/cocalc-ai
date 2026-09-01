@@ -286,6 +286,80 @@ describe("CodexConfigButton", () => {
     });
   });
 
+  it("reconciles only invalid capability fields when the catalog arrives", async () => {
+    let resolveUsageStatus: (status: any) => void = () => undefined;
+    getCodexUsageStatus.mockReturnValue(
+      new Promise((resolve) => {
+        resolveUsageStatus = resolve;
+      }),
+    );
+    stableForm.getFieldsValue.mockReturnValue({
+      model: "gpt-5.4",
+      reasoning: "extra_high",
+      serviceTier: "fast",
+      workingDirectory: "keep-my-edit",
+    });
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={{
+          model: "gpt-5.4",
+          reasoning: "extra_high",
+          serviceTier: "fast",
+          paymentSource: "subscription",
+        }}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex"));
+    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalled());
+    stableForm.setFieldsValue.mockClear();
+    resolveUsageStatus({
+      available: true,
+      models: [
+        {
+          model: "gpt-5.4",
+          displayName: "GPT-5.4",
+          description: "Account model",
+          reasoning: [
+            {
+              id: "low",
+              description: "Fast responses",
+              default: true,
+            },
+          ],
+          serviceTiers: [],
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(stableForm.setFieldsValue).toHaveBeenCalledWith({
+        reasoning: "low",
+        serviceTier: "standard",
+      });
+    });
+    expect(stableForm.setFieldsValue).not.toHaveBeenCalledWith(
+      expect.objectContaining({ workingDirectory: expect.anything() }),
+    );
+  });
+
   it("updates the closed top bar when thread config arrives after mount", async () => {
     const actions = {
       getCodexConfig: jest.fn(() => undefined),

@@ -773,6 +773,48 @@ export function CodexConfigButton({
       ?.serviceTiers?.includes("fast") ??
     codexModelSupportsFastMode(modelValue);
 
+  useEffect(() => {
+    if (!open || paymentSource?.source !== "subscription") return;
+    const catalog = codexUsageStatus?.models;
+    if (!catalog?.length) return;
+    const current = form.getFieldsValue([
+      "model",
+      "reasoning",
+      "serviceTier",
+    ]) as Partial<CodexThreadConfig>;
+    const model = current.model ?? selectedModelValue;
+    if (!model || !catalog.some((entry) => entry.model === model)) return;
+    const reasoning = getReasoningForModel({
+      models,
+      modelValue: model,
+      desired: current.reasoning ?? selectedReasoningValue,
+    });
+    const serviceTier =
+      (current.serviceTier ?? selectedServiceTierValue) === "fast" &&
+      modelSupportsFastMode(model)
+        ? "fast"
+        : "standard";
+    const patch: Partial<CodexThreadConfig> = {};
+    if ((current.reasoning ?? selectedReasoningValue) !== reasoning) {
+      patch.reasoning = reasoning;
+    }
+    if ((current.serviceTier ?? selectedServiceTierValue) !== serviceTier) {
+      patch.serviceTier = serviceTier;
+    }
+    if (!Object.keys(patch).length) return;
+    form.setFieldsValue(patch);
+    setValue((currentValue) => ({ ...(currentValue ?? {}), ...patch }));
+  }, [
+    codexUsageStatus?.models,
+    form,
+    models,
+    open,
+    paymentSource?.source,
+    selectedModelValue,
+    selectedReasoningValue,
+    selectedServiceTierValue,
+  ]);
+
   const normalizeConfigForSave = (
     values: Partial<CodexThreadConfig>,
   ): Partial<CodexThreadConfig> => {
