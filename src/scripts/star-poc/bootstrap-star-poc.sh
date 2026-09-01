@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/web-onboarding.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../star/managed-container-runtime.sh"
 
 if [ -z "${STAR_USER:-}" ]; then
   if [ "$(id -u)" -eq 0 ] && [ -z "${SUDO_USER:-}" ]; then
@@ -39,6 +41,7 @@ STAR_HAS_GPU="${STAR_HAS_GPU:-0}"
 STAR_AUTO_APT_STATE_DIR=""
 STAR_AUTO_APT_DISABLED=0
 STAR_PROJECT_HOST_ENV="/etc/cocalc/star/project-host.env"
+star_configure_container_runtime_env || true
 
 log() {
   printf '[star] %s\n' "$*" >&2
@@ -163,7 +166,9 @@ restore_automatic_apt() {
 }
 
 as_star_user() {
-  sudo -H -u "$STAR_USER" bash -lc "cd '$STAR_HOME' && $*"
+  local runtime_exports
+  runtime_exports="$(star_container_runtime_shell_exports)"
+  sudo -H -u "$STAR_USER" bash -lc "${runtime_exports}cd '$STAR_HOME' && $*"
 }
 
 require_root() {
@@ -760,11 +765,22 @@ publish_default_rootfs() {
 write_env_files() {
   local site_master_key="${STAR_DATA}/secrets/site-master-key"
   local existing_public_url=""
+  local container_runtime_env=""
   if [ ! -f "$site_master_key" ]; then
     mkdir -p "$(dirname "$site_master_key")"
     openssl rand -base64 32 >"$site_master_key"
     chmod 600 "$site_master_key"
     chown "$STAR_USER:$STAR_USER" "$site_master_key"
+  fi
+
+  if star_configure_container_runtime_env; then
+    container_runtime_env="$(cat <<EOF
+COCALC_CONTAINER_RUNTIME_CURRENT=${COCALC_CONTAINER_RUNTIME_CURRENT}
+COCALC_PODMAN_BIN=${COCALC_PODMAN_BIN}
+CONTAINERS_CONF_OVERRIDE=${CONTAINERS_CONF_OVERRIDE}
+PATH=${COCALC_CONTAINER_RUNTIME_CURRENT}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EOF
+)"
   fi
   if [ -z "$STAR_PUBLIC_URL" ] && [ -f /etc/cocalc/star/config.env ]; then
     existing_public_url="$(
@@ -858,6 +874,7 @@ PROJECT_RUNNER_NAME=0
 COCALC_ALLOW_INSECURE_HTTP_MODE=true
 DEBUG_CONSOLE=no
 COCALC_PROJECT_HOST_LOG=${STAR_PROJECT_HOST_DATA}/log
+${container_runtime_env}
 EOF
   chown "$STAR_USER:$STAR_USER" "$STAR_PROJECT_HOST_ENV"
   chmod 600 "$STAR_PROJECT_HOST_ENV"

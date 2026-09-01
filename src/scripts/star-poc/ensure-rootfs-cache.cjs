@@ -29,6 +29,18 @@ function isUsableDir(dir) {
 
 function podmanEnv() {
   const env = { ...process.env };
+  const runtimeCurrent = `${
+    env.COCALC_CONTAINER_RUNTIME_CURRENT ??
+    "/opt/cocalc/container-runtime/current"
+  }`.trim();
+  try {
+    accessSync(`${runtimeCurrent}/bin/podman`, constants.X_OK);
+    env.PATH = `${runtimeCurrent}/bin:${env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}`;
+    env.COCALC_PODMAN_BIN ??= `${runtimeCurrent}/bin/podman`;
+    env.CONTAINERS_CONF_OVERRIDE ??= `${runtimeCurrent}/etc/containers/containers.conf`;
+  } catch {
+    // Source installs may intentionally fall back to the distro Podman.
+  }
   const uid =
     typeof process.getuid === "function" ? process.getuid() : undefined;
   const configured = env.COCALC_PODMAN_RUNTIME_DIR || env.XDG_RUNTIME_DIR;

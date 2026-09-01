@@ -146,7 +146,9 @@ if command -v sha256sum >/dev/null 2>&1 && [ -f "$CHECKSUMS" ]; then
   (cd "$SCRIPT_DIR" && sha256sum -c SHA256SUMS --ignore-missing)
 fi
 
-tar -xzf "$TARBALL" -C "$INSTALLER_TMP" src/scripts/star/install-from-tarball.sh
+tar -xzf "$TARBALL" -C "$INSTALLER_TMP" \
+  src/scripts/star/install-from-tarball.sh \
+  src/scripts/star/managed-container-runtime.sh
 export STAR_RELEASE_ID="${STAR_RELEASE_ID:-__STAR_RELEASE_ID__}"
 export STAR_RELEASE_METADATA_JSON="${SCRIPT_DIR}/release.json"
 if [ "$MODE" = "runtime" ]; then

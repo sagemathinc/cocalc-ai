@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/web-onboarding.sh"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../star/managed-container-runtime.sh"
 STAR_CONFIG="${STAR_CONFIG:-/etc/cocalc/star/config.env}"
 if [ -f "$STAR_CONFIG" ]; then
   # shellcheck disable=SC1090
@@ -28,6 +30,7 @@ if [ -z "${SRC_ROOT:-}" ]; then
     SRC_ROOT="${STAR_HOME}/cocalc-ai/src"
   fi
 fi
+star_configure_container_runtime_env || true
 
 usage() {
   cat <<'EOF'
@@ -115,6 +118,7 @@ wait_for_runtime_health() {
 doctor() {
   local failures=0
   local star_uid
+  local runtime_crun="/usr/bin/crun"
 
   star_uid="$(id -u "$STAR_USER" 2>/dev/null || true)"
 
@@ -138,10 +142,21 @@ doctor() {
   }
 
   as_star_user() {
+    local -a runtime_env=()
+    if star_configure_container_runtime_env; then
+      runtime_env=(
+        COCALC_CONTAINER_RUNTIME_CURRENT="$COCALC_CONTAINER_RUNTIME_CURRENT"
+        COCALC_PODMAN_BIN="$COCALC_PODMAN_BIN"
+        CONTAINERS_CONF_OVERRIDE="$CONTAINERS_CONF_OVERRIDE"
+        PATH="$PATH"
+      )
+    fi
     if [ "$(id -u)" = "$star_uid" ]; then
-      env XDG_RUNTIME_DIR="/run/user/${star_uid}" "$@"
+      env XDG_RUNTIME_DIR="/run/user/${star_uid}" "${runtime_env[@]}" "$@"
     else
-      sudo -Hiu "$STAR_USER" env XDG_RUNTIME_DIR="/run/user/${star_uid}" "$@"
+      sudo -Hiu "$STAR_USER" env \
+        XDG_RUNTIME_DIR="/run/user/${star_uid}" \
+        "${runtime_env[@]}" "$@"
     fi
   }
 
@@ -195,6 +210,26 @@ doctor() {
   check "user linger is enabled" bash -lc "loginctl show-user '$STAR_USER' -p Linger | grep -qx 'Linger=yes'"
   check "user systemd manager is active" systemctl is-active --quiet "user@${star_uid}.service"
   check "standard podman runtime dir exists" test -d "/run/user/${star_uid}"
+  if [ -x "${STAR_CONTAINER_RUNTIME_CURRENT}/bin/podman" ]; then
+    runtime_crun="${STAR_CONTAINER_RUNTIME_CURRENT}/bin/crun"
+    check "managed container runtime is active" test -L "$STAR_CONTAINER_RUNTIME_CURRENT"
+    check "managed Podman is executable" test -x "${STAR_CONTAINER_RUNTIME_CURRENT}/bin/podman"
+    check "managed conmon is executable" test -x "${STAR_CONTAINER_RUNTIME_CURRENT}/bin/conmon"
+    check "managed crun is executable" test -x "$runtime_crun"
+    check "managed runtime manifest is valid" python3 -c \
+      'import json,sys; data=json.load(open(sys.argv[1])); assert data["schema"] == "cocalc-container-runtime-v1"; assert data["os"] == "linux"; assert data["arch"] == sys.argv[2]' \
+      "${STAR_CONTAINER_RUNTIME_CURRENT}/share/cocalc/runtime-manifest.json" \
+      "$(star_container_runtime_arch)"
+    check "managed Podman reports its version" as_star_user \
+      "${STAR_CONTAINER_RUNTIME_CURRENT}/bin/podman" --version
+    check "managed conmon reports its version" \
+      "${STAR_CONTAINER_RUNTIME_CURRENT}/bin/conmon" --version
+    check "managed crun reports its version" "$runtime_crun" --version
+  else
+    ok "source release uses distro container-runtime fallback"
+    check "distro Podman is executable" command -v podman
+    check "distro crun is executable" test -x "$runtime_crun"
+  fi
   check "btrfs data mount is active" mountpoint -q /mnt/cocalc
   check "project-host data directory is on btrfs" bash -lc \
     "test \"\$(findmnt -n -o FSTYPE --target '${COCALC_DATA:-${DATA:-/mnt/cocalc/data}}' 2>/dev/null)\" = btrfs"
@@ -218,8 +253,8 @@ doctor() {
     check "cached rootfs has project secrets mountpoint" test -d "${rootfs_path}/run/secrets/cocalc"
     check "cached rootfs has project tools mountpoint" test -d "${rootfs_path}/opt/cocalc/bin2"
     check "cached rootfs has project source mountpoint" test -d "${rootfs_path}/opt/cocalc/src"
-    check "rootless podman can run cached rootfs" as_star_user podman run --rm --runtime /usr/bin/crun --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/true
-    check "cached rootfs preserves root-owned sudo files" as_star_user podman run --rm --runtime /usr/bin/crun --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/bash -lc 'test "$(stat -c %u /etc/sudo.conf)" = 0 && test "$(stat -c %u /etc/sudoers)" = 0 && test "$(stat -c %u /etc/sudoers.d)" = 0 && test -z "$(find /etc/sudoers.d -mindepth 1 -maxdepth 1 ! -uid 0 -print -quit)" && test "$(stat -Lc %u /usr/bin/sudo)" = 0 && test -u /usr/bin/sudo'
+    check "rootless podman can run cached rootfs" as_star_user podman run --rm --runtime "$runtime_crun" --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/true
+    check "cached rootfs preserves root-owned sudo files" as_star_user podman run --rm --runtime "$runtime_crun" --userns=keep-id:uid=2001,gid=2001 --user 0:0 --rootfs "$rootfs_path" /bin/bash -lc 'test "$(stat -c %u /etc/sudo.conf)" = 0 && test "$(stat -c %u /etc/sudoers)" = 0 && test "$(stat -c %u /etc/sudoers.d)" = 0 && test -z "$(find /etc/sudoers.d -mindepth 1 -maxdepth 1 ! -uid 0 -print -quit)" && test "$(stat -Lc %u /usr/bin/sudo)" = 0 && test -u /usr/bin/sudo'
   else
     local image_name="$STAR_DEFAULT_ROOTFS_IMAGE"
     case "$image_name" in
@@ -227,7 +262,7 @@ doctor() {
     esac
     if as_star_user podman image exists "$image_name" >/dev/null 2>&1; then
       ok "default rootfs image exists before cache extraction"
-      check "rootless podman can run default rootfs image" as_star_user podman run --rm --runtime /usr/bin/crun --userns=keep-id:uid=2001,gid=2001 --user 0:0 "$image_name" /bin/true
+      check "rootless podman can run default rootfs image" as_star_user podman run --rm --runtime "$runtime_crun" --userns=keep-id:uid=2001,gid=2001 --user 0:0 "$image_name" /bin/true
     else
       fail "cached rootfs or default rootfs image exists"
     fi
@@ -289,6 +324,16 @@ status() {
     )"
   fi
 
+  printf '\nManaged container runtime:\n'
+  if [ -x "${STAR_CONTAINER_RUNTIME_CURRENT}/bin/podman" ]; then
+    printf 'current=%s\n' "$(readlink -f "$STAR_CONTAINER_RUNTIME_CURRENT")"
+    "${STAR_CONTAINER_RUNTIME_CURRENT}/bin/podman" --version || true
+    "${STAR_CONTAINER_RUNTIME_CURRENT}/bin/conmon" --version || true
+    "${STAR_CONTAINER_RUNTIME_CURRENT}/bin/crun" --version || true
+  else
+    log "managed container runtime is not installed"
+  fi
+
   printf '\nPodman images:\n'
   if command -v podman >/dev/null 2>&1; then
     printf 'XDG_RUNTIME_DIR=%s\n' "${XDG_RUNTIME_DIR:-}"
@@ -310,7 +355,16 @@ status() {
 
 smoke() {
   local smoke_state
+  local -a runtime_env=()
   smoke_state="${STAR_SMOKE_STATE:-${STAR_ROOT}/smoke}"
+  if star_configure_container_runtime_env; then
+    runtime_env=(
+      COCALC_CONTAINER_RUNTIME_CURRENT="$COCALC_CONTAINER_RUNTIME_CURRENT"
+      COCALC_PODMAN_BIN="$COCALC_PODMAN_BIN"
+      CONTAINERS_CONF_OVERRIDE="$CONTAINERS_CONF_OVERRIDE"
+      PATH="$PATH"
+    )
+  fi
   if [ "$(id -un)" = "$STAR_USER" ]; then
     install -d -m 700 "$smoke_state"
     exec env \
@@ -332,6 +386,7 @@ smoke() {
     STAR_BOOTSTRAP_RESULT="${STAR_BOOTSTRAP_RESULT:-${STAR_ROOT}/bootstrap-result.json}" \
     STAR_SMOKE_ROOTFS_IMAGE="${STAR_SMOKE_ROOTFS_IMAGE:-}" \
     STAR_SMOKE_REUSE_PROJECT="${STAR_SMOKE_REUSE_PROJECT:-0}" \
+    "${runtime_env[@]}" \
     "${SCRIPT_DIR}/smoke-star-poc.sh"
 }
 
@@ -409,6 +464,18 @@ rollback_release() {
     log "Release does not exist or is incomplete: $release_id"
     exit 1
   }
+  if star_activate_release_container_runtime "$release_dir"; then
+    log "activated managed container runtime for release ${release_id}"
+    star_configure_container_runtime_env
+  else
+    local runtime_status=$?
+    if [ "$runtime_status" = "2" ]; then
+      log "release ${release_id} predates managed runtime metadata; retaining the current managed runtime"
+    else
+      log "managed container runtime for release ${release_id} is unavailable or invalid"
+      exit 1
+    fi
+  fi
   replace_symlink "$release_dir/source" "$STAR_SOURCE_LINK"
   replace_symlink "$release_dir" "${STAR_INSTALL_ROOT}/current"
   sudo systemctl restart cocalc-star-hub cocalc-star-rest-server cocalc-star-project-host
@@ -429,6 +496,7 @@ upgrade_release() {
     exit 1
   }
   sudo STAR_ASSUME_YES=1 \
+    STAR_WEB_ONBOARDING_REQUIRE_OPEN=0 \
     STAR_INSTALL_ROOT="$STAR_INSTALL_ROOT" \
     STAR_USER="$STAR_USER" \
     "$installer" "$release"
@@ -469,13 +537,24 @@ reconcile_runtime_state() {
     exit 1
   }
   local star_uid live_file status
+  local -a runtime_env=()
   star_uid="$(id -u "$STAR_USER" 2>/dev/null || true)"
   [ -n "$star_uid" ] || {
     log "missing Star runtime user: $STAR_USER"
     exit 1
   }
   live_file="$(mktemp -t cocalc-star-live-projects.XXXXXX)"
-  sudo -Hiu "$STAR_USER" env XDG_RUNTIME_DIR="/run/user/${star_uid}" \
+  if star_configure_container_runtime_env; then
+    runtime_env=(
+      COCALC_CONTAINER_RUNTIME_CURRENT="$COCALC_CONTAINER_RUNTIME_CURRENT"
+      COCALC_PODMAN_BIN="$COCALC_PODMAN_BIN"
+      CONTAINERS_CONF_OVERRIDE="$CONTAINERS_CONF_OVERRIDE"
+      PATH="$PATH"
+    )
+  fi
+  sudo -Hiu "$STAR_USER" env \
+    XDG_RUNTIME_DIR="/run/user/${star_uid}" \
+    "${runtime_env[@]}" \
     podman ps --filter label=role=project --format '{{.Names}}' 2>/dev/null |
     sed -n 's/^project-\([0-9a-fA-F-]\{36\}\)$/\1/p' >"$live_file"
 
@@ -986,10 +1065,23 @@ is_generated_star_caddyfile() {
 
 stop_star_project_containers() {
   local star_uid
+  local -a runtime_env=()
   star_uid="$(id -u "$STAR_USER" 2>/dev/null || true)"
   [ -n "$star_uid" ] || return 0
-  command -v podman >/dev/null 2>&1 || return 0
-  sudo -Hiu "$STAR_USER" env XDG_RUNTIME_DIR="/run/user/${star_uid}" bash -lc '
+  if star_configure_container_runtime_env; then
+    runtime_env=(
+      COCALC_CONTAINER_RUNTIME_CURRENT="$COCALC_CONTAINER_RUNTIME_CURRENT"
+      COCALC_PODMAN_BIN="$COCALC_PODMAN_BIN"
+      CONTAINERS_CONF_OVERRIDE="$CONTAINERS_CONF_OVERRIDE"
+      PATH="$PATH"
+    )
+  elif ! command -v podman >/dev/null 2>&1; then
+    return 0
+  fi
+  sudo -Hiu "$STAR_USER" env \
+    XDG_RUNTIME_DIR="/run/user/${star_uid}" \
+    "${runtime_env[@]}" \
+    bash -lc '
     ids="$(podman ps -aq --filter label=role=project 2>/dev/null || true)"
     [ -z "$ids" ] || podman rm -f $ids >/dev/null 2>&1 || true
   ' || true
@@ -1108,8 +1200,16 @@ EOF
     fi
     umount /mnt/cocalc-scratch >/dev/null 2>&1 || true
     umount /mnt/cocalc >/dev/null 2>&1 || true
+    if mountpoint -q /mnt/cocalc-scratch || mountpoint -q /mnt/cocalc; then
+      die "refusing to purge Star data while /mnt/cocalc or /mnt/cocalc-scratch is still mounted"
+    fi
     remove_fstab_marker_lines
-    rm -rf "$STAR_ROOT" "$STAR_INSTALL_ROOT" /mnt/cocalc-scratch /mnt/cocalc/shared-scratch
+    rm -rf \
+      "$STAR_ROOT" \
+      "$STAR_INSTALL_ROOT" \
+      "$STAR_CONTAINER_RUNTIME_ROOT" \
+      /mnt/cocalc-scratch \
+      /mnt/cocalc/shared-scratch
     rm -f "${STAR_BTRFS_IMAGE:-/var/lib/cocalc/btrfs.img}"
     if [ "$purge_user" = "1" ] && getent passwd "$STAR_USER" >/dev/null; then
       userdel -r "$STAR_USER" >/dev/null 2>&1 || userdel "$STAR_USER" >/dev/null 2>&1 || true
@@ -1129,6 +1229,7 @@ EOF
 Preserved Star data and releases:
   ${STAR_ROOT}
   ${STAR_INSTALL_ROOT}
+  ${STAR_CONTAINER_RUNTIME_ROOT}
   ${STAR_BTRFS_IMAGE:-/var/lib/cocalc/btrfs.img}
   /mnt/cocalc
   /mnt/cocalc-scratch

@@ -83,6 +83,7 @@ for arch in "${arches[@]}"; do
     first_runtime=0
   else
     STAR_RUNTIME_BUILD=0 \
+      STAR_CONTAINER_RUNTIME_BUILD=1 \
       STAR_RELEASE_MODE=runtime \
       STAR_RELEASE_ID="$release_id" \
       COCALC_STAR_RELEASE_ARCH="$arch" \
