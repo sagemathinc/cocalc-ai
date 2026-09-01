@@ -287,6 +287,10 @@ const ACP_AUTOMATION_SYNCDB_READY_TIMEOUT_MS = envNumber(
   "COCALC_ACP_AUTOMATION_SYNCDB_READY_TIMEOUT_MS",
   10_000,
 );
+const ACP_RECOVERY_SYNCDB_READY_TIMEOUT_MS = envNumber(
+  "COCALC_ACP_RECOVERY_SYNCDB_READY_TIMEOUT_MS",
+  10_000,
+);
 
 function acpAdmissionContextFromRequest(request: AcpJobRequest) {
   return {
@@ -5073,6 +5077,7 @@ async function repairCompletedAcpTurnOnce({
       client,
       project_id,
       path,
+      readyTimeoutMs: ACP_RECOVERY_SYNCDB_READY_TIMEOUT_MS,
       fn: async (syncdb) => {
         const current = findRecoverableChatRow(syncdb as any, {
           message_date,
@@ -5345,6 +5350,7 @@ async function repairInterruptedAcpTurnOnce({
       client,
       project_id,
       path,
+      readyTimeoutMs: ACP_RECOVERY_SYNCDB_READY_TIMEOUT_MS,
       fn: async (syncdb) => {
         const current =
           findRecoverableChatRow(syncdb as any, {
@@ -5682,6 +5688,7 @@ export async function turnNeedsInterruptedRepair({
     client,
     project_id,
     path,
+    readyTimeoutMs: ACP_RECOVERY_SYNCDB_READY_TIMEOUT_MS,
     fn: async (syncdb) => {
       const state = syncdbField<string>(
         preferredThreadStateRow(syncdb, thread_id),
@@ -5822,6 +5829,7 @@ export async function recoverOrphanedAcpTurns(
         client,
         project_id: turn.project_id,
         path: turn.path,
+        readyTimeoutMs: ACP_RECOVERY_SYNCDB_READY_TIMEOUT_MS,
       });
       try {
         if (!syncdb.isReady()) {

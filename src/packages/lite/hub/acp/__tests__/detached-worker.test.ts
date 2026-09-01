@@ -9,6 +9,7 @@ import {
   isProjectAcpStorageError,
   recoverCurrentWorkerStuckAcpTurns,
   recoverDetachedWorkerStartupState,
+  recoverOrphanedAcpTurns,
   shouldCompleteAcpTurnAfterTerminalStorageFailure,
   shouldStopDetachedWorkerForDrain,
   shouldStopDetachedWorkerForIdle,
@@ -1027,6 +1028,100 @@ describe("recoverDetachedWorkerStartupState", () => {
     );
     expect(recoveryRow).toBeTruthy();
     expect(recoveryRow?.sender_id).toBeTruthy();
+  });
+
+  it("does not let an unavailable chat block later orphan recovery", async () => {
+    const badRequest = {
+      ...makeRequest(),
+      project_id: "00000000-1000-4000-8000-000000000010",
+      session_id: "session-bad",
+      chat: {
+        ...makeRequest().chat,
+        project_id: "00000000-1000-4000-8000-000000000010",
+        path: "/tmp/unavailable.chat",
+        thread_id: "thread-bad",
+        parent_message_id: "user-bad",
+        message_id: "assistant-bad",
+      },
+    };
+    const goodRequest = {
+      ...makeRequest(),
+      project_id: "00000000-1000-4000-8000-000000000020",
+      session_id: "session-good",
+      chat: {
+        ...makeRequest().chat,
+        project_id: "00000000-1000-4000-8000-000000000020",
+        path: "/tmp/healthy.chat",
+        thread_id: "thread-good",
+        parent_message_id: "user-good",
+        message_id: "assistant-good",
+      },
+    };
+    const badJob = enqueueAcpJob(badRequest as any);
+    const goodJob = enqueueAcpJob(goodRequest as any);
+    for (const job of [badJob, goodJob]) {
+      claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+        worker_id: "worker-old",
+        worker_bundle_version: "bundle-old",
+      });
+    }
+    const goodRows: any[] = [
+      {
+        event: "chat",
+        date: goodRequest.chat.message_date,
+        sender_id: goodRequest.chat.sender_id,
+        message_id: goodRequest.chat.message_id,
+        thread_id: goodRequest.chat.thread_id,
+        generating: true,
+        history: [],
+      },
+    ];
+    (chatServer.acquireChatSyncDB as jest.Mock).mockImplementation(
+      async (opts: any) => {
+        expect(opts.readyTimeoutMs).toEqual(expect.any(Number));
+        expect(opts.readyTimeoutMs).toBeGreaterThan(0);
+        if (opts.project_id === badRequest.project_id) {
+          throw new Error("timed out waiting for unavailable chat SyncDB");
+        }
+        return makeSyncdb(goodRows);
+      },
+    );
+    (turns.listRunningAcpTurnLeases as jest.Mock).mockReturnValue(
+      [badRequest, goodRequest].map((request) => ({
+        project_id: request.project_id,
+        path: request.chat.path,
+        message_date: request.chat.message_date,
+        sender_id: request.chat.sender_id,
+        message_id: request.chat.message_id,
+        thread_id: request.chat.thread_id,
+        session_id: request.session_id,
+        owner_instance_id: "worker-old",
+        started_at: Date.now() - 60_000,
+        heartbeat_at: Date.now() - 30_000,
+      })),
+    );
+
+    const recovered = await recoverOrphanedAcpTurns({} as ConatClient, {
+      recoveryReason: "worker stopped",
+      autoResume: true,
+    });
+
+    expect(recovered).toBe(2);
+    expect(
+      (chatServer.acquireChatSyncDB as jest.Mock).mock.calls.some(
+        ([opts]) => opts.project_id === goodRequest.project_id,
+      ),
+    ).toBe(true);
+    expect(
+      getAcpJob({
+        project_id: goodJob.project_id,
+        path: goodJob.path,
+        user_message_id: goodJob.user_message_id,
+      })?.state,
+    ).toBe("interrupted");
   });
 
   it("does not auto-resume command jobs during startup recovery", async () => {
