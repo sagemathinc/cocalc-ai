@@ -338,15 +338,23 @@ function getSiteLicenseProvisioningTiers(
 function findSiteLicenseTier({
   tiers,
   used,
+  preferredIds,
   keywords,
   fallbackIndex,
 }: {
   tiers: MembershipTierLike[];
   used: Set<string>;
+  preferredIds: string[];
   keywords: string[];
   fallbackIndex: number;
 }): MembershipTierLike | undefined {
   const available = tiers.filter((tier) => !used.has(tier.id));
+  for (const preferredId of preferredIds) {
+    const preferredMatch = available.find(
+      (tier) => tier.id.toLowerCase() === preferredId.toLowerCase(),
+    );
+    if (preferredMatch) return preferredMatch;
+  }
   const keywordMatch = available.find((tier) => {
     const text = `${tier.id} ${tier.label ?? ""}`.toLowerCase();
     return keywords.some((keyword) => text.includes(keyword));
@@ -4403,6 +4411,7 @@ function ProvisionSiteLicenseModal({
     const studentTier = findSiteLicenseTier({
       tiers: siteLicenseTierOptions,
       used: usedTierIds,
+      preferredIds: ["student"],
       keywords: ["student"],
       fallbackIndex: 0,
     });
@@ -4410,6 +4419,7 @@ function ProvisionSiteLicenseModal({
     const instructorTier = findSiteLicenseTier({
       tiers: siteLicenseTierOptions,
       used: usedTierIds,
+      preferredIds: ["instructor"],
       keywords: ["instructor", "teacher", "faculty", "pro"],
       fallbackIndex: 0,
     });
@@ -4417,6 +4427,7 @@ function ProvisionSiteLicenseModal({
     const researcherTier = findSiteLicenseTier({
       tiers: siteLicenseTierOptions,
       used: usedTierIds,
+      preferredIds: ["researcher"],
       keywords: ["research"],
       fallbackIndex: 0,
     });
