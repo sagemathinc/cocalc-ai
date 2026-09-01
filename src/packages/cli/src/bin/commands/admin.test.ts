@@ -1082,6 +1082,38 @@ test("admin host abuse-processes forwards bounded snapshot options", async () =>
   });
 });
 
+test("admin host intrusion-snapshot forwards the host and audit reason", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      adminHost: {
+        intrusionSnapshot: async (opts: any) => {
+          capturedArgs = opts;
+          return { audit_id: "audit-intrusion-snapshot", snapshot: {} };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "host",
+    "intrusion-snapshot",
+    "montreal-1",
+    "--reason",
+    "host integrity review",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    host: "montreal-1",
+    reason: "host integrity review",
+  });
+});
+
 test("admin host abuse-filesystems forwards bounded snapshot options", async () => {
   let capturedArgs: any;
   const program = new Command();

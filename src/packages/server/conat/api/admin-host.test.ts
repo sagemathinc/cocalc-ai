@@ -10,6 +10,7 @@ import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 
 import {
   describe as describeHost,
+  intrusionSnapshot,
   scanAbuseFilesystems,
   scanAbuseProcesses,
 } from "./admin-host";
@@ -212,6 +213,42 @@ describe("admin host API", () => {
         value: expect.objectContaining({
           mode: "abuse-filesystems",
           reason: "filesystem fingerprint triage",
+        }),
+      }),
+    );
+  });
+
+  it("routes and audits the read-only intrusion snapshot", async () => {
+    const hostId = "7843c648-86e4-45d3-9ed2-85ebe9faf9ee";
+    mockGetPool.mockReturnValue({
+      query: jest.fn(async () => ({
+        rows: [{ id: hostId, name: "host", status: "running" }],
+      })),
+    } as any);
+    const getIntrusionSnapshot = jest.fn(async () => ({
+      version: 1 as const,
+      coverage: "complete" as const,
+      issues: [],
+      truncated: {},
+    }));
+    mockGetRoutedHostControlClient.mockResolvedValue({
+      getIntrusionSnapshot,
+    } as any);
+
+    const result = await intrusionSnapshot({
+      account_id: "account-id",
+      host_id: hostId,
+      reason: "host integrity review",
+    });
+
+    expect(getIntrusionSnapshot).toHaveBeenCalledWith();
+    expect(result.snapshot.coverage).toBe("complete");
+    expect(mockCentralLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "admin_host_operator",
+        value: expect.objectContaining({
+          mode: "intrusion-snapshot",
+          reason: "host integrity review",
         }),
       }),
     );

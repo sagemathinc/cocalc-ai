@@ -43,7 +43,476 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260901-v48"
+HELPER_SCHEMA_VERSION = "20260901-v49"
+HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
+import datetime
+import hashlib
+import json
+import os
+import pathlib
+import pwd
+import re
+import stat
+import subprocess
+import time
+
+MAX_ITEMS = 500
+MAX_PERSISTENCE_FILES = 500
+COLLECTOR_DEADLINE = time.monotonic() + 105
+PERSISTENCE_ROOTS = [
+    "/etc/systemd/system",
+    "/usr/local/lib/systemd/system",
+    "/etc/cron.d",
+    "/etc/cron.daily",
+    "/etc/cron.hourly",
+    "/etc/cron.weekly",
+    "/etc/cron.monthly",
+    "/etc/crontab",
+    "/var/spool/cron/crontabs",
+    "/etc/sudoers.d",
+    "/etc/rc.local",
+    "/etc/ld.so.preload",
+    "/etc/profile",
+    "/etc/profile.d",
+    "/etc/modules",
+    "/etc/modules-load.d",
+    "/etc/modprobe.d",
+    "/etc/network/if-up.d",
+    "/etc/init.d",
+    "/root/.ssh/authorized_keys",
+    "/root/.bashrc",
+    "/root/.profile",
+    "/home/ubuntu/.ssh/authorized_keys",
+    "/home/ubuntu/.bashrc",
+    "/home/ubuntu/.profile",
+    "/etc/ssh/sshd_config",
+    "/etc/ssh/sshd_config.d",
+]
+PRIVILEGED_ROOTS = [
+    path
+    for path in ["/usr", "/opt", "/etc"]
+    if os.path.exists(path)
+]
+issues = []
+truncated = {}
+
+
+def clean(value, limit=1000):
+    text = str(value)
+    text = re.sub(r"[\x00-\x1f\x7f-\x9f]", "?", text)
+    return text[:limit]
+
+
+def issue(section, code):
+    if len(issues) >= 100:
+        truncated["issues"] = True
+        return
+    section = clean(section, 64)
+    code = clean(code, 64)
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", section):
+        section = "collector"
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", code):
+        code = "FAILED"
+    issues.append({"section": section, "code": code})
+
+
+def run(section, args, timeout=30, max_lines=MAX_ITEMS):
+    remaining = COLLECTOR_DEADLINE - time.monotonic()
+    if remaining <= 0:
+        issue(section, "DEADLINE_EXCEEDED")
+        return []
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=min(timeout, max(0.1, remaining)),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        issue(section, "TIMEOUT")
+        return []
+    except Exception:
+        issue(section, "EXEC_FAILED")
+        return []
+    if result.returncode != 0:
+        issue(section, f"EXIT_{result.returncode}")
+    lines = [clean(line) for line in result.stdout.splitlines() if line.strip()]
+    if len(lines) > max_lines:
+        truncated[section] = True
+    return lines[:max_lines]
+
+
+def read_text(path, limit=64 * 1024):
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(limit).decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def read_link(path):
+    try:
+        return os.readlink(path)
+    except OSError:
+        return ""
+
+
+def status_value(text, key):
+    match = re.search(rf"^{re.escape(key)}:\s+(.+)$", text, re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def file_record(path):
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return None
+    record = {
+        "path": clean(path),
+        "uid": info.st_uid,
+        "gid": info.st_gid,
+        "mode": f"{stat.S_IMODE(info.st_mode):04o}",
+        "mtime": datetime.datetime.fromtimestamp(
+            info.st_mtime, datetime.timezone.utc
+        ).isoformat(),
+        "size": info.st_size,
+        "type": "symlink" if stat.S_ISLNK(info.st_mode) else "file",
+    }
+    if stat.S_ISREG(info.st_mode) and info.st_size <= 1024 * 1024:
+        descriptor = None
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode) or (
+                opened.st_dev != info.st_dev or opened.st_ino != info.st_ino
+            ):
+                issue("persistence", "FILE_CHANGED")
+                return record
+            digest = hashlib.sha256()
+            with os.fdopen(descriptor, "rb") as handle:
+                descriptor = None
+                for chunk in iter(lambda: handle.read(128 * 1024), b""):
+                    digest.update(chunk)
+            record["sha256"] = digest.hexdigest()
+        except OSError:
+            issue("persistence", "HASH_FAILED")
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+    return record
+
+
+def collect_persistence():
+    paths = set()
+    limit_reached = False
+    for root in PERSISTENCE_ROOTS:
+        if os.path.isfile(root) or os.path.islink(root):
+            paths.add(root)
+            continue
+        if not os.path.isdir(root):
+            continue
+        for current, directories, files in os.walk(root, followlinks=False):
+            directories[:] = sorted(directories)
+            for name in sorted(files):
+                paths.add(os.path.join(current, name))
+                if len(paths) >= MAX_PERSISTENCE_FILES:
+                    limit_reached = True
+                    break
+            if limit_reached:
+                break
+        if limit_reached:
+            break
+    records = [file_record(path) for path in sorted(paths)]
+    return [record for record in records if record is not None], limit_reached
+
+
+def collect_accounts():
+    uid_zero = []
+    interactive = []
+    for entry in pwd.getpwall():
+        record = {
+            "name": clean(entry.pw_name, 128),
+            "uid": entry.pw_uid,
+            "gid": entry.pw_gid,
+            "home": clean(entry.pw_dir),
+            "shell": clean(entry.pw_shell),
+        }
+        if entry.pw_uid == 0:
+            uid_zero.append(record)
+        if entry.pw_uid >= 1000 and entry.pw_shell not in ("/usr/sbin/nologin", "/bin/false"):
+            interactive.append(record)
+    return {"uid_zero": uid_zero, "interactive": interactive}
+
+
+def collect_processes():
+    host_mnt = read_link("/proc/1/ns/mnt")
+    host_user = read_link("/proc/1/ns/user")
+    records = []
+    scanned = 0
+    for proc in pathlib.Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        scanned += 1
+        status_text = read_text(proc / "status")
+        uid_fields = status_value(status_text, "Uid").split()
+        uid = int(uid_fields[0]) if uid_fields else -1
+        same_mount_namespace = read_link(proc / "ns/mnt") == host_mnt
+        same_user_namespace = read_link(proc / "ns/user") == host_user
+        if uid != 0 and not (same_mount_namespace and same_user_namespace):
+            continue
+        exe = read_link(proc / "exe")
+        if not exe:
+            continue
+        comm = clean(read_text(proc / "comm", 256).strip(), 64) or "[unknown]"
+        capability_mask = clean(status_value(status_text, "CapEff"), 32)
+        target = exe.removesuffix(" (deleted)")
+        executable_uid = None
+        executable_mode = None
+        try:
+            info = os.stat(target)
+            executable_uid = info.st_uid
+            executable_mode = f"{stat.S_IMODE(info.st_mode):04o}"
+        except OSError:
+            pass
+        flags = []
+        if uid == 0 and not same_mount_namespace:
+            flags.append("root-with-isolated-mount-namespace")
+        if uid == 0 and not same_user_namespace:
+            flags.append("root-with-isolated-user-namespace")
+        if exe.endswith(" (deleted)"):
+            flags.append("deleted-executable")
+        if exe.startswith("memfd:") or "/memfd:" in exe:
+            flags.append("memfd-executable")
+        if exe.startswith(("/tmp/", "/var/tmp/", "/dev/shm/")):
+            flags.append("temporary-executable")
+        if uid == 0 and exe.startswith(("/home/", "/mnt/cocalc/")):
+            flags.append("root-from-writable-tree")
+        if uid == 0 and executable_uid not in (None, 0):
+            flags.append("root-executable-not-owned-by-root")
+        if executable_mode is not None and int(executable_mode, 8) & 0o022:
+            flags.append("executable-group-or-world-writable")
+        records.append(
+            {
+                "pid": int(proc.name),
+                "uid": uid,
+                "comm": comm,
+                "exe": clean(exe),
+                "capability_mask": capability_mask,
+                "executable_uid": executable_uid,
+                "executable_mode": executable_mode,
+                "flags": flags,
+            }
+        )
+    grouped = collections.Counter(
+        (
+            record["uid"],
+            record["comm"],
+            record["exe"],
+            record["capability_mask"],
+            record["executable_uid"],
+            record["executable_mode"],
+        )
+        for record in records
+    )
+    summary = []
+    for key, count in sorted(grouped.items(), key=lambda item: (-item[1], item[0])):
+        item = {
+            "count": count,
+            "uid": key[0],
+            "comm": key[1],
+            "exe": key[2],
+            "capability_mask": key[3],
+        }
+        if key[4] is not None:
+            item["executable_uid"] = key[4]
+        if key[5] is not None:
+            item["executable_mode"] = key[5]
+        summary.append(item)
+    findings = []
+    for record in records:
+        if not record["flags"]:
+            continue
+        finding = {key: value for key, value in record.items() if value is not None}
+        findings.append(finding)
+    return {
+        "scanned_process_count": scanned,
+        "process_count": len(records),
+        "summary": summary[:MAX_ITEMS],
+        "findings": findings[:MAX_ITEMS],
+    }, {record["pid"] for record in records}
+
+
+def collect_network(host_pids):
+    listener_lines = run("network_listeners", ["/usr/bin/ss", "-H", "-lntup"], max_lines=5000)
+    listener_counts = collections.Counter()
+    listening_ports = set()
+    for line in listener_lines:
+        pid_match = re.search(r"pid=(\d+)", line)
+        if pid_match and int(pid_match.group(1)) not in host_pids:
+            continue
+        fields = line.split()
+        if len(fields) < 6:
+            continue
+        process_match = re.search(r'users:\(\("([^\"]+)\"', line)
+        process = clean(process_match.group(1), 128) if process_match else "unattributed"
+        local = clean(fields[4], 256)
+        listener_counts[(clean(fields[0], 16), process, local)] += 1
+        listening_ports.add(local.rsplit(":", 1)[-1])
+    listeners = [
+        {"count": count, "protocol": key[0], "process": key[1], "local": key[2]}
+        for key, count in listener_counts.most_common(200)
+    ]
+    if len(listener_counts) > len(listeners):
+        truncated["network_listeners"] = True
+
+    connection_lines = run(
+        "network_established",
+        ["/usr/bin/ss", "-H", "-tanp", "state", "established"],
+        max_lines=5000,
+    )
+    connection_counts = collections.Counter()
+    for line in connection_lines:
+        pid_match = re.search(r"pid=(\d+)", line)
+        if not pid_match or int(pid_match.group(1)) not in host_pids:
+            continue
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        process_match = re.search(r'users:\(\("([^\"]+)\"', line)
+        process = clean(process_match.group(1), 128) if process_match else "unknown"
+        local = fields[2]
+        peer = fields[3]
+        peer_host, _, peer_port = peer.rpartition(":")
+        peer_host = peer_host.strip("[]")
+        local_port = local.rsplit(":", 1)[-1]
+        if peer_host in ("127.0.0.1", "::1"):
+            continue
+        normalized_peer = peer_host if local_port in listening_ports else f"{peer_host}:{peer_port}"
+        connection_counts[(process, clean(local_port, 16), clean(normalized_peer, 256))] += 1
+    established = [
+        {"count": count, "process": key[0], "local_port": key[1], "peer": key[2]}
+        for key, count in connection_counts.most_common(200)
+    ]
+    if len(connection_counts) > len(established):
+        truncated["network_established"] = True
+    return {"listeners": listeners, "established": established}
+
+
+def collect_authentication():
+    lines = run(
+        "authentication",
+        ["/usr/bin/journalctl", "--since", "7 days ago", "-n", "20000", "-u", "ssh", "-u", "sshd", "--no-pager", "-o", "cat"],
+        timeout=60,
+        max_lines=20000,
+    )
+    accepted = collections.Counter()
+    failed = 0
+    invalid = 0
+    for line in lines:
+        match = re.search(r"Accepted (\S+) for (\S+) from ([^ ]+)", line)
+        if match:
+            accepted[(clean(match.group(1), 32), clean(match.group(2), 128), clean(match.group(3), 128))] += 1
+        if "Failed password" in line or "Failed publickey" in line:
+            failed += 1
+        if "Invalid user" in line:
+            invalid += 1
+    accepted_records = [
+        {"count": count, "method": key[0], "user": key[1], "source": key[2]}
+        for key, count in accepted.most_common(100)
+    ]
+    return {"accepted": accepted_records, "failed": failed, "invalid_user": invalid}
+
+
+def collect_kernel_signals():
+    lines = run(
+        "kernel_signals",
+        ["/usr/bin/journalctl", "-k", "--since", "7 days ago", "-n", "20000", "--no-pager", "-o", "cat"],
+        timeout=60,
+        max_lines=20000,
+    )
+    patterns = {
+        "apparmor_denied": re.compile(r"apparmor.*denied", re.I),
+        "oom": re.compile(r"oom-kill|out of memory", re.I),
+        "segfault": re.compile(r"segfault|general protection", re.I),
+        "tainted": re.compile(r"taint", re.I),
+        "module_verification_failed": re.compile(r"module verification failed", re.I),
+    }
+    counts = collections.Counter()
+    for line in lines:
+        for name, pattern in patterns.items():
+            if pattern.search(line):
+                counts[name] += 1
+    return dict(sorted(counts.items()))
+
+
+def main():
+    started = time.monotonic()
+    captured_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    processes, host_pids = collect_processes()
+    persistence_files, persistence_truncated = collect_persistence()
+    if persistence_truncated:
+        truncated["persistence"] = True
+    writable = run(
+        "privileged_writable",
+        ["/usr/bin/find", *PRIVILEGED_ROOTS, "-xdev", "-type", "f", "(", "-perm", "-002", "-o", "-perm", "-020", ")", "-printf", "%p\\t%U:%G\\t%m\\n"],
+        timeout=60,
+    ) if PRIVILEGED_ROOTS else []
+    suid_sgid = run(
+        "suid_sgid",
+        ["/usr/bin/find", *PRIVILEGED_ROOTS, "-xdev", "-type", "f", "-perm", "/6000", "-printf", "%p\\t%U:%G\\t%m\\n"],
+        timeout=60,
+    ) if PRIVILEGED_ROOTS else []
+    capabilities = run(
+        "file_capabilities",
+        ["/usr/sbin/getcap", "-r", *PRIVILEGED_ROOTS],
+        timeout=60,
+    ) if PRIVILEGED_ROOTS else []
+    enabled = run(
+        "enabled_services",
+        ["/usr/bin/systemctl", "list-unit-files", "--state=enabled", "--no-legend", "--no-pager"],
+    )
+    failed = run(
+        "failed_services",
+        ["/usr/bin/systemctl", "--failed", "--no-legend", "--no-pager"],
+    )
+    package_differences = run(
+        "package_integrity",
+        ["/usr/bin/dpkg", "--verify"],
+        timeout=90,
+        max_lines=200,
+    )
+    boot_id = clean(read_text("/proc/sys/kernel/random/boot_id", 256).strip(), 128)
+    output = {
+        "version": 1,
+        "captured_at": captured_at,
+        "duration_ms": int((time.monotonic() - started) * 1000),
+        "hostname": clean(os.uname().nodename, 256),
+        "kernel": clean(os.uname().release, 256),
+        "boot_id": boot_id,
+        "coverage": "partial" if issues or any(truncated.values()) else "complete",
+        "accounts": collect_accounts(),
+        "host_processes": processes,
+        "persistence": {"files": persistence_files, "truncated": persistence_truncated},
+        "privileged_files": {
+            "writable": writable,
+            "suid_sgid": suid_sgid,
+            "capabilities": capabilities,
+        },
+        "services": {"enabled": enabled, "failed": failed},
+        "network": collect_network(host_pids),
+        "authentication_7d": collect_authentication(),
+        "kernel_signals_7d": collect_kernel_signals(),
+        "package_integrity": {"manager": "dpkg", "differences": package_differences},
+        "issues": issues,
+        "truncated": truncated,
+    }
+    print(json.dumps(output, sort_keys=True, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    main()
+'''
 RUNTIME_WRAPPER_VERSION = "20260825-v16"
 BOOTSTRAP_LIFECYCLE_EXPORT_DIR = Path("/var/lib/cocalc/bootstrap-lifecycle")
 NVM_VERSION = "0.40.4"
@@ -10965,6 +11434,12 @@ doctor() {
   return "${status}"
 }
 
+intrusion_snapshot() {
+  /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8 /usr/bin/python3 - <<'PY'
+__HOST_INTRUSION_SNAPSHOT_HELPER__
+PY
+}
+
 case "${cmd}" in
   start|ensure|restart|stop|protect|prepare-podman-boot)
     acquire_daemon_control_lock
@@ -11009,6 +11484,13 @@ case "${cmd}" in
     fi
     capture_forensics "$1" "$2" "$3"
     ;;
+  intrusion-snapshot)
+    if [ "$#" -ne 0 ]; then
+      echo "usage: ${0} intrusion-snapshot" >&2
+      exit 2
+    fi
+    intrusion_snapshot
+    ;;
   apply-sysctls)
     apply_project_host_sysctls
     reconcile_app_core_dumps
@@ -11042,7 +11524,7 @@ case "${cmd}" in
     doctor
     ;;
   *)
-    echo "usage: ${0} {start|stop|restart|ensure|status|doctor|protect|capture-forensics|apply-sysctls|prepare-podman-boot|noop}" >&2
+    echo "usage: ${0} {start|stop|restart|ensure|status|doctor|protect|capture-forensics|intrusion-snapshot|apply-sysctls|prepare-podman-boot|noop}" >&2
     exit 2
     ;;
 esac
@@ -11101,6 +11583,9 @@ esac
         str(PROJECT_POOL_CPU_PERIOD_US),
     )
     rootctl = rootctl.replace("__HELPER_SCHEMA_VERSION__", HELPER_SCHEMA_VERSION)
+    rootctl = rootctl.replace(
+        "__HOST_INTRUSION_SNAPSHOT_HELPER__", HOST_INTRUSION_SNAPSHOT_HELPER
+    )
     (bin_dir / "ctl").write_text(ctl, encoding="utf-8")
     (bin_dir / "start-project-host").write_text(start_ph, encoding="utf-8")
     (bin_dir / "logs").write_text(logs_script, encoding="utf-8")
