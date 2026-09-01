@@ -5,6 +5,16 @@
 # The cache stores downloaded/static helper binaries only. The cocalc-cli JS
 # bundle is intentionally installed after restoring the cache so local CLI code
 # changes are always reflected in newly built tools tarballs.
+#
+# Completed builds retain two generations per platform/flavor and at most 3 GiB
+# by default. Set COCALC_PROJECT_TOOLS_CACHE_PRUNE=0 to disable pruning, or tune
+# COCALC_PROJECT_TOOLS_CACHE_RETENTION_COUNT,
+# COCALC_PROJECT_TOOLS_CACHE_MAX_BYTES, and
+# COCALC_PROJECT_TOOLS_CACHE_MIN_AGE_MS.
+
+COCALC_TOOLS_CACHE_HELPERS_DIR="$(
+  cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+)"
 
 cocalc_tools_hash_file() {
   local path="$1"
@@ -44,6 +54,9 @@ cocalc_tools_restore_cache() {
   if [ ! -d "$cache_dir/bin" ]; then
     return 1
   fi
+  # Directory mtime is the cache's LRU signal. Touch before and after the copy
+  # so a concurrent build's pruning pass treats this entry as active.
+  touch "$cache_dir"
   rm -rf "$work_dir/bin" "$work_dir/share"
   mkdir -p "$work_dir"
   cp -a "$cache_dir/bin" "$work_dir/bin"
@@ -52,6 +65,7 @@ cocalc_tools_restore_cache() {
   else
     mkdir -p "$work_dir/share"
   fi
+  touch "$cache_dir"
   return 0
 }
 
@@ -68,4 +82,16 @@ cocalc_tools_save_cache() {
   mkdir -p "$(dirname "$cache_dir")"
   rm -rf "$cache_dir"
   mv "$tmp_dir" "$cache_dir"
+}
+
+cocalc_tools_prune_cache() {
+  local cache_root="$1"
+  shift
+  if [ "${COCALC_PROJECT_TOOLS_CACHE_PRUNE:-1}" = "0" ]; then
+    return
+  fi
+  if ! node "$COCALC_TOOLS_CACHE_HELPERS_DIR/tools-cache-prune.cjs" \
+    "$cache_root" "$@"; then
+    echo "Warning: unable to prune project tools cache at $cache_root" >&2
+  fi
 }

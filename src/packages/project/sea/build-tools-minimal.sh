@@ -18,6 +18,7 @@ CLI_BUNDLE_LICENSES="$CLI_PKG_DIR/build/bundle/licenses.txt"
 
 source "$(dirname "$0")/tools-cache.sh"
 CACHE_ROOT="$(cocalc_tools_cache_root)"
+CACHE_DIRS_USED=()
 
 TARGETS=(
   "linux:amd64"
@@ -74,6 +75,7 @@ for TARGET in "${TARGETS[@]}"; do
   mkdir -p "$WORK_DIR/bin" "$WORK_DIR/share"
   CACHE_KEY="$(cocalc_tools_cache_key "$ROOT" "tools-minimal" "$OS" "$ARCH" "$TOOLS_CACHE_KEY")"
   CACHE_DIR="$CACHE_ROOT/$CACHE_KEY"
+  CACHE_DIRS_USED+=("$CACHE_DIR")
   if cocalc_tools_restore_cache "$CACHE_DIR" "$WORK_DIR"; then
     echo "  - Restored downloaded tools-minimal from cache: $CACHE_DIR"
   else
@@ -90,3 +92,5 @@ for TARGET in "${TARGETS[@]}"; do
   tar -C "$WORK_DIR" -Jcf "$TARGET_FILE" bin share
   echo "  - Tools-minimal bundle created at $TARGET_FILE"
 done
+
+cocalc_tools_prune_cache "$CACHE_ROOT" "${CACHE_DIRS_USED[@]}"

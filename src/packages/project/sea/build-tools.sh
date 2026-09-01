@@ -25,6 +25,7 @@ X11_LAUNCHER="$(dirname "$0")/cocalc-x11"
 
 source "$(dirname "$0")/tools-cache.sh"
 CACHE_ROOT="$(cocalc_tools_cache_root)"
+CACHE_DIRS_USED=()
 
 echo "Building CoCalc tools bundle..."
 echo "  root: $ROOT"
@@ -74,6 +75,7 @@ for ARCH in "${ARCHES[@]}"; do
   mkdir -p "$WORK_DIR/bin" "$WORK_DIR/share"
   CACHE_KEY="$(cocalc_tools_cache_key "$ROOT" "tools" "$OS" "$ARCH" "all")"
   CACHE_DIR="$CACHE_ROOT/$CACHE_KEY"
+  CACHE_DIRS_USED+=("$CACHE_DIR")
   if cocalc_tools_restore_cache "$CACHE_DIR" "$WORK_DIR"; then
     echo "  - Restored downloaded tools from cache: $CACHE_DIR"
   else
@@ -93,3 +95,5 @@ for ARCH in "${ARCHES[@]}"; do
   tar -C "$WORK_DIR" -Jcf "$TARGET" bin share
   echo "  - Tools bundle created at $TARGET"
 done
+
+cocalc_tools_prune_cache "$CACHE_ROOT" "${CACHE_DIRS_USED[@]}"
