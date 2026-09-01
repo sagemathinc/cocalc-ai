@@ -466,14 +466,13 @@ reconcile_runtime_state() {
     log "missing /etc/cocalc/star/hub.env"
     exit 1
   }
-  local star_uid live_file
+  local star_uid live_file status
   star_uid="$(id -u "$STAR_USER" 2>/dev/null || true)"
   [ -n "$star_uid" ] || {
     log "missing Star runtime user: $STAR_USER"
     exit 1
   }
   live_file="$(mktemp -t cocalc-star-live-projects.XXXXXX)"
-  trap 'rm -f "$live_file"' RETURN
   sudo -Hiu "$STAR_USER" env XDG_RUNTIME_DIR="/run/user/${star_uid}" \
     podman ps --filter label=role=project --format '{{.Names}}' 2>/dev/null |
     sed -n 's/^project-\([0-9a-fA-F-]\{36\}\)$/\1/p' >"$live_file"
@@ -483,9 +482,12 @@ reconcile_runtime_state() {
   source /etc/cocalc/star/hub.env
   set +a
 
-  psql -v ON_ERROR_STOP=1 -v live_file="$live_file" <<'SQL'
+  if {
+    cat <<'SQL'
 CREATE TEMP TABLE star_live_project_containers(project_id uuid PRIMARY KEY);
-\copy star_live_project_containers(project_id) FROM :'live_file'
+SQL
+    printf "\\copy star_live_project_containers(project_id) FROM '%s'\n" "$live_file"
+    cat <<'SQL'
 
 CREATE TEMP TABLE star_stale_runtime_projects AS
   SELECT p.project_id
@@ -536,6 +538,13 @@ SELECT 'live_project_containers' AS metric, count(*)::text AS value
 SELECT 'stale_runtime_projects' AS metric, count(*)::text AS value
   FROM star_stale_runtime_projects;
 SQL
+  } | psql -v ON_ERROR_STOP=1; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f "$live_file"
+  return "$status"
 }
 
 local_bootstrap_url() {
