@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import io
+import inspect
 import json
 import os
 import pwd
@@ -3314,6 +3315,13 @@ reserve_project_startup_io_capacity
             )
             self.assertIn('io_class="${12:-standard}"', script)
             self.assertIn("reconcile-project-io-policy)", script)
+            reconcile_source = inspect.getsource(
+                bootstrap.reconcile_project_io_policy
+            )
+            self.assertIn(
+                '"reconcile per-project I/O containment"', reconcile_source
+            )
+            self.assertIn("timeout=300", reconcile_source)
             self.assertIn("normalize_project_io_class_state", script)
             self.assertIn(
                 'PROJECT_IO_CLASS_STATE_DIR="/var/lib/cocalc/project-io-classes"',

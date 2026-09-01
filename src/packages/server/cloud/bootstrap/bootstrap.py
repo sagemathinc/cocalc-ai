@@ -8790,7 +8790,9 @@ def reconcile_project_io_policy(cfg: BootstrapConfig) -> None:
             "reconcile-project-io-policy",
         ],
         "reconcile per-project I/O containment",
-        timeout=120,
+        # Device discovery can approach two minutes on small, busy hosts.
+        # Keep this bounded while leaving enough margin for fleet reconciliation.
+        timeout=300,
     )
 
 
