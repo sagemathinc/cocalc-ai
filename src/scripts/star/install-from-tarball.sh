@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/managed-container-runtime.sh"
+
 TARBALL="${1:-}"
 STAR_INSTALL_ROOT="${STAR_INSTALL_ROOT:-/opt/cocalc-star}"
 STAR_INSTALL_SOURCE="${STAR_INSTALL_SOURCE:-${STAR_INSTALL_ROOT}/source}"
@@ -244,6 +248,8 @@ release_dir="${STAR_RELEASES_DIR}/${STAR_RELEASE_ID}"
 release_source="${release_dir}/source"
 previous_source=""
 release_dir_created=0
+installed_container_runtime_created=0
+installed_container_runtime_path=""
 
 [ ! -e "$release_dir" ] || die "release already exists: $release_dir"
 mkdir -p "$STAR_RELEASES_DIR"
@@ -307,6 +313,7 @@ snapshot_mutable_state() {
   snapshot_path /etc/systemd/system/cocalc-star-hub.service
   snapshot_path /etc/systemd/system/cocalc-star-project-host.service
   snapshot_path /etc/caddy/Caddyfile
+  snapshot_path "$STAR_CONTAINER_RUNTIME_CURRENT"
 }
 
 restore_mutable_state() {
@@ -318,6 +325,7 @@ restore_mutable_state() {
   restore_path /etc/systemd/system/cocalc-star-hub.service
   restore_path /etc/systemd/system/cocalc-star-project-host.service
   restore_path /etc/caddy/Caddyfile
+  restore_path "$STAR_CONTAINER_RUNTIME_CURRENT"
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     rm -rf "$path"
@@ -339,6 +347,10 @@ restore_previous_release() {
       rm -f "$STAR_INSTALL_SOURCE"
     fi
     restore_mutable_state
+    if [ "$installed_container_runtime_created" = "1" ] &&
+      [ -n "$installed_container_runtime_path" ]; then
+      rm -rf "$installed_container_runtime_path"
+    fi
     if [ -n "$previous_source" ]; then
       systemctl start cocalc-star-hub.service cocalc-star-project-host.service >/dev/null 2>&1 || true
     fi
@@ -352,13 +364,35 @@ snapshot_mutable_state
 log "extracting $TARBALL to $release_source"
 mkdir -p "$tmp_release/source"
 tar -xzf "$TARBALL" -C "$tmp_release/source"
+container_runtime_archive=""
+container_runtime_archives=(
+  "$tmp_release/source/src"/packages/backend/podman/build/container-runtime-linux-*.tar.xz
+)
+if [ -f "${container_runtime_archives[0]}" ]; then
+  container_runtime_archive="$(star_container_runtime_archive "$tmp_release/source/src")"
+  log "installing managed container runtime from authenticated runtime payload"
+  star_install_container_runtime_archive "$container_runtime_archive"
+  installed_container_runtime_created="$STAR_INSTALLED_CONTAINER_RUNTIME_CREATED"
+  installed_container_runtime_path="$STAR_INSTALLED_CONTAINER_RUNTIME_PATH"
+fi
 install_privileged_runtime_tools "$tmp_release/source/src"
+container_runtime_json=""
+if [ -n "${STAR_INSTALLED_CONTAINER_RUNTIME_ID:-}" ]; then
+  container_runtime_json="$(cat <<EOF
+,
+  "container_runtime_id": "${STAR_INSTALLED_CONTAINER_RUNTIME_ID}",
+  "container_runtime_version": "${STAR_INSTALLED_CONTAINER_RUNTIME_VERSION}",
+  "container_runtime_arch": "${STAR_INSTALLED_CONTAINER_RUNTIME_ARCH}",
+  "container_runtime_sha256": "${STAR_INSTALLED_CONTAINER_RUNTIME_SHA256}"
+EOF
+)"
+fi
 cat >"$tmp_release/release.json" <<EOF
 {
   "release_id": "${STAR_RELEASE_ID}",
   "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "tarball_sha256": "${tarball_sha256}",
-  "source_path": "${release_source}"
+  "source_path": "${release_source}"${container_runtime_json}
 }
 EOF
 if [ -n "${STAR_RELEASE_METADATA_JSON:-}" ] && [ -f "$STAR_RELEASE_METADATA_JSON" ]; then
@@ -369,6 +403,10 @@ chown -R "$STAR_USER:$STAR_USER" "$tmp_release"
 mv "$tmp_release" "$release_dir"
 release_dir_created=1
 replace_symlink "$release_source" "$STAR_INSTALL_SOURCE"
+if [ -n "$installed_container_runtime_path" ]; then
+  star_activate_container_runtime "$installed_container_runtime_path"
+  star_configure_container_runtime_env
+fi
 
 INSTALLER="${STAR_INSTALL_SOURCE}/src/scripts/star/install-star.sh"
 [ -x "$INSTALLER" ] || die "missing installer in tarball: $INSTALLER"

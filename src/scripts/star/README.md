@@ -22,9 +22,11 @@ STAR_RELEASE_MODE=runtime \
   src/scripts/star/build-star-release.sh /tmp/cocalc-star-runtime-20260531T000000Z.tar.gz
 ```
 
-Runtime artifacts include the built workspace, `node_modules`, the project
-bundle, backend tools, and frontend assets. They are larger than source
-artifacts, but installs and upgrades skip the target-VM source build.
+Runtime artifacts include the built workspace, project and project-host
+bundles, privileged backend tools, frontend assets, and the architecture-
+specific managed Podman runtime used by production project hosts. They are
+larger than source artifacts, but installs and upgrades skip the target-VM
+source build.
 
 Copy the release artifact to a fresh Ubuntu 24.04 VM.
 
@@ -117,6 +119,12 @@ sudo /opt/cocalc-star/source/src/scripts/star/star.sh smoke
 sudo /opt/cocalc-star/source/src/scripts/star/star.sh bootstrap-link
 ```
 
+`doctor` verifies that `/opt/cocalc/container-runtime/current` selects the
+release's checksum-pinned Podman, conmon, crun, netavark, and aardvark-dns
+bundle, then runs the RootFS with that runtime. Ubuntu's Podman package remains
+installed for host dependencies and emergency fallback, but normal Star
+project execution does not use the distro Podman binary.
+
 The GCP proof-of-concept harness can validate install, smoke, release upgrade,
 rollback, and hard-reset durability in one run:
 
@@ -189,7 +197,13 @@ Each tarball install creates:
 /opt/cocalc-star/releases/<release-id>/release.json
 /opt/cocalc-star/source -> releases/<release-id>/source
 /opt/cocalc-star/current -> releases/<release-id>
+/opt/cocalc/container-runtime/<runtime-id>
+/opt/cocalc/container-runtime/current -> <runtime-id>
 ```
+
+Runtime release metadata records the managed runtime ID. Upgrade failure
+restores the previous runtime symlink, and `star rollback` activates the
+runtime associated with the selected release before restarting services.
 
 Useful commands:
 

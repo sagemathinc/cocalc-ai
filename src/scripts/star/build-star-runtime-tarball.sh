@@ -6,6 +6,7 @@ SRC_ROOT="$(realpath "${SCRIPT_DIR}/../..")"
 REPO_ROOT="$(realpath "${SRC_ROOT}/..")"
 OUTPUT="${1:-${STAR_RUNTIME_TARBALL:-/tmp/cocalc-star-runtime.tar.gz}}"
 STAR_RUNTIME_BUILD="${STAR_RUNTIME_BUILD:-1}"
+STAR_CONTAINER_RUNTIME_BUILD="${STAR_CONTAINER_RUNTIME_BUILD:-${STAR_RUNTIME_BUILD}}"
 COCALC_STAR_RELEASE_ARCH="${COCALC_STAR_RELEASE_ARCH:-}"
 STAR_HELPER_BUILD_DIR=""
 
@@ -31,6 +32,9 @@ workspace state.
 
 Set COCALC_STAR_RELEASE_ARCH=x64 or arm64 to choose the matching project tools
 bundle. Defaults from uname -m.
+
+Set STAR_CONTAINER_RUNTIME_BUILD=0 to package an already-built managed runtime
+from packages/backend/podman/build instead of rebuilding it.
 EOF
 }
 
@@ -104,6 +108,29 @@ runtime_tools_arch() {
     arm64) printf 'arm64\n' ;;
     *) die "unsupported COCALC_STAR_RELEASE_ARCH=$arch; expected x64 or arm64" ;;
   esac
+}
+
+prepare_container_runtime_bundle() {
+  local arch output source="${COCALC_STAR_CONTAINER_RUNTIME_TARBALL:-}"
+  arch="$(runtime_tools_arch)"
+  output="$SRC_ROOT/packages/backend/podman/build/container-runtime-linux-${arch}.tar.xz"
+  if [ -n "$source" ]; then
+    [ -f "$source" ] || die "managed container-runtime archive does not exist: $source"
+    mkdir -p "$(dirname "$output")"
+    if [ "$(realpath "$source")" != "$(realpath -m "$output")" ]; then
+      cp "$source" "$output"
+    fi
+  elif [ "$STAR_CONTAINER_RUNTIME_BUILD" = "1" ]; then
+    log "building managed container runtime for ${arch}"
+    COCALC_CONTAINER_RUNTIME_ARCH="$arch" \
+      "$SRC_ROOT/packages/backend/podman/build-runtime-bundle.sh" >/dev/null
+  elif [ "$STAR_CONTAINER_RUNTIME_BUILD" != "0" ]; then
+    die "STAR_CONTAINER_RUNTIME_BUILD must be 0 or 1"
+  fi
+  [ -f "$output" ] || die "missing managed container-runtime archive: $output"
+  # shellcheck disable=SC1091
+  source "$SRC_ROOT/scripts/star/managed-container-runtime.sh"
+  star_inspect_container_runtime_archive "$output" "$arch" >/dev/null
 }
 
 build_star_helper_bundles() {
@@ -243,6 +270,7 @@ copy_runtime_payload() {
     "$runtime_src/packages/launchpad/build" \
     "$runtime_src/packages/project-host/build" \
     "$runtime_src/packages/project/build" \
+    "$runtime_src/packages/backend/podman/build" \
     "$runtime_src/packages/server/cloud/bootstrap"
 
   cp -a "$SRC_ROOT/scripts/star" "$runtime_src/scripts/"
@@ -270,6 +298,8 @@ copy_runtime_payload() {
   tools_arch="$(runtime_tools_arch)"
   cp "$SRC_ROOT/packages/project/build/tools-linux-${tools_arch}.tar.xz" \
     "$runtime_src/packages/project/build/"
+  cp "$SRC_ROOT/packages/backend/podman/build/container-runtime-linux-${tools_arch}.tar.xz" \
+    "$runtime_src/packages/backend/podman/build/"
   cp "$SRC_ROOT/packages/server/cloud/bootstrap/bootstrap.py" \
     "$runtime_src/packages/server/cloud/bootstrap/"
 }
@@ -292,11 +322,18 @@ verify_runtime_tarball() {
     "src/packages/project-host/build/bundle-linux.tar.xz"
     "src/packages/project/build/bundle-linux.tar.xz"
     "src/packages/project/build/tools-linux-$(runtime_tools_arch).tar.xz"
+    "src/packages/backend/podman/build/container-runtime-linux-$(runtime_tools_arch).tar.xz"
   )
   local path
   for path in "${required[@]}"; do
     [ -f "$verify_dir/$path" ] || die "runtime tarball missing $path"
   done
+
+  # shellcheck disable=SC1091
+  source "$verify_dir/src/scripts/star/managed-container-runtime.sh"
+  star_inspect_container_runtime_archive \
+    "$verify_dir/src/packages/backend/podman/build/container-runtime-linux-$(runtime_tools_arch).tar.xz" \
+    "$(runtime_tools_arch)" >/dev/null
 
   python3 - "$verify_dir/src/packages/project/build/tools-linux-$(runtime_tools_arch).tar.xz" <<'PY'
 import sys
@@ -331,6 +368,7 @@ trap cleanup EXIT
 STAR_HELPER_BUILD_DIR="$tmp_dir/helper-build"
 
 build_runtime
+prepare_container_runtime_bundle
 build_star_helper_bundles
 build_api_v2_routes_bundle
 
@@ -339,6 +377,7 @@ build_api_v2_routes_bundle
 [ -f "$SRC_ROOT/packages/project-host/build/bundle-linux.tar.xz" ] || die "missing project-host bundle tarball"
 [ -f "$SRC_ROOT/packages/project/build/bundle-linux.tar.xz" ] || die "missing project bundle tarball"
 [ -f "$SRC_ROOT/packages/project/build/tools-linux-$(runtime_tools_arch).tar.xz" ] || die "missing $(runtime_tools_arch) tools bundle"
+[ -f "$SRC_ROOT/packages/backend/podman/build/container-runtime-linux-$(runtime_tools_arch).tar.xz" ] || die "missing $(runtime_tools_arch) managed container-runtime bundle"
 [ -f "$STAR_HELPER_BUILD_DIR/seed-star-poc/index.cjs" ] || die "missing bundled seed helper"
 [ -f "$STAR_HELPER_BUILD_DIR/publish-default-rootfs/index.cjs" ] || die "missing bundled rootfs publish helper"
 [ -f "$STAR_HELPER_BUILD_DIR/ensure-rootfs-cache/index.cjs" ] || die "missing bundled rootfs cache helper"
