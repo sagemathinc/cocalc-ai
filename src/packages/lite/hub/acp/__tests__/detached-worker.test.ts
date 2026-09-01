@@ -29,7 +29,9 @@ import {
   enqueueAcpJob,
   getAcpJob,
   listAcpJobsByRecoveryParent,
+  listAcpJobsWithRecoveryIntent,
   listQueuedAcpJobs,
+  setAcpJobState,
 } from "../../sqlite/acp-jobs";
 
 jest.mock("@cocalc/ai/acp", () => ({
@@ -361,6 +363,44 @@ describe("terminal failure recovery", () => {
     ).toHaveLength(1);
   });
 
+  it("collapses concurrent recovery replay into one continuation", async () => {
+    const request = makeRequest();
+    const queued = enqueueAcpJob(request as any);
+    setAcpJobState({
+      op_id: queued.op_id,
+      state: "error",
+      error: "Codex app-server exited",
+    });
+    const failed = getAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    })!;
+    const rows: any[] = [];
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(makeSyncdb(rows));
+
+    await Promise.all([
+      acpTestInternals.enqueueFailureRecoveryContinuation({
+        client: {} as ConatClient,
+        job: { ...failed, started_at: Date.now() },
+        recoveryCode: "codex_app_server_exited",
+      }),
+      acpTestInternals.enqueueFailureRecoveryContinuation({
+        client: {} as ConatClient,
+        job: { ...failed, started_at: Date.now() },
+        recoveryCode: "codex_app_server_exited",
+      }),
+    ]);
+
+    const recoveries = listAcpJobsByRecoveryParent({
+      recovery_parent_op_id: queued.op_id,
+    });
+    expect(recoveries).toHaveLength(1);
+    expect(
+      rows.filter((row) => row.message_id === recoveries[0].user_message_id),
+    ).toHaveLength(1);
+  });
+
   it("stops failure recovery after two continuation attempts", async () => {
     const request = {
       ...makeRequest(),
@@ -472,6 +512,50 @@ describe("terminal failure recovery", () => {
 });
 
 describe("recoverDetachedWorkerStartupState", () => {
+  it("replays a durable terminal recovery intent after worker restart", async () => {
+    const request = makeRequest();
+    const queued = enqueueAcpJob(request as any);
+    const running = claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-before-crash",
+      worker_bundle_version: "bundle-before-crash",
+    });
+    expect(running?.state).toBe("running");
+    setAcpJobState({
+      op_id: queued.op_id,
+      state: "error",
+      worker_id: "worker-before-crash",
+      error: "Codex app-server exited",
+      recovery_code: "codex_app_server_exited",
+      recovery_detail: "exit code 1",
+    });
+    expect(listAcpJobsWithRecoveryIntent()).toHaveLength(1);
+    const rows: any[] = [];
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(makeSyncdb(rows));
+
+    await recoverDetachedWorkerStartupState({} as ConatClient, {
+      restartReason: "worker restart",
+    });
+
+    expect(listAcpJobsWithRecoveryIntent()).toHaveLength(0);
+    const recoveries = listAcpJobsByRecoveryParent({
+      recovery_parent_op_id: queued.op_id,
+    });
+    expect(recoveries).toHaveLength(1);
+    const recoveryRequest = decodeAcpJobRequest(recoveries[0]);
+    if (recoveryRequest.request_kind === "command") {
+      throw new Error("expected Codex recovery request");
+    }
+    expect(recoveryRequest.prompt).toContain(
+      "Codex app-server exited unexpectedly",
+    );
+    expect(recoveryRequest.chat?.user_message_content).toContain(
+      "System recovery",
+    );
+  });
+
   it("does not blanket-interrupt running local detached jobs", async () => {
     const request = makeRequest();
     const queued = enqueueAcpJob(request as any);

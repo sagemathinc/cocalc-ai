@@ -36,6 +36,8 @@ export interface AcpJobRow {
   recovery_parent_op_id?: string | null;
   recovery_reason?: string | null;
   recovery_count?: number | null;
+  recovery_code?: string | null;
+  recovery_detail?: string | null;
   request_json: string;
   error?: string | null;
   created_at: number;
@@ -77,6 +79,8 @@ function init(): void {
       recovery_parent_op_id TEXT,
       recovery_reason TEXT,
       recovery_count INTEGER,
+      recovery_code TEXT,
+      recovery_detail TEXT,
       request_json TEXT NOT NULL,
       error TEXT,
       created_at INTEGER NOT NULL,
@@ -117,6 +121,12 @@ function init(): void {
   }
   if (!hasColumn("available_at")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN available_at INTEGER`);
+  }
+  if (!hasColumn("recovery_code")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN recovery_code TEXT`);
+  }
+  if (!hasColumn("recovery_detail")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN recovery_detail TEXT`);
   }
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_jobs_recovery_parent_idx ON ${TABLE}(recovery_parent_op_id, state, created_at)`,
@@ -509,9 +519,34 @@ function countAcpJobsByWhere(where: string, args: unknown[]): number {
   return Number(row?.count ?? 0) || 0;
 }
 
-export function countQueuedAcpJobsForAccount(account_id: string): number {
+export function countQueuedAcpJobsForAccount(
+  account_id: string,
+  excludeRecoveryForThread?: {
+    project_id: string;
+    path: string;
+    thread_id: string;
+  },
+): number {
   const accountId = `${account_id ?? ""}`.trim();
   if (!accountId) return 0;
+  if (excludeRecoveryForThread) {
+    return countAcpJobsByWhere(
+      `WHERE account_id = ?
+         AND state = 'queued'
+         AND NOT (
+           recovery_parent_op_id IS NOT NULL
+           AND project_id = ?
+           AND path = ?
+           AND thread_id = ?
+         )`,
+      [
+        accountId,
+        excludeRecoveryForThread.project_id,
+        excludeRecoveryForThread.path,
+        excludeRecoveryForThread.thread_id,
+      ],
+    );
+  }
   return countAcpJobsByWhere(`WHERE account_id = ? AND state = 'queued'`, [
     accountId,
   ]);
@@ -598,16 +633,22 @@ export function countQueuedAcpJobsForThread({
   project_id,
   path,
   thread_id,
+  includeRecovery = true,
 }: {
   project_id: string;
   path: string;
   thread_id: string;
+  includeRecovery?: boolean;
 }): number {
+  const recoveryClause = includeRecovery
+    ? ""
+    : "AND recovery_parent_op_id IS NULL";
   return countAcpJobsByWhere(
     `WHERE project_id = ?
        AND path = ?
        AND thread_id = ?
-       AND state = 'queued'`,
+       AND state = 'queued'
+       ${recoveryClause}`,
     [project_id, path, thread_id],
   );
 }
@@ -781,11 +822,15 @@ export function setAcpJobState({
   state,
   error,
   worker_id,
+  recovery_code,
+  recovery_detail,
 }: {
   op_id: string;
   state: Exclude<AcpJobState, "queued" | "running">;
   error?: string;
   worker_id?: string;
+  recovery_code?: string;
+  recovery_detail?: string;
 }): void {
   ensureInit();
   const db = getAcpDatabase();
@@ -795,6 +840,8 @@ export function setAcpJobState({
       `UPDATE ${TABLE}
         SET state = ?,
             error = COALESCE(?, error),
+            recovery_code = COALESCE(?, recovery_code),
+            recovery_detail = COALESCE(?, recovery_detail),
             updated_at = ?,
             finished_at = ?
         WHERE op_id = ?
@@ -803,7 +850,16 @@ export function setAcpJobState({
             OR worker_id IS NULL
             OR worker_id = ?
           )`,
-    ).run(state, error ?? null, now, now, op_id, worker_id);
+    ).run(
+      state,
+      error ?? null,
+      recovery_code ?? null,
+      recovery_detail ?? null,
+      now,
+      now,
+      op_id,
+      worker_id,
+    );
     mirrorAcpJobSession(getAcpJobByOpId(op_id));
     return;
   }
@@ -811,11 +867,47 @@ export function setAcpJobState({
     `UPDATE ${TABLE}
       SET state = ?,
           error = COALESCE(?, error),
+          recovery_code = COALESCE(?, recovery_code),
+          recovery_detail = COALESCE(?, recovery_detail),
           updated_at = ?,
           finished_at = ?
       WHERE op_id = ?`,
-  ).run(state, error ?? null, now, now, op_id);
+  ).run(
+    state,
+    error ?? null,
+    recovery_code ?? null,
+    recovery_detail ?? null,
+    now,
+    now,
+    op_id,
+  );
   mirrorAcpJobSession(getAcpJobByOpId(op_id));
+}
+
+export function listAcpJobsWithRecoveryIntent(limit = 100): AcpJobRow[] {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE state = 'error'
+         AND recovery_code IS NOT NULL
+       ORDER BY finished_at ASC, created_at ASC
+       LIMIT ?`,
+    )
+    .all(Math.max(1, Math.floor(limit))) as AcpJobRow[];
+}
+
+export function clearAcpJobRecoveryIntent(op_id: string): void {
+  ensureInit();
+  getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET recovery_code = NULL,
+           recovery_detail = NULL,
+           updated_at = ?
+       WHERE op_id = ?`,
+    )
+    .run(Date.now(), op_id);
 }
 
 export function requeueRunningAcpJob({

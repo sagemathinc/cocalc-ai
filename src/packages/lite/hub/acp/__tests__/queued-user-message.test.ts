@@ -62,6 +62,33 @@ describe("queued user message refresh helpers", () => {
     ).toBe(request);
   });
 
+  it("preserves recovery guidance behind an unchanged recovery notice", () => {
+    const visibleNotice =
+      "System recovery: the previous Codex turn stopped unexpectedly.";
+    const request = {
+      project_id: "proj-1",
+      account_id: "acct-1",
+      prompt:
+        "Continue the interrupted task from its last durable state. Do not restart completed work.",
+      chat: {
+        project_id: "proj-1",
+        path: "thread.chat",
+        thread_id: "thread-1",
+        parent_message_id: "recovery-1",
+        message_id: "assistant-1",
+        message_date: "2026-05-07T21:00:00.000Z",
+        sender_id: "openai-codex-agent",
+        user_message_content: visibleNotice,
+      },
+    };
+    expect(
+      applyQueuedUserMessageEditToRequest({
+        request,
+        latestContent: visibleNotice,
+      }),
+    ).toBe(request);
+  });
+
   it("uses a real visible-message edit instead of the hidden ACP prompt", () => {
     const request = {
       project_id: "proj-1",

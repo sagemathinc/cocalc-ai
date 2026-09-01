@@ -89,6 +89,7 @@ type AcpCreationAdmissionIdentity = {
   path?: string;
   thread_id?: string;
   recovery_parent_op_id?: string;
+  supersedes_queued_recoveries?: boolean;
 };
 
 export class AcpAdmissionDeniedError extends Error {
@@ -263,6 +264,7 @@ export function admitAcpJobCreation(
   request: AcpJobRequest,
   limits: AcpAdmissionLimits = getDefaultAcpAdmissionLimits(),
   now = Date.now(),
+  opts: { supersedesQueuedRecoveries?: boolean } = {},
 ): AcpAdmissionDecision {
   return admitAcpJobCreationIdentity(
     {
@@ -271,6 +273,7 @@ export function admitAcpJobCreation(
       path: request.chat?.path,
       thread_id: request.chat?.thread_id,
       recovery_parent_op_id: recoveryParentId(request),
+      supersedes_queued_recoveries: opts.supersedesQueuedRecoveries === true,
     },
     limits,
     now,
@@ -289,10 +292,20 @@ export function admitAcpJobCreationIdentity(
   const project_id = `${identity.project_id ?? ""}`.trim();
   const path = `${identity.path ?? ""}`.trim();
   const thread_id = `${identity.thread_id ?? ""}`.trim();
+  const supersededRecoveryThread =
+    identity.supersedes_queued_recoveries &&
+    project_id.length > 0 &&
+    path.length > 0 &&
+    thread_id.length > 0
+      ? { project_id, path, thread_id }
+      : undefined;
 
   const queuedPerAccount = finiteLimit(limits.queuedPerAccount);
   if (account_id && queuedPerAccount != null) {
-    const current = countQueuedAcpJobsForAccount(account_id);
+    const current = countQueuedAcpJobsForAccount(
+      account_id,
+      supersededRecoveryThread,
+    );
     if (current >= queuedPerAccount) {
       return denied({
         ok: false,
@@ -311,6 +324,7 @@ export function admitAcpJobCreationIdentity(
       project_id,
       path,
       thread_id,
+      includeRecovery: supersededRecoveryThread == null,
     });
     if (current >= queuedPerThread) {
       return denied({

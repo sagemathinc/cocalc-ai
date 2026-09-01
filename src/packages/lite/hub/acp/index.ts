@@ -163,6 +163,7 @@ import {
 import {
   cancelQueuedAcpJob,
   claimNextQueuedAcpJobForThread,
+  clearAcpJobRecoveryIntent,
   clearQueuedAcpJobWorkerAffinity,
   countQueuedAcpJobsForThread,
   countRunningAcpJobsForWorker,
@@ -176,6 +177,7 @@ import {
   hasRunningAcpJobForThread,
   listQueuedAcpJobThreadKeys,
   listAcpJobsByRecoveryParent,
+  listAcpJobsWithRecoveryIntent,
   listQueuedAcpJobsForThread,
   listRunningAcpJobs,
   markRunningAcpJobsInterrupted,
@@ -6590,6 +6592,7 @@ export async function recoverDetachedWorkerStartupState(
   await recoverTerminalStaleAcpTurns(client, {
     recoveryReason,
   });
+  await recoverPendingFailureRecoveryIntents({ client });
 }
 
 function initializeAcpRuntime(client: ConatClient): void {
@@ -6947,6 +6950,7 @@ export async function runDetachedAcpQueueWorker(
               ? "ACP worker stopped unexpectedly"
               : "ACP worker stopped before turn startup",
         });
+        await recoverPendingFailureRecoveryIntents({ client });
       }
       const runtimeStatus = getAcpAgentRuntimeStatus();
       const hasWork =
@@ -9053,11 +9057,20 @@ async function enqueueRecoveryContinuationForJob({
     1,
     Math.floor(Number(sourceJob.recovery_count ?? 0)) + 1,
   );
-  const user_message_id = randomUUID();
-  const assistant_message_id = randomUUID();
-  const now = Date.now();
+  const recoveryIdentity = `${parentOpId}:${recoveryCount}`;
+  const user_message_id = uuidsha1(`acp-recovery-user:${recoveryIdentity}`);
+  const assistant_message_id = uuidsha1(
+    `acp-recovery-assistant:${recoveryIdentity}`,
+  );
+  const now = sourceJob.finished_at ?? Date.now();
   const userDate = new Date(now).toISOString();
   const assistantDate = new Date(now + 1).toISOString();
+  const visibleRecoveryContent = buildRecoveryContinuationContent({
+    interruptedNotice,
+    recoveryCount,
+    delayMs,
+    maxRetries,
+  });
   await withChatSyncDB({
     client,
     project_id,
@@ -9072,12 +9085,7 @@ async function enqueueRecoveryContinuationForJob({
           sender_id: ACP_RECOVERY_CHAT_SENDER_ID,
           date: userDate,
           prevHistory: [],
-          content: buildRecoveryContinuationContent({
-            interruptedNotice,
-            recoveryCount,
-            delayMs,
-            maxRetries,
-          }),
+          content: visibleRecoveryContent,
           generating: false,
           message_id: user_message_id,
           thread_id,
@@ -9111,6 +9119,7 @@ async function enqueueRecoveryContinuationForJob({
       recovery_parent_op_id: parentOpId,
       recovery_reason: recoveryReason,
       recovery_count: recoveryCount,
+      user_message_content: visibleRecoveryContent,
     },
   };
   throwIfAcpAdmissionDenied(
@@ -9215,6 +9224,35 @@ async function enqueueFailureRecoveryContinuation({
     });
   }
   return resumed;
+}
+
+async function recoverPendingFailureRecoveryIntents({
+  client,
+  limit = 100,
+}: {
+  client: ConatClient;
+  limit?: number;
+}): Promise<number> {
+  let recovered = 0;
+  for (const job of listAcpJobsWithRecoveryIntent(limit)) {
+    try {
+      await enqueueFailureRecoveryContinuation({
+        client,
+        job,
+        recoveryCode: job.recovery_code as CodexAcpRecoveryErrorCode,
+        recoveryDetail: job.recovery_detail ?? undefined,
+      });
+      clearAcpJobRecoveryIntent(job.op_id);
+      recovered += 1;
+    } catch (err) {
+      logger.warn("failed recovering persisted ACP failure intent", {
+        op_id: job.op_id,
+        recovery_code: job.recovery_code,
+        err,
+      });
+    }
+  }
+  return recovered;
 }
 
 async function clearSupersededRecoveryProjections({
@@ -9564,6 +9602,10 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       op_id: job.op_id,
       state: result.terminalState,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+      recovery_code:
+        result.terminalState === "error" ? result.recoveryCode : undefined,
+      recovery_detail:
+        result.terminalState === "error" ? result.recoveryDetail : undefined,
     });
     if (result.terminalState === "error" && result.recoveryCode) {
       try {
@@ -9573,6 +9615,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
           recoveryCode: result.recoveryCode,
           recoveryDetail: result.recoveryDetail,
         });
+        clearAcpJobRecoveryIntent(job.op_id);
       } catch (err) {
         logger.warn("failed to enqueue ACP failure recovery continuation", {
           op_id: job.op_id,
@@ -10181,6 +10224,8 @@ async function enqueueChatAcpTurn({
     admitAcpJobCreation(
       request,
       await resolveAcpAdmissionLimits(acpAdmissionContextFromRequest(request)),
+      Date.now(),
+      { supersedesQueuedRecoveries: true },
     ),
     "chat",
   );
@@ -10608,6 +10653,7 @@ export async function init(
       );
       await recoverOrphanedAcpTurns(client);
       markRunningAcpJobsInterrupted("server restart");
+      await recoverPendingFailureRecoveryIntents({ client });
       startAcpInterruptPoller();
       startAcpSteerPoller();
       kickAllQueuedAcpJobs();

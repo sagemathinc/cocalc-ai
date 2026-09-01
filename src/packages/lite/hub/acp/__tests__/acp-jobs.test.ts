@@ -24,6 +24,7 @@ import {
   claimNextQueuedAcpJobForThread,
   cancelQueuedAcpJob,
   cancelQueuedRecoveryJobsForThread,
+  clearAcpJobRecoveryIntent,
   clearQueuedAcpJobWorkerAffinity,
   countCreatedAcpJobsForAccountSince,
   countQueuedAcpJobsForAccount,
@@ -38,6 +39,7 @@ import {
   getAcpJobByOpId,
   hasNewerNonRecoveryAcpJob,
   listAcpJobsByRecoveryParent,
+  listAcpJobsWithRecoveryIntent,
   listQueuedAcpJobs,
   listQueuedAcpJobThreadKeys,
   listQueuedAcpJobsForThread,
@@ -860,6 +862,46 @@ describe("acp job queue ordering", () => {
     ).toEqual({ ok: true });
   });
 
+  it("admits a human turn that atomically supersedes a queued recovery", () => {
+    const recoveryRequest = {
+      ...makeRequest({
+        userMessageId: "user-delayed-recovery-admission",
+        assistantMessageId: "assistant-delayed-recovery-admission",
+        assistantDate: "2026-03-08T00:00:14.100Z",
+      }),
+      recovery_parent_op_id: "failed-parent-admission",
+      recovery_reason: "model capacity",
+      recovery_count: 1,
+    };
+    enqueueAcpJob(recoveryRequest, {
+      available_at: Date.now() + 15 * 60_000,
+    });
+    const humanRequest = makeRequest({
+      userMessageId: "user-superseding-recovery",
+      assistantMessageId: "assistant-superseding-recovery",
+      assistantDate: "2026-03-08T00:00:14.200Z",
+    });
+    const limits = {
+      queuedPerAccount: 1,
+      queuedPerThread: 1,
+      created5hPerAccount: 100,
+      created7dPerAccount: 100,
+      runningPerAccount: 100,
+      runningPerProject: 100,
+      activeAutomationsPerProject: 100,
+    };
+
+    expect(admitAcpJobCreation(humanRequest, limits)).toMatchObject({
+      ok: false,
+      limit: "queued_per_account",
+    });
+    expect(
+      admitAcpJobCreation(humanRequest, limits, Date.now(), {
+        supersedesQueuedRecoveries: true,
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it("maps membership effective limits into ACP admission limits", () => {
     const defaults = {
       queuedPerAccount: 1000,
@@ -1021,6 +1063,39 @@ describe("acp job queue ordering", () => {
         recovery_count: 2,
       }),
     );
+  });
+
+  it("durably stores and clears terminal recovery intent", () => {
+    const job = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-terminal-recovery-intent",
+        assistantMessageId: "assistant-terminal-recovery-intent",
+        assistantDate: "2026-03-08T00:00:03.600Z",
+      }),
+    );
+
+    setAcpJobState({
+      op_id: job.op_id,
+      state: "error",
+      error: "Codex app-server exited",
+      recovery_code: "codex_app_server_exited",
+      recovery_detail: "exit code 137",
+    });
+
+    expect(listAcpJobsWithRecoveryIntent()).toEqual([
+      expect.objectContaining({
+        op_id: job.op_id,
+        state: "error",
+        recovery_code: "codex_app_server_exited",
+        recovery_detail: "exit code 137",
+      }),
+    ]);
+    clearAcpJobRecoveryIntent(job.op_id);
+    expect(listAcpJobsWithRecoveryIntent()).toEqual([]);
+    expect(getAcpJobByOpId(job.op_id)).toMatchObject({
+      recovery_code: null,
+      recovery_detail: null,
+    });
   });
 
   it("can resend a canceled queued job", async () => {

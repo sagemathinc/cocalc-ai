@@ -17,7 +17,6 @@ import {
 } from "@cocalc/server/projects/hard-delete-state";
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import { requireDangerousProjectMutationAuth } from "./project-dangerous-auth";
 export * from "@cocalc/server/projects/collaborators";
 import {
   createCollabInvite as createCollabInviteLocal,
