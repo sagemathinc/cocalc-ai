@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { Writable } from "node:stream";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 
-import type { AppRequestMatch } from "./app-public-access";
+import type { AppRequestMatch } from "./app-request-match";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { publicViewerHtmlForPath } from "./public-viewer";
 
@@ -368,7 +368,7 @@ describe("static app serving", () => {
     }
   });
 
-  it("uses public cache defaults for exposed raw files and supports etag revalidation", async () => {
+  it("uses private cache defaults for raw files and supports etag revalidation", async () => {
     const base = await mkTempDir("cocalc-static-apps-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
@@ -392,7 +392,6 @@ describe("static app serving", () => {
       project_id,
       match: {
         ...makeMatch(PUBLIC_ROOT, "/a.md?raw=1"),
-        exposure: { mode: "public" },
         spec: {
           id: "site",
           kind: "static",
@@ -410,7 +409,7 @@ describe("static app serving", () => {
     expect(firstHandled).toBe(true);
     expect(firstRes.statusCode).toBe(200);
     expect(firstRes.headers["Cache-Control"]).toBe(
-      "public, max-age=60, s-maxage=300, stale-while-revalidate=600",
+      "private, max-age=60, must-revalidate",
     );
     expect(typeof firstRes.headers.ETag).toBe("string");
 
@@ -423,7 +422,6 @@ describe("static app serving", () => {
       project_id,
       match: {
         ...makeMatch(PUBLIC_ROOT, "/a.md?raw=1"),
-        exposure: { mode: "public" },
         spec: {
           id: "site",
           kind: "static",
@@ -442,7 +440,7 @@ describe("static app serving", () => {
     expect(secondRes.statusCode).toBe(304);
   });
 
-  it("uses a shorter public cache default for generated manifest pages", async () => {
+  it("uses private cache defaults for generated manifest pages", async () => {
     const base = await mkTempDir("cocalc-static-apps-");
     const home = join(base, "home");
     const rootfs = join(base, "rootfs");
@@ -474,7 +472,6 @@ describe("static app serving", () => {
       project_id,
       match: {
         ...makeMatch(PUBLIC_ROOT, "/"),
-        exposure: { mode: "public" },
         spec: {
           id: "site",
           kind: "static",
@@ -492,7 +489,7 @@ describe("static app serving", () => {
     expect(handled).toBe(true);
     expect(res.statusCode).toBe(200);
     expect(res.headers["Cache-Control"]).toBe(
-      "public, max-age=15, s-maxage=60, stale-while-revalidate=120",
+      "private, max-age=60, must-revalidate",
     );
   });
 });

@@ -6,7 +6,6 @@ export {
 } from "@cocalc/project/named-servers/control";
 
 export {
-  APP_PUBLIC_TOKEN_QUERY_PARAM,
   listAppSpecs,
   listAppTemplates,
   getAppSpec,
@@ -19,8 +18,6 @@ export {
   ensureRunning,
   listAppStatuses,
   deleteApp,
-  exposeApp,
-  unexposeApp,
   getPrivateHostnamePolicy,
   inspectPrivateHostname,
   listPrivateHostnames,
@@ -31,5 +28,4 @@ export {
   listMetrics as listAppMetrics,
   detectApps,
   detectInstalledTemplates,
-  auditAppPublicReadiness,
 } from "@cocalc/project/app-servers/control";

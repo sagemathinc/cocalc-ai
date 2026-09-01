@@ -10,10 +10,6 @@ import hasAccess, {
   resolveAuthenticatedAccountId,
 } from "./check-for-access-to-project";
 import { stripBasePath } from "./util";
-import {
-  isPublicAppSubdomainRequest,
-  maybeRewritePublicAppSubdomainRequest,
-} from "./public-app-subdomain";
 import { setProjectHostProxyAccountId } from "./project-host";
 
 const logger = getLogger("proxy:handle-upgrade");
@@ -35,8 +31,6 @@ export default function initUpgrade(
   const re = new RegExp(proxy_regexp);
 
   async function handleProxyUpgradeRequest(req, socket, head): Promise<void> {
-    await maybeRewritePublicAppSubdomainRequest(req);
-    const allowPublicSubdomainBypass = isPublicAppSubdomainRequest(req);
     let remember_me: string | undefined = undefined;
     let api_key: string | undefined = undefined;
 
@@ -86,25 +80,21 @@ export default function initUpgrade(
 
     const parsed = parseReq(stripBasePath(req.url), remember_me, api_key);
     const accessType = parsed.type === "files" ? "read" : "write";
-    const authenticatedAccountId = allowPublicSubdomainBypass
-      ? undefined
-      : await resolveAuthenticatedAccountId({
-          remember_me,
-          api_key,
-        });
+    const authenticatedAccountId = await resolveAuthenticatedAccountId({
+      remember_me,
+      api_key,
+    });
     setProjectHostProxyAccountId(req, authenticatedAccountId);
-    if (!allowPublicSubdomainBypass) {
-      if (
-        !(await hasAccess({
-          project_id: parsed.project_id,
-          remember_me,
-          api_key,
-          type: accessType,
-          isPersonal,
-        }))
-      ) {
-        throw Error(`user does not have ${accessType} access to project`);
-      }
+    if (
+      !(await hasAccess({
+        project_id: parsed.project_id,
+        remember_me,
+        api_key,
+        type: accessType,
+        isPersonal,
+      }))
+    ) {
+      throw Error(`user does not have ${accessType} access to project`);
     }
     projectProxyHandlers.handleUpgrade(req, socket, head);
   }

@@ -51,10 +51,6 @@ import {
 } from "@cocalc/backend/auth/project-proxy-auth";
 import { DOWNLOAD_ERROR_HEADER } from "@cocalc/conat/files/file-download";
 import {
-  APP_PROXY_EXPOSURE_HEADER,
-  type AppProxyExposureMode,
-} from "@cocalc/backend/auth/app-proxy";
-import {
   recordServiceAdmissionDenial,
   recordServiceAdmissionNearLimit,
 } from "@cocalc/conat/admission/denials";
@@ -120,7 +116,6 @@ type StaticResolvedPath = {
 type AppMetricsContext = {
   app_id: string;
   kind: "service" | "static";
-  exposure_mode: AppProxyExposureMode;
   request_started_ms: number;
   bytes_received: number;
 };
@@ -374,12 +369,6 @@ interface StartOptions {
   host?: string; // default to COCALC_PROXY_HOST or 127.0.0.1
 }
 
-function getExposureMode(req: http.IncomingMessage): AppProxyExposureMode {
-  return req.headers[APP_PROXY_EXPOSURE_HEADER] === "public"
-    ? "public"
-    : "private";
-}
-
 function getRequestBytes(req: http.IncomingMessage): number {
   const header = req.headers["content-length"];
   const raw = Array.isArray(header) ? header[0] : header;
@@ -438,7 +427,6 @@ function observeHttpResponse({
     delete (req as any)[APP_METRICS_CONTEXT];
     recordAppHttpMetric({
       app_id: context.app_id,
-      exposure_mode: context.exposure_mode,
       status_code: res.statusCode || 0,
       bytes_sent: bytesSent,
       bytes_received: context.bytes_received,
@@ -1059,20 +1047,15 @@ ${entries}
 </html>`;
   }
 
-  function buildPublicViewerHeaders(
-    exposureMode: AppProxyExposureMode,
-  ): Record<string, string> {
-    const headers: Record<string, string> = {
+  function buildPublicViewerHeaders(): Record<string, string> {
+    return {
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
+      "Content-Security-Policy":
+        "default-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; media-src 'self' data: blob: https: http:; connect-src 'self'",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "Cross-Origin-Opener-Policy": "same-origin",
     };
-    if (exposureMode === "public") {
-      headers["Content-Security-Policy"] =
-        "default-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; media-src 'self' data: blob: https: http:; connect-src 'self'";
-      headers["Cross-Origin-Resource-Policy"] = "same-origin";
-      headers["Cross-Origin-Opener-Policy"] = "same-origin";
-    }
-    return headers;
   }
 
   const writeResolvedStaticFile = async ({
@@ -1221,7 +1204,6 @@ ${entries}
     cache_control,
     requestPath,
     integration,
-    exposureMode,
   }: {
     req: http.IncomingMessage;
     res: http.ServerResponse;
@@ -1230,9 +1212,8 @@ ${entries}
     cache_control?: string;
     requestPath: string;
     integration: AppStaticIntegrationSpec;
-    exposureMode: AppProxyExposureMode;
   }) => {
-    const extraHeaders = buildPublicViewerHeaders(exposureMode);
+    const extraHeaders = buildPublicViewerHeaders();
     const pathInfo = await resolveStaticPath({ root, requestPath });
     if (!pathInfo) {
       res.writeHead(404, {
@@ -1388,7 +1369,6 @@ ${entries}
     cache_control,
     requestPath,
     integration,
-    exposureMode,
   }: {
     req: http.IncomingMessage;
     res: http.ServerResponse;
@@ -1397,7 +1377,6 @@ ${entries}
     cache_control?: string;
     requestPath: string;
     integration?: AppStaticIntegrationSpec;
-    exposureMode: AppProxyExposureMode;
   }) => {
     if (integration?.mode === COCALC_PUBLIC_VIEWER_MODE) {
       await writePublicViewerResponse({
@@ -1408,7 +1387,6 @@ ${entries}
         cache_control,
         requestPath,
         integration,
-        exposureMode,
       });
       return;
     }
@@ -1434,7 +1412,6 @@ ${entries}
         (req as any)[APP_METRICS_CONTEXT] = {
           app_id: managedApp.app_id,
           kind: managedApp.kind,
-          exposure_mode: getExposureMode(req),
           request_started_ms: Date.now(),
           bytes_received: getRequestBytes(req),
         } satisfies AppMetricsContext;
@@ -1455,7 +1432,6 @@ ${entries}
         (req as any)[APP_METRICS_CONTEXT] = {
           app_id: managedApp.app_id,
           kind: managedApp.kind,
-          exposure_mode: getExposureMode(req),
           request_started_ms: Date.now(),
           bytes_received: getRequestBytes(req),
         } satisfies AppMetricsContext;
@@ -1468,7 +1444,6 @@ ${entries}
     const appTarget = await resolveAppProxyTarget({
       base,
       url,
-      exposureMode: getExposureMode(req),
     });
     if (appTarget) {
       if (appTarget.kind === "redirect") {
@@ -1482,7 +1457,6 @@ ${entries}
       const metricsContext: AppMetricsContext = {
         app_id: appTarget.app_id,
         kind: appTarget.kind,
-        exposure_mode: getExposureMode(req),
         request_started_ms: Date.now(),
         bytes_received: getRequestBytes(req),
       };
@@ -1500,7 +1474,6 @@ ${entries}
           cache_control: appTarget.cache_control,
           requestPath: appTarget.rewritePath,
           integration: appTarget.integration,
-          exposureMode: getExposureMode(req),
         });
         return undefined;
       }

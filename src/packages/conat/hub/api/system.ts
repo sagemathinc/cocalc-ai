@@ -176,11 +176,6 @@ export const system = {
   listBrowserSessions: authFirstRequireAccount,
   removeBrowserSession: authFirstRequireAccount,
   issueBrowserSignInCookie: authFirstRequireAccount,
-  assertProjectPublicSharingAllowed: authFirstRequireAccountOrHost,
-  getProjectAppPublicPolicy: authFirstRequireAccountOrHost,
-  tracePublicAppHostname: authFirstRequireAccountOrHost,
-  reserveProjectAppPublicSubdomain: authFirstRequireAccountOrHost,
-  releaseProjectAppPublicSubdomain: authFirstRequireAccountOrHost,
   getProjectAppPrivateHostnamePolicy: authFirstRequireAccountOrHost,
   inspectProjectAppPrivateHostname: authFirstRequireAccountOrHost,
   listProjectAppPrivateHostnames: authFirstRequireAccountOrHost,
@@ -1052,18 +1047,6 @@ export interface BrowserSignInCookieInfo {
   max_age_ms?: number;
 }
 
-export interface ProjectAppPublicPolicy {
-  enabled: boolean;
-  launchpad: boolean;
-  site_hostname?: string;
-  host_hostname?: string;
-  dns_domain?: string;
-  subdomain_suffix: string;
-  provider?: string;
-  metered_egress: boolean;
-  warnings: string[];
-}
-
 export type ManagedProjectEgressCategory =
   | "file-download"
   | "http-proxy"
@@ -1127,14 +1110,6 @@ export interface ParallelOpsLimitResolution {
   configured_limit: number | null;
   effective_limit: number | null;
   config_source: "constant" | "env-legacy" | "db-override" | "env-debug-cap";
-}
-
-export interface ReserveProjectAppPublicSubdomainResult {
-  hostname: string;
-  label: string;
-  base_path: string;
-  url_public: string;
-  warnings: string[];
 }
 
 export interface ProjectAppPrivateHostnamePolicy {
@@ -2057,21 +2032,6 @@ export interface AccountNotificationIndexProjectionStatus {
   bay_id: string;
   backlog: AccountNotificationIndexProjectionBacklogStatus;
   maintenance: AccountNotificationIndexProjectionMaintenanceStatus;
-}
-
-export interface PublicAppHostnameTrace {
-  matched: boolean;
-  hostname: string;
-  project_id?: string;
-  app_id?: string;
-  base_path?: string;
-  site_hostname?: string;
-  host_hostname?: string;
-  dns_domain?: string;
-  subdomain_suffix?: string;
-  dns_target?: string;
-  metered_egress?: boolean;
-  warnings?: string[];
 }
 
 export interface PrivateAppHostnameTrace {
@@ -3052,42 +3012,6 @@ export interface System {
     session_hash?: string | null;
     max_age_ms?: number;
   }) => Promise<BrowserSignInCookieInfo>;
-
-  assertProjectPublicSharingAllowed: (opts?: {
-    account_id?: string;
-    project_id?: string;
-  }) => Promise<{
-    allowed: true;
-    project_id: string;
-    checked_account_ids: string[];
-  }>;
-
-  getProjectAppPublicPolicy: (opts?: {
-    account_id?: string;
-    project_id?: string;
-  }) => Promise<ProjectAppPublicPolicy>;
-
-  tracePublicAppHostname: (opts: {
-    account_id?: string;
-    host_id?: string;
-    hostname: string;
-  }) => Promise<PublicAppHostnameTrace>;
-
-  reserveProjectAppPublicSubdomain: (opts: {
-    account_id?: string;
-    project_id?: string;
-    app_id: string;
-    base_path: string;
-    ttl_s: number;
-    preferred_label?: string;
-    random_subdomain?: boolean;
-  }) => Promise<ReserveProjectAppPublicSubdomainResult>;
-
-  releaseProjectAppPublicSubdomain: (opts: {
-    account_id?: string;
-    project_id?: string;
-    app_id: string;
-  }) => Promise<{ released: boolean }>;
 
   getProjectAppPrivateHostnamePolicy: (opts: {
     account_id?: string;

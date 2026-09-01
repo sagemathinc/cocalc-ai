@@ -173,8 +173,6 @@ describe("project-host client routing", () => {
         project_id: "p1",
         app_id: "app",
         static_root: "/tmp",
-        exposure_mode: "private",
-        public_access_granted: false,
         requested: {
           kind: "file",
           relative_path: "a.txt",

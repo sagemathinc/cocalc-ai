@@ -5,7 +5,7 @@
 
 import type { ClientRequest, IncomingMessage } from "node:http";
 
-import { APP_PROXY_EXPOSURE_HEADER } from "@cocalc/backend/auth/app-proxy";
+import { LEGACY_APP_PROXY_EXPOSURE_HEADER } from "@cocalc/backend/auth/app-proxy";
 import {
   PROJECT_PROXY_ACCOUNT_ID_HEADER,
   PROJECT_PROXY_AUTH_HEADER,
@@ -19,7 +19,7 @@ export function sanitizeAppUpstreamRequest(
   for (const header of [
     PROJECT_PROXY_AUTH_HEADER,
     PROJECT_PROXY_ACCOUNT_ID_HEADER,
-    APP_PROXY_EXPOSURE_HEADER,
+    LEGACY_APP_PROXY_EXPOSURE_HEADER,
   ]) {
     proxyReq.removeHeader(header);
   }

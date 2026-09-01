@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { PROJECT_PROXY_AUTH_HEADER } from "@cocalc/backend/auth/project-proxy-auth";
-import { APP_PROXY_EXPOSURE_HEADER } from "@cocalc/backend/auth/app-proxy";
 
 jest.mock("@cocalc/project/conat/hub", () => ({
   hubApi: jest.fn(() => ({
@@ -210,21 +209,20 @@ describe("managed app metrics", () => {
       expect(privateRes.statusCode).toBe(200);
       expect(privateRes.body).toContain("metrics-ok");
 
-      const publicRes = await httpGet(
+      const secondRes = await httpGet(
         `http://127.0.0.1:${proxyPort}/${project_id}/apps/${id}/`,
         {
           [PROJECT_PROXY_AUTH_HEADER]: secretToken,
-          [APP_PROXY_EXPOSURE_HEADER]: "public",
         },
       );
-      expect(publicRes.statusCode).toBe(200);
+      expect(secondRes.statusCode).toBe(200);
 
       await new Promise((resolve) => setTimeout(resolve, 2200));
       resetAppMetricsForTests();
       const summary = await appMetrics(id, { minutes: 60 });
       expect(summary.totals.requests).toBe(2);
-      expect(summary.totals.private_requests).toBe(1);
-      expect(summary.totals.public_requests).toBe(1);
+      expect(summary.totals.private_requests).toBe(2);
+      expect(summary.totals.public_requests).toBe(0);
       expect(summary.totals.bytes_sent).toBeGreaterThan(0);
       expect(summary.history.length).toBeGreaterThan(0);
       expect(summary.last_hit_ms).toBeGreaterThan(0);

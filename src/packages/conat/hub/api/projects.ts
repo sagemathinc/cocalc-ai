@@ -284,9 +284,6 @@ export interface PublicPathInspectionResult {
   host_id: string;
   app_id: string;
   static_root: string;
-  exposure_mode: "private" | "public";
-  auth_front?: "none" | "token";
-  public_access_granted: boolean;
   requested: {
     kind: "file" | "directory";
     relative_path: string;

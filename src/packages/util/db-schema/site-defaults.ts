@@ -176,7 +176,6 @@ export type SiteSettingsKeys =
   | "project_hosts_gcp_surcharge_percent"
   | "project_hosts_nebius_surcharge_percent"
   | "cloudflare_mode"
-  | "project_hosts_app_public_subdomain_suffix"
   | "project_hosts_app_private_hostnames_enabled"
   | "project_hosts_app_private_hostname_domain"
   | "project_hosts_app_private_hostname_bay_limit"
@@ -1756,17 +1755,6 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Project Hosts", "Cloud", "Nebius", "Commercialization"],
     group: "Compute / Project Hosts",
     subgroup: "Billing",
-  },
-  project_hosts_app_public_subdomain_suffix: {
-    name: "Project Hosts: App Public Subdomain Suffix",
-    desc: "Suffix inserted after user-selected app labels for public app hostnames. Example: suffix 'app' yields demo-app.cocalc.ai.",
-    default: "app",
-    valid: valid_dns_name_or_empty,
-    to_val: to_trimmed_str,
-    tags: ["Project Hosts", "Cloud", "Cloudflare"],
-    group: "Compute / Project Hosts",
-    subgroup: "Domain",
-    show: (conf) => (conf.cloudflare_mode ?? "none") === "self",
   },
   project_hosts_app_private_hostnames_enabled: {
     name: "Project Hosts: Private App Hostnames",

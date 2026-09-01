@@ -30,7 +30,6 @@ import { getProjectHostAuthPublicKey } from "./auth-public-key";
 import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
 import { conatPassword } from "@cocalc/backend/data";
 import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
-import { authorizePublicAppPath } from "./app-public-access";
 import callHub from "@cocalc/conat/hub/call-hub";
 import type {
   AuthorizePublicDirectoryShareReadResponse,
@@ -51,7 +50,6 @@ const logger = getLogger("project-host:http-proxy-auth");
 const PROJECT_HOST_HTTP_AUTH_CONTEXT = Symbol(
   "cocalc-project-host-http-auth-context",
 );
-const PUBLIC_APP_HOST_HEADER = "x-cocalc-public-app-host";
 function envNumber(name: string, fallback: number): number {
   const n = Number(process.env[name]);
   return Number.isFinite(n) ? n : fallback;
@@ -113,7 +111,7 @@ function readCookieValues(header: string | undefined, name: string): string[] {
 export type AuthorizedAccountContext = {
   account_id: string;
   issued_at_s: number;
-  actor: "account" | "hub";
+  actor: "account";
   revalidate_collaborator?: boolean;
 };
 
@@ -430,30 +428,15 @@ export function createProjectHostHttpProxyAuth({
     account_id: string;
     issued_at_s: number;
     project_id?: string;
-    actor: "account" | "hub";
+    actor: "account";
     revalidate_collaborator: boolean;
   }>();
 
-  const verifyClaimsAndGetAccountId = (
-    claims: {
-      sub: string;
-      act?: string;
-    },
-    req?: IncomingMessage,
-    project_id?: string,
-  ): string => {
+  const verifyClaimsAndGetAccountId = (claims: {
+    sub: string;
+    act?: string;
+  }): string => {
     const actor = claims.act ?? "account";
-    if (actor === "hub") {
-      const publicAppHost =
-        `${req?.headers?.[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();
-      if (!publicAppHost || !project_id) {
-        throw new HttpAuthError(
-          403,
-          "invalid actor for project-host HTTP auth",
-        );
-      }
-      return project_id;
-    }
     if (actor !== "account") {
       throw new HttpAuthError(403, "invalid actor for project-host HTTP auth");
     }
@@ -756,30 +739,16 @@ export function createProjectHostHttpProxyAuth({
           "This private development site must be opened from its CoCalc project.",
         );
       }
-      const allowedPublic = await authorizePublicAppPath({
-        project_id,
-        url: req.url,
-      });
-      if (allowedPublic) {
-        setAuthContext(req, {
-          account_id: project_id,
-          issued_at_s: Math.floor(Date.now() / 1000),
-          actor: "hub",
-        });
-        return;
-      }
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
     const claims = verifyBearerClaims(token);
-    const account_id = verifyClaimsAndGetAccountId(claims, req, project_id);
+    const account_id = verifyClaimsAndGetAccountId(claims);
     assertNotRevoked({ account_id, issued_at_s: claims.iat });
-    if ((claims.act ?? "account") === "account") {
-      await authorizeAccountForHttpRequest({ account_id, project_id, req });
-    }
+    await authorizeAccountForHttpRequest({ account_id, project_id, req });
     setAuthContext(req, {
       account_id,
       issued_at_s: claims.iat,
-      actor: (claims.act ?? "account") === "account" ? "account" : "hub",
+      actor: "account",
     });
     if (source === "header") {
       delete req.headers.authorization;
@@ -842,31 +811,16 @@ export function createProjectHostHttpProxyAuth({
           "This private development site must be opened from its CoCalc project.",
         );
       }
-      const allowedPublic = await authorizePublicAppPath({
-        project_id,
-        url: req.url,
-      });
-      if (allowedPublic) {
-        const context = {
-          account_id: project_id,
-          issued_at_s: Math.floor(Date.now() / 1000),
-          actor: "hub" as const,
-        };
-        setAuthContext(req, context);
-        return context;
-      }
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
     const claims = verifyBearerClaims(token);
-    const account_id = verifyClaimsAndGetAccountId(claims, req, project_id);
+    const account_id = verifyClaimsAndGetAccountId(claims);
     assertNotRevoked({ account_id, issued_at_s: claims.iat });
-    if ((claims.act ?? "account") === "account") {
-      authorizeAccountForProject({ account_id, project_id });
-    }
+    authorizeAccountForProject({ account_id, project_id });
     const context: AuthorizedAccountContext = {
       account_id,
       issued_at_s: claims.iat,
-      actor: (claims.act ?? "account") === "account" ? "account" : "hub",
+      actor: "account",
       revalidate_collaborator: !!req.headers[PRIVATE_APP_HOST_HEADER],
     };
     setAuthContext(req, context);

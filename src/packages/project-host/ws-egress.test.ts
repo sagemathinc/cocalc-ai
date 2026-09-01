@@ -46,7 +46,6 @@ describe("project-host managed websocket egress recorder", () => {
     setManagedWsEgressContext(req, {
       project_id: "project-id",
       app_id: "demo",
-      exposure_mode: "private",
     });
     attachManagedWsEgressRecorder({
       req,
@@ -63,7 +62,6 @@ describe("project-host managed websocket egress recorder", () => {
     expect(record).toHaveBeenCalledWith({
       project_id: "project-id",
       app_id: "demo",
-      exposure_mode: "private",
       bytes: 11,
       request_path: "/project-id/apps/demo/socket",
       partial: true,
@@ -83,7 +81,6 @@ describe("project-host managed websocket egress recorder", () => {
 
     setManagedWsEgressContext(req, {
       project_id: "project-id",
-      exposure_mode: "public",
     });
     attachManagedWsEgressRecorder({
       req,
@@ -98,7 +95,6 @@ describe("project-host managed websocket egress recorder", () => {
 
     expect(record).toHaveBeenCalledWith({
       project_id: "project-id",
-      exposure_mode: "public",
       bytes: 7,
       request_path: "/project-id/proxy/9000/ws",
       partial: true,

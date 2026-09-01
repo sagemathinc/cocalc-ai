@@ -79,7 +79,7 @@ import {
 } from "./network-policy";
 import { setupProjectSecretSshKey } from "./project-secret-ssh-key";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
-import { matchAppRequest } from "./app-public-access";
+import { matchAppRequest } from "./app-request-match";
 import {
   deleteRootfsCacheEntry,
   gcDeletedManagedRootfsCacheEntries,
@@ -1913,7 +1913,6 @@ export async function startMasterRegistration({
       const inspection = await inspectStaticAppRequest({
         project_id,
         match,
-        url,
       });
       if (!inspection) {
         throw new Error("static app path not found");

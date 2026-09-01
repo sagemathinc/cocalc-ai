@@ -477,16 +477,6 @@ function extractArtifactVersion(
   }
 }
 
-function buildAppPublicWildcardHostname({
-  hostHostname,
-}: {
-  hostHostname?: string;
-}): string | undefined {
-  const raw = `${hostHostname ?? ""}`.trim().toLowerCase();
-  if (!raw) return undefined;
-  return `*.${raw}`;
-}
-
 function buildExamHostname({
   hostHostname,
 }: {
@@ -566,7 +556,6 @@ export type BootstrapScripts = {
   cloudflaredConfig?: {
     enabled: boolean;
     hostname?: string;
-    appPublicWildcard?: string;
     examHostname?: string;
     port?: number;
     sshHostname?: string;
@@ -1371,9 +1360,6 @@ export async function buildBootstrapScripts(
   envLines.push(
     `COCALC_PROJECT_HOST_STORAGE_ADMISSION_MODE=${resolveBootstrapStorageAdmissionMode(metadata)}`,
   );
-  const appPublicWildcard = buildAppPublicWildcardHostname({
-    hostHostname: tunnel?.hostname,
-  });
   const examHostname = buildExamHostname({
     hostHostname: tunnel?.hostname,
   });
@@ -1416,7 +1402,6 @@ export async function buildBootstrapScripts(
       return {
         enabled: true,
         hostname: tunnel.hostname,
-        appPublicWildcard,
         examHostname,
         port,
         sshHostname: tunnel.ssh_hostname,

@@ -7,7 +7,6 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { getMountPoint } from "./file-server";
-import type { AppProxyExposureMode } from "@cocalc/backend/auth/app-proxy";
 
 const logger = getLogger("project-host:app-metrics");
 
@@ -127,12 +126,10 @@ export async function recordHostAppWebsocketTraffic({
   project_id,
   app_id,
   bytes_sent,
-  exposure_mode,
 }: {
   project_id: string;
   app_id: string;
   bytes_sent: number;
-  exposure_mode: AppProxyExposureMode;
 }): Promise<void> {
   const bytes = Math.floor(Number(bytes_sent) || 0);
   if (!(bytes > 0)) return;
@@ -145,11 +142,7 @@ export async function recordHostAppWebsocketTraffic({
       const now = Date.now();
       metrics.last_hit_ms = now;
       metrics.totals.websocket_bytes_sent += bytes;
-      if (exposure_mode === "public") {
-        metrics.totals.public_websocket_bytes_sent += bytes;
-      } else {
-        metrics.totals.private_websocket_bytes_sent += bytes;
-      }
+      metrics.totals.private_websocket_bytes_sent += bytes;
       historyBucket(metrics, currentMinuteStart(now)).websocket_bytes_sent +=
         bytes;
       state.apps[app_id] = metrics;
@@ -161,7 +154,6 @@ export async function recordHostAppWebsocketTraffic({
         project_id,
         app_id,
         bytes,
-        exposure_mode,
         err: `${err}`,
       });
     })

@@ -7,7 +7,6 @@ import { Application } from "express";
 import getLogger from "../logger";
 import initRequest from "./handle-request";
 import initUpgrade from "./handle-upgrade";
-import { maybeRewritePublicAppSubdomainRequest } from "./public-app-subdomain";
 import { proxyConatRequest } from "./proxy-conat";
 import base_path from "@cocalc/backend/base-path";
 import { ProjectControlFunction } from "@cocalc/server/projects/control";
@@ -47,23 +46,6 @@ export default function initProxy(opts: Options) {
       });
     });
   }
-
-  // Host-based public app subdomains are rewritten to canonical project paths.
-  opts.app.all(/.*/, async (req, res, next) => {
-    try {
-      if (!(await maybeRewritePublicAppSubdomainRequest(req))) {
-        return next();
-      }
-      await handleProxy(req, res);
-    } catch (err) {
-      logger.debug("public app subdomain rewrite failed", {
-        host: req.headers?.host,
-        url: req.url,
-        err: `${err}`,
-      });
-      return next();
-    }
-  });
 
   opts.app.all(proxy_route_regexp, handleProxy);
 

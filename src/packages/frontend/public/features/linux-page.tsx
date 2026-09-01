@@ -323,9 +323,9 @@ kill $SERVER_PID`}
             An app can also be <strong>defined up front</strong>, with its
             command and port, so CoCalc starts it and wakes it when someone
             opens the URL. The Apps panel launches JupyterLab, VS Code, Pluto,
-            and an R IDE the same way, and a managed app can optionally be
-            exposed on a public subdomain when you want to share a running
-            service.
+            and an R IDE the same way. Managed app URLs remain private to
+            project collaborators; deploy production or anonymous applications
+            to a dedicated hosting provider.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>

@@ -36,6 +36,19 @@ describe("hub API argument transforms", () => {
     expect(Object.values(policies)).not.toContain(undefined);
   });
 
+  it("does not expose the retired anonymous project-app RPCs", () => {
+    const policies = getHubApiPrincipalPolicies();
+    for (const method of [
+      "system.assertProjectPublicSharingAllowed",
+      "system.getProjectAppPublicPolicy",
+      "system.tracePublicAppHostname",
+      "system.reserveProjectAppPublicSubdomain",
+      "system.releaseProjectAppPublicSubdomain",
+    ]) {
+      expect(policies).not.toHaveProperty(method);
+    }
+  });
+
   it("requires review of every RPC that preserves account_id as target data", () => {
     expect(getHubApiAccountTargetMethods()).toEqual([
       "aiSessions.upsertProjectHostSession",
@@ -300,7 +313,7 @@ describe("hub API argument transforms", () => {
     expect(projectArgs[0]).not.toHaveProperty("account_id");
 
     const hostArgs = await transformArgs({
-      name: "system.getProjectAppPublicPolicy",
+      name: "system.getProjectAppPrivateHostnamePolicy",
       args: [
         {
           account_id: "victim-account",

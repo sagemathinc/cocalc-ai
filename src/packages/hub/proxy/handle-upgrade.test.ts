@@ -8,8 +8,6 @@ const mockStripRememberMeCookie = jest.fn();
 const mockParseReq = jest.fn();
 const mockHasAccess = jest.fn();
 const mockResolveAuthenticatedAccountId = jest.fn();
-const mockIsPublicAppSubdomainRequest = jest.fn();
-const mockMaybeRewritePublicAppSubdomainRequest = jest.fn();
 const mockSetProjectHostProxyAccountId = jest.fn();
 const mockProxyConatWebsocket = jest.fn();
 
@@ -46,13 +44,6 @@ jest.mock("./check-for-access-to-project", () => ({
     mockResolveAuthenticatedAccountId(...args),
 }));
 
-jest.mock("./public-app-subdomain", () => ({
-  isPublicAppSubdomainRequest: (...args) =>
-    mockIsPublicAppSubdomainRequest(...args),
-  maybeRewritePublicAppSubdomainRequest: (...args) =>
-    mockMaybeRewritePublicAppSubdomainRequest(...args),
-}));
-
 jest.mock("./project-host", () => ({
   setProjectHostProxyAccountId: (...args) =>
     mockSetProjectHostProxyAccountId(...args),
@@ -82,10 +73,6 @@ describe("hub proxy websocket upgrades", () => {
     mockResolveAuthenticatedAccountId
       .mockReset()
       .mockResolvedValue("account-1");
-    mockIsPublicAppSubdomainRequest.mockReset().mockReturnValue(false);
-    mockMaybeRewritePublicAppSubdomainRequest
-      .mockReset()
-      .mockResolvedValue(undefined);
     mockSetProjectHostProxyAccountId.mockReset();
     mockProxyConatWebsocket.mockReset();
   });
@@ -158,6 +145,48 @@ describe("hub proxy websocket upgrades", () => {
     expect(mockProxyConatWebsocket).toHaveBeenCalledWith(req, socket, head, {
       localConatServer: true,
     });
+    expect(proxyHandlers.handleUpgrade).not.toHaveBeenCalled();
+  });
+
+  it("does not revive anonymous websocket access from a retired public hostname", async () => {
+    mockStripRememberMeCookie.mockReturnValue({
+      cookie: "",
+      remember_me: undefined,
+      api_key: undefined,
+    });
+    mockResolveAuthenticatedAccountId.mockResolvedValue(undefined);
+    mockHasAccess.mockResolvedValue(false);
+    const initUpgrade = (await import("./handle-upgrade")).default;
+    const proxyHandlers = { handleUpgrade: jest.fn() };
+    const handler = initUpgrade(
+      {
+        proxyConat: false,
+        localConatServer: undefined,
+        isPersonal: false,
+        projectProxyHandlersPromise: Promise.resolve(proxyHandlers),
+      },
+      "^/",
+    );
+    const req: any = {
+      url: `/${project_id}/apps/demo/socket`,
+      headers: {
+        cookie: "",
+        "x-cocalc-public-app-host": "demo.example.invalid",
+      },
+    };
+    const socket: any = {
+      on: jest.fn(),
+      write: jest.fn(),
+      destroy: jest.fn(),
+    };
+
+    await handler(req, socket, Buffer.alloc(0));
+
+    expect(mockHasAccess).toHaveBeenCalled();
+    expect(socket.write).toHaveBeenCalledWith(
+      "HTTP/1.1 401 Unauthorized\r\n\r\n",
+    );
+    expect(socket.destroy).toHaveBeenCalled();
     expect(proxyHandlers.handleUpgrade).not.toHaveBeenCalled();
   });
 });

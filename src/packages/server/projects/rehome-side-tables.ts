@@ -217,7 +217,7 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     table: "project_app_public_subdomains",
     status: "seed-global-cleanup",
     reason:
-      "Public app subdomain rows are seed-global and hard-delete releases them through seed authority instead of local project-owned cleanup.",
+      "Rows from the retired public-app experiment are cleanup-only seed data. Hard-delete removes them through seed authority; no active code creates or routes them.",
   },
   project_copies: {
     table: "project_copies",

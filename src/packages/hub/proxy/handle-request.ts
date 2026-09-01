@@ -9,7 +9,6 @@ import { parseReq } from "./parse";
 import hasAccess, {
   resolveAuthenticatedAccountId,
 } from "./check-for-access-to-project";
-import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
 import {
   getProjectHostRedirectUrl,
   setProjectHostProxyAccountId,
@@ -20,9 +19,6 @@ import { isWorkspaceProjectRuntime } from "@cocalc/server/launchpad/project-runt
 import { ensureWorkspaceFileDownloadReadServer } from "@cocalc/server/conat/project/workspace-filesystem";
 
 const logger = getLogger("proxy:handle-request");
-const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
-const PROJECT_ID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface Options {
   isPersonal: boolean;
@@ -39,23 +35,6 @@ export default function init({
   const workspaceFileDownloadClient = isWorkspaceProjectRuntime()
     ? conat()
     : undefined;
-
-  function isPublicAppTokenBypassRequest(req): boolean {
-    try {
-      const url = stripBasePath(`${req.url ?? "/"}`);
-      const parsed = new URL(url, "http://proxy.local");
-      const token =
-        `${parsed.searchParams.get(APP_PUBLIC_TOKEN_QUERY_PARAM) ?? ""}`.trim();
-      if (!token) return false;
-      const segments = parsed.pathname.split("/").filter(Boolean);
-      if (segments.length < 3) return false;
-      const [project_id, proxyType] = segments;
-      if (!project_id || !PROJECT_ID_RE.test(project_id)) return false;
-      return proxyType === "apps";
-    } catch {
-      return false;
-    }
-  }
 
   async function handleProxyRequest(req, res): Promise<void> {
     const dbg = (...args) => {
@@ -86,11 +65,7 @@ export default function init({
       req.headers["cookie"] = cookie;
     }
 
-    const allowPublicSubdomainBypass = isPublicAppSubdomainRequest(req);
-    const allowPublicTokenBypass = isPublicAppTokenBypassRequest(req);
-    const allowAnonymousProxyBypass =
-      allowPublicSubdomainBypass || allowPublicTokenBypass;
-    if (!isPersonal && !allowAnonymousProxyBypass && !remember_me && !api_key) {
+    if (!isPersonal && !remember_me && !api_key) {
       dbg("no rememember me set, so blocking");
       // Not in personal mode and there is no remember_me or api_key set all, so
       // definitely block access.  4xx since this is a *client* problem.
@@ -104,30 +79,25 @@ export default function init({
     const parsed = parseReq(url, remember_me, api_key);
     // TODO: parseReq is called again in getTarget so need to refactor...
     const { type, project_id, route } = parsed;
-    const authenticatedAccountId = allowAnonymousProxyBypass
-      ? undefined
-      : await resolveAuthenticatedAccountId({
-          remember_me,
-          api_key,
-        });
+    const authenticatedAccountId = await resolveAuthenticatedAccountId({
+      remember_me,
+      api_key,
+    });
     setProjectHostProxyAccountId(req, authenticatedAccountId);
 
-    if (!allowAnonymousProxyBypass) {
-      if (
-        !(await hasAccess({
-          project_id,
-          remember_me,
-          api_key,
-          type: route.access,
-          isPersonal,
-        }))
-      ) {
-        throw Error(`user does not have ${route.access} access to project`);
-      }
+    if (
+      !(await hasAccess({
+        project_id,
+        remember_me,
+        api_key,
+        type: route.access,
+        isPersonal,
+      }))
+    ) {
+      throw Error(`user does not have ${route.access} access to project`);
     }
 
     if (
-      !allowAnonymousProxyBypass &&
       workspaceFileDownloadClient != null &&
       type === "files" &&
       /^(GET|HEAD)$/i.test(req.method ?? "GET")
@@ -152,11 +122,7 @@ export default function init({
       return;
     }
 
-    if (
-      !allowAnonymousProxyBypass &&
-      type !== "conat" &&
-      /^(GET|HEAD)$/i.test(req.method ?? "GET")
-    ) {
+    if (type !== "conat" && /^(GET|HEAD)$/i.test(req.method ?? "GET")) {
       const account_id = authenticatedAccountId;
       if (account_id) {
         const target = await getProjectHostRedirectUrl({

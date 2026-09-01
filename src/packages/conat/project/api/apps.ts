@@ -20,8 +20,6 @@ export const apps = {
   waitForAppState: true,
   ensureRunning: true,
   listAppStatuses: true,
-  exposeApp: true,
-  unexposeApp: true,
   getPrivateHostnamePolicy: true,
   inspectPrivateHostname: true,
   listPrivateHostnames: true,
@@ -33,7 +31,6 @@ export const apps = {
   detectApps: true,
   detectInstalledTemplates: true,
   listAppTemplates: true,
-  auditAppPublicReadiness: true,
 };
 
 export interface NamedServerStatus {
@@ -81,17 +78,6 @@ export interface ManagedAppStatus {
   spawnError?: unknown;
   exit?: { code: number | null; signal: NodeJS.Signals | null };
   error?: string;
-  exposure?: {
-    mode: "private" | "public";
-    auth_front: "none" | "token";
-    token?: string;
-    exposed_at_ms?: number;
-    expires_at_ms?: number;
-    ttl_s?: number;
-    random_subdomain?: string;
-    public_hostname?: string;
-    public_url?: string;
-  };
   warnings?: string[];
 }
 
@@ -116,29 +102,6 @@ export interface AppTemplateCatalogEntry extends AppTemplateCatalogEntryV1 {
   template_source?: string;
   template_scope?: "builtin" | "remote" | "project-local";
   source_path?: string;
-}
-
-export interface AppAuditCheck {
-  id: string;
-  level: "info" | "warning" | "error";
-  status: "pass" | "warn" | "fail";
-  message: string;
-  suggestion?: string;
-}
-
-export interface AppPublicReadinessAudit {
-  app_id: string;
-  title?: string;
-  kind: "service" | "static";
-  status: ManagedAppStatus;
-  summary: {
-    pass: number;
-    warn: number;
-    fail: number;
-  };
-  checks: AppAuditCheck[];
-  suggested_actions: string[];
-  agent_prompt: string;
 }
 
 export interface AppMetricsBucket {
@@ -216,14 +179,6 @@ export interface Apps {
     opts?: { timeout?: number; interval?: number },
   ) => Promise<ManagedAppStatus>;
   listAppStatuses: () => Promise<ManagedAppStatus[]>;
-  exposeApp: (opts: {
-    id: string;
-    ttl_s: number;
-    auth_front?: "none" | "token";
-    random_subdomain?: boolean;
-    subdomain_label?: string;
-  }) => Promise<ManagedAppStatus>;
-  unexposeApp: (id: string) => Promise<ManagedAppStatus>;
   getPrivateHostnamePolicy: () => Promise<ProjectAppPrivateHostnamePolicy>;
   inspectPrivateHostname: (
     id: string,
@@ -253,6 +208,4 @@ export interface Apps {
 
   detectInstalledTemplates: () => Promise<InstalledAppTemplate[]>;
   listAppTemplates: () => Promise<AppTemplateCatalogEntry[]>;
-
-  auditAppPublicReadiness: (id: string) => Promise<AppPublicReadinessAudit>;
 }

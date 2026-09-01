@@ -16,7 +16,6 @@ import { initAnalytics } from "../analytics";
 import { setup_health_checks as setupHealthChecks } from "../health-checks";
 import { getLogger } from "../logger";
 import initProxy from "../proxy";
-import { maybeRewritePublicAppSubdomainRequest } from "../proxy/public-app-subdomain";
 import initAppRedirect from "./app/app-redirect";
 import initBlobUpload from "./app/blob-upload";
 import initUpload from "./app/upload";
@@ -67,7 +66,6 @@ const PYTHON_API_PATH = join(root, "python", "cocalc-api", "site");
 
 // Used for longterm caching of files. This should be in units of seconds.
 const MAX_AGE = Math.round(ms("10 days") / 1000);
-const PUBLIC_APP_SUBDOMAIN_REWRITE_TIMEOUT_MS = 250;
 
 function isEnabled(value: unknown): boolean {
   if (value === true) return true;
@@ -299,35 +297,6 @@ export default async function init(opts: Options): Promise<{
   router.use("/api/conat", createConatRouter());
   logger.info("enabling api/v2 express router");
   router.use("/api/v2", createApiV2Router());
-
-  if (opts.proxyServer) {
-    app.all(/.*/, (req, _res, next) => {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
-        next();
-      };
-      const timer = setTimeout(() => {
-        logger.warn("early public app subdomain rewrite timed out", {
-          host: req.headers?.host,
-          url: req.url,
-          timeout_ms: PUBLIC_APP_SUBDOMAIN_REWRITE_TIMEOUT_MS,
-        });
-        finish();
-      }, PUBLIC_APP_SUBDOMAIN_REWRITE_TIMEOUT_MS);
-      void maybeRewritePublicAppSubdomainRequest(req)
-        .catch((err) => {
-          logger.debug("early public app subdomain rewrite failed", {
-            host: req.headers?.host,
-            url: req.url,
-            err: `${err}`,
-          });
-        })
-        .finally(finish);
-    });
-  }
 
   if (basePath !== "/") {
     app.use(basePath, router);

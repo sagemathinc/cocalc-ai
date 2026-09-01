@@ -12,22 +12,6 @@ import { join } from "node:path";
 jest.mock("@cocalc/project/conat/hub", () => ({
   hubApi: jest.fn(() => ({
     system: {
-      assertProjectPublicSharingAllowed: jest.fn(async () => ({
-        allowed: true,
-      })),
-      getProjectAppPublicPolicy: jest.fn(async () => ({
-        enabled: false,
-        warnings: [],
-      })),
-      reserveProjectAppPublicSubdomain: jest.fn(async () => ({
-        hostname: "test-public-app.example.com",
-        label: "test",
-        url_public: "https://test-public-app.example.com",
-        warnings: [],
-      })),
-      releaseProjectAppPublicSubdomain: jest.fn(async () => ({
-        released: true,
-      })),
       releaseProjectAppPrivateHostname: jest.fn(async () => ({
         released: false,
       })),
@@ -39,25 +23,16 @@ jest.mock("@cocalc/project/conat/runtime-client", () => ({
   getProjectConatClient: jest.fn(() => ({})),
 }));
 
-jest.mock("@cocalc/util/project-apps", () => ({
-  PROJECT_APP_PUBLIC_EXPOSURE_ENABLED: true,
-  PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE:
-    "Public project app exposure is disabled for this release.",
-}));
-
 import {
   appLogs,
-  auditAppPublicReadiness,
   deleteApp,
   detectApps,
   ensureRunning,
-  exposeApp,
   listAppSpecs,
   refreshApp,
   resolveAppProxyTarget,
   statusApp,
   stopApp,
-  unexposeApp,
   upsertAppSpec,
   waitForAppState,
 } from "./control";
@@ -176,49 +151,6 @@ describe("app server agent workflows", () => {
     const recovered = await statusApp(id);
     expect(recovered.state).toBe("running");
     expect(recovered.ready).toBe(true);
-  });
-
-  test("expose/unexpose lifecycle is auditable for agent workflows", async () => {
-    const id = appId("expose");
-    await upsertAppSpec({
-      version: 1,
-      id,
-      kind: "service",
-      title: "Agent Expose Test",
-      command: { exec: process.execPath, args: ["-e", SERVICE_SCRIPT] },
-      network: { listen_host: "127.0.0.1", protocol: "http" },
-      proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
-      wake: { enabled: true, keep_warm_s: 300, startup_timeout_s: 15 },
-    });
-
-    await ensureRunning(id, { timeout: 10_000, interval: 100 });
-
-    const exposed = await exposeApp({
-      id,
-      ttl_s: 600,
-      auth_front: "token",
-      random_subdomain: true,
-    });
-    expect(exposed.exposure?.mode).toBe("public");
-    expect(exposed.exposure?.auth_front).toBe("token");
-    expect(exposed.exposure?.token).toBeTruthy();
-
-    const auditPublic = await auditAppPublicReadiness(id);
-    const publicCheck = auditPublic.checks.find(
-      (c) => c.id === "exposure.public",
-    );
-    expect(publicCheck?.status).toBe("pass");
-    expect(auditPublic.agent_prompt).toContain(`app '${id}'`);
-    expect(auditPublic.suggested_actions.length).toBeGreaterThan(0);
-
-    const privateStatus = await unexposeApp(id);
-    expect(privateStatus.exposure).toBeUndefined();
-
-    const auditPrivate = await auditAppPublicReadiness(id);
-    const privateCheck = auditPrivate.checks.find(
-      (c) => c.id === "exposure.public",
-    );
-    expect(privateCheck?.status).toBe("warn");
   });
 
   test("detect surfaces unmanaged listeners and distinguishes managed apps", async () => {
@@ -459,23 +391,6 @@ describe("app server agent workflows", () => {
     });
     expect(nestedTarget?.kind).toBe("static");
     expect((nestedTarget as any)?.rewritePath).toBe("/sub/");
-
-    const audit = await auditAppPublicReadiness(id);
-    const cacheCheck = audit.checks.find(
-      (c) => c.id === "static.cache_control",
-    );
-    expect(cacheCheck?.status).toBe("pass");
-
-    const exposed = await exposeApp({
-      id,
-      ttl_s: 600,
-      auth_front: "token",
-      random_subdomain: true,
-    });
-    expect(exposed.exposure?.mode).toBe("public");
-
-    const hidden = await unexposeApp(id);
-    expect(hidden.exposure).toBeUndefined();
 
     await stopApp(id);
     const afterStop = await statusApp(id);
