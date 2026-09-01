@@ -1376,9 +1376,14 @@ async function notifySiteLicensePoolRequestCreatedBestEffort({
 }): Promise<void> {
   try {
     const managers = await listSiteLicenseManagers(siteLicense.id);
-    const targetAccountIds = managers
-      .filter((manager) => manager.role === "manager")
-      .map((manager) => manager.account_id);
+    const targetAccountIds = [
+      ...new Set([
+        siteLicense.owner_account_id,
+        ...managers
+          .filter((manager) => manager.role === "manager")
+          .map((manager) => manager.account_id),
+      ]),
+    ];
     const poolName = getPackagePoolName(pkg);
     await createSiteLicenseAccountNoticeBestEffort({
       actor_account_id: request.account_id,
@@ -1814,12 +1819,14 @@ function addSiteLicenseViewerRole({
   if (admin) {
     return { ...overview, viewer_role: "admin" };
   }
-  const viewer_role: SiteLicenseViewerRole = overview.managers.some(
-    (manager) =>
-      manager.account_id === account_id && manager.role === "manager",
-  )
-    ? "manager"
-    : "viewer";
+  const viewer_role: SiteLicenseViewerRole =
+    overview.site_license.owner_account_id === account_id ||
+    overview.managers.some(
+      (manager) =>
+        manager.account_id === account_id && manager.role === "manager",
+    )
+      ? "manager"
+      : "viewer";
   return { ...overview, viewer_role };
 }
 
@@ -1932,13 +1939,11 @@ async function assertSiteLicenseManager({
   account_id,
   site_license_id,
   write = false,
-  allow_owner_write = false,
   client,
 }: {
   account_id: string;
   site_license_id: string;
   write?: boolean;
-  allow_owner_write?: boolean;
   client?: PoolClient;
 }): Promise<void> {
   await ensureSiteLicenseSchema(client);
@@ -1961,18 +1966,16 @@ async function assertSiteLicenseManager({
   if (rows[0]) {
     return;
   }
-  if (!write || allow_owner_write) {
-    const { rows: ownerRows } = await getQueryClient(client).query(
-      `SELECT 1
-         FROM site_licenses
-        WHERE id=$1
-          AND owner_account_id=$2
-        LIMIT 1`,
-      [site_license_id, account_id],
-    );
-    if (ownerRows[0]) {
-      return;
-    }
+  const { rows: ownerRows } = await getQueryClient(client).query(
+    `SELECT 1
+       FROM site_licenses
+      WHERE id=$1
+        AND owner_account_id=$2
+      LIMIT 1`,
+    [site_license_id, account_id],
+  );
+  if (ownerRows[0]) {
+    return;
   }
   throw Error(write ? "must manage site license" : "must view site license");
 }
@@ -4198,9 +4201,6 @@ export async function reviewSiteLicensePoolRequest({
           account_id: actorAccountId,
           site_license_id: siteLicense.id,
           write: true,
-          // The responsible owner can review membership requests without
-          // receiving broader delegated-manager write permissions.
-          allow_owner_write: true,
           client,
         });
         if (request.state !== "pending") {
