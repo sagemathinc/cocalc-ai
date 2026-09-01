@@ -2201,6 +2201,8 @@ export interface ProjectCollabInviteCreateRequest {
   invitee_account_id: string;
   message?: string;
   direct?: boolean;
+  /** Internal result of an admin check performed on the actor's home bay. */
+  trusted_admin?: boolean;
   invite_role?: Exclude<ProjectUserRole, "owner">;
   read_policy?: ProjectViewerReadPolicy | null;
 }
