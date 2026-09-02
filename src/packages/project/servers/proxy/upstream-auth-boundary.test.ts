@@ -14,6 +14,7 @@ describe("application upstream auth boundary", () => {
       ["x-cocalc-project-secret", "internal-secret"],
       ["x-cocalc-project-account-id", "account-id"],
       ["x-cocalc-app-exposure", "private"],
+      ["x-cocalc-public-app-host", "demo.example.invalid"],
       [
         "cookie",
         [
@@ -42,5 +43,6 @@ describe("application upstream auth boundary", () => {
     expect(headers.has("x-cocalc-project-secret")).toBe(false);
     expect(headers.has("x-cocalc-project-account-id")).toBe(false);
     expect(headers.has("x-cocalc-app-exposure")).toBe(false);
+    expect(headers.has("x-cocalc-public-app-host")).toBe(false);
   });
 });

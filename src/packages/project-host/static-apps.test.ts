@@ -492,4 +492,44 @@ describe("static app serving", () => {
       "private, max-age=60, must-revalidate",
     );
   });
+
+  it("does not permit shared caching from an app spec", async () => {
+    const base = await mkTempDir("cocalc-static-apps-");
+    const home = join(base, "home");
+    const rootfs = join(base, "rootfs");
+    const scratch = join(base, "scratch");
+    await mkdir(join(home, "public"), { recursive: true });
+    await mkdir(rootfs, { recursive: true });
+    await mkdir(scratch, { recursive: true });
+    await writeFile(join(home, "public", "index.html"), "private app");
+
+    currentProjectFs = createProjectSandboxFilesystem({
+      project_id,
+      home,
+      rootfs,
+      scratch,
+    });
+
+    const res = new MockResponse();
+    const handled = await maybeHandleStaticAppRequest({
+      req: makeRequest("/"),
+      res: res as unknown as http.ServerResponse,
+      project_id,
+      match: {
+        ...makeMatch(PUBLIC_ROOT, "/"),
+        spec: {
+          id: "site",
+          kind: "static",
+          static: {
+            root: PUBLIC_ROOT,
+            cache_control: "public, max-age=600, s-maxage=300",
+          },
+        },
+      },
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["Cache-Control"]).toBe("private, max-age=600");
+  });
 });

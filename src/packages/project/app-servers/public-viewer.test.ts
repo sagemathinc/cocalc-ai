@@ -210,7 +210,7 @@ describe("static public viewer mode", () => {
       );
       expect(page.statusCode).toBe(200);
       expect(page.headers["content-type"]).toContain("text/html");
-      expect(page.headers["cache-control"]).toBe("public, max-age=120");
+      expect(page.headers["cache-control"]).toBe("private, max-age=120");
       expect(page.headers["x-content-type-options"]).toBe("nosniff");
       expect(page.headers["content-security-policy"]).toContain(
         "frame-ancestors 'none'",

@@ -11,6 +11,7 @@ import hasAccess, {
 } from "./check-for-access-to-project";
 import { stripBasePath } from "./util";
 import { setProjectHostProxyAccountId } from "./project-host";
+import { stripLegacyPublicAppRequestMetadata } from "@cocalc/backend/auth/app-proxy";
 
 const logger = getLogger("proxy:handle-upgrade");
 
@@ -40,6 +41,8 @@ export default function initUpgrade(
       });
       return;
     }
+
+    stripLegacyPublicAppRequestMetadata(req);
 
     if (!req.url.match(re)) {
       logger.debug("denying unexpected websocket upgrade", { url: req.url });

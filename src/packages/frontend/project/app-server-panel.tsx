@@ -1170,7 +1170,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   const [staticRoot, setStaticRoot] = useState<string>("");
   const [staticIndex, setStaticIndex] = useState<string>("index.html");
   const [staticCacheControl, setStaticCacheControl] = useState<string>(
-    "public,max-age=3600",
+    "private,max-age=3600",
   );
   const [staticRefreshCommand, setStaticRefreshCommand] = useState<string>("");
   const [staticRefreshStaleAfter, setStaticRefreshStaleAfter] =
@@ -1726,7 +1726,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       const viewerCacheMode = preset.staticViewerCacheMode ?? "balanced";
       setStaticRoot(preset.staticRoot ?? "");
       setStaticIndex(preset.staticIndex ?? "index.html");
-      setStaticCacheControl(preset.staticCacheControl ?? "public,max-age=3600");
+      setStaticCacheControl(
+        preset.staticCacheControl ?? "private,max-age=3600",
+      );
       setStaticRefreshCommand(preset.staticRefreshCommand ?? "");
       setStaticRefreshStaleAfter(
         preset.staticRefreshStaleAfter ??
@@ -1761,7 +1763,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     setServiceOpenMode("proxy");
     setStaticRoot("");
     setStaticIndex("index.html");
-    setStaticCacheControl("public,max-age=3600");
+    setStaticCacheControl("private,max-age=3600");
     setStaticRefreshCommand("");
     setStaticRefreshStaleAfter("3600");
     setStaticRefreshTimeout("120");

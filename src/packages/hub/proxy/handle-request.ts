@@ -17,6 +17,7 @@ import { handleFileDownload } from "@cocalc/conat/files/file-download";
 import { conat } from "@cocalc/backend/conat";
 import { isWorkspaceProjectRuntime } from "@cocalc/server/launchpad/project-runtime";
 import { ensureWorkspaceFileDownloadReadServer } from "@cocalc/server/conat/project/workspace-filesystem";
+import { stripLegacyPublicAppRequestMetadata } from "@cocalc/backend/auth/app-proxy";
 
 const logger = getLogger("proxy:handle-request");
 
@@ -37,6 +38,7 @@ export default function init({
     : undefined;
 
   async function handleProxyRequest(req, res): Promise<void> {
+    stripLegacyPublicAppRequestMetadata(req);
     const dbg = (...args) => {
       // for low level debugging -- silly isn't logged by default
       logger.silly(req.url, ...args);

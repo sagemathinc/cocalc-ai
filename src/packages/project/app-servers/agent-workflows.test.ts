@@ -347,7 +347,7 @@ describe("app server agent workflows", () => {
     }
   });
 
-  test("static app routing and public-readiness audit are agent-usable", async () => {
+  test("static app routing is agent-usable", async () => {
     const id = appId("static");
     const root = mkdtempSync(join(testHome, "static-app-"));
     mkdirSync(join(root, "sub"), { recursive: true });

@@ -327,6 +327,8 @@ describe("project-host HTTP session cookie", () => {
     await expect(
       auth.authorizeHttpRequest(req, createResponse(), project_id),
     ).rejects.toThrow("missing project-host HTTP auth token");
+    expect(req.url).toBe(`/${project_id}/apps/demo/`);
+    expect(req.headers).not.toHaveProperty("x-cocalc-public-app-host");
   });
 
   it("authorizes a collaborator on a private hostname", async () => {

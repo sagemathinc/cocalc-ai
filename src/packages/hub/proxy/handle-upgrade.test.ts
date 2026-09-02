@@ -188,5 +188,6 @@ describe("hub proxy websocket upgrades", () => {
     );
     expect(socket.destroy).toHaveBeenCalled();
     expect(proxyHandlers.handleUpgrade).not.toHaveBeenCalled();
+    expect(req.headers).not.toHaveProperty("x-cocalc-public-app-host");
   });
 });

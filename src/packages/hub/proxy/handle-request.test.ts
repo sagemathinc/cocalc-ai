@@ -331,5 +331,7 @@ describe("hub proxy file downloads", () => {
     );
     expect(mockHasAccess).not.toHaveBeenCalled();
     expect(proxyHandlers.handleRequest).not.toHaveBeenCalled();
+    expect(req.url).toBe("/457f20dd-59d1-45c4-b5b1-a245d0e0a629/apps/demo/");
+    expect(req.headers).not.toHaveProperty("x-cocalc-public-app-host");
   });
 });

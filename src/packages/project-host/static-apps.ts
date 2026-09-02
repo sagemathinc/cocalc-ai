@@ -8,6 +8,7 @@ import path from "node:path";
 import type { Stats } from "node:fs";
 import { finished } from "node:stream/promises";
 import TTL from "@isaacs/ttlcache";
+import { normalizePrivateAppCacheControl } from "@cocalc/backend/auth/app-proxy";
 import getLogger from "@cocalc/backend/logger";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { hubApi } from "@cocalc/lite/hub/api";
@@ -234,9 +235,10 @@ function resolveStaticCacheControl({
 }: {
   explicit?: string;
 }): string {
-  const normalized = `${explicit ?? ""}`.trim();
-  if (normalized) return normalized;
-  return STATIC_CACHE_CONTROL_PRIVATE_DEFAULT;
+  return normalizePrivateAppCacheControl(
+    explicit,
+    STATIC_CACHE_CONTROL_PRIVATE_DEFAULT,
+  );
 }
 
 function sortPublicViewerEntries(

@@ -31,6 +31,7 @@ import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import * as path from "node:path";
 import httpProxy from "http-proxy-3";
+import { normalizePrivateAppCacheControl } from "@cocalc/backend/auth/app-proxy";
 import { getLogger } from "@cocalc/project/logger";
 import { project_id } from "@cocalc/project/data";
 import { secretToken } from "@cocalc/project/data";
@@ -73,7 +74,7 @@ import { getProjectHubApi } from "../../conat/hub";
 import { sanitizeAppUpstreamRequest } from "./upstream-auth-boundary";
 
 const logger = getLogger("project:servers:proxy");
-const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=300";
+const STATIC_CACHE_CONTROL_DEFAULT = "private, max-age=300";
 
 const activeWebsocketsByTarget = new Map<string, number>();
 let activeWebsocketsTotal = 0;
@@ -1077,7 +1078,10 @@ ${entries}
     const explicitDownload = isExplicitDownloadRequest(req);
     const cacheControl = explicitDownload
       ? "private, no-store"
-      : cache_control || STATIC_CACHE_CONTROL_DEFAULT;
+      : normalizePrivateAppCacheControl(
+          cache_control,
+          STATIC_CACHE_CONTROL_DEFAULT,
+        );
     const rangeHeader = req.headers.range;
     let start = 0;
     let end = info.size - 1;
@@ -1181,7 +1185,10 @@ ${entries}
     const body = Buffer.from(html, "utf8");
     const headers: Record<string, string | number> = {
       "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": cache_control || STATIC_CACHE_CONTROL_DEFAULT,
+      "Cache-Control": normalizePrivateAppCacheControl(
+        cache_control,
+        STATIC_CACHE_CONTROL_DEFAULT,
+      ),
       "Content-Length": body.byteLength,
       ...(extraHeaders ?? {}),
     };

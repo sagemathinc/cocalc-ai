@@ -41,6 +41,7 @@ import {
   privateAppHostnameExternalLocation,
   PRIVATE_APP_HOST_HEADER,
 } from "./private-app-hostname";
+import { stripLegacyPublicAppRequestMetadata } from "@cocalc/backend/auth/app-proxy";
 
 const collaboratorCache = new TTL<string, boolean>({
   max: 50_000,
@@ -673,6 +674,7 @@ export function createProjectHostHttpProxyAuth({
     res: ServerResponse,
     project_id: string,
   ) => {
+    stripLegacyPublicAppRequestMetadata(req);
     const accountFromBrowserSession = browserSessionAccountId(req);
     if (accountFromBrowserSession) {
       try {
@@ -763,6 +765,7 @@ export function createProjectHostHttpProxyAuth({
     req: IncomingMessage,
     project_id: string,
   ): Promise<AuthorizedAccountContext> => {
+    stripLegacyPublicAppRequestMetadata(req);
     const accountFromBrowserSession = browserSessionAccountId(req);
     if (accountFromBrowserSession) {
       assertNotRevoked({

@@ -221,7 +221,7 @@ type ProjectHostSmokeResult = {
     host_name?: string;
     workspace_title?: string;
     app_id?: string;
-    exposed_url?: string;
+    app_url?: string;
     ssh_target?: string;
     ssh_tail_log?: string;
     scp_log?: string;
@@ -754,7 +754,7 @@ async function prepareSmokeStaticContentViaCli({
 }): Promise<SmokeStaticContentInfo> {
   const markerRoot = `smoke-static-root-${Date.now()}`;
   const markerNested = `smoke-static-nested-${Date.now()}`;
-  const cacheControl = "public, max-age=600";
+  const cacheControl = "private, max-age=600";
   const command = [
     "set -euo pipefail",
     `root="$HOME/smoke-static-${app_id}"`,
@@ -857,7 +857,7 @@ async function writeSmokeAppSpecFile({
         root,
         index: "index.html",
         cache_control:
-          `${static_cache_control ?? "public, max-age=600"}`.trim(),
+          `${static_cache_control ?? "private, max-age=600"}`.trim(),
       },
       proxy: {
         base_path: `/apps/${app_id}`,
@@ -3259,7 +3259,8 @@ async function runAppSmokeScenarioViaCli({
   let app_id: string | undefined;
   let appPidBeforeKill: number | undefined;
   let debugHints: HostConnectionHints | undefined;
-  let exposedUrl: string | undefined;
+  let appUrl: string | undefined;
+  let appCookie: string | undefined;
   let specDir: string | undefined;
   let staticContent: SmokeStaticContentInfo | undefined;
   let hostName = `${createSpec?.name ?? "smoke-apps"}`.trim() || "smoke-apps";
@@ -3495,73 +3496,62 @@ async function runAppSmokeScenarioViaCli({
       }
     });
 
-    await runStep("app_audit", async () => {
+    await runStep("app_prepare_authenticated_url", async () => {
+      if (!host_id) throw new Error("missing host id");
       if (!workspaceId) throw new Error("missing workspace id");
       if (!app_id) throw new Error("missing app id");
-      const audit = await runCli<{
-        app_id?: string;
-        checks?: unknown[];
-        agent_prompt?: string;
-      }>(cli, [
-        "workspace",
-        "app",
-        "audit",
-        app_id,
-        "--workspace",
-        workspaceId,
-        "--public-readiness",
-      ]);
-      if (`${audit.app_id ?? ""}` !== app_id) {
-        throw new Error("app audit returned unexpected app_id");
+      const hostUrl = `${debugHints?.host_url ?? ""}`.replace(/\/+$/, "");
+      if (!hostUrl) {
+        throw new Error("host has no URL for authenticated app probe");
       }
-      if (!Array.isArray(audit.checks) || audit.checks.length === 0) {
-        throw new Error("app audit returned no checks");
-      }
-      if (!`${audit.agent_prompt ?? ""}`.includes(app_id)) {
-        throw new Error("app audit prompt does not reference app id");
-      }
-    });
-
-    await runStep("app_expose", async () => {
-      if (!workspaceId) throw new Error("missing workspace id");
-      if (!app_id) throw new Error("missing app id");
-      const exposed = await runCli<{
-        url_public?: string;
-        exposure?: { mode?: "private" | "public"; token?: string };
-      }>(cli, [
-        "workspace",
-        "app",
-        "expose",
-        app_id,
-        "--workspace",
-        workspaceId,
-        "--ttl",
-        "10m",
-        "--front-auth",
-        "token",
-      ]);
-      if (exposed.exposure?.mode !== "public") {
+      const baseUrl = `${hostUrl}/${workspaceId}/apps/${encodeURIComponent(app_id)}/`;
+      const unauth = await fetchWithTimeout(baseUrl, {
+        redirect: "manual",
+        timeoutMs: 12_000,
+      });
+      if (unauth.status < 400 || unauth.status >= 500) {
         throw new Error(
-          `app expose did not set public mode (mode=${exposed.exposure?.mode})`,
+          `unexpected unauthenticated app status ${unauth.status}`,
         );
       }
-      exposedUrl = `${exposed.url_public ?? ""}`.trim();
-      if (!exposedUrl) {
-        throw new Error("app expose did not return url_public");
+
+      const issued = await issueProjectHostAuthToken({
+        account_id,
+        host_id,
+        project_id: workspaceId,
+        ttl_seconds: 300,
+      });
+      const bootstrap = await fetchWithTimeout(
+        `${baseUrl}?cocalc_project_host_token=${encodeURIComponent(issued.token)}`,
+        { redirect: "manual", timeoutMs: 12_000 },
+      );
+      appCookie = parseCookie(
+        bootstrap.headers.get("set-cookie"),
+        "cocalc_project_host_http_session",
+      );
+      if (!appCookie) {
+        throw new Error("missing project-host app session cookie");
       }
+      const location = bootstrap.headers.get("location");
+      if (!location) {
+        throw new Error("missing app redirect after token bootstrap");
+      }
+      appUrl = new URL(location, baseUrl).toString();
     });
 
-    await runStep("app_probe_public_url", async () => {
-      if (!exposedUrl) throw new Error("missing exposed URL");
+    await runStep("app_probe_authenticated_url", async () => {
+      if (!appUrl) throw new Error("missing app URL");
+      if (!appCookie) throw new Error("missing app session cookie");
       await waitForCondition(async () => {
-        const response = await fetchWithTimeout(exposedUrl!, {
+        const response = await fetchWithTimeout(appUrl!, {
+          headers: { Cookie: appCookie! },
           redirect: "follow",
           timeoutMs: 12_000,
         });
         const body = await response.text();
         if (response.status < 200 || response.status >= 300) {
           throw new Error(
-            `unexpected app response status ${response.status} at ${exposedUrl} body=${JSON.stringify(
+            `unexpected app response status ${response.status} at ${appUrl} body=${JSON.stringify(
               body.slice(0, 280),
             )}`,
           );
@@ -3572,7 +3562,7 @@ async function runAppSmokeScenarioViaCli({
             : "smoke-app-ok";
         if (!expectedMarker || !body.includes(expectedMarker)) {
           throw new Error(
-            `app response did not include expected marker '${expectedMarker}' at ${exposedUrl}; body=${JSON.stringify(
+            `app response did not include expected marker '${expectedMarker}' at ${appUrl}; body=${JSON.stringify(
               body.slice(0, 280),
             )}`,
           );
@@ -3582,10 +3572,12 @@ async function runAppSmokeScenarioViaCli({
 
     if (appKind === "static") {
       await runStep("app_probe_static_nested", async () => {
-        if (!exposedUrl) throw new Error("missing exposed URL");
+        if (!appUrl) throw new Error("missing app URL");
+        if (!appCookie) throw new Error("missing app session cookie");
         if (!staticContent) throw new Error("missing static content metadata");
-        const nestedUrl = appendPathToUrl(exposedUrl, "sub/");
+        const nestedUrl = appendPathToUrl(appUrl, "sub/");
         const response = await fetchWithTimeout(nestedUrl, {
+          headers: { Cookie: appCookie },
           redirect: "follow",
           timeoutMs: 12_000,
         });
@@ -3607,11 +3599,13 @@ async function runAppSmokeScenarioViaCli({
       });
 
       await runStep("app_probe_static_range_cache", async () => {
-        if (!exposedUrl) throw new Error("missing exposed URL");
+        if (!appUrl) throw new Error("missing app URL");
+        if (!appCookie) throw new Error("missing app session cookie");
         if (!staticContent) throw new Error("missing static content metadata");
-        const fileUrl = appendPathToUrl(exposedUrl, staticContent.large_file);
+        const fileUrl = appendPathToUrl(appUrl, staticContent.large_file);
         const response = await fetchWithTimeout(fileUrl, {
           headers: {
+            Cookie: appCookie,
             Range: "bytes=0-63",
           },
           timeoutMs: 12_000,
@@ -3662,12 +3656,11 @@ async function runAppSmokeScenarioViaCli({
       });
 
       await runStep("app_probe_static_traversal_blocked", async () => {
-        if (!exposedUrl) throw new Error("missing exposed URL");
-        const blockedUrl = appendPathToUrl(
-          exposedUrl,
-          "%2e%2e/%2e%2e/etc/passwd",
-        );
+        if (!appUrl) throw new Error("missing app URL");
+        if (!appCookie) throw new Error("missing app session cookie");
+        const blockedUrl = appendPathToUrl(appUrl, "%2e%2e/%2e%2e/etc/passwd");
         const response = await fetchWithTimeout(blockedUrl, {
+          headers: { Cookie: appCookie },
           timeoutMs: 12_000,
         });
         if (response.status >= 200 && response.status < 300) {
@@ -3788,30 +3781,6 @@ async function runAppSmokeScenarioViaCli({
       });
     }
 
-    await runStep("app_unexpose", async () => {
-      if (!workspaceId) throw new Error("missing workspace id");
-      if (!app_id) throw new Error("missing app id");
-      const unexposed = await runCli<{
-        exposure?: unknown;
-        state?: string;
-      }>(cli, [
-        "workspace",
-        "app",
-        "unexpose",
-        app_id,
-        "--workspace",
-        workspaceId,
-      ]);
-      if (unexposed.exposure != null) {
-        throw new Error("app unexpose returned non-empty exposure");
-      }
-      if (`${unexposed.state ?? ""}` !== "running") {
-        throw new Error(
-          `app unexpose returned unexpected state '${unexposed.state}'`,
-        );
-      }
-    });
-
     await runStep("app_stop", async () => {
       if (!workspaceId) throw new Error("missing workspace id");
       if (!app_id) throw new Error("missing app id");
@@ -3901,7 +3870,7 @@ async function runAppSmokeScenarioViaCli({
             host_name: hostName,
             workspace_title: workspaceTitle,
             app_id: app_id ?? undefined,
-            exposed_url: exposedUrl ?? undefined,
+            app_url: appUrl ?? undefined,
             ssh_target: debugHints.ssh_target,
             ssh_tail_log: debugHints.ssh_tail_log,
             scp_log: debugHints.scp_log,
@@ -3914,7 +3883,7 @@ async function runAppSmokeScenarioViaCli({
             host_name: hostName,
             workspace_title: workspaceTitle,
             app_id: app_id ?? undefined,
-            exposed_url: exposedUrl ?? undefined,
+            app_url: appUrl ?? undefined,
             host_log_path: "/mnt/cocalc/data/log",
             bootstrap_log_path:
               "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
@@ -3946,7 +3915,7 @@ async function runAppSmokeScenarioViaCli({
             host_name: hostName,
             workspace_title: workspaceTitle,
             app_id: app_id ?? undefined,
-            exposed_url: exposedUrl ?? undefined,
+            app_url: appUrl ?? undefined,
             ssh_target: debugHints.ssh_target,
             ssh_tail_log: debugHints.ssh_tail_log,
             scp_log: debugHints.scp_log,
@@ -3959,7 +3928,7 @@ async function runAppSmokeScenarioViaCli({
             host_name: hostName,
             workspace_title: workspaceTitle,
             app_id: app_id ?? undefined,
-            exposed_url: exposedUrl ?? undefined,
+            app_url: appUrl ?? undefined,
             host_log_path: "/mnt/cocalc/data/log",
             bootstrap_log_path:
               "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
