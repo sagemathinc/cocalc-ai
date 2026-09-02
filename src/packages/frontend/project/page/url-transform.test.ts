@@ -2,6 +2,18 @@ import getUrlTransform from "./url-transform";
 import { fileURL } from "@cocalc/frontend/lib/cocalc-urls";
 
 describe("project page url transform", () => {
+  it("leaves encoded cross-project anchors for SmartAnchorTag", () => {
+    const transform = getUrlTransform({
+      project_id: "1ce4fe78-19c7-40a8-a598-947975744cd9",
+      path: "/home/user/a.md",
+    });
+    const href =
+      `${window.location.origin}/projects/` +
+      "756629fd-ce98-4596-8595-1071d6c019a6/files/home/user/scratch/a%20b.md";
+
+    expect(transform(href, "a")).toBeUndefined();
+  });
+
   it("keeps absolute slash paths unchanged", () => {
     const transform = getUrlTransform({
       project_id: "00000000-1000-4000-8000-000000000000",
