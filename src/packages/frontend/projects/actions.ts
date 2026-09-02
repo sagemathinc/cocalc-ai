@@ -412,6 +412,7 @@ function projectHardDeletingMessage(): string {
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
   private static HOST_INFO_RPC_TIMEOUT_MS = 5_000;
+  private static HOST_INFO_FAILURE_RETRY_MS = 10_000;
   private static HOST_RECOVERY_POLL_MS = 10_000;
   private static HOST_RECOVERY_WAIT_MS = 10 * 60_000;
   private static ARCHIVE_RPC_TIMEOUT_MS = 30_000;
@@ -519,7 +520,48 @@ export class ProjectsActions extends Actions<ProjectsState> {
     Actions.prototype.destroy.call(this);
   };
 
-  ensure_host_info = reuseInFlight(async (host_id?: string, force = false) => {
+  private resolve_host_info = reuseInFlight(async (host_id: string) => {
+    const accountId = webapp_client.account_id;
+    const startedAt = Date.now();
+    try {
+      const info: HostConnectionInfo = await withTimeout(
+        webapp_client.conat_client.hub.hosts.resolveHostConnection({
+          host_id,
+        }),
+        ProjectsActions.HOST_INFO_RPC_TIMEOUT_MS,
+      );
+      if (webapp_client.account_id !== accountId) {
+        return;
+      }
+      // Other host lookups may have completed while this RPC was in flight.
+      // Merge into the current map rather than replacing their results with
+      // the snapshot from before this request started.
+      const current = store.get("host_info") ?? Map<string, any>();
+      const next = current.set(
+        host_id,
+        fromJS({ ...info, updated_at: Date.now() }),
+      );
+      this.setState({ host_info: next } as ProjectsState);
+      delete this.recentHostInfoLookupFailureAt[host_id];
+      return next.get(host_id);
+    } catch (err) {
+      const errString = `${err}`;
+      const previousFailureAt = this.recentHostInfoLookupFailureAt[host_id];
+      if (
+        previousFailureAt == null ||
+        startedAt - previousFailureAt >= ProjectsActions.HOST_INFO_TTL_MS
+      ) {
+        console.warn("ensure_host_info failed", {
+          host_id,
+          err: errString,
+        });
+      }
+      this.recentHostInfoLookupFailureAt[host_id] = startedAt;
+      return;
+    }
+  });
+
+  ensure_host_info = async (host_id?: string, force = false) => {
     if (!host_id) return;
     const hostInfo = store.get("host_info");
     const existing = hostInfo?.get(host_id);
@@ -532,42 +574,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
         }
       }
     }
-    try {
-      const info: HostConnectionInfo = await withTimeout(
-        webapp_client.conat_client.hub.hosts.resolveHostConnection({
-          host_id,
-        }),
-        ProjectsActions.HOST_INFO_RPC_TIMEOUT_MS,
-      );
-      const next = (hostInfo ?? Map<string, any>()).set(
-        host_id,
-        fromJS({ ...info, updated_at: now }),
-      );
-      if (next) {
-        this.setState({ host_info: next } as ProjectsState);
-      }
-      delete this.recentHostInfoLookupFailureAt[host_id];
-      return next?.get(host_id);
-    } catch (err) {
-      const errString = `${err}`;
-      const isHostMissing = errString.includes("host not found");
-      const previousFailureAt = this.recentHostInfoLookupFailureAt[host_id];
-      if (
-        !isHostMissing ||
-        previousFailureAt == null ||
-        now - previousFailureAt >= ProjectsActions.HOST_INFO_TTL_MS
-      ) {
-        console.warn("ensure_host_info failed", {
-          host_id,
-          err: errString,
-        });
-      }
-      if (isHostMissing) {
-        this.recentHostInfoLookupFailureAt[host_id] = now;
-      }
+    const previousFailureAt = this.recentHostInfoLookupFailureAt[host_id];
+    if (
+      !force &&
+      previousFailureAt != null &&
+      now - previousFailureAt < ProjectsActions.HOST_INFO_FAILURE_RETRY_MS
+    ) {
       return;
     }
-  });
+    // Force controls cache freshness, not in-flight identity. Once a lookup is
+    // required, forced and ordinary callers for the same host share one RPC.
+    return await this.resolve_host_info(host_id);
+  };
 
   private waitForAssignedHostRecovery = async ({
     host_id,

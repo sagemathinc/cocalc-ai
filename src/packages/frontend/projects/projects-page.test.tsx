@@ -25,6 +25,7 @@ let mockEmailVerificationRequired = false;
 let mockActiveTopTab: string | undefined;
 let mockProjectMap: any = mockEmptyMap;
 const mockLoadProjectListWindow = jest.fn();
+const mockEnsureHostInfo = jest.fn();
 
 jest.mock("./actions", () => ({}));
 
@@ -76,7 +77,7 @@ jest.mock("@cocalc/frontend/app-framework", () => {
       getActions: (name: string) => {
         if (name === "projects")
           return {
-            ensure_host_info: jest.fn(),
+            ensure_host_info: mockEnsureHostInfo,
             loadProjectListWindowForCurrentAccount: mockLoadProjectListWindow,
           };
         if (name === "mentions") return { set_filter: jest.fn() };
@@ -224,6 +225,8 @@ beforeEach(() => {
   mockActiveTopTab = undefined;
   mockProjectMap = mockEmptyMap;
   mockLoadProjectListWindow.mockClear();
+  mockEnsureHostInfo.mockReset();
+  mockEnsureHostInfo.mockResolvedValue(ImmutableMap());
   (globalThis as any).ResizeObserver = class {
     observe() {}
     disconnect() {}
@@ -294,6 +297,41 @@ test("projects page falls back to locally visible projects without a matching ba
     "data-visible-projects",
     JSON.stringify(["local-project"]),
   );
+});
+
+test("host-info prefetch is limited to the current visible project window", async () => {
+  mockActiveTopTab = "projects";
+  mockVisibleProjects.push("visible-project");
+  mockProjectMap = ImmutableMap({
+    "visible-project": ImmutableMap({ host_id: "visible-host" }),
+    "historical-project": ImmutableMap({ host_id: "historical-host" }),
+  });
+
+  render(<ProjectsPage />);
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  expect(mockEnsureHostInfo).toHaveBeenCalledTimes(1);
+  expect(mockEnsureHostInfo).toHaveBeenCalledWith("visible-host");
+});
+
+test("host-info prefetch stops after a failed lookup", async () => {
+  mockActiveTopTab = "projects";
+  mockVisibleProjects.push("project-1", "project-2");
+  mockProjectMap = ImmutableMap({
+    "project-1": ImmutableMap({ host_id: "host-1" }),
+    "project-2": ImmutableMap({ host_id: "host-2" }),
+  });
+  mockEnsureHostInfo.mockResolvedValueOnce(undefined);
+
+  render(<ProjectsPage />);
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  expect(mockEnsureHostInfo).toHaveBeenCalledTimes(1);
+  expect(mockEnsureHostInfo).toHaveBeenCalledWith("host-1");
 });
 
 test("projects page sizes the table from the flex list slot", () => {

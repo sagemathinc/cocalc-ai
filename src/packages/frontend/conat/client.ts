@@ -1334,20 +1334,6 @@ export class ConatClient extends EventEmitter {
     }
     const hostInfo = this.getHostInfo(host_id);
     if (!hostInfo) return;
-    const projectBayId =
-      `${project_map?.getIn([project_id, "owning_bay_id"]) ?? ""}`.trim();
-    const hostBayId = `${hostInfo.get("bay_id") ?? ""}`.trim();
-    if (
-      projectBayId &&
-      hostBayId &&
-      projectBayId !== hostBayId &&
-      !isPublicDirectoryShareHost(host_id)
-    ) {
-      // Cross-bay placement is valid. Refresh any stale cached host info, but
-      // do not suppress direct browser->project-host routing just because the
-      // control-plane bay and host bay differ.
-      void redux.getActions("projects")?.ensure_host_info(host_id, true);
-    }
     return this.buildHostRoutingInfo(host_id, hostInfo, project_id);
   }
 
@@ -1383,20 +1369,12 @@ export class ConatClient extends EventEmitter {
     const host_id = project_map?.getIn([project_id, "host_id"]) as
       | string
       | undefined;
-    const projectBayId =
-      `${project_map?.getIn([project_id, "owning_bay_id"]) ?? ""}`.trim();
-    const hostInfo = host_id
-      ? redux.getStore("projects")?.get("host_info")?.get(host_id)
-      : undefined;
-    const hostBayId = `${hostInfo?.get?.("bay_id") ?? ""}`.trim();
-    const bayMismatch =
-      !!host_id && !!projectBayId && !!hostBayId && projectBayId !== hostBayId;
     const publicDirectoryShareHost = isPublicDirectoryShareHost(host_id);
     const initial = this.getProjectRoutingInfo(project_id);
-    if (initial && (!bayMismatch || publicDirectoryShareHost)) return initial;
+    if (initial) return initial;
     if (!host_id) return initial;
     if (publicDirectoryShareHost) return initial;
-    await redux.getActions("projects")?.ensure_host_info(host_id, bayMismatch);
+    await redux.getActions("projects")?.ensure_host_info(host_id, false);
     return this.getProjectRoutingInfo(project_id) ?? initial;
   };
 
