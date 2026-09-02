@@ -154,10 +154,6 @@ describe("CodexAppServerAgent", () => {
     process.env.COCALC_CODEX_REMOTE_COMPACT_MAX_RETRIES;
   const originalCompactRetryDelay =
     process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS;
-  const originalCapacityRetryLimit =
-    process.env.COCALC_CODEX_MODEL_CAPACITY_MAX_RETRIES;
-  const originalCapacityRetryDelay =
-    process.env.COCALC_CODEX_MODEL_CAPACITY_RETRY_DELAY_MS;
   const originalTimeoutRetryLimit =
     process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES;
   const originalTimeoutRetryDelay =
@@ -166,6 +162,10 @@ describe("CodexAppServerAgent", () => {
     process.env.COCALC_CODEX_STREAM_DISCONNECT_MAX_RETRIES;
   const originalStreamDisconnectRetryDelay =
     process.env.COCALC_CODEX_STREAM_DISCONNECT_RETRY_DELAY_MS;
+  const originalTurnReconcileFailureLimit =
+    process.env.COCALC_CODEX_TURN_RECONCILE_FAILURE_LIMIT;
+  const originalTurnNotificationIdleTimeout =
+    process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS;
 
   afterEach(async () => {
     setCodexProjectSpawner(null);
@@ -186,18 +186,6 @@ describe("CodexAppServerAgent", () => {
     } else {
       process.env.COCALC_CODEX_REMOTE_COMPACT_RETRY_DELAY_MS =
         originalCompactRetryDelay;
-    }
-    if (originalCapacityRetryLimit == null) {
-      delete process.env.COCALC_CODEX_MODEL_CAPACITY_MAX_RETRIES;
-    } else {
-      process.env.COCALC_CODEX_MODEL_CAPACITY_MAX_RETRIES =
-        originalCapacityRetryLimit;
-    }
-    if (originalCapacityRetryDelay == null) {
-      delete process.env.COCALC_CODEX_MODEL_CAPACITY_RETRY_DELAY_MS;
-    } else {
-      process.env.COCALC_CODEX_MODEL_CAPACITY_RETRY_DELAY_MS =
-        originalCapacityRetryDelay;
     }
     if (originalTimeoutRetryLimit == null) {
       delete process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES;
@@ -221,6 +209,18 @@ describe("CodexAppServerAgent", () => {
     } else {
       process.env.COCALC_CODEX_STREAM_DISCONNECT_RETRY_DELAY_MS =
         originalStreamDisconnectRetryDelay;
+    }
+    if (originalTurnReconcileFailureLimit == null) {
+      delete process.env.COCALC_CODEX_TURN_RECONCILE_FAILURE_LIMIT;
+    } else {
+      process.env.COCALC_CODEX_TURN_RECONCILE_FAILURE_LIMIT =
+        originalTurnReconcileFailureLimit;
+    }
+    if (originalTurnNotificationIdleTimeout == null) {
+      delete process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS;
+    } else {
+      process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS =
+        originalTurnNotificationIdleTimeout;
     }
   });
 
@@ -1203,6 +1203,8 @@ describe("CodexAppServerAgent", () => {
         "usually caused by the project running out of RAM",
       );
       expect(error?.error).toContain("Increase the project's RAM");
+      expect(error?.code).toBe("codex_resource_killed");
+      expect(error?.retryable).toBe(true);
     },
   );
 
@@ -1261,11 +1263,144 @@ describe("CodexAppServerAgent", () => {
     const error = streamPayloads.find((payload) => payload.type === "error");
     expect(error?.error).toContain("codex app-server exited unexpectedly: 255");
     expect(error?.error).toContain("provider transport unavailable");
+    expect(error?.code).toBe("codex_app_server_exited");
+    expect(error?.retryable).toBe(true);
     expect(loggerMock.warn).not.toHaveBeenCalledWith(
       "codex app-server: turn reconciliation failed",
       expect.anything(),
     );
   });
+
+  it("keeps waiting when a paginated thread is active but omits its live turn", async () => {
+    process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS = "50";
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, { thread: { id: "thr-paginated" } });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-paginated" } });
+          break;
+        case "thread/read":
+          fake.sendResponse(message.id, {
+            thread: {
+              id: "thr-paginated",
+              historyMode: "paginated",
+              status: { type: "active", activeFlags: [] },
+              turns: [],
+            },
+          });
+          setImmediate(() => {
+            fake.sendNotification("item/agentMessage/delta", {
+              threadId: "thr-paginated",
+              turnId: "turn-paginated",
+              itemId: "message-paginated",
+              delta: "Recovered live turn",
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-paginated", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const streamPayloads: any[] = [];
+    await new CodexAppServerAgent().evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) streamPayloads.push(payload);
+      },
+      config: { workingDirectory: "/tmp/project" } as any,
+    });
+
+    expect(streamPayloads).toContainEqual(
+      expect.objectContaining({
+        type: "summary",
+        finalResponse: "Recovered live turn",
+      }),
+    );
+    expect(streamPayloads.some((payload) => payload.type === "error")).toBe(
+      false,
+    );
+  }, 15_000);
+
+  it("classifies an idle thread with no durable active turn as lost", async () => {
+    process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS = "50";
+    process.env.COCALC_CODEX_TURN_RECONCILE_FAILURE_LIMIT = "1";
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, { thread: { id: "thr-lost" } });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-lost" } });
+          break;
+        case "thread/read":
+          fake.sendResponse(message.id, {
+            thread: {
+              id: "thr-lost",
+              status: { type: "idle" },
+              turns: [],
+            },
+          });
+          break;
+        default:
+          if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const streamPayloads: any[] = [];
+    await new CodexAppServerAgent().evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "continue",
+      stream: async (payload) => {
+        if (payload) streamPayloads.push(payload);
+      },
+      config: { workingDirectory: "/tmp/project" } as any,
+    });
+
+    expect(streamPayloads).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "codex_turn_lost",
+        retryable: true,
+      }),
+    );
+  }, 15_000);
 
   it("surfaces a command rejection instead of the routine bubblewrap warning", async () => {
     const proc = new FakeCodexAppServerProc((fake, message) => {
@@ -1313,6 +1448,8 @@ describe("CodexAppServerAgent", () => {
     expect(error?.error).toContain(
       "Codex blocked a command: rm -f style commands are not permitted. Use a safer approach",
     );
+    expect(error?.code).toBe("codex_command_blocked");
+    expect(error?.retryable).toBe(true);
     expect(error?.error).not.toContain("bubblewrap");
     expect(error?.error).not.toContain("no container with ID");
   });
@@ -2084,15 +2221,12 @@ describe("CodexAppServerAgent", () => {
     );
   });
 
-  it("retries model-capacity failures with a longer backoff message", async () => {
-    process.env.COCALC_CODEX_MODEL_CAPACITY_MAX_RETRIES = "1";
-    process.env.COCALC_CODEX_MODEL_CAPACITY_RETRY_DELAY_MS = "1000";
-
+  it("classifies model-capacity failures for durable recovery", async () => {
     let spawnCount = 0;
     const capacityError =
       "Selected model is at capacity. Please try a different model.";
 
-    const makeProc = (spawn: number) =>
+    const makeProc = () =>
       new FakeCodexAppServerProc((fake, message) => {
         switch (message.method) {
           case "initialize":
@@ -2104,35 +2238,23 @@ describe("CodexAppServerAgent", () => {
             });
             break;
           case "turn/start": {
-            const turnId = `turn-capacity-${spawn}`;
+            const turnId = "turn-capacity-1";
             fake.sendResponse(message.id, { turn: { id: turnId } });
             setImmediate(() => {
               fake.sendNotification("turn/started", {
                 turn: { id: turnId, status: "inProgress" },
               });
-              if (spawn === 1) {
-                fake.sendNotification("error", {
-                  turnId,
+              fake.sendNotification("error", {
+                turnId,
+                error: { message: capacityError },
+              });
+              fake.sendNotification("turn/completed", {
+                turn: {
+                  id: turnId,
+                  status: "failed",
                   error: { message: capacityError },
-                });
-                fake.sendNotification("turn/completed", {
-                  turn: {
-                    id: turnId,
-                    status: "failed",
-                    error: { message: capacityError },
-                  },
-                });
-              } else {
-                fake.sendNotification("item/agentMessage/delta", {
-                  threadId: "thr-capacity-1",
-                  turnId,
-                  itemId: "msg-capacity-1",
-                  delta: "Recovered",
-                });
-                fake.sendNotification("turn/completed", {
-                  turn: { id: turnId, status: "completed" },
-                });
-              }
+                },
+              });
             });
             break;
           }
@@ -2147,12 +2269,15 @@ describe("CodexAppServerAgent", () => {
       spawnCodexExec: async () => {
         throw new Error("unexpected codex exec spawn");
       },
-      spawnCodexAppServer: async () => ({
-        proc: makeProc(++spawnCount) as any,
-        cmd: "fake-codex",
-        args: ["app-server"],
-        cwd: "/tmp/project",
-      }),
+      spawnCodexAppServer: async () => {
+        spawnCount += 1;
+        return {
+          proc: makeProc() as any,
+          cmd: "fake-codex",
+          args: ["app-server"],
+          cwd: "/tmp/project",
+        };
+      },
     });
 
     const agent = new CodexAppServerAgent();
@@ -2169,33 +2294,18 @@ describe("CodexAppServerAgent", () => {
       } as any,
     });
 
-    expect(spawnCount).toBe(2);
-    expect(streamPayloads).toEqual(
-      expect.arrayContaining([
-        {
-          type: "event",
-          event: {
-            type: "thinking",
-            text: "Selected model is at capacity. Retrying in 1 second (1/1)...",
-          },
-        },
-        {
-          type: "summary",
-          finalResponse: "Recovered",
-          usage: undefined,
-          threadId: "thr-capacity-1",
-        },
-      ]),
-    );
+    expect(spawnCount).toBe(1);
+    expect(streamPayloads).toContainEqual({
+      type: "error",
+      error: capacityError,
+      code: "codex_model_capacity",
+      retryable: true,
+    });
   });
 
-  it("adds model-capacity guidance after retries are exhausted", async () => {
-    process.env.COCALC_CODEX_MODEL_CAPACITY_MAX_RETRIES = "1";
-    process.env.COCALC_CODEX_MODEL_CAPACITY_RETRY_DELAY_MS = "1000";
-
+  it("recognizes plural model-capacity failures", async () => {
     let spawnCount = 0;
-    const capacityError =
-      "Selected model is at capacity. Please try a different model.";
+    const capacityError = "Models are at capacity. Please try again later.";
 
     const makeProc = () =>
       new FakeCodexAppServerProc((fake, message) => {
@@ -2265,14 +2375,16 @@ describe("CodexAppServerAgent", () => {
       } as any,
     });
 
-    expect(spawnCount).toBe(2);
+    expect(spawnCount).toBe(1);
     const errorPayload = streamPayloads.find(
       (payload) => payload.type === "error",
     );
-    expect(errorPayload?.error).toContain(
-      "selected model stayed at capacity after automatic retries",
-    );
-    expect(errorPayload?.error).toContain("switch to a different model");
+    expect(errorPayload).toEqual({
+      type: "error",
+      error: capacityError,
+      code: "codex_model_capacity",
+      retryable: true,
+    });
   });
 
   it("does not retry remote compaction failures after visible turn output", async () => {
@@ -4924,6 +5036,44 @@ describe("CodexAppServerAgent", () => {
             },
           });
           break;
+        case "model/list":
+          expect(message.params).toEqual({
+            limit: 100,
+            includeHidden: false,
+          });
+          fake.sendResponse(message.id, {
+            data: [
+              {
+                id: "gpt-5.6-luna",
+                model: "gpt-5.6-luna",
+                displayName: "GPT-5.6 Luna",
+                description: "Fast account model",
+                supportedReasoningEfforts: [
+                  {
+                    reasoningEffort: "low",
+                    description: "Fast responses",
+                  },
+                  {
+                    reasoningEffort: "xhigh",
+                    description: "Deep reasoning",
+                  },
+                ],
+                defaultReasoningEffort: "xhigh",
+                serviceTiers: [
+                  {
+                    id: "priority",
+                    name: "Priority",
+                    description: "Priority processing",
+                  },
+                ],
+                additionalSpeedTiers: ["fast"],
+                defaultServiceTier: "fast",
+                isDefault: true,
+              },
+            ],
+            nextCursor: null,
+          });
+          break;
         default:
           throw new Error(`unexpected method ${message.method}`);
       }
@@ -4948,6 +5098,7 @@ describe("CodexAppServerAgent", () => {
       projectId: "project-1",
       accountId: "account-1",
       includeTokenUsage: true,
+      includeModels: true,
     });
 
     expect(spawnCodexAppServer).toHaveBeenCalledWith(
@@ -4962,6 +5113,38 @@ describe("CodexAppServerAgent", () => {
     expect(status.account?.account?.email).toBe("user@example.com");
     expect(status.rateLimits?.rateLimits?.primary?.usedPercent).toBe(42);
     expect(status.tokenUsage?.summary?.lifetimeTokens).toBe(12345);
+    expect(status.models).toEqual([
+      {
+        model: "gpt-5.6-luna",
+        displayName: "GPT-5.6 Luna",
+        description: "Fast account model",
+        reasoning: [
+          {
+            id: "low",
+            description: "Fast responses",
+          },
+          {
+            id: "extra_high",
+            description: "Deep reasoning",
+            default: true,
+          },
+        ],
+        serviceTiers: [
+          {
+            id: "priority",
+            label: "Priority",
+            description: "Priority processing",
+          },
+          {
+            id: "fast",
+            label: "Fast",
+            description: "",
+            default: true,
+          },
+        ],
+        default: true,
+      },
+    ]);
     expect(seen.map(({ method }) => method)).toEqual([
       "initialize",
       "initialized",
@@ -4969,7 +5152,53 @@ describe("CodexAppServerAgent", () => {
       "account/read",
       "account/rateLimits/read",
       "account/usage/read",
+      "model/list",
     ]);
+  });
+
+  it("keeps account status usable when model discovery is unsupported", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, {});
+          break;
+        case "initialized":
+          break;
+        case "account/read":
+          fake.sendResponse(message.id, {
+            account: { type: "chatgpt", planType: "basic" },
+            requiresOpenaiAuth: false,
+          });
+          break;
+        case "account/rateLimits/read":
+          fake.sendResponse(message.id, { rateLimits: { limitId: "codex" } });
+          break;
+        case "model/list":
+          fake.sendError(message.id, "Method not found: model/list");
+          break;
+        default:
+          throw new Error(`unexpected method ${message.method}`);
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: jest.fn() as any,
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        args: ["app-server"],
+        cmd: "codex",
+      }),
+    });
+
+    const status = await getCodexAppServerAccountStatus({
+      projectId: "project-1",
+      accountId: "account-1",
+      includeModels: true,
+    });
+
+    expect(status.authentication).toEqual({ status: "connected" });
+    expect(status.rateLimits).toEqual({ rateLimits: { limitId: "codex" } });
+    expect(status.models).toBeUndefined();
+    expect(status.errors?.models).toContain("Method not found: model/list");
   });
 
   it("does not read token usage during the default account status check", async () => {

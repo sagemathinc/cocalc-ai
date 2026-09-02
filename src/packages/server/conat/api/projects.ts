@@ -3924,6 +3924,8 @@ async function getAssignedDirectCoursePackageMembership({
 
 export async function createCollabInvite({
   account_id,
+  browser_id,
+  session_hash,
   project_id,
   invitee_account_id,
   message,
@@ -3932,6 +3934,8 @@ export async function createCollabInvite({
   read_policy,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
   project_id: string;
   invitee_account_id: string;
   message?: string;
@@ -3939,7 +3943,26 @@ export async function createCollabInvite({
   invite_role?: "collaborator" | "viewer";
   read_policy?: ProjectViewerReadPolicy | null;
 }) {
-  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  let trusted_admin = false;
+  if (direct) {
+    if (!account_id) {
+      throw new Error("must be signed in");
+    }
+    await requireDangerousProjectMutationAuth({
+      account_id,
+      browser_id,
+      session_hash,
+    });
+    // Account-authenticated hub calls run on the actor's home bay, where
+    // account groups are authoritative. The owning bay trusts this result only
+    // through the internal inter-bay request below.
+    trusted_admin = await isAdmin(account_id);
+    if (!trusted_admin) {
+      await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+    }
+  } else {
+    await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  }
   const ownership = await resolveProjectBay(project_id);
   if (ownership == null) {
     throw new Error(`project ${project_id} not found`);
@@ -3951,6 +3974,7 @@ export async function createCollabInvite({
       invitee_account_id,
       message,
       direct,
+      trusted_admin,
       invite_role,
       read_policy,
     });
@@ -3963,6 +3987,7 @@ export async function createCollabInvite({
       invitee_account_id,
       message,
       direct,
+      trusted_admin,
       invite_role,
       read_policy,
     });
@@ -6906,6 +6931,7 @@ export async function getCodexUsageStatus({
 }: {
   account_id?: string;
   project_id: string;
+  include_models?: boolean;
   timeout?: number;
 }): Promise<CodexUsageStatusInfo> {
   await assertCollab({ account_id, project_id });

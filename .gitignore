@@ -208,6 +208,7 @@ src/packages/lite/sea/cocalc*gnu
 *.zip
 
 src/packages/*/build/
+src/packages/backend/podman/build/
 
 g
 g-cs

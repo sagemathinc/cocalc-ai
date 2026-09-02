@@ -192,6 +192,111 @@ export interface HostFilesystemSnapshotResponse {
   btrfs_usage?: HostDiagnosticCommandOutput;
 }
 
+export interface HostIntrusionSnapshotResponse {
+  version: 1;
+  captured_at: string;
+  duration_ms: number;
+  hostname: string;
+  kernel: string;
+  boot_id: string;
+  coverage: "complete" | "partial" | "unavailable";
+  accounts: {
+    uid_zero: Array<{
+      name: string;
+      uid: number;
+      gid: number;
+      home: string;
+      shell: string;
+    }>;
+    interactive: Array<{
+      name: string;
+      uid: number;
+      gid: number;
+      home: string;
+      shell: string;
+    }>;
+  };
+  host_processes: {
+    scanned_process_count: number;
+    process_count: number;
+    summary: Array<{
+      count: number;
+      uid: number;
+      comm: string;
+      exe: string;
+      capability_mask: string;
+      executable_uid?: number;
+      executable_mode?: string;
+    }>;
+    findings: Array<{
+      pid: number;
+      uid: number;
+      comm: string;
+      exe: string;
+      capability_mask: string;
+      executable_uid?: number;
+      executable_mode?: string;
+      flags: string[];
+    }>;
+  };
+  persistence: {
+    files: Array<{
+      path: string;
+      uid: number;
+      gid: number;
+      mode: string;
+      mtime: string;
+      size: number;
+      type: "file" | "symlink";
+      sha256?: string;
+    }>;
+    truncated: boolean;
+  };
+  privileged_files: {
+    writable: string[];
+    suid_sgid: string[];
+    capabilities: string[];
+  };
+  services: {
+    enabled: string[];
+    failed: string[];
+  };
+  network: {
+    listeners: Array<{
+      count: number;
+      protocol: string;
+      process: string;
+      local: string;
+    }>;
+    established: Array<{
+      count: number;
+      process: string;
+      local_port: string;
+      peer: string;
+    }>;
+  };
+  authentication_7d: {
+    accepted: Array<{
+      count: number;
+      method: string;
+      user: string;
+      source: string;
+    }>;
+    failed: number;
+    invalid_user: number;
+  };
+  kernel_signals_7d: Record<string, number>;
+  package_integrity: {
+    manager: "dpkg" | "unavailable";
+    differences: string[];
+  };
+  issues: Array<{
+    section: string;
+    code: string;
+  }>;
+  truncated: Record<string, boolean>;
+}
+
 export interface HostPodmanSnapshotRequest {
   limit?: number;
 }
@@ -763,6 +868,7 @@ export interface HostControlApi {
     opts?: HostNetworkSnapshotRequest,
   ) => Promise<HostNetworkSnapshotResponse>;
   getFilesystemSnapshot: () => Promise<HostFilesystemSnapshotResponse>;
+  getIntrusionSnapshot: () => Promise<HostIntrusionSnapshotResponse>;
   getPodmanSnapshot: (
     opts?: HostPodmanSnapshotRequest,
   ) => Promise<HostPodmanSnapshotResponse>;

@@ -341,7 +341,10 @@ describe("admin support API", () => {
   });
 
   it("downloads a ticket image without forwarding Zendesk credentials to the CDN", async () => {
-    const image = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const image = Buffer.from(
+      "89504e470d0a1a0a0000000d494844520000000100000001",
+      "hex",
+    );
     const attachment = {
       id: 987,
       size: image.length,
@@ -389,6 +392,7 @@ describe("admin support API", () => {
       .fn()
       .mockImplementationOnce(async (_url: URL, init: RequestInit) => {
         expect(init.headers).toMatchObject({
+          Accept: "*/*",
           Authorization: expect.stringMatching(/^Basic /),
         });
         return new Response(null, {
@@ -399,11 +403,12 @@ describe("admin support API", () => {
         });
       })
       .mockImplementationOnce(async (_url: URL, init: RequestInit) => {
+        expect(init.headers).toMatchObject({ Accept: "*/*" });
         expect(init.headers).not.toHaveProperty("Authorization");
         return new Response(image, {
           status: 200,
           headers: {
-            "content-type": "image/png",
+            "content-type": "application/octet-stream",
             "content-length": `${image.length}`,
           },
         });

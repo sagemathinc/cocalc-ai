@@ -2540,6 +2540,27 @@ Merge comments are private unless their corresponding --*-comment-public flag is
     );
 
   adminHost
+    .command("intrusion-snapshot <host>")
+    .description(
+      "collect an audited, bounded host integrity and persistence snapshot",
+    )
+    .option("--reason <reason>", "human-readable reason for audit")
+    .action(
+      async (host: string, opts: { reason?: string }, command: Command) => {
+        await withContext(
+          command,
+          "admin host intrusion-snapshot",
+          async (ctx) => {
+            return await ctx.hub.adminHost.intrusionSnapshot({
+              host,
+              reason: opts.reason,
+            });
+          },
+        );
+      },
+    );
+
+  adminHost
     .command("net <host>")
     .description("show audited project-host network socket snapshot")
     .option("--limit <n>", "max socket rows", "100")

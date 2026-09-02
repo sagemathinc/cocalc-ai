@@ -23,6 +23,8 @@ import { automationHasActiveBackendRun } from "../active-automation-run";
 import {
   claimNextQueuedAcpJobForThread,
   cancelQueuedAcpJob,
+  cancelQueuedRecoveryJobsForThread,
+  clearAcpJobRecoveryIntent,
   clearQueuedAcpJobWorkerAffinity,
   countCreatedAcpJobsForAccountSince,
   countQueuedAcpJobsForAccount,
@@ -32,11 +34,16 @@ import {
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
   enqueueAcpJob,
+  enqueueAcpJobCancelingQueuedRecoveries,
   getAcpJob,
   getAcpJobByOpId,
+  hasNewerNonRecoveryAcpJob,
   listAcpJobsByRecoveryParent,
+  listAcpJobsWithRecoveryIntent,
   listQueuedAcpJobs,
+  listQueuedAcpJobThreadKeys,
   listQueuedAcpJobsForThread,
+  nextQueuedAcpJobAvailability,
   oldestQueuedAcpJobTimestamp,
   resendCanceledAcpJob,
   reprioritizeAcpJobImmediate,
@@ -94,6 +101,237 @@ afterAll(() => {
 });
 
 describe("acp job queue ordering", () => {
+  it("does not claim a delayed recovery until its availability time", () => {
+    const request = {
+      ...makeRequest({
+        userMessageId: "user-delayed-recovery",
+        assistantMessageId: "assistant-delayed-recovery",
+        assistantDate: "2026-03-08T00:00:00.000Z",
+      }),
+      recovery_parent_op_id: "parent-delayed-recovery",
+      recovery_reason: "model capacity",
+      recovery_count: 1,
+    };
+    const availableAt = Date.now() + 15 * 60_000;
+    const queued = enqueueAcpJob(request as any, {
+      available_at: availableAt,
+    });
+
+    expect(queued.available_at).toBe(availableAt);
+    expect(nextQueuedAcpJobAvailability()).toBe(availableAt);
+    expect(listQueuedAcpJobs()).toHaveLength(1);
+    expect(listQueuedAcpJobThreadKeys()).toHaveLength(0);
+    expect(
+      claimNextQueuedAcpJobForThread({
+        project_id: queued.project_id,
+        path: queued.path,
+        thread_id: queued.thread_id,
+      }),
+    ).toBeUndefined();
+
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET available_at = ? WHERE op_id = ?")
+      .run(Date.now() - 1, queued.op_id);
+    expect(listQueuedAcpJobThreadKeys()).toHaveLength(1);
+    expect(
+      claimNextQueuedAcpJobForThread({
+        project_id: queued.project_id,
+        path: queued.path,
+        thread_id: queued.thread_id,
+      })?.op_id,
+    ).toBe(queued.op_id);
+  });
+
+  it("atomically rejects recovery after a newer user job", async () => {
+    const source = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-recovery-source",
+        assistantMessageId: "assistant-recovery-source",
+        assistantDate: "2026-03-08T00:00:00.000Z",
+      }) as any,
+    );
+    await delay();
+    enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-newer-turn",
+        assistantMessageId: "assistant-newer-turn",
+        assistantDate: "2026-03-08T00:01:00.000Z",
+      }) as any,
+    );
+    const guard = {
+      source_op_id: source.op_id,
+      source_created_at: source.created_at,
+    };
+    expect(
+      hasNewerNonRecoveryAcpJob({
+        project_id: source.project_id,
+        path: source.path,
+        thread_id: source.thread_id,
+        guard,
+      }),
+    ).toBe(true);
+
+    const recovery = enqueueAcpJob(
+      {
+        ...makeRequest({
+          userMessageId: "user-stale-recovery",
+          assistantMessageId: "assistant-stale-recovery",
+          assistantDate: "2026-03-08T00:02:00.000Z",
+        }),
+        recovery_parent_op_id: source.op_id,
+        recovery_reason: "lost turn",
+        recovery_count: 1,
+      } as any,
+      {
+        reject_if_newer_non_recovery_than: guard,
+      },
+    );
+
+    expect(recovery).toBeUndefined();
+    expect(listQueuedAcpJobs()).toHaveLength(2);
+  });
+
+  it("uses insertion order for supersession within one millisecond", () => {
+    const older = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-same-ms-older",
+        assistantMessageId: "assistant-same-ms-older",
+        assistantDate: "2026-03-08T00:00:00.100Z",
+      }) as any,
+    );
+    const source = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-same-ms-source",
+        assistantMessageId: "assistant-same-ms-source",
+        assistantDate: "2026-03-08T00:00:00.200Z",
+      }) as any,
+    );
+    const sameTimestamp = Date.now();
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET created_at = ? WHERE op_id IN (?, ?)")
+      .run(sameTimestamp, older.op_id, source.op_id);
+    const guard = {
+      source_op_id: source.op_id,
+      source_created_at: sameTimestamp,
+    };
+
+    expect(
+      hasNewerNonRecoveryAcpJob({
+        project_id: source.project_id,
+        path: source.path,
+        thread_id: source.thread_id,
+        guard,
+      }),
+    ).toBe(false);
+
+    enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-same-ms-newer",
+        assistantMessageId: "assistant-same-ms-newer",
+        assistantDate: "2026-03-08T00:00:00.300Z",
+      }) as any,
+    );
+    getAcpDatabase()
+      .prepare("UPDATE acp_jobs SET created_at = ? WHERE op_id = ?")
+      .run(sameTimestamp, "assistant-same-ms-newer");
+
+    expect(
+      hasNewerNonRecoveryAcpJob({
+        project_id: source.project_id,
+        path: source.path,
+        thread_id: source.thread_id,
+        guard,
+      }),
+    ).toBe(true);
+  });
+
+  it("atomically enqueues a user job while canceling queued recovery", () => {
+    const recovery = enqueueAcpJob(
+      {
+        ...makeRequest({
+          userMessageId: "user-pending-recovery",
+          assistantMessageId: "assistant-pending-recovery",
+          assistantDate: "2026-03-08T00:00:00.000Z",
+        }),
+        recovery_parent_op_id: "failed-parent",
+        recovery_reason: "lost turn",
+        recovery_count: 1,
+      } as any,
+      { available_at: Date.now() + 15 * 60_000 },
+    );
+
+    const { job, canceled } = enqueueAcpJobCancelingQueuedRecoveries(
+      makeRequest({
+        userMessageId: "user-atomic-new-turn",
+        assistantMessageId: "assistant-atomic-new-turn",
+        assistantDate: "2026-03-08T00:01:00.000Z",
+      }) as any,
+    );
+
+    expect(job.state).toBe("queued");
+    expect(canceled.map((row) => row.op_id)).toEqual([recovery.op_id]);
+    expect(getAcpJobByOpId(recovery.op_id)).toMatchObject({
+      state: "canceled",
+      error: "superseded by a newer user turn",
+    });
+  });
+
+  it("does not cancel recovery when the original user enqueue is redelivered", () => {
+    const request = makeRequest({
+      userMessageId: "user-redelivered",
+      assistantMessageId: "assistant-redelivered",
+      assistantDate: "2026-03-08T00:00:00.000Z",
+    }) as any;
+    const original = enqueueAcpJob(request);
+    const recovery = enqueueAcpJob(
+      {
+        ...makeRequest({
+          userMessageId: "user-redelivery-recovery",
+          assistantMessageId: "assistant-redelivery-recovery",
+          assistantDate: "2026-03-08T00:01:00.000Z",
+        }),
+        recovery_parent_op_id: original.op_id,
+        recovery_reason: "lost turn",
+        recovery_count: 1,
+      } as any,
+      { available_at: Date.now() + 15 * 60_000 },
+    );
+
+    const result = enqueueAcpJobCancelingQueuedRecoveries(request);
+
+    expect(result.job.op_id).toBe(original.op_id);
+    expect(result.canceled).toEqual([]);
+    expect(getAcpJobByOpId(recovery.op_id)?.state).toBe("queued");
+  });
+
+  it("cancels queued recovery jobs when a user turn supersedes them", () => {
+    const request = {
+      ...makeRequest({
+        userMessageId: "user-canceled-recovery",
+        assistantMessageId: "assistant-canceled-recovery",
+        assistantDate: "2026-03-08T00:00:00.000Z",
+      }),
+      recovery_parent_op_id: "parent-canceled-recovery",
+      recovery_reason: "model capacity",
+      recovery_count: 1,
+    };
+    const queued = enqueueAcpJob(request as any, {
+      available_at: Date.now() + 15 * 60_000,
+    });
+
+    const canceled = cancelQueuedRecoveryJobsForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+    });
+
+    expect(canceled.map((row) => row.op_id)).toEqual([queued.op_id]);
+    expect(getAcpJobByOpId(queued.op_id)).toMatchObject({
+      state: "canceled",
+      error: "superseded by a newer user turn",
+    });
+  });
+
   it("reserves a continuation for its retained runtime worker", () => {
     const queued = enqueueAcpJob(
       makeRequest({
@@ -706,6 +944,46 @@ describe("acp job queue ordering", () => {
     ).toEqual({ ok: true });
   });
 
+  it("admits a human turn that atomically supersedes a queued recovery", () => {
+    const recoveryRequest = {
+      ...makeRequest({
+        userMessageId: "user-delayed-recovery-admission",
+        assistantMessageId: "assistant-delayed-recovery-admission",
+        assistantDate: "2026-03-08T00:00:14.100Z",
+      }),
+      recovery_parent_op_id: "failed-parent-admission",
+      recovery_reason: "model capacity",
+      recovery_count: 1,
+    };
+    enqueueAcpJob(recoveryRequest, {
+      available_at: Date.now() + 15 * 60_000,
+    });
+    const humanRequest = makeRequest({
+      userMessageId: "user-superseding-recovery",
+      assistantMessageId: "assistant-superseding-recovery",
+      assistantDate: "2026-03-08T00:00:14.200Z",
+    });
+    const limits = {
+      queuedPerAccount: 1,
+      queuedPerThread: 1,
+      created5hPerAccount: 100,
+      created7dPerAccount: 100,
+      runningPerAccount: 100,
+      runningPerProject: 100,
+      activeAutomationsPerProject: 100,
+    };
+
+    expect(admitAcpJobCreation(humanRequest, limits)).toMatchObject({
+      ok: false,
+      limit: "queued_per_account",
+    });
+    expect(
+      admitAcpJobCreation(humanRequest, limits, Date.now(), {
+        supersedesQueuedRecoveries: true,
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it("maps membership effective limits into ACP admission limits", () => {
     const defaults = {
       queuedPerAccount: 1000,
@@ -869,6 +1147,39 @@ describe("acp job queue ordering", () => {
     );
   });
 
+  it("durably stores and clears terminal recovery intent", () => {
+    const job = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-terminal-recovery-intent",
+        assistantMessageId: "assistant-terminal-recovery-intent",
+        assistantDate: "2026-03-08T00:00:03.600Z",
+      }),
+    );
+
+    setAcpJobState({
+      op_id: job.op_id,
+      state: "error",
+      error: "Codex app-server exited",
+      recovery_code: "codex_app_server_exited",
+      recovery_detail: "exit code 137",
+    });
+
+    expect(listAcpJobsWithRecoveryIntent()).toEqual([
+      expect.objectContaining({
+        op_id: job.op_id,
+        state: "error",
+        recovery_code: "codex_app_server_exited",
+        recovery_detail: "exit code 137",
+      }),
+    ]);
+    clearAcpJobRecoveryIntent(job.op_id);
+    expect(listAcpJobsWithRecoveryIntent()).toEqual([]);
+    expect(getAcpJobByOpId(job.op_id)).toMatchObject({
+      recovery_code: null,
+      recovery_detail: null,
+    });
+  });
+
   it("can resend a canceled queued job", async () => {
     const queued = enqueueAcpJob(
       makeRequest({
@@ -911,6 +1222,8 @@ describe("acp job queue ordering", () => {
       op_id: queued.op_id,
       state: "error",
       error: "Codex authentication expired.",
+      recovery_code: "codex_app_server_exited",
+      recovery_detail: "exit code 137",
     });
     const failed = getAcpJob({
       project_id: queued.project_id,
@@ -925,6 +1238,11 @@ describe("acp job queue ordering", () => {
       user_message_id: queued.user_message_id,
     });
     expect(resent?.state).toBe("queued");
+    expect(resent).toMatchObject({
+      recovery_code: null,
+      recovery_detail: null,
+    });
+    expect(listAcpJobsWithRecoveryIntent()).toEqual([]);
 
     const claimed = claimNextQueuedAcpJobForThread({
       project_id: queued.project_id,
@@ -932,5 +1250,11 @@ describe("acp job queue ordering", () => {
       thread_id: queued.thread_id,
     });
     expect(claimed?.op_id).toBe(queued.op_id);
+    setAcpJobState({
+      op_id: queued.op_id,
+      state: "error",
+      error: "The manual retry failed without a recoverable condition.",
+    });
+    expect(listAcpJobsWithRecoveryIntent()).toEqual([]);
   });
 });

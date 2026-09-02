@@ -1743,6 +1743,8 @@ export interface Projects {
 
   createCollabInvite: (opts: {
     account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
     project_id: string;
     invitee_account_id: string;
     message?: string;
@@ -2464,6 +2466,7 @@ export interface Projects {
   getCodexUsageStatus: (opts: {
     account_id?: string;
     project_id: string;
+    include_models?: boolean;
     timeout?: number;
   }) => Promise<CodexUsageStatusInfo>;
 

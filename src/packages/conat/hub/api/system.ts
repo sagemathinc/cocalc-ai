@@ -799,6 +799,28 @@ export interface CodexPaymentSourceInfo {
   unavailableReason?: string;
 }
 
+export interface CodexModelReasoningEffortInfo {
+  id: string;
+  description: string;
+  default?: boolean;
+}
+
+export interface CodexModelServiceTierInfo {
+  id: string;
+  label: string;
+  description: string;
+  default?: boolean;
+}
+
+export interface CodexModelCapabilityInfo {
+  model: string;
+  displayName: string;
+  description: string;
+  reasoning: CodexModelReasoningEffortInfo[];
+  serviceTiers: CodexModelServiceTierInfo[];
+  default?: boolean;
+}
+
 export interface CodexUsageStatusInfo {
   available: boolean;
   checkedAt: string;
@@ -811,10 +833,12 @@ export interface CodexUsageStatusInfo {
   account?: unknown;
   rateLimits?: unknown;
   tokenUsage?: unknown;
+  models?: CodexModelCapabilityInfo[];
   errors?: {
     account?: string;
     rateLimits?: string;
     tokenUsage?: string;
+    models?: string;
   };
   reason?: string;
 }
@@ -2775,6 +2799,7 @@ export interface System {
   getCodexUsageStatus: (opts: {
     account_id?: string;
     project_id?: string;
+    include_models?: boolean;
     timeout?: number;
   }) => Promise<CodexUsageStatusInfo>;
 

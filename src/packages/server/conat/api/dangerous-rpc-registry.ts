@@ -258,6 +258,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "admin-only bounded and audited project tree fingerprint inspection without file contents, paths, or symlink targets",
   },
+  "adminHost.intrusionSnapshot": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "admin-only bounded and audited read-only host integrity snapshot without file contents, key material, argv, or process environments",
+  },
   "adminSupport.update": {
     decision: "fresh-auth-required",
     reason: "posts comments or changes customer-visible Zendesk ticket state",
@@ -910,8 +915,9 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "projects.createCollabInvite": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
+    decision: "fresh-auth-required",
+    reason:
+      "direct admin collaborator grants require fresh auth; ordinary invitations retain project authorization",
   },
   "projects.createSnapshot": {
     decision: "fresh-auth-not-required",

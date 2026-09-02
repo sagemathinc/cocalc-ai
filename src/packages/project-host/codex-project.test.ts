@@ -1247,7 +1247,7 @@ describe("initCodexProjectRunner", () => {
       account_id: "00000000-0000-4000-8000-000000000001",
       project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       autostart: true,
-      timeout: 90000,
+      timeout: 180000,
     });
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
@@ -1291,7 +1291,7 @@ describe("initCodexProjectRunner", () => {
       account_id: "00000000-0000-4000-8000-000000000001",
       project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       autostart: true,
-      timeout: 90000,
+      timeout: 180000,
     });
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });

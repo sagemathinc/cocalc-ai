@@ -45,6 +45,7 @@ import {
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import type {
+  CodexModelCapabilityInfo,
   CodexPaymentSourceInfo,
   CodexUsageStatusInfo,
 } from "@cocalc/conat/hub/api/system";
@@ -135,7 +136,74 @@ type ModelOption = {
   label: string;
   description?: string;
   reasoning?: CodexReasoningLevel[];
+  serviceTiers?: string[];
+  disabled?: boolean;
 };
+
+function staticCodexModelOptions(): ModelOption[] {
+  return DEFAULT_CODEX_MODELS.map((model) => ({
+    value: model.name,
+    label: model.name,
+    description: model.description,
+    reasoning: model.reasoning,
+    serviceTiers: model.serviceTiers?.map(({ id }) => id),
+  }));
+}
+
+const CODEX_REASONING_LEVELS = new Map(
+  DEFAULT_CODEX_MODELS.flatMap((model) => model.reasoning ?? []).map(
+    (level) => [level.id, level],
+  ),
+);
+
+function catalogReasoningLevels(
+  model: CodexModelCapabilityInfo,
+): CodexReasoningLevel[] {
+  return model.reasoning.flatMap((reasoning) => {
+    const known = CODEX_REASONING_LEVELS.get(reasoning.id as CodexReasoningId);
+    if (!known) return [];
+    return [
+      {
+        ...known,
+        description: reasoning.description || known.description,
+        default: reasoning.default,
+      },
+    ];
+  });
+}
+
+export function codexModelOptionsForStatus(
+  status?: CodexUsageStatusInfo,
+): ModelOption[] {
+  const catalog = status?.models;
+  if (!catalog?.length) return staticCodexModelOptions();
+  const staticModels = new Map(
+    DEFAULT_CODEX_MODELS.map((model) => [model.name, model]),
+  );
+  const advertised = new Set(catalog.map(({ model }) => model));
+  return [
+    ...catalog.map((model) => {
+      const fallback = staticModels.get(model.model);
+      return {
+        value: model.model,
+        label: model.model,
+        description: model.description || fallback?.description,
+        reasoning: catalogReasoningLevels(model),
+        serviceTiers: model.serviceTiers.map(({ id }) => id),
+      };
+    }),
+    ...DEFAULT_CODEX_MODELS.filter((model) => !advertised.has(model.name)).map(
+      (model) => ({
+        value: model.name,
+        label: model.name,
+        description: `${model.description ?? "Codex model"} Not available with the connected ChatGPT account.`,
+        reasoning: model.reasoning,
+        serviceTiers: model.serviceTiers?.map(({ id }) => id),
+        disabled: true,
+      }),
+    ),
+  ];
+}
 
 type LiteCodexLocalStatus = {
   installed: boolean;
@@ -423,16 +491,19 @@ export function CodexConfigButton({
     PillSegment | undefined
   >(undefined);
   const lastAppliedThreadRef = React.useRef<string | undefined>(undefined);
+  const lastCodexUsageScopeRef = React.useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    const initialModels = DEFAULT_CODEX_MODELS.map((m) => ({
-      value: m.name,
-      label: m.name,
-      description: m.description,
-      reasoning: m.reasoning,
-    }));
-    setModels(initialModels);
+    setModels(staticCodexModelOptions());
   }, []);
+
+  useEffect(() => {
+    setModels(
+      paymentSource?.source === "subscription"
+        ? codexModelOptionsForStatus(codexUsageStatus)
+        : staticCodexModelOptions(),
+    );
+  }, [codexUsageStatus, paymentSource?.source]);
 
   const threadConfigKey = codexThreadConfigKey(threadConfig);
 
@@ -620,19 +691,23 @@ export function CodexConfigButton({
       setCodexUsageStatus(undefined);
       setCodexUsageLoading(false);
       setCodexUsageStale(false);
+      lastCodexUsageScopeRef.current = undefined;
       return;
     }
     let cancelled = false;
+    const scope = `${accountId ?? ""}\0${projectId ?? ""}`;
+    const scopeChanged = lastCodexUsageScopeRef.current !== scope;
+    lastCodexUsageScopeRef.current = scope;
     const cached = readCachedCodexUsageStatus({ accountId });
     if (cached) {
       setCodexUsageStatus(cached.status);
       setCodexUsageStale(true);
-    } else {
+    } else if (scopeChanged) {
       setCodexUsageStatus(undefined);
       setCodexUsageStale(false);
     }
     setCodexUsageLoading(true);
-    void getLiveCodexUsageStatus({ projectId })
+    void getLiveCodexUsageStatus({ projectId, includeModels: true })
       .then((status: CodexUsageStatusInfo) => {
         if (cancelled) return;
         setCodexUsageStatus(status);
@@ -663,7 +738,13 @@ export function CodexConfigButton({
   const reasoningLabel =
     reasoningOptions.find((option) => option.value === selectedReasoningValue)
       ?.label ?? selectedReasoningValue;
-  const fastModeSupported = codexModelSupportsFastMode(selectedModelValue);
+  const selectedModelOption = models.find(
+    (model) => model.value === selectedModelValue,
+  );
+  const selectedModelUnavailable = selectedModelOption?.disabled === true;
+  const fastModeSupported =
+    selectedModelOption?.serviceTiers?.includes("fast") ??
+    codexModelSupportsFastMode(selectedModelValue);
   const effectiveServiceTier =
     selectedServiceTierValue === "fast" && fastModeSupported
       ? "fast"
@@ -686,6 +767,54 @@ export function CodexConfigButton({
     });
   };
 
+  const modelSupportsFastMode = (modelValue?: string): boolean =>
+    models
+      .find((model) => model.value === modelValue)
+      ?.serviceTiers?.includes("fast") ??
+    codexModelSupportsFastMode(modelValue);
+
+  useEffect(() => {
+    if (!open || paymentSource?.source !== "subscription") return;
+    const catalog = codexUsageStatus?.models;
+    if (!catalog?.length) return;
+    const current = form.getFieldsValue([
+      "model",
+      "reasoning",
+      "serviceTier",
+    ]) as Partial<CodexThreadConfig>;
+    const model = current.model ?? selectedModelValue;
+    if (!model || !catalog.some((entry) => entry.model === model)) return;
+    const reasoning = getReasoningForModel({
+      models,
+      modelValue: model,
+      desired: current.reasoning ?? selectedReasoningValue,
+    });
+    const serviceTier =
+      (current.serviceTier ?? selectedServiceTierValue) === "fast" &&
+      modelSupportsFastMode(model)
+        ? "fast"
+        : "standard";
+    const patch: Partial<CodexThreadConfig> = {};
+    if ((current.reasoning ?? selectedReasoningValue) !== reasoning) {
+      patch.reasoning = reasoning;
+    }
+    if ((current.serviceTier ?? selectedServiceTierValue) !== serviceTier) {
+      patch.serviceTier = serviceTier;
+    }
+    if (!Object.keys(patch).length) return;
+    form.setFieldsValue(patch);
+    setValue((currentValue) => ({ ...(currentValue ?? {}), ...patch }));
+  }, [
+    codexUsageStatus?.models,
+    form,
+    models,
+    open,
+    paymentSource?.source,
+    selectedModelValue,
+    selectedReasoningValue,
+    selectedServiceTierValue,
+  ]);
+
   const normalizeConfigForSave = (
     values: Partial<CodexThreadConfig>,
   ): Partial<CodexThreadConfig> => {
@@ -695,10 +824,10 @@ export function CodexConfigButton({
       ...values,
       sessionId: normalizeCodexSessionId(values?.sessionId),
       sessionMode,
-      serviceTier: resolveCodexServiceTier({
-        model: values?.model,
-        serviceTier: values?.serviceTier,
-      }),
+      serviceTier:
+        values?.serviceTier === "fast" && modelSupportsFastMode(values?.model)
+          ? "fast"
+          : "standard",
       allowWrite: sessionMode !== "read-only",
     };
   };
@@ -725,7 +854,7 @@ export function CodexConfigButton({
         modelValue: patch.model,
         desired: nextValues.reasoning,
       });
-      if (!codexModelSupportsFastMode(patch.model)) {
+      if (!modelSupportsFastMode(patch.model)) {
         nextValues.serviceTier = "standard";
       }
     }
@@ -754,6 +883,7 @@ export function CodexConfigButton({
     items: models.map((model) => ({
       key: model.value,
       label: model.label,
+      disabled: model.disabled,
       title: model.description,
     })),
     onClick: ({ domEvent, key }) => {
@@ -825,7 +955,10 @@ export function CodexConfigButton({
     },
     onMouseEnter: () => {
       setHoveredPillSegment(segment);
-      if (segment === "source" && paymentSource?.source === "subscription") {
+      if (
+        (segment === "source" || segment === "model") &&
+        paymentSource?.source === "subscription"
+      ) {
         setCodexUsageRequested(true);
       }
     },
@@ -1274,51 +1407,68 @@ export function CodexConfigButton({
                     }
                   />
                 ) : (
-                  <div style={gridTwoColStyle}>
-                    <Form.Item label="Model" name="model" style={formItemStyle}>
-                      <Select
-                        placeholder="e.g., gpt-5.6-sol"
-                        options={models}
-                        optionRender={(option) =>
-                          renderOptionWithDescription({
-                            title: `${option.data.label}`,
-                            description: option.data.description,
-                          })
-                        }
-                        showSearch
-                        allowClear
-                        onChange={(val) => {
-                          const selected = models.find((m) => m.value === val);
-                          if (selected?.reasoning?.length) {
-                            const def =
-                              selected.reasoning.find((r) => r.default)?.id ??
-                              selected.reasoning[0]?.id;
-                            form.setFieldsValue({ reasoning: def });
-                          }
-                          if (!codexModelSupportsFastMode(val)) {
-                            form.setFieldsValue({ serviceTier: "standard" });
-                          }
-                        }}
+                  <div>
+                    {selectedModelUnavailable ? (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        style={{ marginBottom: 12 }}
+                        title="Model unavailable for this ChatGPT account"
+                        description="Choose an enabled model before starting the next Codex turn. Model access depends on the connected ChatGPT plan."
                       />
-                    </Form.Item>
-                    <Form.Item
-                      label="Reasoning level"
-                      name="reasoning"
-                      style={formItemStyle}
-                    >
-                      <Select
-                        placeholder="Select reasoning"
-                        options={reasoningOptions}
-                        optionRender={(option) =>
-                          renderOptionWithDescription({
-                            title: `${option.data.label}${
-                              option.data.default ? " (default)" : ""
-                            }`,
-                            description: option.data.description,
-                          })
-                        }
-                      />
-                    </Form.Item>
+                    ) : null}
+                    <div style={gridTwoColStyle}>
+                      <Form.Item
+                        label="Model"
+                        name="model"
+                        style={formItemStyle}
+                      >
+                        <Select
+                          placeholder="e.g., gpt-5.6-sol"
+                          options={models}
+                          optionRender={(option) =>
+                            renderOptionWithDescription({
+                              title: `${option.data.label}`,
+                              description: option.data.description,
+                            })
+                          }
+                          showSearch
+                          allowClear
+                          onChange={(val) => {
+                            const selected = models.find(
+                              (m) => m.value === val,
+                            );
+                            if (selected?.reasoning?.length) {
+                              const def =
+                                selected.reasoning.find((r) => r.default)?.id ??
+                                selected.reasoning[0]?.id;
+                              form.setFieldsValue({ reasoning: def });
+                            }
+                            if (!modelSupportsFastMode(val)) {
+                              form.setFieldsValue({ serviceTier: "standard" });
+                            }
+                          }}
+                        />
+                      </Form.Item>
+                      <Form.Item
+                        label="Reasoning level"
+                        name="reasoning"
+                        style={formItemStyle}
+                      >
+                        <Select
+                          placeholder="Select reasoning"
+                          options={reasoningOptions}
+                          optionRender={(option) =>
+                            renderOptionWithDescription({
+                              title: `${option.data.label}${
+                                option.data.default ? " (default)" : ""
+                              }`,
+                              description: option.data.description,
+                            })
+                          }
+                        />
+                      </Form.Item>
+                    </div>
                   </div>
                 )}
                 <div style={gridTwoColStyle}>

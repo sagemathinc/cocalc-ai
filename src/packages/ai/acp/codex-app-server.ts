@@ -16,6 +16,7 @@ import {
   type CodexSessionConfig,
 } from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
+import type { CodexModelCapabilityInfo } from "@cocalc/conat/hub/api/system";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import type {
@@ -48,7 +49,29 @@ const TURN_NOTIFICATION_IDLE_TIMEOUT_MS = Math.max(
   REQUEST_TIMEOUT_MS,
   Number(process.env.COCALC_CODEX_APP_SERVER_NOTIFICATION_TIMEOUT_MS ?? 60_000),
 );
-const TURN_RECONCILE_FAILURE_LIMIT = 3;
+function getTurnNotificationIdleTimeoutMs(): number {
+  const override = Number(
+    process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS,
+  );
+  return Number.isFinite(override) && override > 0
+    ? Math.max(10, override)
+    : TURN_NOTIFICATION_IDLE_TIMEOUT_MS;
+}
+function getTurnReconcileFailureLimit(): number {
+  return Math.max(
+    1,
+    Number(process.env.COCALC_CODEX_TURN_RECONCILE_FAILURE_LIMIT ?? 3),
+  );
+}
+export const CODEX_ACP_RECOVERY_ERROR_CODE = {
+  appServerExited: "codex_app_server_exited",
+  commandBlocked: "codex_command_blocked",
+  modelCapacity: "codex_model_capacity",
+  resourceKilled: "codex_resource_killed",
+  turnLost: "codex_turn_lost",
+} as const;
+export type CodexAcpRecoveryErrorCode =
+  (typeof CODEX_ACP_RECOVERY_ERROR_CODE)[keyof typeof CODEX_ACP_RECOVERY_ERROR_CODE];
 const APP_SERVER_IDLE_EXIT_MS = Math.max(
   0,
   Number(process.env.COCALC_CODEX_APP_SERVER_IDLE_EXIT_MS ?? 10 * 60_000),
@@ -424,10 +447,12 @@ export type CodexAppServerAccountStatus = {
   account?: any;
   rateLimits?: any;
   tokenUsage?: any;
+  models?: CodexModelCapabilityInfo[];
   errors?: {
     account?: string;
     rateLimits?: string;
     tokenUsage?: string;
+    models?: string;
   };
 };
 
@@ -547,6 +572,10 @@ type RetryableAppServerFailureKind =
   | "model-capacity"
   | "timeout"
   | "stream-disconnect";
+type InProcessRetryableAppServerFailureKind = Exclude<
+  RetryableAppServerFailureKind,
+  "model-capacity"
+>;
 
 type RetryableAppServerError = Error & {
   retryableAppServerError: true;
@@ -554,6 +583,11 @@ type RetryableAppServerError = Error & {
   threadId?: string;
   turnId?: string;
   stderrTail?: string[];
+};
+
+type RecoverableTurnError = Error & {
+  recoverableTurnError: true;
+  code: Exclude<CodexAcpRecoveryErrorCode, "codex_model_capacity">;
 };
 
 type RequestEntry = {
@@ -956,20 +990,6 @@ function getRemoteCompactRetryDelayMs(): number {
   );
 }
 
-function getModelCapacityRetryLimit(): number {
-  return Math.max(
-    0,
-    Number(process.env.COCALC_CODEX_MODEL_CAPACITY_MAX_RETRIES ?? 2),
-  );
-}
-
-function getModelCapacityRetryDelayMs(): number {
-  return Math.max(
-    1_000,
-    Number(process.env.COCALC_CODEX_MODEL_CAPACITY_RETRY_DELAY_MS ?? 60_000),
-  );
-}
-
 function getTimeoutRetryLimit(): number {
   return Math.max(0, Number(process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES ?? 2));
 }
@@ -1012,8 +1032,52 @@ function isRetryableRemoteCompactTimeoutText(text: string): boolean {
 
 function isRetryableModelCapacityText(text: string): boolean {
   const normalized = stripAnsi(`${text ?? ""}`).toLowerCase();
-  return normalized.includes(
-    "selected model is at capacity. please try a different model.",
+  return (
+    normalized.includes("selected model is at capacity") ||
+    normalized.includes("model is at capacity") ||
+    normalized.includes("models are at capacity")
+  );
+}
+
+function isBlockedCommandErrorText(text: string): boolean {
+  return stripAnsi(`${text ?? ""}`)
+    .toLowerCase()
+    .includes("codex blocked a command:");
+}
+
+function isResourceKilledErrorText(text: string): boolean {
+  const normalized = stripAnsi(`${text ?? ""}`).toLowerCase();
+  return (
+    normalized.includes("killed by sigkill (exit code 137)") ||
+    normalized.includes("codex app-server already exited: 137")
+  );
+}
+
+function createRecoverableTurnError({
+  code,
+  message,
+}: {
+  code: RecoverableTurnError["code"];
+  message: string;
+}): RecoverableTurnError {
+  return Object.assign(new Error(message), {
+    recoverableTurnError: true as const,
+    code,
+  });
+}
+
+function isRecoverableTurnError(err: unknown): err is RecoverableTurnError {
+  return !!(err as RecoverableTurnError)?.recoverableTurnError;
+}
+
+function threadStatusIsActive(status: unknown): boolean {
+  if (typeof status === "string") {
+    return status.toLowerCase() === "active";
+  }
+  return (
+    !!status &&
+    typeof status === "object" &&
+    `${(status as { type?: unknown }).type ?? ""}`.toLowerCase() === "active"
   );
 }
 
@@ -1135,13 +1199,6 @@ function formatRemoteCompactRetryExhaustedError(error: string): string {
   return normalized ? `${normalized}\n\n${guidance}` : guidance;
 }
 
-function formatModelCapacityRetryExhaustedError(error: string): string {
-  const normalized = `${error ?? ""}`.trim();
-  const guidance =
-    "The selected model stayed at capacity after automatic retries. Try again later, or switch to a different model if the turn is urgent.";
-  return normalized ? `${normalized}\n\n${guidance}` : guidance;
-}
-
 function formatTimeoutRetryExhaustedError(error: string): string {
   const normalized = `${error ?? ""}`.trim();
   const guidance =
@@ -1168,23 +1225,15 @@ function formatRetryDelay(ms: number): string {
   return `${ms}ms`;
 }
 
-function getRetryPolicyForFailure(kind: RetryableAppServerFailureKind): {
+function getRetryPolicyForFailure(
+  kind: InProcessRetryableAppServerFailureKind,
+): {
   maxRetries: number;
   retryDelayMs: number;
   retryMessage: (attempt: number, maxRetries: number) => string;
   exhaustedMessage: (error: string) => string;
 } {
   switch (kind) {
-    case "model-capacity": {
-      const retryDelayMs = getModelCapacityRetryDelayMs();
-      return {
-        maxRetries: getModelCapacityRetryLimit(),
-        retryDelayMs,
-        retryMessage: (attempt, maxRetries) =>
-          `Selected model is at capacity. Retrying in ${formatRetryDelay(retryDelayMs * attempt)} (${attempt}/${maxRetries})...`,
-        exhaustedMessage: formatModelCapacityRetryExhaustedError,
-      };
-    }
     case "timeout": {
       const retryDelayMs = getTimeoutRetryDelayMs();
       return {
@@ -1724,6 +1773,103 @@ function settledValue<T>(result: PromiseSettledResult<T>): {
   return { error: `${result.reason}` };
 }
 
+const MAX_MODEL_CATALOG_ENTRIES = 100;
+const MAX_MODEL_REASONING_EFFORTS = 20;
+const MAX_MODEL_SERVICE_TIERS = 20;
+
+function boundedCatalogText(value: unknown, maxLength = 2_000): string {
+  if (typeof value !== "string") return "";
+  const text = value.trim();
+  return text.length <= maxLength ? text : text.slice(0, maxLength);
+}
+
+function catalogLabel(value: string): string {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function catalogReasoningId(value: unknown): string {
+  const id = boundedCatalogText(value, 100);
+  return id === "xhigh" ? "extra_high" : id;
+}
+
+function normalizeCodexModelCatalog(
+  value: unknown,
+): CodexModelCapabilityInfo[] {
+  const data = (value as { data?: unknown })?.data;
+  if (!Array.isArray(data)) {
+    throw Error("model/list returned an invalid response");
+  }
+  const models: CodexModelCapabilityInfo[] = [];
+  const seen = new Set<string>();
+  for (const raw of data.slice(0, MAX_MODEL_CATALOG_ENTRIES)) {
+    if (raw == null || typeof raw !== "object") continue;
+    const entry = raw as Record<string, unknown>;
+    const model = boundedCatalogText(entry.model ?? entry.id, 200);
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    const defaultReasoningEffort = catalogReasoningId(
+      entry.defaultReasoningEffort,
+    );
+    const reasoning = Array.isArray(entry.supportedReasoningEfforts)
+      ? entry.supportedReasoningEfforts
+          .slice(0, MAX_MODEL_REASONING_EFFORTS)
+          .flatMap((rawEffort): CodexModelCapabilityInfo["reasoning"] => {
+            if (rawEffort == null || typeof rawEffort !== "object") return [];
+            const effort = rawEffort as Record<string, unknown>;
+            const id = catalogReasoningId(effort.reasoningEffort);
+            if (!id) return [];
+            return [
+              {
+                id,
+                description: boundedCatalogText(effort.description),
+                ...(id === defaultReasoningEffort ? { default: true } : {}),
+              },
+            ];
+          })
+      : [];
+    const defaultServiceTier = boundedCatalogText(
+      entry.defaultServiceTier,
+      100,
+    );
+    const rawServiceTiers = [
+      ...(Array.isArray(entry.serviceTiers) ? entry.serviceTiers : []),
+      ...(Array.isArray(entry.additionalSpeedTiers)
+        ? entry.additionalSpeedTiers.map((id) => ({ id }))
+        : []),
+    ];
+    const seenServiceTiers = new Set<string>();
+    const serviceTiers = rawServiceTiers
+      .slice(0, MAX_MODEL_SERVICE_TIERS)
+      .flatMap((rawTier): CodexModelCapabilityInfo["serviceTiers"] => {
+        if (rawTier == null || typeof rawTier !== "object") return [];
+        const tier = rawTier as Record<string, unknown>;
+        const id = boundedCatalogText(tier.id, 100);
+        if (!id || seenServiceTiers.has(id)) return [];
+        seenServiceTiers.add(id);
+        return [
+          {
+            id,
+            label: boundedCatalogText(tier.name, 200) || catalogLabel(id),
+            description: boundedCatalogText(tier.description),
+            ...(id === defaultServiceTier ? { default: true } : {}),
+          },
+        ];
+      });
+    models.push({
+      model,
+      displayName:
+        boundedCatalogText(entry.displayName, 200) || catalogLabel(model),
+      description: boundedCatalogText(entry.description),
+      reasoning,
+      serviceTiers,
+      default: entry.isDefault === true || undefined,
+    });
+  }
+  return models;
+}
+
 function isRateLimitsAuthError(error: string | undefined): boolean {
   const normalized = `${error ?? ""}`.toLowerCase();
   return (
@@ -1740,6 +1886,7 @@ export async function getCodexAppServerAccountStatus(opts: {
   env?: NodeJS.ProcessEnv;
   appServerLogin?: CodexAppServerLoginHint;
   includeTokenUsage?: boolean;
+  includeModels?: boolean;
   timeoutMs?: number;
 }): Promise<CodexAppServerAccountStatus> {
   const timeoutMs = opts.timeoutMs ?? ACCOUNT_STATUS_REQUEST_TIMEOUT_MS;
@@ -1818,10 +1965,30 @@ export async function getCodexAppServerAccountStatus(opts: {
     const tokenUsage = tokenUsageResult
       ? settledValue(tokenUsageResult)
       : { value: undefined };
+    let models: {
+      value?: CodexModelCapabilityInfo[];
+      error?: string;
+    } = { value: undefined };
+    if (opts.includeModels) {
+      try {
+        models = {
+          value: normalizeCodexModelCatalog(
+            await client.request(
+              "model/list",
+              { limit: MAX_MODEL_CATALOG_ENTRIES, includeHidden: false },
+              timeoutMs,
+            ),
+          ),
+        };
+      } catch (reason) {
+        models = { error: `${reason}` };
+      }
+    }
     const errors: CodexAppServerAccountStatus["errors"] = {};
     if (account.error) errors.account = account.error;
     if (rateLimits.error) errors.rateLimits = rateLimits.error;
     if (tokenUsage.error) errors.tokenUsage = tokenUsage.error;
+    if (models.error) errors.models = models.error;
     const normalizedErrors = Object.keys(errors).length ? errors : undefined;
     return {
       authentication: classifyCodexAuthentication({
@@ -1832,6 +1999,7 @@ export async function getCodexAppServerAccountStatus(opts: {
       account: account.value,
       rateLimits: rateLimits.value,
       tokenUsage: tokenUsage.value,
+      models: models.value,
       errors: normalizedErrors,
     };
   } finally {
@@ -2288,8 +2456,42 @@ export class CodexAppServerAgent implements AcpAgent {
         }
         return;
       } catch (err) {
+        const terminalError = (err as Error)?.message ?? `${err}`;
+        const terminalRecoveryCode = isBlockedCommandErrorText(terminalError)
+          ? CODEX_ACP_RECOVERY_ERROR_CODE.commandBlocked
+          : isResourceKilledErrorText(terminalError)
+            ? CODEX_ACP_RECOVERY_ERROR_CODE.resourceKilled
+            : undefined;
+        if (terminalRecoveryCode) {
+          await request.stream({
+            type: "error",
+            error: terminalError,
+            code: terminalRecoveryCode,
+            retryable: true,
+          });
+          return;
+        }
+        if (isRecoverableTurnError(err)) {
+          await request.stream({
+            type: "error",
+            error: err.message,
+            code: err.code,
+            retryable: true,
+          });
+          return;
+        }
         if (isRetryableAppServerError(err)) {
-          const policy = getRetryPolicyForFailure(err.kind);
+          const retryKind = err.kind;
+          if (retryKind === "model-capacity") {
+            await request.stream({
+              type: "error",
+              error: err.message,
+              code: CODEX_ACP_RECOVERY_ERROR_CODE.modelCapacity,
+              retryable: true,
+            });
+            return;
+          }
+          const policy = getRetryPolicyForFailure(retryKind);
           maxRetries = policy.maxRetries;
           retryDelayMs = policy.retryDelayMs;
           retryMessage = policy.retryMessage;
@@ -3236,7 +3438,7 @@ export class CodexAppServerAgent implements AcpAgent {
                 return params?.turn?.id === turnId;
               }
               return params?.turnId === turnId;
-            }, TURN_NOTIFICATION_IDLE_TIMEOUT_MS);
+            }, getTurnNotificationIdleTimeoutMs());
           } catch (err) {
             // Reconciliation can recover a dropped notification from a live
             // app-server. It cannot recover a process that has already exited;
@@ -3255,7 +3457,14 @@ export class CodexAppServerAgent implements AcpAgent {
                 (candidate) => candidate?.id === turnId,
               );
               const status = `${reconciledTurn?.status ?? ""}`;
-              if (status === "inProgress") {
+              const threadStatus = result?.thread?.status;
+              // Codex 0.151 paginated histories persist a turn only when it
+              // completes. thread/read can therefore omit a live turn even
+              // though its thread-level status is authoritatively active.
+              if (
+                status === "inProgress" ||
+                threadStatusIsActive(threadStatus)
+              ) {
                 reconciliationFailures = 0;
                 if (Date.now() - lastReconciliationNoticeAt >= 5 * 60_000) {
                   lastReconciliationNoticeAt = Date.now();
@@ -3286,12 +3495,13 @@ export class CodexAppServerAgent implements AcpAgent {
                 waitError: `${err}`,
                 reconcileError: `${reconcileErr}`,
               });
-              if (reconciliationFailures < TURN_RECONCILE_FAILURE_LIMIT) {
+              if (reconciliationFailures < getTurnReconcileFailureLimit()) {
                 continue;
               }
-              throw new Error(
-                `Unable to confirm Codex turn state after ${reconciliationFailures} reconciliation attempts: ${reconcileErr}`,
-              );
+              throw createRecoverableTurnError({
+                code: CODEX_ACP_RECOVERY_ERROR_CODE.turnLost,
+                message: `Unable to confirm Codex turn state after ${reconciliationFailures} reconciliation attempts: ${reconcileErr}`,
+              });
             }
           }
           if (notification.method === "turn/completed") {
@@ -3434,6 +3644,33 @@ export class CodexAppServerAgent implements AcpAgent {
         persistedTurnInfo,
         stderrTail,
       });
+      if (isRecoverableTurnError(err)) {
+        throw err;
+      }
+      if (
+        client.hasExited() &&
+        isBlockedCommandErrorText(userFacingPrimaryError)
+      ) {
+        throw createRecoverableTurnError({
+          code: CODEX_ACP_RECOVERY_ERROR_CODE.commandBlocked,
+          message: userFacingPrimaryError,
+        });
+      }
+      if (
+        client.hasExited() &&
+        isResourceKilledErrorText(userFacingPrimaryError)
+      ) {
+        throw createRecoverableTurnError({
+          code: CODEX_ACP_RECOVERY_ERROR_CODE.resourceKilled,
+          message: userFacingPrimaryError,
+        });
+      }
+      if (turnId && client.hasExited()) {
+        throw createRecoverableTurnError({
+          code: CODEX_ACP_RECOVERY_ERROR_CODE.appServerExited,
+          message: userFacingPrimaryError,
+        });
+      }
       const retryKind = getRetryableFailureKind(diagnosticError);
       if (
         retryKind &&

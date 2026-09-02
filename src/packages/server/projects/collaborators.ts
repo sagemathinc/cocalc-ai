@@ -1144,6 +1144,7 @@ export async function createCollabInvite({
   invite_context,
   invite_scope,
   direct,
+  trusted_admin,
   invite_role,
   read_policy,
 }: {
@@ -1154,6 +1155,8 @@ export async function createCollabInvite({
   invite_context?: Record<string, unknown>;
   invite_scope?: string;
   direct?: boolean;
+  /** Internal result of an admin check performed on the actor's home bay. */
+  trusted_admin?: boolean;
   invite_role?: Exclude<ProjectUserRole, "owner">;
   read_policy?: ProjectViewerReadPolicy | null;
 }): Promise<{
@@ -1172,18 +1175,21 @@ export async function createCollabInvite({
   if (invitee_account_id === account_id) {
     throw new Error("cannot invite yourself");
   }
-  await assertLocalProjectCollaborator({ account_id, project_id });
-  await assertCanManageProjectCollaborators({
-    account_id,
-    action: "invite collaborators",
-    project_id,
-  });
+  const actorIsAdmin = (direct && trusted_admin) || (await isAdmin(account_id));
+  if (!(direct && actorIsAdmin)) {
+    await assertLocalProjectCollaborator({ account_id, project_id });
+    await assertCanManageProjectCollaborators({
+      account_id,
+      action: "invite collaborators",
+      project_id,
+    });
+  }
   await ensureProjectCollabInviteEmailTokenSchema();
   const role = normalizeInviteRole(invite_role);
   const policy = normalizeInviteReadPolicy({ invite_role: role, read_policy });
 
   const pool = getPool();
-  const includeEmail = await isAdmin(account_id);
+  const includeEmail = actorIsAdmin;
   await expirePendingCollabInvites(pool);
   const normalizedMessage = await normalizeInviteMessageForAccount({
     account_id,
