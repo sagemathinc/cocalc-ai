@@ -578,13 +578,21 @@ describe("hub API argument transforms", () => {
       expect(args[0].account_id).toBe("account-1");
     }
 
-    await expect(
-      transformArgs({
-        name: "system.releaseProjectAppPrivateHostname",
-        args: [{ project_id: "spoofed-project", app_id: "app-1" }],
-        project_id: "project-1",
-      }),
-    ).rejects.toThrow("must be an account or host");
+    for (const name of [
+      "system.getProjectAppPrivateHostnamePolicy",
+      "system.inspectProjectAppPrivateHostname",
+      "system.listProjectAppPrivateHostnames",
+      "system.reserveProjectAppPrivateHostname",
+      "system.releaseProjectAppPrivateHostname",
+    ]) {
+      await expect(
+        transformArgs({
+          name,
+          args: [{ project_id: "spoofed-project", app_id: "app-1" }],
+          project_id: "project-1",
+        }),
+      ).resolves.toEqual([{ project_id: "project-1", app_id: "app-1" }]);
+    }
 
     await expect(
       transformArgs({
