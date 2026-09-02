@@ -114,6 +114,8 @@ import {
 } from "@cocalc/util/consts";
 import {
   createTemporaryR2ReadCredentials,
+  disposableRestoreInstanceName,
+  isRetryableDisposablePitrWalFailure,
   newDisposableRestoreWorkerIdentity,
   runDisposableGcpRestoreWorker,
   type DisposableGcpRestoreResult,
@@ -170,11 +172,19 @@ type PgBackRestApplicationStatus = {
 
 type PgBackRestRestoreStatus = {
   level?: string;
+  run_id?: string;
+  started_at?: string;
   tested_at?: string;
   backup_label?: string;
   pitr_target_time?: string;
   error?: string;
+  attempt?: number;
+  max_attempts?: number;
+  current_worker_run_id?: string | null;
+  current_worker_instance_name?: string | null;
+  current_worker_zone?: string | null;
   worker?: DisposableGcpRestoreResult | null;
+  worker_attempts?: DisposableGcpRestoreResult[];
 };
 
 type StoredBayBackupState = {
@@ -340,6 +350,7 @@ const DEFAULT_BAY_BACKUP_RESTORE_RETENTION_DAYS = 7;
 const DEFAULT_BAY_WAL_LOCAL_RETENTION_COUNT = 128;
 const DEFAULT_BAY_WAL_REMOTE_RETENTION_BACKUPS = 2;
 const BAY_BACKUP_RUN_LOCK_PREFIX = "bay-backup-full-snapshot";
+const BAY_RESTORE_TEST_RUN_LOCK_PREFIX = "bay-backup-restore-test";
 const DEFAULT_BAY_BACKUP_NICE_LEVEL = 10;
 const DEFAULT_BAY_BACKUP_IONICE_CLASS = 2;
 const DEFAULT_BAY_BACKUP_IONICE_LEVEL = 7;
@@ -360,6 +371,13 @@ class BayBackupAlreadyRunningError extends Error {
   constructor(bay_id: string) {
     super(`bay backup is already running for bay '${bay_id}'`);
     this.name = "BayBackupAlreadyRunningError";
+  }
+}
+
+class BayRestoreTestAlreadyRunningError extends Error {
+  constructor(bay_id: string) {
+    super(`bay restore test is already running for bay '${bay_id}'`);
+    this.name = "BayRestoreTestAlreadyRunningError";
   }
 }
 
@@ -391,6 +409,43 @@ async function withBayBackupRunLock<T>({
         ]);
       } catch (err) {
         logger.warn("failed to release bay backup advisory lock", {
+          bay_id,
+          err,
+        });
+      }
+    }
+    client.release();
+  }
+}
+
+async function withBayRestoreTestRunLock<T>({
+  bay_id,
+  fn,
+}: {
+  bay_id: string;
+  fn: () => Promise<T>;
+}): Promise<T> {
+  const lockKey = `${BAY_RESTORE_TEST_RUN_LOCK_PREFIX}:${bay_id}`;
+  const client: PoolClient = await getPool().connect();
+  let locked = false;
+  try {
+    const { rows } = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+      [lockKey],
+    );
+    locked = rows[0]?.locked === true;
+    if (!locked) {
+      throw new BayRestoreTestAlreadyRunningError(bay_id);
+    }
+    return await fn();
+  } finally {
+    if (locked) {
+      try {
+        await client.query("SELECT pg_advisory_unlock(hashtext($1))", [
+          lockKey,
+        ]);
+      } catch (err) {
+        logger.warn("failed to release bay restore-test advisory lock", {
           bay_id,
           err,
         });
@@ -840,14 +895,27 @@ async function backupStatusIssue({
   path,
   timestamp_field,
   maximum_age_ms,
+  running_maximum_age_ms,
 }: {
   label: string;
   path: string;
   timestamp_field: string;
   maximum_age_ms: number;
+  running_maximum_age_ms?: number;
 }): Promise<string | undefined> {
   const value = await readJsonIfExists<Record<string, any>>(path);
   if (!value) return `${label}: status file is missing (${path})`;
+  if (value.level === "running") {
+    const startedAt = Date.parse(`${value.started_at ?? ""}`);
+    if (!Number.isFinite(startedAt)) {
+      return `${label}: running status has no valid started_at timestamp`;
+    }
+    const runningAge = Date.now() - startedAt;
+    if (runningAge <= (running_maximum_age_ms ?? maximum_age_ms)) {
+      return;
+    }
+    return `${label}: running restore drill is stalled (${Math.floor(runningAge / 60_000)} minutes since start)`;
+  }
   if (value.level !== "ok") {
     const reasons = Array.isArray(value.reasons)
       ? value.reasons.join("; ")
@@ -903,6 +971,23 @@ export async function runBayBackupHealthCheck({
     );
   }
   if (pgEnabled && sqliteEnabled) {
+    const restoreDrillTimeoutMs = Math.max(
+      30 * 60_000,
+      Number.parseInt(
+        `${process.env.COCALC_BAY_RESTORE_DRILL_GCP_TIMEOUT_MS ?? ""}`,
+        10,
+      ) || 4 * 60 * 60_000,
+    );
+    const restoreDrillWorkerAttempts = Math.max(
+      1,
+      Math.min(
+        2,
+        Number.parseInt(
+          `${process.env.COCALC_BAY_RESTORE_DRILL_GCP_WORKER_ATTEMPTS ?? ""}`,
+          10,
+        ) || 2,
+      ),
+    );
     checks.push(
       backupStatusIssue({
         label: "disposable PITR restore drill",
@@ -911,6 +996,8 @@ export async function runBayBackupHealthCheck({
           join(stateDir, "pgbackrest-restore-test-status.json"),
         timestamp_field: "tested_at",
         maximum_age_ms: 8 * 24 * 60 * 60_000,
+        running_maximum_age_ms:
+          restoreDrillTimeoutMs * restoreDrillWorkerAttempts + 60 * 60_000,
       }),
     );
   }
@@ -4271,6 +4358,7 @@ function mapPgBackRestRestoreReadiness({
   if (!latestBackupLabel) return legacy;
 
   const testedAt = `${restoreStatus?.tested_at ?? ""}`.trim() || null;
+  const testRunning = restoreStatus?.level === "running";
   const testedAtMs = testedAt == null ? Number.NaN : Date.parse(testedAt);
   const testIsCurrent =
     Number.isFinite(testedAtMs) &&
@@ -4278,11 +4366,13 @@ function mapPgBackRestRestoreReadiness({
   const testStatus: "not-run" | "stale" | "passed" | "failed" =
     restoreStatus == null
       ? "not-run"
-      : restoreStatus.level !== "ok"
-        ? "failed"
-        : testIsCurrent
-          ? "passed"
-          : "stale";
+      : testRunning
+        ? "stale"
+        : restoreStatus.level !== "ok"
+          ? "failed"
+          : testIsCurrent
+            ? "passed"
+            : "stale";
   const testedBackupLabel =
     `${restoreStatus?.backup_label ?? ""}`.trim() || null;
   const workerRun = restoreStatus?.worker ?? null;
@@ -4309,8 +4399,9 @@ function mapPgBackRestRestoreReadiness({
         conat_quick_check_passed: worker?.conat?.quick_check_passed ?? null,
       }
     : null;
-  const summary =
-    testStatus === "passed"
+  const summary = testRunning
+    ? `A disposable pgBackRest PITR restore drill for backup ${testedBackupLabel ?? latestBackupLabel} has been running since ${restoreStatus?.started_at ?? "unknown time"}.`
+    : testStatus === "passed"
       ? `pgBackRest backup ${latestBackupLabel} is current; disposable PITR backup ${testedBackupLabel ?? "unknown"} passed at ${testedAt}.`
       : testStatus === "failed"
         ? `The latest disposable pgBackRest PITR restore drill failed at ${testedAt ?? "unknown time"}.`
@@ -5937,28 +6028,40 @@ async function runPgBackRestDisposableGcpRestoreTest({
       10,
     ) || 4 * 60 * 60_000,
   );
-  const temporaryR2 = await createTemporaryR2ReadCredentials({
-    account_id: r2.account_id,
-    api_token: r2.api_token,
-    bucket,
-    parent_access_key_id: parentAccessKey,
-    prefixes: [pgbackrestRepoPath, sqliteRepoRoot],
-    ttl_seconds: Math.min(
-      7 * 24 * 60 * 60,
-      Math.ceil(timeoutMs / 1000) + 30 * 60,
+  const maxWorkerAttempts = Math.max(
+    1,
+    Math.min(
+      2,
+      Number.parseInt(
+        `${process.env.COCALC_BAY_RESTORE_DRILL_GCP_WORKER_ATTEMPTS ?? ""}`,
+        10,
+      ) || 2,
     ),
-  });
-  const pitrRun = await preparePitrRestoreSentinel({
-    bay_id: resolvedBayId,
-    backup_set_id: postgresBackup.label,
-    remote_only: true,
-    archive_backend: "pgbackrest",
-  });
-  const sizing = disposableRestoreDiskSizing({
-    database_bytes: sizingInfo.database_bytes,
-    artifact_bytes: postgresBackup.repository_bytes,
-  });
-  const identity = newDisposableRestoreWorkerIdentity();
+  );
+  const archiveGetTimeoutSeconds = Math.max(
+    30,
+    Number.parseInt(
+      `${process.env.COCALC_BAY_RESTORE_DRILL_ARCHIVE_GET_TIMEOUT_SECONDS ?? ""}`,
+      10,
+    ) || 120,
+  );
+  const archiveGetAttempts = Math.max(
+    1,
+    Math.min(
+      5,
+      Number.parseInt(
+        `${process.env.COCALC_BAY_RESTORE_DRILL_ARCHIVE_GET_ATTEMPTS ?? ""}`,
+        10,
+      ) || 3,
+    ),
+  );
+  const walReplayStallTimeoutSeconds = Math.max(
+    archiveGetTimeoutSeconds * archiveGetAttempts + 30,
+    Number.parseInt(
+      `${process.env.COCALC_BAY_RESTORE_DRILL_WAL_STALL_TIMEOUT_SECONDS ?? ""}`,
+      10,
+    ) || 600,
+  );
   const machineType =
     `${process.env.COCALC_BAY_RESTORE_DRILL_GCP_MACHINE_TYPE ?? ""}`.trim() ||
     "n2-standard-4";
@@ -5968,60 +6071,156 @@ async function runPgBackRestDisposableGcpRestoreTest({
       `${process.env.COCALC_BAY_STATE_DIR ?? ""}`.trim() || join(data, "state"),
       "pgbackrest-restore-test-status.json",
     );
+  const restoreTestRunId = randomUUID();
   let workerRun: DisposableGcpRestoreResult | null = null;
+  const workerAttempts: DisposableGcpRestoreResult[] = [];
+  let pitrRun: PitrRestoreSentinel | null = null;
+  let currentWorkerIdentity: ReturnType<
+    typeof newDisposableRestoreWorkerIdentity
+  > | null = null;
+  await writeJson(statusPath, {
+    level: "running",
+    run_id: restoreTestRunId,
+    started_at,
+    backup_label: postgresBackup.label,
+    sqlite_snapshot_id: sqliteSnapshotId,
+    attempt: 0,
+    max_attempts: maxWorkerAttempts,
+    worker: null,
+    worker_attempts: [],
+    current_worker_run_id: null,
+    current_worker_instance_name: null,
+    current_worker_zone: null,
+  });
   try {
-    workerRun = await runDisposableGcpRestoreWorker({
-      service_account_json: serviceAccountJson,
-      zone,
-      machine_type: machineType,
-      // Balanced PD performance scales with disk size. Production WAL replay
-      // is random-I/O heavy, so a space-only disk can make a valid drill time
-      // out even though the ephemeral capacity is inexpensive.
-      boot_disk_gb: Math.max(500, sizing.boot_disk_gb),
-      timeout_ms: timeoutMs,
-      config: {
-        ...identity,
-        bay_id: resolvedBayId,
-        backup_set_id: postgresBackup.label,
-        repository_type: "pgbackrest",
-        snapshot_id: sqliteSnapshotId,
-        restore_mode: "pitr",
-        target_time: pitrRun.target_time,
-        pitr_run_id: pitrRun.run_id,
-        postgres_major: sizingInfo.postgres_major,
-        postgres_user: pguser,
-        postgres_database: pgdatabase,
-        r2_endpoint: endpoint,
-        r2_bucket: bucket,
-        r2_access_key_id: temporaryR2.access_key_id,
-        r2_secret_access_key: temporaryR2.secret_access_key,
-        r2_session_token: temporaryR2.session_token,
-        rustic_repo_root: sqliteRepoRoot,
-        rustic_repo_password: requiredBackupEnv(
-          "COCALC_BAY_SQLITE_RUSTIC_PASSWORD",
-        ),
-        pgbackrest_repo_path: pgbackrestRepoPath,
-        pgbackrest_cipher_pass: requiredBackupEnv(
-          "COCALC_BAY_PGBACKREST_CIPHER_PASS",
-        ),
-        pgbackrest_stanza: stanza,
-        pgbackrest_version: PGBACKREST_VERSION,
-        pgbackrest_source_sha256: PGBACKREST_SOURCE_SHA256,
-        require_conat: true,
-        minimum_free_bytes: sizing.minimum_free_bytes,
-      },
+    const temporaryR2 = await createTemporaryR2ReadCredentials({
+      account_id: r2.account_id,
+      api_token: r2.api_token,
+      bucket,
+      parent_access_key_id: parentAccessKey,
+      prefixes: [pgbackrestRepoPath, sqliteRepoRoot],
+      ttl_seconds: Math.min(
+        7 * 24 * 60 * 60,
+        Math.ceil((timeoutMs * maxWorkerAttempts) / 1000) + 30 * 60,
+      ),
     });
+    pitrRun = await preparePitrRestoreSentinel({
+      bay_id: resolvedBayId,
+      backup_set_id: postgresBackup.label,
+      remote_only: true,
+      archive_backend: "pgbackrest",
+    });
+    const sizing = disposableRestoreDiskSizing({
+      database_bytes: sizingInfo.database_bytes,
+      artifact_bytes: postgresBackup.repository_bytes,
+    });
+    for (let attempt = 1; attempt <= maxWorkerAttempts; attempt++) {
+      const identity = newDisposableRestoreWorkerIdentity();
+      currentWorkerIdentity = identity;
+      await writeJson(statusPath, {
+        level: "running",
+        run_id: restoreTestRunId,
+        started_at,
+        backup_label: postgresBackup.label,
+        sqlite_snapshot_id: sqliteSnapshotId,
+        pitr_target_time: pitrRun.target_time,
+        pitr_run_id: pitrRun.run_id,
+        attempt,
+        max_attempts: maxWorkerAttempts,
+        worker: workerRun,
+        worker_attempts: workerAttempts,
+        current_worker_run_id: identity.run_id,
+        current_worker_instance_name: disposableRestoreInstanceName(
+          identity.run_id,
+        ),
+        current_worker_zone: zone,
+      });
+      workerRun = await runDisposableGcpRestoreWorker({
+        service_account_json: serviceAccountJson,
+        zone,
+        machine_type: machineType,
+        // Balanced PD performance scales with disk size. Production WAL replay
+        // is random-I/O heavy, so a space-only disk can make a valid drill time
+        // out even though the ephemeral capacity is inexpensive.
+        boot_disk_gb: Math.max(500, sizing.boot_disk_gb),
+        timeout_ms: timeoutMs,
+        config: {
+          ...identity,
+          bay_id: resolvedBayId,
+          backup_set_id: postgresBackup.label,
+          repository_type: "pgbackrest",
+          snapshot_id: sqliteSnapshotId,
+          restore_mode: "pitr",
+          target_time: pitrRun.target_time,
+          pitr_run_id: pitrRun.run_id,
+          postgres_major: sizingInfo.postgres_major,
+          postgres_user: pguser,
+          postgres_database: pgdatabase,
+          r2_endpoint: endpoint,
+          r2_bucket: bucket,
+          r2_access_key_id: temporaryR2.access_key_id,
+          r2_secret_access_key: temporaryR2.secret_access_key,
+          r2_session_token: temporaryR2.session_token,
+          rustic_repo_root: sqliteRepoRoot,
+          rustic_repo_password: requiredBackupEnv(
+            "COCALC_BAY_SQLITE_RUSTIC_PASSWORD",
+          ),
+          pgbackrest_repo_path: pgbackrestRepoPath,
+          pgbackrest_cipher_pass: requiredBackupEnv(
+            "COCALC_BAY_PGBACKREST_CIPHER_PASS",
+          ),
+          pgbackrest_stanza: stanza,
+          pgbackrest_version: PGBACKREST_VERSION,
+          pgbackrest_source_sha256: PGBACKREST_SOURCE_SHA256,
+          require_conat: true,
+          minimum_free_bytes: sizing.minimum_free_bytes,
+          archive_get_timeout_seconds: archiveGetTimeoutSeconds,
+          archive_get_attempts: archiveGetAttempts,
+          wal_replay_stall_timeout_seconds: walReplayStallTimeoutSeconds,
+        },
+      });
+      workerAttempts.push(workerRun);
+      try {
+        assertDisposableWorkerPassed(workerRun.worker, "pitr");
+        break;
+      } catch (err) {
+        const retryableWalStall = isRetryableDisposablePitrWalFailure(
+          workerRun.worker,
+        );
+        if (!retryableWalStall || attempt === maxWorkerAttempts) {
+          throw err;
+        }
+        logger.warn("retrying disposable PITR drill on a fresh worker", {
+          bay_id: resolvedBayId,
+          backup_label: postgresBackup.label,
+          attempt,
+          max_attempts: maxWorkerAttempts,
+          worker_error: workerRun.worker.error,
+        });
+      }
+    }
+    if (!workerRun) {
+      throw new Error("disposable PITR restore did not start a worker");
+    }
     assertDisposableWorkerPassed(workerRun.worker, "pitr");
     const finished_at = new Date().toISOString();
     const conat = workerRun.worker.conat!;
     await writeJson(statusPath, {
       level: "ok",
+      run_id: restoreTestRunId,
+      started_at,
       tested_at: finished_at,
       backup_label: postgresBackup.label,
       sqlite_snapshot_id: sqliteSnapshotId,
       pitr_target_time: pitrRun.target_time,
       pitr_run_id: pitrRun.run_id,
+      attempt: workerAttempts.length,
+      max_attempts: maxWorkerAttempts,
       worker: workerRun,
+      worker_attempts: workerAttempts,
+      current_worker_run_id: workerRun.worker.run_id,
+      current_worker_instance_name: workerRun.instance_name,
+      current_worker_zone: workerRun.zone,
     });
     return {
       ...getSingleBayInfo(),
@@ -6074,13 +6273,26 @@ async function runPgBackRestDisposableGcpRestoreTest({
   } catch (err) {
     await writeJson(statusPath, {
       level: "critical",
+      run_id: restoreTestRunId,
+      started_at,
       tested_at: new Date().toISOString(),
       backup_label: postgresBackup.label,
       sqlite_snapshot_id: sqliteSnapshotId,
-      pitr_target_time: pitrRun.target_time,
-      pitr_run_id: pitrRun.run_id,
+      pitr_target_time: pitrRun?.target_time ?? null,
+      pitr_run_id: pitrRun?.run_id ?? null,
+      attempt: workerAttempts.length,
+      max_attempts: maxWorkerAttempts,
       error: String(err).slice(0, 2_000),
       worker: workerRun,
+      worker_attempts: workerAttempts,
+      current_worker_run_id:
+        workerRun?.worker.run_id ?? currentWorkerIdentity?.run_id ?? null,
+      current_worker_instance_name:
+        workerRun?.instance_name ??
+        (currentWorkerIdentity
+          ? disposableRestoreInstanceName(currentWorkerIdentity.run_id)
+          : null),
+      current_worker_zone: workerRun?.zone ?? zone,
     });
     throw err;
   }
@@ -6340,10 +6552,14 @@ export async function runBayRestoreTest({
         "--target-dir and --keep are only supported for bay-local restore tests",
       );
     }
-    return await runPgBackRestDisposableGcpRestoreTest({
-      resolvedBayId,
-      started_at,
-      backup_label: backup_set_id?.trim() || undefined,
+    return await withBayRestoreTestRunLock({
+      bay_id: resolvedBayId,
+      fn: async () =>
+        await runPgBackRestDisposableGcpRestoreTest({
+          resolvedBayId,
+          started_at,
+          backup_label: backup_set_id?.trim() || undefined,
+        }),
     });
   }
   const paths = getBayBackupPaths(resolvedBayId);

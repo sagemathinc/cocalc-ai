@@ -6,6 +6,8 @@
 import {
   buildDisposableRestoreStartupScript,
   createTemporaryR2ReadCredentials,
+  disposableRestoreInstanceName,
+  isRetryableDisposablePitrWalFailure,
   runDisposableGcpRestoreWorker,
   type DisposableRestoreWorkerConfig,
   type DisposableRestoreWorkerResult,
@@ -214,13 +216,32 @@ test("startup script supports pgBackRest PITR and independent SQLite restore", (
     'for stale in ("recovery.signal", "standby.signal")',
   );
   expect(workerSource).toContain(
-    'auto_conf_text.replace(str(pgdata), "/var/lib/postgresql/data")',
+    "\"restore_command = '/usr/local/bin/cocalc-pgbackrest-archive-get %f %p'\\n\"",
   );
+  expect(workerSource).toContain('"io-timeout=" + str(io_timeout)');
+  expect(workerSource).toContain('"protocol-timeout=" + str(protocol_timeout)');
+  expect(workerSource).toContain(
+    'timeout --foreground --signal=TERM --kill-after=10s "$timeout_seconds"',
+  );
+  expect(workerSource).toContain(
+    '"WAL replay stalled on segment " + segment +',
+  );
+  expect(workerSource).toContain("archive_get_state(container)");
+  const wrapper = workerSource.match(
+    /pgbackrest_archive_get_script\.write_text\(r'''([\s\S]*?)''', encoding="utf-8"\)/,
+  )?.[1];
+  expect(wrapper).toBeTruthy();
+  const checkedWrapper = spawnSync("bash", ["-n"], {
+    input: wrapper,
+    encoding: "utf8",
+  });
+  expect(checkedWrapper.stderr).toBe("");
+  expect(checkedWrapper.status).toBe(0);
   expect(workerSource).toContain('"-c", "port=5432"');
   expect(workerSource).toContain('"-p", "5432"');
   expect(workerSource).toContain('"--security-opt=apparmor=unconfined"');
   expect(workerSource).toContain(
-    "--no-install-recommends ca-certificates libbz2-1.0",
+    "--no-install-recommends ca-certificates coreutils libbz2-1.0",
   );
   expect(workerSource).toContain(
     '"PostgreSQL container exited before readiness: "',
@@ -265,6 +286,41 @@ test("startup script rejects an invalid PITR target", () => {
       target_time: "not-a-timestamp",
     }),
   ).toThrow("invalid disposable PITR target 'not-a-timestamp'");
+});
+
+test("only a diagnosed PITR WAL stall is eligible for a fresh worker retry", () => {
+  const worker = passedWorker();
+  expect(
+    isRetryableDisposablePitrWalFailure({
+      ...worker,
+      status: "failed",
+      stage: "postgres-pitr",
+      error:
+        "WAL replay stalled on segment 00000001000003C700000041 for 600 seconds",
+    }),
+  ).toBe(true);
+  expect(
+    isRetryableDisposablePitrWalFailure({
+      ...worker,
+      status: "failed",
+      stage: "restore-pgbackrest",
+      error: "pgBackRest source checksum mismatch",
+    }),
+  ).toBe(false);
+  expect(
+    isRetryableDisposablePitrWalFailure({
+      ...worker,
+      status: "failed",
+      stage: "postgres-pitr",
+      error: "PITR verification timed out: archive-get exited with status 1",
+    }),
+  ).toBe(false);
+});
+
+test("disposable worker names are deterministic for crash cleanup", () => {
+  expect(disposableRestoreInstanceName(config().run_id)).toBe(
+    "cocalc-restore-11111111111141118111",
+  );
 });
 
 test("GCP worker attempts cleanup when instance insertion fails ambiguously", async () => {
