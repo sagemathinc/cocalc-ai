@@ -2365,15 +2365,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return;
     }
     this.noteProjectHostTransition(project_id);
-    redux
-      .getProjectActions(project_id)
-      ?.setState?.({ move_reopen_required: true });
+    const projectActions = this.getExistingProjectActions(project_id);
+    projectActions?.setState?.({ move_reopen_required: true });
     webapp_client.conat_client.releaseProjectHostRouting({ project_id });
     webapp_client.conat_client.refreshProjectHostRouting({
       source_host_id,
       dest_host_id,
     });
-    redux.getProjectActions(project_id)?.resetProjectHostRuntime?.();
+    projectActions?.resetProjectHostRuntime?.();
     // Do not force a global reconnect here. A move can succeed before the
     // projected account feed catches up, and reconnecting eagerly risks
     // rehydrating stale host placement into project_map.
@@ -2540,6 +2539,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return;
     }
     return this.redux.getStore(storeName);
+  }
+
+  private getExistingProjectActions(project_id: string) {
+    const storeName = project_redux_name(project_id);
+    if (!this.redux.hasStore(storeName)) {
+      return;
+    }
+    return this.redux.getActions(storeName);
   }
 
   private setProjectOpen = (project_id: string): void => {
