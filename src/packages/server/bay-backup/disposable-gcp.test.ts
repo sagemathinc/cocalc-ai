@@ -307,6 +307,14 @@ test("only a diagnosed PITR WAL stall is eligible for a fresh worker retry", () 
       error: "pgBackRest source checksum mismatch",
     }),
   ).toBe(false);
+  expect(
+    isRetryableDisposablePitrWalFailure({
+      ...worker,
+      status: "failed",
+      stage: "postgres-pitr",
+      error: "PITR verification timed out: archive-get exited with status 1",
+    }),
+  ).toBe(false);
 });
 
 test("disposable worker names are deterministic for crash cleanup", () => {

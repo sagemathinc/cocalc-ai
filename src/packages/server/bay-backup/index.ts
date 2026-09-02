@@ -981,7 +981,7 @@ export async function runBayBackupHealthCheck({
     const restoreDrillWorkerAttempts = Math.max(
       1,
       Math.min(
-        3,
+        2,
         Number.parseInt(
           `${process.env.COCALC_BAY_RESTORE_DRILL_GCP_WORKER_ATTEMPTS ?? ""}`,
           10,
@@ -6031,7 +6031,7 @@ async function runPgBackRestDisposableGcpRestoreTest({
   const maxWorkerAttempts = Math.max(
     1,
     Math.min(
-      3,
+      2,
       Number.parseInt(
         `${process.env.COCALC_BAY_RESTORE_DRILL_GCP_WORKER_ATTEMPTS ?? ""}`,
         10,

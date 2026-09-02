@@ -107,7 +107,7 @@ export function isRetryableDisposablePitrWalFailure(
   return (
     worker.status === "failed" &&
     worker.stage === "postgres-pitr" &&
-    /WAL replay stalled|archive-get/i.test(`${worker.error ?? ""}`)
+    /\bWAL replay stalled on segment\b/i.test(`${worker.error ?? ""}`)
   );
 }
 
