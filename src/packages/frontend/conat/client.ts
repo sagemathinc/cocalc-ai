@@ -167,6 +167,7 @@ const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 const PROJECT_HOST_AUTH_TIMEOUT_MS = 4_000;
 const PROJECT_HOST_TOKEN_FAILURE_BACKOFF_MS = [1_000, 3_000, 7_000] as const;
 const PROJECT_HOST_ROUTING_REFRESH_TIMEOUT_MS = 5_000;
+const PROJECT_HOST_BAY_MISMATCH_RETRY_MS = 60_000;
 const PROJECT_HOST_BROWSER_SESSION_SETTLE_MS = 100;
 const ROUTED_HOST_RECONNECT_DELAYS_MS = [750, 2_000, 5_000] as const;
 const ROUTED_HOST_REFRESH_AUTH_AFTER_ATTEMPTS = 3;
@@ -293,6 +294,11 @@ type PublicDirectoryShareRoutingInfo = HostRoutingInfo & {
   share_id: string;
 };
 
+type HostBayMismatchRefreshState = {
+  requestedAt: number;
+  inFlight?: Promise<unknown>;
+};
+
 export class ConatClient extends EventEmitter {
   client: WebappClient;
   public hub: HubApi;
@@ -307,6 +313,9 @@ export class ConatClient extends EventEmitter {
   } = {};
   private publicDirectoryShareRoutingByProjectId: {
     [project_id: string]: PublicDirectoryShareRoutingInfo;
+  } = {};
+  private hostBayMismatchRefreshes: {
+    [host_id: string]: { [signature: string]: HostBayMismatchRefreshState };
   } = {};
   private routedHostRecoveryTimer?: ReturnType<typeof setTimeout>;
   private browserSessionAutomation: BrowserSessionAutomation;
@@ -1334,7 +1343,70 @@ export class ConatClient extends EventEmitter {
     }
     const hostInfo = this.getHostInfo(host_id);
     if (!hostInfo) return;
+    this.refreshHostInfoForBayMismatch({
+      host_id,
+      project_bay_id:
+        `${project_map?.getIn([project_id, "owning_bay_id"]) ?? ""}`.trim(),
+      host_bay_id: `${hostInfo.get("bay_id") ?? ""}`.trim(),
+    });
     return this.buildHostRoutingInfo(host_id, hostInfo, project_id);
+  }
+
+  private refreshHostInfoForBayMismatch({
+    host_id,
+    project_bay_id,
+    host_bay_id,
+  }: {
+    host_id: string;
+    project_bay_id: string;
+    host_bay_id: string;
+  }): Promise<unknown> | undefined {
+    if (
+      !project_bay_id ||
+      !host_bay_id ||
+      project_bay_id === host_bay_id ||
+      isPublicDirectoryShareHost(host_id)
+    ) {
+      delete this.hostBayMismatchRefreshes[host_id];
+      return;
+    }
+    const signature = `${this.client.account_id}:${project_bay_id}:${host_bay_id}`;
+    const now = Date.now();
+    const refreshes = (this.hostBayMismatchRefreshes[host_id] ??= {});
+    for (const [key, state] of Object.entries(refreshes)) {
+      if (
+        !state.inFlight &&
+        now - state.requestedAt >= PROJECT_HOST_BAY_MISMATCH_RETRY_MS
+      ) {
+        delete refreshes[key];
+      }
+    }
+    const current = refreshes[signature];
+    if (current) {
+      if (current.inFlight) return current.inFlight;
+      if (now - current.requestedAt < PROJECT_HOST_BAY_MISMATCH_RETRY_MS) {
+        return;
+      }
+    }
+    const state: HostBayMismatchRefreshState = {
+      requestedAt: now,
+    };
+    const inFlight = Promise.resolve()
+      .then(() => redux.getActions("projects")?.ensure_host_info(host_id, true))
+      .catch((err) => {
+        reconnectDebugWarn(
+          `failed refreshing mismatched project-host bay for ${host_id}`,
+          err,
+        );
+      })
+      .finally(() => {
+        if (refreshes[signature] === state) {
+          state.inFlight = undefined;
+        }
+      });
+    state.inFlight = inFlight;
+    refreshes[signature] = state;
+    return inFlight;
   }
 
   private getProjectHostId(project_id: string): string | undefined {
@@ -1369,12 +1441,29 @@ export class ConatClient extends EventEmitter {
     const host_id = project_map?.getIn([project_id, "host_id"]) as
       | string
       | undefined;
+    const projectBayId =
+      `${project_map?.getIn([project_id, "owning_bay_id"]) ?? ""}`.trim();
+    const hostInfo = host_id
+      ? redux.getStore("projects")?.get("host_info")?.get(host_id)
+      : undefined;
+    const hostBayId = `${hostInfo?.get?.("bay_id") ?? ""}`.trim();
     const publicDirectoryShareHost = isPublicDirectoryShareHost(host_id);
     const initial = this.getProjectRoutingInfo(project_id);
-    if (initial) return initial;
+    const mismatchRefresh = host_id
+      ? this.refreshHostInfoForBayMismatch({
+          host_id,
+          project_bay_id: projectBayId,
+          host_bay_id: hostBayId,
+        })
+      : undefined;
+    if (initial && !mismatchRefresh) return initial;
     if (!host_id) return initial;
     if (publicDirectoryShareHost) return initial;
-    await redux.getActions("projects")?.ensure_host_info(host_id, false);
+    if (mismatchRefresh) {
+      await mismatchRefresh;
+    } else {
+      await redux.getActions("projects")?.ensure_host_info(host_id, false);
+    }
     return this.getProjectRoutingInfo(project_id) ?? initial;
   };
 
