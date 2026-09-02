@@ -221,6 +221,9 @@ interface ChatRoomSidebarContentProps {
   setSidebarVisible: (value: boolean) => void;
   threadSections: ThreadSectionWithUnread[];
   archivedThreads: ThreadMeta[];
+  attentionCount: number;
+  attentionCountByThread: ReadonlyMap<string, number>;
+  attentionTargetByThread: ReadonlyMap<string, string>;
   openAppearanceModal: (
     threadKey: string,
     plainLabel: string,
@@ -272,6 +275,9 @@ export function ChatRoomSidebarContent({
   setSidebarVisible,
   threadSections,
   archivedThreads,
+  attentionCount,
+  attentionCountByThread,
+  attentionTargetByThread,
   openAppearanceModal,
   openBehaviorModal,
   openGitBrowser,
@@ -337,6 +343,12 @@ export function ChatRoomSidebarContent({
         : (threadMetadata?.agent_model as string | undefined);
     const isCodexThread =
       isAI && typeof model === "string" && isCodexModelName(model);
+    const rootThreadId =
+      `${field<string>(thread.rootMessage, "thread_id") ?? ""}`.trim();
+    const attentionCountForThread = Math.max(
+      attentionCountByThread.get(key) ?? 0,
+      rootThreadId ? (attentionCountByThread.get(rootThreadId) ?? 0) : 0,
+    );
     const { showDot, dotColor, dotTitle } = resolveThreadStatusDot({
       thread,
       acpState,
@@ -405,6 +417,16 @@ export function ChatRoomSidebarContent({
                 style={{ flexShrink: 0 }}
               />
             )}
+            {attentionCountForThread > 0 ? (
+              <Tooltip title="Codex needs attention in this chat">
+                <Badge
+                  count={attentionCountForThread}
+                  color={COLORS.ORANGE_WARN}
+                  overflowCount={99}
+                  style={{ flexShrink: 0 }}
+                />
+              </Tooltip>
+            ) : null}
           </div>
           {showDot && (
             <Tooltip title={dotTitle}>
@@ -514,10 +536,27 @@ export function ChatRoomSidebarContent({
           mode="inline"
           selectedKeys={selectedThreadKey ? [selectedThreadKey] : []}
           onClick={({ key: menuKey }) => {
+            const thread = list.find(({ key }) => key === String(menuKey));
+            const rootThreadId =
+              `${field<string>(thread?.rootMessage, "thread_id") ?? ""}`.trim();
+            const attentionId =
+              attentionTargetByThread.get(String(menuKey)) ??
+              (rootThreadId
+                ? attentionTargetByThread.get(rootThreadId)
+                : undefined);
             setAllowAutoSelectThread(true);
             setSelectedThreadKey(String(menuKey));
             if (isCompact) {
               setSidebarVisible(false);
+            }
+            if (attentionId) {
+              setTimeout(() => {
+                const node = document.querySelector(
+                  `[data-codex-attention-id="${CSS.escape(attentionId)}"]`,
+                ) as HTMLElement | null;
+                node?.focus();
+                node?.scrollIntoView({ block: "center" });
+              }, 300);
             }
           }}
           items={items}
@@ -550,7 +589,11 @@ export function ChatRoomSidebarContent({
           >
             Chats
           </span>
-          <Space size="small" />
+          {attentionCount > 0 ? (
+            <Tooltip title="Codex needs attention in this project chat">
+              <Badge count={attentionCount} color={COLORS.ORANGE_WARN} />
+            </Tooltip>
+          ) : null}
         </div>
         {!isCompact && (
           <>

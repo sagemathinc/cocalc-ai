@@ -5,6 +5,8 @@
 
 import getPool from "@cocalc/database/pool";
 import type { NotificationCategory } from "@cocalc/util/notification-preferences";
+import { notificationModeSendsEmail } from "@cocalc/util/notification-preferences";
+import { resolveNotificationDeliveryPolicy } from "@cocalc/util/notification-delivery-policy";
 import {
   normalizeEmailLane,
   type EmailLane,
@@ -75,6 +77,15 @@ export interface EnqueueNotificationEmailInput {
   scheduled_at?: Date | string | null;
   last_error?: string | null;
   dedupe_by_notification_id?: boolean;
+}
+
+export type NotificationEmailRevalidation =
+  | { action: "send" }
+  | { action: "skip"; reason: string }
+  | { action: "reschedule"; scheduled_at: Date; reason: string };
+
+export function codexNotificationEmailEnabled(): boolean {
+  return process.env.COCALC_CODEX_ATTENTION_EMAIL !== "0";
 }
 
 type Queryable = {
@@ -356,4 +367,104 @@ export async function markNotificationEmailStatus(opts: {
       error,
     ],
   );
+}
+
+export async function requeueNotificationEmail(opts: {
+  email_id: string;
+  scheduled_at: Date | string;
+  reason: string;
+  db?: Queryable;
+}): Promise<void> {
+  const db = queryable(opts.db);
+  await db.query(
+    `UPDATE notification_email_outbox
+        SET status = 'queued',
+            scheduled_at = $2,
+            last_error = $3,
+            updated_at = NOW()
+      WHERE email_id = $1 AND status = 'sending'`,
+    [
+      normalizeUuid(opts.email_id, "email id"),
+      normalizeDate(opts.scheduled_at),
+      `${opts.reason ?? ""}`,
+    ],
+  );
+}
+
+export async function revalidateNotificationEmail(opts: {
+  row: NotificationEmailOutboxRow;
+  now?: Date;
+  db?: Queryable;
+}): Promise<NotificationEmailRevalidation> {
+  const { row } = opts;
+  if (row.category === "ai" && !codexNotificationEmailEnabled()) {
+    return { action: "skip", reason: "Codex notification email is disabled" };
+  }
+  if (row.category !== "ai" || row.notification_id == null) {
+    return { action: "send" };
+  }
+  const db = queryable(opts.db);
+  const now = opts.now ?? new Date();
+  const projectionNotificationId =
+    row.summary_json?.projection_notification_id ?? row.notification_id;
+  const { rows } = await db.query(
+    `SELECT idx.summary, idx.read_state, accounts.other_settings
+       FROM accounts
+       LEFT JOIN account_notification_index idx
+         ON idx.account_id = accounts.account_id
+        AND idx.notification_id = $2::UUID
+      WHERE accounts.account_id = $1::UUID
+        AND (accounts.deleted IS NULL OR accounts.deleted = FALSE)
+      LIMIT 1`,
+    [row.target_account_id, projectionNotificationId],
+  );
+  const current = rows[0];
+  if (!current) {
+    return { action: "skip", reason: "notification account no longer exists" };
+  }
+  const sourceSummary = row.summary_json?.summary ?? {};
+  const summary = current.summary ?? sourceSummary;
+  const policy = resolveNotificationDeliveryPolicy({
+    kind: row.summary_json?.kind ?? "account_notice",
+    origin_kind: row.summary_json?.origin_kind,
+    actor_account_id: row.actor_account_id,
+    target_account_id: row.target_account_id,
+    summary,
+    event_payload: row.summary_json?.event_payload,
+    preferences: current.other_settings?.notification_preferences,
+    preferences_v2: current.other_settings?.notification_preferences_v2,
+  });
+  if (!notificationModeSendsEmail(policy.delivery_mode)) {
+    return { action: "skip", reason: "email disabled before delivery" };
+  }
+  if (summary.notice_type === "codex_attention") {
+    if ((summary.attention_state ?? "pending") !== "pending") {
+      return { action: "skip", reason: "attention resolved before delivery" };
+    }
+    if (summary.acknowledged_at != null) {
+      return {
+        action: "skip",
+        reason: "attention acknowledged before delivery",
+      };
+    }
+    const snoozedUntil = new Date(Number(summary.snoozed_until ?? 0));
+    if (
+      Number.isFinite(snoozedUntil.valueOf()) &&
+      snoozedUntil.valueOf() > now.valueOf()
+    ) {
+      return {
+        action: "reschedule",
+        scheduled_at: snoozedUntil,
+        reason: "attention snoozed",
+      };
+    }
+  }
+  if (
+    summary.notice_type === "codex_turn_completion" &&
+    summary.severity === "warning" &&
+    current.read_state?.read === true
+  ) {
+    return { action: "skip", reason: "terminal failure was read" };
+  }
+  return { action: "send" };
 }

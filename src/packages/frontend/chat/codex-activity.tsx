@@ -2,6 +2,7 @@ import { LoadingOutlined } from "@ant-design/icons";
 import { Button, Popconfirm, Space, Tag, Typography } from "antd";
 import { mergeProgressiveMessageText, type InlineCodeLink } from "@cocalc/chat";
 import type {
+  AcpAttentionRecord,
   AcpStreamEvent,
   AcpStreamMessage as AcpLogStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
@@ -37,6 +38,7 @@ import {
   languageHintFromPath,
 } from "./diff-prism";
 import { CodexVmApprovalPrompt } from "./codex-vm-approval";
+import { CodexAttentionCard } from "./codex-attention-card";
 
 const { Text } = Typography;
 type SubagentEvent = Extract<AcpStreamEvent, { type: "subagent" }>;
@@ -236,6 +238,16 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     () => normalizeEvents(events ?? [], activitySteers),
     [events, activitySteers],
   );
+  const attentionRecords = useMemo(() => {
+    const records = new Map<string, AcpAttentionRecord>();
+    for (const message of events ?? []) {
+      if (message.type !== "event" || message.event.type !== "attention") {
+        continue;
+      }
+      records.set(message.event.request.attention_id, message.event.request);
+    }
+    return [...records.values()];
+  }, [events]);
   const waitingForVmApproval = useMemo(
     () =>
       generating === true &&
@@ -306,7 +318,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     [activitySteers, durationLabel, events, generating],
   );
 
-  if (!entries.length) return null;
+  if (!entries.length && !attentionRecords.length) return null;
 
   const baseFontSize = fontSize ?? 13;
   const secondarySize = Math.max(11, baseFontSize - 2);
@@ -319,6 +331,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
         ? `Worked for ${durationLabel}`
         : `${entries.length} ${plural(entries.length, "step")}`;
   const toggleLabel = expanded ? "Hide log" : `${durationSummary} (show)`;
+  const hasActivityEntries = entries.length > 0;
 
   const showCloseButton = IS_TOUCH || hovered;
   const handleClickCapture = (e: React.MouseEvent) => {
@@ -341,13 +354,23 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   if (!expanded) {
     return (
       <div style={{ marginTop: 8, marginLeft: -8, marginBottom: 8 }}>
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          {attentionRecords.map((record) => (
+            <CodexAttentionCard
+              key={record.attention_id}
+              initialRecord={record}
+            />
+          ))}
+        </Space>
         <CodexVmApprovalPrompt
           projectId={projectId}
           active={waitingForVmApproval}
         />
-        <Button size="small" type="text" onClick={() => setExpanded(true)}>
-          {toggleLabel}
-        </Button>
+        {hasActivityEntries ? (
+          <Button size="small" type="text" onClick={() => setExpanded(true)}>
+            {toggleLabel}
+          </Button>
+        ) : null}
       </div>
     );
   }
@@ -472,7 +495,13 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
       onClickCapture={handleClickCapture}
     >
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
-        {header}
+        {attentionRecords.map((record) => (
+          <CodexAttentionCard
+            key={record.attention_id}
+            initialRecord={record}
+          />
+        ))}
+        {hasActivityEntries ? header : null}
         <CodexVmApprovalPrompt
           projectId={projectId}
           active={waitingForVmApproval}

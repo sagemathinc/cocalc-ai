@@ -51,9 +51,11 @@ import {
   type ChatThreadAnchor,
   type ChatThreadResolvedMeta,
   type CodexThreadConfig,
+  type CodexCompletionNotificationOverride,
   type ChatThreadAutomationConfig,
   type ChatThreadAutomationState,
 } from "@cocalc/chat";
+import { normalizeCodexCompletionNotificationOverride } from "@cocalc/util/notification-preferences";
 import {
   chooseAnchorThread,
   parseThreadAnchor,
@@ -218,6 +220,7 @@ export interface ThreadMetadataSnapshot {
   agent_model?: LanguageModel;
   agent_mode?: ThreadAgentMode;
   acp_config?: CodexThreadConfig | null;
+  codex_completion_notification?: CodexCompletionNotificationOverride;
   automation_config?: ChatThreadAutomationConfig;
   automation_state?: ChatThreadAutomationState;
   notification_followers?: string[];
@@ -2161,6 +2164,11 @@ export class ChatActions extends Actions<ChatState> {
       agent_model,
       agent_mode,
       acp_config,
+      codex_completion_notification:
+        normalizeCodexCompletionNotificationOverride(
+          field<any>(cfg, "codex_completion_notification"),
+          acp_config,
+        ),
       automation_config,
       automation_state,
       notification_followers: parseAccountIdList(
@@ -2798,6 +2806,12 @@ export class ChatActions extends Actions<ChatState> {
     if (!sessionId) {
       delete (nextConfig as any).sessionId;
     }
+    delete (nextConfig as any).notifyOnTurnFinish;
+    const currentMetadata = this.getThreadMetadata(threadKey, { threadId });
+    const completionOverride = normalizeCodexCompletionNotificationOverride(
+      currentMetadata.codex_completion_notification,
+      currentConfig,
+    );
     if (
       !this.setThreadConfigRecord(
         threadKey,
@@ -2806,7 +2820,32 @@ export class ChatActions extends Actions<ChatState> {
           agent_kind: "acp",
           agent_model: model,
           agent_mode: "interactive",
+          codex_completion_notification: completionOverride,
         },
+        { threadId },
+      )
+    ) {
+      return;
+    }
+    this.syncdb.commit();
+    void this.saveSyncdb();
+  };
+
+  setCodexCompletionNotificationOverride = (
+    threadKey: string,
+    value: CodexCompletionNotificationOverride,
+  ): void => {
+    if (this.syncdb == null) return;
+    const threadId = this.normalizeThreadId(threadKey);
+    if (!threadId) {
+      throw Error(
+        `setCodexCompletionNotificationOverride: invalid threadKey ${threadKey}`,
+      );
+    }
+    if (
+      !this.setThreadConfigRecord(
+        threadKey,
+        { codex_completion_notification: value },
         { threadId },
       )
     ) {

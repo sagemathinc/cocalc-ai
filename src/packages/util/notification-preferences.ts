@@ -5,6 +5,8 @@
 
 export const OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY =
   "notification_preferences";
+export const OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY =
+  "notification_preferences_v2";
 
 export type NotificationEmailMode = "immediate" | "digest" | "off" | "none";
 export type NotificationEmailSendingMode = "immediate" | "digest";
@@ -40,6 +42,197 @@ export interface NotificationPreferences {
     time: string;
     timezone: "auto";
   };
+}
+
+export type CodexNotificationEventClass =
+  | "attention"
+  | "completion"
+  | "terminal_failure";
+export type NotificationEmailStrategy =
+  | "off"
+  | "immediate"
+  | "digest"
+  | "unresolved_after_delay";
+
+export interface CodexNotificationChannelPolicy {
+  inbox: boolean;
+  toast: boolean;
+  browser: boolean;
+  email: NotificationEmailStrategy;
+  email_delay_minutes?: number;
+}
+
+export interface NotificationPreferencesV2 {
+  version: 2;
+  ai: {
+    completion_default: boolean;
+    events: Record<CodexNotificationEventClass, CodexNotificationChannelPolicy>;
+  };
+}
+
+const CODEX_EVENT_CLASSES: CodexNotificationEventClass[] = [
+  "attention",
+  "completion",
+  "terminal_failure",
+];
+
+export function getDefaultNotificationPreferencesV2(): NotificationPreferencesV2 {
+  return {
+    version: 2,
+    ai: {
+      completion_default: true,
+      events: {
+        attention: {
+          inbox: true,
+          toast: true,
+          browser: true,
+          email: "unresolved_after_delay",
+          email_delay_minutes: 5,
+        },
+        completion: {
+          inbox: true,
+          toast: true,
+          browser: true,
+          email: "off",
+        },
+        terminal_failure: {
+          inbox: true,
+          toast: true,
+          browser: true,
+          email: "unresolved_after_delay",
+          email_delay_minutes: 5,
+        },
+      },
+    },
+  };
+}
+
+function legacyAiPolicy(
+  legacy: NotificationEmailMode,
+): Partial<CodexNotificationChannelPolicy> {
+  switch (legacy) {
+    case "none":
+      return { inbox: false, toast: false, browser: false, email: "off" };
+    case "immediate":
+      return { inbox: true, email: "immediate" };
+    case "digest":
+      return { inbox: true, email: "digest" };
+    default:
+      return { inbox: true, email: "off" };
+  }
+}
+
+function normalizedDelay(
+  value: unknown,
+  fallback?: number,
+): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.min(60, Math.round(value)));
+}
+
+function isEmailStrategy(value: unknown): value is NotificationEmailStrategy {
+  return (
+    value === "off" ||
+    value === "immediate" ||
+    value === "digest" ||
+    value === "unresolved_after_delay"
+  );
+}
+
+export function normalizeNotificationPreferencesV2(
+  rawV2: unknown,
+  rawV1?: unknown,
+): NotificationPreferencesV2 {
+  const defaults = getDefaultNotificationPreferencesV2();
+  const legacy = normalizeNotificationPreferences(rawV1);
+  const legacyAi = legacyAiPolicy(legacy.email.ai);
+  const input =
+    rawV2 != null &&
+    typeof rawV2 === "object" &&
+    typeof (rawV2 as { toJS?: unknown }).toJS === "function"
+      ? (rawV2 as { toJS: () => unknown }).toJS()
+      : rawV2;
+  const rawAi =
+    input != null && typeof input === "object" ? (input as any).ai : undefined;
+  const explicitV2 = (input as any)?.version === 2 && rawAi != null;
+  const events = {} as NotificationPreferencesV2["ai"]["events"];
+  for (const eventClass of CODEX_EVENT_CLASSES) {
+    const fallback = {
+      ...defaults.ai.events[eventClass],
+      ...(legacy.email.ai === "none"
+        ? legacyAi
+        : eventClass === "completion"
+          ? legacyAi
+          : {}),
+    };
+    const candidate = explicitV2 ? rawAi?.events?.[eventClass] : undefined;
+    events[eventClass] = {
+      inbox:
+        typeof candidate?.inbox === "boolean"
+          ? candidate.inbox
+          : fallback.inbox,
+      toast:
+        typeof candidate?.toast === "boolean"
+          ? candidate.toast
+          : fallback.toast,
+      browser:
+        typeof candidate?.browser === "boolean"
+          ? candidate.browser
+          : fallback.browser,
+      email: isEmailStrategy(candidate?.email)
+        ? candidate.email
+        : fallback.email,
+      email_delay_minutes: normalizedDelay(
+        candidate?.email_delay_minutes,
+        fallback.email_delay_minutes,
+      ),
+    };
+  }
+  return {
+    version: 2,
+    ai: {
+      completion_default:
+        explicitV2 && typeof rawAi.completion_default === "boolean"
+          ? rawAi.completion_default
+          : true,
+      events,
+    },
+  };
+}
+
+export function codexNotificationEventClass(opts: {
+  notice_type?: unknown;
+  severity?: unknown;
+}): CodexNotificationEventClass | undefined {
+  if (opts.notice_type === "codex_attention") return "attention";
+  if (opts.notice_type === "codex_turn_completion") {
+    return opts.severity === "warning" ? "terminal_failure" : "completion";
+  }
+  return undefined;
+}
+
+export function normalizeCodexCompletionNotificationOverride(
+  value: unknown,
+  legacy?: { notifyOnTurnFinish?: unknown } | null,
+): "inherit" | "on" | "off" {
+  if (value === "on" || value === "off" || value === "inherit") return value;
+  return legacy?.notifyOnTurnFinish === true ? "on" : "inherit";
+}
+
+export function resolveCodexCompletionNotificationEnabled(opts: {
+  override: unknown;
+  legacy?: { notifyOnTurnFinish?: unknown } | null;
+  accountDefault: boolean;
+}): boolean {
+  const override = normalizeCodexCompletionNotificationOverride(
+    opts.override,
+    opts.legacy,
+  );
+  return override === "on"
+    ? true
+    : override === "off"
+      ? false
+      : opts.accountDefault;
 }
 
 export const NOTIFICATION_EMAIL_MODES: {
@@ -117,7 +310,7 @@ export const NOTIFICATION_CATEGORIES: NotificationCategoryDefinition[] = [
   },
   {
     key: "ai",
-    label: "AI activity",
+    label: "Codex and agents",
     description: "Long-running AI tasks completed or requiring attention.",
     defaultEmailMode: "off",
   },

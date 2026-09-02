@@ -1,6 +1,8 @@
 import type { Client, Subscription } from "@cocalc/conat/core/client";
 import { getLogger } from "@cocalc/conat/logger";
 import type {
+  AcpAttentionRequest,
+  AcpAttentionResponse,
   AcpAutomationRequest,
   AcpAutomationResponse,
   AcpControlRequest,
@@ -25,6 +27,7 @@ import {
 import { ConcurrencyLimiter } from "./concurrency-limiter";
 
 export {
+  acpAttentionSubject,
   acpAutomationSubject,
   acpControlSubject,
   acpForkSubject,
@@ -43,6 +46,7 @@ let forkSub: Subscription | null = null;
 let truncateSub: Subscription | null = null;
 let controlSub: Subscription | null = null;
 let automationSub: Subscription | null = null;
+let attentionSub: Subscription | null = null;
 const legacySubs: Subscription[] = [];
 function nonNegativeIntegerFromEnv(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -128,6 +132,9 @@ type ControlHandler = (
 type AutomationHandler = (
   options: AcpAutomationRequest,
 ) => Promise<AcpAutomationResponse>;
+type AttentionHandler = (
+  options: AcpAttentionRequest,
+) => Promise<AcpAttentionResponse>;
 
 export async function init(
   handlers: {
@@ -138,6 +145,7 @@ export async function init(
     truncateSession?: TruncateHandler;
     control?: ControlHandler;
     automation?: AutomationHandler;
+    attention?: AttentionHandler;
   },
   client: Client,
 ): Promise<void> {
@@ -194,6 +202,13 @@ export async function init(
     listenAutomations(handlers.automation);
     await subscribeLegacy(client, "automation");
   }
+  if (handlers.attention) {
+    attentionSub = await client.subscribe(acpSubscriptionSubject("attention"), {
+      queue: "acp-attention-q",
+    });
+    listenAttentions(handlers.attention);
+    await subscribeLegacy(client, "attention");
+  }
 }
 
 async function subscribeLegacy(
@@ -235,6 +250,10 @@ export async function close(): Promise<void> {
   if (automationSub != null) {
     automationSub.close();
     automationSub = null;
+  }
+  if (attentionSub != null) {
+    attentionSub.close();
+    attentionSub = null;
   }
   while (legacySubs.length > 0) {
     legacySubs.pop()?.close();
@@ -365,6 +384,19 @@ function listenAutomations(automationHandler: AutomationHandler): void {
     }
   })().catch((err) => {
     logger.warn("acp automation listener stopped", err);
+  });
+}
+
+function listenAttentions(attentionHandler: AttentionHandler): void {
+  if (attentionSub == null) return;
+  (async () => {
+    for await (const mesg of attentionSub!) {
+      void runLimited("attention", mesg, () =>
+        handleAttentionMessage(mesg, attentionHandler),
+      );
+    }
+  })().catch((err) => {
+    logger.warn("acp attention listener stopped", { err });
   });
 }
 
@@ -670,6 +702,24 @@ async function handleAutomationMessage(
     bindOptionsToSubject(options, mesg.subject, "automation");
     const result = await automation(options);
     await respond(result);
+  } catch (err) {
+    await respond(undefined, `${err}`);
+  }
+}
+
+async function handleAttentionMessage(
+  mesg,
+  attention: AttentionHandler,
+): Promise<void> {
+  const options = mesg.data ?? {};
+  const respond = async (payload?: any, error?: string) => {
+    const data: any = payload ?? {};
+    if (error) data.error = error;
+    await mesg.respond(data, { noThrow: true });
+  };
+  try {
+    bindOptionsToSubject(options, mesg.subject, "attention");
+    await respond(await attention(options));
   } catch (err) {
     await respond(undefined, `${err}`);
   }

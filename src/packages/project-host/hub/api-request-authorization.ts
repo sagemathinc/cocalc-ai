@@ -27,6 +27,8 @@ export const ACCOUNT_PROJECT_HOST_HUB_METHODS = new Set([
   "projects.chatStoreSearch",
   "projects.chatStoreDelete",
   "projects.chatStoreVacuum",
+  "notifications.createCodexAttentionNotice",
+  "notifications.getCodexFreshAuthActionStatus",
 ]);
 
 export const PROJECT_PROJECT_HOST_HUB_METHODS = new Set([
@@ -49,6 +51,7 @@ export const PROJECT_PROJECT_HOST_HUB_METHODS = new Set([
   "system.recordServiceAdmissionDenial",
   "system.recordServiceAdmissionNearLimit",
   "system.getServiceAdmissionConfig",
+  "notifications.createCodexTurnNotice",
 ]);
 
 export const EXAM_PROJECT_HOST_HUB_METHODS = new Set([
@@ -68,7 +71,7 @@ function forbidden(message: string, subject: string): never {
 }
 
 function projectIdFromArgs(args: any[]): string | undefined {
-  const project_id = args?.[0]?.project_id;
+  const project_id = args?.[0]?.project_id ?? args?.[0]?.source_project_id;
   return typeof project_id === "string" && isValidUUID(project_id)
     ? project_id
     : undefined;

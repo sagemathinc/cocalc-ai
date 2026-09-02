@@ -723,16 +723,16 @@ export function AgentMessageStatus({
           </Button>
         ) : null}
         {generating && onNotifyOnTurnFinishChange ? (
-          <Tooltip title="Create a notification and show a small toast when this Codex turn finishes.">
+          <Tooltip title="Override completion notifications for this Codex thread.">
             <span
-              title="Create a notification and show a small toast when this Codex turn finishes."
+              title="Override completion notifications for this Codex thread."
               style={{ display: "inline-flex", alignItems: "center" }}
             >
               <Checkbox
-                checked={notifyOnTurnFinish}
-                onChange={(e) => onNotifyOnTurnFinishChange(e.target.checked)}
+                checked={!notifyOnTurnFinish}
+                onChange={(e) => onNotifyOnTurnFinishChange(!e.target.checked)}
               >
-                Notify
+                Mute completion notifications for this thread
               </Checkbox>
             </span>
           </Tooltip>

@@ -10,7 +10,13 @@ import { ChatSendPipeline, type ChatSendTransport } from "./send";
 const ACCOUNT_ID = "00000000-0000-4000-8000-000000000001";
 const PROJECT_ID = "00000000-0000-4000-8000-000000000002";
 
-function fakeDb(events: string[]) {
+function fakeDb(
+  events: string[],
+  config?: {
+    completionOverride?: "inherit" | "on" | "off";
+    legacyNotifyOnTurnFinish?: boolean;
+  },
+) {
   const rows: Record<string, any>[] = [
     {
       event: "chat-thread-config",
@@ -19,7 +25,15 @@ function fakeDb(events: string[]) {
       thread_id: "thread-1",
       agent_kind: "acp",
       agent_model: "gpt-5.6-sol",
-      acp_config: { reasoning: "high" },
+      acp_config: {
+        reasoning: "high",
+        ...(config?.legacyNotifyOnTurnFinish == null
+          ? {}
+          : { notifyOnTurnFinish: config.legacyNotifyOnTurnFinish }),
+      },
+      ...(config?.completionOverride == null
+        ? {}
+        : { codex_completion_notification: config.completionOverride }),
     },
     {
       event: "chat",
@@ -59,10 +73,12 @@ function pipeline({
   db,
   transport,
   sleep,
+  completionDefault,
 }: {
   db: ReturnType<typeof fakeDb>;
   transport: ChatSendTransport;
   sleep?: (ms: number) => Promise<void>;
+  completionDefault?: boolean;
 }) {
   const ids = ["user-message", "assistant-message"];
   return new ChatSendPipeline({
@@ -75,6 +91,7 @@ function pipeline({
     idGenerator: () => ids.shift()!,
     now: () => new Date("2026-01-01T00:00:02.000Z"),
     sleep,
+    codexCompletionNotificationDefault: completionDefault,
     ackTimeoutMs: 10,
     ackBackoffMs: 1,
   });
@@ -124,6 +141,48 @@ describe("ChatSendPipeline", () => {
     expect(
       db.rows.filter((row) => row.message_id === "user-message"),
     ).toHaveLength(1);
+  });
+
+  it.each([
+    {
+      label: "inherits an enabled account default from legacy false",
+      config: { legacyNotifyOnTurnFinish: false },
+      accountDefault: true,
+      expected: true,
+    },
+    {
+      label: "keeps legacy true enabled",
+      config: { legacyNotifyOnTurnFinish: true },
+      accountDefault: false,
+      expected: true,
+    },
+    {
+      label: "honors the dedicated off override",
+      config: { completionOverride: "off" as const },
+      accountDefault: true,
+      expected: false,
+    },
+  ])("$label", async ({ config, accountDefault, expected }) => {
+    const events: string[] = [];
+    let request: any;
+    const transport: ChatSendTransport = {
+      stream: async function* (value) {
+        request = value;
+        yield { seq: 0, type: "status", state: "queued" };
+      },
+      interrupt: jest.fn(),
+      steer: jest.fn(),
+    };
+    const db = fakeDb(events, config);
+
+    await pipeline({
+      db,
+      transport,
+      completionDefault: accountDefault,
+    }).send({ thread_id: "thread-1", text: "notify me" });
+
+    expect(request.chat.notify_on_turn_finish).toBeUndefined();
+    expect(request.chat.completion_notification_enabled).toBe(expected);
   });
 
   it("interrupts before retrying an ambiguous missing acknowledgement", async () => {

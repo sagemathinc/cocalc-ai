@@ -1,4 +1,7 @@
-import type { CodexThreadConfig } from "./acp";
+import type {
+  CodexCompletionNotificationOverride,
+  CodexThreadConfig,
+} from "./acp";
 
 export const CHAT_SCHEMA_V2 = 2;
 export const CHAT_THREAD_META_ROW_DATE = "1970-01-01T00:00:00.000Z";
@@ -315,6 +318,7 @@ export interface ChatThreadConfigRecord {
   agent_model?: string;
   agent_mode?: "interactive" | "single_turn";
   acp_config?: CodexThreadConfig;
+  codex_completion_notification?: CodexCompletionNotificationOverride;
   automation_config?: ChatThreadAutomationConfig;
   automation_state?: ChatThreadAutomationState;
   notification_followers?: string[];
@@ -345,6 +349,7 @@ export interface BuildThreadConfigRecordOptions {
   agent_model?: string;
   agent_mode?: "interactive" | "single_turn";
   acp_config?: CodexThreadConfig;
+  codex_completion_notification?: CodexCompletionNotificationOverride;
   automation_config?: ChatThreadAutomationConfig;
   automation_state?: ChatThreadAutomationState;
   notification_followers?: string[];
@@ -378,6 +383,7 @@ export function buildThreadConfigRecord(
     agent_model: options.agent_model,
     agent_mode: options.agent_mode,
     acp_config: options.acp_config,
+    codex_completion_notification: options.codex_completion_notification,
     automation_config: options.automation_config,
     automation_state: options.automation_state,
     notification_followers: options.notification_followers,

@@ -43,7 +43,15 @@ export {
   type CodexAppServerRequestHandler,
   type CodexSiteFundedTurnRequest,
   type CodexSiteFundedTurnRuntime,
+  type CodexAttentionContext,
+  type CodexAttentionHandler,
 } from "./codex-project";
+export {
+  CODEX_SYNC_QUESTION_METHOD,
+  normalizeCodexAsyncQuestions,
+  normalizeCodexSyncQuestionRequest,
+  validateAttentionAnswers,
+} from "./codex-attention";
 export {
   getCodexSiteKeyGovernor,
   setCodexSiteKeyGovernor,

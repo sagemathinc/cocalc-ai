@@ -22,6 +22,21 @@ function dedupeKey(mention: MentionInfo): string | undefined {
   if (mention.get("kind") !== "account_notice") {
     return undefined;
   }
+  if (mention.get("notice_type") === "codex_attention") {
+    return JSON.stringify([
+      "codex_attention",
+      mention.get("project_id") ?? null,
+      mention.get("attention_id") ?? mention.get("thread_id") ?? "",
+    ]);
+  }
+  if (mention.get("notice_type") === "codex_turn_completion") {
+    return JSON.stringify([
+      "codex_turn_completion",
+      mention.get("project_id") ?? null,
+      mention.get("path") ?? "",
+      mention.get("thread_id") ?? "",
+    ]);
+  }
   return JSON.stringify([
     mention.get("kind") ?? "",
     mention.get("notice_type") ?? "",

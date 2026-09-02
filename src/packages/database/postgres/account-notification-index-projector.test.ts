@@ -103,6 +103,51 @@ describe("account_notification_index projector", () => {
     });
   }
 
+  async function appendCodexNotice(opts: {
+    notification_id: string;
+    notice_type: "codex_attention" | "codex_turn_completion";
+    stable_source_id: string;
+    created_at: string;
+    thread_id?: string;
+    attention_id?: string;
+    attention_state?: string;
+    acknowledged_at?: number;
+    severity?: string;
+  }) {
+    return await createNotificationEventGraph({
+      kind: "account_notice",
+      source_bay_id: LOCAL_BAY_ID,
+      source_project_id: PROJECT_ID,
+      source_path: "work/codex.chat",
+      source_fragment_id: `source=${opts.stable_source_id}`,
+      actor_account_id: LOCAL_ACCOUNT_ID,
+      origin_kind: "project",
+      payload_json: {
+        notice_type: opts.notice_type,
+        stable_source_id: opts.stable_source_id,
+      },
+      created_at: opts.created_at,
+      targets: [
+        {
+          target_account_id: LOCAL_ACCOUNT_ID,
+          target_home_bay_id: LOCAL_BAY_ID,
+          notification_id: opts.notification_id,
+          summary_json: {
+            notice_type: opts.notice_type,
+            origin_label: "Codex",
+            stable_source_id: opts.stable_source_id,
+            path: "work/codex.chat",
+            thread_id: opts.thread_id,
+            attention_id: opts.attention_id,
+            attention_state: opts.attention_state,
+            acknowledged_at: opts.acknowledged_at,
+            severity: opts.severity,
+          },
+        },
+      ],
+    });
+  }
+
   async function setNotificationEmailMode(
     category: string,
     mode: string,
@@ -118,6 +163,34 @@ describe("account_notification_index projector", () => {
               )
         WHERE account_id = $1::UUID`,
       [LOCAL_ACCOUNT_ID, category, mode],
+    );
+  }
+
+  async function setCodexCompletionEmailImmediate(): Promise<void> {
+    await getPool().query(
+      `UPDATE accounts
+          SET other_settings = jsonb_build_object(
+                'notification_preferences_v2',
+                $2::JSONB
+              )
+        WHERE account_id = $1::UUID`,
+      [
+        LOCAL_ACCOUNT_ID,
+        JSON.stringify({
+          version: 2,
+          ai: {
+            completion_default: true,
+            events: {
+              completion: {
+                inbox: true,
+                toast: true,
+                browser: true,
+                email: "immediate",
+              },
+            },
+          },
+        }),
+      ],
     );
   }
 
@@ -444,6 +517,134 @@ describe("account_notification_index projector", () => {
       rows: [
         {
           subject: "CoCalc mention in b.chat",
+        },
+      ],
+    });
+  });
+
+  it("coalesces Codex completions by thread and reopens unread state", async () => {
+    await seedAccounts();
+    await setCodexCompletionEmailImmediate();
+    const firstId = "66666666-6666-4666-8666-666666666661";
+    const secondId = "66666666-6666-4666-8666-666666666662";
+    await appendCodexNotice({
+      notification_id: firstId,
+      notice_type: "codex_turn_completion",
+      stable_source_id: "turn-1",
+      thread_id: "thread-1",
+      created_at: "2026-04-04T00:00:00.000Z",
+    });
+    await drainAccountNotificationIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      limit: 10,
+      dry_run: false,
+    });
+    await setProjectedNotificationReadState({
+      account_id: LOCAL_ACCOUNT_ID,
+      notification_ids: [firstId],
+      read: true,
+    });
+
+    await appendCodexNotice({
+      notification_id: secondId,
+      notice_type: "codex_turn_completion",
+      stable_source_id: "turn-2",
+      thread_id: "thread-1",
+      created_at: "2026-04-04T00:10:00.000Z",
+    });
+    await drainAccountNotificationIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      limit: 10,
+      dry_run: false,
+    });
+
+    await expect(
+      listProjectedNotificationsForAccount({
+        account_id: LOCAL_ACCOUNT_ID,
+        limit: 10,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        notification_id: firstId,
+        read_state: {},
+        summary: expect.objectContaining({
+          stable_source_id: "turn-2",
+          coalesced_count: 2,
+          first_completion_at: "2026-04-04T00:00:00.000Z",
+        }),
+      }),
+    ]);
+    await expect(
+      getPool().query(
+        `SELECT notification_id, summary_json ->> 'projection_notification_id'
+                   AS projection_notification_id
+           FROM notification_email_outbox
+          WHERE notification_id = ANY($1::UUID[])
+          ORDER BY created_at ASC`,
+        [[firstId, secondId]],
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          notification_id: firstId,
+          projection_notification_id: firstId,
+        },
+        {
+          notification_id: secondId,
+          projection_notification_id: firstId,
+        },
+      ],
+    });
+  });
+
+  it("cancels delayed attention email when the request resolves", async () => {
+    await seedAccounts();
+    const firstId = "77777777-7777-4777-8777-777777777771";
+    const secondId = "77777777-7777-4777-8777-777777777772";
+    const attentionId = "88888888-8888-4888-8888-888888888888";
+    await appendCodexNotice({
+      notification_id: firstId,
+      notice_type: "codex_attention",
+      stable_source_id: "request-1",
+      attention_id: attentionId,
+      attention_state: "pending",
+      thread_id: "thread-1",
+      created_at: "2026-04-04T00:00:00.000Z",
+    });
+    await drainAccountNotificationIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      limit: 10,
+      dry_run: false,
+    });
+
+    await appendCodexNotice({
+      notification_id: secondId,
+      notice_type: "codex_attention",
+      stable_source_id: "request-1",
+      attention_id: attentionId,
+      attention_state: "answered",
+      thread_id: "thread-1",
+      created_at: "2026-04-04T00:01:00.000Z",
+    });
+    await drainAccountNotificationIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      limit: 10,
+      dry_run: false,
+    });
+
+    await expect(
+      getPool().query(
+        `SELECT notification_id, status, last_error
+           FROM notification_email_outbox
+          WHERE notification_id = $1`,
+        [firstId],
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          notification_id: firstId,
+          status: "skipped_preference",
+          last_error: "attention request resolved before escalation",
         },
       ],
     });

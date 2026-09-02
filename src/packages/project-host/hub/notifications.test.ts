@@ -58,4 +58,32 @@ describe("wireNotificationsApi", () => {
       host_id: "00000000-1000-4000-8000-000000000123",
     });
   });
+
+  it("forwards fresh-auth status checks through the master host scope", async () => {
+    callHubMock.mockResolvedValue({
+      challenge_id: "00000000-3000-4000-8000-000000000003",
+      state: "pending",
+      expires_at: "2099-09-02T01:00:00.000Z",
+    });
+    const { hubApi } = await import("@cocalc/lite/hub/api");
+    (hubApi as any).notifications = {};
+    const { wireNotificationsApi } = await import("./notifications");
+    wireNotificationsApi();
+
+    const opts = {
+      account_id: "00000000-1000-4000-8000-000000000001",
+      source_project_id: "00000000-2000-4000-8000-000000000002",
+      challenge_id: "00000000-3000-4000-8000-000000000003",
+    };
+    await expect(
+      hubApi.notifications.getCodexFreshAuthActionStatus(opts),
+    ).resolves.toMatchObject({ state: "pending" });
+
+    expect(callHubMock).toHaveBeenCalledWith({
+      client: { id: "master-client" },
+      name: "notifications.getCodexFreshAuthActionStatus",
+      args: [opts],
+      host_id: "00000000-1000-4000-8000-000000000123",
+    });
+  });
 });

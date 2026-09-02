@@ -60,6 +60,7 @@ export interface AccountState {
     news_read_ids?: string[];
     [OTHER_SETTINGS_LOCALE_KEY]?: string;
     notification_preferences?: Record<string, any>;
+    notification_preferences_v2?: Record<string, any>;
     newsletter?: boolean;
     marketing_email_consent_record?: MarketingEmailConsentRecord;
     membership_trial_banner_dismissed?: boolean;

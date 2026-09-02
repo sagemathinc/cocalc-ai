@@ -106,6 +106,10 @@ import { setAutoBalance as setAutoBalanceLocal } from "@cocalc/server/accounts/a
 import { searchRelatedClusterAccounts } from "@cocalc/server/accounts/search-policy";
 import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
+import {
+  getCodexFreshAuthActionStatus,
+  startCodexFreshAuthChallengeLocal,
+} from "@cocalc/server/auth/cli-auth";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getConfiguredClusterRole,
@@ -1099,6 +1103,24 @@ async function startAccountLocalService(): Promise<void> {
       await verifyLocalSignInPassword({ email_address, password }),
     createCliLoginSession: async (opts) =>
       await createLocalCliLoginSession(opts),
+    startCodexFreshAuth: async ({
+      account_id,
+      target_session_hash,
+      duration,
+      context,
+    }) =>
+      await startCodexFreshAuthChallengeLocal({
+        account_id,
+        session_hash: target_session_hash,
+        duration,
+        context,
+      }),
+    getCodexFreshAuthStatus: async ({ account_id, project_id, challenge_id }) =>
+      await getCodexFreshAuthActionStatus({
+        account_id,
+        project_id,
+        challenge_id,
+      }),
     redeemVerifyEmail: async ({ email_address, token }) => {
       await redeemVerifyEmailLocal(email_address, token);
     },

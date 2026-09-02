@@ -225,7 +225,11 @@ const baseMetadata: AcpChatContext = {
   thread_id: "thread-0",
 } as any;
 
+const originalCompletionNotifications =
+  process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
+
 beforeEach(() => {
+  delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
   (queue.listAcpPayloads as any)?.mockReset?.();
   (queue.listAcpPayloads as any)?.mockImplementation?.(() => []);
   (queue.enqueueAcpPayload as any)?.mockReset?.();
@@ -255,6 +259,15 @@ beforeEach(() => {
 
 afterEach(async () => {
   await disposeAllChatWritersForTests();
+});
+
+afterAll(() => {
+  if (originalCompletionNotifications == null) {
+    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
+  } else {
+    process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS =
+      originalCompletionNotifications;
+  }
 });
 
 async function flush(writer: ChatStreamWriter) {
@@ -451,6 +464,34 @@ describe("ChatStreamWriter", () => {
     releaseNotice?.();
     await pending;
     expect(resolved).toBe(true);
+    writer.dispose?.(true);
+  });
+
+  it("can disable completion notification creation without changing history", async () => {
+    process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS = "0";
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        completion_notification_enabled: true,
+      },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+
+    expect(callHubMock).not.toHaveBeenCalled();
     writer.dispose?.(true);
   });
 

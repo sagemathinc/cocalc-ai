@@ -24,6 +24,7 @@ import type {
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type { ImmerDB } from "@cocalc/conat/sync-doc/immer-db";
 import { uuid } from "@cocalc/util/misc";
+import { resolveCodexCompletionNotificationEnabled } from "@cocalc/util/notification-preferences";
 
 export const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
 export const ACP_ACK_MAX_ATTEMPTS = 5;
@@ -51,6 +52,7 @@ export interface ChatSendPipelineOptions {
   ackTimeoutMs?: number;
   ackMaxAttempts?: number;
   ackBackoffMs?: number;
+  codexCompletionNotificationDefault?: boolean;
 }
 
 type MutableChatMessage = Omit<ChatMessage, "acp_state"> & {
@@ -149,7 +151,10 @@ export class ChatSendPipeline {
       | "ackBackoffMs"
     >
   > &
-    Pick<ChatSendPipelineOptions, "idGenerator" | "now" | "sleep">;
+    Pick<
+      ChatSendPipelineOptions,
+      "idGenerator" | "now" | "sleep" | "codexCompletionNotificationDefault"
+    >;
   private readonly transport: ChatSendTransport;
   private readonly pending = new Map<
     string,
@@ -349,7 +354,13 @@ export class ChatSendPipeline {
         thread_id: threadId,
         message_id: assistantMessageId,
         parent_message_id: messageId,
-        notifyOnTurnFinish: configRow.acp_config?.notifyOnTurnFinish === true,
+        completionNotificationEnabled:
+          resolveCodexCompletionNotificationEnabled({
+            override: configRow.codex_completion_notification,
+            legacy: configRow.acp_config,
+            accountDefault:
+              this.options.codexCompletionNotificationDefault ?? true,
+          }),
       }),
     };
 
@@ -495,7 +506,13 @@ export class ChatSendPipeline {
         message_id: assistantMessageId,
         parent_message_id: messageId,
         sendMode: "immediate",
-        notifyOnTurnFinish: configRow.acp_config?.notifyOnTurnFinish === true,
+        completionNotificationEnabled:
+          resolveCodexCompletionNotificationEnabled({
+            override: configRow.codex_completion_notification,
+            legacy: configRow.acp_config,
+            accountDefault:
+              this.options.codexCompletionNotificationDefault ?? true,
+          }),
       }),
     };
 

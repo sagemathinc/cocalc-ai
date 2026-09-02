@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Collapse, Space } from "antd";
+import { Badge, Collapse, Space } from "antd";
 const { Panel } = Collapse;
 import { CSS, redux } from "@cocalc/frontend/app-framework";
 import { Icon, Loading, MarkAll } from "@cocalc/frontend/components";
@@ -99,6 +99,11 @@ export function MentionsPanel(props: MentionsPanelProps) {
       };
 
       switch (filter) {
+        case "attention":
+          return (
+            m.get("notice_type") === "codex_attention" &&
+            (m.get("attention_state") ?? "pending") === "pending"
+          );
         case "unread":
           return status.read === false;
         case "read":
@@ -155,7 +160,15 @@ export function MentionsPanel(props: MentionsPanelProps) {
                 General Notifications
               </>
             ) : (
-              <ProjectTitle project_id={project_id} />
+              <Space>
+                <ProjectTitle project_id={project_id} />
+                {filter === "attention" ? (
+                  <Badge
+                    count={mentions_per_project[panel_key].length}
+                    overflowCount={99}
+                  />
+                ) : null}
+              </Space>
             )
           }
           extra={renderMarkAll(project_id)}

@@ -102,6 +102,8 @@ function buildNotificationMention(
     fragment_id: summary.fragment_id,
     thread_id: summary.thread_id,
     thread_label: summary.thread_label,
+    attention_state: summary.attention_state,
+    attention_id: summary.attention_id,
     users: {
       [account_id]: {
         read: !!row.read_state?.read,
@@ -583,10 +585,7 @@ export class MentionsActions extends Actions<MentionsState> {
     }
     switch (event.type) {
       case "notification.upsert": {
-        if (
-          event.reason === "projected_upsert" &&
-          !event.notification.read_state?.read
-        ) {
+        if (event.reason === "projected_upsert") {
           void showCodexTurnCompletionToastBestEffort({
             account_id,
             row: event.notification,
@@ -601,6 +600,14 @@ export class MentionsActions extends Actions<MentionsState> {
             ? new Date(event.notification.updated_at)
             : null,
         });
+        if (event.notification.read_state?.archived) {
+          this.setState({
+            mentions: this.getMentions().remove(
+              event.notification.notification_id,
+            ),
+          });
+          return;
+        }
         this.setState({
           mentions: this.getMentions()
             .set(event.notification.notification_id, mention)

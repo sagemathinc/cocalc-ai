@@ -79,8 +79,6 @@ interface ChatRoomModalsProps {
 type ThreadAgentMode = "codex" | "human";
 const DEFAULT_CODEX_MODEL =
   DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
-const NOTIFY_ON_TURN_FINISH_NOTE =
-  "Create a notification and show a small toast when this Codex turn finishes.";
 type ExportRequest = {
   scope: ChatExportScope;
   threadKey?: string;
@@ -894,24 +892,6 @@ export function ChatRoomModals({
                     }))
                   }
                 />
-              </div>
-              <div>
-                <Checkbox
-                  checked={renameCodexConfig.notifyOnTurnFinish === true}
-                  onChange={(e) =>
-                    setRenameCodexConfig((prev) => ({
-                      ...prev,
-                      notifyOnTurnFinish: e.target.checked,
-                    }))
-                  }
-                >
-                  Notify when a Codex turn finishes
-                </Checkbox>
-                <div
-                  style={{ color: COLORS.GRAY_D, fontSize: 12, marginLeft: 24 }}
-                >
-                  {NOTIFY_ON_TURN_FINISH_NOTE}
-                </div>
               </div>
             </Space>
           ) : null}

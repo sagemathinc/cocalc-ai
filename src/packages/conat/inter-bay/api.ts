@@ -1330,6 +1330,34 @@ export interface AccountLocalCreateCliLoginSessionResult {
   expire: Date | string | number;
 }
 
+export interface AccountLocalCodexFreshAuthContext {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  turn_id?: string;
+  message_date?: string;
+  purpose?: string;
+}
+
+export interface AccountLocalStartCodexFreshAuthRequest {
+  account_id: string;
+  target_session_hash: string;
+  duration?: "default" | "extended";
+  context: AccountLocalCodexFreshAuthContext;
+}
+
+export interface AccountLocalCodexFreshAuthStatusRequest {
+  account_id: string;
+  project_id: string;
+  challenge_id: string;
+}
+
+export interface AccountLocalCodexFreshAuthStatusResult {
+  challenge_id: string;
+  state: "pending" | "approved" | "canceled" | "expired";
+  expires_at: Date | string | number;
+}
+
 export interface AccountLocalRedeemVerifyEmailRequest {
   email_address: string;
   token: string;
@@ -2689,6 +2717,8 @@ export type AccountLocalMethod =
   | "save-blob"
   | "get-blob"
   | "create-cli-login-session"
+  | "start-codex-fresh-auth"
+  | "get-codex-fresh-auth-status"
   | "redeem-verify-email"
   | "send-email-verification"
   | "admin-verify-email-address"
@@ -4123,6 +4153,12 @@ export interface InterBayAccountLocalApi {
   createCliLoginSession: (
     opts: AccountLocalCreateCliLoginSessionRequest,
   ) => Promise<AccountLocalCreateCliLoginSessionResult>;
+  startCodexFreshAuth: (
+    opts: AccountLocalStartCodexFreshAuthRequest,
+  ) => Promise<AccountLocalCodexFreshAuthStatusResult>;
+  getCodexFreshAuthStatus: (
+    opts: AccountLocalCodexFreshAuthStatusRequest,
+  ) => Promise<AccountLocalCodexFreshAuthStatusResult>;
   redeemVerifyEmail: (
     opts: AccountLocalRedeemVerifyEmailRequest,
   ) => Promise<void>;
@@ -6662,6 +6698,24 @@ export function createInterBayAccountLocalClient({
       method: "create-cli-login-session",
     }),
   });
+  const startCodexFreshAuthClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "startCodexFreshAuth">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "start-codex-fresh-auth",
+    }),
+  });
+  const getCodexFreshAuthStatusClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getCodexFreshAuthStatus">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-codex-fresh-auth-status",
+    }),
+  });
   const redeemVerifyEmailClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "redeemVerifyEmail">
   >({
@@ -7802,6 +7856,10 @@ export function createInterBayAccountLocalClient({
       await verifySignInPasswordClient.verifySignInPassword(opts),
     createCliLoginSession: async (opts) =>
       await createCliLoginSessionClient.createCliLoginSession(opts),
+    startCodexFreshAuth: async (opts) =>
+      await startCodexFreshAuthClient.startCodexFreshAuth(opts),
+    getCodexFreshAuthStatus: async (opts) =>
+      await getCodexFreshAuthStatusClient.getCodexFreshAuthStatus(opts),
     redeemVerifyEmail: async (opts) =>
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
     sendEmailVerification: async (opts) =>
@@ -8339,6 +8397,32 @@ export function createInterBayAccountLocalHandler({
       impl: {
         createCliLoginSession: async (opts) =>
           await impl.createCliLoginSession(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "startCodexFreshAuth">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "start-codex-fresh-auth",
+      }),
+      impl: {
+        startCodexFreshAuth: async (opts) =>
+          await impl.startCodexFreshAuth(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getCodexFreshAuthStatus">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-codex-fresh-auth-status",
+      }),
+      impl: {
+        getCodexFreshAuthStatus: async (opts) =>
+          await impl.getCodexFreshAuthStatus(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "redeemVerifyEmail">>({

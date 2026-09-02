@@ -15,6 +15,10 @@ const RUNTIME_AUTH_ENV_KEYS = new Set([
   "COCALC_BEARER_TOKEN_FILE",
   "COCALC_BROWSER_ID",
   "COCALC_CLI_AGENT_MODE",
+  "COCALC_CODEX_CHAT_PATH",
+  "COCALC_CODEX_MESSAGE_DATE",
+  "COCALC_CODEX_THREAD_ID",
+  "COCALC_CODEX_TURN_ID",
   "COCALC_PROJECT_ID",
 ]);
 
@@ -154,6 +158,14 @@ export async function buildCodexRuntimeEnv({
   if (projectId) out.COCALC_PROJECT_ID = projectId;
   const browserId = `${request.chat?.browser_id ?? ""}`.trim();
   if (browserId) out.COCALC_BROWSER_ID = browserId;
+  const chatPath = `${request.chat?.path ?? ""}`.trim();
+  const threadId = `${request.chat?.thread_id ?? ""}`.trim();
+  const messageDate = `${request.chat?.message_date ?? ""}`.trim();
+  if (chatPath && threadId) {
+    out.COCALC_CODEX_CHAT_PATH = chatPath;
+    out.COCALC_CODEX_THREAD_ID = threadId;
+    if (messageDate) out.COCALC_CODEX_MESSAGE_DATE = messageDate;
+  }
   out.COCALC_API_URL = resolveCodexApiUrl({
     useContainer,
     request,
