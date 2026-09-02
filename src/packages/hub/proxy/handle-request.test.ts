@@ -8,7 +8,6 @@ const mockStripRememberMeCookie = jest.fn();
 const mockParseReq = jest.fn();
 const mockHasAccess = jest.fn();
 const mockResolveAuthenticatedAccountId = jest.fn();
-const mockIsPublicAppSubdomainRequest = jest.fn();
 const mockGetProjectHostRedirectUrl = jest.fn();
 const mockSetProjectHostProxyAccountId = jest.fn();
 const mockHandleFileDownload = jest.fn();
@@ -34,11 +33,6 @@ jest.mock("./check-for-access-to-project", () => ({
   default: (...args) => mockHasAccess(...args),
   resolveAuthenticatedAccountId: (...args) =>
     mockResolveAuthenticatedAccountId(...args),
-}));
-
-jest.mock("./public-app-subdomain", () => ({
-  isPublicAppSubdomainRequest: (...args) =>
-    mockIsPublicAppSubdomainRequest(...args),
 }));
 
 jest.mock("./project-host", () => ({
@@ -84,7 +78,6 @@ describe("hub proxy file downloads", () => {
     mockResolveAuthenticatedAccountId
       .mockReset()
       .mockResolvedValue("account-1");
-    mockIsPublicAppSubdomainRequest.mockReset().mockReturnValue(false);
     mockGetProjectHostRedirectUrl.mockReset();
     mockSetProjectHostProxyAccountId.mockReset();
     mockHandleFileDownload.mockReset().mockResolvedValue(undefined);
@@ -303,5 +296,42 @@ describe("hub proxy file downloads", () => {
     );
     expect(mockGetProjectHostRedirectUrl).not.toHaveBeenCalled();
     expect(proxyHandlers.handleRequest).toHaveBeenCalledWith(req, res);
+  });
+
+  it("does not revive anonymous app access from retired public-app inputs", async () => {
+    mockStripRememberMeCookie.mockReturnValue({
+      cookie: "",
+      remember_me: undefined,
+      api_key: undefined,
+    });
+    const init = (await import("./handle-request")).default;
+    const proxyHandlers = { handleRequest: jest.fn() };
+    const handler = init({
+      isPersonal: false,
+      projectProxyHandlersPromise: Promise.resolve(proxyHandlers),
+    });
+    const req: any = {
+      url: "/457f20dd-59d1-45c4-b5b1-a245d0e0a629/apps/demo/?cocalc_app_token=retired",
+      method: "GET",
+      headers: {
+        cookie: "",
+        "x-cocalc-public-app-host": "demo.example.invalid",
+      },
+    };
+    const res: any = {
+      writeHead: jest.fn(),
+      end: jest.fn(),
+    };
+
+    await handler(req, res);
+
+    expect(res.writeHead).toHaveBeenCalledWith(
+      500,
+      expect.objectContaining({ "X-Content-Type-Options": "nosniff" }),
+    );
+    expect(mockHasAccess).not.toHaveBeenCalled();
+    expect(proxyHandlers.handleRequest).not.toHaveBeenCalled();
+    expect(req.url).toBe("/457f20dd-59d1-45c4-b5b1-a245d0e0a629/apps/demo/");
+    expect(req.headers).not.toHaveProperty("x-cocalc-public-app-host");
   });
 });

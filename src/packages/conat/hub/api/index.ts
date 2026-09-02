@@ -32,6 +32,7 @@ import {
   commercialOrders,
 } from "./commercial-orders";
 import { type AdminCrmApi, adminCrm } from "./crm";
+import type { HubApiArgTransform, HubApiPrincipalPolicy } from "./util";
 
 export interface HubApi {
   system: System;
@@ -62,6 +63,12 @@ export interface HubApi {
   adminCrm: AdminCrmApi;
 }
 
+type HubApiTransformStructure = {
+  [Group in keyof HubApi]: {
+    [Method in keyof HubApi[Group]]: HubApiArgTransform;
+  };
+};
+
 const HubApiStructure = {
   system,
   projects,
@@ -89,7 +96,84 @@ const HubApiStructure = {
   growthAnalytics,
   commercialOrders,
   adminCrm,
-} as const;
+} as const satisfies HubApiTransformStructure;
+
+export function getHubApiPrincipalPolicy(
+  name: string,
+): HubApiPrincipalPolicy | undefined {
+  const [group, functionName] = `${name ?? ""}`.split(".");
+  return HubApiStructure[group]?.[functionName]?.principalPolicy;
+}
+
+export function getHubApiPrincipalPolicies(): Record<
+  string,
+  HubApiPrincipalPolicy
+> {
+  const policies: Record<string, HubApiPrincipalPolicy> = {};
+  for (const group in HubApiStructure) {
+    for (const functionName in HubApiStructure[group]) {
+      policies[`${group}.${functionName}`] =
+        HubApiStructure[group][functionName].principalPolicy;
+    }
+  }
+  return policies;
+}
+
+export function getHubApiAccountTargetMethods(): string[] {
+  const methods: string[] = [];
+  for (const group in HubApiStructure) {
+    for (const functionName in HubApiStructure[group]) {
+      if (HubApiStructure[group][functionName].preservesAccountTarget) {
+        methods.push(`${group}.${functionName}`);
+      }
+    }
+  }
+  return methods.sort();
+}
+
+export function isHubApiPrincipalAllowed({
+  policy,
+  account_id,
+  project_id,
+  host_id,
+  auth_actor,
+}: {
+  policy: HubApiPrincipalPolicy;
+  account_id?: string;
+  project_id?: string;
+  host_id?: string;
+  auth_actor?: "agent";
+}): boolean {
+  if (policy === "public") return true;
+  if (policy === "authenticated") {
+    return !!(account_id || project_id || host_id);
+  }
+  if (policy === "account") return !!account_id && auth_actor !== "agent";
+  if (policy === "project") return !!project_id && auth_actor !== "agent";
+  if (policy === "host") return !!host_id && auth_actor !== "agent";
+  if (policy === "project-or-host") {
+    return !!(project_id || host_id) && auth_actor !== "agent";
+  }
+  if (policy === "account-or-project") {
+    return !!(account_id || project_id) && auth_actor !== "agent";
+  }
+  if (policy === "account-or-host") {
+    return !!(account_id || host_id) && auth_actor !== "agent";
+  }
+  if (policy === "account-or-project-or-host") {
+    return !!(account_id || project_id || host_id) && auth_actor !== "agent";
+  }
+  if (policy === "compute-project") {
+    return auth_actor === "agent" || (!!(project_id || host_id) && !account_id);
+  }
+  if (policy === "account-or-compute-project") {
+    return auth_actor === "agent" || !!(account_id || project_id || host_id);
+  }
+  if (policy === "account-or-compute-agent") {
+    return auth_actor === "agent" || !!account_id;
+  }
+  return false;
+}
 
 export function transformArgs({
   name,

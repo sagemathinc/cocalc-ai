@@ -201,11 +201,6 @@ function normalizeHost(raw: string): string {
   return raw.trim().toLowerCase().split(":")[0] ?? "";
 }
 
-function normalizePathPrefix(value: string): string {
-  const withLeading = value.startsWith("/") ? value : `/${value}`;
-  return withLeading.replace(/\/+$/, "") || "/";
-}
-
 function tryParseProjectProxyPath(pathname: string): {
   project_id: string;
   mode: "proxy" | "port";
@@ -722,7 +717,7 @@ export function registerDevCommand(
 
   dev
     .command("trace-url <url>")
-    .description("trace how a public/private app URL is routed")
+    .description("trace how a project app URL is routed")
     .action(async (rawUrl: string, command: Command) => {
       await withContext(command, "dev trace-url", async (ctx) => {
         const parsed = new URL(rawUrl);
@@ -745,98 +740,6 @@ export function registerDevCommand(
           publicSiteHostname = null;
         }
         result.public_site_hostname = publicSiteHostname;
-
-        const publicTrace = await ctx.hub.system.tracePublicAppHostname({
-          hostname,
-        });
-        if ((publicTrace as any)?.matched) {
-          const projectId = `${(publicTrace as any).project_id ?? ""}`.trim();
-          const appId = `${(publicTrace as any).app_id ?? ""}`.trim();
-          const ws = await resolveProjectFromArgOrContext(ctx, projectId);
-          const { api } = await resolveProjectProjectApi(ctx, projectId);
-          const spec = await api.apps.getAppSpec(appId);
-          const status = await api.apps.statusApp(appId);
-          const host = ws.host_id ? await resolveHost(ctx, ws.host_id) : null;
-          const connection =
-            host == null
-              ? null
-              : await ctx.hub.hosts.resolveHostConnection({ host_id: host.id });
-          const appBasePath = normalizePathPrefix(
-            `${(publicTrace as any).base_path ?? "/"}`,
-          );
-          const canonicalProjectPath = normalizePathPrefix(
-            `${projectId}${appBasePath}`,
-          );
-          return {
-            ...result,
-            kind: "public-app-subdomain",
-            public_app: publicTrace,
-            project: {
-              project_id: ws.project_id,
-              title: ws.title,
-              host_id: ws.host_id,
-            },
-            host:
-              host == null
-                ? null
-                : {
-                    host_id: host.id,
-                    name: host.name,
-                    status: host.status ?? null,
-                    version: host.version ?? null,
-                    project_host_build_id: host.project_host_build_id ?? null,
-                    project_bundle_version: host.project_bundle_version ?? null,
-                    project_bundle_build_id:
-                      host.project_bundle_build_id ?? null,
-                    tools_version: host.tools_version ?? null,
-                  },
-            host_connection:
-              connection == null
-                ? null
-                : {
-                    connect_url: connection.connect_url ?? null,
-                    local_proxy: !!connection.local_proxy,
-                    ssh_server: connection.ssh_server ?? null,
-                  },
-            app: {
-              app_id: spec.id,
-              kind: spec.kind,
-              title: spec.title,
-              base_path: spec.proxy?.base_path ?? null,
-              open_mode: spec.proxy?.open_mode ?? null,
-              health: spec.proxy?.health ?? null,
-              status,
-            },
-            chain: [
-              {
-                layer: "request",
-                hostname,
-                pathname,
-              },
-              {
-                layer: "public-dns",
-                dns_target: (publicTrace as any).dns_target ?? null,
-              },
-              {
-                layer: "hub-rewrite",
-                canonical_project_path: canonicalProjectPath,
-              },
-              {
-                layer: "project-host",
-                host_id: ws.host_id,
-                local_proxy: connection ? !!connection.local_proxy : null,
-                connect_url: connection?.connect_url ?? null,
-              },
-              {
-                layer: "project-app",
-                project_id: ws.project_id,
-                app_id: spec.id,
-                port: status.port ?? null,
-                ready: status.ready ?? null,
-              },
-            ],
-          };
-        }
 
         const appPath = tryParseProjectAppPath(pathname);
         if (appPath) {

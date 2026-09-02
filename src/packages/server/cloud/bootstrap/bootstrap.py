@@ -1345,7 +1345,6 @@ class CloudflaredSpec:
     enabled: bool
     hostname: str | None = None
     port: int | None = None
-    app_public_wildcard: str | None = None
     exam_hostname: str | None = None
     ssh_hostname: str | None = None
     ssh_port: int | None = None
@@ -1694,8 +1693,6 @@ def load_config(bootstrap_dir: str) -> BootstrapConfig:
             enabled=_ensure_bool(cloudflared.get("enabled"), "cloudflared.enabled"),
             hostname=cloudflared.get("hostname"),
             port=cloudflared.get("port"),
-            app_public_wildcard=cloudflared.get("appPublicWildcard")
-            or cloudflared.get("app_public_wildcard"),
             exam_hostname=cloudflared.get("examHostname")
             or cloudflared.get("exam_hostname"),
             ssh_hostname=cloudflared.get("sshHostname")
@@ -2342,7 +2339,6 @@ def build_desired_state(cfg: BootstrapConfig) -> dict[str, Any]:
         "cloudflared": {
             "enabled": cfg.cloudflared.enabled,
             "hostname": cfg.cloudflared.hostname,
-            "app_public_wildcard": cfg.cloudflared.app_public_wildcard,
             "exam_hostname": cfg.cloudflared.exam_hostname,
             "port": cfg.cloudflared.port,
             "ssh_hostname": cfg.cloudflared.ssh_hostname,
@@ -12169,16 +12165,6 @@ def configure_cloudflared_with_options(
         f"  - hostname: {yaml_quote(cfg.cloudflared.hostname)}",
         f"    service: http://localhost:{cfg.cloudflared.port}",
     ]
-    if (
-        cfg.cloudflared.app_public_wildcard
-        and cfg.cloudflared.app_public_wildcard != cfg.cloudflared.hostname
-    ):
-        ingress_lines.extend(
-            [
-                f"  - hostname: {yaml_quote(cfg.cloudflared.app_public_wildcard)}",
-                f"    service: http://localhost:{cfg.cloudflared.port}",
-            ]
-        )
     if (
         cfg.cloudflared.exam_hostname
         and cfg.cloudflared.exam_hostname != cfg.cloudflared.hostname

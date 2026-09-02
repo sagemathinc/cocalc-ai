@@ -41,7 +41,6 @@ describe("project-host managed http egress recorder", () => {
     attachManagedHttpEgressRecorder({
       req,
       res,
-      exposure_mode: "private",
       record,
     });
 
@@ -55,7 +54,6 @@ describe("project-host managed http egress recorder", () => {
       request_path: "/project-id/port/5000/index.html",
       method: "GET",
       status_code: 200,
-      exposure_mode: "private",
       partial: false,
     });
   });
@@ -71,7 +69,6 @@ describe("project-host managed http egress recorder", () => {
     attachManagedHttpEgressRecorder({
       req,
       res,
-      exposure_mode: "public",
       record,
     });
 
@@ -84,7 +81,6 @@ describe("project-host managed http egress recorder", () => {
       request_path: "/project-id/port/5000/api/run",
       method: "POST",
       status_code: 200,
-      exposure_mode: "public",
       partial: true,
     });
   });

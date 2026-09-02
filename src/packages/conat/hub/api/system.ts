@@ -1,7 +1,8 @@
 import {
   noAuth,
-  authFirst,
   authFirstRequireAccount,
+  authFirstRequireAccountOrHost,
+  authFirstRequireAuthenticated,
   authFirstRequireHost,
   authFirstRequireProject,
   authFirstRequireProjectOrHost,
@@ -53,95 +54,95 @@ export const system = {
   getCustomize: noAuth,
   listNews: noAuth,
   ping: noAuth,
-  listBays: authFirst,
+  listBays: authFirstRequireAccount,
   getBayOpsOverview: authFirstRequireAccount,
   getBayOpsDetail: authFirstRequireAccount,
   getBayDrainPreflight: authFirstRequireAccount,
   getGlobalConfigPropagationStatus: authFirstRequireAccount,
   setBayProjectOwnershipAdmission: authFirstRequireAccount,
-  getBayLoad: authFirst,
-  getActiveUserMap: authFirst,
-  getActiveUserMapDetails: authFirst,
-  getActiveUserMapHistorySeries: authFirst,
-  getActiveUserMapHistorySnapshot: authFirst,
-  recordUxLatencyEvent: authFirst,
+  getBayLoad: authFirstRequireAccount,
+  getActiveUserMap: authFirstRequireAccount,
+  getActiveUserMapDetails: authFirstRequireAccount,
+  getActiveUserMapHistorySeries: authFirstRequireAccount,
+  getActiveUserMapHistorySnapshot: authFirstRequireAccount,
+  recordUxLatencyEvent: authFirstRequireAccount,
   getUxLatencySummary: authFirstRequireAccount,
   getLaunchHealth: authFirstRequireAccount,
   recordLaunchSmokeResult: authFirstRequireAccount,
-  getBayBackups: authFirst,
+  getBayBackups: authFirstRequireAccount,
   getAcpAdmissionDenialReport: authFirstRequireAccount,
   getServiceAdmissionDenialReport: authFirstRequireAccount,
   getRootfsQuotaReport: authFirstRequireAccount,
   getProjectRuntimeSlotReport: authFirstRequireAccount,
-  getProjectBackupShards: authFirst,
-  runBayBackup: authFirst,
-  runBayRestore: authFirst,
-  runBayRestoreTest: authFirst,
+  getProjectBackupShards: authFirstRequireAccount,
+  runBayBackup: authFirstRequireAccount,
+  runBayRestore: authFirstRequireAccount,
+  runBayRestoreTest: authFirstRequireAccount,
   getAccountBay: authFirstRequireAccount,
   getProjectBay: authFirstRequireAccount,
   getHostBay: authFirstRequireAccount,
   getRoutingContext: authFirstRequireAccount,
-  backfillBayOwnership: authFirst,
-  rebuildAccountProjectIndex: authFirst,
-  drainAccountProjectIndexProjection: authFirst,
-  getAccountProjectIndexProjectionStatus: authFirst,
-  rebuildAccountCollaboratorIndex: authFirst,
-  drainAccountCollaboratorIndexProjection: authFirst,
-  getAccountCollaboratorIndexProjectionStatus: authFirst,
-  rebuildAccountNotificationIndex: authFirst,
-  drainAccountNotificationIndexProjection: authFirst,
-  getAccountNotificationIndexProjectionStatus: authFirst,
-  getParallelOpsStatus: authFirst,
+  backfillBayOwnership: authFirstRequireAccount,
+  rebuildAccountProjectIndex: authFirstRequireAccount,
+  drainAccountProjectIndexProjection: authFirstRequireAccount,
+  getAccountProjectIndexProjectionStatus: authFirstRequireAccount,
+  rebuildAccountCollaboratorIndex: authFirstRequireAccount,
+  drainAccountCollaboratorIndexProjection: authFirstRequireAccount,
+  getAccountCollaboratorIndexProjectionStatus: authFirstRequireAccount,
+  rebuildAccountNotificationIndex: authFirstRequireAccount,
+  drainAccountNotificationIndexProjection: authFirstRequireAccount,
+  getAccountNotificationIndexProjectionStatus: authFirstRequireAccount,
+  getParallelOpsStatus: authFirstRequireAccount,
   getSiteSetupStatus: authFirstRequireAccount,
   getStarServerInfo: authFirstRequireAccount,
-  getProjectHostParallelOpsLimit: authFirst,
-  setParallelOpsLimit: authFirst,
-  clearParallelOpsLimit: authFirst,
+  getProjectHostParallelOpsLimit: authFirstRequireAccountOrHost,
+  setParallelOpsLimit: authFirstRequireAccount,
+  clearParallelOpsLimit: authFirstRequireAccount,
   recordBrowserAutomationAudit: authFirstRequireAccount,
-  logClientError: authFirst,
-  webappError: authFirst,
-  manageApiKeys: authFirst,
-  createImpersonationGrant: authFirst,
-  adminBanUser: authFirst,
-  userSearch: authFirst,
+  logClientError: authFirstRequireAccount,
+  webappError: authFirstRequireAccount,
+  manageApiKeys: authFirstRequireAccount,
+  createImpersonationGrant: authFirstRequireAccount,
+  adminBanUser: authFirstRequireAccount,
+  userSearch: authFirstRequireAccount,
   getNames: requireAccount,
-  adminCreateUser: authFirst,
-  adminUnbanUser: authFirst,
-  deleteAccount: authFirst,
+  adminCreateUser: authFirstRequireAccount,
+  adminUnbanUser: authFirstRequireAccount,
+  deleteAccount: authFirstRequireAccount,
   rehomeAccount: authFirstRequireAccount,
   getAccountRehomeOperation: authFirstRequireAccount,
   reconcileAccountRehome: authFirstRequireAccount,
   drainAccountRehome: authFirstRequireAccount,
   repairAccountMembershipPortability: authFirstRequireAccount,
-  adminResetPasswordLink: authFirst,
-  adminVerifyEmailAddress: authFirst,
-  adminDisableTwoFactor: authFirst,
-  adminGrantAdminRole: authFirst,
-  adminRevokeAdminRole: authFirst,
-  sendTestEmail: authFirst,
+  adminResetPasswordLink: authFirstRequireAccount,
+  adminVerifyEmailAddress: authFirstRequireAccount,
+  adminDisableTwoFactor: authFirstRequireAccount,
+  adminGrantAdminRole: authFirstRequireAccount,
+  adminRevokeAdminRole: authFirstRequireAccount,
+  sendTestEmail: authFirstRequireAccount,
   getSiteSettings: authFirstRequireAccount,
-  setSiteSettings: authFirst,
-  syncSiteSettingsToBays: authFirst,
-  sendEmailVerification: authFirst,
-  deletePassport: authFirst,
-  getAdminAssignedMembership: authFirst,
-  setAdminAssignedMembership: authFirst,
-  clearAdminAssignedMembership: authFirst,
-  getAccountEntitlementOverride: authFirst,
-  setAccountEntitlementOverride: authFirst,
-  clearAccountEntitlementOverride: authFirst,
-  listExternalCredentials: authFirst,
-  revokeExternalCredential: authFirst,
-  setOpenAiApiKey: authFirst,
-  deleteOpenAiApiKey: authFirst,
-  getOpenAiApiKeyStatus: authFirst,
-  getCodexPaymentSource: authFirst,
+  setSiteSettings: authFirstRequireAccount,
+  syncSiteSettingsToBays: authFirstRequireAccount,
+  sendEmailVerification: authFirstRequireAccount,
+  deletePassport: authFirstRequireAccount,
+  getAdminAssignedMembership: authFirstRequireAccount,
+  setAdminAssignedMembership: authFirstRequireAccount,
+  clearAdminAssignedMembership: authFirstRequireAccount,
+  getAccountEntitlementOverride: authFirstRequireAccount,
+  setAccountEntitlementOverride: authFirstRequireAccount,
+  clearAccountEntitlementOverride: authFirstRequireAccount,
+  listExternalCredentials: authFirstRequireAccount,
+  revokeExternalCredential: authFirstRequireAccount,
+  setOpenAiApiKey: authFirstRequireAccount,
+  deleteOpenAiApiKey: authFirstRequireAccount,
+  getOpenAiApiKeyStatus: authFirstRequireAccount,
+  getCodexPaymentSource: authFirstRequireAccount,
   getSiteFundedCodexAdminStatus: authFirstRequireAccount,
-  getCodexUsageStatus: authFirst,
-  getFrontendSourceFingerprint: authFirst,
-  getRootfsCatalog: authFirst,
-  getRootfsCatalogPage: authFirst,
-  getRootfsCatalogEntries: authFirst,
+  getCodexUsageStatus: authFirstRequireAccount,
+  getFrontendSourceFingerprint: authFirstRequireAccount,
+  getRootfsCatalog: authFirstRequireAccount,
+  getRootfsCatalogPage: authFirstRequireAccount,
+  getRootfsCatalogEntries: authFirstRequireAccount,
   getRootfsCatalogAdmin: authFirstRequireAccount,
   getRootfsCatalogAdminPage: authFirstRequireAccount,
   getRootfsRusticReposAdmin: authFirstRequireAccount,
@@ -155,48 +156,43 @@ export const system = {
   publishProjectRootfsImage: authFirstRequireAccount,
   getProjectRootfsStates: authFirstRequireAccount,
   setProjectRootfsImage: authFirstRequireAccount,
-  getPublicSiteUrl: authFirst,
-  testR2Credentials: authFirst,
-  testCloudflareVisitorLocationHeaders: authFirst,
-  applyCloudflareTunnelSettings: authFirst,
-  bootstrapCloudflareConfiguration: authFirst,
-  createCloudflareTeardownPlan: authFirst,
-  getCloudflareTeardownPlan: authFirst,
-  startCloudflareTeardownApply: authFirst,
-  getCloudflareR2Usage: authFirst,
-  auditCloudflareR2Bucket: authFirst,
-  startCloudflareR2Audit: authFirst,
-  getCloudflareR2BayBackupCleanupPlan: authFirst,
-  startCloudflareR2BayBackupCleanup: authFirst,
-  createProviderSetupChallenge: authFirst,
-  getProviderSetupChallenge: authFirst,
-  clearProviderSetupChallenge: authFirst,
-  upsertBrowserSession: authFirst,
-  listBrowserSessions: authFirst,
-  removeBrowserSession: authFirst,
+  getPublicSiteUrl: authFirstRequireAuthenticated,
+  testR2Credentials: authFirstRequireAccount,
+  testCloudflareVisitorLocationHeaders: authFirstRequireAccount,
+  applyCloudflareTunnelSettings: authFirstRequireAccount,
+  bootstrapCloudflareConfiguration: authFirstRequireAccount,
+  createCloudflareTeardownPlan: authFirstRequireAccount,
+  getCloudflareTeardownPlan: authFirstRequireAccount,
+  startCloudflareTeardownApply: authFirstRequireAccount,
+  getCloudflareR2Usage: authFirstRequireAccount,
+  auditCloudflareR2Bucket: authFirstRequireAccount,
+  startCloudflareR2Audit: authFirstRequireAccount,
+  getCloudflareR2BayBackupCleanupPlan: authFirstRequireAccount,
+  startCloudflareR2BayBackupCleanup: authFirstRequireAccount,
+  createProviderSetupChallenge: authFirstRequireAccount,
+  getProviderSetupChallenge: authFirstRequireAccount,
+  clearProviderSetupChallenge: authFirstRequireAccount,
+  upsertBrowserSession: authFirstRequireAccount,
+  listBrowserSessions: authFirstRequireAccount,
+  removeBrowserSession: authFirstRequireAccount,
   issueBrowserSignInCookie: authFirstRequireAccount,
-  assertProjectPublicSharingAllowed: authFirst,
-  getProjectAppPublicPolicy: authFirst,
-  tracePublicAppHostname: authFirst,
-  reserveProjectAppPublicSubdomain: authFirst,
-  releaseProjectAppPublicSubdomain: authFirst,
-  getProjectAppPrivateHostnamePolicy: authFirst,
-  inspectProjectAppPrivateHostname: authFirst,
-  listProjectAppPrivateHostnames: authFirst,
-  tracePrivateAppHostname: authFirst,
-  reserveProjectAppPrivateHostname: authFirst,
-  releaseProjectAppPrivateHostname: authFirst,
-  reconcileProjectAppPrivateHostnames: authFirst,
+  getProjectAppPrivateHostnamePolicy: authFirstRequireAccountOrHost,
+  inspectProjectAppPrivateHostname: authFirstRequireAccountOrHost,
+  listProjectAppPrivateHostnames: authFirstRequireAccountOrHost,
+  tracePrivateAppHostname: authFirstRequireAccountOrHost,
+  reserveProjectAppPrivateHostname: authFirstRequireAccountOrHost,
+  releaseProjectAppPrivateHostname: authFirstRequireAccountOrHost,
+  reconcileProjectAppPrivateHostnames: authFirstRequireAccount,
   recordManagedProjectEgress: authFirstRequireProjectOrHost,
   getManagedProjectEgressPolicy: authFirstRequireProjectOrHost,
   recordManagedProjectCpuUsage: authFirstRequireProjectOrHost,
   recordServiceAdmissionDenial: authFirstRequireProject,
   recordServiceAdmissionNearLimit: authFirstRequireProject,
-  getServiceAdmissionConfig: authFirst,
+  getServiceAdmissionConfig: authFirstRequireProjectOrHost,
   resolveManagedProjectSshKeyAccount: authFirstRequireHost,
 
-  adminSalesloftSync: authFirst,
-  userSalesloftSync: authFirst,
+  adminSalesloftSync: authFirstRequireAccount,
+  userSalesloftSync: authFirstRequireAccount,
 };
 
 export type ProviderSetupChallengeProvider = "gcp" | "nebius";
@@ -1075,18 +1071,6 @@ export interface BrowserSignInCookieInfo {
   max_age_ms?: number;
 }
 
-export interface ProjectAppPublicPolicy {
-  enabled: boolean;
-  launchpad: boolean;
-  site_hostname?: string;
-  host_hostname?: string;
-  dns_domain?: string;
-  subdomain_suffix: string;
-  provider?: string;
-  metered_egress: boolean;
-  warnings: string[];
-}
-
 export type ManagedProjectEgressCategory =
   | "file-download"
   | "http-proxy"
@@ -1150,14 +1134,6 @@ export interface ParallelOpsLimitResolution {
   configured_limit: number | null;
   effective_limit: number | null;
   config_source: "constant" | "env-legacy" | "db-override" | "env-debug-cap";
-}
-
-export interface ReserveProjectAppPublicSubdomainResult {
-  hostname: string;
-  label: string;
-  base_path: string;
-  url_public: string;
-  warnings: string[];
 }
 
 export interface ProjectAppPrivateHostnamePolicy {
@@ -2080,21 +2056,6 @@ export interface AccountNotificationIndexProjectionStatus {
   bay_id: string;
   backlog: AccountNotificationIndexProjectionBacklogStatus;
   maintenance: AccountNotificationIndexProjectionMaintenanceStatus;
-}
-
-export interface PublicAppHostnameTrace {
-  matched: boolean;
-  hostname: string;
-  project_id?: string;
-  app_id?: string;
-  base_path?: string;
-  site_hostname?: string;
-  host_hostname?: string;
-  dns_domain?: string;
-  subdomain_suffix?: string;
-  dns_target?: string;
-  metered_egress?: boolean;
-  warnings?: string[];
 }
 
 export interface PrivateAppHostnameTrace {
@@ -3076,42 +3037,6 @@ export interface System {
     session_hash?: string | null;
     max_age_ms?: number;
   }) => Promise<BrowserSignInCookieInfo>;
-
-  assertProjectPublicSharingAllowed: (opts?: {
-    account_id?: string;
-    project_id?: string;
-  }) => Promise<{
-    allowed: true;
-    project_id: string;
-    checked_account_ids: string[];
-  }>;
-
-  getProjectAppPublicPolicy: (opts?: {
-    account_id?: string;
-    project_id?: string;
-  }) => Promise<ProjectAppPublicPolicy>;
-
-  tracePublicAppHostname: (opts: {
-    account_id?: string;
-    host_id?: string;
-    hostname: string;
-  }) => Promise<PublicAppHostnameTrace>;
-
-  reserveProjectAppPublicSubdomain: (opts: {
-    account_id?: string;
-    project_id?: string;
-    app_id: string;
-    base_path: string;
-    ttl_s: number;
-    preferred_label?: string;
-    random_subdomain?: boolean;
-  }) => Promise<ReserveProjectAppPublicSubdomainResult>;
-
-  releaseProjectAppPublicSubdomain: (opts: {
-    account_id?: string;
-    project_id?: string;
-    app_id: string;
-  }) => Promise<{ released: boolean }>;
 
   getProjectAppPrivateHostnamePolicy: (opts: {
     account_id?: string;

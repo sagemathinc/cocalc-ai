@@ -8,6 +8,7 @@ import path from "node:path";
 import type { Stats } from "node:fs";
 import { finished } from "node:stream/promises";
 import TTL from "@isaacs/ttlcache";
+import { normalizePrivateAppCacheControl } from "@cocalc/backend/auth/app-proxy";
 import getLogger from "@cocalc/backend/logger";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { hubApi } from "@cocalc/lite/hub/api";
@@ -28,18 +29,11 @@ import {
   PublicViewerManifestEntry,
 } from "./public-viewer";
 import { getProjectSandboxFilesystem } from "./file-server";
-import {
-  authorizePublicAppPath,
-  type AppRequestMatch,
-} from "./app-public-access";
+import type { AppRequestMatch } from "./app-request-match";
 
 const logger = getLogger("project-host:static-apps");
 const STATIC_CACHE_CONTROL_PRIVATE_DEFAULT =
   "private, max-age=60, must-revalidate";
-const STATIC_CACHE_CONTROL_PUBLIC_FILE_DEFAULT =
-  "public, max-age=60, s-maxage=300, stale-while-revalidate=600";
-const STATIC_CACHE_CONTROL_PUBLIC_MANIFEST_DEFAULT =
-  "public, max-age=15, s-maxage=60, stale-while-revalidate=120";
 const PUBLIC_VIEWER_BASE_URL_CACHE = new TTL<string, string | null>({
   max: 1,
   ttl: 30_000,
@@ -238,21 +232,13 @@ function matchesIfNoneMatch(req: http.IncomingMessage, etag: string): boolean {
 
 function resolveStaticCacheControl({
   explicit,
-  exposureMode,
-  kind,
 }: {
   explicit?: string;
-  exposureMode: "private" | "public";
-  kind: "file" | "manifest";
 }): string {
-  const normalized = `${explicit ?? ""}`.trim();
-  if (normalized) return normalized;
-  if (exposureMode === "public") {
-    return kind === "manifest"
-      ? STATIC_CACHE_CONTROL_PUBLIC_MANIFEST_DEFAULT
-      : STATIC_CACHE_CONTROL_PUBLIC_FILE_DEFAULT;
-  }
-  return STATIC_CACHE_CONTROL_PRIVATE_DEFAULT;
+  return normalizePrivateAppCacheControl(
+    explicit,
+    STATIC_CACHE_CONTROL_PRIVATE_DEFAULT,
+  );
 }
 
 function sortPublicViewerEntries(
@@ -538,26 +524,19 @@ ${entries}
 </html>`;
 }
 
-function buildPublicViewerHeaders(
-  exposureMode: "private" | "public",
-): Record<string, string> {
-  const headers: Record<string, string> = {
+function buildPublicViewerHeaders(): Record<string, string> {
+  return {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy":
+      "default-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; media-src 'self' data: blob: https: http:; connect-src 'self' https: http:",
   };
-  if (exposureMode === "public") {
-    headers["Content-Security-Policy"] =
-      "default-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; media-src 'self' data: blob: https: http:; connect-src 'self' https: http:";
-  }
-  return headers;
 }
 
 async function buildPublicFileHeaders({
   req,
-  exposureMode,
 }: {
   req: http.IncomingMessage;
-  exposureMode: "private" | "public";
 }): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     "Cross-Origin-Resource-Policy": "cross-origin",
@@ -575,9 +554,6 @@ async function buildPublicFileHeaders({
     headers["Access-Control-Allow-Credentials"] = "true";
     headers["Vary"] = "Origin";
     return headers;
-  }
-  if (exposureMode === "public") {
-    headers["Access-Control-Allow-Origin"] = "*";
   }
   return headers;
 }
@@ -714,11 +690,9 @@ async function resolveStaticChildFile({
 export async function inspectStaticAppRequest({
   project_id,
   match,
-  url,
 }: {
   project_id: string;
   match: AppRequestMatch | undefined;
-  url: string;
 }): Promise<HostStaticAppPathInspection | undefined> {
   if (match?.spec.kind !== "static") {
     return;
@@ -763,9 +737,6 @@ export async function inspectStaticAppRequest({
       project_id,
       app_id: match.spec.id,
       static_root: rootContext.containerPath,
-      exposure_mode: match.exposure?.mode === "public" ? "public" : "private",
-      auth_front: match.exposure?.auth_front,
-      public_access_granted: await authorizePublicAppPath({ project_id, url }),
       requested: {
         kind: requestedKind,
         relative_path: pathInfo.relativePath,
@@ -982,15 +953,13 @@ export async function maybeHandleStaticAppRequest({
 
   try {
     const integration = match.spec.integration;
-    const exposureMode =
-      match.exposure?.mode === "public" ? "public" : "private";
     const extraHtmlHeaders =
       integration?.mode === COCALC_PUBLIC_VIEWER_MODE
-        ? buildPublicViewerHeaders(exposureMode)
+        ? buildPublicViewerHeaders()
         : undefined;
     const fileHeaders =
       integration?.mode === COCALC_PUBLIC_VIEWER_MODE
-        ? await buildPublicFileHeaders({ req, exposureMode })
+        ? await buildPublicFileHeaders({ req })
         : undefined;
 
     const pathInfo = await resolveStaticPath({
@@ -1037,8 +1006,6 @@ export async function maybeHandleStaticAppRequest({
         },
         cacheControl: resolveStaticCacheControl({
           explicit: match.spec.static?.cache_control,
-          exposureMode,
-          kind: "file",
         }),
         extraHeaders: fileHeaders,
         maxBytes: getStaticReadLimit({
@@ -1103,8 +1070,6 @@ export async function maybeHandleStaticAppRequest({
         resolved: indexFile,
         cacheControl: resolveStaticCacheControl({
           explicit: match.spec.static?.cache_control,
-          exposureMode,
-          kind: "file",
         }),
         extraHeaders: fileHeaders,
         maxBytes: getStaticReadLimit({
@@ -1160,8 +1125,6 @@ export async function maybeHandleStaticAppRequest({
         html,
         cacheControl: resolveStaticCacheControl({
           explicit: match.spec.static?.cache_control,
-          exposureMode,
-          kind: "manifest",
         }),
         mtimeMs: manifestFile.stat.mtimeMs,
         extraHeaders: extraHtmlHeaders,

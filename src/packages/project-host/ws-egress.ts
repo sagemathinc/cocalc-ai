@@ -7,7 +7,6 @@ import type { IncomingMessage } from "http";
 import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import getLogger from "@cocalc/backend/logger";
-import type { AppProxyExposureMode } from "@cocalc/backend/auth/app-proxy";
 
 const logger = getLogger("project-host:ws-egress");
 
@@ -23,13 +22,11 @@ export const MANAGED_WS_EGRESS_CATEGORY = "ws-proxy";
 export interface ManagedWsEgressContext {
   project_id: string;
   app_id?: string;
-  exposure_mode: AppProxyExposureMode;
 }
 
 type RecordManagedWsEgressFn = (opts: {
   project_id: string;
   app_id?: string;
-  exposure_mode: AppProxyExposureMode;
   bytes: number;
   request_path: string;
   partial: boolean;

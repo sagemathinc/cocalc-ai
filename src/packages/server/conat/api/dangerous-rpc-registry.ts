@@ -1480,10 +1480,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
-  "system.releaseProjectAppPublicSubdomain": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
-  },
   "system.removeBrowserSession": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -1497,10 +1493,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: "RootFS catalog deletion request",
   },
   "system.reserveProjectAppPrivateHostname": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
-  },
-  "system.reserveProjectAppPublicSubdomain": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },

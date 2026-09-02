@@ -5,7 +5,6 @@
 
 import type { IncomingMessage, ServerResponse } from "http";
 import getLogger from "@cocalc/backend/logger";
-import type { AppProxyExposureMode } from "@cocalc/backend/auth/app-proxy";
 
 const logger = getLogger("project-host:http-egress");
 
@@ -18,7 +17,6 @@ type RecordManagedHttpEgressFn = (opts: {
   request_path: string;
   method: string;
   status_code: number;
-  exposure_mode: AppProxyExposureMode;
   partial: boolean;
 }) => Promise<void> | void;
 
@@ -48,12 +46,10 @@ function getChunkByteLength(
 export function attachManagedHttpEgressRecorder({
   req,
   res,
-  exposure_mode,
   record,
 }: {
   req: IncomingMessage;
   res: ServerResponse;
-  exposure_mode: AppProxyExposureMode;
   record: RecordManagedHttpEgressFn;
 }): void {
   if ((res as any)[HTTP_EGRESS_TRACKER]) {
@@ -78,7 +74,6 @@ export function attachManagedHttpEgressRecorder({
         request_path,
         method,
         status_code: res.statusCode,
-        exposure_mode,
         partial,
       }),
     ).catch((err) => {
@@ -86,7 +81,6 @@ export function attachManagedHttpEgressRecorder({
         request_path,
         method,
         status_code: res.statusCode,
-        exposure_mode,
         partial,
         bytes,
         err: `${err}`,

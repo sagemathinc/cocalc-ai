@@ -8,7 +8,6 @@ import * as http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { APP_PROXY_EXPOSURE_HEADER } from "@cocalc/backend/auth/app-proxy";
 import { PROJECT_PROXY_AUTH_HEADER } from "@cocalc/backend/auth/project-proxy-auth";
 
 jest.mock("@cocalc/project/conat/hub", () => ({
@@ -207,12 +206,11 @@ describe("static public viewer mode", () => {
         `http://127.0.0.1:${proxyPort}/${project_id}/apps/${id}/docs/`,
         {
           [PROJECT_PROXY_AUTH_HEADER]: secretToken,
-          [APP_PROXY_EXPOSURE_HEADER]: "public",
         },
       );
       expect(page.statusCode).toBe(200);
       expect(page.headers["content-type"]).toContain("text/html");
-      expect(page.headers["cache-control"]).toBe("public, max-age=120");
+      expect(page.headers["cache-control"]).toBe("private, max-age=120");
       expect(page.headers["x-content-type-options"]).toBe("nosniff");
       expect(page.headers["content-security-policy"]).toContain(
         "frame-ancestors 'none'",

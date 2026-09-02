@@ -5,10 +5,6 @@ import {
   projectCookiePath,
 } from "./http-proxy-cookies";
 
-jest.mock("./app-public-access", () => ({
-  authorizePublicAppPath: jest.fn(async () => false),
-}));
-
 const getRowMock = jest.fn();
 const getAccountRevokedBeforeMsMock = jest.fn(() => undefined);
 const mockCallHub = jest.fn();
@@ -314,6 +310,25 @@ describe("project-host HTTP session cookie", () => {
     ).rejects.toThrow(
       "This private development site must be opened from its CoCalc project.",
     );
+  });
+
+  it("rejects retired public-app headers and query tokens without account auth", async () => {
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const req = {
+      headers: {
+        "x-cocalc-public-app-host": "demo.example.invalid",
+      },
+      socket: {},
+      url: `/${project_id}/apps/demo/?cocalc_app_token=retired`,
+    } as any;
+
+    await expect(
+      auth.authorizeHttpRequest(req, createResponse(), project_id),
+    ).rejects.toThrow("missing project-host HTTP auth token");
+    expect(req.url).toBe(`/${project_id}/apps/demo/`);
+    expect(req.headers).not.toHaveProperty("x-cocalc-public-app-host");
   });
 
   it("authorizes a collaborator on a private hostname", async () => {

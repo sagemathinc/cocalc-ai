@@ -1,4 +1,9 @@
-import { initHubApi, transformArgs } from "./index";
+import {
+  getHubApiAccountTargetMethods,
+  getHubApiPrincipalPolicies,
+  initHubApi,
+  transformArgs,
+} from "./index";
 import { purchases } from "./purchases";
 
 describe("hub API response handling", () => {
@@ -25,6 +30,76 @@ describe("hub API response handling", () => {
 });
 
 describe("hub API argument transforms", () => {
+  it("declares a principal policy for every Hub API method", () => {
+    const policies = getHubApiPrincipalPolicies();
+    expect(Object.keys(policies).length).toBeGreaterThan(700);
+    expect(Object.values(policies)).not.toContain(undefined);
+  });
+
+  it("does not expose the retired anonymous project-app RPCs", () => {
+    const policies = getHubApiPrincipalPolicies();
+    for (const method of [
+      "system.assertProjectPublicSharingAllowed",
+      "system.getProjectAppPublicPolicy",
+      "system.tracePublicAppHostname",
+      "system.reserveProjectAppPublicSubdomain",
+      "system.releaseProjectAppPublicSubdomain",
+    ]) {
+      expect(policies).not.toHaveProperty(method);
+    }
+  });
+
+  it("requires review of every RPC that preserves account_id as target data", () => {
+    expect(getHubApiAccountTargetMethods()).toEqual([
+      "aiSessions.upsertProjectHostSession",
+      "hosts.checkCodexSiteUsageAllowance",
+      "hosts.getAccountEffectiveLimits",
+      "hosts.issueProjectHostAgentAuthToken",
+      "hosts.recordAcpAdmissionDenial",
+      "hosts.recordCodexSiteUsage",
+      "hosts.recordServiceAdmissionDenial",
+      "hosts.recordServiceAdmissionNearLimit",
+      "hosts.reserveSiteFundedCodexTurn",
+      "hosts.touchProject",
+      "notifications.createCodexTurnNotice",
+      "projects.startFromHost",
+      "publicDirectoryShares.authorizeRead",
+      "publicDirectoryShares.getTemporaryViewerReadPolicy",
+    ]);
+  });
+
+  it.each([
+    "purchases.getMembership",
+    "org.get",
+    "sync.history",
+    "system.manageApiKeys",
+    "system.createImpersonationGrant",
+    "system.setOpenAiApiKey",
+    "system.upsertBrowserSession",
+    "projects.previewEmailProjectInvite",
+  ])("classifies %s as account-only", (name) => {
+    expect(getHubApiPrincipalPolicies()[name]).toBe("account");
+  });
+
+  it("makes every account-only transform reject project and host principals", async () => {
+    const accountOnlyMethods = Object.entries(getHubApiPrincipalPolicies())
+      .filter(([, policy]) => policy === "account")
+      .map(([name]) => name);
+
+    for (const name of accountOnlyMethods) {
+      await expect(
+        Promise.resolve().then(() =>
+          transformArgs({ name, args: [{}], project_id: "project-1" }),
+        ),
+      ).rejects.toThrow(/signed in|account/);
+      await expect(
+        Promise.resolve().then(() =>
+          transformArgs({ name, args: [{}], host_id: "host-1" }),
+        ),
+      ).rejects.toThrow(/signed in|account/);
+    }
+  });
+
   it("binds every purchases RPC to the authenticated account principal", async () => {
     for (const functionName of Object.keys(purchases)) {
       const name = `purchases.${functionName}`;
@@ -222,6 +297,81 @@ describe("hub API argument transforms", () => {
     ).rejects.toThrow("must be a host");
   });
 
+  it("drops account actor claims from generic project and host RPCs", async () => {
+    const projectArgs = await transformArgs({
+      name: "db.userQuery",
+      args: [
+        {
+          account_id: "victim-account",
+          project_id: "spoofed-project",
+          query: { projects: [{ project_id: null }] },
+        },
+      ],
+      project_id: "caller-project",
+    });
+    expect(projectArgs[0]).toMatchObject({ project_id: "caller-project" });
+    expect(projectArgs[0]).not.toHaveProperty("account_id");
+
+    const hostArgs = await transformArgs({
+      name: "system.getProjectAppPrivateHostnamePolicy",
+      args: [
+        {
+          account_id: "victim-account",
+          project_id: "target-project",
+        },
+      ],
+      host_id: "caller-host",
+    });
+    expect(hostArgs[0]).toMatchObject({
+      host_id: "caller-host",
+      project_id: "target-project",
+    });
+    expect(hostArgs[0]).not.toHaveProperty("account_id");
+  });
+
+  it("preserves explicitly declared account targets for host RPCs", async () => {
+    const viewerArgs = await transformArgs({
+      name: "publicDirectoryShares.authorizeRead",
+      args: [
+        {
+          account_id: "viewer-account",
+          project_id: "project-1",
+          share_id: "share-1",
+        },
+      ],
+      host_id: "caller-host",
+    });
+    expect(viewerArgs[0]).toMatchObject({
+      account_id: "viewer-account",
+      host_id: "caller-host",
+      project_id: "project-1",
+    });
+
+    const sessionArgs = await transformArgs({
+      name: "aiSessions.upsertProjectHostSession",
+      args: [
+        {
+          account_id: "session-account",
+          project_id: "project-1",
+          state: "running",
+        },
+      ],
+      host_id: "caller-host",
+    });
+    expect(sessionArgs[0]).toMatchObject({
+      account_id: "session-account",
+      authenticated_host_id: "caller-host",
+      project_id: "project-1",
+    });
+    await expect(
+      transformArgs({
+        name: "aiSessions.upsertProjectHostSession",
+        args: [{ account_id: "victim-account", project_id: "project-1" }],
+        project_id: "project-1",
+      }),
+    ).rejects.toThrow("requires host authentication");
+  });
+
   it("authorizes project VM reads for collaborators without trusting spoofed principals", async () => {
     const accountArgs = await transformArgs({
       name: "compute.listProjectVms",
@@ -328,7 +478,7 @@ describe("hub API argument transforms", () => {
       });
       expect(hostArgs[0].host_id).toBe("host-1");
       expect(hostArgs[0].project_id).toBe("spoofed-project");
-      expect(hostArgs[0].account_id).toBe("account-for-download-attribution");
+      expect(hostArgs[0].account_id).toBeUndefined();
 
       const projectArgs = await transformArgs({
         name,
@@ -428,20 +578,20 @@ describe("hub API argument transforms", () => {
       expect(args[0].account_id).toBe("account-1");
     }
 
-    expect(
+    await expect(
       transformArgs({
         name: "system.releaseProjectAppPrivateHostname",
         args: [{ project_id: "spoofed-project", app_id: "app-1" }],
         project_id: "project-1",
       }),
-    ).toEqual([{ project_id: "project-1", app_id: "app-1" }]);
+    ).rejects.toThrow("must be an account or host");
 
-    expect(
+    await expect(
       transformArgs({
         name: "system.tracePrivateAppHostname",
         args: [{ host_id: "spoofed-host", hostname: "dev-1.example.com" }],
         host_id: "host-1",
       }),
-    ).toEqual([{ host_id: "host-1", hostname: "dev-1.example.com" }]);
+    ).resolves.toEqual([{ host_id: "host-1", hostname: "dev-1.example.com" }]);
   });
 });

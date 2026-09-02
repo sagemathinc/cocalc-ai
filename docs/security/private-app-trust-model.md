@@ -52,8 +52,8 @@ defense-in-depth protections:
 - project-host bootstrap bearer auth is stripped after validation and not sent
   to upstream apps,
 - project-host `/customize` no longer exposes `account_id`,
-- public apps use separate public hostnames, so browser same-origin access to
-  the main site is not the relevant risk there.
+- managed app URLs require authenticated project collaboration; CoCalc does
+  not publish project apps for anonymous access.
 
 These protections are required because the trust model is **same-project**, not
 **same-host** and not **site-wide**.

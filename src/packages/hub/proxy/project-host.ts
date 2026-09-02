@@ -3,18 +3,15 @@ import getLogger from "../logger";
 import { parseReq } from "./parse";
 import getPool from "@cocalc/database/pool";
 import LRU from "lru-cache";
-import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const logger = getLogger("proxy:project-host");
-const PUBLIC_APP_HOST_HEADER = "x-cocalc-public-app-host";
 const PROJECT_HOST_PROXY_ACCOUNT_ID_KEY = Symbol.for(
   "@cocalc/hub/proxy/project-host-account-id",
 );
-const HUB_PUBLIC_AUTH_TOKEN_LEEWAY_MS = 60_000;
 
 type HostRow = {
   host_id?: string;
@@ -43,10 +40,6 @@ function getProjectHostProxyAccountId(
 
 const cache = new LRU<string, HostRow>({ max: 10000, ttl: 60_000 });
 const hostCache = new LRU<string, HostRow>({ max: 10000, ttl: 60_000 });
-const publicAuthTokenCache = new LRU<
-  string,
-  { token: string; expiresAt: number }
->({ max: 10_000, ttl: 10 * 60_000 });
 
 async function getHost(project_id: string): Promise<HostRow | undefined> {
   const cached = cache.get(project_id);
@@ -89,29 +82,6 @@ async function getHostById(host_id: string): Promise<HostRow | undefined> {
     hostCache.set(host_id, row);
   }
   return row;
-}
-
-function getPublicAppHubAuthToken(host_id: string): string {
-  const cached = publicAuthTokenCache.get(host_id);
-  if (
-    cached &&
-    Date.now() < cached.expiresAt - HUB_PUBLIC_AUTH_TOKEN_LEEWAY_MS
-  ) {
-    return cached.token;
-  }
-  const issued = issueProjectHostAuthToken({
-    host_id,
-    actor: "hub",
-    hub_id: "hub",
-    ttl_seconds: 5 * 60,
-    private_key: getProjectHostAuthTokenPrivateKey(),
-  });
-  const value = {
-    token: issued.token,
-    expiresAt: issued.expires_at,
-  };
-  publicAuthTokenCache.set(host_id, value);
-  return value.token;
 }
 
 function isLocalProxyHost(host: HostRow | undefined): boolean {
@@ -311,14 +281,7 @@ export async function createProjectHostProxyHandlers() {
         rewriteProjectHostSessionPath(req, parsed.project_id);
       }
       const host = await getHostForParsedRoute(parsed);
-      if (isPublicAppSubdomainRequest(req) && req.headers.host) {
-        req.headers[PUBLIC_APP_HOST_HEADER] = req.headers.host;
-        if (host?.host_id) {
-          req.headers.authorization = `Bearer ${getPublicAppHubAuthToken(host.host_id)}`;
-        }
-      } else {
-        setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
-      }
+      setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
       const target =
         parsed.type === "conat" || parsed.type === "project-host-session"
           ? await targetForConatRoute(parsed.project_id)
@@ -348,14 +311,7 @@ export async function createProjectHostProxyHandlers() {
         rewriteProjectHostSessionPath(req, parsed.project_id);
       }
       const host = await getHostForParsedRoute(parsed);
-      if (isPublicAppSubdomainRequest(req) && req.headers.host) {
-        req.headers[PUBLIC_APP_HOST_HEADER] = req.headers.host;
-        if (host?.host_id) {
-          req.headers.authorization = `Bearer ${getPublicAppHubAuthToken(host.host_id)}`;
-        }
-      } else {
-        setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
-      }
+      setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
       const target =
         parsed.type === "conat" || parsed.type === "project-host-session"
           ? await targetForConatRoute(parsed.project_id)

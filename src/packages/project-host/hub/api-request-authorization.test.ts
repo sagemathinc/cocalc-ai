@@ -178,8 +178,6 @@ describe("project-host hub API request authorization", () => {
     }
     for (const name of [
       "compute.authorizeProjectSshKey",
-      "system.assertProjectPublicSharingAllowed",
-      "system.reserveProjectAppPublicSubdomain",
       "system.reserveProjectAppPrivateHostname",
     ]) {
       expectForbidden(() =>
@@ -191,7 +189,10 @@ describe("project-host hub API request authorization", () => {
   it("rejects a project identity targeting another project", () => {
     expectForbidden(() =>
       authorizeProjectHostHubApiRequest(
-        projectRequest("system.getProjectAppPublicPolicy", other_project_id),
+        projectRequest(
+          "system.getProjectAppPrivateHostnamePolicy",
+          other_project_id,
+        ),
       ),
     );
   });

@@ -9,7 +9,6 @@ import type {
   AppMetricsBucket,
   AppMetricsSummary,
 } from "@cocalc/conat/project/api/apps";
-import type { AppProxyExposureMode } from "@cocalc/backend/auth/app-proxy";
 
 interface PersistedAppMetrics {
   last_hit_ms?: number;
@@ -342,14 +341,12 @@ function mergeHistoryBuckets({
 
 export function recordAppHttpMetric({
   app_id,
-  exposure_mode,
   status_code,
   bytes_sent,
   bytes_received,
   duration_ms,
 }: {
   app_id: string;
-  exposure_mode: AppProxyExposureMode;
   status_code: number;
   bytes_sent: number;
   bytes_received: number;
@@ -361,13 +358,8 @@ export function recordAppHttpMetric({
   metrics.totals.requests += 1;
   metrics.totals.bytes_sent += Math.max(0, bytes_sent);
   metrics.totals.bytes_received += Math.max(0, bytes_received);
-  if (exposure_mode === "public") {
-    metrics.totals.public_requests += 1;
-    metrics.totals.public_bytes_sent += Math.max(0, bytes_sent);
-  } else {
-    metrics.totals.private_requests += 1;
-    metrics.totals.private_bytes_sent += Math.max(0, bytes_sent);
-  }
+  metrics.totals.private_requests += 1;
+  metrics.totals.private_bytes_sent += Math.max(0, bytes_sent);
   if (status_code >= 500) metrics.totals.status_5xx += 1;
   else if (status_code >= 400) metrics.totals.status_4xx += 1;
   else if (status_code >= 300) metrics.totals.status_3xx += 1;
@@ -384,8 +376,7 @@ export function recordAppHttpMetric({
   bucket.requests += 1;
   bucket.bytes_sent += Math.max(0, bytes_sent);
   bucket.bytes_received += Math.max(0, bytes_received);
-  if (exposure_mode === "public") bucket.public_requests += 1;
-  else bucket.private_requests += 1;
+  bucket.private_requests += 1;
   scheduleFlush();
 }
 

@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { authFirst, authFirstRequireAccount } from "./util";
+import {
+  authFirstRequireAccount,
+  authFirstRequireAccountOrHostWithAccountTarget,
+} from "./util";
 import type { CopyOptions } from "@cocalc/conat/files/fs";
 import type { FileTypeLabel } from "@cocalc/conat/files/listing";
 import type { HostConnectionInfo } from "./hosts";
@@ -435,7 +438,7 @@ export const publicDirectoryShares = {
   listDirectory: authFirstRequireAccount,
   copyToProject: authFirstRequireAccount,
   copyToNewProject: authFirstRequireAccount,
-  authorizeRead: authFirst,
+  authorizeRead: authFirstRequireAccountOrHostWithAccountTarget,
   grantTemporaryViewerAccess: authFirstRequireAccount,
-  getTemporaryViewerReadPolicy: authFirst,
+  getTemporaryViewerReadPolicy: authFirstRequireAccountOrHostWithAccountTarget,
 } as const;

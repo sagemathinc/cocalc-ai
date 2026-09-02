@@ -13,7 +13,6 @@ import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { URL } from "node:url";
 import express, { type NextFunction } from "express";
-import TTL from "@isaacs/ttlcache";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
 import {
@@ -54,7 +53,6 @@ import {
   PROJECT_PROXY_ACCOUNT_ID_HEADER,
   PROJECT_PROXY_AUTH_HEADER,
 } from "@cocalc/backend/auth/project-proxy-auth";
-import { APP_PROXY_EXPOSURE_HEADER } from "@cocalc/backend/auth/app-proxy";
 import { attachProjectProxy } from "@cocalc/project-proxy/proxy";
 import { hubApi, init as initHubApi } from "@cocalc/lite/hub/api";
 import { authorizeProjectHostHubApiRequest } from "./hub/api-request-authorization";
@@ -146,7 +144,7 @@ import { configureProjectHostAcpAdmissionDenialRecorder } from "./hub/acp/admiss
 import { configureProjectHostServiceAdmissionDenialRecorder } from "./hub/service-admission-denials";
 import { startProjectHostConatAdmissionSettingsRefresh } from "./hub/admission-settings";
 import { main as runHostAgentMain } from "./host-agent";
-import { matchAppRequest } from "./app-public-access";
+import { matchAppRequest } from "./app-request-match";
 import { maybeHandleStaticAppRequest } from "./static-apps";
 import { runPrivilegedRmHelper } from "./privileged-rm-helper";
 import { initProjectTouchService } from "./touch-service";
@@ -215,7 +213,6 @@ export function reportFatalStartupError(message: string, err: unknown): void {
   console.error(message, err);
 }
 
-const PUBLIC_APP_HOST_HEADER = "x-cocalc-public-app-host";
 const PROJECT_HTTP_PORT_WAIT_MS = Math.max(
   1000,
   Number(process.env.COCALC_PROJECT_HTTP_PORT_WAIT_MS ?? 30_000),
@@ -229,10 +226,6 @@ const ACP_STARTUP_REHYDRATE_CONCURRENCY = Math.max(
   Number(
     process.env.COCALC_PROJECT_HOST_ACP_STARTUP_REHYDRATE_CONCURRENCY ?? 4,
   ) || 4,
-);
-const PUBLIC_APP_ROUTE_CACHE_MS = Math.max(
-  1000,
-  Number(process.env.COCALC_PROJECT_HOST_PUBLIC_APP_ROUTE_CACHE_MS ?? 30_000),
 );
 const PRIVATE_APP_ROUTE_CACHE_MS = Math.max(
   1000,
@@ -254,45 +247,6 @@ type TlsConfig = {
   enabled: boolean;
   hostname: string;
 };
-
-type PublicHostnameRoute = {
-  project_id: string;
-  app_id: string;
-  base_path: string;
-};
-
-function normalizeHostHeader(value: unknown): string {
-  const raw = `${value ?? ""}`.trim().toLowerCase();
-  if (!raw) return "";
-  return raw.split(":")[0] ?? "";
-}
-
-function normalizePrefix(value: string): string {
-  const withLeading = value.startsWith("/") ? value : `/${value}`;
-  return withLeading.replace(/\/+$/, "") || "/";
-}
-
-function rewritePublicAppUrl({
-  originalUrl,
-  route,
-}: {
-  originalUrl?: string;
-  route: PublicHostnameRoute;
-}): string {
-  const parsed = new URL(originalUrl ?? "/", "http://project-host.local");
-  const incomingPath = parsed.pathname || "/";
-  const canonicalBasePath = normalizePrefix(
-    `/${route.project_id}${route.base_path}`,
-  );
-  const proxiedPath =
-    incomingPath === canonicalBasePath ||
-    incomingPath.startsWith(`${canonicalBasePath}/`)
-      ? incomingPath
-      : normalizePrefix(
-          `${canonicalBasePath}${incomingPath === "/" ? "" : incomingPath}`,
-        );
-  return `${proxiedPath}${parsed.search ?? ""}`;
-}
 
 function resolveTlsConfig(host: string, port: number): TlsConfig {
   const httpsEnv = process.env.COCALC_PROJECT_HOST_HTTPS;
@@ -929,7 +883,6 @@ export async function main(
     request_path,
     method,
     status_code,
-    exposure_mode,
     partial,
   }: {
     project_id: string;
@@ -937,7 +890,6 @@ export async function main(
     request_path: string;
     method: string;
     status_code: number;
-    exposure_mode: "private" | "public";
     partial: boolean;
   }): Promise<void> => {
     if (!(bytes > 0) || !isProjectHostManagedEgressTrackingEnabled()) return;
@@ -951,7 +903,6 @@ export async function main(
           request_path,
           method,
           status_code,
-          exposure_mode,
           partial,
         },
       });
@@ -961,7 +912,6 @@ export async function main(
         request_path,
         method,
         status_code,
-        exposure_mode,
         partial,
         bytes,
         err: `${err}`,
@@ -1014,14 +964,12 @@ export async function main(
     app_id,
     bytes,
     request_path,
-    exposure_mode,
     partial,
   }: {
     project_id: string;
     app_id?: string;
     bytes: number;
     request_path: string;
-    exposure_mode: "private" | "public";
     partial: boolean;
   }): Promise<void> => {
     if (!(bytes > 0)) return;
@@ -1030,7 +978,6 @@ export async function main(
         project_id,
         app_id,
         bytes_sent: bytes,
-        exposure_mode,
       });
     }
     if (!isProjectHostManagedEgressTrackingEnabled()) return;
@@ -1043,7 +990,6 @@ export async function main(
         metadata: {
           app_id,
           request_path,
-          exposure_mode,
           partial,
         },
       });
@@ -1052,7 +998,6 @@ export async function main(
         project_id,
         app_id: app_id ?? null,
         request_path,
-        exposure_mode,
         partial,
         bytes,
         err: `${err}`,
@@ -1087,10 +1032,6 @@ export async function main(
       res.status(status).json({ error: message });
     }
   });
-  const publicAppRouteCache = new TTL<string, PublicHostnameRoute | null>({
-    max: 20_000,
-    ttl: PUBLIC_APP_ROUTE_CACHE_MS,
-  });
   const maybeRewritePrivateHostnameRequest =
     createPrivateAppHostnameRequestRewriter({
       cacheMs: PRIVATE_APP_ROUTE_CACHE_MS,
@@ -1103,62 +1044,10 @@ export async function main(
         });
       },
     });
-  const maybeRewritePublicHostnameRequest = async (
-    req: IncomingMessage,
-    originalUrl?: string,
-  ) => {
-    const currentUrl = `${originalUrl ?? req.url ?? ""}`;
-    if (!currentUrl || currentUrl.startsWith(`/${hostId}/`)) {
-      return;
-    }
-    const parsed = new URL(currentUrl || "/", "http://project-host.local");
-    const pathname = parsed.pathname || "/";
-    const maybeProjectPrefix = pathname.split("/")[1];
-    if (maybeProjectPrefix && isValidUUID(maybeProjectPrefix)) {
-      return;
-    }
-    const hostname = normalizeHostHeader(req.headers.host);
-    if (!hostname) return;
-    let route = publicAppRouteCache.get(hostname);
-    if (route === undefined) {
-      try {
-        const traced = await hubApi.system.tracePublicAppHostname({
-          hostname,
-        });
-        route =
-          traced?.matched &&
-          traced.project_id &&
-          traced.app_id &&
-          traced.base_path
-            ? {
-                project_id: traced.project_id,
-                app_id: traced.app_id,
-                base_path: normalizePrefix(traced.base_path),
-              }
-            : null;
-      } catch (err) {
-        logger.debug("public hostname trace failed", {
-          hostname,
-          err: `${err}`,
-        });
-        route = null;
-      }
-      publicAppRouteCache.set(hostname, route);
-    }
-    if (!route) return;
-    req.url = rewritePublicAppUrl({
-      originalUrl: currentUrl,
-      route,
-    });
-    req.headers[PUBLIC_APP_HOST_HEADER] = hostname;
-  };
   const maybeRewriteAppHostnameRequest = createAppHostnameRequestRewriteBarrier(
     {
       shouldClaim: (req) => {
-        if (
-          req.headers[PRIVATE_APP_HOST_HEADER] ||
-          req.headers[PUBLIC_APP_HOST_HEADER]
-        ) {
+        if (req.headers[PRIVATE_APP_HOST_HEADER]) {
           return false;
         }
         const parsed = new URL(
@@ -1173,8 +1062,6 @@ export async function main(
       },
       rewrite: async (req, originalUrl) => {
         await maybeRewritePrivateHostnameRequest(req, originalUrl);
-        if (req.headers[PRIVATE_APP_HOST_HEADER]) return;
-        await maybeRewritePublicHostnameRequest(req, originalUrl);
       },
     },
   );
@@ -1215,20 +1102,12 @@ export async function main(
           }
           return await checkManagedWsEgressAllowedBestEffort({ project_id });
         },
-        record: async ({
-          project_id,
-          app_id,
-          bytes,
-          request_path,
-          exposure_mode,
-          partial,
-        }) =>
+        record: async ({ project_id, app_id, bytes, request_path, partial }) =>
           await recordManagedWsEgressBestEffort({
             project_id,
             app_id,
             bytes,
             request_path,
-            exposure_mode,
             partial,
           }),
       });
@@ -1370,8 +1249,6 @@ export async function main(
       } else {
         delete req.headers[PROJECT_PROXY_ACCOUNT_ID_HEADER];
       }
-      const publicAppHost =
-        `${req.headers[PUBLIC_APP_HOST_HEADER] ?? ""}`.trim();
       const privateAppHost =
         `${req.headers[PRIVATE_APP_HOST_HEADER] ?? ""}`.trim();
       const isManagedHttpRoute =
@@ -1391,13 +1268,11 @@ export async function main(
         attachManagedHttpEgressRecorder({
           req,
           res,
-          exposure_mode: publicAppHost ? "public" : "private",
           record: async ({
             bytes,
             request_path,
             method,
             status_code,
-            exposure_mode,
             partial,
           }) =>
             await recordManagedHttpEgressBestEffort({
@@ -1406,7 +1281,6 @@ export async function main(
               request_path,
               method,
               status_code,
-              exposure_mode,
               partial,
             }),
         });
@@ -1423,13 +1297,11 @@ export async function main(
         setManagedWsEgressContext(req, {
           project_id,
           app_id: await resolveManagedWsAppId({ project_id, req }),
-          exposure_mode: publicAppHost ? "public" : "private",
         });
       }
-      if (publicAppHost || privateAppHost) {
-        req.headers.host = publicAppHost || privateAppHost;
+      if (privateAppHost) {
+        req.headers.host = privateAppHost;
       }
-      delete req.headers[PUBLIC_APP_HOST_HEADER];
       delete req.headers[PRIVATE_APP_HOST_HEADER];
       if (res) {
         const match = await matchAppRequest({
@@ -1456,10 +1328,8 @@ export async function main(
           authContext?.actor === "account" ? authContext.account_id : undefined;
         if (!account_id) {
           // Host-local start would bypass runtime-slot and ban admission.
-          // Anonymous/public app traffic can use already-running projects, but
-          // cannot be the actor that starts a stopped project.
           throw new Error(
-            "project is not running; anonymous app requests cannot automatically start it",
+            "project is not running; requests without an account cannot automatically start it",
           );
         }
         logger.debug("project proxy resolveTarget starting project", {
@@ -1478,9 +1348,6 @@ export async function main(
       }
       const upstreamSecret = getOrCreateProjectLocalSecretToken(project_id);
       req.headers[PROJECT_PROXY_AUTH_HEADER] = upstreamSecret;
-      req.headers[APP_PROXY_EXPOSURE_HEADER] = publicAppHost
-        ? "public"
-        : "private";
       const http_port = await waitForProjectHttpPort(project_id);
       return { handled: true, target: { host: "127.0.0.1", port: http_port } };
     },

@@ -15,7 +15,7 @@ describe("app runtime state serialization", () => {
     }
   });
 
-  test("concurrent exposure and running-service updates do not overwrite each other", async () => {
+  test("serializes concurrent running-service updates and drops legacy exposures", async () => {
     process.env.HOME = "/tmp/cocalc-state-test";
 
     const files = new Map<string, string>();
@@ -54,26 +54,34 @@ describe("app runtime state serialization", () => {
 
     const state = await import("./state");
 
-    await Promise.all([
-      state.exposeApp({
-        app_id: "code-server",
-        ttl_s: 600,
-        auth_front: "none",
-        public_url: "https://host.example/project/apps/code-server",
+    files.set(
+      "/tmp/cocalc-state-test/.local/share/cocalc/apps/runtime-state.json",
+      JSON.stringify({
+        version: 1,
+        exposures: {
+          legacy: { mode: "public", auth_front: "none" },
+        },
+        running_services: {},
       }),
+    );
+
+    await Promise.all([
       state.setRunningServicePort("code-server", 43339),
+      state.setRunningServicePort("jupyterlab", 43340),
     ]);
 
     expect(maxConcurrentReads).toBe(1);
-    await expect(
-      state.getAppExposureState("code-server"),
-    ).resolves.toMatchObject({
-      mode: "public",
-      auth_front: "none",
-      public_url: "https://host.example/project/apps/code-server",
-    });
     await expect(state.appIdForRunningServicePort(43339)).resolves.toBe(
       "code-server",
     );
+    await expect(state.appIdForRunningServicePort(43340)).resolves.toBe(
+      "jupyterlab",
+    );
+    const persisted = JSON.parse(
+      files.get(
+        "/tmp/cocalc-state-test/.local/share/cocalc/apps/runtime-state.json",
+      )!,
+    );
+    expect(persisted.exposures).toBeUndefined();
   });
 });

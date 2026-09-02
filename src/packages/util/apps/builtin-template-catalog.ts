@@ -1044,7 +1044,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
         kind: "static",
         static_root_relative: "public-viewer",
         static_index: "index.html",
-        static_cache_control: "public,max-age=300",
+        static_cache_control: "private,max-age=300",
         static_refresh_command: makePublicViewerBootstrapCommand({
           title: "CoCalc Public Viewer",
           description:
@@ -1082,7 +1082,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
         kind: "static",
         static_root_relative: "public-notes",
         static_index: "index.html",
-        static_cache_control: "public,max-age=300",
+        static_cache_control: "private,max-age=300",
         static_refresh_command: makePublicViewerBootstrapCommand({
           title: "Public Notes",
           description:
@@ -1120,7 +1120,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
         kind: "static",
         static_root_relative: "public-slides",
         static_index: "index.html",
-        static_cache_control: "public,max-age=300",
+        static_cache_control: "private,max-age=300",
         static_refresh_command: makePublicViewerBootstrapCommand({
           title: "Public Slides and Boards",
           description:
@@ -1157,7 +1157,7 @@ exec "$quarto_bin" preview index.qmd --no-browser --host "\${HOST:-127.0.0.1}" -
         kind: "static",
         static_root_relative: "static-hello",
         static_index: "index.html",
-        static_cache_control: "public,max-age=3600",
+        static_cache_control: "private,max-age=3600",
         static_refresh_command: `mkdir -p "$APP_STATIC_ROOT" && [ -f "$APP_STATIC_ROOT/index.html" ] || printf '<h1>Hello from static app</h1>\\n' > "$APP_STATIC_ROOT/index.html"`,
         static_refresh_stale_after: "3600",
         static_refresh_timeout: "120",

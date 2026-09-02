@@ -35,11 +35,6 @@ describe("getProjectAppOpenUrl", () => {
       kind: "service",
       state: "running",
       url: "/project-1/proxy/23454/",
-      exposure: {
-        mode: "public",
-        auth_front: "none",
-        public_url: "https://public.example",
-      },
     };
 
     await expect(

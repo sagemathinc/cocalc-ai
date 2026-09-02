@@ -1,4 +1,4 @@
-import { authFirst } from "./util";
+import { authFirstRequireAccount } from "./util";
 
 export interface Patch {
   seq: number;
@@ -49,6 +49,6 @@ export interface Sync {
 }
 
 export const sync = {
-  history: authFirst,
-  purgeHistory: authFirst,
+  history: authFirstRequireAccount,
+  purgeHistory: authFirstRequireAccount,
 };

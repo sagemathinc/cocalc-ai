@@ -117,48 +117,6 @@ export function wireSystemApi(): void {
     return await forwardSystem("system.getPublicSiteUrl", [opts]);
   };
 
-  hubApi.system.getProjectAppPublicPolicy = async (opts?: {
-    account_id?: string;
-    project_id?: string;
-    host_id?: string;
-  }) => {
-    return await forwardSystem("system.getProjectAppPublicPolicy", [opts]);
-  };
-
-  hubApi.system.tracePublicAppHostname = async (opts: {
-    account_id?: string;
-    host_id?: string;
-    hostname: string;
-  }) => {
-    return await forwardSystem("system.tracePublicAppHostname", [opts]);
-  };
-
-  hubApi.system.reserveProjectAppPublicSubdomain = async (opts: {
-    account_id?: string;
-    project_id?: string;
-    host_id?: string;
-    app_id: string;
-    base_path: string;
-    ttl_s: number;
-    preferred_label?: string;
-    random_subdomain?: boolean;
-  }) => {
-    return await forwardSystem("system.reserveProjectAppPublicSubdomain", [
-      opts,
-    ]);
-  };
-
-  hubApi.system.releaseProjectAppPublicSubdomain = async (opts: {
-    account_id?: string;
-    project_id?: string;
-    host_id?: string;
-    app_id: string;
-  }) => {
-    return await forwardSystem("system.releaseProjectAppPublicSubdomain", [
-      opts,
-    ]);
-  };
-
   hubApi.system.tracePrivateAppHostname = async (opts: {
     account_id?: string;
     host_id?: string;

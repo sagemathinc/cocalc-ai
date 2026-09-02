@@ -1,7 +1,6 @@
 import {
-  authFirst,
   authFirstRequireAccount,
-  authFirstRequireHost,
+  authFirstRequireHostWithAccountTarget,
   authFirstRequireProject,
 } from "./util";
 import {
@@ -285,9 +284,6 @@ export interface PublicPathInspectionResult {
   host_id: string;
   app_id: string;
   static_root: string;
-  exposure_mode: "private" | "public";
-  auth_front?: "none" | "token";
-  public_access_granted: boolean;
   requested: {
     kind: "file" | "directory";
     relative_path: string;
@@ -1214,7 +1210,7 @@ export const projects = {
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   copyEmailProjectInviteLink: authFirstRequireAccount,
   redeemEmailProjectInvite: authFirstRequireAccount,
-  previewEmailProjectInvite: authFirst,
+  previewEmailProjectInvite: authFirstRequireAccount,
   respondEmailProjectInvite: authFirstRequireAccount,
 
   exec: authFirstRequireAccount,
@@ -1245,7 +1241,7 @@ export const projects = {
   getSnapshotFileText: authFirstRequireAccount,
 
   start: authFirstRequireAccount,
-  startFromHost: authFirstRequireHost,
+  startFromHost: authFirstRequireHostWithAccountTarget,
   stop: authFirstRequireAccount,
   status: authFirstRequireAccount,
   restart: authFirstRequireAccount,

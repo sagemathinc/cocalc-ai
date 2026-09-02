@@ -1,16 +1,17 @@
 import {
-  authFirst,
   authFirstRequireAccount,
+  authFirstRequireAccountOrProject,
+  authFirstRequireAccountOrProjectOrHost,
   authFirstRequireProjectOrHost,
 } from "./util";
 
 export const db = {
-  userQuery: authFirst,
-  touch: authFirst,
-  getLegacyTimeTravelInfo: authFirst,
-  getLegacyTimeTravelPatches: authFirst,
+  userQuery: authFirstRequireAccountOrProject,
+  touch: authFirstRequireAccount,
+  getLegacyTimeTravelInfo: authFirstRequireAccount,
+  getLegacyTimeTravelPatches: authFirstRequireAccount,
   removeBlobTtls: authFirstRequireAccount,
-  saveBlob: authFirst,
+  saveBlob: authFirstRequireAccountOrProjectOrHost,
   getBlob: authFirstRequireProjectOrHost,
   deleteOldestAccountBlobs: authFirstRequireAccount,
   deleteOldestProjectBlobs: authFirstRequireAccount,

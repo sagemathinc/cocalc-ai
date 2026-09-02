@@ -28,6 +28,7 @@ const PII_EVENTS = new Set([
   "browser_raw_exec_denied",
   "browser_async_exec_denied",
   "browser_quickjs_host_action_denied",
+  "hub_api_principal_denied",
 ]);
 
 export default async function centralLog({

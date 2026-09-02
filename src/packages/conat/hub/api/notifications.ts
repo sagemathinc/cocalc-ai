@@ -1,4 +1,4 @@
-import { authFirstRequireAccount } from "./util";
+import { authFirstRequireAccount, declareHubApiPrincipalPolicy } from "./util";
 import type { Configuration } from "@cocalc/conat/persist/storage";
 
 export type NotificationPriority = "low" | "normal" | "high";
@@ -188,33 +188,44 @@ export interface Notifications {
 export const notifications = {
   createMention: authFirstRequireAccount,
   createAccountNotice: authFirstRequireAccount,
-  createCodexTurnNotice: async ({ args, account_id, project_id, host_id }) => {
-    if (args[0] == null) {
-      args[0] = {} as any;
-    }
-    if (account_id) {
-      args[0].account_id = account_id;
-      return args;
-    }
-    if (project_id) {
-      if (!args[0].account_id) {
-        throw Error(
-          "project-authenticated codex turn notices require an account_id target",
-        );
+  createCodexTurnNotice: declareHubApiPrincipalPolicy(
+    "account-or-project-or-host",
+    async ({ args, account_id, project_id, host_id, auth_actor }) => {
+      if (auth_actor === "agent") {
+        throw Error("managed compute agents cannot create Codex turn notices");
       }
-      return args;
-    }
-    if (host_id) {
-      if (!args[0].account_id) {
-        throw Error(
-          "host-authenticated codex turn notices require an account_id target",
-        );
+      if (args[0] == null) {
+        args[0] = {} as any;
       }
-      args[0].host_id = host_id;
-      return args;
-    }
-    throw Error("must be signed in as an account, project, or host");
-  },
+      if (account_id) {
+        args[0].account_id = account_id;
+        return args;
+      }
+      if (project_id) {
+        if (!args[0].account_id) {
+          throw Error(
+            "project-authenticated codex turn notices require an account_id target",
+          );
+        }
+        // The account_id is the notification target here, not the actor. Bind
+        // the source project separately so a project cannot impersonate a
+        // different project's Codex activity.
+        args[0].source_project_id = project_id;
+        return args;
+      }
+      if (host_id) {
+        if (!args[0].account_id) {
+          throw Error(
+            "host-authenticated codex turn notices require an account_id target",
+          );
+        }
+        args[0].host_id = host_id;
+        return args;
+      }
+      throw Error("must be signed in as an account, project, or host");
+    },
+    { preservesAccountTarget: true },
+  ),
   list: authFirstRequireAccount,
   listSnapshot: authFirstRequireAccount,
   counts: authFirstRequireAccount,

@@ -632,11 +632,6 @@ async function createManagedAppForward(
   };
 }
 
-function normalizePrefix(value: string): string {
-  const withLeading = value.startsWith("/") ? value : `/${value}`;
-  return withLeading.replace(/\/+$/, "") || "/";
-}
-
 function asPortableSpec(spec: unknown, context: string): PortableAppSpec {
   if (spec == null || typeof spec !== "object" || Array.isArray(spec)) {
     throw new Error(`${context} must be an app spec object`);
@@ -1515,133 +1510,6 @@ export function registerProjectAppCommands(
       },
     );
 
-  app
-    .command("audit <appId>")
-    .description("audit app public-readiness for agent and operator workflows")
-    .option("-w, --project <project>", "project id or name")
-    .option(
-      "--public-readiness",
-      "run public-readiness audit mode (currently the default and only mode)",
-      true,
-    )
-    .action(
-      async (
-        appId: string,
-        opts: {
-          project?: string;
-          publicReadiness?: boolean;
-        },
-        command: Command,
-      ) => {
-        await withContext(command, "project app audit", async (ctx) => {
-          const { project: ws, api } = await resolveProjectProjectApi(
-            ctx,
-            opts.project,
-          );
-          if (opts.publicReadiness === false) {
-            throw new Error("only --public-readiness mode is supported");
-          }
-          const audit = await api.apps.auditAppPublicReadiness(appId);
-          return {
-            project_id: ws.project_id,
-            mode: "public-readiness",
-            ...audit,
-          };
-        });
-      },
-    );
-
-  app
-    .command("expose <appId>")
-    .description("enable public app access with required TTL")
-    .option("-w, --project <project>", "project id or name")
-    .requiredOption("--ttl <duration>", "public exposure TTL (e.g. 10m, 2h)")
-    .option(
-      "--front-auth <mode>",
-      "front auth mode: token|none (default: token)",
-      "token",
-    )
-    .option(
-      "--random-subdomain",
-      "request random subdomain label metadata",
-      true,
-    )
-    .option(
-      "--subdomain-label <label>",
-      "explicit public subdomain label (used as <label>-suffix.<domain>)",
-    )
-    .action(
-      async (
-        appId: string,
-        opts: {
-          project?: string;
-          ttl: string;
-          frontAuth?: "token" | "none";
-          randomSubdomain?: boolean;
-          subdomainLabel?: string;
-        },
-        command: Command,
-      ) => {
-        await withContext(command, "project app expose", async (ctx) => {
-          const { project: ws, api } = await resolveProjectProjectApi(
-            ctx,
-            opts.project,
-          );
-          const spec = await api.apps.getAppSpec(appId);
-          const ttlMs = deps.durationToMs(opts.ttl);
-          const ttl_s = Math.max(60, Math.floor(ttlMs / 1000));
-          const auth_front = opts.frontAuth === "none" ? "none" : "token";
-          const status = await api.apps.exposeApp({
-            id: appId,
-            ttl_s,
-            auth_front,
-            random_subdomain: opts.randomSubdomain !== false,
-            subdomain_label: `${opts.subdomainLabel ?? ""}`.trim() || undefined,
-          });
-          const relative = `/${ws.project_id}${normalizePrefix(spec.proxy?.base_path ?? `/apps/${appId}`)}`;
-          const base = `${ctx.apiBaseUrl}`.replace(/\/+$/, "");
-          const exposure = status.exposure;
-          const url = new URL(
-            exposure?.public_url ? exposure.public_url : `${base}${relative}`,
-          );
-          if (auth_front === "token" && exposure?.token) {
-            url.searchParams.set("cocalc_app_token", exposure.token);
-          }
-          return {
-            project_id: ws.project_id,
-            app_id: appId,
-            ttl_s,
-            relative_url: relative,
-            url_public: url.toString(),
-            exposure,
-            warnings: status.warnings ?? [],
-          };
-        });
-      },
-    );
-
-  app
-    .command("unexpose <appId>")
-    .description("disable public app access")
-    .option("-w, --project <project>", "project id or name")
-    .action(
-      async (appId: string, opts: { project?: string }, command: Command) => {
-        await withContext(command, "project app unexpose", async (ctx) => {
-          const { project: ws, api } = await resolveProjectProjectApi(
-            ctx,
-            opts.project,
-          );
-          const status = await api.apps.unexposeApp(appId);
-          return {
-            project_id: ws.project_id,
-            app_id: appId,
-            exposure: status.exposure,
-            state: status.state,
-          };
-        });
-      },
-    );
-
   const privateHostname = app
     .command("private-hostname")
     .description("authenticated private app hostname operations");
@@ -1953,8 +1821,8 @@ export function registerProjectAppCommands(
             },
           ],
           fallback_options: [
-            "Public Cloudflare exposure for the managed app.",
             "SSH port forwarding for direct non-proxied access.",
+            "Deploy the app to an external hosting provider when public access is required.",
           ],
         };
       });

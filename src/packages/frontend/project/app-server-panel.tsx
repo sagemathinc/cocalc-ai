@@ -24,7 +24,6 @@ import {
 import type {
   AppSpec,
   AppMetricsSummary,
-  AppPublicReadinessAudit,
   AppTemplateCatalogEntry,
   DetectedAppPort,
   InstalledAppTemplate,
@@ -47,10 +46,6 @@ import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { humanSize } from "@cocalc/util/misc";
 import {
-  PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE,
-  PROJECT_APP_PUBLIC_EXPOSURE_ENABLED,
-} from "@cocalc/util/project-apps";
-import {
   dispatchNavigatorPromptIntent,
   submitNavigatorPromptToCurrentThread,
 } from "@cocalc/frontend/project/new/navigator-intents";
@@ -70,10 +65,7 @@ import {
 } from "./app-template-catalog";
 import {
   buildPrivateHostnameOpenUrl,
-  buildPublicHostnameFromExposure,
-  buildPublicUrlFromExposure,
   openProjectAppStatus,
-  type PublicAppPolicy,
 } from "./app-server-open";
 import {
   inferStaticSharingFromDirectory,
@@ -84,17 +76,8 @@ import {
 } from "./static-sharing-inference";
 
 type AppKind = "service" | "static";
-type AppStatusFilter =
-  | "all"
-  | "running"
-  | "stopped"
-  | "error"
-  | "public"
-  | "private";
+type AppStatusFilter = "all" | "running" | "stopped" | "error" | "private";
 type AppRowAction =
-  | "expose"
-  | "unexpose"
-  | "audit"
   | "refresh"
   | "reserve-private-hostname"
   | "release-private-hostname";
@@ -159,7 +142,7 @@ const APP_SECURITY_MARKDOWN = `
 
 ### What CoCalc is designed to protect
 
-- Public app exposure is disabled for this release.
+- Managed apps are available only to project collaborators.
 - Project-host session cookies are scoped to the current project instead of the whole host.
 - Project-host auth/session cookies and bootstrap bearer headers are stripped before traffic is proxied upstream to the app.
 - Private apps in one project cannot fetch private apps in another project on the same host.
@@ -167,7 +150,7 @@ const APP_SECURITY_MARKDOWN = `
 ### What this means in practice
 
 - Do **not** open untrusted private apps in projects that contain sensitive files or secrets.
-- Public exposure may return after a focused security/product review.
+- For anonymous or public access, deploy the application to a dedicated hosting provider.
 
 More detail: \`docs/security/private-app-trust-model.md\`
 `;
@@ -564,10 +547,6 @@ function renderLogTailBlock({
       </div>
     </div>
   );
-}
-
-function isPublicExposure(status: ManagedAppStatus): boolean {
-  return status.exposure?.mode === "public";
 }
 
 function PrivateHostnameRow({
@@ -1191,7 +1170,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   const [staticRoot, setStaticRoot] = useState<string>("");
   const [staticIndex, setStaticIndex] = useState<string>("index.html");
   const [staticCacheControl, setStaticCacheControl] = useState<string>(
-    "public,max-age=3600",
+    "private,max-age=3600",
   );
   const [staticRefreshCommand, setStaticRefreshCommand] = useState<string>("");
   const [staticRefreshStaleAfter, setStaticRefreshStaleAfter] =
@@ -1225,13 +1204,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     useState<string>("");
   const [startNow, setStartNow] = useState<boolean>(true);
   const [openWhenReady, setOpenWhenReady] = useState<boolean>(true);
-  const [exposeTtlHours, setExposeTtlHours] = useState<string>("24");
-  const [exposeAuthFront, setExposeAuthFront] = useState<"none" | "token">(
-    "none",
-  );
-  const [exposeRandomSubdomain, setExposeRandomSubdomain] =
-    useState<boolean>(true);
-  const [exposeSubdomainLabel, setExposeSubdomainLabel] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [formSubmitting, setFormSubmitting] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -1244,9 +1216,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     action: AppRowAction;
   } | null>(null);
   const [error, setError] = useState<Error | undefined>(undefined);
-  const [audit, setAudit] = useState<AppPublicReadinessAudit | undefined>(
-    undefined,
-  );
   const [detected, setDetected] = useState<DetectedAppPort[]>([]);
   const [detecting, setDetecting] = useState<boolean>(false);
   const [installedTemplates, setInstalledTemplates] = useState<
@@ -1299,9 +1268,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
   const [rows, setRows] = useState<ManagedAppStatus[]>([]);
   const [rowFilter, setRowFilter] = useState<AppStatusFilter>("all");
   const [rowSearch, setRowSearch] = useState<string>("");
-  const [publicAppPolicy, setPublicAppPolicy] = useState<
-    PublicAppPolicy | undefined
-  >(undefined);
   const [privateHostnamePolicy, setPrivateHostnamePolicy] = useState<
     ProjectAppPrivateHostnamePolicy | undefined
   >(undefined);
@@ -1437,7 +1403,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       if (rowFilter === "running" && row.state !== "running") return false;
       if (rowFilter === "stopped" && row.state !== "stopped") return false;
       if (rowFilter === "error" && !rowHasError) return false;
-      if (rowFilter === "public" && !isPublicExposure(row)) return false;
       if (rowFilter === "private" && !privateHostnamesById[row.id])
         return false;
       if (!needle) return true;
@@ -1447,10 +1412,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         row.kind,
         row.lifecycle_mode,
         row.state,
-        row.exposure?.public_url,
-        row.exposure?.public_hostname,
-        row.exposure?.random_subdomain,
-        row.exposure?.mode,
         privateHostnamesById[row.id]?.hostname,
         privateHostnamesById[row.id]?.url,
         spec?.proxy?.base_path,
@@ -1473,9 +1434,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     const running = userVisibleRows.filter(
       (row) => row.state === "running",
     ).length;
-    const exposed = userVisibleRows.filter((row) =>
-      isPublicExposure(row),
-    ).length;
     const attention = userVisibleRows.filter(
       (row) =>
         !!row.error ||
@@ -1486,7 +1444,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       total: userVisibleRows.length,
       running,
       stopped: Math.max(0, userVisibleRows.length - running),
-      exposed,
       privateHostnames: userVisibleRows.filter(
         (row) => !!privateHostnamesById[row.id],
       ).length,
@@ -1633,39 +1590,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     };
   }, [project_id, resolvedHomeDirectory]);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadPublicAppPolicy() {
-      if (!PROJECT_APP_PUBLIC_EXPOSURE_ENABLED) {
-        if (!cancelled) {
-          setPublicAppPolicy({
-            enabled: false,
-          });
-        }
-        return;
-      }
-      try {
-        const policy =
-          await webapp_client.conat_client.hub.system.getProjectAppPublicPolicy(
-            { project_id },
-          );
-        if (!cancelled) {
-          setPublicAppPolicy({
-            enabled: !!policy?.enabled,
-            dns_domain: policy?.dns_domain,
-            subdomain_suffix: policy?.subdomain_suffix,
-          });
-        }
-      } catch {
-        if (!cancelled) setPublicAppPolicy(undefined);
-      }
-    }
-    void loadPublicAppPolicy();
-    return () => {
-      cancelled = true;
-    };
-  }, [project_id]);
-
   const startableRows = useMemo(
     () =>
       userVisibleRows.filter(
@@ -1802,7 +1726,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       const viewerCacheMode = preset.staticViewerCacheMode ?? "balanced";
       setStaticRoot(preset.staticRoot ?? "");
       setStaticIndex(preset.staticIndex ?? "index.html");
-      setStaticCacheControl(preset.staticCacheControl ?? "public,max-age=3600");
+      setStaticCacheControl(
+        preset.staticCacheControl ?? "private,max-age=3600",
+      );
       setStaticRefreshCommand(preset.staticRefreshCommand ?? "");
       setStaticRefreshStaleAfter(
         preset.staticRefreshStaleAfter ??
@@ -1837,7 +1763,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     setServiceOpenMode("proxy");
     setStaticRoot("");
     setStaticIndex("index.html");
-    setStaticCacheControl("public,max-age=3600");
+    setStaticCacheControl("private,max-age=3600");
     setStaticRefreshCommand("");
     setStaticRefreshStaleAfter("3600");
     setStaticRefreshTimeout("120");
@@ -2134,7 +2060,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       },
       project_id,
       privateHostname: privateHostnamesById[status.id],
-      publicAppPolicy,
       spec: specById[status.id],
       status,
     });
@@ -2600,53 +2525,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     }
   }
 
-  async function onExpose(id: string) {
-    if (!PROJECT_APP_PUBLIC_EXPOSURE_ENABLED) {
-      setError(new Error(PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE));
-      return;
-    }
-    try {
-      setSubmitting(true);
-      setRowAction({ appId: id, action: "expose" });
-      setError(undefined);
-      setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
-      const ttl = Math.max(
-        60,
-        Math.floor((Number(exposeTtlHours) || 24) * 3600),
-      );
-      await api.apps.exposeApp({
-        id,
-        ttl_s: ttl,
-        auth_front: exposeAuthFront,
-        random_subdomain: exposeRandomSubdomain,
-        subdomain_label: exposeRandomSubdomain
-          ? undefined
-          : `${exposeSubdomainLabel ?? ""}`.trim() || undefined,
-      });
-      await refreshAfterMutation();
-    } catch (err) {
-      setError(normalizeError(err));
-    } finally {
-      setSubmitting(false);
-      setRowAction(null);
-    }
-  }
-
-  async function onUnexpose(id: string) {
-    try {
-      setSubmitting(true);
-      setRowAction({ appId: id, action: "unexpose" });
-      setError(undefined);
-      await api.apps.unexposeApp(id);
-      await refreshAfterMutation();
-    } catch (err) {
-      setError(normalizeError(err));
-    } finally {
-      setSubmitting(false);
-      setRowAction(null);
-    }
-  }
-
   async function onRefreshNow(id: string) {
     try {
       setSubmitting(true);
@@ -2655,27 +2533,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       setStartupFailures((prev) => ({ ...prev, [id]: undefined }));
       await api.apps.refreshApp(id);
       await refreshAfterMutation();
-    } catch (err) {
-      setError(normalizeError(err));
-    } finally {
-      setSubmitting(false);
-      setRowAction(null);
-    }
-  }
-
-  async function onAuditWithAgent(id: string) {
-    try {
-      setSubmitting(true);
-      setRowAction({ appId: id, action: "audit" });
-      setError(undefined);
-      const next = await api.apps.auditAppPublicReadiness(id);
-      setAudit(next);
-      const auditTitle = specById[id]?.title
-        ? `Audit ${specById[id]?.title}`
-        : "Audit App Public Readiness";
-      await sendAgentPrompt(next.agent_prompt, "intent:app-server-audit", {
-        title: auditTitle,
-      });
     } catch (err) {
       setError(normalizeError(err));
     } finally {
@@ -2903,9 +2760,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
     action:
       | "tunnel"
       | "refresh"
-      | "expose"
-      | "unexpose"
-      | "audit"
       | "reserve-private-hostname"
       | "release-private-hostname"
       | "logs"
@@ -2919,15 +2773,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         return;
       case "refresh":
         void onRefreshNow(row.id);
-        return;
-      case "expose":
-        void onExpose(row.id);
-        return;
-      case "unexpose":
-        void onUnexpose(row.id);
-        return;
-      case "audit":
-        void onAuditWithAgent(row.id);
         return;
       case "reserve-private-hostname":
         void onReservePrivateHostname(row.id);
@@ -3145,9 +2990,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
             <Tag color={summaryCounts.running > 0 ? "green" : "default"}>
               running {summaryCounts.running}
             </Tag>
-            <Tag color={summaryCounts.exposed > 0 ? "gold" : "default"}>
-              public {summaryCounts.exposed}
-            </Tag>
             {privateHostnameUiVisible ? (
               <Tag
                 color={summaryCounts.privateHostnames > 0 ? "blue" : "default"}
@@ -3231,10 +3073,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 const isStatic = row.kind === "static";
                 const isUnmanaged = row.lifecycle_mode === "unmanaged";
                 const privateHostname = privateHostnamesById[row.id];
-                const canOpen =
-                  !!row.url ||
-                  !!buildPublicUrlFromExposure(row, publicAppPolicy) ||
-                  !!privateHostname;
+                const canOpen = !!row.url || !!privateHostname;
                 return (
                   <div
                     key={`launch-${row.id}`}
@@ -4025,9 +3864,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     },
                 {
                   key: "launch",
-                  label: PROJECT_APP_PUBLIC_EXPOSURE_ENABLED
-                    ? "Launch and public defaults"
-                    : "Launch",
+                  label: "Launch",
                   children: (
                     <Space
                       orientation="vertical"
@@ -4048,64 +3885,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                           Open when ready
                         </Checkbox>
                       </Space>
-                      {PROJECT_APP_PUBLIC_EXPOSURE_ENABLED ? (
-                        <>
-                          <div
-                            style={{
-                              fontWeight: 600,
-                              fontSize: "12px",
-                              color: "#666",
-                            }}
-                          >
-                            Public expose defaults
-                          </div>
-                          <Space.Compact style={{ width: "100%" }}>
-                            <Input
-                              value={exposeTtlHours}
-                              onChange={(e) =>
-                                setExposeTtlHours(e.target.value)
-                              }
-                              placeholder="TTL hours (e.g. 24)"
-                            />
-                            <Select<"none" | "token">
-                              value={exposeAuthFront}
-                              style={{ width: "140px" }}
-                              options={[
-                                { label: "No front auth", value: "none" },
-                                { label: "Token gate", value: "token" },
-                              ]}
-                              onChange={(value) => setExposeAuthFront(value)}
-                            />
-                          </Space.Compact>
-                          <Space wrap>
-                            <Checkbox
-                              checked={exposeRandomSubdomain}
-                              onChange={(e) =>
-                                setExposeRandomSubdomain(e.target.checked)
-                              }
-                            >
-                              Random subdomain
-                            </Checkbox>
-                            {!exposeRandomSubdomain ? (
-                              <Input
-                                value={exposeSubdomainLabel}
-                                onChange={(e) =>
-                                  setExposeSubdomainLabel(e.target.value)
-                                }
-                                placeholder="subdomain label (optional)"
-                                style={{ width: "220px" }}
-                              />
-                            ) : null}
-                          </Space>
-                        </>
-                      ) : (
-                        <Alert
-                          type="info"
-                          showIcon
-                          title={PROJECT_APP_PUBLIC_EXPOSURE_DISABLED_MESSAGE}
-                          description="Private project apps still work. Public app publishing is intentionally out of scope for launch."
-                        />
-                      )}
                     </Space>
                   ),
                 },
@@ -4217,7 +3996,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                   { value: "running", label: "Running" },
                   { value: "stopped", label: "Stopped" },
                   { value: "error", label: "Needs attention" },
-                  { value: "public", label: "Public" },
                   ...(privateHostnameUiVisible
                     ? [{ value: "private" as const, label: "Private URL" }]
                     : []),
@@ -4247,7 +4025,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         <Space orientation="vertical" style={{ width: "100%" }}>
           {filteredRows.map((row) => {
             const isRunning = row.state === "running";
-            const isPublic = isPublicExposure(row);
             const isUnmanaged = row.lifecycle_mode === "unmanaged";
             const spec = specById[row.id];
             const metrics = metricsById[row.id];
@@ -4269,29 +4046,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     {
                       key: "tunnel",
                       label: "Tunnel locally",
-                    },
-                  ]
-                : []),
-              ...(isPublic
-                ? [
-                    {
-                      key: "unexpose",
-                      label: "Unexpose",
-                    },
-                  ]
-                : PROJECT_APP_PUBLIC_EXPOSURE_ENABLED
-                  ? [
-                      {
-                        key: "expose",
-                        label: "Expose",
-                      },
-                    ]
-                  : []),
-              ...(PROJECT_APP_PUBLIC_EXPOSURE_ENABLED
-                ? [
-                    {
-                      key: "audit",
-                      label: "Audit with Codex",
                     },
                   ]
                 : []),
@@ -4364,7 +4118,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                       <Tag color={isRunning ? "green" : "default"}>
                         {isRunning ? "running" : "stopped"}
                       </Tag>
-                      {isPublic ? <Tag color="gold">public</Tag> : null}
                     </div>
                     <div
                       style={{
@@ -4414,11 +4167,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     <Button
                       size="small"
                       onClick={() => void openStatus(row)}
-                      disabled={
-                        !privateHostname &&
-                        !row.url &&
-                        !buildPublicUrlFromExposure(row, publicAppPolicy)
-                      }
+                      disabled={!privateHostname && !row.url}
                     >
                       Open
                     </Button>
@@ -4446,9 +4195,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                             key as
                               | "tunnel"
                               | "refresh"
-                              | "expose"
-                              | "unexpose"
-                              | "audit"
                               | "reserve-private-hostname"
                               | "release-private-hostname"
                               | "logs"
@@ -4585,11 +4331,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                           value={formatCount(metrics.totals.wake_count)}
                         />
                         <MetricStat
-                          label="Public / private"
-                          value={`${formatCount(metrics.totals.public_requests)} / ${formatCount(metrics.totals.private_requests)}`}
-                          subtle
-                        />
-                        <MetricStat
                           label="Latency p50 / p95"
                           value={`${formatLatency(metrics.totals.p50_ms)} / ${formatLatency(metrics.totals.p95_ms)}`}
                           subtle
@@ -4600,53 +4341,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                         No app traffic recorded yet.
                       </div>
                     )}
-                  </div>
-                ) : null}
-                {isExpanded && isPublic ? (
-                  <div
-                    style={{
-                      marginTop: "8px",
-                      fontSize: "12px",
-                      opacity: 0.85,
-                    }}
-                  >
-                    {buildPublicUrlFromExposure(row, publicAppPolicy) ? (
-                      <>
-                        Public URL:{" "}
-                        <a
-                          href={buildPublicUrlFromExposure(
-                            row,
-                            publicAppPolicy,
-                          )}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {buildPublicUrlFromExposure(row, publicAppPolicy)}
-                        </a>
-                      </>
-                    ) : buildPublicHostnameFromExposure(
-                        row,
-                        publicAppPolicy,
-                      ) ? (
-                      <>
-                        Public Hostname:{" "}
-                        {buildPublicHostnameFromExposure(row, publicAppPolicy)}
-                      </>
-                    ) : row.exposure?.random_subdomain ? (
-                      <>
-                        Public exposure active (subdomain label:{" "}
-                        {row.exposure.random_subdomain})
-                      </>
-                    ) : (
-                      <>Public exposure active</>
-                    )}
-                    {row.exposure?.expires_at_ms ? (
-                      <span>
-                        {" "}
-                        (expires{" "}
-                        {new Date(row.exposure.expires_at_ms).toLocaleString()})
-                      </span>
-                    ) : null}
                   </div>
                 ) : null}
                 {isExpanded && row.warnings?.length ? (
@@ -4751,74 +4445,6 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
           })}
         </Space>
       </Card>
-      {audit ? (
-        <div
-          style={{
-            marginTop: "12px",
-            border: "1px solid #e5e5e5",
-            borderRadius: "8px",
-            padding: "10px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: "8px",
-            }}
-          >
-            <div style={{ fontWeight: 600 }}>
-              Audit: {audit.title || audit.app_id}
-            </div>
-            <Button size="small" onClick={() => setAudit(undefined)}>
-              Close
-            </Button>
-          </div>
-          <div style={{ marginTop: "6px", fontSize: "12px", opacity: 0.85 }}>
-            pass={audit.summary.pass}, warn={audit.summary.warn}, fail=
-            {audit.summary.fail}
-          </div>
-          <ul
-            style={{
-              marginTop: "8px",
-              marginBottom: "8px",
-              paddingInlineStart: "18px",
-            }}
-          >
-            {audit.checks.map((check) => (
-              <li key={`${check.id}-${check.status}`}>
-                {check.status.toUpperCase()}: {check.message}
-              </li>
-            ))}
-          </ul>
-          <Space wrap>
-            <Button
-              size="small"
-              onClick={() =>
-                navigator.clipboard
-                  .writeText(audit.agent_prompt)
-                  .catch(() => {})
-              }
-            >
-              Copy Agent Prompt
-            </Button>
-            <Button
-              size="small"
-              type="primary"
-              loading={submittingToAgent}
-              onClick={() =>
-                void sendAgentPrompt(
-                  audit.agent_prompt,
-                  "intent:app-server-audit",
-                  { title: "Audit App Public Readiness" },
-                )
-              }
-            >
-              Send to Codex
-            </Button>
-          </Space>
-        </div>
-      ) : null}
       <Modal
         open={!!installWithCodexTarget}
         onCancel={() => setInstallWithCodexTarget(null)}

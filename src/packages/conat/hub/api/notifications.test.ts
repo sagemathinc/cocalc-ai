@@ -31,7 +31,7 @@ describe("notifications auth routing", () => {
     const args = [
       {
         account_id: "target-account",
-        source_project_id: "project-1",
+        source_project_id: "spoofed-project",
         source_path: "work/chat.chat",
         thread_id: "thread-1",
         title: "Codex turn finished",
@@ -49,6 +49,7 @@ describe("notifications auth routing", () => {
     expect(args[0]).toEqual(
       expect.objectContaining({
         account_id: "target-account",
+        source_project_id: "project-1",
       }),
     );
   });

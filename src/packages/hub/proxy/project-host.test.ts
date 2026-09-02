@@ -8,7 +8,6 @@ const mockProxyWs = jest.fn();
 const mockProxyOn = jest.fn();
 const mockGetPool = jest.fn();
 const mockParseReq = jest.fn();
-const mockIsPublicAppSubdomainRequest = jest.fn();
 const mockIssueProjectHostAuthToken = jest.fn();
 const mockGetProjectHostAuthTokenPrivateKey = jest.fn();
 
@@ -30,11 +29,6 @@ jest.mock("@cocalc/database/pool", () => ({
 
 jest.mock("./parse", () => ({
   parseReq: (...args) => mockParseReq(...args),
-}));
-
-jest.mock("./public-app-subdomain", () => ({
-  isPublicAppSubdomainRequest: (...args) =>
-    mockIsPublicAppSubdomainRequest(...args),
 }));
 
 jest.mock("@cocalc/conat/auth/project-host-token", () => ({
@@ -80,7 +74,6 @@ describe("hub project-host proxy auth injection", () => {
       type: "proxy",
       project_id,
     });
-    mockIsPublicAppSubdomainRequest.mockReset().mockReturnValue(false);
     mockIssueProjectHostAuthToken.mockReset().mockReturnValue({
       token: "project-host-token",
       expires_at: Date.now() + 60_000,

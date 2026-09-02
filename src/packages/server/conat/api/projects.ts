@@ -1552,19 +1552,12 @@ export async function inspectPublicPath({
     project_id: source_project_id,
     url: parsed.rawUrl,
   });
-  if (
-    !(inspection.exposure_mode === "public" && inspection.public_access_granted)
-  ) {
-    await assertCollab({ account_id, project_id: source_project_id });
-  }
+  await assertCollab({ account_id, project_id: source_project_id });
   return {
     source_project_id,
     host_id,
     app_id: inspection.app_id,
     static_root: inspection.static_root,
-    exposure_mode: inspection.exposure_mode,
-    auth_front: inspection.auth_front,
-    public_access_granted: inspection.public_access_granted,
     requested: inspection.requested,
     containing_directory: inspection.containing_directory,
   };
