@@ -95,6 +95,14 @@ type FleetSnapshotRow = {
   normalized: NormalizedHostIntrusionSnapshot;
 };
 
+type PersistSnapshotOptions = {
+  hostId: string;
+  bayId: string;
+  source: HostIntrusionSnapshotResponse;
+  normalized: NormalizedHostIntrusionSnapshot;
+  delta?: HostIntrusionSnapshotDelta;
+};
+
 type HostTransition = {
   host: CandidateHost;
   delta: HostIntrusionSnapshotDelta;
@@ -393,7 +401,7 @@ async function loadRecentCoverage(hostId: string): Promise<CoverageRow[]> {
       ORDER BY created_at DESC
       LIMIT $2
     `,
-    [hostId, COVERAGE_FAILURE_ALERT_THRESHOLD],
+    [hostId, COVERAGE_FAILURE_ALERT_THRESHOLD - 1],
   );
   return rows;
 }
@@ -452,13 +460,7 @@ async function persistSnapshot({
   source,
   normalized,
   delta,
-}: {
-  hostId: string;
-  bayId: string;
-  source: HostIntrusionSnapshotResponse;
-  normalized: NormalizedHostIntrusionSnapshot;
-  delta?: HostIntrusionSnapshotDelta;
-}): Promise<void> {
+}: PersistSnapshotOptions): Promise<void> {
   await getPool().query(
     `
       INSERT INTO ${TABLE} (
@@ -583,9 +585,10 @@ function formatInitialBaselineAlert(hosts: CandidateHost[]): string {
   ]);
 }
 
-function reachedCoverageFailureThreshold(rows: CoverageRow[]): boolean {
-  if (rows.length !== COVERAGE_FAILURE_ALERT_THRESHOLD - 1) return false;
-  return rows.every(({ coverage }) => coverage !== "complete");
+export function reachedCoverageFailureThreshold(rows: CoverageRow[]): boolean {
+  const preceding = rows.slice(0, COVERAGE_FAILURE_ALERT_THRESHOLD - 1);
+  if (preceding.length !== COVERAGE_FAILURE_ALERT_THRESHOLD - 1) return false;
+  return preceding.every(({ coverage }) => coverage !== "complete");
 }
 
 function unavailableSource(host: CandidateHost): HostIntrusionSnapshotResponse {
@@ -654,6 +657,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
   const transitions: HostTransition[] = [];
   const coverageFailures: CoverageFailure[] = [];
   const initialBaselines: CandidateHost[] = [];
+  const deferredCompleteSnapshots: PersistSnapshotOptions[] = [];
   const result: HostIntrusionMonitorResult = {
     checked: 0,
     changed: 0,
@@ -712,20 +716,33 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
           comparedWithFleet = true;
         }
       }
-      await persistSnapshot({
+      const completeSnapshot = {
         hostId: host.id,
         bayId,
         source,
         normalized,
         delta,
-      });
+      };
+      const changedDelta =
+        delta != null && hasHostIntrusionSnapshotChanges(delta)
+          ? delta
+          : undefined;
+      const needsInitialReview = !previous && !comparedWithFleet;
+      // Do not promote a security baseline until its alert is accepted. If
+      // delivery fails, the next pass compares against the older baseline and
+      // retries rather than silently absorbing the transition.
+      if (changedDelta || needsInitialReview) {
+        deferredCompleteSnapshots.push(completeSnapshot);
+      } else {
+        await persistSnapshot(completeSnapshot);
+      }
       if (!previous) {
         result.baselined += 1;
-        if (!comparedWithFleet) initialBaselines.push(host);
+        if (needsInitialReview) initialBaselines.push(host);
       }
-      if (delta && hasHostIntrusionSnapshotChanges(delta)) {
+      if (changedDelta) {
         result.changed += 1;
-        transitions.push({ host, delta, baseline });
+        transitions.push({ host, delta: changedDelta, baseline });
       }
     } catch (err) {
       result.failed += 1;
@@ -783,6 +800,12 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
       errorOnFail: true,
     });
   }
+
+  await mapWithConcurrency(
+    deferredCompleteSnapshots,
+    concurrency,
+    persistSnapshot,
+  );
 
   const retentionDays = envNumberAtLeast(
     "COCALC_HOST_INTRUSION_MONITOR_RETENTION_DAYS",
