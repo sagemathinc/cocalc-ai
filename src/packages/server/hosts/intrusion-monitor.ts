@@ -417,6 +417,7 @@ async function loadFleetCompleteSnapshots({
         AND hosts.deleted IS NULL
         AND hosts.status = 'running'
         AND hosts.last_seen >= NOW() - ($4::double precision * INTERVAL '1 millisecond')
+        AND COALESCE(NULLIF(hosts.bay_id, ''), $1) = $1
       ORDER BY snapshots.host_id, snapshots.created_at DESC
     `,
     [bayId, excludeHostId, NORMALIZATION_VERSION, HOST_ONLINE_WINDOW_MS],
@@ -424,15 +425,23 @@ async function loadFleetCompleteSnapshots({
   return rows.map(({ normalized }) => normalized);
 }
 
-async function fleetHasCompleteBaseline(bayId: string): Promise<boolean> {
+export async function activeFleetHasCompleteBaseline(
+  bayId: string,
+): Promise<boolean> {
   const { rows } = await getPool().query<{ present: boolean }>(
     `SELECT EXISTS (
-       SELECT 1 FROM ${TABLE}
-        WHERE bay_id = $1
-          AND coverage = 'complete'
-          AND normalization_version = $2
+       SELECT 1
+         FROM ${TABLE} AS snapshots
+         INNER JOIN project_hosts AS hosts ON hosts.id = snapshots.host_id
+        WHERE snapshots.bay_id = $1
+          AND snapshots.coverage = 'complete'
+          AND snapshots.normalization_version = $2
+          AND hosts.deleted IS NULL
+          AND hosts.status = 'running'
+          AND hosts.last_seen >= NOW() - ($3::double precision * INTERVAL '1 millisecond')
+          AND COALESCE(NULLIF(hosts.bay_id, ''), $1) = $1
      ) AS present`,
-    [bayId, NORMALIZATION_VERSION],
+    [bayId, NORMALIZATION_VERSION, HOST_ONLINE_WINDOW_MS],
   );
   return rows[0]?.present === true;
 }
@@ -641,7 +650,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
   // The first complete pass establishes the fleet as a unit. Hosts added later
   // are also compared with active peers, so a first sample cannot silently
   // introduce novel state.
-  const hadFleetBaseline = await fleetHasCompleteBaseline(bayId);
+  const hadActiveFleetBaseline = await activeFleetHasCompleteBaseline(bayId);
   const transitions: HostTransition[] = [];
   const coverageFailures: CoverageFailure[] = [];
   const initialBaselines: CandidateHost[] = [];
@@ -689,9 +698,10 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
       const previous = await loadPreviousCompleteSnapshot(host.id);
       let delta: HostIntrusionSnapshotDelta | undefined;
       let baseline: HostTransition["baseline"] = "host";
+      let comparedWithFleet = false;
       if (previous) {
         delta = diffHostIntrusionSnapshots(previous, normalized);
-      } else if (hadFleetBaseline) {
+      } else if (hadActiveFleetBaseline) {
         const fleet = await loadFleetCompleteSnapshots({
           bayId,
           excludeHostId: host.id,
@@ -699,6 +709,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
         if (fleet.length) {
           delta = diffHostIntrusionSnapshotAgainstFleet(fleet, normalized);
           baseline = "fleet";
+          comparedWithFleet = true;
         }
       }
       await persistSnapshot({
@@ -710,7 +721,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
       });
       if (!previous) {
         result.baselined += 1;
-        if (!hadFleetBaseline) initialBaselines.push(host);
+        if (!comparedWithFleet) initialBaselines.push(host);
       }
       if (delta && hasHostIntrusionSnapshotChanges(delta)) {
         result.changed += 1;

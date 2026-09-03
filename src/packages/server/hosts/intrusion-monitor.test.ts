@@ -7,6 +7,7 @@ import type { HostIntrusionSnapshotResponse } from "@cocalc/conat/project-host/a
 import getPool from "@cocalc/database/pool";
 
 import {
+  activeFleetHasCompleteBaseline,
   diffHostIntrusionSnapshotAgainstFleet,
   diffHostIntrusionSnapshots,
   ensureHostIntrusionMonitorSchema,
@@ -133,6 +134,60 @@ describe("project-host intrusion monitor normalization", () => {
       `DELETE FROM project_host_intrusion_snapshots WHERE id=$1`,
       [id],
     );
+  });
+
+  it("does not treat retired hosts as an active fleet baseline", async () => {
+    await ensureHostIntrusionMonitorSchema();
+    const id = "864f72a8-f1f7-47e4-a758-b358e52b019e";
+    const hostId = "1bcc01ce-80f3-4c4d-9c84-f5d82caa48c3";
+    const bayId = "intrusion-monitor-test";
+    const pool = getPool();
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS project_hosts (
+        id UUID PRIMARY KEY,
+        name TEXT,
+        bay_id TEXT,
+        status TEXT,
+        last_seen TIMESTAMPTZ,
+        created TIMESTAMPTZ,
+        updated TIMESTAMPTZ,
+        deleted TIMESTAMPTZ
+      )
+    `);
+    try {
+      await pool.query(
+        `INSERT INTO project_hosts
+           (id, name, bay_id, status, last_seen, created, updated)
+         VALUES ($1, 'retired-baseline', $2, 'running',
+                 NOW() - INTERVAL '10 minutes', NOW(), NOW())`,
+        [hostId, bayId],
+      );
+      await pool.query(
+        `INSERT INTO project_host_intrusion_snapshots
+           (id, host_id, bay_id, captured_at, duration_ms, coverage,
+            normalization_version, normalized)
+         VALUES ($1, $2, $3, NOW(), 1, 'complete', 1, '{}'::jsonb)`,
+        [id, hostId, bayId],
+      );
+
+      await expect(activeFleetHasCompleteBaseline(bayId)).resolves.toBe(false);
+
+      await pool.query("UPDATE project_hosts SET last_seen=NOW() WHERE id=$1", [
+        hostId,
+      ]);
+      await expect(activeFleetHasCompleteBaseline(bayId)).resolves.toBe(true);
+
+      await pool.query("UPDATE project_hosts SET deleted=NOW() WHERE id=$1", [
+        hostId,
+      ]);
+      await expect(activeFleetHasCompleteBaseline(bayId)).resolves.toBe(false);
+    } finally {
+      await pool.query(
+        "DELETE FROM project_host_intrusion_snapshots WHERE id=$1",
+        [id],
+      );
+      await pool.query("DELETE FROM project_hosts WHERE id=$1", [hostId]);
+    }
   });
 
   it("does not alert on volatile timestamps, pids, counts, or connections", () => {
