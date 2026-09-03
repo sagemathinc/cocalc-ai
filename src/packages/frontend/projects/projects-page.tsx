@@ -88,7 +88,6 @@ const LOADING_STYLE: CSS = {
 
 const PROJECTS_TABLE_INITIAL_BODY_HEIGHT = 400;
 const PROJECTS_TABLE_MIN_BODY_HEIGHT = 160;
-const HOST_INFO_PREFETCH_CONCURRENCY = 4;
 const PROJECTS_TABLE_HEADER_RESERVED_PX = 48;
 
 const VISIBLE_WINDOW_REPAIR_LIMIT = 200;
@@ -469,7 +468,13 @@ export const ProjectsPage: React.FC = () => {
   }, [all_projects]);
 
   useEffect(() => {
-    if (!project_map || activeTopTab !== "projects") return;
+    if (
+      !project_map ||
+      activeTopTab !== "projects" ||
+      visibleProjectionRepairKey.length === 0
+    ) {
+      return;
+    }
     let canceled = false;
     let refreshGeneration = 0;
     const refreshHostInfo = () => {
@@ -478,25 +483,24 @@ export const ProjectsPage: React.FC = () => {
       const actions = redux.getActions("projects");
       if (!actions) return;
       const hostIds = new Set<string>();
-      project_map.forEach((project) => {
-        const hostId = project.get("host_id");
+      for (const projectId of visibleProjectionRepairKey.split("\n")) {
+        const hostId = project_map.getIn([projectId, "host_id"]) as
+          | string
+          | undefined;
         if (hostId) hostIds.add(hostId);
-      });
-      const pending = [...hostIds];
-      const worker = async () => {
-        while (!canceled && generation === refreshGeneration) {
-          const hostId = pending.shift();
-          if (hostId == null) return;
-          await actions.ensure_host_info(hostId);
-        }
-      };
-      for (
-        let i = 0;
-        i < Math.min(HOST_INFO_PREFETCH_CONCURRENCY, pending.length);
-        i++
-      ) {
-        void worker();
       }
+      void (async () => {
+        for (const hostId of hostIds) {
+          if (canceled || generation !== refreshGeneration) return;
+          const info = await actions.ensure_host_info(hostId);
+          if (info == null) {
+            // This is best-effort display metadata. A timeout must not advance
+            // through hundreds of hosts while the corresponding server calls
+            // are still active and consuming the account RPC budget.
+            return;
+          }
+        }
+      })();
     };
     const onVisibilityChange = () => {
       if (!document.hidden) refreshHostInfo();
@@ -507,7 +511,7 @@ export const ProjectsPage: React.FC = () => {
       canceled = true;
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [activeTopTab, project_map]);
+  }, [activeTopTab, project_map, visibleProjectionRepairKey]);
 
   useEffect(() => {
     if (activeTopTab !== "projects" || project_map == null) return;
