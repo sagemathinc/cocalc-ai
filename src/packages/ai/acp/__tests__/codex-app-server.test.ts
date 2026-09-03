@@ -32,6 +32,7 @@ import {
   getCodexAppServerAccountStatus,
   setCodexProjectSpawner,
 } from "..";
+import { AppServerClient } from "../codex-app-server";
 
 class FakeCodexAppServerProc extends EventEmitter {
   public readonly stdout = new PassThrough();
@@ -166,6 +167,8 @@ describe("CodexAppServerAgent", () => {
     process.env.COCALC_CODEX_TURN_RECONCILE_FAILURE_LIMIT;
   const originalTurnNotificationIdleTimeout =
     process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS;
+  const originalAttentionInput = process.env.COCALC_CODEX_ATTENTION_INPUT;
+  const originalAsyncAttention = process.env.COCALC_CODEX_ATTENTION_ASYNC;
 
   afterEach(async () => {
     setCodexProjectSpawner(null);
@@ -221,6 +224,16 @@ describe("CodexAppServerAgent", () => {
     } else {
       process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS =
         originalTurnNotificationIdleTimeout;
+    }
+    if (originalAttentionInput == null) {
+      delete process.env.COCALC_CODEX_ATTENTION_INPUT;
+    } else {
+      process.env.COCALC_CODEX_ATTENTION_INPUT = originalAttentionInput;
+    }
+    if (originalAsyncAttention == null) {
+      delete process.env.COCALC_CODEX_ATTENTION_ASYNC;
+    } else {
+      process.env.COCALC_CODEX_ATTENTION_ASYNC = originalAsyncAttention;
     }
   });
 
@@ -6209,5 +6222,232 @@ describe("CodexAppServerAgent", () => {
     } finally {
       rmSync(rootHostPath, { recursive: true, force: true });
     }
+  });
+
+  it("version-gates and answers synchronous attention requests", async () => {
+    process.env.COCALC_CODEX_ATTENTION_INPUT = "1";
+    process.env.COCALC_CODEX_ATTENTION_ASYNC = "1";
+    const threadStartRequests: any[] = [];
+    const syncResponses: any[] = [];
+    const requestSyncQuestion = jest.fn(async () => ({
+      region: { answers: ["EU"] },
+    }));
+    const createAsyncQuestion = jest.fn(async () => {});
+    const serverRequestResolved = jest.fn(async () => {});
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      if (message.id === 901 && message.result) {
+        syncResponses.push(message);
+        fake.sendNotification("serverRequest/resolved", { requestId: 901 });
+        fake.sendNotification("turn/completed", {
+          turn: { id: "turn-attention-1", status: "completed" },
+        });
+        return;
+      }
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, {
+            userAgent: "codex_cli_rs/0.151.0",
+          });
+          break;
+        case "thread/start":
+          threadStartRequests.push(message.params);
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-attention-1" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-attention-1" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-attention-1", status: "inProgress" },
+            });
+            fake.sendNotification("item/completed", {
+              threadId: "thr-attention-1",
+              turnId: "turn-attention-1",
+              item: {
+                id: "async-question-1",
+                type: "agentMessage",
+                delivery: "async",
+                text: "I can continue after this question.",
+                questions: [
+                  {
+                    title: "Which environment should I use?",
+                    options: ["Staging", "Production"],
+                  },
+                ],
+              },
+            });
+            fake.sendRequest(901, "item/tool/requestUserInput", {
+              threadId: "thr-attention-1",
+              turnId: "turn-attention-1",
+              itemId: "question-attention-1",
+              isBlocking: false,
+              questions: [
+                {
+                  id: "region",
+                  header: "Region",
+                  question: "Which region?",
+                  options: [{ label: "EU" }, { label: "US" }],
+                },
+              ],
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/home/user",
+      }),
+    });
+
+    await new CodexAppServerAgent({
+      attentionHandler: {
+        requestSyncQuestion,
+        createAsyncQuestion,
+        serverRequestResolved,
+      },
+    }).evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "ask me",
+      stream: async () => {},
+      chat: {
+        path: "root/demo.chat",
+        project_id: "00000000-0000-4000-8000-000000000000",
+      } as any,
+      config: {
+        workingDirectory: "/home/user",
+      } as any,
+    });
+
+    expect(threadStartRequests).toHaveLength(1);
+    expect(threadStartRequests[0].config).toEqual({
+      "features.default_mode_request_user_input": true,
+    });
+    expect(requestSyncQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: "901",
+        itemId: "question-attention-1",
+        isBlocking: false,
+        questions: [
+          {
+            id: "region",
+            header: "Region",
+            question: "Which region?",
+            options: [{ label: "EU" }, { label: "US" }],
+          },
+        ],
+      }),
+    );
+    expect(createAsyncQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        itemId: "async-question-1",
+        questions: [
+          {
+            id: "question-1",
+            header: "Question 1",
+            question: "Which environment should I use?",
+            isOther: true,
+            options: [{ label: "Staging" }, { label: "Production" }],
+          },
+        ],
+      }),
+    );
+    expect(syncResponses).toEqual([
+      {
+        id: 901,
+        result: { answers: { region: { answers: ["EU"] } } },
+      },
+    ]);
+    expect(serverRequestResolved).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: "901" }),
+    );
+  });
+
+  it("keeps request attention context after a later turn becomes active", async () => {
+    let answerQuestion!: (
+      answers: Record<string, { answers: string[] }>,
+    ) => void;
+    let noteRequestStarted!: () => void;
+    const requestStarted = new Promise<void>((resolve) => {
+      noteRequestStarted = resolve;
+    });
+    let noteRequestResolved!: (value: any) => void;
+    const requestResolved = new Promise<any>((resolve) => {
+      noteRequestResolved = resolve;
+    });
+    const requestSyncQuestion = jest.fn(
+      async () =>
+        await new Promise<Record<string, { answers: string[] }>>((resolve) => {
+          answerQuestion = resolve;
+          noteRequestStarted();
+        }),
+    );
+    const serverRequestResolved = jest.fn(async (value) => {
+      noteRequestResolved(value);
+    });
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      if (message.method === "initialize") {
+        fake.sendResponse(message.id, { userAgent: "codex_cli_rs/0.151.0" });
+      } else if (message.id === 901 && message.result) {
+        fake.sendNotification("serverRequest/resolved", { requestId: 901 });
+      }
+    });
+    const client = new AppServerClient(proc as any, undefined, {
+      requestSyncQuestion,
+      createAsyncQuestion: jest.fn(async () => ({}) as any),
+      serverRequestResolved,
+    });
+    await client.initialize();
+    const firstContext = {
+      projectId: "00000000-0000-4000-8000-000000000000",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      threadId: "thread-shared",
+      turnId: "turn-first",
+      stream: async () => {},
+    };
+    client.setAttentionContext(firstContext);
+    proc.sendRequest(901, "item/tool/requestUserInput", {
+      threadId: firstContext.threadId,
+      turnId: firstContext.turnId,
+      itemId: "question-first",
+      isBlocking: false,
+      questions: [
+        {
+          id: "choice",
+          header: "Choice",
+          question: "Choose one",
+          options: [{ label: "One" }, { label: "Two" }],
+        },
+      ],
+    });
+    await requestStarted;
+
+    client.setAttentionContext({
+      ...firstContext,
+      turnId: "turn-second",
+    });
+    answerQuestion({ choice: { answers: ["One"] } });
+
+    await expect(requestResolved).resolves.toMatchObject({
+      requestId: "901",
+      context: firstContext,
+    });
+    expect(serverRequestResolved).toHaveBeenCalledTimes(1);
+    proc.kill();
   });
 });

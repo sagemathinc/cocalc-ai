@@ -1700,7 +1700,6 @@ export function codexThreadConfigKey(
     envHome: config.envHome,
     envPath: config.envPath,
     model: config.model,
-    notifyOnTurnFinish: config.notifyOnTurnFinish,
     paymentSource: config.paymentSource,
     reasoning: config.reasoning,
     serviceTier: config.serviceTier,

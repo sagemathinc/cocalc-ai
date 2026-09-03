@@ -4,6 +4,12 @@ import type {
   SiteFundedCodexReservation,
 } from "@cocalc/util/ai/site-funded-codex";
 import type { CodexPaymentSourcePreference } from "@cocalc/util/ai/codex";
+import type {
+  AcpAttentionQuestion,
+  AcpAttentionRecord,
+  AcpChatContext,
+  AcpStreamPayload,
+} from "@cocalc/conat/ai/acp/types";
 
 export type CodexSiteFundedTurnRequest = {
   fundedTurnId: string;
@@ -61,6 +67,37 @@ export type CodexAppServerRequest = {
 export type CodexAppServerRequestHandler = (
   request: CodexAppServerRequest,
 ) => Promise<any>;
+
+export type CodexAttentionContext = {
+  projectId: string;
+  accountId: string;
+  chat?: AcpChatContext;
+  threadId: string;
+  turnId: string;
+  stream: (payload?: AcpStreamPayload | null) => Promise<void>;
+};
+
+export type CodexAttentionHandler = {
+  requestSyncQuestion: (opts: {
+    requestId: string;
+    itemId: string;
+    isBlocking: boolean;
+    autoResolutionMs?: number;
+    questions: AcpAttentionQuestion[];
+    context: CodexAttentionContext;
+    signal: AbortSignal;
+  }) => Promise<Record<string, { answers: string[] }>>;
+  createAsyncQuestion: (opts: {
+    itemId: string;
+    questions: AcpAttentionQuestion[];
+    context: CodexAttentionContext;
+  }) => Promise<AcpAttentionRecord>;
+  serverRequestResolved?: (opts: {
+    requestId: string;
+    context?: CodexAttentionContext;
+  }) => void | Promise<void>;
+  runtimeClosed?: (context?: CodexAttentionContext) => void | Promise<void>;
+};
 
 export type CodexProjectSpawner = {
   spawnCodexExec: (opts: CodexProjectSpawnOptions) => Promise<{

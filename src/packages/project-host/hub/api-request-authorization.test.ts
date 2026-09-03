@@ -39,6 +39,26 @@ function projectRequest(name: string, target = project_id) {
   };
 }
 
+function sourceProjectRequest({
+  name,
+  target = project_id,
+  principal = "account",
+}: {
+  name: string;
+  target?: string;
+  principal?: "account" | "project";
+}) {
+  return {
+    subject:
+      principal === "account"
+        ? `hub.account.${account_id}.api`
+        : `hub.project.${project_id}.api`,
+    name,
+    args: [{ source_project_id: target, account_id }],
+    ...(principal === "account" ? { account_id } : { project_id }),
+  };
+}
+
 function expectForbidden(run: () => void): void {
   let error: unknown;
   try {
@@ -83,6 +103,33 @@ describe("project-host hub API request authorization", () => {
       "projects",
       JSON.stringify({ project_id }),
     );
+  });
+
+  it("authorizes account notification proxies by source project", () => {
+    for (const name of [
+      "notifications.createCodexAttentionNotice",
+      "notifications.getCodexFreshAuthActionStatus",
+    ]) {
+      expect(() =>
+        authorizeProjectHostHubApiRequest(
+          sourceProjectRequest({ name, principal: "account" }),
+        ),
+      ).not.toThrow();
+      mockGetRow.mockImplementation((_table, key) =>
+        key === JSON.stringify({ project_id })
+          ? { users: { [account_id]: { group: "collaborator" } } }
+          : undefined,
+      );
+      expectForbidden(() =>
+        authorizeProjectHostHubApiRequest(
+          sourceProjectRequest({
+            name,
+            principal: "account",
+            target: other_project_id,
+          }),
+        ),
+      );
+    }
   });
 
   it("denies embedded hub API methods to exam accounts", () => {
@@ -162,6 +209,26 @@ describe("project-host hub API request authorization", () => {
     expect(mockGetRow).toHaveBeenCalledWith(
       "projects",
       JSON.stringify({ project_id }),
+    );
+  });
+
+  it("authorizes Codex completion notices by source project", () => {
+    expect(() =>
+      authorizeProjectHostHubApiRequest(
+        sourceProjectRequest({
+          name: "notifications.createCodexTurnNotice",
+          principal: "project",
+        }),
+      ),
+    ).not.toThrow();
+    expectForbidden(() =>
+      authorizeProjectHostHubApiRequest(
+        sourceProjectRequest({
+          name: "notifications.createCodexTurnNotice",
+          principal: "project",
+          target: other_project_id,
+        }),
+      ),
     );
   });
 

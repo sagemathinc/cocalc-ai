@@ -59,6 +59,7 @@ export interface CreateHeadlessChatClientOptions {
   ackTimeoutMs?: number;
   ackMaxAttempts?: number;
   ackBackoffMs?: number;
+  codexCompletionNotificationDefault?: boolean;
   activityLoadPolicy?: "recent" | "live-preview-only";
 }
 
@@ -127,6 +128,8 @@ export class CoCalcHeadlessChatClient implements HeadlessChatClient {
         ackTimeoutMs: this.options.ackTimeoutMs,
         ackMaxAttempts: this.options.ackMaxAttempts,
         ackBackoffMs: this.options.ackBackoffMs,
+        codexCompletionNotificationDefault:
+          this.options.codexCompletionNotificationDefault,
       };
       this.sendPipeline = new ChatSendPipeline(sendOptions);
       this.rebuild();

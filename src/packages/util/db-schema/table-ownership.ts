@@ -880,6 +880,19 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "Bay-local synthetic launch smoke telemetry used for operator health checks. It records diagnostic probe history, not authoritative project state.",
   }),
 
+  ...adHocEntries(["project_host_intrusion_snapshots"], {
+    ownership: "audit-local",
+    authority: "local",
+    portability: "stable",
+    secondary_reference_fields: {
+      host_id: "Monitored host reference, not host placement authority.",
+    },
+    source: "server host intrusion monitor schema bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Bay-local normalized host intrusion snapshots used for operator monitoring. They are diagnostic history, not authoritative host state.",
+  }),
+
   ...adHocEntries(
     [
       "bay_restore_test_pitr_events",

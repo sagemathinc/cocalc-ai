@@ -119,6 +119,8 @@ describe("ProjectsActions move flow", () => {
         projectMap = state.projects.project_map;
       }),
       removeActions: jest.fn(),
+      hasStore: jest.fn((name: string) => name === `project-${project_id}`),
+      getActions: jest.fn(() => projectActions),
       getProjectActions: jest.fn(() => projectActions),
     } as any;
     jest

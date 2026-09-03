@@ -449,7 +449,7 @@ describe("ConatClient routed project-host reconnect", () => {
     ]);
   });
 
-  it("routes filesystem subjects directly to the project-host even when the project bay differs from the host bay", async () => {
+  it("deduplicates mismatch refreshes for repeated filesystem subjects", async () => {
     jest.resetModules();
 
     const connectCalls: any[] = [];
@@ -497,11 +497,16 @@ describe("ConatClient routed project-host reconnect", () => {
           return immutable.Map({
             open_projects: immutable.List([
               "00000000-0000-4000-8000-000000000003",
+              "00000000-0000-4000-8000-000000000004",
             ]),
             project_map: immutable.Map({
               "00000000-0000-4000-8000-000000000003": immutable.Map({
                 host_id: "host-1",
                 owning_bay_id: "bay-2",
+              }),
+              "00000000-0000-4000-8000-000000000004": immutable.Map({
+                host_id: "host-1",
+                owning_bay_id: "bay-3",
               }),
             }),
             host_info: immutable.Map({
@@ -607,9 +612,20 @@ describe("ConatClient routed project-host reconnect", () => {
     const routed = routeSubject(
       "fs.project-00000000-0000-4000-8000-000000000003",
     );
+    await Promise.resolve();
+    await Promise.resolve();
+    routeSubject("fs.project-00000000-0000-4000-8000-000000000004");
+    await Promise.resolve();
+    await Promise.resolve();
+    const routedAgain = routeSubject(
+      "fs.project-00000000-0000-4000-8000-000000000003",
+    );
 
-    expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
+    expect(ensureHostInfo).toHaveBeenCalledTimes(2);
+    expect(ensureHostInfo).toHaveBeenNthCalledWith(1, "host-1", true);
+    expect(ensureHostInfo).toHaveBeenNthCalledWith(2, "host-1", true);
     expect(routed?.client).toBe(routedClient);
+    expect(routedAgain?.client).toBe(routedClient);
     expect(connectCalls).toHaveLength(2);
     expect(client.routedHubClients["host-1"]?.client).toBe(routedClient);
   });
@@ -4387,7 +4403,7 @@ describe("ConatClient routed project-host reconnect", () => {
     jest.useRealTimers();
   });
 
-  it("forces a host-info refresh when the cached host bay mismatches the project bay", async () => {
+  it("refreshes cached routing when the host and project bays differ", async () => {
     let hostInfo = immutable.Map({
       "host-1": immutable.Map({
         bay_id: "bay-1",
@@ -4529,6 +4545,7 @@ describe("ConatClient routed project-host reconnect", () => {
       "00000000-0000-4000-8000-000000000001",
     );
 
+    expect(ensureHostInfo).toHaveBeenCalledTimes(1);
     expect(ensureHostInfo).toHaveBeenCalledWith("host-1", true);
     expect(routing).toMatchObject({
       host_id: "host-1",

@@ -11,6 +11,8 @@ import {
   markNotificationEmailSent,
   markNotificationEmailStatus,
   markNotificationEmailsSent,
+  requeueNotificationEmail,
+  revalidateNotificationEmail,
   type NotificationEmailOutboxRow,
 } from "@cocalc/database/postgres/notification-email-outbox";
 import { getServerSettings } from "@cocalc/database/settings";
@@ -239,6 +241,23 @@ export async function sendQueuedNotificationEmailBatch(opts?: {
     opts?.sendLimitChecker ?? checkNotificationEmailSendLimitForAccount;
   for (const row of rows) {
     try {
+      const revalidation = await revalidateNotificationEmail({ row });
+      if (revalidation.action === "skip") {
+        await markNotificationEmailStatus({
+          email_id: row.email_id,
+          status: "skipped_preference",
+          error: revalidation.reason,
+        });
+        continue;
+      }
+      if (revalidation.action === "reschedule") {
+        await requeueNotificationEmail({
+          email_id: row.email_id,
+          scheduled_at: revalidation.scheduled_at,
+          reason: revalidation.reason,
+        });
+        continue;
+      }
       if (!(await emailConfigured(row.lane))) {
         await markNotificationEmailStatus({
           email_id: row.email_id,

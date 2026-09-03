@@ -9,6 +9,7 @@ import { AccountPreferencesCommunication } from "../account-preferences-communic
 import {
   MARKETING_CONSENT_OTHER_SETTINGS_KEY,
   OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
+  OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY,
   type NotificationEmailMode,
 } from "@cocalc/util/notification-preferences";
 
@@ -17,6 +18,7 @@ const setOtherSettings = jest.fn();
 const setOtherSettingsMany = jest.fn();
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
+  React: jest.requireActual("react"),
   redux: {
     getActions: () => ({
       set_other_settings: (...args: unknown[]) => setOtherSettings(...args),
@@ -187,7 +189,11 @@ describe("AccountPreferencesCommunication", () => {
     expect(screen.getByText("Access requests")).toBeTruthy();
     expect(screen.getByText("Mentions")).toBeTruthy();
     expect(screen.getByText("Chat replies")).toBeTruthy();
-    expect(screen.getByText("AI activity")).toBeTruthy();
+    expect(screen.getByText("Codex and agents")).toBeTruthy();
+    expect(screen.getByText("Needs attention")).toBeTruthy();
+    expect(screen.getByText("Turn completed")).toBeTruthy();
+    expect(screen.getByText("Turn failed")).toBeTruthy();
+    expect(screen.queryByText("AI activity")).toBeNull();
     expect(screen.queryByText("project invitations")).toBeNull();
     expect(screen.queryByText("Required immediate email")).toBeNull();
     expect(screen.queryByText("Show Announcement Banner")).toBeNull();
@@ -201,13 +207,15 @@ describe("AccountPreferencesCommunication", () => {
           row.getAttribute("data-testid")?.replace("notification-row-", ""),
         ),
     ).toEqual([
+      "attention",
+      "completion",
+      "terminal_failure",
       "security",
       "billing",
       "membership_requests",
       "access_requests",
       "mentions",
       "chat_replies",
-      "ai",
       "onboarding",
       "course",
       "support",
@@ -281,14 +289,34 @@ describe("AccountPreferencesCommunication", () => {
     ]);
   });
 
-  it("persists notification_preferences when a category mode changes", () => {
+  it("persists Codex notification channels independently", () => {
+    render(<AccountPreferencesCommunication />);
+
+    fireEvent.click(
+      screen.getByLabelText("toast notifications for Needs attention"),
+    );
+
+    expect(setOtherSettings).toHaveBeenCalledWith(
+      OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY,
+      expect.objectContaining({
+        version: 2,
+        ai: expect.objectContaining({
+          events: expect.objectContaining({
+            attention: expect.objectContaining({ toast: false }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("persists version 1 preferences when a legacy category mode changes", () => {
     render(<AccountPreferencesCommunication />);
 
     fireEvent.change(
-      within(screen.getByTestId("notification-row-ai")).getByTestId(
+      within(screen.getByTestId("notification-row-course")).getByTestId(
         "delivery-mode",
       ),
-      { target: { value: "immediate" } },
+      { target: { value: "off" } },
     );
 
     expect(setOtherSettings).toHaveBeenCalledWith(
@@ -296,8 +324,8 @@ describe("AccountPreferencesCommunication", () => {
       expect.objectContaining({
         version: 1,
         email: expect.objectContaining({
-          ai: "immediate",
           billing: "immediate",
+          course: "off",
           security: "immediate",
         }),
       }),

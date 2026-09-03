@@ -36,11 +36,40 @@ import {
   normalizeCodexMaxConcurrentSubagents,
 } from "@cocalc/frontend/account/codex-subagent-concurrency";
 import { redux } from "@cocalc/frontend/app-framework";
+import {
+  OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
+  OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY,
+  normalizeNotificationPreferencesV2,
+  resolveCodexCompletionNotificationEnabled,
+} from "@cocalc/util/notification-preferences";
 
 let lastGeneratedAcpMessageMs = 0;
 const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
 const ACP_ACK_MAX_ATTEMPTS = 5;
 const ACP_ACK_BACKOFF_MS = 2000;
+
+function chatMetadataCompletionNotificationEnabled(
+  actions: ChatActions,
+  threadId: string,
+): boolean {
+  const metadata = actions.getThreadMetadata?.(threadId, { threadId });
+  const otherSettings = redux.getStore("account")?.get("other_settings");
+  const rawV1 = otherSettings?.get?.(
+    OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
+  );
+  const rawV2 = otherSettings?.get?.(
+    OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY,
+  );
+  const accountDefault = normalizeNotificationPreferencesV2(
+    rawV2?.toJS?.() ?? rawV2,
+    rawV1?.toJS?.() ?? rawV1,
+  ).ai.completion_default;
+  return resolveCodexCompletionNotificationEnabled({
+    override: metadata?.codex_completion_notification,
+    legacy: metadata?.acp_config,
+    accountDefault,
+  });
+}
 
 export function resetAcpApiStateForTests(): void {
   lastGeneratedAcpMessageMs = 0;
@@ -410,7 +439,10 @@ export async function processAcpLLM({
     message_id,
     parent_message_id: user_message_id,
     sendMode: sendMode,
-    notifyOnTurnFinish: config.notifyOnTurnFinish === true,
+    completionNotificationEnabled: chatMetadataCompletionNotificationEnabled(
+      actions,
+      thread_id,
+    ),
   });
   let acknowledged = false;
   try {

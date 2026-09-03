@@ -48,6 +48,15 @@ export type CliAuthChallengeStatus =
   | "redeemed"
   | "canceled";
 
+export type CodexFreshAuthAttentionContext = {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  turn_id?: string;
+  message_date?: string;
+  purpose?: string;
+};
+
 type Queryable = {
   query: <T = any>(
     sql: string,
@@ -85,6 +94,72 @@ function cleanChallengeId(challenge_id: string): string {
     throw new Error("invalid challenge id");
   }
   return value;
+}
+
+function boundedRequiredText(
+  value: unknown,
+  label: string,
+  maxLength: number,
+): string {
+  if (typeof value !== "string") throw new Error(`${label} is required`);
+  const normalized = value.trim();
+  if (!normalized) throw new Error(`${label} is required`);
+  if (normalized.length > maxLength) throw new Error(`${label} is too long`);
+  return normalized;
+}
+
+export function normalizeCodexFreshAuthAttentionContext(
+  value: unknown,
+): CodexFreshAuthAttentionContext | undefined {
+  if (value == null) return;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("invalid Codex attention context");
+  }
+  const input = value as Record<string, unknown>;
+  const project_id = boundedRequiredText(
+    input.project_id,
+    "Codex attention project id",
+    100,
+  );
+  if (!isValidUUID(project_id)) {
+    throw new Error("invalid Codex attention project id");
+  }
+  return {
+    project_id,
+    path: boundedRequiredText(input.path, "Codex attention path", 4_096),
+    thread_id: boundedRequiredText(
+      input.thread_id,
+      "Codex attention thread id",
+      200,
+    ),
+    ...(input.turn_id == null || input.turn_id === ""
+      ? {}
+      : {
+          turn_id: boundedRequiredText(
+            input.turn_id,
+            "Codex attention turn id",
+            200,
+          ),
+        }),
+    ...(input.message_date == null || input.message_date === ""
+      ? {}
+      : {
+          message_date: boundedRequiredText(
+            input.message_date,
+            "Codex attention message date",
+            100,
+          ),
+        }),
+    ...(input.purpose == null || input.purpose === ""
+      ? {}
+      : {
+          purpose: boundedRequiredText(
+            input.purpose,
+            "Codex attention action purpose",
+            200,
+          ),
+        }),
+  };
 }
 
 function cleanSessionHash(session_hash: string): string {
@@ -511,25 +586,25 @@ export async function startCliLoginChallenge({
   };
 }
 
-export async function startCliElevateChallenge({
-  req,
+async function createCliElevateChallengeForSession({
   account_id,
   session_hash,
   duration,
+  codex_attention_context,
 }: {
-  req: any;
   account_id: string;
   session_hash: string;
   duration?: FreshAuthDuration;
+  codex_attention_context?: CodexFreshAuthAttentionContext;
 }): Promise<{
   challenge_id: string;
   poll_token: string;
-  approval_url: string;
   expires_at: Date;
-  home_bay_id: string;
-  home_bay_url?: string;
 }> {
   const target_session_hash = cleanSessionHash(session_hash);
+  const attentionContext = normalizeCodexFreshAuthAttentionContext(
+    codex_attention_context,
+  );
   await getCurrentAuthSessionForSessionHash({
     account_id,
     session_hash: target_session_hash,
@@ -548,22 +623,121 @@ export async function startCliElevateChallenge({
         requested_duration: duration ?? "default",
         metadata: {
           auth_client: "cli",
+          ...(attentionContext
+            ? { codex_attention_context: attentionContext }
+            : {}),
         },
       }),
   });
   return {
     challenge_id: inserted.id,
     poll_token,
+    expires_at: inserted.expire,
+  };
+}
+
+export async function startCodexFreshAuthChallengeLocal({
+  account_id,
+  session_hash,
+  duration,
+  context,
+}: {
+  account_id: string;
+  session_hash: string;
+  duration?: FreshAuthDuration;
+  context: CodexFreshAuthAttentionContext;
+}): Promise<{
+  challenge_id: string;
+  state: "pending";
+  expires_at: Date;
+}> {
+  const started = await createCliElevateChallengeForSession({
+    account_id,
+    session_hash,
+    duration,
+    codex_attention_context: context,
+  });
+  return {
+    challenge_id: started.challenge_id,
+    state: "pending",
+    expires_at: started.expires_at,
+  };
+}
+
+export async function startCliElevateChallenge({
+  req,
+  account_id,
+  session_hash,
+  duration,
+  codex_attention_context,
+}: {
+  req: any;
+  account_id: string;
+  session_hash: string;
+  duration?: FreshAuthDuration;
+  codex_attention_context?: CodexFreshAuthAttentionContext;
+}): Promise<{
+  challenge_id: string;
+  poll_token: string;
+  approval_url: string;
+  expires_at: Date;
+  home_bay_id: string;
+  home_bay_url?: string;
+}> {
+  const started = await createCliElevateChallengeForSession({
+    account_id,
+    session_hash,
+    duration,
+    codex_attention_context,
+  });
+  return {
+    ...started,
     approval_url: await challengeApprovalUrl({
       req,
       kind: "elevate",
-      challenge_id: inserted.id,
+      challenge_id: started.challenge_id,
     }),
-    expires_at: inserted.expire,
     home_bay_id: getConfiguredBayId(),
     home_bay_url:
       (await getBayPublicOriginForRequest(req, getConfiguredBayId())) ??
       undefined,
+  };
+}
+
+export async function getCodexFreshAuthActionStatus({
+  challenge_id,
+  account_id,
+  project_id,
+}: {
+  challenge_id: string;
+  account_id: string;
+  project_id: string;
+}): Promise<{
+  challenge_id: string;
+  state: "pending" | "approved" | "canceled" | "expired";
+  expires_at: Date;
+}> {
+  const row = await getChallengeRow(cleanChallengeId(challenge_id));
+  if (!row || row.kind !== "elevate") {
+    throw new Error("unknown cli auth challenge");
+  }
+  if (`${row.account_id ?? ""}`.trim() !== `${account_id ?? ""}`.trim()) {
+    throw new Error("cli auth challenge account mismatch");
+  }
+  const context = normalizeCodexFreshAuthAttentionContext(
+    row.metadata?.codex_attention_context,
+  );
+  if (!context || context.project_id !== `${project_id ?? ""}`.trim()) {
+    throw new Error("cli auth challenge project mismatch");
+  }
+  return {
+    challenge_id: row.id,
+    state: isChallengeExpired(row)
+      ? "expired"
+      : row.status === "approved" || row.status === "redeemed"
+        ? "approved"
+        : row.status,
+    expires_at: new Date(row.expire),
   };
 }
 

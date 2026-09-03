@@ -31,6 +31,9 @@ export function NoMentions(props: NoMentionsProps) {
         defaultMessage: "No read notifications",
       });
       break;
+    case "attention":
+      text = "Nothing needs your attention";
+      break;
     default:
       unreachable(filter);
   }

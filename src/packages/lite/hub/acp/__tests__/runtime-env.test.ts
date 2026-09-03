@@ -129,6 +129,10 @@ describe("buildCodexRuntimeEnv", () => {
           COCALC_AGENT_TOKEN: "stale-token",
           COCALC_AGENT_TOKEN_FILE: "/tmp/stale-agent-token",
           COCALC_API_URL: "https://wrong.example",
+          COCALC_CODEX_CHAT_PATH: "wrong.chat",
+          COCALC_CODEX_THREAD_ID: "wrong-thread",
+          COCALC_CODEX_TURN_ID: "wrong-turn",
+          COCALC_CODEX_MESSAGE_DATE: "wrong-date",
           FOO: "bar",
         },
         chat: {
@@ -152,6 +156,10 @@ describe("buildCodexRuntimeEnv", () => {
     });
     expect(env.COCALC_BEARER_TOKEN_FILE).toBeUndefined();
     expect(env.COCALC_AGENT_TOKEN_FILE).toBeUndefined();
+    expect(env.COCALC_CODEX_CHAT_PATH).toBeUndefined();
+    expect(env.COCALC_CODEX_THREAD_ID).toBeUndefined();
+    expect(env.COCALC_CODEX_TURN_ID).toBeUndefined();
+    expect(env.COCALC_CODEX_MESSAGE_DATE).toBeUndefined();
   });
 
   it("can issue a bearer using account id from runtime env", async () => {

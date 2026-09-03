@@ -5,18 +5,18 @@
 
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
-import { enqueueNotificationEmail } from "./notification-email-outbox";
+import {
+  codexNotificationEmailEnabled,
+  enqueueNotificationEmail,
+} from "./notification-email-outbox";
 import type {
   NotificationTargetOutboxRow,
   NotificationTransportEventType,
 } from "./notifications-core";
 import { resolveNotificationDeliveryPolicy } from "@cocalc/util/notification-delivery-policy";
 import type { NotificationDeliveryPolicy } from "@cocalc/util/notification-delivery-policy";
-import {
-  notificationModeCreatesInApp,
-  notificationModeSendsEmail,
-  type NotificationInAppMode,
-} from "@cocalc/util/notification-preferences";
+import { notificationModeSendsEmail } from "@cocalc/util/notification-preferences";
+import { ACCOUNT_NOTIFICATION_REVISION_LOCK } from "./schema/account-notification-revision";
 
 const DEFAULT_SINGLE_BAY_ID = "bay-0";
 const RELEVANT_EVENT_TYPES: NotificationTransportEventType[] = [
@@ -43,12 +43,82 @@ type LocalHomeAccount = {
   other_settings: Record<string, any> | null;
 };
 
-type InAppNotificationDeliveryPolicy = Omit<
-  NotificationDeliveryPolicy,
-  "delivery_mode"
-> & {
-  delivery_mode: NotificationInAppMode;
+type ExistingProjection = {
+  notification_id: string;
+  summary: Record<string, any>;
+  read_state: Record<string, any>;
 };
+
+async function coalescedProjection(opts: {
+  db: PoolClient;
+  account_id: string;
+  event: NotificationTargetOutboxRow;
+  payload: NotificationTargetOutboxPayload;
+}): Promise<ExistingProjection | undefined> {
+  const summary = opts.payload.summary ?? {};
+  if (opts.event.kind !== "account_notice") {
+    return;
+  }
+  const noticeType = `${summary.notice_type ?? ""}`;
+  let extraClause: string;
+  let extraValue: string;
+  if (noticeType === "codex_attention" && summary.attention_id) {
+    extraClause = "summary->>'attention_id' = $4";
+    extraValue = `${summary.attention_id}`;
+  } else if (noticeType === "codex_turn_completion" && summary.thread_id) {
+    extraClause = "summary->>'thread_id' = $4";
+    extraValue = `${summary.thread_id}`;
+  } else {
+    return;
+  }
+  const { rows } = await opts.db.query<ExistingProjection>(
+    `SELECT notification_id, summary, read_state
+       FROM account_notification_index
+      WHERE account_id = $1::UUID
+        AND kind = 'account_notice'
+        AND project_id IS NOT DISTINCT FROM $2::UUID
+        AND summary->>'notice_type' = $3
+        AND ${extraClause}
+      ORDER BY updated_at DESC
+      LIMIT 1`,
+    [
+      opts.account_id,
+      opts.payload.source_project_id ?? null,
+      noticeType,
+      extraValue,
+    ],
+  );
+  return rows[0];
+}
+
+function projectedSummary(opts: {
+  incoming: Record<string, any>;
+  existing?: ExistingProjection;
+  created_at: string;
+}): { summary: Record<string, any>; is_new_source: boolean } {
+  if (opts.incoming.notice_type !== "codex_turn_completion") {
+    return { summary: opts.incoming, is_new_source: !opts.existing };
+  }
+  const oldSummary = opts.existing?.summary ?? {};
+  const oldSource = `${oldSummary.stable_source_id ?? ""}`;
+  const newSource = `${opts.incoming.stable_source_id ?? ""}`;
+  const is_new_source = !opts.existing || !newSource || oldSource !== newSource;
+  const oldCount = Math.max(1, Number(oldSummary.coalesced_count ?? 1) || 1);
+  return {
+    is_new_source,
+    summary: {
+      ...opts.incoming,
+      coalesced_count: is_new_source
+        ? oldCount + (opts.existing ? 1 : 0)
+        : oldCount,
+      first_completion_at:
+        oldSummary.first_completion_at ??
+        oldSummary.completed_at ??
+        opts.incoming.completed_at ??
+        opts.created_at,
+    },
+  };
+}
 
 export interface DrainAccountNotificationIndexProjectionResult {
   bay_id: string;
@@ -111,6 +181,16 @@ async function loadLocalHomeAccount(
   return rows[0] as LocalHomeAccount | undefined;
 }
 
+async function lockAccountProjection(
+  db: PoolClient,
+  account_id: string,
+): Promise<void> {
+  await db.query(`SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, [
+    ACCOUNT_NOTIFICATION_REVISION_LOCK,
+    account_id,
+  ]);
+}
+
 async function applyNotificationEventToAccountNotificationIndex(opts: {
   db: PoolClient;
   bay_id: string;
@@ -140,6 +220,9 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
       affected_notification_id: undefined,
     };
   }
+  // Different projector workers can claim distinct outbox rows for the same
+  // account. Serialize the coalescing read and write so they reuse one row.
+  await lockAccountProjection(db, event.target_account_id);
   const payload = (event.payload_json ?? {}) as NotificationTargetOutboxPayload;
   const policy = resolveNotificationDeliveryPolicy({
     kind: event.kind,
@@ -149,55 +232,89 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
     summary: payload.summary,
     event_payload: payload.event_payload,
     preferences: account.other_settings?.notification_preferences,
+    preferences_v2: account.other_settings?.notification_preferences_v2,
     onboarding_email_declined:
       account.other_settings?.marketing_email_consent_record?.source ===
         "first-project-open" &&
       account.other_settings?.marketing_email_consent_record?.enabled === false,
   });
+  const existingProjection = await coalescedProjection({
+    db,
+    account_id: event.target_account_id,
+    event,
+    payload,
+  });
+  const projectionNotificationId =
+    existingProjection?.notification_id ?? event.notification_id;
+  const projection = projectedSummary({
+    incoming: payload.summary ?? {},
+    existing: existingProjection,
+    created_at: payload.created_at ?? event.created_at.toISOString(),
+  });
+  const shouldReplaceReadState =
+    !policy.creates_in_app ||
+    (policy.creates_in_app &&
+      existingProjection?.read_state?.archived === true) ||
+    (payload.summary?.notice_type === "codex_turn_completion" &&
+      projection.is_new_source);
   const delivery_mode = policy.delivery_mode;
-  if (!notificationModeCreatesInApp(delivery_mode)) {
-    return {
-      inserted_rows: 0,
-      deleted_rows: 0,
-      affected_account_id: undefined,
-      affected_notification_id: undefined,
-    };
-  }
-  await db.query(
-    `INSERT INTO account_notification_index
+  const insertProjection = policy.creates_in_app || policy.category === "ai";
+  if (insertProjection) {
+    await db.query(
+      `INSERT INTO account_notification_index
        (account_id, notification_id, kind, project_id, summary, read_state,
         created_at, updated_at)
      VALUES
-       ($1, $2, $3, $4, $5::JSONB, '{}'::JSONB, $6, $7)
+       ($1, $2, $3, $4, $5::JSONB, $6::JSONB, $7, $8)
      ON CONFLICT (account_id, notification_id)
      DO UPDATE SET
        kind = EXCLUDED.kind,
        project_id = EXCLUDED.project_id,
        summary = EXCLUDED.summary,
+       read_state = CASE
+         WHEN $9::BOOLEAN THEN EXCLUDED.read_state
+         ELSE account_notification_index.read_state
+       END,
        created_at = EXCLUDED.created_at,
        updated_at = EXCLUDED.updated_at`,
-    [
-      event.target_account_id,
-      event.notification_id,
-      event.kind,
-      payload.source_project_id ?? null,
-      JSON.stringify(payload.summary ?? {}),
-      payload.created_at ?? event.created_at.toISOString(),
-      event.created_at,
-    ],
-  );
-  await enqueueProjectedNotificationEmail({
-    db,
-    event,
-    payload,
-    account,
-    policy: { ...policy, delivery_mode },
-  });
+      [
+        event.target_account_id,
+        projectionNotificationId,
+        event.kind,
+        payload.source_project_id ?? null,
+        JSON.stringify(projection.summary),
+        JSON.stringify(
+          policy.creates_in_app ? {} : { read: true, archived: true },
+        ),
+        payload.created_at ?? event.created_at.toISOString(),
+        event.created_at,
+        shouldReplaceReadState,
+      ],
+    );
+  }
+  if (insertProjection || notificationModeSendsEmail(delivery_mode)) {
+    await enqueueProjectedNotificationEmail({
+      db,
+      event,
+      payload,
+      account,
+      notification_id:
+        payload.summary?.notice_type === "codex_attention"
+          ? projectionNotificationId
+          : event.notification_id,
+      projection_notification_id: projectionNotificationId,
+      policy: policy.creates_in_app
+        ? { ...policy, delivery_mode, creates_in_app: true }
+        : policy,
+    });
+  }
   return {
-    inserted_rows: 1,
+    inserted_rows: insertProjection ? 1 : 0,
     deleted_rows: 0,
-    affected_account_id: event.target_account_id,
-    affected_notification_id: event.notification_id,
+    affected_account_id: insertProjection ? event.target_account_id : undefined,
+    affected_notification_id: insertProjection
+      ? projectionNotificationId
+      : undefined,
   };
 }
 
@@ -236,25 +353,69 @@ async function enqueueProjectedNotificationEmail(opts: {
   event: NotificationTargetOutboxRow;
   payload: NotificationTargetOutboxPayload;
   account: LocalHomeAccount;
-  policy: InAppNotificationDeliveryPolicy;
+  notification_id: string;
+  projection_notification_id: string;
+  policy: NotificationDeliveryPolicy;
 }): Promise<void> {
   const { db, event, payload, account, policy } = opts;
+  if (
+    payload.summary?.notice_type === "codex_attention" &&
+    (payload.summary?.attention_state !== "pending" ||
+      payload.summary?.acknowledged_at != null)
+  ) {
+    await db.query(
+      `UPDATE notification_email_outbox
+          SET status = 'skipped_preference',
+              last_error = $2,
+              updated_at = NOW()
+        WHERE notification_id = $1::UUID AND status = 'queued'`,
+      [
+        opts.notification_id,
+        payload.summary?.attention_state !== "pending"
+          ? "attention request resolved before escalation"
+          : "attention request acknowledged before escalation",
+      ],
+    );
+    return;
+  }
+  const snoozedUntil = Number(payload.summary?.snoozed_until ?? 0);
+  if (
+    payload.summary?.notice_type === "codex_attention" &&
+    Number.isFinite(snoozedUntil) &&
+    snoozedUntil > Date.now()
+  ) {
+    await db.query(
+      `UPDATE notification_email_outbox
+          SET scheduled_at = GREATEST(scheduled_at, TO_TIMESTAMP($2 / 1000.0)),
+              updated_at = NOW()
+        WHERE notification_id = $1::UUID AND status = 'queued'`,
+      [opts.notification_id, snoozedUntil],
+    );
+  }
   const recipient_email = resolveRecipientEmail(account);
-  const status = notificationModeSendsEmail(policy.delivery_mode)
-    ? recipient_email
-      ? "queued"
-      : "skipped_no_recipient"
-    : "skipped_preference";
+  const status =
+    policy.category === "ai" && !codexNotificationEmailEnabled()
+      ? "skipped_preference"
+      : notificationModeSendsEmail(policy.delivery_mode)
+        ? recipient_email
+          ? "queued"
+          : "skipped_no_recipient"
+        : "skipped_preference";
   await enqueueNotificationEmail({
     db,
-    notification_id: event.notification_id,
+    notification_id: opts.notification_id,
     event_id: payload.event_id ?? null,
     target_account_id: event.target_account_id,
     actor_account_id: payload.actor_account_id ?? null,
     responsible_account_id: policy.responsible_account_id,
     category: policy.category,
     lane: policy.lane,
-    delivery_mode: policy.delivery_mode,
+    delivery_mode:
+      policy.delivery_mode === "digest"
+        ? "digest"
+        : policy.delivery_mode === "immediate"
+          ? "immediate"
+          : "off",
     recipient_email,
     subject: notificationEmailSubject({ event, payload }),
     summary_json: {
@@ -263,10 +424,17 @@ async function enqueueProjectedNotificationEmail(opts: {
       event_payload: payload.event_payload ?? {},
       source_project_id: payload.source_project_id ?? null,
       source_path: payload.source_path ?? null,
+      projection_notification_id: opts.projection_notification_id,
       required: policy.required,
     },
     status,
-    scheduled_at: event.created_at,
+    last_error:
+      policy.category === "ai" && !codexNotificationEmailEnabled()
+        ? "Codex notification email is disabled"
+        : undefined,
+    scheduled_at: new Date(
+      event.created_at.getTime() + (policy.email_delay_ms ?? 0),
+    ),
   });
 }
 

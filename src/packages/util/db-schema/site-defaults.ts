@@ -81,6 +81,8 @@ export type SiteSettingsKeys =
   | "cookie_banner_text"
   | "openai_enabled"
   | "agent_openai_codex_enabled"
+  | "codex_notification_toast_enabled"
+  | "codex_notification_browser_enabled"
   | "google_vertexai_enabled"
   | "mistral_enabled"
   | "anthropic_enabled"
@@ -1515,6 +1517,26 @@ export const site_settings_conf: SiteSettings = {
     tags: ["OpenAI", "AI"],
     group: "AI & Agents",
     subgroup: "OpenAI",
+  },
+  codex_notification_toast_enabled: {
+    name: "Codex Toast Notifications",
+    desc: "Allow attention and completion notifications to appear as in-app toasts. Durable inbox notifications are retained when this is disabled.",
+    default: "yes",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["AI"],
+    group: "AI & Agents",
+    subgroup: "Codex",
+  },
+  codex_notification_browser_enabled: {
+    name: "Codex Browser Notifications",
+    desc: "Allow privacy-safe native browser notifications for Codex attention and completion events. Users must also enable the channel and grant browser permission.",
+    default: "yes",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["AI"],
+    group: "AI & Agents",
+    subgroup: "Codex",
   },
   google_vertexai_enabled: {
     name: "Google Generative AI UI",

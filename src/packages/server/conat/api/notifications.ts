@@ -7,6 +7,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import {
+  claimProjectedCodexNotificationDelivery,
   getProjectedNotificationCounts,
   listProjectedNotificationSnapshotForAccount,
   listProjectedNotificationsForAccount,
@@ -22,8 +23,14 @@ import {
 import getPool from "@cocalc/database/pool";
 import { getClusterAccountsByIds } from "@cocalc/server/inter-bay/accounts";
 import type {
+  CodexFreshAuthActionStart,
+  ClaimCodexNotificationDeliveryOptions,
+  ClaimCodexNotificationDeliveryResult,
   CreateAccountNoticeOptions,
+  CreateCodexAttentionNoticeOptions,
   CreateCodexTurnNoticeOptions,
+  CodexFreshAuthActionStatus,
+  GetCodexFreshAuthActionStatusOptions,
   ArchiveNotificationOptions,
   CreateMentionNotificationOptions,
   CreateNotificationResult,
@@ -39,13 +46,27 @@ import type {
   NotificationPriority,
   NotificationSeverity,
   SaveNotificationOptions,
+  StartCodexFreshAuthActionOptions,
 } from "@cocalc/conat/hub/api/notifications";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   publishProjectedNotificationFeedCountsBestEffort,
   publishProjectedNotificationFeedUpdatesBestEffort,
 } from "@cocalc/server/notifications/feed";
 import { forwardRemoteNotificationTargetsBestEffort } from "@cocalc/server/notifications/remote-feed";
+import {
+  getCodexFreshAuthActionStatus as getAuthoritativeFreshAuthStatus,
+  normalizeCodexFreshAuthAttentionContext,
+  startCodexFreshAuthChallengeLocal,
+} from "@cocalc/server/auth/cli-auth";
+import {
+  codexFreshAuthAttentionEnabled,
+  registerCodexFreshAuthAttention,
+} from "@cocalc/server/auth/codex-attention";
+import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
+import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
 const MAX_MENTION_TARGETS = 25;
 const MENTION_RATE_LIMIT_WINDOW_MINUTES = 60;
@@ -548,6 +569,229 @@ export async function createCodexTurnNotice(
   });
 }
 
+export async function createCodexAttentionNotice(
+  opts: CreateCodexAttentionNoticeOptions,
+): Promise<CreateNotificationResult> {
+  const account_id = requireAccountId(opts.account_id);
+  const source_project_id = requireUuid(
+    opts.source_project_id,
+    "source project id",
+  );
+  const host_id = opts.host_id
+    ? requireUuid(opts.host_id, "host id")
+    : undefined;
+  if (host_id) {
+    await assertHostCodexTurnNoticeAccess({
+      host_id,
+      project_id: source_project_id,
+      account_id,
+    });
+  } else {
+    await assertProjectCollaboratorAccessAllowRemote({
+      account_id,
+      project_id: source_project_id,
+    });
+  }
+  const source_path = requireNonEmptyString(opts.source_path, "source_path");
+  const thread_id = requireNonEmptyString(opts.thread_id, "thread_id");
+  const attention_id = requireUuid(opts.attention_id, "attention id");
+  const attention_kind = requireNonEmptyString(
+    opts.attention_kind,
+    "attention_kind",
+  );
+  requireNonEmptyString(opts.title, "title");
+  // Question titles originate in model output and remain on the project data
+  // plane. Home-bay inbox and email projections use only generic text.
+  const title = "Codex needs your attention";
+  const stable_source_id = requireNonEmptyString(
+    opts.stable_source_id,
+    "stable_source_id",
+  );
+  const source_bay_id = getConfiguredBayId();
+  const thread_label = `${opts.thread_label ?? ""}`.trim() || null;
+  const fragment_id = `${opts.source_fragment_id ?? ""}`.trim() || null;
+  const state = opts.state ?? "pending";
+  const body_markdown =
+    state === "pending"
+      ? opts.is_blocking
+        ? "Codex is paused until you respond."
+        : "Codex requested input and may continue working while it waits."
+      : state === "stale"
+        ? "Codex disconnected before it could accept the response."
+        : `This Codex request is ${state}.`;
+  return await createNotificationResult({
+    kind: "account_notice",
+    source_bay_id,
+    targets: [account_id],
+    buildEvent: async () => ({
+      kind: "account_notice",
+      source_bay_id,
+      source_project_id,
+      source_path,
+      source_fragment_id: fragment_id,
+      actor_account_id: account_id,
+      origin_kind: "project",
+      payload_json: {
+        title,
+        body_markdown,
+        severity: "warning",
+        origin_label: "Codex",
+        notice_type: "codex_attention",
+        thread_id,
+        thread_label,
+        attention_id,
+        attention_kind,
+        is_blocking: opts.is_blocking,
+        stable_source_id,
+        attention_state: state,
+        acknowledged_at: opts.acknowledged_at,
+        snoozed_until: opts.snoozed_until,
+      },
+    }),
+    buildTargets: async (targetHomeBays) => [
+      {
+        target_account_id: account_id,
+        target_home_bay_id: targetHomeBays[account_id],
+        dedupe_key: [
+          "codex_attention",
+          source_project_id,
+          stable_source_id,
+          account_id,
+        ].join(":"),
+        summary_json: {
+          title,
+          body_markdown,
+          severity: "warning",
+          origin_label: "Codex",
+          notice_type: "codex_attention",
+          path: source_path,
+          display_path: displayPathRelativeToHome(source_path),
+          fragment_id,
+          thread_id,
+          thread_label,
+          attention_id,
+          attention_kind,
+          is_blocking: opts.is_blocking,
+          stable_source_id,
+          attention_state: state,
+          acknowledged_at: opts.acknowledged_at,
+          snoozed_until: opts.snoozed_until,
+        },
+      },
+    ],
+  });
+}
+
+export async function getCodexFreshAuthActionStatus(
+  opts: GetCodexFreshAuthActionStatusOptions,
+): Promise<CodexFreshAuthActionStatus> {
+  const account_id = requireAccountId(opts.account_id);
+  const project_id = requireUuid(opts.source_project_id, "source project id");
+  const host_id = opts.host_id
+    ? requireUuid(opts.host_id, "host id")
+    : undefined;
+  if (host_id) {
+    await assertHostCodexTurnNoticeAccess({
+      host_id,
+      project_id,
+      account_id,
+    });
+  } else {
+    await assertProjectCollaboratorAccessAllowRemote({
+      account_id,
+      project_id,
+    });
+  }
+  const challenge_id = requireUuid(opts.challenge_id, "challenge id");
+  const { home_bay_id } = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  const status =
+    home_bay_id === getConfiguredBayId()
+      ? await getAuthoritativeFreshAuthStatus({
+          challenge_id,
+          account_id,
+          project_id,
+        })
+      : await createInterBayAccountLocalClient({
+          client: getInterBayFabricClient(),
+          dest_bay: home_bay_id,
+        }).getCodexFreshAuthStatus({
+          challenge_id,
+          account_id,
+          project_id,
+        });
+  return {
+    ...status,
+    expires_at: new Date(status.expires_at).toISOString(),
+  };
+}
+
+export async function startCodexFreshAuthAction(
+  opts: StartCodexFreshAuthActionOptions,
+): Promise<CodexFreshAuthActionStart> {
+  if (!codexFreshAuthAttentionEnabled()) {
+    throw new Error("Codex fresh-auth attention is disabled");
+  }
+  const account_id = requireAccountId(opts.account_id);
+  const project_id = requireUuid(opts.source_project_id, "source project id");
+  const context = normalizeCodexFreshAuthAttentionContext(opts.context);
+  if (!context || context.project_id !== project_id) {
+    throw new Error("Codex attention context project mismatch");
+  }
+  await assertProjectCollaboratorAccessAllowRemote({
+    account_id,
+    project_id,
+  });
+  const browser_id = `${opts.browser_id ?? ""}`.trim();
+  if (!browser_id || browser_id.length > 200) {
+    throw new Error("valid browser id is required for fresh authorization");
+  }
+  const { home_bay_id } = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  let started;
+  if (home_bay_id === getConfiguredBayId()) {
+    const session_hash = getBrowserAuthSessionHash({
+      account_id,
+      browser_id,
+    });
+    if (!session_hash) {
+      throw new Error(
+        "The active CoCalc browser session could not be found. Keep the originating browser tab open and retry.",
+      );
+    }
+    started = await startCodexFreshAuthChallengeLocal({
+      account_id,
+      session_hash,
+      duration: opts.duration,
+      context,
+    });
+  } else {
+    started = await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: home_bay_id,
+    }).startCodexFreshAuth({
+      account_id,
+      browser_id,
+      duration: opts.duration,
+      context,
+    });
+  }
+  await registerCodexFreshAuthAttention({
+    account_id,
+    challenge_id: started.challenge_id,
+    context,
+  });
+  return {
+    challenge_id: started.challenge_id,
+    state: "pending",
+    expires_at: new Date(started.expires_at).toISOString(),
+  };
+}
+
 export async function list(
   opts: ListNotificationsOptions = {},
 ): Promise<NotificationListRow[]> {
@@ -583,6 +827,19 @@ export async function counts(opts?: {
   return await getProjectedNotificationCounts({
     account_id,
   });
+}
+
+export async function claimCodexNotificationDelivery(
+  opts: ClaimCodexNotificationDeliveryOptions,
+): Promise<ClaimCodexNotificationDeliveryResult> {
+  const account_id = requireAccountId(opts.account_id);
+  return {
+    claimed: await claimProjectedCodexNotificationDelivery({
+      account_id,
+      notification_id: opts.notification_id,
+      delivery_id: opts.delivery_id,
+    }),
+  };
 }
 
 export async function markRead(

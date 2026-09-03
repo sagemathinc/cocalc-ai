@@ -450,6 +450,8 @@ async function getResponse({
 
 const AGENT_HUB_API_METHODS = new Set([
   "system.getPublicSiteUrl",
+  "notifications.startCodexFreshAuthAction",
+  "notifications.getCodexFreshAuthActionStatus",
   "compute.listProjectVms",
   "compute.getProjectVm",
   "compute.listProjectVolumes",

@@ -330,6 +330,60 @@ describe("SmartAnchorTag", () => {
     expect(openFile).not.toHaveBeenCalled();
   });
 
+  it("opens encoded cross-project links in the target project", async () => {
+    const targetProjectId = "756629fd-ce98-4596-8595-1071d6c019a6";
+    render(
+      <SmartAnchorTag
+        project_id="1ce4fe78-19c7-40a8-a598-947975744cd9"
+        path="/home/user/a.md"
+        href={`${window.location.origin}/projects/${targetProjectId}/files/home/user/scratch/a%20b.md`}
+      >
+        target
+      </SmartAnchorTag>,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "target" }));
+
+    await waitFor(() => {
+      expect(openProject).toHaveBeenCalledWith({
+        project_id: targetProjectId,
+        switch_to: true,
+      });
+      expect(loadTarget).toHaveBeenCalledWith(
+        "files/home/user/scratch/a b.md",
+        true,
+        false,
+        true,
+        undefined,
+      );
+      expect(setActiveTab).toHaveBeenCalledWith(targetProjectId);
+    });
+  });
+
+  it("leaves non-SPA project routes to normal browser navigation", () => {
+    const targetProjectId = "756629fd-ce98-4596-8595-1071d6c019a6";
+    render(
+      <SmartAnchorTag
+        project_id="1ce4fe78-19c7-40a8-a598-947975744cd9"
+        path="/home/user/a.md"
+        href={`${window.location.origin}/projects/${targetProjectId}/raw/home/user/data.csv`}
+      >
+        raw file
+      </SmartAnchorTag>,
+    );
+
+    const event = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+    });
+    screen.getByRole("link", { name: "raw file" }).dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(openProject).not.toHaveBeenCalled();
+    expect(loadTarget).not.toHaveBeenCalled();
+  });
+
   it("opens relative links with encoded :line suffix as file+line", async () => {
     render(
       <SmartAnchorTag

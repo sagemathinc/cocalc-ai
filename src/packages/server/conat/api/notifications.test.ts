@@ -16,8 +16,10 @@ import {
 } from "@cocalc/util/security-limits";
 import {
   archive,
+  claimCodexNotificationDelivery,
   counts,
   createAccountNotice,
+  createCodexAttentionNotice,
   createCodexTurnNotice,
   createMention,
   list,
@@ -53,7 +55,8 @@ describe("conat notifications api", () => {
   afterEach(async () => {
     jest.clearAllMocks();
     await getPool().query(
-      `TRUNCATE notification_target_outbox,
+      `TRUNCATE account_notification_index,
+                notification_target_outbox,
                 notification_targets,
                 notification_events,
                 projects,
@@ -102,6 +105,49 @@ describe("conat notifications api", () => {
       ],
     );
   }
+
+  it("atomically claims Codex delivery within the authenticated account", async () => {
+    await seedMentionContext();
+    const notificationId = "99999999-9999-4999-8999-999999999999";
+    await getPool().query(
+      `INSERT INTO account_notification_index
+         (account_id, notification_id, kind, project_id, summary, read_state,
+          created_at, updated_at)
+       VALUES ($1, $2, 'account_notice', $3, $4::JSONB, '{}'::JSONB,
+               NOW(), NOW())`,
+      [
+        ACTOR_ACCOUNT_ID,
+        notificationId,
+        PROJECT_ID,
+        JSON.stringify({
+          origin_label: "Codex",
+          notice_type: "codex_turn_completion",
+          stable_source_id: "codex-turn-1",
+        }),
+      ],
+    );
+    await expect(
+      claimCodexNotificationDelivery({
+        account_id: ACTOR_ACCOUNT_ID,
+        notification_id: notificationId,
+        delivery_id: "codex-turn-1",
+      }),
+    ).resolves.toEqual({ claimed: true });
+    await expect(
+      claimCodexNotificationDelivery({
+        account_id: ACTOR_ACCOUNT_ID,
+        notification_id: notificationId,
+        delivery_id: "codex-turn-1",
+      }),
+    ).resolves.toEqual({ claimed: false });
+    await expect(
+      claimCodexNotificationDelivery({
+        account_id: ACTOR_ACCOUNT_ID,
+        notification_id: notificationId,
+        delivery_id: "different-turn",
+      }),
+    ).resolves.toEqual({ claimed: false });
+  });
 
   it("creates mention notifications for collaborator targets", async () => {
     await seedMentionContext();
@@ -369,6 +415,49 @@ describe("conat notifications api", () => {
         },
       },
     ]);
+  });
+
+  it("keeps Codex question content out of attention projections", async () => {
+    await seedMentionContext();
+    const sensitiveTitle = "Use sk-secret-value for /private/customer.chat?";
+
+    await expect(
+      createCodexAttentionNotice({
+        account_id: TARGET_ACCOUNT_ID,
+        source_project_id: PROJECT_ID,
+        source_path: "work/chat.chat",
+        source_fragment_id: "chat=1715000000000",
+        thread_id: "thread-1",
+        attention_id: "66666666-6666-4666-8666-666666666666",
+        attention_kind: "question",
+        is_blocking: true,
+        title: sensitiveTitle,
+        stable_source_id: "thread-1:turn-1:request-1",
+      }),
+    ).resolves.toMatchObject({ kind: "account_notice", target_count: 1 });
+
+    const { rows } = await getPool().query(
+      `SELECT e.payload_json AS event_payload,
+              o.payload_json AS target_payload
+         FROM notification_events e
+         JOIN notification_target_outbox o
+           ON o.payload_json->>'event_id' = e.event_id::TEXT`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      event_payload: {
+        title: "Codex needs your attention",
+        body_markdown: "Codex is paused until you respond.",
+      },
+      target_payload: {
+        summary: {
+          title: "Codex needs your attention",
+          body_markdown: "Codex is paused until you respond.",
+        },
+      },
+    });
+    expect(JSON.stringify(rows[0])).not.toContain(sensitiveTitle);
+    expect(JSON.stringify(rows[0])).not.toContain("sk-secret-value");
   });
 
   it("lists projected notifications, returns counts, and marks rows read", async () => {

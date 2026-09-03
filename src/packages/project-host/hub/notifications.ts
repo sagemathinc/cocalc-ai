@@ -40,4 +40,51 @@ export function wireNotificationsApi(): void {
       ...(scope.host_id ? { host_id: scope.host_id } : {}),
     });
   };
+  hubApi.notifications.createCodexAttentionNotice = async (opts: {
+    account_id?: string;
+    source_project_id: string;
+    source_path: string;
+    source_fragment_id?: string;
+    thread_id: string;
+    thread_label?: string;
+    attention_id: string;
+    attention_kind: string;
+    is_blocking: boolean;
+    title: string;
+    stable_source_id: string;
+    acknowledged_at?: number;
+    snoozed_until?: number;
+    state?:
+      | "pending"
+      | "answered"
+      | "declined"
+      | "canceled"
+      | "resolved"
+      | "expired"
+      | "superseded"
+      | "stale";
+  }) => {
+    const scope = defaultHostScope();
+    return await callHub({
+      client: requireMasterClient("notifications.createCodexAttentionNotice"),
+      name: "notifications.createCodexAttentionNotice",
+      args: [opts],
+      ...(scope.host_id ? { host_id: scope.host_id } : {}),
+    });
+  };
+  hubApi.notifications.getCodexFreshAuthActionStatus = async (opts: {
+    account_id?: string;
+    source_project_id: string;
+    challenge_id: string;
+  }) => {
+    const scope = defaultHostScope();
+    return await callHub({
+      client: requireMasterClient(
+        "notifications.getCodexFreshAuthActionStatus",
+      ),
+      name: "notifications.getCodexFreshAuthActionStatus",
+      args: [opts],
+      ...(scope.host_id ? { host_id: scope.host_id } : {}),
+    });
+  };
 }

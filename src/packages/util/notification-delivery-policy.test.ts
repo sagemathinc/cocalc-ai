@@ -18,10 +18,11 @@ describe("notification delivery policy", () => {
           },
         },
       }),
-    ).toEqual({
+    ).toMatchObject({
       category: "mentions",
       lane: "notification",
       delivery_mode: "digest",
+      creates_in_app: true,
       required: false,
       responsible_account_id: "actor",
     });
@@ -63,6 +64,7 @@ describe("notification delivery policy", () => {
       category: "ai",
       lane: "notification",
       delivery_mode: "off",
+      creates_in_app: true,
     });
   });
 
@@ -74,10 +76,11 @@ describe("notification delivery policy", () => {
         summary: { notice_type: "onboarding_day_one" },
         preferences: { email: { onboarding: "off" } },
       }),
-    ).toEqual({
+    ).toMatchObject({
       category: "onboarding",
       lane: "transactional",
       delivery_mode: "off",
+      creates_in_app: true,
       required: false,
       responsible_account_id: null,
     });
@@ -126,6 +129,7 @@ describe("notification delivery policy", () => {
     ).toMatchObject({
       category: "mentions",
       delivery_mode: "none",
+      creates_in_app: false,
       required: false,
     });
   });
@@ -145,10 +149,11 @@ describe("notification delivery policy", () => {
           },
         },
       }),
-    ).toEqual({
+    ).toMatchObject({
       category: "access_requests",
       lane: "transactional",
       delivery_mode: "none",
+      creates_in_app: false,
       required: false,
       responsible_account_id: null,
     });
@@ -169,10 +174,11 @@ describe("notification delivery policy", () => {
           },
         },
       }),
-    ).toEqual({
+    ).toMatchObject({
       category: "membership_requests",
       lane: "transactional",
       delivery_mode: "immediate",
+      creates_in_app: true,
       required: false,
       responsible_account_id: null,
     });
@@ -193,12 +199,42 @@ describe("notification delivery policy", () => {
           },
         },
       }),
-    ).toEqual({
+    ).toMatchObject({
       category: "billing",
       lane: "critical",
       delivery_mode: "immediate",
+      creates_in_app: true,
       required: true,
       responsible_account_id: null,
+    });
+  });
+
+  it("keeps Codex inbox and delayed email policy independent", () => {
+    expect(
+      resolveNotificationDeliveryPolicy({
+        kind: "account_notice",
+        target_account_id: "target",
+        summary: { notice_type: "codex_attention" },
+        preferences_v2: {
+          version: 2,
+          ai: {
+            events: {
+              attention: {
+                inbox: false,
+                toast: true,
+                browser: true,
+                email: "unresolved_after_delay",
+                email_delay_minutes: 7,
+              },
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
+      category: "ai",
+      creates_in_app: false,
+      delivery_mode: "immediate",
+      email_delay_ms: 7 * 60_000,
     });
   });
 });

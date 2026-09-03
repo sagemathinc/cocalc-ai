@@ -816,6 +816,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "notifications.claimCodexNotificationDelivery": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "account-bound idempotent delivery marker on an existing matching Codex notification",
+  },
   "notifications.createAccountNotice": {
     decision: "fresh-auth-not-required",
     reason: "admin-only account notification creation",
@@ -823,6 +828,15 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "notifications.createCodexTurnNotice": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "notifications.createCodexAttentionNotice": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "notifications.startCodexFreshAuthAction": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "creates a bound approval challenge but does not approve it or perform the privileged action",
   },
   "notifications.createMention": {
     decision: "fresh-auth-not-required",

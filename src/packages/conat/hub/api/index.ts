@@ -172,6 +172,9 @@ export function isHubApiPrincipalAllowed({
   if (policy === "account-or-compute-agent") {
     return auth_actor === "agent" || !!account_id;
   }
+  if (policy === "account-or-host-or-compute-agent") {
+    return auth_actor === "agent" || !!account_id || !!host_id;
+  }
   return false;
 }
 
