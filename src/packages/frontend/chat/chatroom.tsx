@@ -1783,12 +1783,8 @@ export function ChatPanel({
       return;
     }
     const messageCount = Math.max(thread.messageCount ?? 0, 0);
-    const unreadCount = Math.max(thread.unreadCount ?? 0, 0);
     const signature = `${thread.key}:${messageCount}`;
-    if (
-      selectedThreadReadSignatureRef.current === signature &&
-      unreadCount <= 0
-    ) {
+    if (selectedThreadReadSignatureRef.current === signature) {
       return;
     }
     if (messageCount <= 0) {

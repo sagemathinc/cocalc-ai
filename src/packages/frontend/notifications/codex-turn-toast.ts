@@ -20,7 +20,10 @@ import {
   normalizeNotificationPreferencesV2,
 } from "@cocalc/util/notification-preferences";
 import { isDirectlyWatchingCodexThread } from "@cocalc/frontend/chat/codex-watch-presence";
-import { codexNativeNotificationContent } from "./codex-native-content";
+import {
+  canShowCodexNativeNotification,
+  codexNativeNotificationContent,
+} from "./codex-native-content";
 
 const TOAST_STATE_DKV_NAME = "notification-toast-state";
 const CODEX_TURN_TOAST_PREFIX = "codex-turn.";
@@ -90,6 +93,14 @@ function codexExternalDeliveryEnabled(channel: "toast" | "browser"): boolean {
       ? "codex_notification_toast_enabled"
       : "codex_notification_browser_enabled";
   return customizeStore.get(key) !== false;
+}
+
+function nativeCodexNotificationAvailable(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    "Notification" in window &&
+    canShowCodexNativeNotification(window.Notification)
+  );
 }
 
 async function claimCrossTabDelivery(notificationId: string): Promise<boolean> {
@@ -302,11 +313,7 @@ function showNativeCodexNotification(opts: {
   row: Pick<NotificationListRow, "notification_id" | "project_id" | "summary">;
   attention: boolean;
 }): void {
-  if (
-    typeof window === "undefined" ||
-    !("Notification" in window) ||
-    window.Notification.permission !== "granted"
-  ) {
+  if (!nativeCodexNotificationAvailable()) {
     return;
   }
   const { title, body } = codexNativeNotificationContent(opts.attention);
@@ -406,9 +413,12 @@ export async function showCodexTurnCompletionToastBestEffort(opts: {
     }
     return;
   }
-  const eligible = documentVisible()
+  const visible = documentVisible();
+  const eligible = visible
     ? policy.toast && codexExternalDeliveryEnabled("toast")
-    : policy.browser && codexExternalDeliveryEnabled("browser");
+    : policy.browser &&
+      codexExternalDeliveryEnabled("browser") &&
+      nativeCodexNotificationAvailable();
   if (!eligible) return;
   await ensureCodexTurnToastState(opts.account_id);
   if (
@@ -434,7 +444,7 @@ export async function showCodexTurnCompletionToastBestEffort(opts: {
     type: "delivered",
     notificationId: deliveryId,
   });
-  if (!documentVisible()) {
+  if (!visible) {
     showNativeCodexNotification({
       notificationId: deliveryId,
       row: opts.row,

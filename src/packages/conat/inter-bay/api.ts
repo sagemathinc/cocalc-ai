@@ -1341,7 +1341,7 @@ export interface AccountLocalCodexFreshAuthContext {
 
 export interface AccountLocalStartCodexFreshAuthRequest {
   account_id: string;
-  target_session_hash: string;
+  browser_id: string;
   duration?: "default" | "extended";
   context: AccountLocalCodexFreshAuthContext;
 }

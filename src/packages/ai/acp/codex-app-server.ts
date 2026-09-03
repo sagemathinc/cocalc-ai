@@ -108,11 +108,11 @@ function normalizeMaxConcurrentSubagents(value: unknown): number | undefined {
 }
 
 function attentionInputEnabled(supported: boolean): boolean {
-  return supported && process.env.COCALC_CODEX_ATTENTION_INPUT !== "0";
+  return supported && process.env.COCALC_CODEX_ATTENTION_INPUT === "1";
 }
 
 function asyncAttentionEnabled(): boolean {
-  return process.env.COCALC_CODEX_ATTENTION_ASYNC !== "0";
+  return process.env.COCALC_CODEX_ATTENTION_ASYNC === "1";
 }
 
 function threadConfig(
@@ -647,7 +647,7 @@ function formatAppServerExitMessage(
   return `codex app-server exited unexpectedly: ${exitDetail}${stderrDetail}`;
 }
 
-class AppServerClient {
+export class AppServerClient {
   private nextId = 1;
   private readonly pendingRequests = new Map<number, RequestEntry>();
   private readonly waiters: Waiter[] = [];
@@ -658,6 +658,10 @@ class AppServerClient {
   private exitError?: Error & { stderrTail?: string[] };
   private attentionContext?: CodexAttentionContext;
   private attentionInputSupported = false;
+  private readonly serverRequestContexts = new Map<
+    string,
+    CodexAttentionContext
+  >();
   private readonly serverRequestAborts = new Map<
     string | number,
     AbortController
@@ -737,7 +741,22 @@ class AppServerClient {
         controller.abort(err);
       }
       this.serverRequestAborts.clear();
-      void this.attentionHandler?.runtimeClosed?.(this.attentionContext);
+      const contexts = new Map<string, CodexAttentionContext>();
+      const addContext = (context?: CodexAttentionContext) => {
+        if (!context) return;
+        contexts.set(
+          `${context.projectId}\0${context.threadId}\0${context.turnId}`,
+          context,
+        );
+      };
+      addContext(this.attentionContext);
+      for (const context of this.serverRequestContexts.values()) {
+        addContext(context);
+      }
+      this.serverRequestContexts.clear();
+      for (const context of contexts.values()) {
+        void this.attentionHandler?.runtimeClosed?.(context);
+      }
     });
   }
 
@@ -889,6 +908,9 @@ class AppServerClient {
         ) {
           throw new Error("request_user_input does not match the active turn");
         }
+        const context = this.attentionContext;
+        const requestKey = `${message.id}`;
+        this.serverRequestContexts.set(requestKey, context);
         const controller = new AbortController();
         this.serverRequestAborts.set(message.id, controller);
         try {
@@ -898,7 +920,7 @@ class AppServerClient {
             isBlocking: request.isBlocking,
             autoResolutionMs: request.autoResolutionMs,
             questions: request.questions,
-            context: this.attentionContext,
+            context,
             signal: controller.signal,
           });
           if (this.exited) return;
@@ -923,6 +945,15 @@ class AppServerClient {
       });
     } catch (err) {
       if (this.exited) return;
+      const requestKey = `${message.id}`;
+      const context = this.serverRequestContexts.get(requestKey);
+      if (context) {
+        this.serverRequestContexts.delete(requestKey);
+        void this.attentionHandler?.serverRequestResolved?.({
+          requestId: requestKey,
+          context,
+        });
+      }
       this.send({
         id: message.id,
         error: {
@@ -954,9 +985,12 @@ class AppServerClient {
     if (message.method === "serverRequest/resolved") {
       const requestId = message.params?.requestId;
       if (requestId != null) {
+        const requestKey = `${requestId}`;
+        const context = this.serverRequestContexts.get(requestKey);
+        this.serverRequestContexts.delete(requestKey);
         void this.attentionHandler?.serverRequestResolved?.({
-          requestId: `${requestId}`,
-          context: this.attentionContext,
+          requestId: requestKey,
+          context,
         });
       }
     }

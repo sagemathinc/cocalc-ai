@@ -45,15 +45,14 @@ describe("notification grouping", () => {
 
     const groups = groupNotificationMentions(mentions);
 
-    expect(groups).toHaveLength(2);
-    expect(groups[0].ids).toEqual(["n-3"]);
-    expect(groups[1].ids).toEqual(["n-1", "n-2"]);
-    expect(groups[1].mention.get("time")).toEqual(
-      new Date("2026-05-08T10:10:00.000Z"),
+    expect(groups).toHaveLength(1);
+    expect(groups[0].ids).toEqual(["n-1", "n-2", "n-3"]);
+    expect(groups[0].mention.get("time")).toEqual(
+      new Date("2026-05-08T10:20:00.000Z"),
     );
-    expect(groups[1].mention.get("fragment_id")).toBe("turn-2");
-    expect(groups[1].firstTime).toEqual(new Date("2026-05-08T10:00:00.000Z"));
-    expect(groups[1].latestTime).toEqual(new Date("2026-05-08T10:10:00.000Z"));
+    expect(groups[0].mention.get("title")).toBe("Different notice");
+    expect(groups[0].firstTime).toEqual(new Date("2026-05-08T10:00:00.000Z"));
+    expect(groups[0].latestTime).toEqual(new Date("2026-05-08T10:20:00.000Z"));
   });
 
   it("does not group ordinary mentions", () => {

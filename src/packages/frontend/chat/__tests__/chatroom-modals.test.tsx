@@ -202,7 +202,7 @@ describe("chatroom fork modal defaults", () => {
     });
   });
 
-  it("saves the Codex turn-finish notification setting from the behavior modal", async () => {
+  it("does not expose or rewrite the legacy completion notification setting", async () => {
     const actions: any = {
       getThreadMetadata: jest.fn(() => ({
         agent_kind: "acp",
@@ -231,19 +231,18 @@ describe("chatroom fork modal defaults", () => {
       handlers.openBehaviorModal("thread-1");
     });
 
-    const notifyCheckbox = await screen.findByRole("checkbox", {
-      name: "Notify when a Codex turn finishes",
-    });
-    expect((notifyCheckbox as HTMLInputElement).checked).toBe(false);
-
-    fireEvent.click(notifyCheckbox);
+    expect(
+      screen.queryByRole("checkbox", {
+        name: "Notify when a Codex turn finishes",
+      }),
+    ).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: "OK" }));
 
     await waitFor(() => {
       expect(actions.setCodexConfig).toHaveBeenCalledWith(
         "thread-1",
-        expect.objectContaining({
-          notifyOnTurnFinish: true,
+        expect.not.objectContaining({
+          notifyOnTurnFinish: expect.anything(),
         }),
       );
     });

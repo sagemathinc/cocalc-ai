@@ -229,7 +229,7 @@ const originalCompletionNotifications =
   process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
 
 beforeEach(() => {
-  delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
+  process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS = "1";
   (queue.listAcpPayloads as any)?.mockReset?.();
   (queue.listAcpPayloads as any)?.mockImplementation?.(() => []);
   (queue.enqueueAcpPayload as any)?.mockReset?.();
@@ -469,6 +469,34 @@ describe("ChatStreamWriter", () => {
 
   it("can disable completion notification creation without changing history", async () => {
     process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS = "0";
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        completion_notification_enabled: true,
+      },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+
+    expect(callHubMock).not.toHaveBeenCalled();
+    writer.dispose?.(true);
+  });
+
+  it("does not create completion notifications before rollout is enabled", async () => {
+    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: {

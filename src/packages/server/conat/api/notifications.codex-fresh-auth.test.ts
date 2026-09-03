@@ -139,10 +139,11 @@ describe("Codex fresh-auth action routing", () => {
     });
     expect(startRemoteMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
-      target_session_hash: "browser-session-hash",
+      browser_id: "browser-1",
       duration: undefined,
       context: CONTEXT,
     });
+    expect(getBrowserSessionMock).not.toHaveBeenCalled();
     expect(startLocalMock).not.toHaveBeenCalled();
 
     await expect(
@@ -209,6 +210,27 @@ describe("Codex fresh-auth action routing", () => {
     expect(startLocalMock).not.toHaveBeenCalled();
     expect(startRemoteMock).not.toHaveBeenCalled();
     expect(registerAttentionMock).not.toHaveBeenCalled();
+  });
+
+  it("delegates browser-session resolution to a remote account home bay", async () => {
+    resolveAccountHomeBayMock.mockResolvedValue({ home_bay_id: "bay-2" });
+    getBrowserSessionMock.mockReturnValue(undefined);
+
+    await expect(
+      startCodexFreshAuthAction({
+        account_id: ACCOUNT_ID,
+        source_project_id: PROJECT_ID,
+        browser_id: "browser-remote",
+        context: CONTEXT,
+      }),
+    ).resolves.toMatchObject({ challenge_id: CHALLENGE_ID });
+    expect(getBrowserSessionMock).not.toHaveBeenCalled();
+    expect(startRemoteMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-remote",
+      }),
+    );
   });
 
   it("rejects a context for a different project", async () => {

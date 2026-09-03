@@ -110,6 +110,7 @@ import {
   getCodexFreshAuthActionStatus,
   startCodexFreshAuthChallengeLocal,
 } from "@cocalc/server/auth/cli-auth";
+import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getConfiguredClusterRole,
@@ -1105,16 +1106,26 @@ async function startAccountLocalService(): Promise<void> {
       await createLocalCliLoginSession(opts),
     startCodexFreshAuth: async ({
       account_id,
-      target_session_hash,
+      browser_id,
       duration,
       context,
-    }) =>
-      await startCodexFreshAuthChallengeLocal({
+    }) => {
+      const session_hash = getBrowserAuthSessionHash({
         account_id,
-        session_hash: target_session_hash,
+        browser_id,
+      });
+      if (!session_hash) {
+        throw new Error(
+          "The active CoCalc browser session could not be found. Keep the originating browser tab open and retry.",
+        );
+      }
+      return await startCodexFreshAuthChallengeLocal({
+        account_id,
+        session_hash,
         duration,
         context,
-      }),
+      });
+    },
     getCodexFreshAuthStatus: async ({ account_id, project_id, challenge_id }) =>
       await getCodexFreshAuthActionStatus({
         account_id,

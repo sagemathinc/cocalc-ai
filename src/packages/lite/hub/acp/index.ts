@@ -245,6 +245,7 @@ import {
   resolveAcpAttention,
   submitAcpAttentionResponse,
   updateAcpAttentionDelivery,
+  type AcpAttentionStoredRecord,
 } from "../sqlite/acp-attention";
 import {
   createCodexAttentionHandler,
@@ -1029,6 +1030,19 @@ function turnStillLikelyOwnedByLiveWorker(
     return true;
   }
   return false;
+}
+
+function attentionResponderStillLive(
+  record: AcpAttentionStoredRecord,
+): boolean {
+  const messageDate = `${record.chat?.message_date ?? ""}`.trim();
+  if (!messageDate) return false;
+  const lease = getAcpTurnLease({
+    project_id: record.project_id,
+    path: record.path,
+    message_date: messageDate,
+  });
+  return lease != null && turnStillLikelyOwnedByLiveWorker(lease);
 }
 
 function jobStillLikelyOwnedByLiveWorker({
@@ -2482,7 +2496,7 @@ export class ChatStreamWriter {
   ): Promise<void> {
     if (
       this.completionNoticePublished ||
-      process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS === "0"
+      process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS !== "1"
     ) {
       return;
     }
@@ -11117,6 +11131,7 @@ export async function init(
   initializeAcpRuntime(client);
   for (const record of markAllPendingAcpSyncAttentionStale(
     "Codex attention responder was lost when the ACP service restarted",
+    { preserve: attentionResponderStillLive },
   )) {
     void publishStoredAttentionNoticeBestEffort({ client, record });
   }

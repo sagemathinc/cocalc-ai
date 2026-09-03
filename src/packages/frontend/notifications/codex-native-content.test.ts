@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { codexNativeNotificationContent } from "./codex-native-content";
+import {
+  canShowCodexNativeNotification,
+  codexNativeNotificationContent,
+} from "./codex-native-content";
 
 describe("Codex native notification privacy", () => {
   it("contains only fixed, privacy-minimal text", () => {
@@ -31,5 +34,18 @@ describe("Codex native notification privacy", () => {
     for (const detail of hostileDetails) {
       expect(JSON.stringify(content)).not.toContain(detail);
     }
+  });
+
+  it("requires granted browser permission before claiming delivery", () => {
+    expect(canShowCodexNativeNotification(undefined)).toBe(false);
+    expect(canShowCodexNativeNotification({ permission: "default" })).toBe(
+      false,
+    );
+    expect(canShowCodexNativeNotification({ permission: "denied" })).toBe(
+      false,
+    );
+    expect(canShowCodexNativeNotification({ permission: "granted" })).toBe(
+      true,
+    );
   });
 });

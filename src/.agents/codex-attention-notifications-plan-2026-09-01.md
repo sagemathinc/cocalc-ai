@@ -692,6 +692,15 @@ the relevant browser accessibility scenario for each implementation wave.
 7. Enable native browser delivery separately from email escalation.
 8. Enable delayed email only after duplicate/rate-limit metrics are clean.
 
+The server-side rollout controls are intentionally opt-in. Set a value to `1`
+only for the canary cohort being enabled:
+
+- `COCALC_CODEX_ATTENTION_INPUT` for synchronous app-server questions;
+- `COCALC_CODEX_ATTENTION_ASYNC` for asynchronous questions;
+- `COCALC_CODEX_ATTENTION_FRESH_AUTH` for trusted fresh-auth actions;
+- `COCALC_CODEX_COMPLETION_NOTIFICATIONS` for completion notice creation;
+- `COCALC_CODEX_ATTENTION_EMAIL` for Codex notification email delivery.
+
 Rollback must be able to disable synchronous app-server request input,
 asynchronous-question projection, each typed CoCalc action, the completion
 default, and each external delivery channel independently. Disabling a feature

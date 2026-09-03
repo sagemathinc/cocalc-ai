@@ -745,36 +745,38 @@ export async function startCodexFreshAuthAction(
   if (!browser_id || browser_id.length > 200) {
     throw new Error("valid browser id is required for fresh authorization");
   }
-  const target_session_hash = getBrowserAuthSessionHash({
-    account_id,
-    browser_id,
-  });
-  if (!target_session_hash) {
-    throw new Error(
-      "The active CoCalc browser session could not be found. Keep the originating browser tab open and retry.",
-    );
-  }
   const { home_bay_id } = await resolveAccountHomeBay({
     account_id,
     user_account_id: account_id,
   });
-  const started =
-    home_bay_id === getConfiguredBayId()
-      ? await startCodexFreshAuthChallengeLocal({
-          account_id,
-          session_hash: target_session_hash,
-          duration: opts.duration,
-          context,
-        })
-      : await createInterBayAccountLocalClient({
-          client: getInterBayFabricClient(),
-          dest_bay: home_bay_id,
-        }).startCodexFreshAuth({
-          account_id,
-          target_session_hash,
-          duration: opts.duration,
-          context,
-        });
+  let started;
+  if (home_bay_id === getConfiguredBayId()) {
+    const session_hash = getBrowserAuthSessionHash({
+      account_id,
+      browser_id,
+    });
+    if (!session_hash) {
+      throw new Error(
+        "The active CoCalc browser session could not be found. Keep the originating browser tab open and retry.",
+      );
+    }
+    started = await startCodexFreshAuthChallengeLocal({
+      account_id,
+      session_hash,
+      duration: opts.duration,
+      context,
+    });
+  } else {
+    started = await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: home_bay_id,
+    }).startCodexFreshAuth({
+      account_id,
+      browser_id,
+      duration: opts.duration,
+      context,
+    });
+  }
   await registerCodexFreshAuthAttention({
     account_id,
     challenge_id: started.challenge_id,

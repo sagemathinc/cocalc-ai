@@ -85,7 +85,7 @@ export type NotificationEmailRevalidation =
   | { action: "reschedule"; scheduled_at: Date; reason: string };
 
 export function codexNotificationEmailEnabled(): boolean {
-  return process.env.COCALC_CODEX_ATTENTION_EMAIL !== "0";
+  return process.env.COCALC_CODEX_ATTENTION_EMAIL === "1";
 }
 
 type Queryable = {

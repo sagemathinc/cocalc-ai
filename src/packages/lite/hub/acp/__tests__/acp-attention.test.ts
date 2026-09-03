@@ -107,15 +107,36 @@ describe("ACP attention storage", () => {
 
   it("rejects reads and writes under a different account or project", () => {
     const record = createAttention();
+    const otherAccountId = "33333333-3333-4333-8333-333333333333";
     expect(
       submitAcpAttentionResponse({
         attention_id: record.attention_id,
-        account_id: "33333333-3333-4333-8333-333333333333",
+        account_id: otherAccountId,
         project_id: PROJECT_ID,
         response_id: "response-1",
         answers: { choice: ["Yes"] },
       }),
     ).toEqual({ state: "missing" });
+    expect(
+      updateAcpAttentionDelivery({
+        attention_id: record.attention_id,
+        account_id: otherAccountId,
+        project_id: PROJECT_ID,
+        seen_at: Date.now(),
+      }),
+    ).toBeUndefined();
+    expect(
+      updateAcpAttentionDelivery({
+        attention_id: record.attention_id,
+        account_id: ACCOUNT_ID,
+        project_id: "44444444-4444-4444-8444-444444444444",
+        acknowledged_at: Date.now(),
+      }),
+    ).toBeUndefined();
+    expect(getAcpAttention(record.attention_id)).toMatchObject({
+      seen_at: undefined,
+      acknowledged_at: undefined,
+    });
   });
 
   it("tracks seen, acknowledged, and snoozed delivery state independently", () => {
@@ -203,6 +224,23 @@ describe("ACP attention storage", () => {
       ]),
     );
     expect(getAcpAttention(asynchronous.attention_id)?.state).toBe("pending");
+  });
+
+  it("preserves synchronous requests still owned by a live responder", () => {
+    const live = createAttention({ source_id: "sync-live" });
+    const orphaned = createAttention({ source_id: "sync-orphaned" });
+
+    expect(
+      markAllPendingAcpSyncAttentionStale("service restarted", {
+        preserve: ({ attention_id }) => attention_id === live.attention_id,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        attention_id: orphaned.attention_id,
+        state: "stale",
+      }),
+    ]);
+    expect(getAcpAttention(live.attention_id)?.state).toBe("pending");
   });
 
   it("supersedes unanswered async questions but preserves submitted ones", () => {

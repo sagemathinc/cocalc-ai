@@ -25,3 +25,9 @@ export function codexNativeNotificationContent(
 ): CodexNativeNotificationContent {
   return attention ? ATTENTION_CONTENT : COMPLETION_CONTENT;
 }
+
+export function canShowCodexNativeNotification(
+  notificationApi: Pick<typeof Notification, "permission"> | undefined,
+): boolean {
+  return notificationApi?.permission === "granted";
+}

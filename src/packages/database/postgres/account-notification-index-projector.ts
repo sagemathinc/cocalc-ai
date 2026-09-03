@@ -16,6 +16,7 @@ import type {
 import { resolveNotificationDeliveryPolicy } from "@cocalc/util/notification-delivery-policy";
 import type { NotificationDeliveryPolicy } from "@cocalc/util/notification-delivery-policy";
 import { notificationModeSendsEmail } from "@cocalc/util/notification-preferences";
+import { ACCOUNT_NOTIFICATION_REVISION_LOCK } from "./schema/account-notification-revision";
 
 const DEFAULT_SINGLE_BAY_ID = "bay-0";
 const RELEVANT_EVENT_TYPES: NotificationTransportEventType[] = [
@@ -180,6 +181,16 @@ async function loadLocalHomeAccount(
   return rows[0] as LocalHomeAccount | undefined;
 }
 
+async function lockAccountProjection(
+  db: PoolClient,
+  account_id: string,
+): Promise<void> {
+  await db.query(`SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, [
+    ACCOUNT_NOTIFICATION_REVISION_LOCK,
+    account_id,
+  ]);
+}
+
 async function applyNotificationEventToAccountNotificationIndex(opts: {
   db: PoolClient;
   bay_id: string;
@@ -209,6 +220,9 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
       affected_notification_id: undefined,
     };
   }
+  // Different projector workers can claim distinct outbox rows for the same
+  // account. Serialize the coalescing read and write so they reuse one row.
+  await lockAccountProjection(db, event.target_account_id);
   const payload = (event.payload_json ?? {}) as NotificationTargetOutboxPayload;
   const policy = resolveNotificationDeliveryPolicy({
     kind: event.kind,

@@ -9,7 +9,7 @@ import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
 
 export function codexFreshAuthAttentionEnabled(): boolean {
-  return process.env.COCALC_CODEX_ATTENTION_FRESH_AUTH !== "0";
+  return process.env.COCALC_CODEX_ATTENTION_FRESH_AUTH === "1";
 }
 
 export async function registerCodexFreshAuthAttention({

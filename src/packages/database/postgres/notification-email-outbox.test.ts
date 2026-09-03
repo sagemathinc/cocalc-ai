@@ -16,10 +16,10 @@ describe("Codex notification email rollout gate", () => {
     }
   });
 
-  it("is default-on and can be disabled independently", () => {
+  it("is default-off and can be enabled independently", () => {
     delete process.env.COCALC_CODEX_ATTENTION_EMAIL;
-    expect(codexNotificationEmailEnabled()).toBe(true);
-    process.env.COCALC_CODEX_ATTENTION_EMAIL = "0";
     expect(codexNotificationEmailEnabled()).toBe(false);
+    process.env.COCALC_CODEX_ATTENTION_EMAIL = "1";
+    expect(codexNotificationEmailEnabled()).toBe(true);
   });
 });

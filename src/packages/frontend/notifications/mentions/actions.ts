@@ -24,7 +24,10 @@ import {
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { lite } from "@cocalc/frontend/lite";
 import { MAX_NOTIFICATION_INBOX_LIST_LIMIT } from "@cocalc/util/security-limits";
-import { showCodexTurnCompletionToastBestEffort } from "../codex-turn-toast";
+import {
+  isCodexAttentionNotification,
+  showCodexTurnCompletionToastBestEffort,
+} from "../codex-turn-toast";
 import {
   attachProjectionFeedDiagnostics,
   recordProjectionFeedEvent,
@@ -585,7 +588,11 @@ export class MentionsActions extends Actions<MentionsState> {
     }
     switch (event.type) {
       case "notification.upsert": {
-        if (event.reason === "projected_upsert") {
+        if (
+          event.reason === "projected_upsert" &&
+          (!event.notification.read_state?.read ||
+            isCodexAttentionNotification(event.notification))
+        ) {
           void showCodexTurnCompletionToastBestEffort({
             account_id,
             row: event.notification,

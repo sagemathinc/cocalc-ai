@@ -66,6 +66,7 @@ function publicRecord(
     chat: _chat,
     response: _response,
     response_id: _id,
+    response_declined: _declined,
     ...publicRow
   } = record;
   return publicRow;

@@ -174,7 +174,8 @@ export function ChatRoomModals({
       );
       setRenameImage(metadata?.thread_image?.trim() || "");
       setRenameAgentMode(agentMode);
-      const savedConfig = metadata?.acp_config ?? {};
+      const savedConfig = { ...(metadata?.acp_config ?? {}) };
+      delete savedConfig.notifyOnTurnFinish;
       setRenameCodexConfig({
         ...savedConfig,
         model: currentModel,

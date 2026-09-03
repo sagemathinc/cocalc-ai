@@ -566,23 +566,37 @@ export function markAcpSyncAttentionStale(opts: {
 
 export function markAllPendingAcpSyncAttentionStale(
   reason: string,
+  opts: {
+    preserve?: (record: AcpAttentionStoredRecord) => boolean;
+  } = {},
 ): AcpAttentionStoredRecord[] {
   ensureInit();
   const db = getAcpDatabase();
-  const pending = db
-    .prepare(
-      `SELECT attention_id FROM ${TABLE}
+  const pending = (
+    db
+      .prepare(
+        `SELECT * FROM ${TABLE}
        WHERE source_kind = 'codex_sync_question' AND state = 'pending'`,
-    )
-    .all() as Array<{ attention_id: string }>;
+      )
+      .all() as AcpAttentionRow[]
+  )
+    .map(toStoredRecord)
+    .filter((record) => !opts.preserve?.(record));
   if (pending.length === 0) return [];
   const now = Date.now();
-  db.prepare(
+  const update = db.prepare(
     `UPDATE ${TABLE}
      SET state = 'stale', resolution_reason = ?, resolved_at = ?, updated_at = ?
-     WHERE source_kind = 'codex_sync_question' AND state = 'pending'`,
-  ).run(reason, now, now);
+     WHERE attention_id = ?
+       AND source_kind = 'codex_sync_question' AND state = 'pending'`,
+  );
+  const changed = new Set<string>();
+  for (const { attention_id } of pending) {
+    const result = update.run(reason, now, now, attention_id);
+    if (Number(result.changes ?? 0) > 0) changed.add(attention_id);
+  }
   return pending
+    .filter(({ attention_id }) => changed.has(attention_id))
     .map(({ attention_id }) => getAcpAttention(attention_id))
     .filter((record): record is AcpAttentionStoredRecord => record != null);
 }
@@ -630,7 +644,7 @@ export function updateAcpAttentionDelivery(opts: {
 }): AcpAttentionStoredRecord | undefined {
   ensureInit();
   const now = Date.now();
-  getAcpDatabase()
+  const result = getAcpDatabase()
     .prepare(
       `UPDATE ${TABLE}
        SET seen_at = COALESCE(?, seen_at),
@@ -647,7 +661,9 @@ export function updateAcpAttentionDelivery(opts: {
       opts.account_id,
       opts.project_id,
     );
-  return getAcpAttention(opts.attention_id);
+  return Number(result?.changes ?? 0) === 1
+    ? getAcpAttention(opts.attention_id)
+    : undefined;
 }
 
 export const __test__ = { toStoredRecord };

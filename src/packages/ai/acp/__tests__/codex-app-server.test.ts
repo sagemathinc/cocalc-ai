@@ -32,6 +32,7 @@ import {
   getCodexAppServerAccountStatus,
   setCodexProjectSpawner,
 } from "..";
+import { AppServerClient } from "../codex-app-server";
 
 class FakeCodexAppServerProc extends EventEmitter {
   public readonly stdout = new PassThrough();
@@ -166,6 +167,8 @@ describe("CodexAppServerAgent", () => {
     process.env.COCALC_CODEX_TURN_RECONCILE_FAILURE_LIMIT;
   const originalTurnNotificationIdleTimeout =
     process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS;
+  const originalAttentionInput = process.env.COCALC_CODEX_ATTENTION_INPUT;
+  const originalAsyncAttention = process.env.COCALC_CODEX_ATTENTION_ASYNC;
 
   afterEach(async () => {
     setCodexProjectSpawner(null);
@@ -221,6 +224,16 @@ describe("CodexAppServerAgent", () => {
     } else {
       process.env.COCALC_CODEX_TURN_NOTIFICATION_IDLE_TIMEOUT_MS =
         originalTurnNotificationIdleTimeout;
+    }
+    if (originalAttentionInput == null) {
+      delete process.env.COCALC_CODEX_ATTENTION_INPUT;
+    } else {
+      process.env.COCALC_CODEX_ATTENTION_INPUT = originalAttentionInput;
+    }
+    if (originalAsyncAttention == null) {
+      delete process.env.COCALC_CODEX_ATTENTION_ASYNC;
+    } else {
+      process.env.COCALC_CODEX_ATTENTION_ASYNC = originalAsyncAttention;
     }
   });
 
@@ -6212,6 +6225,8 @@ describe("CodexAppServerAgent", () => {
   });
 
   it("version-gates and answers synchronous attention requests", async () => {
+    process.env.COCALC_CODEX_ATTENTION_INPUT = "1";
+    process.env.COCALC_CODEX_ATTENTION_ASYNC = "1";
     const threadStartRequests: any[] = [];
     const syncResponses: any[] = [];
     const requestSyncQuestion = jest.fn(async () => ({
@@ -6361,5 +6376,78 @@ describe("CodexAppServerAgent", () => {
     expect(serverRequestResolved).toHaveBeenCalledWith(
       expect.objectContaining({ requestId: "901" }),
     );
+  });
+
+  it("keeps request attention context after a later turn becomes active", async () => {
+    let answerQuestion!: (
+      answers: Record<string, { answers: string[] }>,
+    ) => void;
+    let noteRequestStarted!: () => void;
+    const requestStarted = new Promise<void>((resolve) => {
+      noteRequestStarted = resolve;
+    });
+    let noteRequestResolved!: (value: any) => void;
+    const requestResolved = new Promise<any>((resolve) => {
+      noteRequestResolved = resolve;
+    });
+    const requestSyncQuestion = jest.fn(
+      async () =>
+        await new Promise<Record<string, { answers: string[] }>>((resolve) => {
+          answerQuestion = resolve;
+          noteRequestStarted();
+        }),
+    );
+    const serverRequestResolved = jest.fn(async (value) => {
+      noteRequestResolved(value);
+    });
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      if (message.method === "initialize") {
+        fake.sendResponse(message.id, { userAgent: "codex_cli_rs/0.151.0" });
+      } else if (message.id === 901 && message.result) {
+        fake.sendNotification("serverRequest/resolved", { requestId: 901 });
+      }
+    });
+    const client = new AppServerClient(proc as any, undefined, {
+      requestSyncQuestion,
+      createAsyncQuestion: jest.fn(async () => ({}) as any),
+      serverRequestResolved,
+    });
+    await client.initialize();
+    const firstContext = {
+      projectId: "00000000-0000-4000-8000-000000000000",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      threadId: "thread-shared",
+      turnId: "turn-first",
+      stream: async () => {},
+    };
+    client.setAttentionContext(firstContext);
+    proc.sendRequest(901, "item/tool/requestUserInput", {
+      threadId: firstContext.threadId,
+      turnId: firstContext.turnId,
+      itemId: "question-first",
+      isBlocking: false,
+      questions: [
+        {
+          id: "choice",
+          header: "Choice",
+          question: "Choose one",
+          options: [{ label: "One" }, { label: "Two" }],
+        },
+      ],
+    });
+    await requestStarted;
+
+    client.setAttentionContext({
+      ...firstContext,
+      turnId: "turn-second",
+    });
+    answerQuestion({ choice: { answers: ["One"] } });
+
+    await expect(requestResolved).resolves.toMatchObject({
+      requestId: "901",
+      context: firstContext,
+    });
+    expect(serverRequestResolved).toHaveBeenCalledTimes(1);
+    proc.kill();
   });
 });

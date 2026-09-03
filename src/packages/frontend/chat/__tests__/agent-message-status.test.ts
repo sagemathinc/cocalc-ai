@@ -171,7 +171,7 @@ describe("AgentMessageStatus", () => {
     expect(screen.getByText("0:04 ago")).toBeTruthy();
   });
 
-  it("shows the notify toggle next to a running Codex status row", () => {
+  it("shows the completion-notification mute toggle while Codex runs", () => {
     const onNotifyOnTurnFinishChange = jest.fn();
     render(
       React.createElement(AgentMessageStatus, {
@@ -186,7 +186,11 @@ describe("AgentMessageStatus", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Notify" }));
+    const checkbox = screen.getByRole("checkbox", {
+      name: "Mute completion notifications for this thread",
+    });
+    expect((checkbox as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(checkbox);
 
     expect(screen.getByText(/Running/)).toBeTruthy();
     expect(onNotifyOnTurnFinishChange).toHaveBeenCalledWith(true);
@@ -206,7 +210,11 @@ describe("AgentMessageStatus", () => {
       }),
     );
 
-    expect(screen.queryByRole("checkbox", { name: "Notify" })).toBeNull();
+    expect(
+      screen.queryByRole("checkbox", {
+        name: "Mute completion notifications for this thread",
+      }),
+    ).toBeNull();
   });
 
   it("renders an interrupt button when a handler is provided", () => {
