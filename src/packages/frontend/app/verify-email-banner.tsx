@@ -20,6 +20,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useAccountStoreReady } from "./account-store-ready";
+import { shouldShowVerifyEmailReminder } from "./verify-email-policy";
 
 const DISMISSED_KEY_LS = "verify-email-dismissed";
 
@@ -185,7 +186,8 @@ export function useShowVerifyEmail(): boolean {
   );
   const loaded = useAccountStoreReady();
 
-  const emailSendingEnabled = useTypedRedux("customize", "email_enabled");
+  const emailSendingEnabled = !!useTypedRedux("customize", "email_enabled");
+  const verifyEmails = !!useTypedRedux("customize", "verify_emails");
 
   const created = useTypedRedux("account", "created");
 
@@ -203,13 +205,14 @@ export function useShowVerifyEmail(): boolean {
   const dismissed =
     typeof dismissedTS === "number" && now < dismissedTS + 7 * oneDay;
 
-  return (
-    show_verify_email &&
-    loaded &&
-    notTooNew &&
-    !dismissed &&
-    emailSendingEnabled
-  );
+  return shouldShowVerifyEmailReminder({
+    accountLoaded: loaded,
+    accountOldEnough: notTooNew,
+    emailNeedsVerification: show_verify_email,
+    emailSendingEnabled,
+    emailVerificationEnabled: verifyEmails,
+    reminderDismissed: dismissed,
+  });
 }
 
 export function useEmailVerificationRequired(): boolean {
