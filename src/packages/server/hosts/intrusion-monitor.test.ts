@@ -395,6 +395,149 @@ describe("project-host intrusion monitor normalization", () => {
     expect(hasHostIntrusionSnapshotChanges(delta)).toBe(false);
   });
 
+  it("does not alert on expected maintenance processes or rotating listeners", () => {
+    const before = snapshot();
+    before.network.listeners.push(
+      {
+        count: 1,
+        protocol: "tcp",
+        process: "project-host:ac",
+        local: "0.0.0.0:16607",
+      },
+      {
+        count: 1,
+        protocol: "udp",
+        process: "cloudflared",
+        local: "*:64979",
+      },
+    );
+    const after = structuredClone(before);
+    after.network.listeners[1].local = "0.0.0.0:28003";
+    after.network.listeners[2].local = "*:13887";
+    after.host_processes.summary.push(
+      {
+        count: 1,
+        uid: 0,
+        comm: "btrfs",
+        exe: "/usr/bin/btrfs",
+        capability_mask: "000001ffffffffff",
+        executable_uid: 0,
+        executable_mode: "0755",
+      },
+      {
+        count: 1,
+        uid: 105,
+        comm: "sshd",
+        exe: "/usr/sbin/sshd",
+        capability_mask: "0",
+        executable_uid: 0,
+        executable_mode: "0755",
+      },
+      {
+        count: 1,
+        uid: 2000,
+        comm: "bash",
+        exe: "/usr/bin/bash",
+        capability_mask: "0",
+        executable_uid: 0,
+        executable_mode: "0755",
+      },
+      {
+        count: 1,
+        uid: 2000,
+        comm: "rustic",
+        exe: "/opt/cocalc/tools/20260903-release/rustic",
+        capability_mask: "0",
+        executable_uid: 2000,
+        executable_mode: "0755",
+      },
+      {
+        count: 1,
+        uid: 2000,
+        comm: "sleep",
+        exe: "/usr/bin/sleep",
+        capability_mask: "0",
+        executable_uid: 0,
+        executable_mode: "0755",
+      },
+    );
+
+    const delta = diffHostIntrusionSnapshots(
+      normalizeHostIntrusionSnapshot(before),
+      normalizeHostIntrusionSnapshot(after),
+    );
+
+    expect(delta).toEqual({ added: {}, removed: {} });
+  });
+
+  it("still alerts on unknown processes and fixed listener changes", () => {
+    const before = snapshot();
+    before.network.listeners.push({
+      count: 1,
+      protocol: "tcp",
+      process: "project-host:ap",
+      local: "127.0.0.1:9003",
+    });
+    const after = structuredClone(before);
+    after.network.listeners[1].local = "0.0.0.0:9003";
+    after.host_processes.summary.push({
+      count: 1,
+      uid: 2000,
+      comm: "python3",
+      exe: "/usr/bin/python3.12",
+      capability_mask: "0",
+      executable_uid: 0,
+      executable_mode: "0755",
+    });
+    after.host_processes.summary.push({
+      count: 1,
+      uid: 2000,
+      comm: "bash",
+      exe: "/usr/bin/bash",
+      capability_mask: "0000000000000001",
+      executable_uid: 0,
+      executable_mode: "0755",
+    });
+
+    const delta = diffHostIntrusionSnapshots(
+      normalizeHostIntrusionSnapshot(before),
+      normalizeHostIntrusionSnapshot(after),
+    );
+
+    expect(delta.added["host_processes.summary"]).toHaveLength(2);
+    expect(delta.added["host_processes.summary"]?.join("\n")).toContain(
+      "python3",
+    );
+    expect(delta.added["host_processes.summary"]?.join("\n")).toContain("bash");
+    expect(delta.added["network.listeners"]).toEqual([
+      '["tcp","project-host:ap","0.0.0.0:9003"]',
+    ]);
+    expect(delta.removed["network.listeners"]).toEqual([
+      '["tcp","project-host:ap","127.0.0.1:9003"]',
+    ]);
+  });
+
+  it("still alerts on a maintenance-user shell without an active backup", () => {
+    const before = snapshot();
+    const after = structuredClone(before);
+    after.host_processes.summary.push({
+      count: 1,
+      uid: 2000,
+      comm: "bash",
+      exe: "/usr/bin/bash",
+      capability_mask: "0000000000000000",
+      executable_uid: 0,
+      executable_mode: "0755",
+    });
+
+    const delta = diffHostIntrusionSnapshots(
+      normalizeHostIntrusionSnapshot(before),
+      normalizeHostIntrusionSnapshot(after),
+    );
+
+    expect(delta.added["host_processes.summary"]?.[0]).toContain("bash");
+  });
+
   it("detects stable security-state additions and removals", () => {
     const before = snapshot();
     const after = structuredClone(before);

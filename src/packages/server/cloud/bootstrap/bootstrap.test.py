@@ -4244,15 +4244,20 @@ reserve_project_startup_io_capacity
 
         namespace["run"] = lambda section, args, **kwargs: (
             [
-                'ESTAB 0 0 10.0.0.2:443 8.8.8.8:53 users:(("node",pid=123,fd=7))'
+                '0 0 10.0.0.2:443 8.8.8.8:53 users:(("node",pid=123,fd=7))',
+                'ESTAB 0 0 10.0.0.2:443 1.1.1.1:443 users:(("node",pid=124,fd=8))',
+                '0 0 [::1]:9102 [::1]:30000 users:(("node",pid=125,fd=9))',
             ]
             if section == "network_established"
             else []
         )
-        network = namespace["collect_network"]({123})
+        network = namespace["collect_network"]({123, 124, 125})
         self.assertEqual(
             network["established"],
-            [{"count": 1, "process": "node", "local_port": "443", "peer": "8.8.8.8:53"}],
+            [
+                {"count": 1, "process": "node", "local_port": "443", "peer": "8.8.8.8:53"},
+                {"count": 1, "process": "node", "local_port": "443", "peer": "1.1.1.1:443"},
+            ],
         )
 
         main_body = bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER.split("def main():", 1)[1]

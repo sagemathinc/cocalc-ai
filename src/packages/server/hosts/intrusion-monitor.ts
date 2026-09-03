@@ -52,6 +52,15 @@ const ADDITION_ONLY_CATEGORIES = new Set<MonitoredCategory>([
   "kernel_signals_7d",
 ]);
 
+const DYNAMIC_LISTENER_PROCESSES = new Set([
+  "cloudflared",
+  // Linux comm truncates the project-host worker process titles.
+  "project-host:ac",
+  "project-host:ap",
+  "rustic",
+]);
+const DYNAMIC_LISTENER_MIN_PORT = 10_000;
+
 export interface NormalizedHostIntrusionSnapshot {
   version: 1;
   identity: {
@@ -148,6 +157,106 @@ function normalizeStringRecord(
   keys: string[],
 ): string {
   return encode(keys.map((key) => record[key] ?? null));
+}
+
+function decodeSignal(value: string): unknown[] | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+type ExpectedTransientProcess = "always" | "backup" | "backup-wrapper";
+
+function expectedTransientProcess(
+  value: string,
+): ExpectedTransientProcess | undefined {
+  const fields = decodeSignal(value);
+  if (!fields) return;
+  const [uid, comm, exe, capabilities, executableUid, executableMode] = fields;
+  const zeroCapabilities =
+    typeof capabilities === "string" && /^0+$/.test(capabilities);
+  const rootOwnedExecutable = executableUid === 0 && executableMode === "0755";
+  if (
+    uid === 0 &&
+    comm === "btrfs" &&
+    exe === "/usr/bin/btrfs" &&
+    capabilities === "000001ffffffffff" &&
+    rootOwnedExecutable
+  ) {
+    return "always";
+  }
+  if (
+    typeof uid === "number" &&
+    uid !== 0 &&
+    comm === "sshd" &&
+    exe === "/usr/sbin/sshd" &&
+    zeroCapabilities &&
+    rootOwnedExecutable
+  ) {
+    return "always";
+  }
+  if (uid !== 2000) return;
+  if (
+    zeroCapabilities &&
+    rootOwnedExecutable &&
+    ((comm === "bash" && exe === "/usr/bin/bash") ||
+      (comm === "sleep" && exe === "/usr/bin/sleep"))
+  ) {
+    return "backup-wrapper";
+  }
+  if (
+    comm === "rustic" &&
+    typeof exe === "string" &&
+    /^\/opt\/cocalc\/tools\/[^/]+\/rustic$/.test(exe) &&
+    zeroCapabilities &&
+    executableUid === 2000 &&
+    executableMode === "0755"
+  ) {
+    return "backup";
+  }
+}
+
+function canonicalizeListener(value: string): string {
+  const fields = decodeSignal(value);
+  if (!fields || fields.length !== 3) return value;
+  const [protocol, process, local] = fields;
+  if (
+    typeof process !== "string" ||
+    !DYNAMIC_LISTENER_PROCESSES.has(process) ||
+    typeof local !== "string"
+  ) {
+    return value;
+  }
+  const match = /^(.*):(\d+)$/.exec(local);
+  if (!match || Number(match[2]) < DYNAMIC_LISTENER_MIN_PORT) return value;
+  return encode([protocol, process, `${match[1]}:<dynamic>`]);
+}
+
+function monitoredSignals(
+  snapshot: NormalizedHostIntrusionSnapshot,
+  category: MonitoredCategory,
+): string[] {
+  // Preserve raw evidence in the snapshot; remove noise only while comparing.
+  const values = snapshot.signals[category] ?? [];
+  if (category === "host_processes.summary") {
+    const classified = values.map(
+      (value) => [value, expectedTransientProcess(value)] as const,
+    );
+    const backupActive = classified.some(([, kind]) => kind === "backup");
+    return classified
+      .filter(
+        ([, kind]) =>
+          kind == null || (kind === "backup-wrapper" && !backupActive),
+      )
+      .map(([value]) => value);
+  }
+  if (category === "network.listeners") {
+    return sortedUnique(values.map(canonicalizeListener));
+  }
+  return values;
 }
 
 export function normalizeHostIntrusionSnapshot(
@@ -275,8 +384,8 @@ export function diffHostIntrusionSnapshots(
   const added: HostIntrusionSnapshotDelta["added"] = {};
   const removed: HostIntrusionSnapshotDelta["removed"] = {};
   for (const category of MONITORED_CATEGORIES) {
-    const before = new Set(previous.signals[category] ?? []);
-    const after = new Set(current.signals[category] ?? []);
+    const before = new Set(monitoredSignals(previous, category));
+    const after = new Set(monitoredSignals(current, category));
     const newValues = [...after].filter((value) => !before.has(value)).sort();
     const oldValues = [...before].filter((value) => !after.has(value)).sort();
     if (newValues.length) added[category] = newValues;
@@ -302,9 +411,9 @@ export function diffHostIntrusionSnapshotAgainstFleet(
   const added: HostIntrusionSnapshotDelta["added"] = {};
   for (const category of MONITORED_CATEGORIES) {
     const observed = new Set(
-      fleet.flatMap((snapshot) => snapshot.signals[category] ?? []),
+      fleet.flatMap((snapshot) => monitoredSignals(snapshot, category)),
     );
-    const newValues = current.signals[category].filter(
+    const newValues = monitoredSignals(current, category).filter(
       (value) => !observed.has(value),
     );
     if (newValues.length) added[category] = newValues;
@@ -320,7 +429,7 @@ function monitoredFingerprint(
       JSON.stringify(
         MONITORED_CATEGORIES.map((category) => [
           category,
-          snapshot.signals[category],
+          monitoredSignals(snapshot, category),
         ]),
       ),
     )
