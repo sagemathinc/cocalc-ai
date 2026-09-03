@@ -368,7 +368,7 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
   }
 
   async gotoFragment(fragmentId: FragmentId) {
-    const { chat, thread } = fragmentId as any;
+    const { chat, thread, attention } = fragmentId;
     if (!chat) {
       return;
     }
@@ -378,10 +378,15 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     if (!frameId) {
       return;
     }
+    let attentionOpened = false;
     for (const d of [1, 10, 50, 500, 1000]) {
       const actions = this.getChatActions(frameId);
       if (thread) {
         actions?.setSelectedThread?.(thread);
+      }
+      if (attention && actions && !attentionOpened) {
+        actions.openCodexAttention(chat, attention);
+        attentionOpened = true;
       }
       actions?.scrollToDate(chat, { persistFragment: false });
       await delay(d);

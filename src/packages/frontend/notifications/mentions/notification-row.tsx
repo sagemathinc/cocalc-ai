@@ -20,6 +20,7 @@ import { User } from "@cocalc/frontend/users";
 import { MentionInfo } from "./types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { ProjectAccessRequestStatus } from "@cocalc/conat/hub/api/projects";
+import { codexNotificationFragment } from "../codex-notification-target";
 
 const logger = getLogger("frontend:notifications:notification-row");
 
@@ -100,10 +101,20 @@ export function NotificationRow(props: Props) {
     severity,
     notification_reason,
     attention_state,
+    attention_id,
+    thread_id,
   } = mention.toJS();
   const shownPath = display_path || path;
   const isThreadFollowNotification = notification_reason === "thread_follow";
-  const fragmentId = Fragment.decode(fragment_id);
+  const fragmentId =
+    notice_type === "codex_attention"
+      ? codexNotificationFragment({
+          fragment_id,
+          notice_type,
+          thread_id,
+          attention_id,
+        })
+      : Fragment.decode(fragment_id);
   const is_read = mention.getIn(["users", target, "read"]);
 
   const row_style: CSS = {

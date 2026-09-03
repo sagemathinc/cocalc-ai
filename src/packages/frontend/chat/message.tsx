@@ -311,6 +311,7 @@ interface Props {
   dim?: boolean;
   searchHighlight?: string;
   openActivityToken?: number;
+  focusAttentionId?: string;
   onOverlayOpenChange?: (open: boolean) => void;
   notifyOnTurnFinish?: boolean;
   onNotifyOnTurnFinishChange?: (checked: boolean) => void;
@@ -376,6 +377,7 @@ export default function Message({
   dim,
   searchHighlight,
   openActivityToken,
+  focusAttentionId,
   onOverlayOpenChange,
   notifyOnTurnFinish = false,
   onNotifyOnTurnFinishChange,
@@ -2197,6 +2199,7 @@ export default function Message({
               : undefined
           }
           openDrawerToken={openActivityDrawerToken}
+          focusAttentionId={focusAttentionId}
           jumpText={undefined}
           jumpToken={0}
           notifyOnTurnFinish={notifyOnTurnFinish}

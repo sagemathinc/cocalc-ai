@@ -283,6 +283,8 @@ export type AcpAttentionRecord = {
   path: string;
   thread_id: string;
   turn_id?: string;
+  // Exact assistant chat row that owns the activity stream for this request.
+  message_date?: string;
   source_kind: AcpAttentionSourceKind;
   source_id: string;
   attention_kind: AcpAttentionKind;

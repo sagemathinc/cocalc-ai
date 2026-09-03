@@ -193,6 +193,45 @@ describe("NotificationRow", () => {
     expect(markMany).not.toHaveBeenCalled();
   });
 
+  it("opens a Codex attention notification at its actionable request", async () => {
+    render(
+      <NotificationRow
+        id="notice-1"
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "account_notice",
+            project_id: "project-1",
+            path: "work/chat.chat",
+            target: "acct-1",
+            time: new Date("2026-05-07T00:00:00.000Z"),
+            title: "Codex needs your attention",
+            origin_label: "Codex",
+            notice_type: "codex_attention",
+            fragment_id: "chat=1234",
+            thread_id: "thread-1",
+            attention_id: "attention-1",
+            users: { "acct-1": { read: false, saved: false } },
+          }) as any
+        }
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex needs your attention"));
+
+    await waitFor(() =>
+      expect(open_file).toHaveBeenCalledWith({
+        path: "work/chat.chat",
+        chat: true,
+        fragmentId: {
+          chat: "1234",
+          thread: "thread-1",
+          attention: "attention-1",
+        },
+      }),
+    );
+  });
+
   it("does not mark account notices read when clicking action links", () => {
     render(
       <NotificationRow

@@ -11,7 +11,6 @@ import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/projec
 import { getAntdNotificationInstance } from "@cocalc/frontend/app/antd-notification";
 import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 import { store as customizeStore } from "@cocalc/frontend/customize";
-import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
@@ -24,6 +23,7 @@ import {
   canShowCodexNativeNotification,
   codexNativeNotificationContent,
 } from "./codex-native-content";
+import { codexNotificationFragment } from "./codex-notification-target";
 
 const TOAST_STATE_DKV_NAME = "notification-toast-state";
 const CODEX_TURN_TOAST_PREFIX = "codex-turn.";
@@ -275,11 +275,7 @@ async function openCodexTurnNoticeTarget(
     ? row.summary.path.trim()
     : undefined;
   if (project_id && path) {
-    const fragmentId = Fragment.decode(
-      isNonEmptyString(row.summary?.fragment_id)
-        ? row.summary.fragment_id
-        : undefined,
-    );
+    const fragmentId = codexNotificationFragment(row.summary ?? {});
     await ensureProjectReduxRuntime();
     await redux.getProjectActions(project_id)?.open_file({
       path,
@@ -288,18 +284,6 @@ async function openCodexTurnNoticeTarget(
       chat: !!fragmentId?.chat,
       fragmentId,
     });
-    const attentionId = isNonEmptyString(row.summary?.attention_id)
-      ? row.summary.attention_id
-      : undefined;
-    if (attentionId) {
-      setTimeout(() => {
-        const node = document.querySelector(
-          `[data-codex-attention-id="${CSS.escape(attentionId)}"]`,
-        ) as HTMLElement | null;
-        node?.focus();
-        node?.scrollIntoView({ block: "center" });
-      }, 300);
-    }
   }
   if (row.summary?.local_delivery !== true) {
     await webapp_client.conat_client.hub.notifications.markRead({

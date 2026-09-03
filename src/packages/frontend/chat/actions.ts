@@ -492,6 +492,7 @@ export class ChatActions extends Actions<ChatState> {
   private projectReadStateKey?: string;
   private projectReadStateInit?: Promise<ProjectReadStateStore | undefined>;
   private projectReadStateCleanup?: () => void;
+  private codexAttentionOpenToken = 0;
   private pendingThreadReads: Map<
     string,
     { count: number; messageId: string; at: Date }
@@ -3298,6 +3299,21 @@ export class ChatActions extends Actions<ChatState> {
       Fragment.set({ chat: fragmentId });
     }
     this.frameTreeActions?.set_frame_data({ id: this.frameId, fragmentId });
+  };
+
+  openCodexAttention = (date: string | number, attentionId: string) => {
+    const attentionDate = toMsString(date);
+    const normalizedAttentionId = `${attentionId ?? ""}`.trim();
+    if (!Number.isFinite(Number(attentionDate)) || !normalizedAttentionId) {
+      return;
+    }
+    this.codexAttentionOpenToken += 1;
+    this.frameTreeActions?.set_frame_data({
+      id: this.frameId,
+      codexAttentionDate: attentionDate,
+      codexAttentionId: normalizedAttentionId,
+      codexAttentionOpenToken: this.codexAttentionOpenToken,
+    });
   };
 
   setSelectedThread = (threadKey: string | null) => {

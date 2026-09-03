@@ -11,6 +11,7 @@ import { IS_EMBEDDED } from "@cocalc/frontend/client/handle-target";
 export interface FragmentId {
   chat?: string; // fragment refers to ms since epoch of chat message
   thread?: string; // optional chat thread id to select before scrolling
+  attention?: string; // optional Codex attention request in the message activity
   anchor?: string;
   // a specific line in a document
   line?: string;

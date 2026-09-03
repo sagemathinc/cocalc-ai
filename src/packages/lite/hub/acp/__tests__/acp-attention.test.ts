@@ -19,9 +19,34 @@ import {
   upsertAcpAttention,
 } from "../../sqlite/acp-attention";
 import { closeAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
+import { __test__ } from "../codex-attention";
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
+
+describe("ACP attention notification fragments", () => {
+  it("targets the exact message, thread, and attention request", () => {
+    expect(
+      __test__.sourceFragmentId(
+        {
+          projectId: PROJECT_ID,
+          accountId: ACCOUNT_ID,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          chat: {
+            project_id: PROJECT_ID,
+            path: "agent.chat",
+            message_date: "2026-09-02T00:00:00.000Z",
+            sender_id: ACCOUNT_ID,
+            thread_id: "thread-1",
+          },
+          stream: async () => undefined,
+        } as any,
+        "attention-1",
+      ),
+    ).toBe("chat=1788307200000&thread=thread-1&attention=attention-1");
+  });
+});
 
 function createAttention(opts?: {
   source_kind?: "codex_sync_question" | "codex_async_question";
@@ -57,6 +82,14 @@ describe("ACP attention storage", () => {
 
   afterEach(() => {
     closeAcpDatabase();
+  });
+
+  it("retains the owning chat row in the public attention record", () => {
+    const stored = createAttention();
+    expect(__test__.publicRecord(stored)).toMatchObject({
+      message_date: "2026-09-02T00:00:00.000Z",
+    });
+    expect(__test__.publicRecord(stored)).not.toHaveProperty("chat");
   });
 
   it("deduplicates source requests and atomically accepts one response", () => {
