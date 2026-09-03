@@ -72,9 +72,21 @@ function publicRecord(
   return publicRow;
 }
 
-function sourceFragmentId(context: CodexAttentionContext): string | undefined {
+function sourceFragmentId(
+  context: CodexAttentionContext,
+  attentionId?: string,
+): string | undefined {
   const date = Date.parse(`${context.chat?.message_date ?? ""}`);
-  return Number.isFinite(date) ? `chat=${Math.floor(date)}` : undefined;
+  if (!Number.isFinite(date)) return;
+  const parts = [`chat=${Math.floor(date)}`];
+  const threadId =
+    `${context.chat?.thread_id ?? context.threadId ?? ""}`.trim();
+  if (threadId) parts.push(`thread=${threadId}`);
+  const normalizedAttentionId = `${attentionId ?? ""}`.trim();
+  if (normalizedAttentionId) {
+    parts.push(`attention=${normalizedAttentionId}`);
+  }
+  return parts.join("&");
 }
 
 async function publishAttentionNoticeBestEffort(opts: {
@@ -121,14 +133,17 @@ export async function publishStoredAttentionNoticeBestEffort(opts: {
   await publishAttentionNoticeBestEffort({
     client: opts.client,
     record,
-    source_fragment_id: sourceFragmentId({
-      projectId: record.project_id,
-      accountId: record.account_id,
-      threadId: record.thread_id,
-      turnId: record.turn_id ?? "",
-      chat: opts.record.chat,
-      stream: async () => undefined,
-    }),
+    source_fragment_id: sourceFragmentId(
+      {
+        projectId: record.project_id,
+        accountId: record.account_id,
+        threadId: record.thread_id,
+        turnId: record.turn_id ?? "",
+        chat: opts.record.chat,
+        stream: async () => undefined,
+      },
+      record.attention_id,
+    ),
   });
 }
 
@@ -317,7 +332,7 @@ export function createCodexAttentionHandler(
       void publishAttentionNoticeBestEffort({
         client,
         record,
-        source_fragment_id: sourceFragmentId(context),
+        source_fragment_id: sourceFragmentId(context, record.attention_id),
       });
       try {
         while (true) {
@@ -399,7 +414,7 @@ export function createCodexAttentionHandler(
       void publishAttentionNoticeBestEffort({
         client,
         record,
-        source_fragment_id: sourceFragmentId(context),
+        source_fragment_id: sourceFragmentId(context, record.attention_id),
       });
       return record;
     },

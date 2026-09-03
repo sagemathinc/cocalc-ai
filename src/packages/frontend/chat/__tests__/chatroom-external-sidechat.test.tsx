@@ -225,6 +225,24 @@ describe("ChatPanel external side chat persistence", () => {
     expect(actions.scrollToIndex).not.toHaveBeenCalled();
   });
 
+  it("forwards durable Codex attention drawer requests", async () => {
+    renderPanel({
+      "data-codexAttentionDate": "1234",
+      "data-codexAttentionId": "attention-1",
+      "data-codexAttentionOpenToken": 7,
+    });
+
+    await waitFor(() =>
+      expect(renderChatRoomThreadPanel.mock.lastCall?.[0]).toEqual(
+        expect.objectContaining({
+          activityJumpDate: "1234",
+          activityJumpAttentionId: "attention-1",
+          activityJumpToken: 1,
+        }),
+      ),
+    );
+  });
+
   it("disables thread-search shortcuts when the backing tab is hidden", () => {
     renderPanel(undefined, {
       isVisible: false,

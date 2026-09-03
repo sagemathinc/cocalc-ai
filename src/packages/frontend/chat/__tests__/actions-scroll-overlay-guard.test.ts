@@ -77,4 +77,24 @@ describe("ChatActions scroll guards with overlays", () => {
       scrollToIndex: null,
     });
   });
+
+  it("publishes repeatable Codex attention drawer requests", () => {
+    const actions = makeActions();
+
+    actions.openCodexAttention("1234", " attention-1 ");
+    actions.openCodexAttention("1234", "attention-1");
+
+    expect(actions.frameTreeActions.set_frame_data).toHaveBeenNthCalledWith(1, {
+      id: "frame-1",
+      codexAttentionDate: "1234",
+      codexAttentionId: "attention-1",
+      codexAttentionOpenToken: 1,
+    });
+    expect(actions.frameTreeActions.set_frame_data).toHaveBeenNthCalledWith(2, {
+      id: "frame-1",
+      codexAttentionDate: "1234",
+      codexAttentionId: "attention-1",
+      codexAttentionOpenToken: 2,
+    });
+  });
 });

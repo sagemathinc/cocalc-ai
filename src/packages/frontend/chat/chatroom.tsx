@@ -687,6 +687,16 @@ export function ChatPanel({
   const scrollToIndex = getDescValue(desc, "data-scrollToIndex") ?? null;
   const scrollToDate = getDescValue(desc, "data-scrollToDate") ?? null;
   const fragmentId = getDescValue(desc, "data-fragmentId") ?? null;
+  const codexAttentionJumpDate = asTrimmedString(
+    getDescValue(desc, "data-codexAttentionDate"),
+  );
+  const codexAttentionJumpId = asTrimmedString(
+    getDescValue(desc, "data-codexAttentionId"),
+  );
+  const codexAttentionJumpToken = getDescValue(
+    desc,
+    "data-codexAttentionOpenToken",
+  );
   const showThreadImagePreviewRaw = getDescValue(
     desc,
     "data-showThreadImagePreview",
@@ -931,6 +941,21 @@ export function ChatPanel({
     undefined,
   );
   const [activityJumpToken, setActivityJumpToken] = useState<number>(0);
+  const [activityJumpAttentionId, setActivityJumpAttentionId] = useState<
+    string | undefined
+  >(undefined);
+  const appliedCodexAttentionJumpTokenRef = useRef<unknown>(undefined);
+  useEffect(() => {
+    if (!codexAttentionJumpDate || !codexAttentionJumpId) return;
+    if (codexAttentionJumpToken == null) return;
+    if (appliedCodexAttentionJumpTokenRef.current === codexAttentionJumpToken) {
+      return;
+    }
+    appliedCodexAttentionJumpTokenRef.current = codexAttentionJumpToken;
+    setActivityJumpDate(codexAttentionJumpDate);
+    setActivityJumpAttentionId(codexAttentionJumpId);
+    setActivityJumpToken((n) => n + 1);
+  }, [codexAttentionJumpDate, codexAttentionJumpId, codexAttentionJumpToken]);
   const anyOverlayOpen = useAnyChatOverlayOpen();
   const gitBrowserOverlayKey = useMemo(
     () => `${project_id ?? "no-project"}:${path ?? "no-path"}:git-browser`,
@@ -2317,6 +2342,7 @@ export function ChatPanel({
     }
     setGitBrowserOpen(false);
     setGitBrowserThreadKey(undefined);
+    setActivityJumpAttentionId(undefined);
     setActivityJumpDate(`${newestCodexDate}`);
     setActivityJumpToken((n) => n + 1);
   }, [actions, gitBrowserThreadKey, selectedThreadKey, setSelectedThreadKey]);
@@ -2654,6 +2680,7 @@ export function ChatPanel({
         hideChatTypeSelector={hideChatTypeSelector || !aiAgentPolicyAllowed}
         activityJumpDate={activityJumpDate}
         activityJumpToken={activityJumpToken}
+        activityJumpAttentionId={activityJumpAttentionId}
         shortcutEnabled={isVisible && tabIsVisible}
         isVisible={isVisible && tabIsVisible}
         onOpenGitBrowser={openGitBrowserFromMessage}

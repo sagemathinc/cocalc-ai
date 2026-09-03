@@ -285,6 +285,7 @@ interface AgentMessageStatusProps {
   activityContext: ActivityLogContext;
   inlineCodeLinks?: InlineCodeLink[];
   openDrawerToken?: number;
+  focusAttentionId?: string;
   jumpText?: string;
   jumpToken?: number;
   notifyOnTurnFinish?: boolean;
@@ -508,6 +509,7 @@ export function AgentMessageStatus({
   activityContext,
   inlineCodeLinks,
   openDrawerToken,
+  focusAttentionId,
   jumpText,
   jumpToken,
   onOpenGitBrowser,
@@ -653,6 +655,36 @@ export function AgentMessageStatus({
     if (typeof openDrawerToken !== "number" || openDrawerToken <= 0) return;
     setShowDrawer(true);
   }, [show, openDrawerToken]);
+
+  useEffect(() => {
+    if (!showDrawer || !focusAttentionId) return;
+    let canceled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    const focusTarget = () => {
+      if (canceled) return;
+      const target = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-codex-attention-id]"),
+      ).find(
+        (node) =>
+          node.getAttribute("data-codex-attention-id") === focusAttentionId,
+      );
+      if (target) {
+        target.focus({ preventScroll: true });
+        target.scrollIntoView?.({ block: "center" });
+        return;
+      }
+      attempts += 1;
+      if (attempts < 30) {
+        timer = setTimeout(focusTarget, 50);
+      }
+    };
+    timer = setTimeout(focusTarget, 0);
+    return () => {
+      canceled = true;
+      if (timer != null) clearTimeout(timer);
+    };
+  }, [contentVersion, focusAttentionId, openDrawerToken, showDrawer]);
 
   useEffect(() => {
     onDrawerOpenChange?.(showDrawer);

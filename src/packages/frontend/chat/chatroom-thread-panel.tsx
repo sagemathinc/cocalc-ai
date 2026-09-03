@@ -431,6 +431,7 @@ interface ChatRoomThreadPanelProps {
   hideChatTypeSelector?: boolean;
   activityJumpDate?: string;
   activityJumpToken?: number;
+  activityJumpAttentionId?: string;
   shortcutEnabled?: boolean;
   isVisible?: boolean;
   notifyOnTurnFinish?: boolean;
@@ -480,6 +481,7 @@ export function ChatRoomThreadPanel({
   hideChatTypeSelector = false,
   activityJumpDate,
   activityJumpToken,
+  activityJumpAttentionId,
   shortcutEnabled = true,
   isVisible = true,
   notifyOnTurnFinish = false,
@@ -1999,6 +2001,16 @@ export function ChatRoomThreadPanel({
               }
               notifyOnTurnFinish={notifyOnTurnFinish}
               onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
+              openDrawerToken={
+                activityJumpDate === `${selectedRunningCodexDate}`
+                  ? activityJumpToken
+                  : undefined
+              }
+              focusAttentionId={
+                activityJumpDate === `${selectedRunningCodexDate}`
+                  ? activityJumpAttentionId
+                  : undefined
+              }
               interruptRequested={interruptRequested}
               onInterrupt={handleInterruptSelectedRunningTurn}
             />
@@ -2712,6 +2724,7 @@ export function ChatRoomThreadPanel({
           onAtTopStateChange={setThreadNearTop}
           activityJumpDate={activityJumpDate}
           activityJumpToken={activityJumpToken}
+          activityJumpAttentionId={activityJumpAttentionId}
           notifyOnTurnFinish={notifyOnTurnFinish}
           onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
           onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}

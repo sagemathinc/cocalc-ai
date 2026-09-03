@@ -3,7 +3,9 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const mockCodexLogPanel = jest.fn((_props: unknown) => null);
+const mockCodexLogPanel = jest.fn((_props: unknown) => (
+  <section data-codex-attention-id="attention-1" tabIndex={-1} />
+));
 
 jest.mock("../codex-log-panel", () => ({
   __esModule: true,
@@ -51,6 +53,28 @@ describe("AgentMessageStatus activity loading", () => {
         liveLogStream: "acp-live-log/chat.chat/thread/turn",
         logEnabled: true,
       }),
+    );
+  });
+
+  it("opens and focuses a notification-targeted attention request", async () => {
+    render(
+      <AgentMessageStatus
+        show
+        generating
+        durationLabel="0:10"
+        date={1000}
+        logRefs={{}}
+        activityContext={{} as any}
+        openDrawerToken={1}
+        focusAttentionId="attention-1"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(document.activeElement).toHaveAttribute(
+        "data-codex-attention-id",
+        "attention-1",
+      ),
     );
   });
 });

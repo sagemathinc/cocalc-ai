@@ -471,6 +471,7 @@ interface Props {
   onAtTopStateChange?: (atTop: boolean) => void;
   activityJumpDate?: string;
   activityJumpToken?: number;
+  activityJumpAttentionId?: string;
   notifyOnTurnFinish?: boolean;
   onNotifyOnTurnFinishChange?: (checked: boolean) => void;
   onOpenGitBrowser?: (request: {
@@ -506,6 +507,7 @@ export function ChatLog({
   onAtTopStateChange,
   activityJumpDate,
   activityJumpToken,
+  activityJumpAttentionId,
   notifyOnTurnFinish = false,
   onNotifyOnTurnFinishChange,
   onOpenGitBrowser,
@@ -729,6 +731,7 @@ export function ChatLog({
             onAtTopStateChange,
             activityJumpDate,
             activityJumpToken,
+            activityJumpAttentionId,
             notifyOnTurnFinish,
             onNotifyOnTurnFinishChange,
             selectedThread,
@@ -878,6 +881,7 @@ export function MessageList({
   onAtTopStateChange,
   activityJumpDate,
   activityJumpToken,
+  activityJumpAttentionId,
   notifyOnTurnFinish,
   onNotifyOnTurnFinishChange,
   selectedThread,
@@ -918,6 +922,7 @@ export function MessageList({
   onAtTopStateChange?: (atTop: boolean) => void;
   activityJumpDate?: string;
   activityJumpToken?: number;
+  activityJumpAttentionId?: string;
   notifyOnTurnFinish?: boolean;
   onNotifyOnTurnFinishChange?: (checked: boolean) => void;
   selectedThread?: string;
@@ -1468,6 +1473,9 @@ export function MessageList({
             searchHighlight={searchQuery}
             openActivityToken={
               activityJumpDate === date ? activityJumpToken : undefined
+            }
+            focusAttentionId={
+              activityJumpDate === date ? activityJumpAttentionId : undefined
             }
             notifyOnTurnFinish={
               canNotifyForRunningTurn ? notifyOnTurnFinish : undefined
