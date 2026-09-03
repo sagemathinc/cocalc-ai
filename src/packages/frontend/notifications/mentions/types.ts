@@ -36,6 +36,8 @@ export type MentionInfo = TypedMap<{
   fragment_id?: string;
   thread_id?: string;
   thread_label?: string;
+  attention_state?: string;
+  attention_id?: string;
   users?: Map<
     string, // UUIDs
     TypedMap<{
@@ -45,7 +47,7 @@ export type MentionInfo = TypedMap<{
   >;
 }>;
 
-const MENTIONS_FILTER = ["read", "unread"] as const;
+const MENTIONS_FILTER = ["read", "unread", "attention"] as const;
 
 export type MentionsFilter = (typeof MENTIONS_FILTER)[number];
 export type NotificationFilter = MentionsFilter | NewsFilter;

@@ -11,6 +11,9 @@ jest.mock("@cocalc/frontend/conat/account-dstream", () => ({
 
 jest.mock("../codex-turn-toast", () => ({
   showCodexTurnCompletionToastBestEffort: jest.fn(),
+  isCodexAttentionNotification: jest.fn(
+    (row) => row?.summary?.notice_type === "codex_attention",
+  ),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => {

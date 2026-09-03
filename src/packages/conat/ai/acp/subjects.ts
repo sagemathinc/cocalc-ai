@@ -12,6 +12,7 @@ export const ACP_OPERATIONS = [
   "truncate",
   "control",
   "automation",
+  "attention",
 ] as const;
 
 export type AcpOperation = (typeof ACP_OPERATIONS)[number];
@@ -139,4 +140,8 @@ export function acpControlSubject(identity: AcpSubjectIdentity): string {
 
 export function acpAutomationSubject(identity: AcpSubjectIdentity): string {
   return buildAcpSubject(identity, "automation");
+}
+
+export function acpAttentionSubject(identity: AcpSubjectIdentity): string {
+  return buildAcpSubject(identity, "attention");
 }

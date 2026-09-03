@@ -30,11 +30,19 @@ import type {
 import {
   getCodexProjectSpawner,
   type CodexAppServerLoginHint,
+  type CodexAttentionContext,
+  type CodexAttentionHandler,
   type CodexProjectContainerPathMap,
   type CodexAppServerRequestHandler,
   type CodexSiteFundedTurnRequest,
   type CodexSiteFundedTurnRuntime,
 } from "./codex-project";
+import {
+  CODEX_SYNC_QUESTION_METHOD,
+  normalizeCodexAsyncQuestions,
+  normalizeCodexSyncQuestionRequest,
+  supportsCodexAttentionInput,
+} from "./codex-attention";
 import { getCodexSiteKeyGovernor } from "./codex-site-key-governor";
 const logger = getLogger("ai:acp:codex-app-server");
 const REQUEST_TIMEOUT_MS = Math.max(
@@ -99,18 +107,33 @@ function normalizeMaxConcurrentSubagents(value: unknown): number | undefined {
   return Math.min(MAX_CONCURRENT_SUBAGENTS, Math.max(1, value));
 }
 
-function threadConfigForSubagents(
+function attentionInputEnabled(supported: boolean): boolean {
+  return supported && process.env.COCALC_CODEX_ATTENTION_INPUT === "1";
+}
+
+function asyncAttentionEnabled(): boolean {
+  return process.env.COCALC_CODEX_ATTENTION_ASYNC === "1";
+}
+
+function threadConfig(
   maxConcurrentSubagents: number | undefined,
-): Record<string, number> | undefined {
-  if (maxConcurrentSubagents == null) return;
+  hasAttentionHandler = false,
+): Record<string, number | boolean> | undefined {
+  const config: Record<string, number | boolean> = {};
+  if (attentionInputEnabled(hasAttentionHandler)) {
+    config["features.default_mode_request_user_input"] = true;
+  }
+  if (maxConcurrentSubagents == null) {
+    return Object.keys(config).length > 0 ? config : undefined;
+  }
   // Codex counts the manager in max_concurrent_threads_per_session.
   const totalThreads = maxConcurrentSubagents + 1;
-  return {
-    // V1 and V2 have separate config paths. Supplying both is accepted by
-    // Codex and prevents a feature rollout from silently bypassing the cap.
-    "agents.max_concurrent_threads_per_session": totalThreads,
-    "features.multi_agent_v2.max_concurrent_threads_per_session": totalThreads,
-  };
+  // V1 and V2 have separate config paths. Supplying both is accepted by
+  // Codex and prevents a feature rollout from silently bypassing the cap.
+  config["agents.max_concurrent_threads_per_session"] = totalThreads;
+  config["features.multi_agent_v2.max_concurrent_threads_per_session"] =
+    totalThreads;
+  return config;
 }
 
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*m/g;
@@ -317,6 +340,9 @@ function getCoCalcProjectRuntimeGuidance(cliCommand: string): string[] {
     "- COCALC_API_URL",
     "- COCALC_BEARER_TOKEN",
     "Project secret changes apply immediately to running projects; do not restart a project merely to apply a secret update. Programs that cache credentials may need their own reload.",
+    "Use Codex's synchronous or asynchronous question tools when human input is required. Use asynchronous questions only when useful authorized work can continue while waiting.",
+    "Do not use question tools for permission or authentication escalation. Use typed first-party CoCalc actions for supported fresh-auth, login, and approval flows.",
+    "Never ask the user to paste a password, access token, one-time code, cookie, or other secret into a question response.",
     "Prefer high-signal commands over raw browser scripts when available.",
     `For supported document builds, use \`${cliCommand} project build -h\` and \`${cliCommand} project build <path>\` so the complete editor pipeline runs without requiring a browser.`,
     "For notebook edits/execution that must survive browser refresh or disconnect, prefer `cocalc project jupyter -h` over `browser exec`.",
@@ -399,6 +425,7 @@ type CodexAppServerOptions = {
     accountId: string;
     path?: string;
   }) => void | Promise<void>;
+  attentionHandler?: CodexAttentionHandler;
 };
 
 type SpawnedCodexAppServer = {
@@ -620,7 +647,7 @@ function formatAppServerExitMessage(
   return `codex app-server exited unexpectedly: ${exitDetail}${stderrDetail}`;
 }
 
-class AppServerClient {
+export class AppServerClient {
   private nextId = 1;
   private readonly pendingRequests = new Map<number, RequestEntry>();
   private readonly waiters: Waiter[] = [];
@@ -629,10 +656,21 @@ class AppServerClient {
   private exited = false;
   private exitDetail = "unknown";
   private exitError?: Error & { stderrTail?: string[] };
+  private attentionContext?: CodexAttentionContext;
+  private attentionInputSupported = false;
+  private readonly serverRequestContexts = new Map<
+    string,
+    CodexAttentionContext
+  >();
+  private readonly serverRequestAborts = new Map<
+    string | number,
+    AbortController
+  >();
 
   constructor(
     private readonly proc: ReturnType<typeof spawn>,
     private readonly requestHandler?: CodexAppServerRequestHandler,
+    private readonly attentionHandler?: CodexAttentionHandler,
   ) {
     const rl = createInterface({
       input: proc.stdout as Readable,
@@ -699,7 +737,31 @@ class AppServerClient {
         if (waiter.timer) clearTimeout(waiter.timer);
         waiter.reject(err);
       }
+      for (const controller of this.serverRequestAborts.values()) {
+        controller.abort(err);
+      }
+      this.serverRequestAborts.clear();
+      const contexts = new Map<string, CodexAttentionContext>();
+      const addContext = (context?: CodexAttentionContext) => {
+        if (!context) return;
+        contexts.set(
+          `${context.projectId}\0${context.threadId}\0${context.turnId}`,
+          context,
+        );
+      };
+      addContext(this.attentionContext);
+      for (const context of this.serverRequestContexts.values()) {
+        addContext(context);
+      }
+      this.serverRequestContexts.clear();
+      for (const context of contexts.values()) {
+        void this.attentionHandler?.runtimeClosed?.(context);
+      }
     });
+  }
+
+  setAttentionContext(context: CodexAttentionContext): void {
+    this.attentionContext = context;
   }
 
   async initialize(timeoutMs = REQUEST_TIMEOUT_MS): Promise<any> {
@@ -717,8 +779,21 @@ class AppServerClient {
       },
       timeoutMs,
     );
+    this.attentionInputSupported = supportsCodexAttentionInput(
+      result?.userAgent,
+    );
+    if (this.attentionHandler && !this.attentionInputSupported) {
+      logger.warn(
+        "codex app-server: synchronous attention input is not supported",
+        { userAgent: result?.userAgent },
+      );
+    }
     this.notify("initialized", {});
     return result;
+  }
+
+  supportsAttentionInput(): boolean {
+    return this.attentionInputSupported;
   }
 
   notify(method: string, params: any = {}): void {
@@ -822,6 +897,39 @@ class AppServerClient {
 
   private async resolveServerRequest(message: RpcServerRequest): Promise<void> {
     try {
+      if (message.method === CODEX_SYNC_QUESTION_METHOD) {
+        if (!this.attentionHandler || !this.attentionContext) {
+          throw new Error("Codex attention input is not available");
+        }
+        const request = normalizeCodexSyncQuestionRequest(message.params);
+        if (
+          request.threadId !== this.attentionContext.threadId ||
+          request.turnId !== this.attentionContext.turnId
+        ) {
+          throw new Error("request_user_input does not match the active turn");
+        }
+        const context = this.attentionContext;
+        const requestKey = `${message.id}`;
+        this.serverRequestContexts.set(requestKey, context);
+        const controller = new AbortController();
+        this.serverRequestAborts.set(message.id, controller);
+        try {
+          const answers = await this.attentionHandler.requestSyncQuestion({
+            requestId: `${message.id}`,
+            itemId: request.itemId,
+            isBlocking: request.isBlocking,
+            autoResolutionMs: request.autoResolutionMs,
+            questions: request.questions,
+            context,
+            signal: controller.signal,
+          });
+          if (this.exited) return;
+          this.send({ id: message.id, result: { answers } });
+          return;
+        } finally {
+          this.serverRequestAborts.delete(message.id);
+        }
+      }
       if (!this.requestHandler) {
         throw new Error(`unsupported app-server request: ${message.method}`);
       }
@@ -837,6 +945,15 @@ class AppServerClient {
       });
     } catch (err) {
       if (this.exited) return;
+      const requestKey = `${message.id}`;
+      const context = this.serverRequestContexts.get(requestKey);
+      if (context) {
+        this.serverRequestContexts.delete(requestKey);
+        void this.attentionHandler?.serverRequestResolved?.({
+          requestId: requestKey,
+          context,
+        });
+      }
       this.send({
         id: message.id,
         error: {
@@ -865,6 +982,18 @@ class AppServerClient {
   }
 
   private handleNotification(message: RpcNotification): void {
+    if (message.method === "serverRequest/resolved") {
+      const requestId = message.params?.requestId;
+      if (requestId != null) {
+        const requestKey = `${requestId}`;
+        const context = this.serverRequestContexts.get(requestKey);
+        this.serverRequestContexts.delete(requestKey);
+        void this.attentionHandler?.serverRequestResolved?.({
+          requestId: requestKey,
+          context,
+        });
+      }
+    }
     this.notifications.push(message);
     let consumed = false;
     if (this.notifications.length > 400) {
@@ -1750,6 +1879,7 @@ export async function forkCodexAppServerSession(opts: {
     const result = await client.request("thread/fork", {
       threadId: opts.sessionId,
       excludeTurns: true,
+      config: threadConfig(undefined, client.supportsAttentionInput()),
     });
     const sessionId = `${result?.thread?.id ?? ""}`.trim();
     if (!sessionId) {
@@ -2387,6 +2517,7 @@ export class CodexAppServerAgent implements AcpAgent {
     const client = new AppServerClient(
       spawned.proc,
       spawned.handleAppServerRequest,
+      this.opts.attentionHandler,
     );
     try {
       await client.initialize();
@@ -2589,6 +2720,7 @@ export class CodexAppServerAgent implements AcpAgent {
       { command?: string; cwd?: string }
     >();
     const agentMessageTextById = new Map<string, string>();
+    const emittedAsyncAttentionItems = new Set<string>();
     const emittedSubagentEventSignatures = new Set<string>();
     const latestSubagentEvents = new Map<string, SubagentStreamEvent>();
     const completedTerminals = new Set<string>();
@@ -2721,10 +2853,11 @@ export class CodexAppServerAgent implements AcpAgent {
         serviceTier,
         approvalPolicy: "never",
         sandbox: toSandboxMode(spawned, effectiveConfig),
-        config: threadConfigForSubagents(
+        config: threadConfig(
           normalizeMaxConcurrentSubagents(
             effectiveConfig?.maxConcurrentSubagents,
           ),
+          this.opts.attentionHandler != null && client.supportsAttentionInput(),
         ),
       };
       const sessionMode = resolveCodexSessionMode(effectiveConfig);
@@ -2831,6 +2964,14 @@ export class CodexAppServerAgent implements AcpAgent {
       if (runningEntry) {
         runningEntry.turnId = turnId;
       }
+      client.setAttentionContext({
+        projectId: request.chat?.project_id ?? request.project_id,
+        accountId: request.account_id,
+        chat: request.chat,
+        threadId: actualThreadId,
+        turnId,
+        stream,
+      });
       if (siteKeyEnforced && siteKeyGovernor) {
         const pollMs = Math.max(
           30_000,
@@ -3052,6 +3193,28 @@ export class CodexAppServerAgent implements AcpAgent {
             break;
           }
           case "agentMessage":
+            if (this.opts.attentionHandler && asyncAttentionEnabled()) {
+              const normalized = normalizeCodexAsyncQuestions(item);
+              if (
+                normalized &&
+                !emittedAsyncAttentionItems.has(normalized.itemId)
+              ) {
+                emittedAsyncAttentionItems.add(normalized.itemId);
+                const context: CodexAttentionContext = {
+                  projectId: request.chat?.project_id ?? request.project_id,
+                  accountId: request.account_id,
+                  chat: request.chat,
+                  threadId: actualThreadId,
+                  turnId: turnId!,
+                  stream,
+                };
+                await this.opts.attentionHandler.createAsyncQuestion({
+                  itemId: normalized.itemId,
+                  questions: normalized.questions,
+                  context,
+                });
+              }
+            }
             if (typeof item.text === "string") {
               finalResponse = item.text;
               const itemId = `${item.id ?? "agent-message"}`;

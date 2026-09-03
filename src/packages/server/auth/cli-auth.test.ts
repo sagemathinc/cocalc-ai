@@ -322,3 +322,141 @@ describe("CLI elevated login approval", () => {
     ).rejects.toThrow("valid factor level");
   });
 });
+
+describe("Codex fresh-auth attention status", () => {
+  const account_id = "00000000-1000-4000-8000-000000000001";
+  const project_id = "00000000-2000-4000-8000-000000000002";
+  const challenge_id = "00000000-3000-4000-8000-000000000003";
+
+  beforeEach(() => {
+    jest.resetModules();
+    queryMock = jest.fn(async () => ({
+      rows: [
+        {
+          id: challenge_id,
+          account_id,
+          kind: "elevate",
+          status: "pending",
+          poll_token_hash: hashToken("poll-token"),
+          target_session_hash: "session-hash",
+          expire: new Date("2099-09-02T01:00:00.000Z"),
+          created: new Date("2099-09-02T00:00:00.000Z"),
+          metadata: {
+            codex_attention_context: {
+              project_id,
+              path: "agent.chat",
+              thread_id: "thread-1",
+            },
+          },
+        },
+      ],
+    }));
+  });
+
+  it("normalizes bounded chat context", async () => {
+    const { normalizeCodexFreshAuthAttentionContext } =
+      await import("./cli-auth");
+    expect(
+      normalizeCodexFreshAuthAttentionContext({
+        project_id,
+        path: " agent.chat ",
+        thread_id: " thread-1 ",
+        purpose: " host delete ",
+      }),
+    ).toEqual({
+      project_id,
+      path: "agent.chat",
+      thread_id: "thread-1",
+      purpose: "host delete",
+    });
+    expect(() =>
+      normalizeCodexFreshAuthAttentionContext({
+        project_id: "not-a-project",
+        path: "agent.chat",
+        thread_id: "thread-1",
+      }),
+    ).toThrow("invalid Codex attention project id");
+  });
+
+  it("returns status only for the bound account and project", async () => {
+    const { getCodexFreshAuthActionStatus } = await import("./cli-auth");
+    await expect(
+      getCodexFreshAuthActionStatus({
+        challenge_id,
+        account_id,
+        project_id,
+      }),
+    ).resolves.toMatchObject({ challenge_id, state: "pending" });
+    await expect(
+      getCodexFreshAuthActionStatus({
+        challenge_id,
+        account_id: "00000000-4000-4000-8000-000000000004",
+        project_id,
+      }),
+    ).rejects.toThrow("account mismatch");
+    await expect(
+      getCodexFreshAuthActionStatus({
+        challenge_id,
+        account_id,
+        project_id: "00000000-5000-4000-8000-000000000005",
+      }),
+    ).rejects.toThrow("project mismatch");
+  });
+
+  it("reports expiry and authoritative approval state", async () => {
+    const { getCodexFreshAuthActionStatus } = await import("./cli-auth");
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          id: challenge_id,
+          account_id,
+          kind: "elevate",
+          status: "pending",
+          expire: new Date("2000-01-01T00:00:00.000Z"),
+          created: new Date("1999-01-01T00:00:00.000Z"),
+          metadata: {
+            codex_attention_context: {
+              project_id,
+              path: "agent.chat",
+              thread_id: "thread-1",
+            },
+          },
+        },
+      ],
+    });
+    await expect(
+      getCodexFreshAuthActionStatus({
+        challenge_id,
+        account_id,
+        project_id,
+      }),
+    ).resolves.toMatchObject({ state: "expired" });
+
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          id: challenge_id,
+          account_id,
+          kind: "elevate",
+          status: "approved",
+          expire: new Date("2099-09-02T01:00:00.000Z"),
+          created: new Date("2099-09-02T00:00:00.000Z"),
+          metadata: {
+            codex_attention_context: {
+              project_id,
+              path: "agent.chat",
+              thread_id: "thread-1",
+            },
+          },
+        },
+      ],
+    });
+    await expect(
+      getCodexFreshAuthActionStatus({
+        challenge_id,
+        account_id,
+        project_id,
+      }),
+    ).resolves.toMatchObject({ state: "approved" });
+  });
+});

@@ -103,6 +103,9 @@ export interface AcpChatContext {
   // Capture the thread preference when the turn is submitted. The chat writer
   // uses this if its completion-time sync view has not received the config row.
   notify_on_turn_finish?: boolean;
+  // Version 2 effective account + thread policy. Unlike the legacy field,
+  // false here is an intentional effective opt-out.
+  completion_notification_enabled?: boolean;
 }
 
 export type AcpRequest = {
@@ -231,6 +234,144 @@ export type AcpAutomationResponse = {
   project_id?: string;
 };
 
+export type AcpAttentionSourceKind =
+  | "codex_sync_question"
+  | "codex_async_question"
+  | "cocalc_action";
+
+export type AcpAttentionKind =
+  | "question"
+  | "fresh_auth"
+  | "external_login"
+  | "approval"
+  | "manual_action"
+  | "manual_test";
+
+export type AcpAttentionState =
+  | "pending"
+  | "answered"
+  | "declined"
+  | "canceled"
+  | "resolved"
+  | "expired"
+  | "superseded"
+  | "stale";
+
+export type AcpAttentionOption = {
+  label: string;
+  description?: string;
+};
+
+export type AcpAttentionQuestion = {
+  id: string;
+  header: string;
+  question: string;
+  isOther?: boolean;
+  options?: AcpAttentionOption[];
+};
+
+export type AcpAttentionAction = {
+  kind: "fresh_auth";
+  reference: string;
+  expires_at: number;
+};
+
+export type AcpAttentionRecord = {
+  attention_id: string;
+  project_id: string;
+  account_id: string;
+  path: string;
+  thread_id: string;
+  turn_id?: string;
+  source_kind: AcpAttentionSourceKind;
+  source_id: string;
+  attention_kind: AcpAttentionKind;
+  is_blocking: boolean;
+  title: string;
+  summary?: string;
+  questions: AcpAttentionQuestion[];
+  action?: AcpAttentionAction;
+  state: AcpAttentionState;
+  created_at: number;
+  updated_at: number;
+  resolved_at?: number;
+  expires_at?: number;
+  seen_at?: number;
+  acknowledged_at?: number;
+  snoozed_until?: number;
+  response_submitted_at?: number;
+  resolution_reason?: string;
+};
+
+export type AcpAttentionRequest =
+  | {
+      action: "list";
+      project_id: string;
+      account_id: string;
+      path?: string;
+      thread_id?: string;
+      state?: AcpAttentionState | "all";
+    }
+  | {
+      action: "register_action";
+      project_id: string;
+      account_id: string;
+      path: string;
+      thread_id: string;
+      turn_id?: string;
+      message_date?: string;
+      action_kind: "fresh_auth";
+      action_reference: string;
+    }
+  | {
+      action: "execute_action";
+      project_id: string;
+      account_id: string;
+      attention_id: string;
+    }
+  | {
+      action: "respond";
+      project_id: string;
+      account_id: string;
+      attention_id: string;
+      response_id: string;
+      answers?: Record<string, string[]>;
+      decline?: boolean;
+    }
+  | {
+      action: "seen";
+      project_id: string;
+      account_id: string;
+      attention_id: string;
+    }
+  | {
+      action: "acknowledge";
+      project_id: string;
+      account_id: string;
+      attention_id: string;
+    }
+  | {
+      action: "snooze";
+      project_id: string;
+      account_id: string;
+      attention_id: string;
+      snoozed_until: number;
+    }
+  | {
+      action: "continue";
+      project_id: string;
+      account_id: string;
+      attention_id: string;
+    };
+
+export type AcpAttentionResponse = {
+  ok: boolean;
+  state?: AcpAttentionState | "submitted" | "already_submitted" | "missing";
+  records?: AcpAttentionRecord[];
+  record?: AcpAttentionRecord;
+  error?: string;
+};
+
 export type AcpStreamUsage = {
   input_tokens?: number;
   output_tokens?: number;
@@ -330,6 +471,10 @@ export type AcpStreamEvent =
         signal?: string;
       };
       output?: string;
+    }
+  | {
+      type: "attention";
+      request: AcpAttentionRecord;
     };
 
 export type AcpStreamPayload =

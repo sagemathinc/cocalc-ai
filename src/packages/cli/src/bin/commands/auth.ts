@@ -58,11 +58,41 @@ export function registerAuthCommand(
   type CliChallengeStart = {
     challenge_id: string;
     poll_token: string;
-    approval_url: string;
+    approval_url?: string;
     expires_at: string | Date;
     home_bay_id?: string;
     home_bay_url?: string;
+    attention_registered?: boolean;
   };
+
+  type CodexAttentionContext = {
+    project_id: string;
+    path: string;
+    thread_id: string;
+    turn_id?: string;
+    message_date?: string;
+  };
+
+  function codexAttentionContextFromEnv(): CodexAttentionContext | undefined {
+    if (`${env.COCALC_CLI_AGENT_MODE ?? ""}`.trim() !== "1") return;
+    const project_id = `${env.COCALC_PROJECT_ID ?? ""}`.trim();
+    const path = `${env.COCALC_CODEX_CHAT_PATH ?? ""}`.trim();
+    const thread_id = `${env.COCALC_CODEX_THREAD_ID ?? ""}`.trim();
+    if (!project_id || !path || !thread_id) {
+      throw new Error(
+        "Codex fresh-auth approval requires an active CoCalc chat context",
+      );
+    }
+    const turn_id = `${env.COCALC_CODEX_TURN_ID ?? ""}`.trim();
+    const message_date = `${env.COCALC_CODEX_MESSAGE_DATE ?? ""}`.trim();
+    return {
+      project_id,
+      path,
+      thread_id,
+      ...(turn_id ? { turn_id } : {}),
+      ...(message_date ? { message_date } : {}),
+    };
+  }
 
   type CliChallengeStatus = {
     challenge_id: string;
@@ -793,17 +823,33 @@ export function registerAuthCommand(
         dev: status.dev === true,
       };
     }
+    const codexAttentionContext = codexAttentionContextFromEnv();
     const start = await postCliAuthApi<CliChallengeStart>({
       apiBaseUrl,
       endpoint: "auth/cli/elevate/start",
       body: {
         duration: freshAuthDuration,
+        ...(codexAttentionContext
+          ? { codex_attention_context: codexAttentionContext }
+          : {}),
       },
       cookieHeader,
     });
-    process.stderr.write(
-      `Open this URL in your browser to approve CLI elevation:\n${start.approval_url}\n`,
-    );
+    if (codexAttentionContext) {
+      if (start.attention_registered !== true) {
+        throw new Error("CoCalc could not register the fresh-auth request");
+      }
+      process.stderr.write(
+        "Approval requested in CoCalc. Waiting for authorization.\n",
+      );
+    } else {
+      if (!start.approval_url) {
+        throw new Error("CoCalc did not return an approval URL");
+      }
+      process.stderr.write(
+        `Open this URL in your browser to approve CLI elevation:\n${start.approval_url}\n`,
+      );
+    }
     const status = await waitForCliChallenge({
       apiBaseUrl,
       endpoint: "auth/cli/elevate/status",

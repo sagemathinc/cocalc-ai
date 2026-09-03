@@ -37,6 +37,12 @@ export function NotificationPage() {
   const news = useTypedRedux("news", "news");
   const user_map = useTypedRedux("users", "user_map");
   const filter: NotificationFilter = useTypedRedux("mentions", "filter");
+  const attention_count =
+    mentions?.filter(
+      (mention) =>
+        mention.get("notice_type") === "codex_attention" &&
+        (mention.get("attention_state") ?? "pending") === "pending",
+    ).size ?? 0;
 
   useEffect(() => {
     Fragment.set({ page: filter });
@@ -77,6 +83,10 @@ export function NotificationPage() {
 
     if (IS_MOBILE) {
       const options = [
+        {
+          value: "attention",
+          label: `Needs attention (${attention_count})`,
+        },
         {
           value: "unread",
           label: `${intl.formatMessage(MSGS.unread)} (${unread_count})`,
@@ -139,6 +149,7 @@ export function NotificationPage() {
           filter={filter}
           on_click={redux.getActions("mentions").set_filter}
           unread_count={unread_count}
+          attention_count={attention_count}
           news_unread={news_unread}
           style={{
             display: "flex",

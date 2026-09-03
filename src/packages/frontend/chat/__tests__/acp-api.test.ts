@@ -367,7 +367,8 @@ describe("processAcpLLM", () => {
     expect(arg.chat.user_message_content).toBe("run codex");
     expect(arg.chat.user_parent_message_id).toBeUndefined();
     expect(arg.chat.reply_to_message_id).toBeUndefined();
-    expect(arg.chat.notify_on_turn_finish).toBe(true);
+    expect(arg.chat.notify_on_turn_finish).toBeUndefined();
+    expect(arg.chat.completion_notification_enabled).toBe(true);
     expect(arg.session_id).toBe("thread-1");
   });
 

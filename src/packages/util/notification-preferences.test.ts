@@ -4,8 +4,12 @@
  */
 
 import {
+  getDefaultNotificationPreferencesV2,
   getDefaultNotificationPreferences,
+  normalizeCodexCompletionNotificationOverride,
   normalizeNotificationPreferences,
+  normalizeNotificationPreferencesV2,
+  resolveCodexCompletionNotificationEnabled,
 } from "./notification-preferences";
 
 describe("notification preferences", () => {
@@ -116,5 +120,103 @@ describe("notification preferences", () => {
         toJS: () => ({ email: { mentions: "none", onboarding: "off" } }),
       }).email,
     ).toMatchObject({ mentions: "none", onboarding: "off" });
+  });
+
+  it("defaults Codex completion and independent delivery channels on", () => {
+    expect(getDefaultNotificationPreferencesV2()).toEqual({
+      version: 2,
+      ai: {
+        completion_default: true,
+        events: {
+          attention: {
+            inbox: true,
+            toast: true,
+            browser: true,
+            email: "unresolved_after_delay",
+            email_delay_minutes: 5,
+          },
+          completion: {
+            inbox: true,
+            toast: true,
+            browser: true,
+            email: "off",
+          },
+          terminal_failure: {
+            inbox: true,
+            toast: true,
+            browser: true,
+            email: "unresolved_after_delay",
+            email_delay_minutes: 5,
+          },
+        },
+      },
+    });
+  });
+
+  it("migrates legacy AI delivery without enabling an explicit none", () => {
+    const disabled = normalizeNotificationPreferencesV2(undefined, {
+      email: { ai: "none" },
+    });
+    for (const policy of Object.values(disabled.ai.events)) {
+      expect(policy).toMatchObject({
+        inbox: false,
+        toast: false,
+        browser: false,
+        email: "off",
+      });
+    }
+
+    expect(
+      normalizeNotificationPreferencesV2(undefined, {
+        email: { ai: "immediate" },
+      }).ai.events.completion,
+    ).toMatchObject({ inbox: true, email: "immediate" });
+  });
+
+  it("preserves V2 fields independently from legacy writers", () => {
+    const v2 = normalizeNotificationPreferencesV2(
+      {
+        version: 2,
+        ai: {
+          completion_default: false,
+          events: {
+            attention: {
+              inbox: false,
+              toast: true,
+              browser: false,
+              email: "digest",
+            },
+          },
+        },
+      },
+      { email: { ai: "none" } },
+    );
+    expect(v2.ai.completion_default).toBe(false);
+    expect(v2.ai.events.attention).toMatchObject({
+      inbox: false,
+      toast: true,
+      browser: false,
+      email: "digest",
+    });
+  });
+
+  it("maps ambiguous legacy thread false to inherit", () => {
+    expect(normalizeCodexCompletionNotificationOverride(false)).toBe("inherit");
+    expect(
+      normalizeCodexCompletionNotificationOverride(undefined, {
+        notifyOnTurnFinish: false,
+      }),
+    ).toBe("inherit");
+    expect(
+      normalizeCodexCompletionNotificationOverride(undefined, {
+        notifyOnTurnFinish: true,
+      }),
+    ).toBe("on");
+    expect(
+      resolveCodexCompletionNotificationEnabled({
+        override: "off",
+        accountDefault: true,
+      }),
+    ).toBe(false);
   });
 });

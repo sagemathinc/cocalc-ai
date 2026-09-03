@@ -15,6 +15,8 @@ const markNotificationEmailSent = jest.fn();
 const markNotificationEmailsSent = jest.fn();
 const markNotificationEmailFailed = jest.fn();
 const markNotificationEmailStatus = jest.fn();
+const requeueNotificationEmail = jest.fn();
+const revalidateNotificationEmail = jest.fn();
 
 jest.mock("@cocalc/database/postgres/notification-email-outbox", () => ({
   claimQueuedNotificationEmails: (...args: unknown[]) =>
@@ -29,6 +31,10 @@ jest.mock("@cocalc/database/postgres/notification-email-outbox", () => ({
     markNotificationEmailFailed(...args),
   markNotificationEmailStatus: (...args: unknown[]) =>
     markNotificationEmailStatus(...args),
+  requeueNotificationEmail: (...args: unknown[]) =>
+    requeueNotificationEmail(...args),
+  revalidateNotificationEmail: (...args: unknown[]) =>
+    revalidateNotificationEmail(...args),
 }));
 
 jest.mock("@cocalc/database/settings", () => ({
@@ -86,6 +92,8 @@ describe("notification email outbox maintenance", () => {
     markNotificationEmailStatus.mockResolvedValue(undefined);
     claimQueuedNotificationEmails.mockResolvedValue([]);
     claimDigestNotificationEmails.mockResolvedValue([]);
+    requeueNotificationEmail.mockResolvedValue(undefined);
+    revalidateNotificationEmail.mockResolvedValue({ action: "send" });
   });
 
   it("sends claimed immediate notification email and marks it sent", async () => {
@@ -116,6 +124,59 @@ describe("notification email outbox maintenance", () => {
     );
     expect(markNotificationEmailSent).toHaveBeenCalledWith({
       email_id: ROW.email_id,
+    });
+  });
+
+  it("skips an attention email that resolved before delivery", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([ROW]);
+    revalidateNotificationEmail.mockResolvedValue({
+      action: "skip",
+      reason: "attention resolved before delivery",
+    });
+    const sender = jest.fn(async () => undefined);
+
+    await expect(
+      sendQueuedNotificationEmailBatch({
+        sender,
+        emailConfigured: jest.fn(async () => true),
+        sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+      }),
+    ).resolves.toEqual({
+      claimed: 1,
+      sent: 0,
+      skipped_no_backend: 0,
+      failed: 0,
+    });
+
+    expect(sender).not.toHaveBeenCalled();
+    expect(markNotificationEmailStatus).toHaveBeenCalledWith({
+      email_id: ROW.email_id,
+      status: "skipped_preference",
+      error: "attention resolved before delivery",
+    });
+  });
+
+  it("requeues an attention email while the request is snoozed", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([ROW]);
+    const scheduled_at = new Date("2026-05-10T00:10:00.000Z");
+    revalidateNotificationEmail.mockResolvedValue({
+      action: "reschedule",
+      scheduled_at,
+      reason: "attention snoozed",
+    });
+    const sender = jest.fn(async () => undefined);
+
+    await sendQueuedNotificationEmailBatch({
+      sender,
+      emailConfigured: jest.fn(async () => true),
+      sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+    });
+
+    expect(sender).not.toHaveBeenCalled();
+    expect(requeueNotificationEmail).toHaveBeenCalledWith({
+      email_id: ROW.email_id,
+      scheduled_at,
+      reason: "attention snoozed",
     });
   });
 

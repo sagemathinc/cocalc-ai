@@ -472,6 +472,88 @@ test("auth elevate approves the current CLI session via browser polling", async 
   }
 });
 
+test("auth elevate registers Codex attention without printing the approval URL", async () => {
+  const capture: { data?: any } = {};
+  const project_id = "890afc74-9156-4386-a395-afd4bebab4dd";
+  const challenge_id = "00000000-3000-4000-8000-000000000003";
+  const approvalUrl = `https://hub.example.test/auth/cli-elevate/${challenge_id}`;
+  const fetchCalls: Array<{ url: string; init: any }> = [];
+  const output: string[] = [];
+  const originalFetch = global.fetch;
+  const originalWrite = process.stderr.write;
+  global.fetch = (async (url: string | URL | Request, init?: any) => {
+    fetchCalls.push({ url: `${url}`, init });
+    if (`${url}`.endsWith("/api/v2/auth/cli/elevate/start")) {
+      return {
+        json: async () => ({
+          challenge_id,
+          poll_token: "poll-token-3",
+          approval_url: approvalUrl,
+          attention_registered: true,
+          expires_at: "2099-09-02T10:00:00.000Z",
+        }),
+      } as any;
+    }
+    if (`${url}`.endsWith("/api/v2/auth/cli/elevate/status")) {
+      return {
+        json: async () => ({
+          challenge_id,
+          kind: "elevate",
+          state: "approved",
+          expires_at: "2099-09-02T10:00:00.000Z",
+          factor_level: "totp",
+          fresh_auth_until: "2099-09-02T18:00:00.000Z",
+        }),
+      } as any;
+    }
+    throw new Error(`unexpected fetch url ${url}`);
+  }) as any;
+  process.stderr.write = ((chunk: any) => {
+    output.push(`${chunk}`);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const program = new Command();
+    registerAuthCommand(
+      program,
+      makeDeps(capture, {
+        env: {
+          COCALC_CLI_AGENT_MODE: "1",
+          COCALC_PROJECT_ID: project_id,
+          COCALC_CODEX_CHAT_PATH: "agent.chat",
+          COCALC_CODEX_THREAD_ID: "thread-1",
+          COCALC_CODEX_MESSAGE_DATE: "2099-09-02T00:00:00.000Z",
+        },
+        applyAuthProfile: (globals: any) => ({
+          globals: {
+            ...globals,
+            api: "https://hub.example.test",
+            account_id: "acct-123",
+            cookie: "remember_me=remember-cookie-1",
+          },
+          profile: "default",
+          fromProfile: true,
+        }),
+        buildCookieHeader: () => "remember_me=remember-cookie-1",
+      }),
+    );
+    await program.parseAsync(["node", "test", "auth", "elevate"]);
+    const body = JSON.parse(fetchCalls[0].init.body);
+    assert.deepEqual(body.codex_attention_context, {
+      project_id,
+      path: "agent.chat",
+      thread_id: "thread-1",
+      message_date: "2099-09-02T00:00:00.000Z",
+    });
+    assert.match(output.join(""), /Approval requested in CoCalc/);
+    assert.doesNotMatch(output.join(""), /cli-elevate/);
+    assert.doesNotMatch(output.join(""), new RegExp(challenge_id));
+  } finally {
+    global.fetch = originalFetch;
+    process.stderr.write = originalWrite;
+  }
+});
+
 test("auth bootstrap runs one elevated login and checks the session", async () => {
   const capture: { data?: any } = {};
   let config: any = { profiles: {} };

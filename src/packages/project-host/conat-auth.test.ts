@@ -457,6 +457,7 @@ describe("project-host Conat auth", () => {
       "truncate",
       "control",
       "automation",
+      "attention",
     ];
 
     it.each(operations)(
@@ -499,6 +500,26 @@ describe("project-host Conat auth", () => {
           type: "pub",
           subject: `acp.project-${otherProjectId}.account-${account_id}.api`,
         }),
+      ).resolves.toBe(false);
+    });
+
+    it("rechecks collaboration for every attention request", async () => {
+      let projectReads = 0;
+      mockGetRow.mockImplementation((table) => {
+        if (table !== "projects") return undefined;
+        projectReads += 1;
+        return projectReads === 1
+          ? { users: { [account_id]: { group: "collaborator" } } }
+          : { users: {} };
+      });
+      const { isAllowed } = createProjectHostConatAuth({ host_id });
+      const subject = `acp.project-${project_id}.account-${account_id}.attention`;
+
+      await expect(
+        isAllowed({ user: { account_id }, type: "pub", subject }),
+      ).resolves.toBe(true);
+      await expect(
+        isAllowed({ user: { account_id }, type: "pub", subject }),
       ).resolves.toBe(false);
     });
 

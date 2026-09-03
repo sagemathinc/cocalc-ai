@@ -35,6 +35,8 @@ export interface CodexThreadConfig {
   paymentSource?: CodexPaymentSourcePreference;
 }
 
+export type CodexCompletionNotificationOverride = "inherit" | "on" | "off";
+
 export function normalizeCodexMention(model?: string): string | undefined {
   if (!model || model === "codex-agent") return undefined;
   return model;
@@ -113,7 +115,7 @@ export function buildAcpChatContext({
   message_id,
   parent_message_id,
   sendMode,
-  notifyOnTurnFinish,
+  completionNotificationEnabled,
 }: {
   project_id?: string;
   path?: string;
@@ -128,7 +130,7 @@ export function buildAcpChatContext({
   message_id?: string;
   parent_message_id?: string;
   sendMode?: "immediate";
-  notifyOnTurnFinish?: boolean;
+  completionNotificationEnabled?: boolean;
 }): AcpChatContext {
   if (!project_id) throw new Error("Codex requires a project context to run");
   if (!path) throw new Error("Codex requires a chat file path");
@@ -149,7 +151,7 @@ export function buildAcpChatContext({
     message_id,
     parent_message_id,
     send_mode: sendMode,
-    notify_on_turn_finish: notifyOnTurnFinish,
+    completion_notification_enabled: completionNotificationEnabled,
   };
 }
 

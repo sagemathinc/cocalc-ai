@@ -56,6 +56,7 @@ function shouldCacheAuthDecision(subject: string): boolean {
   // not let a stale positive cache entry keep unrestricted project-host data
   // subjects open after that role change.
   return (
+    !isAcpSubject(subject) &&
     !extractProjectSubject(subject) &&
     !extractViewerFileSubject(subject) &&
     !extractShareFileSubject(subject)

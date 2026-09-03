@@ -15,6 +15,7 @@ interface Props {
   filter: NotificationFilter;
   on_click: (label: NotificationFilter) => void;
   unread_count: number;
+  attention_count: number;
   news_unread: number;
   style: React.CSSProperties;
 }
@@ -23,12 +24,21 @@ export function NotificationNav({
   filter,
   on_click,
   unread_count,
+  attention_count,
   news_unread,
   style,
 }: Props) {
   const intl = useIntl();
 
   const ITEMS: MenuItems = [
+    {
+      key: "attention",
+      label: (
+        <Text strong style={{ fontSize: "125%", textOverflow: "ellipsis" }}>
+          <Icon name="exclamation-circle" /> Needs attention ({attention_count})
+        </Text>
+      ),
+    },
     {
       key: "unread",
       label: (

@@ -3710,6 +3710,13 @@ export class ConatClient extends EventEmitter {
     );
   };
 
+  attentionAcp = async (request) => {
+    return await acp.attentionAcp(
+      { account_id: this.client.account_id, ...request },
+      this.conat(),
+    );
+  };
+
   dstream = async <T>(opts: DStreamOptions) => {
     return await dstream<T>({ ...opts, client: this.conat() });
   };

@@ -10,7 +10,8 @@ export type HubApiPrincipalPolicy =
   | "authenticated"
   | "compute-project"
   | "account-or-compute-project"
-  | "account-or-compute-agent";
+  | "account-or-compute-agent"
+  | "account-or-host-or-compute-agent";
 
 export interface HubApiArgTransformContext {
   args: any[];

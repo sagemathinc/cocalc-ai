@@ -223,11 +223,11 @@ describe("ChatPanel ACP thread behavior", () => {
     );
   });
 
-  it("reads and persists notify state from the thread codex config", async () => {
+  it("migrates and persists the thread completion-notification override", async () => {
     currentAcpState = immutable.Map({
       "thread:t1": "running",
     });
-    const setCodexConfig = jest.fn();
+    const setCodexCompletionNotificationOverride = jest.fn();
     const actions = {
       sendChat: jest.fn(() => Date.now()),
       getThreadMetadata: jest.fn(() => ({
@@ -243,7 +243,7 @@ describe("ChatPanel ACP thread behavior", () => {
       frameTreeActions: undefined,
       frameId: undefined,
       languageModelStopGenerating: jest.fn(),
-      setCodexConfig,
+      setCodexCompletionNotificationOverride,
       getCodexConfig: jest.fn(() => ({
         model: "gpt-5.4",
         sessionMode: "workspace-write",
@@ -281,13 +281,9 @@ describe("ChatPanel ACP thread behavior", () => {
       lastThreadPanelProps?.onNotifyOnTurnFinishChange?.(false);
     });
 
-    expect(setCodexConfig).toHaveBeenCalledWith(
+    expect(setCodexCompletionNotificationOverride).toHaveBeenCalledWith(
       "t1",
-      expect.objectContaining({
-        model: "gpt-5.4",
-        sessionMode: "workspace-write",
-        notifyOnTurnFinish: false,
-      }),
+      "off",
     );
   });
 });

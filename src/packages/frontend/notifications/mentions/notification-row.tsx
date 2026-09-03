@@ -99,6 +99,7 @@ export function NotificationRow(props: Props) {
     action_label,
     severity,
     notification_reason,
+    attention_state,
   } = mention.toJS();
   const shownPath = display_path || path;
   const isThreadFollowNotification = notification_reason === "thread_follow";
@@ -378,6 +379,12 @@ export function NotificationRow(props: Props) {
       return (
         <>
           <strong>{title ?? "Notification"}</strong>
+          {notice_type === "codex_attention" &&
+          (attention_state ?? "pending") === "pending" ? (
+            <Tag color="gold" style={{ marginLeft: 8 }}>
+              Needs attention
+            </Tag>
+          ) : null}
           <div style={{ color: "rgb(100, 100, 100)" }}>
             {origin_label ?? "System"}{" "}
             <TimeAgo date={(latestTime ?? time).getTime()} />

@@ -928,7 +928,7 @@ describe("thread-config by thread_id", () => {
     expect(row?.agent_mode).toBe("interactive");
   });
 
-  it("preserves Codex notify setting when saving partial config", () => {
+  it("migrates the legacy Codex notify setting when saving partial config", () => {
     const threadId = "37333333-3333-4333-8333-333333333333";
     const existing = {
       event: "chat-thread-config",
@@ -969,8 +969,9 @@ describe("thread-config by thread_id", () => {
     expect(row?.acp_config).toMatchObject({
       model: "gpt-5.4",
       sessionMode: "full-access",
-      notifyOnTurnFinish: true,
     });
+    expect(row?.acp_config).not.toHaveProperty("notifyOnTurnFinish");
+    expect(row?.codex_completion_notification).toBe("on");
   });
 
   it("creates a canonical thread-config row when updating by thread_id", () => {

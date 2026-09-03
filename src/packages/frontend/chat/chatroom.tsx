@@ -106,6 +106,12 @@ import {
 } from "./drawer-overlay-state";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import {
+  OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
+  OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY,
+  normalizeNotificationPreferencesV2,
+  resolveCodexCompletionNotificationEnabled,
+} from "@cocalc/util/notification-preferences";
+import {
   defaultWorkingDirectoryForChat,
   useWorkspaceChatWorkingDirectory,
 } from "@cocalc/frontend/project/workspaces/chat-defaults";
@@ -117,7 +123,6 @@ import {
 } from "@cocalc/frontend/project/workspaces/runtime";
 import { OTHER_SETTINGS_CODEX_NEW_CHAT_DEFAULTS } from "./codex-defaults";
 import {
-  DEFAULT_CODEX_MODEL_NAME,
   type CodexPaymentSourcePreference,
   isCodexModelName,
   resolveCodexServiceTier,
@@ -133,9 +138,11 @@ import {
   isCodexSubmitTarget,
 } from "./codex-submit-preflight";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
+import { registerDirectlyWatchedCodexThread } from "./codex-watch-presence";
 import { showProjectStartRequiredModal } from "@cocalc/frontend/projects/start-required-modal";
 import { tab_to_path } from "@cocalc/util/misc";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
+import { useCodexAttentionSummary } from "./use-codex-attention";
 import type { ChatInputControl } from "./input";
 import {
   claimPendingChatSend,
@@ -194,6 +201,7 @@ type CodexTurnNotificationSnapshot = {
 };
 
 type ChatThreadCompletionSnapshot = {
+  threadId: string;
   active: boolean;
   interrupted: boolean;
   newestMessageDate?: string;
@@ -299,12 +307,18 @@ export function appendCompletedCodexTurnNotifications({
 
 function threadNotifyOnTurnFinishEnabled(
   config?: Partial<CodexThreadConfig> | immutable.Map<string, unknown> | null,
+  override?: unknown,
+  accountDefault = true,
 ): boolean {
-  const value =
+  const plainConfig =
     config && immutable.Map.isMap(config)
-      ? config.get("notifyOnTurnFinish")
-      : config?.notifyOnTurnFinish;
-  return value === true;
+      ? (config.toJS() as Partial<CodexThreadConfig>)
+      : config;
+  return resolveCodexCompletionNotificationEnabled({
+    override,
+    legacy: plainConfig,
+    accountDefault,
+  });
 }
 
 function latestAcpStableSourceId(
@@ -325,10 +339,12 @@ function buildChatThreadCompletionSnapshots({
   actions,
   acpState,
   threads,
+  accountDefault,
 }: {
   actions: ChatActions;
   acpState?: immutable.Map<string, string>;
   threads: readonly any[];
+  accountDefault: boolean;
 }): Map<string, ChatThreadCompletionSnapshot> {
   const snapshots = new Map<string, ChatThreadCompletionSnapshot>();
   for (const thread of threads) {
@@ -338,6 +354,7 @@ function buildChatThreadCompletionSnapshots({
     const threadMessages = actions.getMessagesInThread(threadId) ?? [];
     const metadata = actions.getThreadMetadata?.(thread.key, { threadId });
     snapshots.set(thread.key, {
+      threadId,
       active: hasActiveAcpTurnForComposer({
         isSelectedThreadAI: true,
         selectedThreadId: threadId,
@@ -350,7 +367,11 @@ function buildChatThreadCompletionSnapshots({
       threadLabel:
         `${thread.displayLabel ?? thread.label ?? metadata?.name ?? ""}`.trim() ||
         "this chat",
-      notifyOnTurnFinish: threadNotifyOnTurnFinishEnabled(metadata?.acp_config),
+      notifyOnTurnFinish: threadNotifyOnTurnFinishEnabled(
+        metadata?.acp_config,
+        metadata?.codex_completion_notification,
+        accountDefault,
+      ),
     });
   }
   return snapshots;
@@ -759,6 +780,11 @@ export function ChatPanel({
     fragmentId,
     storedThreadFromDesc,
   });
+  const codexAttention = useCodexAttentionSummary({
+    active: !readOnly && !!account_id,
+    project_id,
+    path,
+  });
 
   useEffect(() => {
     if (
@@ -788,6 +814,18 @@ export function ChatPanel({
   );
   const accountCustomize = useTypedRedux("account", "customize");
   const accountOtherSettings = useTypedRedux("account", "other_settings");
+  const accountCompletionNotificationDefault = useMemo(() => {
+    const rawV1 = accountOtherSettings?.get?.(
+      OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
+    );
+    const rawV2 = accountOtherSettings?.get?.(
+      OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY,
+    );
+    return normalizeNotificationPreferencesV2(
+      rawV2?.toJS?.() ?? rawV2,
+      rawV1?.toJS?.() ?? rawV1,
+    ).ai.completion_default;
+  }, [accountOtherSettings]);
   const studentProjectFunctionality =
     useStudentProjectFunctionality(project_id);
   const aiAgentPolicyAllowed = useMemo(() => {
@@ -1157,9 +1195,36 @@ export function ChatPanel({
   const selectedThreadResolved = selectedThreadMetadata?.resolved;
   const effectiveReadOnly = readOnly || selectedThreadResolved != null;
   const notifyOnSelectedTurnFinish = useMemo(
-    () => threadNotifyOnTurnFinishEnabled(selectedThreadMetadata?.acp_config),
-    [selectedThreadMetadata?.acp_config],
+    () =>
+      threadNotifyOnTurnFinishEnabled(
+        selectedThreadMetadata?.acp_config,
+        selectedThreadMetadata?.codex_completion_notification,
+        accountCompletionNotificationDefault,
+      ),
+    [
+      accountCompletionNotificationDefault,
+      selectedThreadMetadata?.acp_config,
+      selectedThreadMetadata?.codex_completion_notification,
+    ],
   );
+  useEffect(() => {
+    if (!selectedThreadId || !account_id) return;
+    return registerDirectlyWatchedCodexThread({
+      account_id,
+      project_id,
+      path,
+      thread_id: selectedThreadId,
+      active: isChatForeground && isVisible && tabIsVisible,
+    });
+  }, [
+    isChatForeground,
+    isVisible,
+    path,
+    project_id,
+    account_id,
+    selectedThreadId,
+    tabIsVisible,
+  ]);
   const selectedThreadAutomationConfig = useMemo(
     () => visibleAutomationConfig(selectedThreadMetadata?.automation_config),
     [selectedThreadMetadata?.automation_config],
@@ -1429,14 +1494,12 @@ export function ChatPanel({
   const setNotifyOnSelectedTurnFinish = useCallback(
     (checked: boolean) => {
       if (!selectedThreadKey || !selectedThreadId) return;
-      const currentConfig = selectedThreadMetadata?.acp_config ?? {};
-      actions.setCodexConfig(selectedThreadKey, {
-        ...currentConfig,
-        model: currentConfig.model ?? DEFAULT_CODEX_MODEL_NAME,
-        notifyOnTurnFinish: checked,
-      });
+      actions.setCodexCompletionNotificationOverride(
+        selectedThreadKey,
+        checked ? "on" : "off",
+      );
     },
-    [actions, selectedThreadId, selectedThreadKey, selectedThreadMetadata],
+    [actions, selectedThreadId, selectedThreadKey],
   );
   const hasRunningAcpTurn = useMemo(() => {
     return hasActiveAcpTurnForComposer({
@@ -1457,6 +1520,7 @@ export function ChatPanel({
       actions,
       acpState,
       threads: [...threads, ...archivedThreads],
+      accountDefault: accountCompletionNotificationDefault,
     });
     const previousSnapshots = priorThreadCompletionSnapshotsRef.current;
     priorThreadCompletionSnapshotsRef.current = currentSnapshots;
@@ -1471,8 +1535,10 @@ export function ChatPanel({
       }
       if (previous.notifyOnTurnFinish || current.notifyOnTurnFinish) {
         showLocalCodexTurnCompletionToast({
+          account_id,
           project_id,
           path,
+          thread_id: current.threadId,
           thread_label: current.threadLabel,
           newest_message_date: current.newestMessageDate,
           stable_source_id: current.stableSourceId,
@@ -1495,6 +1561,7 @@ export function ChatPanel({
     }).catch(() => {});
   }, [
     account_id,
+    accountCompletionNotificationDefault,
     acpState,
     actions,
     archivedThreads,
@@ -1716,12 +1783,8 @@ export function ChatPanel({
       return;
     }
     const messageCount = Math.max(thread.messageCount ?? 0, 0);
-    const unreadCount = Math.max(thread.unreadCount ?? 0, 0);
     const signature = `${thread.key}:${messageCount}`;
-    if (
-      selectedThreadReadSignatureRef.current === signature &&
-      unreadCount <= 0
-    ) {
+    if (selectedThreadReadSignatureRef.current === signature) {
       return;
     }
     if (messageCount <= 0) {
@@ -2710,6 +2773,9 @@ export function ChatPanel({
             setSidebarVisible={setSidebarVisible}
             threadSections={threadSections}
             archivedThreads={archivedThreads}
+            attentionCount={codexAttention.count}
+            attentionCountByThread={codexAttention.byThread}
+            attentionTargetByThread={codexAttention.targetByThread}
             openAppearanceModal={
               modalHandlers?.openAppearanceModal ??
               ((_threadKey, _label, _useCurrentLabel, _color, _icon) =>

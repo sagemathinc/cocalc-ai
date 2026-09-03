@@ -1213,6 +1213,14 @@ async function createCodexTurnNoticeLite(
   );
 }
 
+async function createCodexAttentionNoticeLite(
+  _opts: import("@cocalc/conat/hub/api/notifications").CreateCodexAttentionNoticeOptions,
+): Promise<CreateNotificationResult> {
+  throw Error(
+    "notifications.createCodexAttentionNotice is not supported in lite mode",
+  );
+}
+
 async function listNotificationsLite(
   _opts?: ListNotificationsOptions,
 ): Promise<NotificationListRow[]> {
@@ -1287,6 +1295,7 @@ export const hubApi: HubApi = {
     createMention: createMentionLite,
     createAccountNotice: createAccountNoticeLite,
     createCodexTurnNotice: createCodexTurnNoticeLite,
+    createCodexAttentionNotice: createCodexAttentionNoticeLite,
     list: listNotificationsLite,
     counts: getNotificationCountsLite,
     markRead: markNotificationReadLite,

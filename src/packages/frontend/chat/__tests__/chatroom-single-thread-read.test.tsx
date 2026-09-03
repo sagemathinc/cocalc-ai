@@ -254,11 +254,21 @@ describe("ChatPanel selected thread read tracking", () => {
   });
 
   it("retries marking the selected thread read when the watermark is not ready yet", () => {
+    currentThread = {
+      ...currentThread,
+      messageCount: 0,
+      unreadCount: 0,
+    };
     const { actions, rerender } = renderPanel();
     actions.markThreadRead.mockReset();
     actions.markThreadRead
       .mockImplementationOnce(() => false)
       .mockImplementation(() => true);
+    currentThread = {
+      ...currentThread,
+      messageCount: 2,
+      unreadCount: 1,
+    };
 
     rerender(
       <ChatPanel

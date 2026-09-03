@@ -24,7 +24,10 @@ import {
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { lite } from "@cocalc/frontend/lite";
 import { MAX_NOTIFICATION_INBOX_LIST_LIMIT } from "@cocalc/util/security-limits";
-import { showCodexTurnCompletionToastBestEffort } from "../codex-turn-toast";
+import {
+  isCodexAttentionNotification,
+  showCodexTurnCompletionToastBestEffort,
+} from "../codex-turn-toast";
 import {
   attachProjectionFeedDiagnostics,
   recordProjectionFeedEvent,
@@ -102,6 +105,8 @@ function buildNotificationMention(
     fragment_id: summary.fragment_id,
     thread_id: summary.thread_id,
     thread_label: summary.thread_label,
+    attention_state: summary.attention_state,
+    attention_id: summary.attention_id,
     users: {
       [account_id]: {
         read: !!row.read_state?.read,
@@ -585,7 +590,8 @@ export class MentionsActions extends Actions<MentionsState> {
       case "notification.upsert": {
         if (
           event.reason === "projected_upsert" &&
-          !event.notification.read_state?.read
+          (!event.notification.read_state?.read ||
+            isCodexAttentionNotification(event.notification))
         ) {
           void showCodexTurnCompletionToastBestEffort({
             account_id,
@@ -601,6 +607,14 @@ export class MentionsActions extends Actions<MentionsState> {
             ? new Date(event.notification.updated_at)
             : null,
         });
+        if (event.notification.read_state?.archived) {
+          this.setState({
+            mentions: this.getMentions().remove(
+              event.notification.notification_id,
+            ),
+          });
+          return;
+        }
         this.setState({
           mentions: this.getMentions()
             .set(event.notification.notification_id, mention)

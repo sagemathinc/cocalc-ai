@@ -26,6 +26,8 @@ import {
 import type {
   AcpAutomationRequest,
   AcpAutomationResponse,
+  AcpAttentionRequest,
+  AcpAttentionResponse,
   AcpCommandRequest,
   AcpAutomationRecord,
   AcpControlRequest,
@@ -133,7 +135,6 @@ import {
 } from "./admission";
 import {
   buildCodexTurnNoticeOptions,
-  codexTurnNotifyPreference,
   publishCodexTurnNotice,
 } from "./codex-turn-notice";
 import { resolveLiteCodexHome } from "../codex-auth";
@@ -234,6 +235,25 @@ import {
   markAcpSteerHandled,
 } from "../sqlite/acp-steers";
 import {
+  claimAcpAttentionResponseDispatch,
+  claimStaleAcpAttentionContinue,
+  getAcpAttention,
+  listAcpAttention,
+  listPendingAcpActions,
+  markAllPendingAcpSyncAttentionStale,
+  markAcpAsyncAttentionSuperseded,
+  resolveAcpAttention,
+  submitAcpAttentionResponse,
+  updateAcpAttentionDelivery,
+  type AcpAttentionStoredRecord,
+} from "../sqlite/acp-attention";
+import {
+  createCodexAttentionHandler,
+  createCodexFreshAuthAttention,
+  publishStoredAttentionNoticeBestEffort,
+  reconcileCodexAction,
+} from "./codex-attention";
+import {
   getAcpWorker,
   heartbeatAcpWorker,
   listAcpWorkers,
@@ -260,6 +280,7 @@ import {
 } from "./worker-manager";
 import { buildCodexRuntimeEnv } from "./runtime-env";
 import { automationAfterScheduledEnqueueFailure } from "./automation-enqueue-failure";
+import { validateAttentionAnswers } from "@cocalc/ai/acp";
 
 export {
   acpAdmissionLimitsFromEffectiveLimits,
@@ -1009,6 +1030,19 @@ function turnStillLikelyOwnedByLiveWorker(
     return true;
   }
   return false;
+}
+
+function attentionResponderStillLive(
+  record: AcpAttentionStoredRecord,
+): boolean {
+  const messageDate = `${record.chat?.message_date ?? ""}`.trim();
+  if (!messageDate) return false;
+  const lease = getAcpTurnLease({
+    project_id: record.project_id,
+    path: record.path,
+    message_date: messageDate,
+  });
+  return lease != null && turnStillLikelyOwnedByLiveWorker(lease);
 }
 
 function jobStillLikelyOwnedByLiveWorker({
@@ -2460,7 +2494,10 @@ export class ChatStreamWriter {
   private async publishCodexTurnCompletionNoticeBestEffort(
     terminalState: "complete" | "error",
   ): Promise<void> {
-    if (this.completionNoticePublished) {
+    if (
+      this.completionNoticePublished ||
+      process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS !== "1"
+    ) {
       return;
     }
     try {
@@ -2469,13 +2506,18 @@ export class ChatStreamWriter {
         return;
       }
       const threadConfig = preferredThreadConfigRow(this.syncdb, threadId);
-      const config = this.recordField<any>(threadConfig, "acp_config") as
-        | undefined
-        | null;
-      const currentPreference = codexTurnNotifyPreference(config);
+      const override = this.recordField<string>(
+        threadConfig,
+        "codex_completion_notification",
+      );
       const shouldNotify =
-        currentPreference === true ||
-        this.metadata.notify_on_turn_finish === true;
+        override === "on"
+          ? true
+          : override === "off"
+            ? false
+            : typeof this.metadata.completion_notification_enabled === "boolean"
+              ? this.metadata.completion_notification_enabled
+              : true;
       if (!shouldNotify) {
         return;
       }
@@ -7189,6 +7231,7 @@ async function ensureAgent(
     const created = await CodexAppServerAgent.create({
       binaryPath: process.env.COCALC_CODEX_BIN,
       cwd: bindings.workspaceRoot ?? process.cwd(),
+      attentionHandler: createCodexAttentionHandler(conatClient!),
       uploadGeneratedImage: uploadGeneratedImageBlob,
       onOutstandingWorkChanged: async ({
         sessionId,
@@ -10242,6 +10285,20 @@ async function enqueueChatAcpTurn({
     `${request.chat.project_id ?? request.project_id ?? ""}`.trim();
   const chatPath = `${request.chat.path ?? ""}`.trim();
   const threadId = `${request.chat.thread_id ?? ""}`.trim();
+  if (projectId && chatPath && threadId) {
+    const superseded = markAcpAsyncAttentionSuperseded({
+      project_id: projectId,
+      path: chatPath,
+      thread_id: threadId,
+      reason: "A newer user message superseded this question",
+    });
+    for (const record of superseded) {
+      void publishStoredAttentionNoticeBestEffort({
+        client: conatClient,
+        record,
+      });
+    }
+  }
   const { job: row, canceled } = enqueueAcpJobCancelingQueuedRecoveries(
     request,
     {
@@ -10325,6 +10382,454 @@ async function handleAcpSteerRequest(
     return await fallbackAcpSteerToQueuedTurn(request);
   }
   return await fallbackAcpSteerToQueuedTurn(request);
+}
+
+function publicAttentionRecord(
+  record: NonNullable<ReturnType<typeof getAcpAttention>>,
+) {
+  const {
+    chat: _chat,
+    response: _response,
+    response_id: _responseId,
+    response_declined: _responseDeclined,
+    ...publicRecord
+  } = record;
+  return publicRecord;
+}
+
+function formatAttentionAnswer(
+  record: NonNullable<ReturnType<typeof getAcpAttention>>,
+): string {
+  if (record.response_declined) {
+    return "I declined to answer the earlier Codex question.";
+  }
+  const lines = ["Answer to the earlier Codex question:"];
+  for (const question of record.questions) {
+    const answers = record.response?.[question.id] ?? [];
+    lines.push(`\n${question.header}: ${answers.join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+async function enqueueAsyncAttentionAnswer(
+  record: NonNullable<ReturnType<typeof getAcpAttention>>,
+): Promise<void> {
+  if (!conatClient) throw new Error("conat client must be initialized");
+  const responseIdentity = `${record.attention_id}:${record.response_id ?? "response"}`;
+  const responseSubmittedAt =
+    record.response_submitted_at ?? record.updated_at ?? Date.now();
+  const userDate = new Date(responseSubmittedAt);
+  const assistantDate = new Date(userDate.valueOf() + 1);
+  const userMessageId = uuidsha1(`acp-attention-user:${responseIdentity}`);
+  const assistantMessageId = uuidsha1(
+    `acp-attention-assistant:${responseIdentity}`,
+  );
+  const content = formatAttentionAnswer(record);
+  let config: any = {};
+  const senderId = record.account_id;
+  await withChatSyncDB({
+    client: conatClient,
+    project_id: record.project_id,
+    path: record.path,
+    fn: async (syncdb) => {
+      const threadConfig = preferredThreadConfigRow(syncdb, record.thread_id);
+      config = syncdbField(threadConfig, "acp_config") ?? {};
+      if (typeof config?.toJS === "function") {
+        config = config.toJS();
+      }
+      const parentMessageId = latestThreadMessageIdInSyncDB({
+        syncdb,
+        threadId: record.thread_id,
+      });
+      syncdb.set(
+        buildChatMessage({
+          sender_id: senderId,
+          date: userDate,
+          prevHistory: [],
+          content,
+          generating: false,
+          message_id: userMessageId,
+          thread_id: record.thread_id,
+          parent_message_id: parentMessageId,
+        }),
+      );
+      syncdb.commit();
+      await syncdb.save();
+    },
+  });
+  await enqueueChatAcpTurn({
+    request: {
+      project_id: record.project_id,
+      account_id: record.account_id,
+      prompt: content,
+      session_id:
+        normalizeCodexSessionId(config?.sessionId) ?? record.thread_id,
+      config,
+      chat: {
+        project_id: record.project_id,
+        path: record.path,
+        sender_id: senderId,
+        user_message_date: userDate.toISOString(),
+        user_message_content: content,
+        message_date: assistantDate.toISOString(),
+        thread_id: record.thread_id,
+        message_id: assistantMessageId,
+        parent_message_id: userMessageId,
+      },
+    },
+    stream: async () => undefined,
+  });
+}
+
+async function continueStaleAttentionAnswer(
+  request: Extract<AcpAttentionRequest, { action: "continue" }>,
+): Promise<AcpAttentionResponse> {
+  const current = getAcpAttention(request.attention_id);
+  if (
+    !current ||
+    current.account_id !== request.account_id ||
+    current.project_id !== request.project_id
+  ) {
+    return { ok: false, state: "missing" };
+  }
+  if (
+    !["codex_sync_question", "codex_async_question"].includes(
+      current.source_kind,
+    ) ||
+    current.state !== "stale" ||
+    !current.response_id
+  ) {
+    return {
+      ok: false,
+      state: current.state,
+      record: publicAttentionRecord(current),
+      error: "This response cannot be continued.",
+    };
+  }
+  const claimed = claimStaleAcpAttentionContinue({
+    attention_id: request.attention_id,
+    account_id: request.account_id,
+    project_id: request.project_id,
+  });
+  if (!claimed) {
+    const latest = getAcpAttention(request.attention_id);
+    return {
+      ok: latest?.state === "answered",
+      state: latest?.state ?? "missing",
+      record: latest ? publicAttentionRecord(latest) : undefined,
+    };
+  }
+  try {
+    await enqueueAsyncAttentionAnswer(claimed);
+    const resolved = resolveAcpAttention({
+      attention_id: request.attention_id,
+      state: "answered",
+      reason: "Stored answer continued as a new Codex message",
+    });
+    if (resolved && conatClient) {
+      void publishStoredAttentionNoticeBestEffort({
+        client: conatClient,
+        record: resolved,
+      });
+    }
+    return {
+      ok: true,
+      state: resolved?.state ?? "answered",
+      record: resolved ? publicAttentionRecord(resolved) : undefined,
+    };
+  } catch (err) {
+    const stale = resolveAcpAttention({
+      attention_id: request.attention_id,
+      state: "stale",
+      reason: `Unable to continue the answer: ${(err as Error)?.message ?? err}`,
+    });
+    if (stale && conatClient) {
+      void publishStoredAttentionNoticeBestEffort({
+        client: conatClient,
+        record: stale,
+      });
+    }
+    return {
+      ok: false,
+      state: stale?.state ?? "stale",
+      record: stale ? publicAttentionRecord(stale) : undefined,
+      error: stale?.resolution_reason,
+    };
+  }
+}
+
+async function handleAcpAttentionRequest(
+  request: AcpAttentionRequest,
+): Promise<AcpAttentionResponse> {
+  switch (request.action) {
+    case "list": {
+      const records = listAcpAttention({
+        account_id: request.account_id,
+        project_id: request.project_id,
+        path: request.path,
+        thread_id: request.thread_id,
+        state: request.state,
+      });
+      if (conatClient) {
+        await Promise.all(
+          records.map(async (record) => {
+            try {
+              await reconcileCodexAction({ client: conatClient!, record });
+            } catch (err) {
+              logger.debug("failed to reconcile Codex action while listing", {
+                attention_id: record.attention_id,
+                err,
+              });
+            }
+          }),
+        );
+      }
+      return {
+        ok: true,
+        records: listAcpAttention({
+          account_id: request.account_id,
+          project_id: request.project_id,
+          path: request.path,
+          thread_id: request.thread_id,
+          state: request.state,
+        }).map(publicAttentionRecord),
+      };
+    }
+    case "register_action": {
+      if (!conatClient) throw new Error("conat client must be initialized");
+      if (request.action_kind !== "fresh_auth") {
+        throw new Error("unsupported Codex action kind");
+      }
+      const stored = await createCodexFreshAuthAttention({
+        client: conatClient,
+        account_id: request.account_id,
+        project_id: request.project_id,
+        path: request.path,
+        thread_id: request.thread_id,
+        turn_id: request.turn_id,
+        message_date: request.message_date,
+        challenge_id: request.action_reference,
+      });
+      const record = publicAttentionRecord(stored);
+      findChatWriter({
+        threadId: stored.thread_id,
+        chat: stored.chat,
+      })?.addLocalEvent({ type: "attention", request: record });
+      void publishStoredAttentionNoticeBestEffort({
+        client: conatClient,
+        record: stored,
+      });
+      return { ok: true, state: record.state, record };
+    }
+    case "execute_action": {
+      if (!conatClient) throw new Error("conat client must be initialized");
+      const current = getAcpAttention(request.attention_id);
+      if (
+        !current ||
+        current.account_id !== request.account_id ||
+        current.project_id !== request.project_id
+      ) {
+        return { ok: false, state: "missing" };
+      }
+      const record = await reconcileCodexAction({
+        client: conatClient,
+        record: current,
+      });
+      return {
+        ok: true,
+        state: record.state,
+        record: publicAttentionRecord(record),
+      };
+    }
+    case "seen": {
+      const record = updateAcpAttentionDelivery({
+        attention_id: request.attention_id,
+        account_id: request.account_id,
+        project_id: request.project_id,
+        seen_at: Date.now(),
+      });
+      return record
+        ? {
+            ok: true,
+            state: record.state,
+            record: publicAttentionRecord(record),
+          }
+        : { ok: false, state: "missing" };
+    }
+    case "acknowledge": {
+      const record = updateAcpAttentionDelivery({
+        attention_id: request.attention_id,
+        account_id: request.account_id,
+        project_id: request.project_id,
+        acknowledged_at: Date.now(),
+      });
+      if (record && conatClient) {
+        void publishStoredAttentionNoticeBestEffort({
+          client: conatClient,
+          record,
+        });
+      }
+      return record
+        ? {
+            ok: true,
+            state: record.state,
+            record: publicAttentionRecord(record),
+          }
+        : { ok: false, state: "missing" };
+    }
+    case "snooze": {
+      if (
+        !Number.isFinite(request.snoozed_until) ||
+        request.snoozed_until <= Date.now() ||
+        request.snoozed_until > Date.now() + 24 * 60 * 60 * 1000
+      ) {
+        throw new Error("snoozed_until is outside the allowed range");
+      }
+      const record = updateAcpAttentionDelivery({
+        attention_id: request.attention_id,
+        account_id: request.account_id,
+        project_id: request.project_id,
+        snoozed_until: request.snoozed_until,
+      });
+      if (record && conatClient) {
+        void publishStoredAttentionNoticeBestEffort({
+          client: conatClient,
+          record,
+        });
+      }
+      return record
+        ? {
+            ok: true,
+            state: record.state,
+            record: publicAttentionRecord(record),
+          }
+        : { ok: false, state: "missing" };
+    }
+    case "continue":
+      return await continueStaleAttentionAnswer(request);
+    case "respond": {
+      const current = getAcpAttention(request.attention_id);
+      if (
+        !current ||
+        current.account_id !== request.account_id ||
+        current.project_id !== request.project_id
+      ) {
+        return { ok: false, state: "missing" };
+      }
+      const normalized = validateAttentionAnswers({
+        questions: current.questions,
+        answers: request.answers,
+        decline: request.decline,
+      });
+      const answers = Object.fromEntries(
+        Object.entries(normalized).map(([id, value]) => [id, value.answers]),
+      );
+      const submitted = submitAcpAttentionResponse({
+        attention_id: request.attention_id,
+        account_id: request.account_id,
+        project_id: request.project_id,
+        response_id: request.response_id,
+        answers,
+        decline: request.decline,
+      });
+      if (!submitted.record) {
+        return { ok: false, state: submitted.state };
+      }
+      if (current.source_kind !== "codex_async_question") {
+        return {
+          ok: true,
+          state: submitted.state,
+          record: publicAttentionRecord(submitted.record),
+        };
+      }
+      if (
+        submitted.state === "already_submitted" ||
+        !claimAcpAttentionResponseDispatch({
+          attention_id: request.attention_id,
+          response_id: request.response_id,
+        })
+      ) {
+        return {
+          ok: submitted.record.state === "answered",
+          state: submitted.record.state,
+          record: publicAttentionRecord(submitted.record),
+        };
+      }
+      try {
+        await enqueueAsyncAttentionAnswer(submitted.record);
+        const resolved = resolveAcpAttention({
+          attention_id: request.attention_id,
+          state: request.decline ? "declined" : "answered",
+          reason: "Answer queued as a new Codex message",
+        });
+        if (resolved && conatClient) {
+          void publishStoredAttentionNoticeBestEffort({
+            client: conatClient,
+            record: resolved,
+          });
+        }
+        return resolved
+          ? {
+              ok: true,
+              state: resolved.state,
+              record: publicAttentionRecord(resolved),
+            }
+          : { ok: false, state: "missing" };
+      } catch (err) {
+        const stale = resolveAcpAttention({
+          attention_id: request.attention_id,
+          state: "stale",
+          reason: `Unable to queue the answer: ${(err as Error)?.message ?? err}`,
+        });
+        if (stale && conatClient) {
+          void publishStoredAttentionNoticeBestEffort({
+            client: conatClient,
+            record: stale,
+          });
+        }
+        return {
+          ok: false,
+          state: stale?.state ?? "stale",
+          record: stale ? publicAttentionRecord(stale) : undefined,
+          error: stale?.resolution_reason,
+        };
+      }
+    }
+  }
+}
+
+const CODEX_ACTION_RECONCILE_MS = 10_000;
+let codexActionReconcileTimer: NodeJS.Timeout | undefined;
+let codexActionReconcileRunning = false;
+
+async function reconcilePendingCodexActions(
+  client: ConatClient,
+): Promise<void> {
+  if (codexActionReconcileRunning) return;
+  codexActionReconcileRunning = true;
+  try {
+    for (const record of listPendingAcpActions()) {
+      try {
+        await reconcileCodexAction({ client, record });
+      } catch (err) {
+        logger.debug("failed to reconcile pending Codex action", {
+          attention_id: record.attention_id,
+          err,
+        });
+      }
+    }
+  } finally {
+    codexActionReconcileRunning = false;
+  }
+}
+
+function startCodexActionReconcilePoller(client: ConatClient): void {
+  if (codexActionReconcileTimer != null) return;
+  void reconcilePendingCodexActions(client);
+  codexActionReconcileTimer = setInterval(() => {
+    void reconcilePendingCodexActions(client);
+  }, CODEX_ACTION_RECONCILE_MS);
+  codexActionReconcileTimer.unref?.();
 }
 
 async function attemptAcpSteerRequest(
@@ -10624,6 +11129,12 @@ export async function init(
     preferContainerExecutor(),
   );
   initializeAcpRuntime(client);
+  for (const record of markAllPendingAcpSyncAttentionStale(
+    "Codex attention responder was lost when the ACP service restarted",
+    { preserve: attentionResponderStillLive },
+  )) {
+    void publishStoredAttentionNoticeBestEffort({ client, record });
+  }
   process.once("exit", () => {
     void disposeAcpAgents();
   });
@@ -10639,6 +11150,7 @@ export async function init(
       truncateSession: async () => ({ ok: true, truncated: false }),
       control: handleAcpControlRequest,
       automation: handleAcpAutomationRequest,
+      attention: handleAcpAttentionRequest,
     },
     client,
   );
@@ -10646,6 +11158,7 @@ export async function init(
   // under temporary storage pressure need a project-host-owned retry path.
   startAcpTerminalRecoveryPoller(client);
   startAcpAutomationPoller();
+  startCodexActionReconcilePoller(client);
   void republishAcpAutomationProjectIndexes().catch((err) => {
     logger.warn("failed to republish ACP automation project indexes", err);
   });

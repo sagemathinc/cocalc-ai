@@ -127,6 +127,10 @@ import {
   isMissingCookieAuthError,
 } from "./core/interactive-auth-login";
 import {
+  isManagedCodexAgentContext,
+  requestManagedCodexFreshAuth,
+} from "./core/codex-fresh-auth";
+import {
   HOST_CREATE_DISK_TYPES,
   HOST_CREATE_STORAGE_MODES,
   createHostHelpers,
@@ -1661,7 +1665,7 @@ function runInteractiveFreshAuth(
   if (globals.profile) args.push("--profile", globals.profile);
   args.push("--api", apiBaseUrl, "auth", "elevate", "--short");
   process.stderr.write(
-    "This action needs fresh account approval; starting browser elevation.\n",
+    `${process.env.COCALC_CLI_AGENT_MODE === "1" ? "This action needs fresh account approval; requesting it in CoCalc." : "This action needs fresh account approval; starting browser elevation."}\n`,
   );
   runCliAuthChild(args);
   process.stderr.write(
@@ -1763,11 +1767,15 @@ async function withContext(
         ctx = await createEphemeralProjectAccountContext(globals, siteUrl);
         data = await fn(ctx);
       } else if (canOfferInteractiveFreshAuth({ error })) {
-        const apiBaseUrl = ctx.apiBaseUrl;
-        closeCommandContext(ctx);
-        ctx = undefined;
-        runInteractiveFreshAuth(globals, apiBaseUrl);
-        ctx = await contextForGlobals(globals);
+        if (isManagedCodexAgentContext(ctx)) {
+          await requestManagedCodexFreshAuth({ ctx, commandName });
+        } else {
+          const apiBaseUrl = ctx.apiBaseUrl;
+          closeCommandContext(ctx);
+          ctx = undefined;
+          runInteractiveFreshAuth(globals, apiBaseUrl);
+          ctx = await contextForGlobals(globals);
+        }
         data = await fn(ctx);
       } else if (isAgentGrantRequiredError(error)) {
         data = await waitForAgentGrantApproval({

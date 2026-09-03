@@ -5,8 +5,10 @@
 
 import type { EmailLane } from "./notification-email";
 import {
+  codexNotificationEventClass,
   getNotificationCategoryDefinition,
   normalizeNotificationPreferences,
+  normalizeNotificationPreferencesV2,
   type NotificationCategory,
   type NotificationEmailMode,
 } from "./notification-preferences";
@@ -19,6 +21,7 @@ export interface ResolveNotificationDeliveryPolicyOptions {
   summary?: Record<string, any> | null;
   event_payload?: Record<string, any> | null;
   preferences?: unknown;
+  preferences_v2?: unknown;
   onboarding_email_declined?: boolean;
 }
 
@@ -26,6 +29,8 @@ export interface NotificationDeliveryPolicy {
   category: NotificationCategory;
   lane: EmailLane;
   delivery_mode: NotificationEmailMode;
+  creates_in_app: boolean;
+  email_delay_ms?: number;
   required: boolean;
   responsible_account_id: string | null;
 }
@@ -46,7 +51,10 @@ function accountNoticeCategory(opts: {
   const noticeType = lower(
     opts.summary.notice_type ?? opts.event_payload.notice_type,
   );
-  if (noticeType === "codex_turn_completion") {
+  if (
+    noticeType === "codex_turn_completion" ||
+    noticeType === "codex_attention"
+  ) {
     return "ai";
   }
   if (noticeType.startsWith("onboarding_")) {
@@ -178,18 +186,48 @@ export function resolveNotificationDeliveryPolicy(
       "onboarding",
     );
   const required = definition.requiredEmailMode != null;
-  const delivery_mode = required
+  let delivery_mode = required
     ? definition.requiredEmailMode!
     : category === "onboarding" &&
         opts.onboarding_email_declined === true &&
         !hasExplicitOnboardingPreference
       ? "off"
       : preferences.email[category];
+  let creates_in_app = delivery_mode !== "none";
+  let email_delay_ms: number | undefined;
+  if (category === "ai") {
+    const eventClass = codexNotificationEventClass({
+      notice_type: summary.notice_type ?? event_payload.notice_type,
+      severity: summary.severity ?? event_payload.severity,
+    });
+    if (eventClass) {
+      const preferencesV2 = normalizeNotificationPreferencesV2(
+        opts.preferences_v2,
+        opts.preferences,
+      );
+      const eventPolicy = preferencesV2.ai.events[eventClass];
+      creates_in_app = eventPolicy.inbox;
+      delivery_mode =
+        eventPolicy.email === "immediate" ||
+        eventPolicy.email === "unresolved_after_delay"
+          ? "immediate"
+          : eventPolicy.email === "digest"
+            ? "digest"
+            : creates_in_app
+              ? "off"
+              : "none";
+      if (eventPolicy.email === "unresolved_after_delay") {
+        email_delay_ms = (eventPolicy.email_delay_minutes ?? 5) * 60_000;
+      }
+    }
+  }
   const lane = laneForCategory(category);
   return {
     category,
     lane,
     delivery_mode,
+    creates_in_app,
+    email_delay_ms,
     required,
     responsible_account_id: responsibleAccountId({
       category,
