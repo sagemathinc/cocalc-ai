@@ -102,3 +102,55 @@ describe("Codex fresh-auth attention", () => {
     view.unmount();
   });
 });
+
+describe("Codex question attention", () => {
+  const questionRecord: AcpAttentionRecord = {
+    ...record,
+    source_kind: "codex_sync_question",
+    source_id: "question-1",
+    attention_kind: "question",
+    action: undefined,
+    questions: [
+      {
+        id: "region",
+        header: "Region",
+        question: "Which region?",
+        options: [{ label: "EU" }, { label: "US" }],
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) => ({
+        ok: true,
+        ...(request.action === "list"
+          ? { records: [questionRecord] }
+          : { state: "pending", record: questionRecord }),
+      }));
+  });
+
+  it("only offers custom input when the question permits it", async () => {
+    const view = render(<CodexAttentionCard initialRecord={questionRecord} />);
+    expect(
+      screen.queryByRole("textbox", { name: "Custom answer for Region" }),
+    ).not.toBeInTheDocument();
+    view.unmount();
+    const otherView = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          questions: [{ ...questionRecord.questions[0], isOther: true }],
+        }}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("textbox", { name: "Custom answer for Region" }),
+      ).toBeInTheDocument(),
+    );
+    otherView.unmount();
+  });
+});

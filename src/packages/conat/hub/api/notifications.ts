@@ -193,6 +193,16 @@ export interface MarkNotificationReadOptions {
   read?: boolean;
 }
 
+export interface ClaimCodexNotificationDeliveryOptions {
+  account_id?: string;
+  notification_id: string;
+  delivery_id: string;
+}
+
+export interface ClaimCodexNotificationDeliveryResult {
+  claimed: boolean;
+}
+
 export interface MarkNotificationReadResult {
   updated_count: number;
   notification_ids?: string[];
@@ -244,6 +254,9 @@ export interface Notifications {
     opts?: ListNotificationsOptions,
   ) => Promise<NotificationListSnapshot>;
   counts: (opts?: { account_id?: string }) => Promise<NotificationCountsResult>;
+  claimCodexNotificationDelivery: (
+    opts: ClaimCodexNotificationDeliveryOptions,
+  ) => Promise<ClaimCodexNotificationDeliveryResult>;
   markRead: (
     opts: MarkNotificationReadOptions,
   ) => Promise<MarkNotificationReadResult>;
@@ -400,6 +413,7 @@ export const notifications = {
   list: authFirstRequireAccount,
   listSnapshot: authFirstRequireAccount,
   counts: authFirstRequireAccount,
+  claimCodexNotificationDelivery: authFirstRequireAccount,
   markRead: authFirstRequireAccount,
   markAllRead: authFirstRequireAccount,
   save: authFirstRequireAccount,

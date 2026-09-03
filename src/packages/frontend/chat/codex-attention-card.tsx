@@ -386,18 +386,20 @@ export function CodexAttentionCard({
                     ))}
                   </Checkbox.Group>
                 ) : null}
-                <Input.TextArea
-                  aria-label={`Custom answer for ${question.header}`}
-                  autoSize={{ minRows: 2, maxRows: 6 }}
-                  placeholder="Type an answer"
-                  value={other[question.id] ?? ""}
-                  onChange={(event) =>
-                    setOther((current) => ({
-                      ...current,
-                      [question.id]: event.target.value,
-                    }))
-                  }
-                />
+                {question.isOther || !question.options?.length ? (
+                  <Input.TextArea
+                    aria-label={`Custom answer for ${question.header}`}
+                    autoSize={{ minRows: 2, maxRows: 6 }}
+                    placeholder="Type an answer"
+                    value={other[question.id] ?? ""}
+                    onChange={(event) =>
+                      setOther((current) => ({
+                        ...current,
+                        [question.id]: event.target.value,
+                      }))
+                    }
+                  />
+                ) : null}
               </fieldset>
             ))
           : null}

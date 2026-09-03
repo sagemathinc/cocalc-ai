@@ -4,10 +4,12 @@
  */
 
 import {
+  ACP_ATTENTION_DISPATCH_LEASE_MS,
   claimAcpAttentionResponseDispatch,
   claimStaleAcpAttentionContinue,
   getAcpAttention,
   listPendingAcpActions,
+  listPendingAcpAttentionResponseDispatches,
   markAllPendingAcpSyncAttentionStale,
   markAcpAsyncAttentionSuperseded,
   markAcpSyncAttentionStale,
@@ -103,6 +105,52 @@ describe("ACP attention storage", () => {
         response_id: "response-1",
       }),
     ).toBe(false);
+  });
+
+  it("reclaims an asynchronous response after its dispatch lease expires", () => {
+    const now = 1_000_000;
+    const record = createAttention({
+      source_kind: "codex_async_question",
+      source_id: "async-dispatch-recovery",
+    });
+    submitAcpAttentionResponse({
+      attention_id: record.attention_id,
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      response_id: "response-recovery",
+      answers: { choice: ["Yes"] },
+    });
+
+    expect(
+      claimAcpAttentionResponseDispatch({
+        attention_id: record.attention_id,
+        response_id: "response-recovery",
+        now,
+      }),
+    ).toBe(true);
+    expect(
+      listPendingAcpAttentionResponseDispatches(
+        now + ACP_ATTENTION_DISPATCH_LEASE_MS - 1,
+      ),
+    ).toEqual([]);
+    expect(
+      listPendingAcpAttentionResponseDispatches(
+        now + ACP_ATTENTION_DISPATCH_LEASE_MS,
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        attention_id: record.attention_id,
+        response_id: "response-recovery",
+        resolution_reason: "dispatching",
+      }),
+    ]);
+    expect(
+      claimAcpAttentionResponseDispatch({
+        attention_id: record.attention_id,
+        response_id: "response-recovery",
+        now: now + ACP_ATTENTION_DISPATCH_LEASE_MS,
+      }),
+    ).toBe(true);
   });
 
   it("rejects reads and writes under a different account or project", () => {

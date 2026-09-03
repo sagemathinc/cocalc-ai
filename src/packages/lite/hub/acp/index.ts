@@ -239,6 +239,7 @@ import {
   claimStaleAcpAttentionContinue,
   getAcpAttention,
   listAcpAttention,
+  listPendingAcpAttentionResponseDispatches,
   listPendingAcpActions,
   markAllPendingAcpSyncAttentionStale,
   markAcpAsyncAttentionSuperseded,
@@ -10481,6 +10482,50 @@ async function enqueueAsyncAttentionAnswer(
   });
 }
 
+async function dispatchClaimedAsyncAttentionResponse(
+  record: AcpAttentionStoredRecord,
+): Promise<AcpAttentionResponse> {
+  try {
+    await enqueueAsyncAttentionAnswer(record);
+    const resolved = resolveAcpAttention({
+      attention_id: record.attention_id,
+      state: record.response_declined ? "declined" : "answered",
+      reason: "Answer queued as a new Codex message",
+    });
+    if (resolved && conatClient) {
+      void publishStoredAttentionNoticeBestEffort({
+        client: conatClient,
+        record: resolved,
+      });
+    }
+    return resolved
+      ? {
+          ok: true,
+          state: resolved.state,
+          record: publicAttentionRecord(resolved),
+        }
+      : { ok: false, state: "missing" };
+  } catch (err) {
+    const stale = resolveAcpAttention({
+      attention_id: record.attention_id,
+      state: "stale",
+      reason: `Unable to queue the answer: ${(err as Error)?.message ?? err}`,
+    });
+    if (stale && conatClient) {
+      void publishStoredAttentionNoticeBestEffort({
+        client: conatClient,
+        record: stale,
+      });
+    }
+    return {
+      ok: false,
+      state: stale?.state ?? "stale",
+      record: stale ? publicAttentionRecord(stale) : undefined,
+      error: stale?.resolution_reason,
+    };
+  }
+}
+
 async function continueStaleAttentionAnswer(
   request: Extract<AcpAttentionRequest, { action: "continue" }>,
 ): Promise<AcpAttentionResponse> {
@@ -10755,45 +10800,7 @@ async function handleAcpAttentionRequest(
           record: publicAttentionRecord(submitted.record),
         };
       }
-      try {
-        await enqueueAsyncAttentionAnswer(submitted.record);
-        const resolved = resolveAcpAttention({
-          attention_id: request.attention_id,
-          state: request.decline ? "declined" : "answered",
-          reason: "Answer queued as a new Codex message",
-        });
-        if (resolved && conatClient) {
-          void publishStoredAttentionNoticeBestEffort({
-            client: conatClient,
-            record: resolved,
-          });
-        }
-        return resolved
-          ? {
-              ok: true,
-              state: resolved.state,
-              record: publicAttentionRecord(resolved),
-            }
-          : { ok: false, state: "missing" };
-      } catch (err) {
-        const stale = resolveAcpAttention({
-          attention_id: request.attention_id,
-          state: "stale",
-          reason: `Unable to queue the answer: ${(err as Error)?.message ?? err}`,
-        });
-        if (stale && conatClient) {
-          void publishStoredAttentionNoticeBestEffort({
-            client: conatClient,
-            record: stale,
-          });
-        }
-        return {
-          ok: false,
-          state: stale?.state ?? "stale",
-          record: stale ? publicAttentionRecord(stale) : undefined,
-          error: stale?.resolution_reason,
-        };
-      }
+      return await dispatchClaimedAsyncAttentionResponse(submitted.record);
     }
   }
 }
@@ -10808,6 +10815,25 @@ async function reconcilePendingCodexActions(
   if (codexActionReconcileRunning) return;
   codexActionReconcileRunning = true;
   try {
+    for (const record of listPendingAcpAttentionResponseDispatches()) {
+      if (
+        !record.response_id ||
+        !claimAcpAttentionResponseDispatch({
+          attention_id: record.attention_id,
+          response_id: record.response_id,
+        })
+      ) {
+        continue;
+      }
+      const result = await dispatchClaimedAsyncAttentionResponse(record);
+      if (!result.ok) {
+        logger.debug("failed to reconcile a submitted Codex answer", {
+          attention_id: record.attention_id,
+          state: result.state,
+          error: result.error,
+        });
+      }
+    }
     for (const record of listPendingAcpActions()) {
       try {
         await reconcileCodexAction({ client, record });

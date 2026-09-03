@@ -120,6 +120,36 @@ async function claimCrossTabDelivery(notificationId: string): Promise<boolean> {
   return winner === deliveryTabId && !seenCodexTurnToastIds.has(notificationId);
 }
 
+async function claimExternalDelivery(opts: {
+  account_id: string;
+  deliveryId: string;
+  notificationId: string;
+  localDelivery: boolean;
+}): Promise<boolean> {
+  if (!(await claimCrossTabDelivery(opts.deliveryId))) {
+    return false;
+  }
+  if (opts.localDelivery) {
+    return !seenCodexTurnToastIds.has(opts.deliveryId);
+  }
+  try {
+    const result =
+      await webapp_client.conat_client.hub.notifications.claimCodexNotificationDelivery(
+        {
+          account_id: opts.account_id,
+          notification_id: opts.notificationId,
+          delivery_id: opts.deliveryId,
+        },
+      );
+    return result.claimed;
+  } catch (err) {
+    // Keep notifications working while static and hub versions overlap during
+    // a rolling deploy. The account DKV still provides eventual deduplication.
+    logger.debug("atomic Codex notification claim unavailable", err);
+    return !seenCodexTurnToastIds.has(opts.deliveryId);
+  }
+}
+
 function codexDeliveryPolicy(row: Pick<NotificationListRow, "summary">) {
   const otherSettings = redux.getStore("account")?.get("other_settings");
   const rawV1 = otherSettings?.get?.(
@@ -428,7 +458,16 @@ export async function showCodexTurnCompletionToastBestEffort(opts: {
   ) {
     return;
   }
-  if (!(await claimCrossTabDelivery(deliveryId))) return;
+  if (
+    !(await claimExternalDelivery({
+      account_id: opts.account_id,
+      deliveryId,
+      notificationId,
+      localDelivery: opts.row.summary?.local_delivery === true,
+    }))
+  ) {
+    return;
+  }
   if (stableSourceId) seenCodexTurnStableSourceIds.add(stableSourceId);
   openCodexTurnToastIds.add(deliveryId);
   try {

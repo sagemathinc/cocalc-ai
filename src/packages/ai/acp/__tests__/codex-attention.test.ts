@@ -146,4 +146,33 @@ describe("Codex attention protocol validation", () => {
       "an answer is required",
     );
   });
+
+  it("rejects custom values when a question disallows other answers", () => {
+    const questions = [
+      {
+        id: "region",
+        header: "Region",
+        question: "Which region?",
+        options: [{ label: "EU" }, { label: "US" }],
+      },
+    ];
+    expect(
+      validateAttentionAnswers({
+        questions,
+        answers: { region: ["EU"] },
+      }),
+    ).toEqual({ region: { answers: ["EU"] } });
+    expect(() =>
+      validateAttentionAnswers({
+        questions,
+        answers: { region: ["APAC"] },
+      }),
+    ).toThrow("must use the provided options");
+    expect(() =>
+      validateAttentionAnswers({
+        questions: [{ ...questions[0], isOther: true }],
+        answers: { region: ["APAC"] },
+      }),
+    ).not.toThrow();
+  });
 });

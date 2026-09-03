@@ -231,6 +231,16 @@ export function validateAttentionAnswers(opts: {
         MAX_QUESTION_LENGTH,
       ),
     );
+    if (question.options?.length && !question.isOther) {
+      const allowedAnswers = new Set(
+        question.options.map(({ label }) => label),
+      );
+      if (answers.some((answer) => !allowedAnswers.has(answer))) {
+        throw new Error(
+          `answers for '${question.id}' must use the provided options`,
+        );
+      }
+    }
     if (!opts.decline && answers.length === 0) {
       throw new Error(`an answer is required for '${question.id}'`);
     }

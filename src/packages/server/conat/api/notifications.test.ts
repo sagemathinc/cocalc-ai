@@ -16,6 +16,7 @@ import {
 } from "@cocalc/util/security-limits";
 import {
   archive,
+  claimCodexNotificationDelivery,
   counts,
   createAccountNotice,
   createCodexAttentionNotice,
@@ -54,7 +55,8 @@ describe("conat notifications api", () => {
   afterEach(async () => {
     jest.clearAllMocks();
     await getPool().query(
-      `TRUNCATE notification_target_outbox,
+      `TRUNCATE account_notification_index,
+                notification_target_outbox,
                 notification_targets,
                 notification_events,
                 projects,
@@ -103,6 +105,49 @@ describe("conat notifications api", () => {
       ],
     );
   }
+
+  it("atomically claims Codex delivery within the authenticated account", async () => {
+    await seedMentionContext();
+    const notificationId = "99999999-9999-4999-8999-999999999999";
+    await getPool().query(
+      `INSERT INTO account_notification_index
+         (account_id, notification_id, kind, project_id, summary, read_state,
+          created_at, updated_at)
+       VALUES ($1, $2, 'account_notice', $3, $4::JSONB, '{}'::JSONB,
+               NOW(), NOW())`,
+      [
+        ACTOR_ACCOUNT_ID,
+        notificationId,
+        PROJECT_ID,
+        JSON.stringify({
+          origin_label: "Codex",
+          notice_type: "codex_turn_completion",
+          stable_source_id: "codex-turn-1",
+        }),
+      ],
+    );
+    await expect(
+      claimCodexNotificationDelivery({
+        account_id: ACTOR_ACCOUNT_ID,
+        notification_id: notificationId,
+        delivery_id: "codex-turn-1",
+      }),
+    ).resolves.toEqual({ claimed: true });
+    await expect(
+      claimCodexNotificationDelivery({
+        account_id: ACTOR_ACCOUNT_ID,
+        notification_id: notificationId,
+        delivery_id: "codex-turn-1",
+      }),
+    ).resolves.toEqual({ claimed: false });
+    await expect(
+      claimCodexNotificationDelivery({
+        account_id: ACTOR_ACCOUNT_ID,
+        notification_id: notificationId,
+        delivery_id: "different-turn",
+      }),
+    ).resolves.toEqual({ claimed: false });
+  });
 
   it("creates mention notifications for collaborator targets", async () => {
     await seedMentionContext();

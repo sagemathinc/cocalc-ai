@@ -7,6 +7,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import {
+  claimProjectedCodexNotificationDelivery,
   getProjectedNotificationCounts,
   listProjectedNotificationSnapshotForAccount,
   listProjectedNotificationsForAccount,
@@ -23,6 +24,8 @@ import getPool from "@cocalc/database/pool";
 import { getClusterAccountsByIds } from "@cocalc/server/inter-bay/accounts";
 import type {
   CodexFreshAuthActionStart,
+  ClaimCodexNotificationDeliveryOptions,
+  ClaimCodexNotificationDeliveryResult,
   CreateAccountNoticeOptions,
   CreateCodexAttentionNoticeOptions,
   CreateCodexTurnNoticeOptions,
@@ -824,6 +827,19 @@ export async function counts(opts?: {
   return await getProjectedNotificationCounts({
     account_id,
   });
+}
+
+export async function claimCodexNotificationDelivery(
+  opts: ClaimCodexNotificationDeliveryOptions,
+): Promise<ClaimCodexNotificationDeliveryResult> {
+  const account_id = requireAccountId(opts.account_id);
+  return {
+    claimed: await claimProjectedCodexNotificationDelivery({
+      account_id,
+      notification_id: opts.notification_id,
+      delivery_id: opts.delivery_id,
+    }),
+  };
 }
 
 export async function markRead(

@@ -129,6 +129,49 @@ function normalizeNotificationIds(
   return notification_ids;
 }
 
+function normalizeDeliveryId(raw?: string): string {
+  const delivery_id = `${raw ?? ""}`.trim();
+  if (!delivery_id || delivery_id.length > 500) {
+    throw Error("invalid notification delivery id");
+  }
+  return delivery_id;
+}
+
+export async function claimProjectedCodexNotificationDelivery(opts: {
+  account_id: string;
+  notification_id: string;
+  delivery_id: string;
+}): Promise<boolean> {
+  const account_id = normalizeAccountId(opts.account_id);
+  const notification_id = normalizeUuid(
+    opts.notification_id,
+    "notification id",
+  );
+  const delivery_id = normalizeDeliveryId(opts.delivery_id);
+  const { rowCount } = await getPool().query(
+    `UPDATE account_notification_index
+        SET read_state = jsonb_set(
+              COALESCE(read_state, '{}'::JSONB),
+              '{codex_external_delivery_id}',
+              to_jsonb($3::TEXT),
+              TRUE
+            )
+      WHERE account_id = $1::UUID
+        AND notification_id = $2::UUID
+        AND summary->>'origin_label' = 'Codex'
+        AND summary->>'notice_type' IN
+              ('codex_attention', 'codex_turn_completion')
+        AND $3::TEXT = COALESCE(
+              NULLIF(summary->>'stable_source_id', ''),
+              notification_id::TEXT
+            )
+        AND read_state->>'codex_external_delivery_id' IS DISTINCT FROM $3::TEXT
+      RETURNING notification_id`,
+    [account_id, notification_id, delivery_id],
+  );
+  return rowCount === 1;
+}
+
 function normalizeNotificationInboxState(raw?: string): NotificationInboxState {
   const state = `${raw ?? "all"}`.trim() || "all";
   if (!["all", "unread", "saved", "archived"].includes(state)) {

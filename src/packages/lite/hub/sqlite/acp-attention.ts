@@ -22,6 +22,7 @@ const MAX_PENDING_PER_TURN = 10;
 const MAX_CREATED_PER_ACCOUNT_PER_MINUTE = 240;
 const MAX_CREATED_PER_PROJECT_PER_MINUTE = 120;
 const MAX_CREATED_PER_THREAD_PER_MINUTE = 30;
+export const ACP_ATTENTION_DISPATCH_LEASE_MS = 30_000;
 
 type AcpAttentionRow = {
   attention_id: string;
@@ -455,18 +456,43 @@ export function submitAcpAttentionResponse(opts: {
 export function claimAcpAttentionResponseDispatch(opts: {
   attention_id: string;
   response_id: string;
+  now?: number;
 }): boolean {
   ensureInit();
-  const now = Date.now();
+  const now = opts.now ?? Date.now();
   const result = getAcpDatabase()
     .prepare(
       `UPDATE ${TABLE}
        SET resolution_reason = 'dispatching', updated_at = ?
        WHERE attention_id = ? AND state = 'pending' AND response_id = ?
-         AND resolution_reason IS NULL`,
+         AND (resolution_reason IS NULL OR
+              (resolution_reason = 'dispatching' AND updated_at <= ?))`,
     )
-    .run(now, opts.attention_id, opts.response_id);
+    .run(
+      now,
+      opts.attention_id,
+      opts.response_id,
+      now - ACP_ATTENTION_DISPATCH_LEASE_MS,
+    );
   return Number(result?.changes ?? 0) === 1;
+}
+
+export function listPendingAcpAttentionResponseDispatches(
+  now = Date.now(),
+): AcpAttentionStoredRecord[] {
+  ensureInit();
+  return (
+    getAcpDatabase()
+      .prepare(
+        `SELECT * FROM ${TABLE}
+         WHERE source_kind = 'codex_async_question'
+           AND state = 'pending' AND response_id IS NOT NULL
+           AND (resolution_reason IS NULL OR
+                (resolution_reason = 'dispatching' AND updated_at <= ?))
+         ORDER BY response_submitted_at ASC, attention_id ASC`,
+      )
+      .all(now - ACP_ATTENTION_DISPATCH_LEASE_MS) as AcpAttentionRow[]
+  ).map(toStoredRecord);
 }
 
 export function claimStaleAcpAttentionContinue(opts: {
