@@ -741,6 +741,11 @@ describe("host-registry automatic convergence retry", () => {
       host_session_id: "session-old",
       host_boot_id: "boot-1",
       machine: { cloud: "gcp" },
+      restart_recovery: {
+        status: "running",
+        host_boot_id: "boot-1",
+        host_session_id: "session-old",
+      },
     };
     ensureAutomaticHostRuntimeDeploymentsReconcileMock = jest.fn(async () => ({
       queued: false,
@@ -824,6 +829,13 @@ describe("host-registry automatic convergence retry", () => {
     expect(
       publishProjectAccountFeedEventsBestEffortMock,
     ).not.toHaveBeenCalled();
+    expect(currentMetadata.restart_recovery).toMatchObject({
+      status: "queued",
+      host_boot_id: "boot-1",
+      previous_host_session_id: "session-old",
+      host_session_id: "session-new",
+      waiting_for: "runtime_ready",
+    });
   });
 
   it("queues restart recovery when a host registers after a boot change", async () => {
@@ -994,10 +1006,12 @@ describe("host-registry automatic convergence retry", () => {
     expect(startProjectOnHostMock).toHaveBeenNthCalledWith(1, "proj-high", {
       account_id: "owner-high",
       ignore_recent_state_snapshot: true,
+      host_session_id: "session-new",
     });
     expect(startProjectOnHostMock).toHaveBeenNthCalledWith(2, "proj-low", {
       account_id: "owner-low",
       ignore_recent_state_snapshot: true,
+      host_session_id: "session-new",
     });
     expect(reserveProjectRuntimeSlotMock).toHaveBeenCalledTimes(2);
     expect(heartbeatProjectRuntimeSlotMock).toHaveBeenCalledTimes(2);

@@ -72,9 +72,38 @@ const TERMINAL_START_LRO_STATUSES = new Set([
 ]);
 type StartProjectInFlight = {
   op_id?: string;
+  host_session_id?: string;
   promise: Promise<void>;
 };
 const startProjectInFlight = new Map<string, StartProjectInFlight>();
+
+export function immediateStartReplacementReason({
+  existing_op_id,
+  requested_op_id,
+  existing_host_session_id,
+  requested_host_session_id,
+}: {
+  existing_op_id?: string;
+  requested_op_id?: string;
+  existing_host_session_id?: string;
+  requested_host_session_id?: string;
+}): "untracked-start" | "host-session-changed" | undefined {
+  const existingOpId = `${existing_op_id ?? ""}`.trim();
+  const requestedOpId = `${requested_op_id ?? ""}`.trim();
+  if (requestedOpId && !existingOpId) {
+    return "untracked-start";
+  }
+  const existingHostSessionId = `${existing_host_session_id ?? ""}`.trim();
+  const requestedHostSessionId = `${requested_host_session_id ?? ""}`.trim();
+  if (
+    requestedHostSessionId &&
+    existingHostSessionId &&
+    requestedHostSessionId !== existingHostSessionId
+  ) {
+    return "host-session-changed";
+  }
+  return undefined;
+}
 
 async function projectNeedsPendingCopyCheck(
   project_id: string,
@@ -1046,6 +1075,7 @@ export async function startProjectOnHost(
   project_id: string,
   opts?: {
     lro_op_id?: string;
+    host_session_id?: string;
     account_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
     restore_backup_id?: string;
@@ -1056,8 +1086,45 @@ export async function startProjectOnHost(
   if (existing) {
     const requestedOpId = `${opts?.lro_op_id ?? ""}`.trim();
     const existingOpId = `${existing.op_id ?? ""}`.trim();
+    const requestedHostSessionId = `${opts?.host_session_id ?? ""}`.trim();
+    const existingHostSessionId = `${existing.host_session_id ?? ""}`.trim();
     let reuseExisting = true;
-    if (requestedOpId && existingOpId && requestedOpId !== existingOpId) {
+    const immediateReplacement = immediateStartReplacementReason({
+      existing_op_id: existingOpId,
+      requested_op_id: requestedOpId,
+      existing_host_session_id: existingHostSessionId,
+      requested_host_session_id: requestedHostSessionId,
+    });
+    if (immediateReplacement === "untracked-start") {
+      // Host-restart recovery intentionally has no LRO. A recovery RPC can
+      // remain pending when the project-host process is replaced without a VM
+      // reboot; never let that untracked promise block a user-visible start.
+      log.warn("startProjectOnHost replacing untracked in-memory start", {
+        project_id,
+        requested_op_id: requestedOpId,
+        existing_host_session_id: existingHostSessionId || undefined,
+        requested_host_session_id: requestedHostSessionId || undefined,
+      });
+      startProjectInFlight.delete(project_id);
+      reuseExisting = false;
+    } else if (immediateReplacement === "host-session-changed") {
+      log.warn(
+        "startProjectOnHost replacing start from a previous host session",
+        {
+          project_id,
+          existing_op_id: existingOpId || undefined,
+          requested_op_id: requestedOpId || undefined,
+          existing_host_session_id: existingHostSessionId,
+          requested_host_session_id: requestedHostSessionId,
+        },
+      );
+      startProjectInFlight.delete(project_id);
+      reuseExisting = false;
+    } else if (
+      requestedOpId &&
+      existingOpId &&
+      requestedOpId !== existingOpId
+    ) {
       const existingLro = await getLro(existingOpId).catch((err) => {
         log.warn("startProjectOnHost unable to inspect in-flight lro", {
           project_id,
@@ -1339,6 +1406,7 @@ export async function startProjectOnHost(
   })();
   const inFlight: StartProjectInFlight = {
     op_id: opts?.lro_op_id,
+    host_session_id: opts?.host_session_id,
     promise: task,
   };
   startProjectInFlight.set(project_id, inFlight);
