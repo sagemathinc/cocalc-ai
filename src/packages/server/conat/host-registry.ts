@@ -340,8 +340,12 @@ type HostRestartRecoveryMetadataStatus =
   | "finished"
   | "failed";
 
-function recoveryInflightKey(host_id: string, host_boot_id?: string): string {
-  return `${host_id}:${host_boot_id ?? ""}`;
+function recoveryInflightKey(
+  host_id: string,
+  host_boot_id?: string,
+  host_session_id?: string,
+): string {
+  return `${host_id}:${host_boot_id ?? ""}:${host_session_id ?? ""}`;
 }
 
 function getRestartRecoveryStatus(metadata: any): {
@@ -590,15 +594,29 @@ async function loadHostRestartRecoveryProjects(
 async function updateHostRestartRecoveryMetadata({
   host_id,
   patch,
+  expected_host_session_id,
 }: {
   host_id: string;
   patch: Record<string, unknown>;
-}): Promise<void> {
+  expected_host_session_id?: string;
+}): Promise<boolean> {
   const { rows } = await pool().query<{ metadata: any }>(
     "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
     [host_id],
   );
   const metadata = { ...(rows[0]?.metadata ?? {}) };
+  if (
+    expected_host_session_id &&
+    getHostSessionId(metadata) !== expected_host_session_id
+  ) {
+    logger.warn("ignoring restart recovery update from a stale host session", {
+      host_id,
+      expected_host_session_id,
+      current_host_session_id: getHostSessionId(metadata),
+      status: patch.status,
+    });
+    return false;
+  }
   metadata.restart_recovery = {
     ...(metadata.restart_recovery ?? {}),
     ...patch,
@@ -608,6 +626,7 @@ async function updateHostRestartRecoveryMetadata({
     "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
     [host_id, metadata],
   );
+  return true;
 }
 
 async function stillNeedsHostRestartRecovery({
@@ -732,6 +751,7 @@ async function recoverProjectAfterHostRestart({
     await startProjectOnHost(project.project_id, {
       account_id: project.owner_account_id,
       ignore_recent_state_snapshot: true,
+      host_session_id,
     });
     await heartbeatProjectRuntimeSlot({
       sponsor_account_id: sponsor.sponsor_account_id,
@@ -818,6 +838,7 @@ export async function startHostRestartRecoveryForHost({
   if (!initialReadiness.ready) {
     await updateHostRestartRecoveryMetadata({
       host_id,
+      expected_host_session_id: host_session_id,
       patch: {
         status: "queued" satisfies HostRestartRecoveryMetadataStatus,
         host_boot_id,
@@ -831,20 +852,25 @@ export async function startHostRestartRecoveryForHost({
     });
     return;
   }
-  await updateHostRestartRecoveryMetadata({
-    host_id,
-    patch: {
-      status: "running" satisfies HostRestartRecoveryMetadataStatus,
-      host_boot_id,
-      previous_host_boot_id,
-      previous_host_session_id,
-      host_session_id,
-      source,
-      started_at: startedAt,
-      waiting_for: null,
-      wait_reason: null,
-    },
-  });
+  if (
+    !(await updateHostRestartRecoveryMetadata({
+      expected_host_session_id: host_session_id,
+      host_id,
+      patch: {
+        status: "running" satisfies HostRestartRecoveryMetadataStatus,
+        host_boot_id,
+        previous_host_boot_id,
+        previous_host_session_id,
+        host_session_id,
+        source,
+        started_at: startedAt,
+        waiting_for: null,
+        wait_reason: null,
+      },
+    }))
+  ) {
+    return;
+  }
   const projects = await loadHostRestartRecoveryProjects(host_id);
   const rawParallelStarts =
     max_parallel_starts ??
@@ -962,6 +988,7 @@ export async function startHostRestartRecoveryForHost({
   if (pausedReason) {
     await updateHostRestartRecoveryMetadata({
       host_id,
+      expected_host_session_id: host_session_id,
       patch: {
         status: "queued" satisfies HostRestartRecoveryMetadataStatus,
         host_boot_id,
@@ -993,6 +1020,7 @@ export async function startHostRestartRecoveryForHost({
   }
   await updateHostRestartRecoveryMetadata({
     host_id,
+    expected_host_session_id: host_session_id,
     patch: {
       status: (failed > 0
         ? "failed"
@@ -1073,26 +1101,32 @@ async function ensureHostRestartRecovery({
   if (!bootChanged && !pending) {
     return;
   }
-  const key = recoveryInflightKey(host_id, next_boot_id);
+  const key = recoveryInflightKey(host_id, next_boot_id, next_session_id);
   if (hostRestartRecoveryInflight.has(key)) {
     return;
   }
-  await updateHostRestartRecoveryMetadata({
-    host_id,
-    patch: {
-      status: "queued" satisfies HostRestartRecoveryMetadataStatus,
-      host_boot_id: next_boot_id,
-      previous_host_boot_id: previous_boot_id,
-      previous_host_session_id: previous_session_id,
-      host_session_id: next_session_id,
-      source,
-      queued_at: new Date().toISOString(),
-    },
-  });
+  if (
+    !(await updateHostRestartRecoveryMetadata({
+      expected_host_session_id: next_session_id,
+      host_id,
+      patch: {
+        status: "queued" satisfies HostRestartRecoveryMetadataStatus,
+        host_boot_id: next_boot_id,
+        previous_host_boot_id: previous_boot_id,
+        previous_host_session_id: previous_session_id,
+        host_session_id: next_session_id,
+        source,
+        queued_at: new Date().toISOString(),
+      },
+    }))
+  ) {
+    return;
+  }
   const runtime = getHostRuntimeHealth(next_metadata);
   if (!runtime.ready) {
     await updateHostRestartRecoveryMetadata({
       host_id,
+      expected_host_session_id: next_session_id,
       patch: {
         status: "queued" satisfies HostRestartRecoveryMetadataStatus,
         host_boot_id: next_boot_id,
@@ -1132,6 +1166,7 @@ async function ensureHostRestartRecovery({
       });
       await updateHostRestartRecoveryMetadata({
         host_id,
+        expected_host_session_id: next_session_id,
         patch: {
           status: "failed" satisfies HostRestartRecoveryMetadataStatus,
           host_boot_id: next_boot_id,

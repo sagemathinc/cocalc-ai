@@ -1,6 +1,7 @@
 import {
   choosePlacementHostRow,
   hostPlacementPressureRank,
+  immediateStartReplacementReason,
   shouldSkipStartForSnapshot,
 } from "./control";
 import { hostIoPlacementConformant } from "./placement";
@@ -86,6 +87,32 @@ describe("shouldSkipStartForSnapshot", () => {
     ).toEqual({
       skip: false,
     });
+  });
+});
+
+describe("immediateStartReplacementReason", () => {
+  it("lets a tracked user start supersede untracked restart recovery", () => {
+    expect(
+      immediateStartReplacementReason({ requested_op_id: "user-op" }),
+    ).toBe("untracked-start");
+  });
+
+  it("supersedes recovery from a replaced project-host process", () => {
+    expect(
+      immediateStartReplacementReason({
+        existing_host_session_id: "old-session",
+        requested_host_session_id: "new-session",
+      }),
+    ).toBe("host-session-changed");
+  });
+
+  it("continues sharing a start within one project-host session", () => {
+    expect(
+      immediateStartReplacementReason({
+        existing_host_session_id: "same-session",
+        requested_host_session_id: "same-session",
+      }),
+    ).toBeUndefined();
   });
 });
 
