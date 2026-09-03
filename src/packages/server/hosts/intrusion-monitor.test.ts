@@ -395,7 +395,7 @@ describe("project-host intrusion monitor normalization", () => {
     expect(hasHostIntrusionSnapshotChanges(delta)).toBe(false);
   });
 
-  it("does not alert on expected maintenance processes or rotating listeners", () => {
+  it("does not alert on exact maintenance processes or rotating listeners", () => {
     const before = snapshot();
     before.network.listeners.push(
       {
@@ -435,7 +435,30 @@ describe("project-host intrusion monitor normalization", () => {
       },
       {
         count: 1,
-        uid: 2000,
+        uid: 2345,
+        comm: "rustic",
+        exe: "/opt/cocalc/tools/20260903-release/rustic",
+        capability_mask: "0",
+        executable_uid: 2345,
+        executable_mode: "0755",
+      },
+    );
+
+    const delta = diffHostIntrusionSnapshots(
+      normalizeHostIntrusionSnapshot(before),
+      normalizeHostIntrusionSnapshot(after),
+    );
+
+    expect(delta).toEqual({ added: {}, removed: {} });
+  });
+
+  it("alerts on backup-like wrappers even while Rustic is active", () => {
+    const before = snapshot();
+    const after = structuredClone(before);
+    after.host_processes.summary.push(
+      {
+        count: 1,
+        uid: 2345,
         comm: "bash",
         exe: "/usr/bin/bash",
         capability_mask: "0",
@@ -444,16 +467,16 @@ describe("project-host intrusion monitor normalization", () => {
       },
       {
         count: 1,
-        uid: 2000,
+        uid: 2345,
         comm: "rustic",
         exe: "/opt/cocalc/tools/20260903-release/rustic",
         capability_mask: "0",
-        executable_uid: 2000,
+        executable_uid: 2345,
         executable_mode: "0755",
       },
       {
         count: 1,
-        uid: 2000,
+        uid: 2345,
         comm: "sleep",
         exe: "/usr/bin/sleep",
         capability_mask: "0",
@@ -467,7 +490,14 @@ describe("project-host intrusion monitor normalization", () => {
       normalizeHostIntrusionSnapshot(after),
     );
 
-    expect(delta).toEqual({ added: {}, removed: {} });
+    expect(delta.added["host_processes.summary"]).toHaveLength(2);
+    expect(delta.added["host_processes.summary"]?.join("\n")).toContain("bash");
+    expect(delta.added["host_processes.summary"]?.join("\n")).toContain(
+      "sleep",
+    );
+    expect(delta.added["host_processes.summary"]?.join("\n")).not.toContain(
+      "rustic",
+    );
   });
 
   it("still alerts on unknown processes and fixed listener changes", () => {

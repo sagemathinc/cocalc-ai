@@ -168,13 +168,9 @@ function decodeSignal(value: string): unknown[] | undefined {
   }
 }
 
-type ExpectedTransientProcess = "always" | "backup" | "backup-wrapper";
-
-function expectedTransientProcess(
-  value: string,
-): ExpectedTransientProcess | undefined {
+function isExpectedTransientProcess(value: string): boolean {
   const fields = decodeSignal(value);
-  if (!fields) return;
+  if (!fields) return false;
   const [uid, comm, exe, capabilities, executableUid, executableMode] = fields;
   const zeroCapabilities =
     typeof capabilities === "string" && /^0+$/.test(capabilities);
@@ -186,7 +182,7 @@ function expectedTransientProcess(
     capabilities === "000001ffffffffff" &&
     rootOwnedExecutable
   ) {
-    return "always";
+    return true;
   }
   if (
     typeof uid === "number" &&
@@ -196,27 +192,21 @@ function expectedTransientProcess(
     zeroCapabilities &&
     rootOwnedExecutable
   ) {
-    return "always";
-  }
-  if (uid !== 2000) return;
-  if (
-    zeroCapabilities &&
-    rootOwnedExecutable &&
-    ((comm === "bash" && exe === "/usr/bin/bash") ||
-      (comm === "sleep" && exe === "/usr/bin/sleep"))
-  ) {
-    return "backup-wrapper";
+    return true;
   }
   if (
+    typeof uid === "number" &&
+    uid !== 0 &&
     comm === "rustic" &&
     typeof exe === "string" &&
     /^\/opt\/cocalc\/tools\/[^/]+\/rustic$/.test(exe) &&
     zeroCapabilities &&
-    executableUid === 2000 &&
+    executableUid === uid &&
     executableMode === "0755"
   ) {
-    return "backup";
+    return true;
   }
+  return false;
 }
 
 function canonicalizeListener(value: string): string {
@@ -242,16 +232,7 @@ function monitoredSignals(
   // Preserve raw evidence in the snapshot; remove noise only while comparing.
   const values = snapshot.signals[category] ?? [];
   if (category === "host_processes.summary") {
-    const classified = values.map(
-      (value) => [value, expectedTransientProcess(value)] as const,
-    );
-    const backupActive = classified.some(([, kind]) => kind === "backup");
-    return classified
-      .filter(
-        ([, kind]) =>
-          kind == null || (kind === "backup-wrapper" && !backupActive),
-      )
-      .map(([value]) => value);
+    return values.filter((value) => !isExpectedTransientProcess(value));
   }
   if (category === "network.listeners") {
     return sortedUnique(values.map(canonicalizeListener));
