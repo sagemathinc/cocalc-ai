@@ -28,6 +28,7 @@ import {
   parseLineFromHashFragment,
   parsePathWithOptionalLineSuffix,
 } from "@cocalc/frontend/project/parse-path-line";
+import { parseProjectTarget } from "@cocalc/frontend/project-routing";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import {
   containingPath,
@@ -276,6 +277,12 @@ function CoCalcURL({ href, title, children, project_id }) {
   const open = (e) => {
     const { project_id, page, target, fragmentId } = parseCoCalcURL(href);
     if (project_id && target) {
+      const route = parseProjectTarget(target, {
+        decodeDirectoryPath: (path) => path,
+      });
+      // Raw files, ports, and other non-SPA routes must use normal browser
+      // navigation rather than project Redux's narrower target parser.
+      if (route == null) return;
       e.preventDefault();
       try {
         loadTarget(

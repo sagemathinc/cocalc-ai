@@ -328,7 +328,7 @@ function monitoredFingerprint(
 }
 
 export async function ensureHostIntrusionMonitorSchema(): Promise<void> {
-  schemaReady ??= (async () => {
+  const attempt = (schemaReady ??= (async () => {
     const pool = getPool();
     await pool.query(`
       CREATE TABLE IF NOT EXISTS ${TABLE} (
@@ -354,8 +354,13 @@ export async function ensureHostIntrusionMonitorSchema(): Promise<void> {
       CREATE INDEX IF NOT EXISTS ${TABLE}_created_idx
       ON ${TABLE} (created_at)
     `);
-  })();
-  await schemaReady;
+  })());
+  try {
+    await attempt;
+  } catch (err) {
+    if (schemaReady === attempt) schemaReady = undefined;
+    throw err;
+  }
 }
 
 async function listCandidateHosts(bayId: string): Promise<CandidateHost[]> {
