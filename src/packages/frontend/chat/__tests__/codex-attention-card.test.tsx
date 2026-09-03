@@ -7,6 +7,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
+import { showCodexNotificationBestEffort } from "@cocalc/frontend/notifications/codex-turn-toast";
 import { CodexAttentionCard, codexFreshAuthUrl } from "../codex-attention-card";
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -34,6 +35,7 @@ const record: AcpAttentionRecord = {
   account_id: "00000000-1000-4000-8000-000000000001",
   path: "agent.chat",
   thread_id: "thread-1",
+  message_date: "2026-09-03T21:09:14.619Z",
   source_kind: "cocalc_action",
   source_id: `fresh_auth:${reference}`,
   attention_kind: "fresh_auth",
@@ -98,6 +100,15 @@ describe("Codex fresh-auth attention", () => {
           attention_id: record.attention_id,
         }),
       ),
+    );
+    expect(showCodexNotificationBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        row: expect.objectContaining({
+          summary: expect.objectContaining({
+            message_date: record.message_date,
+          }),
+        }),
+      }),
     );
     view.unmount();
   });

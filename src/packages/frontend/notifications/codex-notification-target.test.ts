@@ -26,4 +26,19 @@ describe("codexNotificationFragment", () => {
       }),
     ).toEqual({ chat: "1234" });
   });
+
+  it("recovers the chat target for local attention delivery", () => {
+    expect(
+      codexNotificationFragment({
+        notice_type: "codex_attention",
+        message_date: "2026-09-03T21:09:14.619Z",
+        thread_id: "thread-1",
+        attention_id: "attention-1",
+      }),
+    ).toEqual({
+      chat: "1788469754619",
+      thread: "thread-1",
+      attention: "attention-1",
+    });
+  });
 });

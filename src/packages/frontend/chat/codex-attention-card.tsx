@@ -122,6 +122,7 @@ export function CodexAttentionCard({
           origin_label: "Codex",
           attention_id: record.attention_id,
           attention_state: record.state,
+          message_date: record.message_date,
           path: record.path,
           thread_id: record.thread_id,
           stable_source_id: record.source_id,

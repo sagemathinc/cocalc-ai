@@ -84,6 +84,14 @@ describe("ACP attention storage", () => {
     closeAcpDatabase();
   });
 
+  it("retains the owning chat row in the public attention record", () => {
+    const stored = createAttention();
+    expect(__test__.publicRecord(stored)).toMatchObject({
+      message_date: "2026-09-02T00:00:00.000Z",
+    });
+    expect(__test__.publicRecord(stored)).not.toHaveProperty("chat");
+  });
+
   it("deduplicates source requests and atomically accepts one response", () => {
     const record = createAttention();
     expect(createAttention().attention_id).toBe(record.attention_id);

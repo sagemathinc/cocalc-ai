@@ -537,6 +537,7 @@ export function AgentMessageStatus({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingRestoreRef = useRef<number | null>(null);
   const restoringRef = useRef(false);
+  const restoreGenerationRef = useRef(0);
   const [contentVersion, setContentVersion] = useState(0);
   const [tick, setTick] = useState(0);
   const runStartMs = resolveLiveRunStartMs({ startedAtMs, date });
@@ -599,12 +600,15 @@ export function AgentMessageStatus({
 
   useEffect(() => {
     if (!showDrawer) return;
+    const restoreGeneration = ++restoreGenerationRef.current;
     if (typeof requestAnimationFrame === "function") {
       let frame: number | undefined;
       let cancelled = false;
       const deadline = Date.now() + 1500;
       const attemptRestore = () => {
-        if (cancelled) return;
+        if (cancelled || restoreGeneration !== restoreGenerationRef.current) {
+          return;
+        }
         const node = scrollRef.current;
         const target = pendingRestoreRef.current;
         if (!node || target == null) return;
@@ -620,6 +624,10 @@ export function AgentMessageStatus({
         restoringRef.current = true;
         node.scrollTop = nextTop;
         frame = requestAnimationFrame(() => {
+          if (cancelled || restoreGeneration !== restoreGenerationRef.current) {
+            restoringRef.current = false;
+            return;
+          }
           restoringRef.current = false;
           if (wantsBottom && Date.now() < deadline) {
             frame = requestAnimationFrame(attemptRestore);
@@ -658,6 +666,12 @@ export function AgentMessageStatus({
 
   useEffect(() => {
     if (!showDrawer || !focusAttentionId) return;
+    // A notification target takes precedence over the drawer's saved scroll
+    // position. Otherwise its restoration loop can move the focused card back
+    // off-screen on the next animation frame.
+    restoreGenerationRef.current += 1;
+    pendingRestoreRef.current = null;
+    restoringRef.current = false;
     let canceled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempts = 0;
@@ -672,6 +686,13 @@ export function AgentMessageStatus({
       if (target) {
         target.focus({ preventScroll: true });
         target.scrollIntoView?.({ block: "center" });
+        const scrollNode = scrollRef.current;
+        if (scrollNode) {
+          activityScrollPositions.set(
+            persistKey,
+            getSavedScrollPosition(scrollNode),
+          );
+        }
         return;
       }
       attempts += 1;
@@ -684,7 +705,13 @@ export function AgentMessageStatus({
       canceled = true;
       if (timer != null) clearTimeout(timer);
     };
-  }, [contentVersion, focusAttentionId, openDrawerToken, showDrawer]);
+  }, [
+    contentVersion,
+    focusAttentionId,
+    openDrawerToken,
+    persistKey,
+    showDrawer,
+  ]);
 
   useEffect(() => {
     onDrawerOpenChange?.(showDrawer);

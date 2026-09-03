@@ -69,7 +69,11 @@ function publicRecord(
     response_declined: _declined,
     ...publicRow
   } = record;
-  return publicRow;
+  const message_date = `${_chat?.message_date ?? ""}`.trim() || undefined;
+  return {
+    ...publicRow,
+    ...(message_date ? { message_date } : {}),
+  };
 }
 
 function sourceFragmentId(

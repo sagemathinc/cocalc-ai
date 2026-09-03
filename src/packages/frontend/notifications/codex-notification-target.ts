@@ -16,6 +16,7 @@ export function codexNotificationFragment(summary: {
   notice_type?: unknown;
   thread_id?: unknown;
   attention_id?: unknown;
+  message_date?: unknown;
 }): FragmentId | undefined {
   const fragment = Fragment.decode(nonEmptyString(summary.fragment_id));
   const noticeType = nonEmptyString(summary.notice_type);
@@ -24,11 +25,17 @@ export function codexNotificationFragment(summary: {
   }
   const thread = nonEmptyString(summary.thread_id);
   const attention = nonEmptyString(summary.attention_id);
-  if (!thread && !attention) {
+  const messageDate = nonEmptyString(summary.message_date);
+  const messageTime = Date.parse(messageDate ?? "");
+  const chat =
+    fragment?.chat ??
+    (Number.isFinite(messageTime) ? `${Math.floor(messageTime)}` : undefined);
+  if (!thread && !attention && !chat) {
     return fragment;
   }
   return {
     ...fragment,
+    ...(chat ? { chat } : undefined),
     ...(thread ? { thread } : undefined),
     ...(attention ? { attention } : undefined),
   };
