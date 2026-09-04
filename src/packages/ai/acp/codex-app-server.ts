@@ -2041,6 +2041,14 @@ export async function getCodexAppServerAccountStatus(opts: {
   timeoutMs?: number;
 }): Promise<CodexAppServerAccountStatus> {
   const timeoutMs = opts.timeoutMs ?? ACCOUNT_STATUS_REQUEST_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  const remainingTimeoutMs = () => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error(`Codex account status timed out after ${timeoutMs}ms`);
+    }
+    return remaining;
+  };
   const projectSpawner = getCodexProjectSpawner();
   const spawned =
     projectSpawner && opts.projectId && projectSpawner.spawnCodexAppServer
@@ -2064,17 +2072,21 @@ export async function getCodexAppServerAccountStatus(opts: {
     spawned.handleAppServerRequest,
   );
   try {
-    await client.initialize(timeoutMs);
+    await client.initialize(remainingTimeoutMs());
     const appServerLogin = spawned.appServerLogin ?? opts.appServerLogin;
-    await loginAppServerIfNeeded(client, appServerLogin, timeoutMs);
+    await loginAppServerIfNeeded(client, appServerLogin, remainingTimeoutMs());
     // Validate the current token before rotating it. Status checks are common,
     // and forcing a refresh on every check creates avoidable refresh-token
     // churn across projects and browser tabs.
     const [accountResult] = await Promise.allSettled([
-      client.request("account/read", { refreshToken: false }, timeoutMs),
+      client.request(
+        "account/read",
+        { refreshToken: false },
+        remainingTimeoutMs(),
+      ),
     ]);
     const [rateLimitsResult] = await Promise.allSettled([
-      client.request("account/rateLimits/read", {}, timeoutMs),
+      client.request("account/rateLimits/read", {}, remainingTimeoutMs()),
     ]);
     let account = settledValue(accountResult);
     let rateLimits = settledValue(rateLimitsResult);
@@ -2089,11 +2101,15 @@ export async function getCodexAppServerAccountStatus(opts: {
           value: await client.request(
             "account/read",
             { refreshToken: true },
-            timeoutMs,
+            remainingTimeoutMs(),
           ),
         };
         rateLimits = {
-          value: await client.request("account/rateLimits/read", {}, timeoutMs),
+          value: await client.request(
+            "account/rateLimits/read",
+            {},
+            remainingTimeoutMs(),
+          ),
         };
       } catch (reason) {
         const error = `${reason}`;
@@ -2108,7 +2124,11 @@ export async function getCodexAppServerAccountStatus(opts: {
       try {
         tokenUsageResult = {
           status: "fulfilled",
-          value: await client.request("account/usage/read", {}, timeoutMs),
+          value: await client.request(
+            "account/usage/read",
+            {},
+            remainingTimeoutMs(),
+          ),
         };
       } catch (reason) {
         tokenUsageResult = { status: "rejected", reason };
@@ -2128,7 +2148,7 @@ export async function getCodexAppServerAccountStatus(opts: {
             await client.request(
               "model/list",
               { limit: MAX_MODEL_CATALOG_ENTRIES, includeHidden: false },
-              timeoutMs,
+              remainingTimeoutMs(),
             ),
           ),
         };
