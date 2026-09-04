@@ -1,11 +1,21 @@
 /** @jest-environment jsdom */
 
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import * as immutable from "immutable";
 import { ChatPanel } from "../chatroom";
 
 const persistExternalSideChatSelectedThreadKey = jest.fn();
-const renderChatRoomThreadPanel = jest.fn((_props: any) => null);
+const renderChatRoomThreadPanel = jest.fn((props: any) => (
+  <div>
+    {props.attentionRecords?.map((record: any) => (
+      <div
+        key={record.attention_id}
+        data-testid={`attention-${record.attention_id}`}
+      />
+    ))}
+  </div>
+));
+let attentionRecords: any[] = [];
 
 jest.mock("@cocalc/frontend/feature", () => ({
   IS_MOBILE: false,
@@ -99,7 +109,22 @@ jest.mock("../chatroom-layout", () => ({
 }));
 
 jest.mock("../composer", () => ({
-  ChatRoomComposer: () => null,
+  ChatRoomComposer: () => <div data-testid="chat-composer" />,
+}));
+
+jest.mock("../codex-attention-card", () => ({
+  CodexAttentionCard: ({ initialRecord }: any) => (
+    <div data-testid={`attention-${initialRecord.attention_id}`} />
+  ),
+}));
+
+jest.mock("../use-codex-attention", () => ({
+  useCodexAttentionSummary: () => ({
+    count: attentionRecords.length,
+    records: attentionRecords,
+    byThread: new Map(),
+    targetByThread: new Map(),
+  }),
 }));
 
 jest.mock("../chatroom-sidebar", () => ({
@@ -138,6 +163,7 @@ jest.mock("../external-side-chat-selection", () => ({
 
 describe("ChatPanel external side chat persistence", () => {
   beforeEach(() => {
+    attentionRecords = [];
     persistExternalSideChatSelectedThreadKey.mockClear();
     renderChatRoomThreadPanel.mockClear();
   });
@@ -225,7 +251,7 @@ describe("ChatPanel external side chat persistence", () => {
     expect(actions.scrollToIndex).not.toHaveBeenCalled();
   });
 
-  it("forwards durable Codex attention drawer requests", async () => {
+  it("keeps durable Codex attention requests out of the activity drawer", async () => {
     renderPanel({
       "data-codexAttentionDate": "1234",
       "data-codexAttentionId": "attention-1",
@@ -235,12 +261,31 @@ describe("ChatPanel external side chat persistence", () => {
     await waitFor(() =>
       expect(renderChatRoomThreadPanel.mock.lastCall?.[0]).toEqual(
         expect.objectContaining({
-          activityJumpDate: "1234",
-          activityJumpAttentionId: "attention-1",
+          activityJumpDate: undefined,
+          activityJumpAttentionId: undefined,
           activityJumpToken: 1,
         }),
       ),
     );
+  });
+
+  it("renders selected-thread attention above the composer", () => {
+    attentionRecords = [
+      { attention_id: "attention-1", thread_id: "thread-1" },
+      { attention_id: "attention-other", thread_id: "thread-2" },
+    ];
+
+    renderPanel();
+
+    const attention = screen.getByTestId("attention-attention-1");
+    const composer = screen.getByTestId("chat-composer");
+    expect(
+      attention.compareDocumentPosition(composer) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      document.querySelector('[data-testid="attention-attention-other"]'),
+    ).toBeNull();
   });
 
   it("disables thread-search shortcuts when the backing tab is hidden", () => {

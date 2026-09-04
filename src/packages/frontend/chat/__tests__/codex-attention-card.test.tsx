@@ -4,10 +4,10 @@
  */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
-import { showCodexNotificationBestEffort } from "@cocalc/frontend/notifications/codex-turn-toast";
 import { CodexAttentionCard, codexFreshAuthUrl } from "../codex-attention-card";
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -17,9 +17,6 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 }));
 jest.mock("@cocalc/frontend/misc/open-browser-tab", () => ({
   open_new_tab: jest.fn(),
-}));
-jest.mock("@cocalc/frontend/notifications/codex-turn-toast", () => ({
-  showCodexNotificationBestEffort: jest.fn(async () => undefined),
 }));
 jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
   appBasePath: "/base",
@@ -101,15 +98,6 @@ describe("Codex fresh-auth attention", () => {
         }),
       ),
     );
-    expect(showCodexNotificationBestEffort).toHaveBeenCalledWith(
-      expect.objectContaining({
-        row: expect.objectContaining({
-          summary: expect.objectContaining({
-            message_date: record.message_date,
-          }),
-        }),
-      }),
-    );
     view.unmount();
   });
 });
@@ -163,5 +151,36 @@ describe("Codex question attention", () => {
       ).toBeInTheDocument(),
     );
     otherView.unmount();
+  });
+
+  it("allows exactly one suggested answer", async () => {
+    const user = userEvent.setup();
+    const view = render(<CodexAttentionCard initialRecord={questionRecord} />);
+    const eu = screen.getByRole("radio", { name: "EU" });
+    const us = screen.getByRole("radio", { name: "US" });
+    expect(eu).toHaveAttribute(
+      "name",
+      `codex-attention-${questionRecord.attention_id}-region`,
+    );
+    expect(us).toHaveAttribute("name", eu.getAttribute("name"));
+
+    await user.click(eu);
+    expect(eu).toBeChecked();
+    expect(us).not.toBeChecked();
+
+    await user.keyboard("{ArrowRight}");
+    expect(eu).not.toBeChecked();
+    expect(us).toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send response" }));
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "respond",
+          answers: { region: ["US"] },
+        }),
+      ),
+    );
+    view.unmount();
   });
 });

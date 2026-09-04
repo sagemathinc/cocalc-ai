@@ -254,6 +254,43 @@ describe("notification email outbox maintenance", () => {
     expect(message.text).not.toContain("/home/user/b.chat");
   });
 
+  it("links an attention email directly to its Codex thread", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([
+      {
+        ...ROW,
+        category: "codex",
+        summary_json: {
+          source_project_id: "11111111-1111-4111-8111-111111111111",
+          source_path: "/home/user/attention test.chat",
+          summary: {
+            notice_type: "codex_attention",
+            description: "Codex needs your response.",
+            fragment_id: "chat=1788484841838",
+            thread_id: "thread/one",
+            attention_id: "attention&one",
+          },
+        },
+      },
+    ]);
+    const sender = jest.fn(async () => undefined);
+
+    await sendQueuedNotificationEmailBatch({
+      sender,
+      emailConfigured: jest.fn(async () => true),
+      sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+    });
+
+    const message = sender.mock.calls[0]?.[0];
+    const expected =
+      "https://cocalc.test/projects/11111111-1111-4111-8111-111111111111/files/home/user/attention%20test.chat#chat=1788484841838&thread=thread%2Fone&attention=attention%26one";
+    expect(message.text).toContain(`Open Codex thread: ${expected}`);
+    expect(message.html).toContain(
+      `href="${expected.replaceAll("&", "&amp;")}"`,
+    );
+    expect(message.html).toContain("Open Codex thread in CoCalc");
+    expect(message.text).not.toContain("/notifications");
+  });
+
   it("renders mention spans as readable text in immediate notification email", async () => {
     claimQueuedNotificationEmails.mockResolvedValue([
       {

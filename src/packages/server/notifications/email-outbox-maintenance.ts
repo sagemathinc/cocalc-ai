@@ -25,6 +25,7 @@ import {
   renderNotificationEmailMarkdownHtml,
   renderNotificationEmailMarkdownText,
 } from "./email-format";
+import { isValidUUID } from "@cocalc/util/misc";
 
 const logger = getLogger("server:notifications:email-outbox");
 
@@ -136,24 +137,73 @@ function requireHelpEmail(help_email: string | undefined | null): string {
   return from;
 }
 
+function encodeProjectFilePath(path: string): string {
+  const absolute = path.startsWith("/") ? path : `/${path}`;
+  return absolute
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+async function notificationTarget(row: NotificationEmailOutboxRow): Promise<{
+  label: string;
+  url: string;
+}> {
+  const summary = row.summary_json?.summary ?? {};
+  if (firstNonEmpty(summary.notice_type) !== "codex_attention") {
+    return {
+      label: "Open notifications",
+      url: await siteUrl("notifications"),
+    };
+  }
+  const projectId = firstNonEmpty(
+    row.summary_json?.source_project_id,
+    row.summary_json?.project_id,
+  );
+  const path = firstNonEmpty(row.summary_json?.source_path, summary.path);
+  if (!isValidUUID(projectId) || !path) {
+    return {
+      label: "Open notifications",
+      url: await siteUrl("notifications"),
+    };
+  }
+  const fragment = new URLSearchParams(
+    firstNonEmpty(summary.fragment_id).replace(/^#/, ""),
+  );
+  const messageTime = Date.parse(firstNonEmpty(summary.message_date));
+  if (!fragment.has("chat") && Number.isFinite(messageTime)) {
+    fragment.set("chat", `${Math.floor(messageTime)}`);
+  }
+  const threadId = firstNonEmpty(summary.thread_id);
+  const attentionId = firstNonEmpty(summary.attention_id);
+  if (threadId) fragment.set("thread", threadId);
+  if (attentionId) fragment.set("attention", attentionId);
+  const route = `projects/${encodeURIComponent(projectId)}/files${encodeProjectFilePath(path)}`;
+  const suffix = fragment.size > 0 ? `#${fragment.toString()}` : "";
+  return {
+    label: "Open Codex thread",
+    url: await siteUrl(`${route}${suffix}`),
+  };
+}
+
 async function buildMessage(row: NotificationEmailOutboxRow): Promise<Message> {
   const { help_email, site_name } = await getServerSettings();
   const from = requireHelpEmail(help_email);
-  const notificationsUrl = await siteUrl("notifications");
+  const target = await notificationTarget(row);
   const body = notificationBodyText(row);
   const bodyHtml = notificationBodyHtml(row);
   const path = notificationPathText(row);
   const text = [
     body || "You have a CoCalc notification.",
     "",
-    `Open notifications: ${notificationsUrl}`,
+    `${target.label}: ${target.url}`,
   ].join("\n");
   const html = `
 ${bodyHtml}
 ${path ? `<p>${escapeNotificationEmailHtml(path)}</p>` : ""}
-<p><a href="${escapeNotificationEmailHtml(notificationsUrl)}">Open notifications in ${escapeNotificationEmailHtml(
-    site_name,
-  )}</a>.</p>
+<p><a href="${escapeNotificationEmailHtml(target.url)}">${escapeNotificationEmailHtml(
+    target.label,
+  )} in ${escapeNotificationEmailHtml(site_name)}</a>.</p>
 `;
   return {
     from,

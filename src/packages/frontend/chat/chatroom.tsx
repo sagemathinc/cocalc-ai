@@ -1208,6 +1208,37 @@ export function ChatPanel({
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
   );
+  const selectedAttentionRecords = useMemo(
+    () =>
+      selectedThreadId
+        ? codexAttention.records.filter(
+            (record) => record.thread_id === selectedThreadId,
+          )
+        : [],
+    [codexAttention.records, selectedThreadId],
+  );
+  const attentionJumpIsVisible = useMemo(
+    () =>
+      !!activityJumpAttentionId &&
+      selectedAttentionRecords.some(
+        (record) => record.attention_id === activityJumpAttentionId,
+      ),
+    [activityJumpAttentionId, selectedAttentionRecords],
+  );
+  useEffect(() => {
+    if (!attentionJumpIsVisible || !activityJumpAttentionId) return;
+    const frame = requestAnimationFrame(() => {
+      const node = [
+        ...document.querySelectorAll<HTMLElement>("[data-codex-attention-id]"),
+      ].find(
+        (candidate) =>
+          candidate.dataset.codexAttentionId === activityJumpAttentionId,
+      );
+      node?.scrollIntoView({ block: "nearest" });
+      node?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activityJumpAttentionId, attentionJumpIsVisible]);
   const selectedThreadMetadata = useMemo(
     () =>
       selectedThreadKey
@@ -2678,9 +2709,12 @@ export function ChatPanel({
         onCreateThread={createThreadWithoutMessage}
         showThreadImagePreview={showThreadImagePreview}
         hideChatTypeSelector={hideChatTypeSelector || !aiAgentPolicyAllowed}
-        activityJumpDate={activityJumpDate}
+        activityJumpDate={
+          activityJumpAttentionId ? undefined : activityJumpDate
+        }
         activityJumpToken={activityJumpToken}
-        activityJumpAttentionId={activityJumpAttentionId}
+        activityJumpAttentionId={undefined}
+        attentionRecords={selectedAttentionRecords}
         shortcutEnabled={isVisible && tabIsVisible}
         isVisible={isVisible && tabIsVisible}
         onOpenGitBrowser={openGitBrowserFromMessage}
