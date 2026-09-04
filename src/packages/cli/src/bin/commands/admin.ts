@@ -54,6 +54,8 @@ import type {
 import { registerReceivablesCommand } from "./admin/receivables";
 import { registerCrmCommand } from "./admin/crm";
 
+const ADMIN_HOST_INTRUSION_SNAPSHOT_TIMEOUT_MS = 130_000;
+
 export type AdminCommandDeps = {
   withContext: any;
   resolveAccountByIdentifier: any;
@@ -2554,6 +2556,7 @@ Merge comments are private unless their corresponding --*-comment-public flag is
             return await ctx.hub.adminHost.intrusionSnapshot({
               host,
               reason: opts.reason,
+              timeout: ADMIN_HOST_INTRUSION_SNAPSHOT_TIMEOUT_MS,
             });
           },
         );

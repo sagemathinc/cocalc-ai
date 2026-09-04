@@ -1111,6 +1111,7 @@ test("admin host intrusion-snapshot forwards the host and audit reason", async (
   assert.deepEqual(capturedArgs, {
     host: "montreal-1",
     reason: "host integrity review",
+    timeout: 130_000,
   });
 });
 
