@@ -424,6 +424,14 @@ async function applyMembershipGrantSyncPayload(
 async function applyProjectUsageSyncPayload(
   payload: MembershipProjectUsageSyncPayload,
 ): Promise<void> {
+  if (
+    payload.desired_account_id != null &&
+    !payload.expected_course_project_id
+  ) {
+    throw new Error(
+      `project usage sync for ${payload.project_id} is missing its course recipient fence`,
+    );
+  }
   const updated = await setProjectUsageAccountIdOnOwningBay({
     project_id: payload.project_id,
     account_id: payload.desired_account_id ?? null,

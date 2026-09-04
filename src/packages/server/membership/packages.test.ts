@@ -1047,6 +1047,61 @@ describe("membership packages", () => {
     });
   });
 
+  it("rejects pre-upgrade active usage effects without a recipient fence", async () => {
+    const owner_account_id = uuid();
+    const student_account_id = uuid();
+    const course_project_id = uuid();
+    const project_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(student_account_id);
+    await createCourseStudentProject({
+      project_id,
+      course_project_id,
+      student_account_id,
+      owner_account_id,
+      owning_bay_id: "bay-2",
+    });
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "course",
+      membership_class: "student",
+      seat_count: 1,
+      metadata: {
+        course_project_id,
+        interval: "month",
+        seat_price: 25,
+      },
+    });
+    const assignment = await assignMembershipPackageSeat({
+      package_id,
+      account_id: student_account_id,
+      assigned_by_account_id: owner_account_id,
+      metadata: { project_id },
+    });
+    await getPool("medium").query(
+      `UPDATE membership_side_effects_outbox
+       SET desired_payload_json = desired_payload_json
+         - 'expected_course_project_id'
+         - 'expected_course_email_address'
+       WHERE effect_key=$1`,
+      [`project-usage-sync:${assignment.id}`],
+    );
+
+    const result = await runMembershipSideEffectsPass();
+
+    expect(result.failed).toBe(1);
+    expect(remoteProjectUsageUpdates).toHaveLength(0);
+    const outbox = await getPool("medium").query<{ last_error: string }>(
+      `SELECT last_error
+       FROM membership_side_effects_outbox
+       WHERE effect_key=$1`,
+      [`project-usage-sync:${assignment.id}`],
+    );
+    expect(outbox.rows[0]?.last_error).toContain(
+      "is missing its course recipient fence",
+    );
+  });
+
   it("preserves verified admin authority for remote course validation", async () => {
     const owner_account_id = uuid();
     const admin_account_id = uuid();
