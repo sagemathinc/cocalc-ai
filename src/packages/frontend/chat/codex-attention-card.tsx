@@ -346,6 +346,7 @@ export function CodexAttentionCard({
                 {question.options?.length ? (
                   <Radio.Group
                     aria-label={`Suggested answers for ${question.header}`}
+                    name={`codex-attention-${record.attention_id}-${question.id}`}
                     value={selected[question.id]}
                     onChange={(event) => {
                       setSelected((current) => ({

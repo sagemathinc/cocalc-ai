@@ -4,6 +4,7 @@
  */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
@@ -153,15 +154,21 @@ describe("Codex question attention", () => {
   });
 
   it("allows exactly one suggested answer", async () => {
+    const user = userEvent.setup();
     const view = render(<CodexAttentionCard initialRecord={questionRecord} />);
     const eu = screen.getByRole("radio", { name: "EU" });
     const us = screen.getByRole("radio", { name: "US" });
+    expect(eu).toHaveAttribute(
+      "name",
+      `codex-attention-${questionRecord.attention_id}-region`,
+    );
+    expect(us).toHaveAttribute("name", eu.getAttribute("name"));
 
-    fireEvent.click(eu);
+    await user.click(eu);
     expect(eu).toBeChecked();
     expect(us).not.toBeChecked();
 
-    fireEvent.click(us);
+    await user.keyboard("{ArrowRight}");
     expect(eu).not.toBeChecked();
     expect(us).toBeChecked();
 
