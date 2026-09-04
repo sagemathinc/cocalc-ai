@@ -6328,6 +6328,7 @@ describe("CodexAppServerAgent", () => {
       chat: {
         path: "root/demo.chat",
         project_id: "00000000-0000-4000-8000-000000000000",
+        thread_id: "chat-thread-attention-1",
       } as any,
       config: {
         workingDirectory: "/home/user",
@@ -6378,9 +6379,36 @@ describe("CodexAppServerAgent", () => {
     );
   });
 
-  it("honors attention request kill switches", async () => {
-    process.env.COCALC_CODEX_ATTENTION_INPUT = "0";
-    process.env.COCALC_CODEX_ATTENTION_ASYNC = "0";
+  it.each([
+    {
+      name: "operator kill switches",
+      attentionInput: "0",
+      asyncAttention: "0",
+      chat: {
+        path: "root/demo.chat",
+        project_id: "00000000-0000-4000-8000-000000000000",
+        thread_id: "chat-thread-attention-disabled",
+      },
+      expectedError: "Codex attention input is disabled",
+    },
+    {
+      name: "chat-less ACP calls",
+      attentionInput: undefined,
+      asyncAttention: undefined,
+      chat: undefined,
+      expectedError: "Codex attention requires durable chat context",
+    },
+  ])("does not create attention for $name", async (testCase) => {
+    if (testCase.attentionInput == null) {
+      delete process.env.COCALC_CODEX_ATTENTION_INPUT;
+    } else {
+      process.env.COCALC_CODEX_ATTENTION_INPUT = testCase.attentionInput;
+    }
+    if (testCase.asyncAttention == null) {
+      delete process.env.COCALC_CODEX_ATTENTION_ASYNC;
+    } else {
+      process.env.COCALC_CODEX_ATTENTION_ASYNC = testCase.asyncAttention;
+    }
     const threadStartRequests: any[] = [];
     const syncResponses: any[] = [];
     const requestSyncQuestion = jest.fn(async () => ({}));
@@ -6475,10 +6503,7 @@ describe("CodexAppServerAgent", () => {
       account_id: "00000000-0000-4000-8000-000000000001",
       prompt: "do not ask me",
       stream: async () => {},
-      chat: {
-        path: "root/demo.chat",
-        project_id: "00000000-0000-4000-8000-000000000000",
-      } as any,
+      chat: testCase.chat as any,
       config: {
         workingDirectory: "/home/user",
       } as any,
@@ -6493,7 +6518,7 @@ describe("CodexAppServerAgent", () => {
         id: 901,
         error: {
           code: -32000,
-          message: "Codex attention input is disabled",
+          message: testCase.expectedError,
         },
       },
     ]);
@@ -6539,6 +6564,13 @@ describe("CodexAppServerAgent", () => {
       accountId: "00000000-0000-4000-8000-000000000001",
       threadId: "thread-shared",
       turnId: "turn-first",
+      chat: {
+        project_id: "00000000-0000-4000-8000-000000000000",
+        path: "root/demo.chat",
+        message_date: "2026-09-04T00:00:00.000Z",
+        sender_id: "00000000-0000-4000-8000-000000000001",
+        thread_id: "chat-thread-shared",
+      },
       stream: async () => {},
     };
     client.setAttentionContext(firstContext);
