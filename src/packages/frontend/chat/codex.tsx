@@ -17,6 +17,7 @@ import {
   React,
   useEffect,
   useMemo,
+  useProjectMapField,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -498,6 +499,10 @@ export function CodexConfigButton({
 }: CodexConfigButtonProps): React.ReactElement {
   const defaultSessionMode = getDefaultCodexSessionMode();
   const accountId = useTypedRedux("account", "account_id");
+  const codexRuntimeVersion = useProjectMapField<string>(projectId, [
+    "state",
+    "tools_version",
+  ]);
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(chatPath);
   const [open, setOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
@@ -754,7 +759,7 @@ export function CodexConfigButton({
       return;
     }
     let cancelled = false;
-    const scope = `${accountId ?? ""}\0${projectId ?? ""}`;
+    const scope = `${accountId ?? ""}\0${projectId ?? ""}\0${codexRuntimeVersion ?? ""}`;
     const scopeChanged = lastCodexUsageScopeRef.current !== scope;
     lastCodexUsageScopeRef.current = scope;
     const forceModels =
@@ -763,7 +768,11 @@ export function CodexConfigButton({
     const cachedUsage = readCachedCodexUsageStatus({ accountId });
     const cachedCatalog = forceModels
       ? undefined
-      : readCachedCodexModelCatalog({ accountId, projectId });
+      : readCachedCodexModelCatalog({
+          accountId,
+          projectId,
+          runtimeVersion: codexRuntimeVersion,
+        });
     if (cachedUsage) {
       setCodexUsageStatus(cachedUsage.status);
       setCodexUsageStale(true);
@@ -801,6 +810,7 @@ export function CodexConfigButton({
           writeCachedCodexModelCatalog({
             accountId,
             projectId,
+            runtimeVersion: codexRuntimeVersion,
             models: status.models,
             cachedAt: Number.isFinite(checkedAt) ? checkedAt : Date.now(),
           });
@@ -829,6 +839,7 @@ export function CodexConfigButton({
     codexUsageRequested,
     open,
     paymentSource?.source,
+    codexRuntimeVersion,
     projectId,
   ]);
 
