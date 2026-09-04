@@ -527,6 +527,34 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
+  it("preserves a legacy completion notification opt-out", async () => {
+    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        notify_on_turn_finish: false,
+      },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+
+    expect(callHubMock).not.toHaveBeenCalled();
+    writer.dispose?.(true);
+  });
+
   it("keeps a submitted notify preference despite stale live config", async () => {
     const { syncdb } = makeFakeSyncDB();
     syncdb.set({

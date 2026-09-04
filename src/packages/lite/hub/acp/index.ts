@@ -2511,6 +2511,19 @@ export class ChatStreamWriter {
         threadConfig,
         "codex_completion_notification",
       );
+      const liveAcpConfig = syncdbField(threadConfig, "acp_config");
+      const liveLegacyPreference = syncdbField<boolean>(
+        liveAcpConfig,
+        "notifyOnTurnFinish",
+      );
+      const submittedLegacyPreference = this.metadata.notify_on_turn_finish;
+      const legacyPreference =
+        submittedLegacyPreference === true || liveLegacyPreference === true
+          ? true
+          : submittedLegacyPreference === false ||
+              liveLegacyPreference === false
+            ? false
+            : true;
       const shouldNotify =
         override === "on"
           ? true
@@ -2518,7 +2531,7 @@ export class ChatStreamWriter {
             ? false
             : typeof this.metadata.completion_notification_enabled === "boolean"
               ? this.metadata.completion_notification_enabled
-              : true;
+              : legacyPreference;
       if (!shouldNotify) {
         return;
       }
