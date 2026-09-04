@@ -1,10 +1,13 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { writeCachedCodexUsageStatus } from "@cocalc/frontend/account/codex-usage";
+import {
+  writeCachedCodexModelCatalog,
+  writeCachedCodexUsageStatus,
+} from "@cocalc/frontend/account/codex-usage";
 import {
   CodexConfigButton,
-  codexModelOptionsForStatus,
+  codexModelOptionsForCatalog,
   codexThreadConfigKey,
 } from "../codex";
 
@@ -177,9 +180,9 @@ describe("CodexConfigButton", () => {
     window.localStorage.clear();
   });
 
-  it("disables models absent from the authenticated ChatGPT catalog", () => {
-    const options = codexModelOptionsForStatus({
-      models: [
+  it("uses the authenticated catalog and preserves only the selected unavailable model", () => {
+    const options = codexModelOptionsForCatalog(
+      [
         {
           model: "gpt-5.6-luna",
           displayName: "GPT-5.6 Luna",
@@ -200,8 +203,17 @@ describe("CodexConfigButton", () => {
           ],
           default: true,
         },
+        {
+          model: "gpt-daybreak-blue-latest",
+          displayName: "Daybreak Blue",
+          description: "Defensive cybersecurity model",
+          specialty: "cyber",
+          reasoning: [],
+          serviceTiers: [],
+        },
       ],
-    } as any);
+      "gpt-5.4",
+    );
 
     expect(options[0]).toMatchObject({
       value: "gpt-5.6-luna",
@@ -219,6 +231,101 @@ describe("CodexConfigButton", () => {
       description: expect.stringContaining(
         "Not available with the connected ChatGPT account",
       ),
+    });
+    const daybreak = options.find(
+      ({ value }) => value === "gpt-daybreak-blue-latest",
+    );
+    expect(daybreak).toMatchObject({
+      description: expect.stringContaining("Cybersecurity model"),
+    });
+    expect(daybreak?.disabled).toBeUndefined();
+    expect(options).toHaveLength(3);
+  });
+
+  it("opens the compact picker from the fresh account catalog without a request", async () => {
+    writeCachedCodexModelCatalog({
+      models: [
+        {
+          model: "gpt-daybreak-blue-latest",
+          displayName: "Daybreak Blue",
+          description: "Defensive cybersecurity model",
+          specialty: "cyber",
+          reasoning: [],
+          serviceTiers: [],
+          default: true,
+        },
+      ],
+    });
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    fireEvent.mouseEnter(screen.getByTitle("Change Codex model"));
+    fireEvent.click(screen.getByTitle("Change Codex model"));
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", {
+          name: "gpt-daybreak-blue-latest",
+        }),
+      ).toHaveLength(2);
+    });
+    expect(getCodexUsageStatus).not.toHaveBeenCalled();
+  });
+
+  it("forces catalog discovery from the settings refresh button", async () => {
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex"));
+    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalled());
+    getCodexUsageStatus.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+    await waitFor(() => {
+      expect(getCodexUsageStatus).toHaveBeenCalledWith({
+        project_id: "project-1",
+        include_models: true,
+        refresh_models: true,
+        timeout: 60_000,
+      });
     });
   });
 
@@ -570,7 +677,8 @@ describe("CodexConfigButton", () => {
     await waitFor(() => {
       expect(getCodexUsageStatus).toHaveBeenCalledWith({
         project_id: "project-1",
-        include_models: true,
+        include_models: false,
+        refresh_models: false,
         timeout: 60_000,
       });
       expect(
@@ -850,6 +958,7 @@ describe("CodexConfigButton", () => {
       expect(getCodexUsageStatus).toHaveBeenCalledWith({
         project_id: "project-1",
         include_models: true,
+        refresh_models: false,
         timeout: 60_000,
       });
       expect(

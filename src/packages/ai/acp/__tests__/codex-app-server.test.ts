@@ -5061,6 +5061,7 @@ describe("CodexAppServerAgent", () => {
                 model: "gpt-5.6-luna",
                 displayName: "GPT-5.6 Luna",
                 description: "Fast account model",
+                modelSpecialty: "cybersecurity",
                 supportedReasoningEfforts: [
                   {
                     reasoningEffort: "low",
@@ -5131,6 +5132,7 @@ describe("CodexAppServerAgent", () => {
         model: "gpt-5.6-luna",
         displayName: "GPT-5.6 Luna",
         description: "Fast account model",
+        specialty: "cybersecurity",
         reasoning: [
           {
             id: "low",

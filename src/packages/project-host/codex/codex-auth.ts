@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { codexSubscriptionsPath } from "@cocalc/backend/data";
+import { codexAuthJsonToAppServerLogin } from "@cocalc/ai/acp";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
 import type { CodexPaymentSourcePreference } from "@cocalc/util/ai/codex";
 import {
@@ -32,6 +33,24 @@ export type CodexAuthRuntime = {
   codexHome?: string;
   env: Record<string, string>;
 };
+
+export async function getCodexSubscriptionIdentity(
+  runtime: CodexAuthRuntime,
+): Promise<string | undefined> {
+  if (runtime.source !== "subscription" || !runtime.codexHome) {
+    return undefined;
+  }
+  try {
+    const login = codexAuthJsonToAppServerLogin(
+      await fs.readFile(join(runtime.codexHome, "auth.json"), "utf8"),
+    );
+    return login?.type === "chatgptAuthTokens"
+      ? login.chatgptAccountId
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex");
