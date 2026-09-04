@@ -341,6 +341,28 @@ describe("CodexCredentialsPanel", () => {
     });
   });
 
+  it("explains how to recover when the installed Codex is too old", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      paymentSource: { source: "subscription" },
+      reason:
+        "codex app-server exited unexpectedly: Error: Unknown feature flag: background_paginated_rollout_migration",
+    });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "CoCalc Plus must be upgraded to update Codex. Upgrade and restart CoCalc Plus, then try again.",
+        ),
+      ).toBeTruthy();
+    });
+    expect(screen.queryByText(/Unknown feature flag/)).toBeNull();
+  });
+
   it("refreshes Codex usage without reloading the whole payment panel", async () => {
     const refreshedUsage = deferred<any>();
     getCodexPaymentSource.mockResolvedValue({ source: "subscription" });

@@ -111,7 +111,6 @@ import {
   resolveCodexAuthRuntime,
   uploadSubscriptionAuthFile,
 } from "../codex/codex-auth";
-import { PROJECT_RUNTIME_SUBSCRIPTION_CODEX_HOME } from "../codex/codex-runtime-paths";
 import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
 import { clearProjectHostConatAuthCaches } from "../conat-auth";
 import { rehydrateAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
@@ -388,7 +387,7 @@ async function loadCodexModelCatalogStatus({
   const load = getCodexAppServerAccountStatus({
     projectId,
     accountId,
-    env: { CODEX_HOME: PROJECT_RUNTIME_SUBSCRIPTION_CODEX_HOME },
+    isolatedCodexHome: true,
     includeModels: true,
     timeoutMs,
   });
@@ -3071,7 +3070,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           : await getCodexAppServerAccountStatus({
               projectId: project_id,
               accountId,
-              env: { CODEX_HOME: PROJECT_RUNTIME_SUBSCRIPTION_CODEX_HOME },
+              isolatedCodexHome: true,
               includeModels: include_models && !cachedCatalog,
               timeoutMs,
             });

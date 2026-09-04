@@ -9,9 +9,11 @@ export const CODEX_PROJECT_RESTART_HINT =
 export const CODEX_PROJECT_RESTART_TITLE =
   "This project must be restarted to upgrade Codex.";
 
-export const CODEX_LITE_UPGRADE_HINT = "Upgrade Codex, then try again.";
+export const CODEX_LITE_UPGRADE_HINT =
+  "Upgrade and restart CoCalc Plus, then try again.";
 
-export const CODEX_LITE_UPGRADE_TITLE = "Codex must be upgraded.";
+export const CODEX_LITE_UPGRADE_TITLE =
+  "CoCalc Plus must be upgraded to update Codex.";
 
 export function isCodexUpgradeRequiredError(error: string): boolean {
   const normalized = `${error ?? ""}`.toLowerCase();

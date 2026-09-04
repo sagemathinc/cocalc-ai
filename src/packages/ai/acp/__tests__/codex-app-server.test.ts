@@ -5111,6 +5111,7 @@ describe("CodexAppServerAgent", () => {
     const status = await getCodexAppServerAccountStatus({
       projectId: "project-1",
       accountId: "account-1",
+      isolatedCodexHome: true,
       includeTokenUsage: true,
       includeModels: true,
     });
@@ -5119,6 +5120,7 @@ describe("CodexAppServerAgent", () => {
       expect.objectContaining({
         projectId: "project-1",
         accountId: "account-1",
+        isolatedCodexHome: true,
         touchReason: false,
       }),
     );
