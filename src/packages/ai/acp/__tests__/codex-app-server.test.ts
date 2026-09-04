@@ -5162,6 +5162,7 @@ describe("CodexAppServerAgent", () => {
         default: true,
       },
     ]);
+    expect(proc.stdin.writableEnded).toBe(true);
     expect(seen.map(({ method }) => method)).toEqual([
       "initialize",
       "initialized",
