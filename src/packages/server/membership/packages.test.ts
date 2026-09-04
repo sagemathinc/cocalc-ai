@@ -10,6 +10,7 @@ import dayjs from "dayjs";
 let createInterBayAccountLocalClientMock: jest.Mock;
 let getInterBayFabricClientMock: jest.Mock;
 let projectControlSetUsageAccountMock: jest.Mock;
+let projectDetailsGetMock: jest.Mock;
 
 jest.mock("@cocalc/conat/inter-bay/api", () => {
   const actual = jest.requireActual("@cocalc/conat/inter-bay/api");
@@ -33,6 +34,9 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
     projectControl: jest.fn((dest_bay: string) => ({
       setUsageAccount: (opts: any) =>
         projectControlSetUsageAccountMock(dest_bay, opts),
+    })),
+    projectDetails: jest.fn((dest_bay: string) => ({
+      get: (opts: any) => projectDetailsGetMock(dest_bay, opts),
     })),
   })),
 }));
@@ -114,6 +118,44 @@ describe("membership packages", () => {
         [account_id, home_bay_id],
       );
     }
+  }
+
+  async function createCourseStudentProject({
+    project_id,
+    course_project_id,
+    student_account_id,
+    owner_account_id,
+    email_address,
+    owning_bay_id,
+  }: {
+    project_id: string;
+    course_project_id: string;
+    student_account_id: string;
+    owner_account_id: string;
+    email_address?: string;
+    owning_bay_id?: string;
+  }) {
+    await getPool("medium").query(
+      `INSERT INTO projects
+         (project_id, title, users, last_edited, usage_account_id, owning_bay_id, course)
+       VALUES ($1, $2, $3::jsonb, NOW(), NULL, $4, $5::jsonb)`,
+      [
+        project_id,
+        "Student Project",
+        JSON.stringify({
+          [owner_account_id]: { group: "owner" },
+          [student_account_id]: { group: "collaborator" },
+        }),
+        owning_bay_id ?? null,
+        JSON.stringify({
+          type: "student",
+          account_id: student_account_id,
+          project_id: course_project_id,
+          path: "test.course",
+          ...(email_address ? { email_address } : {}),
+        }),
+      ],
+    );
   }
 
   beforeAll(async () => {
@@ -200,6 +242,14 @@ describe("membership packages", () => {
         return { updated: true };
       },
     );
+    projectDetailsGetMock = jest.fn(async (_dest_bay, { project_id }) => {
+      const { rows } = await getPool().query(
+        "SELECT course FROM projects WHERE project_id=$1 LIMIT 1",
+        [project_id],
+      );
+      if (!rows[0]) throw Error(`project ${project_id} not found`);
+      return { course: rows[0].course };
+    });
   });
 
   afterEach(() => {
@@ -702,24 +752,114 @@ describe("membership packages", () => {
     });
   });
 
+  it("rejects assigning a course seat to the instructor course project", async () => {
+    const owner_account_id = uuid();
+    const student_account_id = uuid();
+    const course_project_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(student_account_id);
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "course",
+      membership_class: "student",
+      seat_count: 1,
+      metadata: { course_project_id },
+    });
+
+    await expect(
+      assignMembershipPackageSeat({
+        package_id,
+        account_id: student_account_id,
+        assigned_by_account_id: owner_account_id,
+        metadata: { project_id: course_project_id },
+      }),
+    ).rejects.toThrow(
+      "course seat must target a student project, not the instructor course project",
+    );
+  });
+
+  it("rejects assigning a course seat to a project from another course", async () => {
+    const owner_account_id = uuid();
+    const student_account_id = uuid();
+    const course_project_id = uuid();
+    const student_project_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(student_account_id);
+    await createCourseStudentProject({
+      project_id: student_project_id,
+      course_project_id: uuid(),
+      student_account_id,
+      owner_account_id,
+    });
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "course",
+      membership_class: "student",
+      seat_count: 1,
+      metadata: { course_project_id },
+    });
+
+    await expect(
+      assignMembershipPackageSeat({
+        package_id,
+        account_id: student_account_id,
+        assigned_by_account_id: owner_account_id,
+        metadata: { project_id: student_project_id },
+      }),
+    ).rejects.toThrow(
+      `course seat project must be a student project linked to course ${course_project_id}`,
+    );
+  });
+
+  it("rejects assigning a course seat to another student's project", async () => {
+    const owner_account_id = uuid();
+    const student_account_id = uuid();
+    const other_student_account_id = uuid();
+    const course_project_id = uuid();
+    const student_project_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(student_account_id);
+    await createTestAccount(other_student_account_id);
+    await createCourseStudentProject({
+      project_id: student_project_id,
+      course_project_id,
+      student_account_id: other_student_account_id,
+      owner_account_id,
+    });
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "course",
+      membership_class: "student",
+      seat_count: 1,
+      metadata: { course_project_id },
+    });
+
+    await expect(
+      assignMembershipPackageSeat({
+        package_id,
+        account_id: student_account_id,
+        assigned_by_account_id: owner_account_id,
+        metadata: { project_id: student_project_id },
+      }),
+    ).rejects.toThrow(
+      "course seat account does not match the student project account",
+    );
+  });
+
   it("updates project usage attribution when assigning and revoking a course seat", async () => {
     const owner_account_id = uuid();
     const student_account_id = uuid();
+    const course_project_id = uuid();
     const project_id = uuid();
     await createTestAccount(owner_account_id);
     await createTestAccount(student_account_id);
 
-    await getPool("medium").query(
-      `INSERT INTO projects (project_id, title, users, last_edited, usage_account_id)
-       VALUES ($1, $2, $3::jsonb, NOW(), NULL)`,
-      [
-        project_id,
-        "Student Project",
-        JSON.stringify({
-          [owner_account_id]: { group: "owner" },
-        }),
-      ],
-    );
+    await createCourseStudentProject({
+      project_id,
+      course_project_id,
+      student_account_id,
+      owner_account_id,
+    });
 
     const package_id = await createTestMembershipPackage({
       owner_account_id,
@@ -727,7 +867,7 @@ describe("membership packages", () => {
       membership_class: "student",
       seat_count: 1,
       metadata: {
-        course_project_id: uuid(),
+        course_project_id,
         interval: "month",
         seat_price: 25,
       },
@@ -763,22 +903,18 @@ describe("membership packages", () => {
   it("routes course usage attribution writes to the project-owning bay", async () => {
     const owner_account_id = uuid();
     const student_account_id = uuid();
+    const course_project_id = uuid();
     const project_id = uuid();
     await createTestAccount(owner_account_id);
     await createTestAccount(student_account_id);
 
-    await getPool("medium").query(
-      `INSERT INTO projects (project_id, title, users, last_edited, usage_account_id, owning_bay_id)
-       VALUES ($1, $2, $3::jsonb, NOW(), NULL, $4)`,
-      [
-        project_id,
-        "Remote Student Project",
-        JSON.stringify({
-          [owner_account_id]: { group: "owner" },
-        }),
-        "bay-2",
-      ],
-    );
+    await createCourseStudentProject({
+      project_id,
+      course_project_id,
+      student_account_id,
+      owner_account_id,
+      owning_bay_id: "bay-2",
+    });
 
     const package_id = await createTestMembershipPackage({
       owner_account_id,
@@ -786,7 +922,7 @@ describe("membership packages", () => {
       membership_class: "student",
       seat_count: 1,
       metadata: {
-        course_project_id: uuid(),
+        course_project_id,
         interval: "month",
         seat_price: 25,
       },
@@ -836,22 +972,19 @@ describe("membership packages", () => {
   it("updates project usage attribution when a reserved course seat is claimed", async () => {
     const owner_account_id = uuid();
     const student_account_id = uuid();
+    const course_project_id = uuid();
     const project_id = uuid();
     await createTestAccount(owner_account_id);
     await createTestAccount(student_account_id);
     await markVerifiedEmail(student_account_id, "reserved-student@example.com");
 
-    await getPool("medium").query(
-      `INSERT INTO projects (project_id, title, users, last_edited, usage_account_id)
-       VALUES ($1, $2, $3::jsonb, NOW(), NULL)`,
-      [
-        project_id,
-        "Reserved Student Project",
-        JSON.stringify({
-          [owner_account_id]: { group: "owner" },
-        }),
-      ],
-    );
+    await createCourseStudentProject({
+      project_id,
+      course_project_id,
+      student_account_id,
+      owner_account_id,
+      email_address: "reserved-student@example.com",
+    });
 
     const package_id = await createTestMembershipPackage({
       owner_account_id,
@@ -859,7 +992,7 @@ describe("membership packages", () => {
       membership_class: "student",
       seat_count: 1,
       metadata: {
-        course_project_id: uuid(),
+        course_project_id,
         interval: "month",
         seat_price: 25,
       },
@@ -889,23 +1022,20 @@ describe("membership packages", () => {
   it("routes reserved course-seat claims to the project-owning bay", async () => {
     const owner_account_id = uuid();
     const student_account_id = uuid();
+    const course_project_id = uuid();
     const project_id = uuid();
     await createTestAccount(owner_account_id);
     await createTestAccount(student_account_id);
     await markVerifiedEmail(student_account_id, "remote-claim@example.com");
 
-    await getPool("medium").query(
-      `INSERT INTO projects (project_id, title, users, last_edited, usage_account_id, owning_bay_id)
-       VALUES ($1, $2, $3::jsonb, NOW(), NULL, $4)`,
-      [
-        project_id,
-        "Remote Reserved Student Project",
-        JSON.stringify({
-          [owner_account_id]: { group: "owner" },
-        }),
-        "bay-2",
-      ],
-    );
+    await createCourseStudentProject({
+      project_id,
+      course_project_id,
+      student_account_id,
+      owner_account_id,
+      email_address: "remote-claim@example.com",
+      owning_bay_id: "bay-2",
+    });
 
     const package_id = await createTestMembershipPackage({
       owner_account_id,
@@ -913,7 +1043,7 @@ describe("membership packages", () => {
       membership_class: "student",
       seat_count: 1,
       metadata: {
-        course_project_id: uuid(),
+        course_project_id,
         interval: "month",
         seat_price: 25,
       },
@@ -1002,11 +1132,13 @@ describe("membership packages", () => {
     await createTestAccount(owner_account_id);
     await createTestAccount(accepted_account_id);
     await markVerifiedEmail(accepted_account_id, "different@example.com");
-    await getPool().query(
-      `INSERT INTO projects (project_id, title, users)
-       VALUES ($1, 'Reserved seat test', $2::jsonb)`,
-      [student_project_id, { [owner_account_id]: { group: "owner" } }],
-    );
+    await createCourseStudentProject({
+      project_id: student_project_id,
+      course_project_id,
+      student_account_id: accepted_account_id,
+      owner_account_id,
+      email_address: "invited@example.com",
+    });
 
     const package_id = await createTestMembershipPackage({
       owner_account_id,

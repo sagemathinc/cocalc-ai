@@ -60,6 +60,7 @@ import {
 } from "@cocalc/server/cluster-config";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 
 type Queryable = PoolClient | ReturnType<typeof getPool>;
 type ClaimableMembershipPackageWithBay = ClaimableMembershipPackage & {
@@ -1299,6 +1300,93 @@ async function syncProjectUsageForAssignment({
   });
 }
 
+async function getCourseInfoForSeatProject({
+  project_id,
+  actor_account_id,
+  client,
+}: {
+  project_id: string;
+  actor_account_id: string;
+  client: PoolClient;
+}): Promise<CourseInfo | null> {
+  const localOwnership = await resolveProjectBayDirect(project_id);
+  const ownership =
+    localOwnership ?? (await resolveProjectBayAcrossCluster(project_id));
+  if (ownership == null) {
+    throw Error(`course seat project ${project_id} not found`);
+  }
+  if (ownership.bay_id === getConfiguredBayId()) {
+    const { rows } = await client.query<{ course: CourseInfo | null }>(
+      "SELECT course FROM projects WHERE project_id=$1 LIMIT 1",
+      [project_id],
+    );
+    if (!rows[0]) {
+      throw Error(`course seat project ${project_id} not found`);
+    }
+    return rows[0].course ?? null;
+  }
+  return (
+    await getInterBayBridge().projectDetails(ownership.bay_id).get({
+      project_id,
+      account_id: actor_account_id,
+    })
+  ).course;
+}
+
+async function assertValidCourseSeatProject({
+  pkg,
+  assignment_metadata,
+  account_id,
+  email_address,
+  actor_account_id,
+  client,
+}: {
+  pkg: MembershipPackageRecord;
+  assignment_metadata?: Record<string, unknown> | null;
+  account_id?: string;
+  email_address?: string;
+  actor_account_id: string;
+  client: PoolClient;
+}): Promise<void> {
+  if (pkg.kind !== "course") return;
+  const project_id = `${assignment_metadata?.project_id ?? ""}`.trim();
+  if (!project_id) return;
+  if (!isValidUUID(project_id)) {
+    throw Error("course seat project_id must be a valid UUID");
+  }
+  const course_project_id = `${pkg.metadata?.course_project_id ?? ""}`.trim();
+  if (!isValidUUID(course_project_id)) {
+    throw Error("course package is missing a valid course_project_id");
+  }
+  if (project_id === course_project_id) {
+    throw Error(
+      "course seat must target a student project, not the instructor course project",
+    );
+  }
+  const course = await getCourseInfoForSeatProject({
+    project_id,
+    actor_account_id,
+    client,
+  });
+  if (course?.type !== "student" || course.project_id !== course_project_id) {
+    throw Error(
+      `course seat project must be a student project linked to course ${course_project_id}`,
+    );
+  }
+  if (account_id && course.account_id && course.account_id !== account_id) {
+    throw Error(
+      "course seat account does not match the student project account",
+    );
+  }
+  if (
+    email_address &&
+    course.email_address &&
+    normalizeEmailAddress(course.email_address) !== email_address
+  ) {
+    throw Error("course seat email does not match the student project email");
+  }
+}
+
 async function withPackageOwnerWriteFence<T>({
   package_id,
   action,
@@ -2304,6 +2392,14 @@ export async function assignMembershipPackageSeat(
       if (!normalizedAccountId && !normalizedEmailAddress) {
         throw Error("account_id or email_address required");
       }
+      await assertValidCourseSeatProject({
+        pkg,
+        assignment_metadata: metadata,
+        account_id: normalizedAccountId,
+        email_address: normalizedEmailAddress,
+        actor_account_id: assigned_by_account_id,
+        client: dbClient,
+      });
       if (pkg.expires_at && pkg.expires_at <= new Date()) {
         throw Error("membership package has expired");
       }
@@ -3187,6 +3283,14 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
               site_license: terms,
             }),
           };
+          await assertValidCourseSeatProject({
+            pkg,
+            assignment_metadata: baseMetadata,
+            account_id,
+            actor_account_id:
+              pendingAssignment.assigned_by_account_id ?? pkg.owner_account_id,
+            client: dbClient,
+          });
           const grantInfo = await createGrantForAssignment({
             owner_account_id: pkg.owner_account_id,
             package_id,
