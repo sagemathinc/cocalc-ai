@@ -17,7 +17,7 @@ export const CODEX_USAGE_LABEL = "Open ChatGPT Codex Usage";
 export const CODEX_USAGE_STATUS_TIMEOUT_MS = 60_000;
 const CODEX_USAGE_STATUS_CACHE_PREFIX = "cocalc.chat.codexUsageStatusCache.v2";
 const CODEX_MODEL_CATALOG_CACHE_PREFIX =
-  "cocalc.chat.codexModelCatalogCache.v1";
+  "cocalc.chat.codexModelCatalogCache.v2";
 const CODEX_MODEL_CATALOG_INVALIDATION_PREFIX =
   "cocalc.chat.codexModelCatalogInvalidation.v1";
 const CODEX_MODEL_CATALOG_INVALIDATED_EVENT =
@@ -87,9 +87,18 @@ function getCodexUsageStatusCacheKey(accountId?: string): string {
   )}`;
 }
 
-function getCodexModelCatalogCacheKey(accountId?: string): string {
+function getCodexModelCatalogCachePrefix(accountId?: string): string {
   return `${CODEX_MODEL_CATALOG_CACHE_PREFIX}:${encodeURIComponent(
     accountId || "account",
+  )}:`;
+}
+
+function getCodexModelCatalogCacheKey(
+  accountId?: string,
+  projectId?: string,
+): string {
+  return `${getCodexModelCatalogCachePrefix(accountId)}${encodeURIComponent(
+    projectId || "project",
   )}`;
 }
 
@@ -199,12 +208,14 @@ export function writeCachedCodexUsageStatus({
 
 export function readCachedCodexModelCatalog({
   accountId,
+  projectId,
   now = Date.now(),
 }: {
   accountId?: string;
+  projectId?: string;
   now?: number;
 }): CachedCodexModelCatalog | undefined {
-  const key = getCodexModelCatalogCacheKey(accountId);
+  const key = getCodexModelCatalogCacheKey(accountId, projectId);
   try {
     const raw = globalThis.localStorage?.getItem(key);
     if (!raw) return undefined;
@@ -229,17 +240,19 @@ export function readCachedCodexModelCatalog({
 
 export function writeCachedCodexModelCatalog({
   accountId,
+  projectId,
   models,
   cachedAt = Date.now(),
 }: {
   accountId?: string;
+  projectId?: string;
   models?: CodexModelCapabilityInfo[];
   cachedAt?: number;
 }): void {
   if (!models?.length) return;
   try {
     globalThis.localStorage?.setItem(
-      getCodexModelCatalogCacheKey(accountId),
+      getCodexModelCatalogCacheKey(accountId, projectId),
       JSON.stringify({ version: 1, cachedAt, models }),
     );
   } catch {
@@ -252,10 +265,16 @@ export function clearCachedCodexModelCatalog({
 }: {
   accountId?: string;
 }): void {
-  const key = getCodexModelCatalogCacheKey(accountId);
+  const prefix = getCodexModelCatalogCachePrefix(accountId);
   const invalidationKey = getCodexModelCatalogInvalidationKey(accountId);
   try {
-    globalThis.localStorage?.removeItem(key);
+    const storage = globalThis.localStorage;
+    const keys: string[] = [];
+    for (let index = 0; index < (storage?.length ?? 0); index += 1) {
+      const key = storage?.key(index);
+      if (key?.startsWith(prefix)) keys.push(key);
+    }
+    for (const key of keys) storage?.removeItem(key);
     globalThis.localStorage?.setItem(
       invalidationKey,
       `${Date.now()}:${Math.random()}`,
@@ -266,7 +285,7 @@ export function clearCachedCodexModelCatalog({
   if (typeof window !== "undefined") {
     window.dispatchEvent(
       new CustomEvent(CODEX_MODEL_CATALOG_INVALIDATED_EVENT, {
-        detail: { key },
+        detail: { key: invalidationKey },
       }),
     );
   }
@@ -280,10 +299,11 @@ export function subscribeToCodexModelCatalogInvalidation({
   onInvalidate: () => void;
 }): () => void {
   if (typeof window === "undefined") return () => undefined;
-  const key = getCodexModelCatalogCacheKey(accountId);
   const invalidationKey = getCodexModelCatalogInvalidationKey(accountId);
   const handleLocal = (event: Event) => {
-    if ((event as CustomEvent<{ key?: string }>).detail?.key === key) {
+    if (
+      (event as CustomEvent<{ key?: string }>).detail?.key === invalidationKey
+    ) {
       onInvalidate();
     }
   };

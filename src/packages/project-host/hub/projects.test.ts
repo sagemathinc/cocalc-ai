@@ -1203,6 +1203,10 @@ describe("project host start ACP rehydrate ordering", () => {
       start: jest.fn(),
       stop: jest.fn(),
     } as any;
+    getProject.mockReturnValue({
+      image: DEFAULT_PROJECT_IMAGE,
+      tools_version: "tools-v1",
+    });
     resolveCodexAuthRuntime.mockResolvedValueOnce({
       source: "subscription",
       contextId: "subscription-context",
@@ -1289,6 +1293,10 @@ describe("project host start ACP rehydrate ordering", () => {
       modelsCached: true,
     });
 
+    getProject.mockReturnValue({
+      image: DEFAULT_PROJECT_IMAGE,
+      tools_version: "tools-v2",
+    });
     resolveCodexAuthRuntime.mockResolvedValueOnce({
       source: "subscription",
       contextId: "subscription-context",
@@ -1308,6 +1316,26 @@ describe("project host start ACP rehydrate ordering", () => {
         },
       ],
     });
+    const upgradedRuntime = await hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+    });
+    expect(getCodexAppServerAccountStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ includeModels: true }),
+    );
+    expect(upgradedRuntime).toMatchObject({
+      models: [expect.objectContaining({ model: "gpt-daybreak-blue-latest" })],
+      modelsCached: false,
+    });
+
+    resolveCodexAuthRuntime.mockResolvedValueOnce({
+      source: "subscription",
+      contextId: "subscription-context",
+      codexHome: "/tmp/codex-home",
+      env: {},
+    });
+    getCodexAppServerAccountStatus.mockResolvedValueOnce(liveStatus);
     const refreshed = await hubApi.projects.getCodexUsageStatus({
       account_id: "acct-1",
       project_id,
@@ -1318,7 +1346,7 @@ describe("project host start ACP rehydrate ordering", () => {
       expect.objectContaining({ includeModels: true }),
     );
     expect(refreshed).toMatchObject({
-      models: [expect.objectContaining({ model: "gpt-daybreak-blue-latest" })],
+      models: [expect.objectContaining({ model: "gpt-5.6-luna" })],
       modelsCached: false,
     });
   });
