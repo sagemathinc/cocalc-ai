@@ -4,7 +4,7 @@
  */
 
 import { SafetyCertificateOutlined } from "@ant-design/icons";
-import { Alert, Button, Checkbox, Input, Space, Tag, Typography } from "antd";
+import { Alert, Button, Input, Radio, Space, Tag, Typography } from "antd";
 import type {
   AcpAttentionQuestion,
   AcpAttentionRecord,
@@ -22,7 +22,6 @@ import { appendUrlPath } from "@cocalc/util/url-path";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getControlPlaneAppUrl } from "@cocalc/frontend/control-plane-origin";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
-import { showCodexNotificationBestEffort } from "@cocalc/frontend/notifications/codex-turn-toast";
 import { lite } from "@cocalc/frontend/lite";
 
 const { Paragraph, Text, Title } = Typography;
@@ -66,11 +65,11 @@ export function codexFreshAuthUrl(
 
 function answersForQuestion(opts: {
   question: AcpAttentionQuestion;
-  selected: string[];
+  selected?: string;
   other: string;
 }): string[] {
   const answer = opts.other.trim();
-  return answer ? [...opts.selected, answer] : opts.selected;
+  return answer ? [answer] : opts.selected ? [opts.selected] : [];
 }
 
 export function CodexAttentionCard({
@@ -79,7 +78,9 @@ export function CodexAttentionCard({
   initialRecord: AcpAttentionRecord;
 }) {
   const [record, setRecord] = useState(initialRecord);
-  const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [selected, setSelected] = useState<Record<string, string | undefined>>(
+    {},
+  );
   const [other, setOther] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
@@ -109,27 +110,6 @@ export function CodexAttentionCard({
         markedSeenRef.current = false;
       });
   }, [initialRecord.attention_id, initialRecord.project_id]);
-
-  useEffect(() => {
-    void showCodexNotificationBestEffort({
-      account_id: record.account_id,
-      row: {
-        notification_id: record.attention_id,
-        kind: "account_notice",
-        project_id: record.project_id,
-        summary: {
-          notice_type: "codex_attention",
-          origin_label: "Codex",
-          attention_id: record.attention_id,
-          attention_state: record.state,
-          message_date: record.message_date,
-          path: record.path,
-          thread_id: record.thread_id,
-          stable_source_id: record.source_id,
-        },
-      },
-    });
-  }, [record]);
 
   useEffect(() => {
     let disposed = false;
@@ -179,7 +159,7 @@ export function CodexAttentionCard({
           question.id,
           answersForQuestion({
             question,
-            selected: selected[question.id] ?? [],
+            selected: selected[question.id],
             other: other[question.id] ?? "",
           }),
         ]),
@@ -364,28 +344,33 @@ export function CodexAttentionCard({
                   {question.question}
                 </Paragraph>
                 {question.options?.length ? (
-                  <Checkbox.Group
+                  <Radio.Group
                     aria-label={`Suggested answers for ${question.header}`}
-                    value={selected[question.id] ?? []}
-                    onChange={(values) =>
+                    name={`codex-attention-${record.attention_id}-${question.id}`}
+                    value={selected[question.id]}
+                    onChange={(event) => {
                       setSelected((current) => ({
                         ...current,
-                        [question.id]: values.map(String),
-                      }))
-                    }
+                        [question.id]: String(event.target.value),
+                      }));
+                      setOther((current) => ({
+                        ...current,
+                        [question.id]: "",
+                      }));
+                    }}
                     style={{ display: "grid", gap: 6, marginBottom: 8 }}
                   >
                     {question.options.map((option) => (
-                      <Checkbox key={option.label} value={option.label}>
+                      <Radio key={option.label} value={option.label}>
                         <Space orientation="vertical" size={0}>
                           <span>{option.label}</span>
                           {option.description ? (
                             <Text type="secondary">{option.description}</Text>
                           ) : null}
                         </Space>
-                      </Checkbox>
+                      </Radio>
                     ))}
-                  </Checkbox.Group>
+                  </Radio.Group>
                 ) : null}
                 {question.isOther || !question.options?.length ? (
                   <Input.TextArea
@@ -393,12 +378,18 @@ export function CodexAttentionCard({
                     autoSize={{ minRows: 2, maxRows: 6 }}
                     placeholder="Type an answer"
                     value={other[question.id] ?? ""}
-                    onChange={(event) =>
+                    onChange={(event) => {
                       setOther((current) => ({
                         ...current,
                         [question.id]: event.target.value,
-                      }))
-                    }
+                      }));
+                      if (event.target.value) {
+                        setSelected((current) => ({
+                          ...current,
+                          [question.id]: undefined,
+                        }));
+                      }
+                    }}
                   />
                 ) : null}
               </fieldset>

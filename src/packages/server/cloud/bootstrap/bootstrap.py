@@ -43,10 +43,11 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260901-v50"
+HELPER_SCHEMA_VERSION = "20260903-v51"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
+import ipaddress
 import json
 import os
 import pathlib
@@ -344,6 +345,35 @@ def collect_processes():
     }, {record["pid"] for record in records}
 
 
+def socket_endpoint(value):
+    value = value.strip()
+    if value.startswith("["):
+        closing = value.rfind("]:")
+        if closing >= 0:
+            return value[1:closing], value[closing + 2:]
+    host, separator, port = value.rpartition(":")
+    return (host, port) if separator else (value, "")
+
+
+def is_loopback_host(host):
+    candidate = host.split("%", 1)[0]
+    try:
+        return ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        return candidate == "localhost"
+
+
+def established_endpoints(fields):
+    # `ss ... state established` normally omits the state column, while some
+    # versions retain it. In both forms endpoints follow the queue columns.
+    offset = 0 if fields and fields[0].isdigit() else 1
+    local_index = offset + 2
+    peer_index = offset + 3
+    if len(fields) <= peer_index:
+        return None
+    return fields[local_index], fields[peer_index]
+
+
 def collect_network(host_pids):
     listener_lines = run("network_listeners", ["/usr/bin/ss", "-H", "-lntup"], max_lines=5000)
     listener_counts = collections.Counter()
@@ -378,16 +408,15 @@ def collect_network(host_pids):
         if not pid_match or int(pid_match.group(1)) not in host_pids:
             continue
         fields = line.split()
-        if len(fields) < 5:
+        endpoints = established_endpoints(fields)
+        if endpoints is None:
             continue
         process_match = re.search(r'users:\(\("([^\"]+)\"', line)
         process = clean(process_match.group(1), 128) if process_match else "unknown"
-        local = fields[3]
-        peer = fields[4]
-        peer_host, _, peer_port = peer.rpartition(":")
-        peer_host = peer_host.strip("[]")
-        local_port = local.rsplit(":", 1)[-1]
-        if peer_host in ("127.0.0.1", "::1"):
+        local, peer = endpoints
+        _local_host, local_port = socket_endpoint(local)
+        peer_host, peer_port = socket_endpoint(peer)
+        if is_loopback_host(peer_host):
             continue
         normalized_peer = peer_host if local_port in listening_ports else f"{peer_host}:{peer_port}"
         connection_counts[(process, clean(local_port, 16), clean(normalized_peer, 256))] += 1

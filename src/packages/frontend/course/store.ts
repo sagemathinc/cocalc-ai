@@ -45,12 +45,17 @@ export type TerminalCommandOutput = TypedMap<{
   project_id: string;
   stdout?: string;
   stderr?: string;
-  time_ms?: number;
+  exit_code?: number;
+  timeout?: number;
+  total_time?: number;
+  status?: "succeeded" | "failed" | "timed_out";
+  phase?: "starting" | "running";
 }>;
 
 export type TerminalCommand = TypedMap<{
   input?: string;
   output?: List<TerminalCommandOutput>;
+  expected_count?: number;
   running?: boolean;
 }>;
 

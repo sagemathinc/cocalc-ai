@@ -495,13 +495,45 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
-  it("does not create completion notifications before rollout is enabled", async () => {
+  it("creates completion notifications by default", async () => {
     delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
       metadata: {
         ...baseMetadata,
         completion_notification_enabled: true,
+      },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+
+    await writer.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+
+    expect(callHubMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "notifications.createCodexTurnNotice",
+      }),
+    );
+    writer.dispose?.(true);
+  });
+
+  it("preserves a legacy completion notification opt-out", async () => {
+    delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        notify_on_turn_finish: false,
       },
       client: makeFakeClient(),
       approverAccountId: "u",
@@ -3341,6 +3373,22 @@ describe("ChatStreamWriter", () => {
       sessionId: "session-123",
     });
     writer.dispose?.(true);
+  });
+});
+
+describe("async attention answers", () => {
+  it("preserves completion notification opt-outs", () => {
+    expect(
+      acpTestInternals.asyncAttentionNotificationMetadata({
+        chat: {
+          notify_on_turn_finish: false,
+          completion_notification_enabled: false,
+        },
+      } as any),
+    ).toEqual({
+      notify_on_turn_finish: false,
+      completion_notification_enabled: false,
+    });
   });
 });
 

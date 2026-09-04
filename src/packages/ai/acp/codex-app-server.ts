@@ -109,11 +109,15 @@ function normalizeMaxConcurrentSubagents(value: unknown): number | undefined {
 }
 
 function attentionInputEnabled(supported: boolean): boolean {
-  return supported && process.env.COCALC_CODEX_ATTENTION_INPUT === "1";
+  return supported && process.env.COCALC_CODEX_ATTENTION_INPUT !== "0";
 }
 
 function asyncAttentionEnabled(): boolean {
-  return process.env.COCALC_CODEX_ATTENTION_ASYNC === "1";
+  return process.env.COCALC_CODEX_ATTENTION_ASYNC !== "0";
+}
+
+function hasDurableAttentionChat(chat: AcpEvaluateRequest["chat"]): boolean {
+  return !!(`${chat?.path ?? ""}`.trim() && `${chat?.thread_id ?? ""}`.trim());
 }
 
 function threadConfig(
@@ -901,6 +905,12 @@ export class AppServerClient {
       if (message.method === CODEX_SYNC_QUESTION_METHOD) {
         if (!this.attentionHandler || !this.attentionContext) {
           throw new Error("Codex attention input is not available");
+        }
+        if (!attentionInputEnabled(this.attentionInputSupported)) {
+          throw new Error("Codex attention input is disabled");
+        }
+        if (!hasDurableAttentionChat(this.attentionContext.chat)) {
+          throw new Error("Codex attention requires durable chat context");
         }
         const request = normalizeCodexSyncQuestionRequest(message.params);
         if (
@@ -2704,6 +2714,7 @@ export class CodexAppServerAgent implements AcpAgent {
     request: AcpEvaluateRequest,
   ): Promise<"completed" | "interrupted"> {
     const { prompt, stream, session_id, config } = request;
+    const hasAttentionChat = hasDurableAttentionChat(request.chat);
     const requestedSessionKey = normalizeCodexSessionId(session_id);
     const persistedSessionId = normalizeCodexSessionId(config?.sessionId);
     const hasEstablishedSession =
@@ -2897,7 +2908,9 @@ export class CodexAppServerAgent implements AcpAgent {
           normalizeMaxConcurrentSubagents(
             effectiveConfig?.maxConcurrentSubagents,
           ),
-          this.opts.attentionHandler != null && client.supportsAttentionInput(),
+          this.opts.attentionHandler != null &&
+            hasAttentionChat &&
+            client.supportsAttentionInput(),
         ),
       };
       const sessionMode = resolveCodexSessionMode(effectiveConfig);
@@ -3233,7 +3246,11 @@ export class CodexAppServerAgent implements AcpAgent {
             break;
           }
           case "agentMessage":
-            if (this.opts.attentionHandler && asyncAttentionEnabled()) {
+            if (
+              this.opts.attentionHandler &&
+              hasAttentionChat &&
+              asyncAttentionEnabled()
+            ) {
               const normalized = normalizeCodexAsyncQuestions(item);
               if (
                 normalized &&

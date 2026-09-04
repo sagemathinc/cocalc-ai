@@ -45,7 +45,10 @@ import {
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import { deriveAcpLogRefs, type CodexThreadConfig } from "@cocalc/chat";
-import type { AcpAutomationConfig } from "@cocalc/conat/ai/acp/types";
+import type {
+  AcpAttentionRecord,
+  AcpAutomationConfig,
+} from "@cocalc/conat/ai/acp/types";
 import { ChatLog } from "./chat-log";
 import { AgentMessageStatus } from "./agent-message-status";
 import CodexConfigButton from "./codex";
@@ -86,6 +89,7 @@ import {
 import { resolveAgentSessionIdForThread } from "./thread-session";
 import { useCodexLiveActivityStatus } from "./use-codex-log";
 import { CodexFullAccessNotice } from "./codex-full-access";
+import { CodexAttentionCard } from "./codex-attention-card";
 import { getCodexPaymentSourceOptions } from "./use-codex-payment-source";
 import {
   automationConfigMissingReason,
@@ -432,6 +436,7 @@ interface ChatRoomThreadPanelProps {
   activityJumpDate?: string;
   activityJumpToken?: number;
   activityJumpAttentionId?: string;
+  attentionRecords?: readonly AcpAttentionRecord[];
   shortcutEnabled?: boolean;
   isVisible?: boolean;
   notifyOnTurnFinish?: boolean;
@@ -482,6 +487,7 @@ export function ChatRoomThreadPanel({
   activityJumpDate,
   activityJumpToken,
   activityJumpAttentionId,
+  attentionRecords = [],
   shortcutEnabled = true,
   isVisible = true,
   notifyOnTurnFinish = false,
@@ -2622,6 +2628,25 @@ export function ChatRoomThreadPanel({
           paddingTop: contentTopInset,
         }}
       >
+        {attentionRecords.length > 0 ? (
+          <section
+            aria-label="Pending Codex requests"
+            style={{
+              maxHeight: "45vh",
+              overflowY: "auto",
+              padding: "8px 12px 0",
+            }}
+          >
+            <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+              {attentionRecords.map((record) => (
+                <CodexAttentionCard
+                  key={record.attention_id}
+                  initialRecord={record}
+                />
+              ))}
+            </Space>
+          </section>
+        ) : null}
         {showArchivedBanner ? (
           <div
             style={{

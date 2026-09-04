@@ -2497,7 +2497,7 @@ export class ChatStreamWriter {
   ): Promise<void> {
     if (
       this.completionNoticePublished ||
-      process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS !== "1"
+      process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS === "0"
     ) {
       return;
     }
@@ -2511,6 +2511,19 @@ export class ChatStreamWriter {
         threadConfig,
         "codex_completion_notification",
       );
+      const liveAcpConfig = syncdbField(threadConfig, "acp_config");
+      const liveLegacyPreference = syncdbField<boolean>(
+        liveAcpConfig,
+        "notifyOnTurnFinish",
+      );
+      const submittedLegacyPreference = this.metadata.notify_on_turn_finish;
+      const legacyPreference =
+        submittedLegacyPreference === true || liveLegacyPreference === true
+          ? true
+          : submittedLegacyPreference === false ||
+              liveLegacyPreference === false
+            ? false
+            : true;
       const shouldNotify =
         override === "on"
           ? true
@@ -2518,7 +2531,7 @@ export class ChatStreamWriter {
             ? false
             : typeof this.metadata.completion_notification_enabled === "boolean"
               ? this.metadata.completion_notification_enabled
-              : true;
+              : legacyPreference;
       if (!shouldNotify) {
         return;
       }
@@ -10412,6 +10425,19 @@ function formatAttentionAnswer(
   return lines.join("\n");
 }
 
+function asyncAttentionNotificationMetadata(
+  record: AcpAttentionStoredRecord,
+): Pick<
+  AcpChatContext,
+  "notify_on_turn_finish" | "completion_notification_enabled"
+> {
+  return {
+    notify_on_turn_finish: record.chat.notify_on_turn_finish,
+    completion_notification_enabled:
+      record.chat.completion_notification_enabled,
+  };
+}
+
 async function enqueueAsyncAttentionAnswer(
   record: NonNullable<ReturnType<typeof getAcpAttention>>,
 ): Promise<void> {
@@ -10476,6 +10502,7 @@ async function enqueueAsyncAttentionAnswer(
         thread_id: record.thread_id,
         message_id: assistantMessageId,
         parent_message_id: userMessageId,
+        ...asyncAttentionNotificationMetadata(record),
       },
     },
     stream: async () => undefined,
@@ -11671,6 +11698,7 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  asyncAttentionNotificationMetadata,
   cancelDelayedAcpQueueWake,
   detachedWorkerCanClaimQueuedJob,
   enqueueFailureRecoveryContinuation,

@@ -142,7 +142,9 @@ describe("rootfs membership limits", () => {
         requested_size_bytes: 11_000_000_000,
         operation: "publish",
       }),
-    ).rejects.toThrow("exceeds per-rootfs limit");
+    ).rejects.toThrow(
+      "rootfs image size 11 GB exceeds per-rootfs limit 10 GB; delete files or upgrade membership",
+    );
   });
 
   it("allows replacing an existing rootfs when projected total remains under cap", async () => {
