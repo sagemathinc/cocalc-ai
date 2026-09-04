@@ -1349,6 +1349,42 @@ describe("project host start ACP rehydrate ordering", () => {
       models: [expect.objectContaining({ model: "gpt-5.6-luna" })],
       modelsCached: false,
     });
+
+    let releaseConcurrentRefresh:
+      | ((status: typeof liveStatus) => void)
+      | undefined;
+    resolveCodexAuthRuntime.mockResolvedValue({
+      source: "subscription",
+      contextId: "subscription-context",
+      codexHome: "/tmp/codex-home",
+      env: {},
+    });
+    getCodexAppServerAccountStatus.mockImplementationOnce(
+      async () =>
+        await new Promise<typeof liveStatus>((resolve) => {
+          releaseConcurrentRefresh = resolve;
+        }),
+    );
+    const callsBeforeConcurrentRefresh =
+      getCodexAppServerAccountStatus.mock.calls.length;
+    const refreshA = hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+      refresh_models: true,
+    });
+    const refreshB = hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+      refresh_models: true,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(getCodexAppServerAccountStatus).toHaveBeenCalledTimes(
+      callsBeforeConcurrentRefresh + 1,
+    );
+    releaseConcurrentRefresh?.(liveStatus);
+    await expect(Promise.all([refreshA, refreshB])).resolves.toHaveLength(2);
   });
 
   it("does not start the Codex app-server for API-key usage sources", async () => {
