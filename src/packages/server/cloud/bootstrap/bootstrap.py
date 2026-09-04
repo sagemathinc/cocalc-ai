@@ -574,7 +574,7 @@ def main():
     kernel_signals = collect_kernel_signals()
     boot_id = clean(read_text("/proc/sys/kernel/random/boot_id", 256).strip(), 128)
     output = {
-        "version": 1,
+        "version": 2,
         "captured_at": captured_at,
         "duration_ms": 0,
         "hostname": clean(os.uname().nodename, 256),

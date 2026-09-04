@@ -51,7 +51,7 @@ async function ensureProjectHostsTestTable(): Promise<void> {
 
 function snapshot(): HostIntrusionSnapshotResponse {
   return {
-    version: 1,
+    version: 2,
     captured_at: "2026-09-02T00:00:00.000Z",
     duration_ms: 100,
     hostname: "host-1",
@@ -271,6 +271,47 @@ describe("project-host intrusion monitor normalization", () => {
         [hostId],
       );
       expect(result.rows[0]?.count).toBe("1");
+    } finally {
+      await pool.query(
+        "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
+        [hostId],
+      );
+      await pool.query("DELETE FROM project_hosts WHERE id=$1", [hostId]);
+      mockAdminAlert.mockReset();
+      mockGetIntrusionSnapshot.mockReset();
+    }
+  });
+
+  it("does not baseline complete snapshots from a legacy helper", async () => {
+    await ensureHostIntrusionMonitorSchema();
+    await ensureProjectHostsTestTable();
+    const hostId = "1f92b1e1-9c05-4112-86d0-c8d4a386650f";
+    const pool = getPool();
+    const legacy = { ...snapshot(), version: 1 as const };
+    mockAdminAlert.mockReset();
+    mockGetIntrusionSnapshot.mockReset();
+    mockGetIntrusionSnapshot.mockResolvedValue(legacy);
+    await pool.query(
+      `INSERT INTO project_hosts
+         (id, name, bay_id, status, last_seen, created, updated)
+       VALUES ($1, 'legacy-helper', 'intrusion-monitor-test', 'running',
+               NOW(), NOW(), NOW())`,
+      [hostId],
+    );
+    try {
+      await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+        checked: 1,
+        baselined: 0,
+        incomplete: 1,
+      });
+      const { rows } = await pool.query<{ coverage: string }>(
+        `SELECT coverage
+           FROM project_host_intrusion_snapshots
+          WHERE host_id=$1`,
+        [hostId],
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.coverage).toBe("partial");
     } finally {
       await pool.query(
         "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",

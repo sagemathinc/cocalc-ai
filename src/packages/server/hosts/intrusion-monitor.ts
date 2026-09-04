@@ -731,6 +731,20 @@ function unavailableSource(host: CandidateHost): HostIntrusionSnapshotResponse {
   };
 }
 
+function requireCgroupAwareCollector(
+  source: HostIntrusionSnapshotResponse,
+): HostIntrusionSnapshotResponse {
+  if (source.version >= 2) return source;
+  return {
+    ...source,
+    coverage: source.coverage === "unavailable" ? "unavailable" : "partial",
+    issues: [
+      ...source.issues,
+      { section: "host_processes", code: "CGROUP_COVERAGE_UNAVAILABLE" },
+    ],
+  };
+}
+
 async function mapWithConcurrency<T>(
   values: T[],
   concurrency: number,
@@ -789,13 +803,15 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
     result.checked += 1;
     try {
       const previousCoverage = await loadRecentCoverage(host.id);
-      const source = await (
-        await getRoutedHostControlClient({
-          host_id: host.id,
-          timeout: HOST_RPC_TIMEOUT_MS,
-          fresh: true,
-        })
-      ).getIntrusionSnapshot();
+      const source = requireCgroupAwareCollector(
+        await (
+          await getRoutedHostControlClient({
+            host_id: host.id,
+            timeout: HOST_RPC_TIMEOUT_MS,
+            fresh: true,
+          })
+        ).getIntrusionSnapshot(),
+      );
       const normalized = normalizeHostIntrusionSnapshot(source);
       if (source.coverage !== "complete") {
         result.incomplete += 1;

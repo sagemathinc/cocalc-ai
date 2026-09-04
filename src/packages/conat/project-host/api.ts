@@ -193,7 +193,7 @@ export interface HostFilesystemSnapshotResponse {
 }
 
 export interface HostIntrusionSnapshotResponse {
-  version: 1;
+  version: 1 | 2;
   captured_at: string;
   duration_ms: number;
   hostname: string;

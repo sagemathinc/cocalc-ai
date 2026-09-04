@@ -12,7 +12,7 @@ import {
 
 function snapshot(): HostIntrusionSnapshotResponse {
   return {
-    version: 1,
+    version: 2,
     captured_at: "2026-09-01T00:00:00.000Z",
     duration_ms: 12,
     hostname: "host-1",
@@ -100,5 +100,14 @@ describe("host intrusion snapshot", () => {
     expect(() => parseIntrusionSnapshot("x".repeat(512 * 1024))).toThrow(
       "intrusion snapshot exceeded output limit",
     );
+  });
+
+  it("accepts legacy version 1 snapshots during rolling upgrades", () => {
+    const legacy = { ...snapshot(), version: 1 as const };
+
+    expect(parseIntrusionSnapshot(JSON.stringify(legacy))).toEqual(legacy);
+    expect(() =>
+      parseIntrusionSnapshot(JSON.stringify({ ...legacy, version: 3 })),
+    ).toThrow("invalid intrusion snapshot response");
   });
 });
