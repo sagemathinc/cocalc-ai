@@ -550,14 +550,16 @@ export function CodexConfigButton({
     setModels(staticCodexModelOptions());
   }, []);
 
+  const selectedModelValue =
+    Form.useWatch("model", form) ?? value?.model ?? threadConfig?.model;
+
   useEffect(() => {
-    const selectedModel = threadConfig?.model;
     setModels(
       paymentSource?.source === "subscription"
-        ? codexModelOptionsForCatalog(codexModelCatalog, selectedModel)
+        ? codexModelOptionsForCatalog(codexModelCatalog, selectedModelValue)
         : staticCodexModelOptions(),
     );
-  }, [codexModelCatalog, paymentSource?.source, threadConfig?.model]);
+  }, [codexModelCatalog, paymentSource?.source, selectedModelValue]);
 
   const threadConfigKey = codexThreadConfigKey(threadConfig);
 
@@ -641,7 +643,6 @@ export function CodexConfigButton({
     projectId,
   ]);
 
-  const selectedModelValue = Form.useWatch("model", form) ?? value?.model;
   const selectedReasoningValue =
     Form.useWatch("reasoning", form) ?? value?.reasoning;
   const currentSessionMode =
@@ -772,6 +773,7 @@ export function CodexConfigButton({
           accountId,
           projectId,
           runtimeVersion: codexRuntimeVersion,
+          subscriptionRevision: paymentSource.subscriptionRevision,
         });
     if (cachedUsage) {
       setCodexUsageStatus(cachedUsage.status);
@@ -811,6 +813,7 @@ export function CodexConfigButton({
             accountId,
             projectId,
             runtimeVersion: codexRuntimeVersion,
+            subscriptionRevision: paymentSource.subscriptionRevision,
             models: status.models,
             cachedAt: Number.isFinite(checkedAt) ? checkedAt : Date.now(),
           });
@@ -839,6 +842,7 @@ export function CodexConfigButton({
     codexUsageRequested,
     open,
     paymentSource?.source,
+    paymentSource?.subscriptionRevision,
     codexRuntimeVersion,
     projectId,
   ]);

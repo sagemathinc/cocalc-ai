@@ -17,7 +17,7 @@ export const CODEX_USAGE_LABEL = "Open ChatGPT Codex Usage";
 export const CODEX_USAGE_STATUS_TIMEOUT_MS = 60_000;
 const CODEX_USAGE_STATUS_CACHE_PREFIX = "cocalc.chat.codexUsageStatusCache.v2";
 const CODEX_MODEL_CATALOG_CACHE_PREFIX =
-  "cocalc.chat.codexModelCatalogCache.v3";
+  "cocalc.chat.codexModelCatalogCache.v4";
 const CODEX_MODEL_CATALOG_INVALIDATION_PREFIX =
   "cocalc.chat.codexModelCatalogInvalidation.v1";
 const CODEX_MODEL_CATALOG_INVALIDATED_EVENT =
@@ -97,10 +97,13 @@ function getCodexModelCatalogCacheKey(
   accountId: string | undefined,
   projectId: string,
   runtimeVersion: string,
+  subscriptionRevision: string,
 ): string {
   return `${getCodexModelCatalogCachePrefix(accountId)}${encodeURIComponent(
     projectId,
-  )}:${encodeURIComponent(runtimeVersion)}`;
+  )}:${encodeURIComponent(runtimeVersion)}:${encodeURIComponent(
+    subscriptionRevision,
+  )}`;
 }
 
 function getCodexModelCatalogInvalidationKey(accountId?: string): string {
@@ -211,18 +214,21 @@ export function readCachedCodexModelCatalog({
   accountId,
   projectId,
   runtimeVersion,
+  subscriptionRevision,
   now = Date.now(),
 }: {
   accountId?: string;
   projectId?: string;
   runtimeVersion?: string;
+  subscriptionRevision?: string;
   now?: number;
 }): CachedCodexModelCatalog | undefined {
-  if (!projectId || !runtimeVersion) return undefined;
+  if (!projectId || !runtimeVersion || !subscriptionRevision) return undefined;
   const key = getCodexModelCatalogCacheKey(
     accountId,
     projectId,
     runtimeVersion,
+    subscriptionRevision,
   );
   try {
     const raw = globalThis.localStorage?.getItem(key);
@@ -250,19 +256,33 @@ export function writeCachedCodexModelCatalog({
   accountId,
   projectId,
   runtimeVersion,
+  subscriptionRevision,
   models,
   cachedAt = Date.now(),
 }: {
   accountId?: string;
   projectId?: string;
   runtimeVersion?: string;
+  subscriptionRevision?: string;
   models?: CodexModelCapabilityInfo[];
   cachedAt?: number;
 }): void {
-  if (!projectId || !runtimeVersion || !models?.length) return;
+  if (
+    !projectId ||
+    !runtimeVersion ||
+    !subscriptionRevision ||
+    !models?.length
+  ) {
+    return;
+  }
   try {
     globalThis.localStorage?.setItem(
-      getCodexModelCatalogCacheKey(accountId, projectId, runtimeVersion),
+      getCodexModelCatalogCacheKey(
+        accountId,
+        projectId,
+        runtimeVersion,
+        subscriptionRevision,
+      ),
       JSON.stringify({ version: 1, cachedAt, models }),
     );
   } catch {
