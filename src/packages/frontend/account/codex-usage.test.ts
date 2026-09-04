@@ -87,15 +87,46 @@ describe("Codex model catalog cache", () => {
     ).toBeUndefined();
   });
 
-  it("separates and explicitly clears account catalogs", () => {
-    writeCachedCodexModelCatalog({ accountId: "account-1", models });
-    writeCachedCodexModelCatalog({ accountId: "account-2", models });
+  it("separates projects and explicitly clears every account catalog", () => {
+    writeCachedCodexModelCatalog({
+      accountId: "account-1",
+      projectId: "project-1",
+      models,
+    });
+    writeCachedCodexModelCatalog({
+      accountId: "account-1",
+      projectId: "project-2",
+      models,
+    });
+    writeCachedCodexModelCatalog({
+      accountId: "account-2",
+      projectId: "project-1",
+      models,
+    });
+    expect(
+      readCachedCodexModelCatalog({
+        accountId: "account-1",
+        projectId: "project-3",
+      }),
+    ).toBeUndefined();
     clearCachedCodexModelCatalog({ accountId: "account-1" });
     expect(
-      readCachedCodexModelCatalog({ accountId: "account-1" }),
+      readCachedCodexModelCatalog({
+        accountId: "account-1",
+        projectId: "project-1",
+      }),
     ).toBeUndefined();
     expect(
-      readCachedCodexModelCatalog({ accountId: "account-2" })?.models,
+      readCachedCodexModelCatalog({
+        accountId: "account-1",
+        projectId: "project-2",
+      }),
+    ).toBeUndefined();
+    expect(
+      readCachedCodexModelCatalog({
+        accountId: "account-2",
+        projectId: "project-1",
+      })?.models,
     ).toEqual(models);
   });
 

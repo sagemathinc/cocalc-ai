@@ -354,8 +354,16 @@ export function resetCodexModelCatalogCacheForTesting(): void {
 function codexModelCatalogCacheKey(
   accountId: string,
   subscriptionId: string,
+  runtimeVersion: string,
 ): string {
-  return `${accountId}\0${subscriptionId}`;
+  return `${accountId}\0${subscriptionId}\0${runtimeVersion}`;
+}
+
+function codexModelCatalogRuntimeVersion(projectId: string): string {
+  const toolsVersion = `${getProject(projectId)?.tools_version ?? ""}`.trim();
+  // Missing legacy metadata must not permit catalogs to cross project
+  // runtimes, since those projects may still mount different Codex binaries.
+  return toolsVersion || `project:${projectId}`;
 }
 
 function invalidateCodexModelCatalog(accountId: string): void {
@@ -3049,8 +3057,11 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       const subscriptionId = include_models
         ? await getCodexSubscriptionIdentity(authRuntime)
         : undefined;
+      const runtimeVersion = include_models
+        ? codexModelCatalogRuntimeVersion(project_id)
+        : undefined;
       const cacheKey = subscriptionId
-        ? codexModelCatalogCacheKey(accountId, subscriptionId)
+        ? codexModelCatalogCacheKey(accountId, subscriptionId, runtimeVersion!)
         : undefined;
       const cacheGeneration = codexModelCatalogGeneration.get(accountId) ?? 0;
       const cachedCatalog =

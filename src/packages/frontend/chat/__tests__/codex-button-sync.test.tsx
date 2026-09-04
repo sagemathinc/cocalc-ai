@@ -245,6 +245,7 @@ describe("CodexConfigButton", () => {
 
   it("opens the compact picker from the fresh account catalog without a request", async () => {
     writeCachedCodexModelCatalog({
+      projectId: "project-1",
       models: [
         {
           model: "gpt-daybreak-blue-latest",
@@ -301,7 +302,10 @@ describe("CodexConfigButton", () => {
       serviceTiers: [],
       default: true,
     };
-    writeCachedCodexModelCatalog({ models: [dynamicModel] });
+    writeCachedCodexModelCatalog({
+      projectId: "project-1",
+      models: [dynamicModel],
+    });
     render(
       <CodexConfigButton
         threadKey="thread-1"
@@ -336,6 +340,7 @@ describe("CodexConfigButton", () => {
     expect(getCodexUsageStatus).not.toHaveBeenCalled();
 
     writeCachedCodexModelCatalog({
+      projectId: "project-1",
       models: [dynamicModel],
       cachedAt: Date.now() - CODEX_MODEL_CATALOG_TTL_MS,
     });

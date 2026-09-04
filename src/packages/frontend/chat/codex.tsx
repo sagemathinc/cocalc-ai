@@ -763,7 +763,7 @@ export function CodexConfigButton({
     const cachedUsage = readCachedCodexUsageStatus({ accountId });
     const cachedCatalog = forceModels
       ? undefined
-      : readCachedCodexModelCatalog({ accountId });
+      : readCachedCodexModelCatalog({ accountId, projectId });
     if (cachedUsage) {
       setCodexUsageStatus(cachedUsage.status);
       setCodexUsageStale(true);
@@ -800,6 +800,7 @@ export function CodexConfigButton({
           const checkedAt = Date.parse(status.modelsCheckedAt ?? "");
           writeCachedCodexModelCatalog({
             accountId,
+            projectId,
             models: status.models,
             cachedAt: Number.isFinite(checkedAt) ? checkedAt : Date.now(),
           });
