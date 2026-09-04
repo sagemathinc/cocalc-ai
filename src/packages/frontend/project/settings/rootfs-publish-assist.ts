@@ -31,6 +31,19 @@ export type PublishDraft = {
   hidden: boolean;
 };
 
+export function defaultRootfsSupersedesImageId({
+  entry,
+  publishMode,
+}: {
+  entry?: RootfsImageEntry;
+  publishMode: "copy" | "manage";
+}): string {
+  if (publishMode === "manage") {
+    return entry?.supersedes_image_id ?? "";
+  }
+  return entry?.can_manage ? entry.id : "";
+}
+
 export function rootfsSupersedesOptions({
   images,
   publishMode,

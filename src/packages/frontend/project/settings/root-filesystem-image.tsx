@@ -105,6 +105,7 @@ import {
 import {
   buildRootfsPublishAgentPrompt,
   buildRootfsPublishAssistCommand,
+  defaultRootfsSupersedesImageId,
   rootfsSupersedesOptions,
   rootfsThemeFromPublishDraft,
   type PublishDraft,
@@ -647,10 +648,10 @@ export default function RootFilesystemImage({
       version: currentEntry?.version ?? "",
       channel: currentEntry?.channel ?? "",
       default_jupyter_kernel: currentEntry?.default_jupyter_kernel ?? "",
-      supersedes_image_id:
-        defaultMode === "manage"
-          ? (currentEntry?.supersedes_image_id ?? "")
-          : (currentEntry?.id ?? ""),
+      supersedes_image_id: defaultRootfsSupersedesImageId({
+        entry: currentEntry,
+        publishMode: defaultMode,
+      }),
       theme: {
         ...themeDraftFromTheme(currentEntry?.theme, nextLabel),
         title: nextLabel,
