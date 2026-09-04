@@ -58,7 +58,7 @@ describe("Codex model catalog cache", () => {
       model: "gpt-daybreak-blue-latest",
       displayName: "Daybreak Blue",
       description: "Defensive cybersecurity model",
-      specialty: "cyber",
+      specialty: "cybersecurity",
       reasoning: [],
       serviceTiers: [],
     },

@@ -187,8 +187,11 @@ export function codexModelOptionsForCatalog(
   );
   const options: ModelOption[] = catalog.map((model) => {
     const fallback = staticModels.get(model.model);
-    const specialty =
-      model.specialty === "cyber" ? "Cybersecurity model." : undefined;
+    const specialty = ["cyber", "cybersecurity"].includes(
+      model.specialty?.toLowerCase() ?? "",
+    )
+      ? "Cybersecurity model."
+      : undefined;
     return {
       value: model.model,
       label: model.model,
