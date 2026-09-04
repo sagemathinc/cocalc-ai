@@ -6224,9 +6224,9 @@ describe("CodexAppServerAgent", () => {
     }
   });
 
-  it("version-gates and answers synchronous attention requests", async () => {
-    process.env.COCALC_CODEX_ATTENTION_INPUT = "1";
-    process.env.COCALC_CODEX_ATTENTION_ASYNC = "1";
+  it("enables and version-gates attention requests by default", async () => {
+    delete process.env.COCALC_CODEX_ATTENTION_INPUT;
+    delete process.env.COCALC_CODEX_ATTENTION_ASYNC;
     const threadStartRequests: any[] = [];
     const syncResponses: any[] = [];
     const requestSyncQuestion = jest.fn(async () => ({
@@ -6376,6 +6376,97 @@ describe("CodexAppServerAgent", () => {
     expect(serverRequestResolved).toHaveBeenCalledWith(
       expect.objectContaining({ requestId: "901" }),
     );
+  });
+
+  it("honors attention request kill switches", async () => {
+    process.env.COCALC_CODEX_ATTENTION_INPUT = "0";
+    process.env.COCALC_CODEX_ATTENTION_ASYNC = "0";
+    const threadStartRequests: any[] = [];
+    const createAsyncQuestion = jest.fn(async () => {});
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, {
+            userAgent: "codex_cli_rs/0.151.0",
+          });
+          break;
+        case "thread/start":
+          threadStartRequests.push(message.params);
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-attention-disabled" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-attention-disabled" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-attention-disabled", status: "inProgress" },
+            });
+            fake.sendNotification("item/completed", {
+              threadId: "thr-attention-disabled",
+              turnId: "turn-attention-disabled",
+              item: {
+                id: "async-question-disabled",
+                type: "agentMessage",
+                delivery: "async",
+                text: "This request should stay disabled.",
+                questions: [
+                  {
+                    title: "Which environment should I use?",
+                    options: ["Staging", "Production"],
+                  },
+                ],
+              },
+            });
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-attention-disabled", status: "completed" },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/home/user",
+      }),
+    });
+
+    await new CodexAppServerAgent({
+      attentionHandler: {
+        requestSyncQuestion: jest.fn(async () => ({})),
+        createAsyncQuestion,
+        serverRequestResolved: jest.fn(async () => {}),
+      },
+    }).evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "do not ask me",
+      stream: async () => {},
+      chat: {
+        path: "root/demo.chat",
+        project_id: "00000000-0000-4000-8000-000000000000",
+      } as any,
+      config: {
+        workingDirectory: "/home/user",
+      } as any,
+    });
+
+    expect(threadStartRequests).toHaveLength(1);
+    expect(threadStartRequests[0].config).toBeUndefined();
+    expect(createAsyncQuestion).not.toHaveBeenCalled();
   });
 
   it("keeps request attention context after a later turn becomes active", async () => {

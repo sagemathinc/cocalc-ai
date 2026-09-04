@@ -495,7 +495,7 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
-  it("does not create completion notifications before rollout is enabled", async () => {
+  it("creates completion notifications by default", async () => {
     delete process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS;
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
@@ -519,7 +519,11 @@ describe("ChatStreamWriter", () => {
       seq: 0,
     } as AcpStreamMessage);
 
-    expect(callHubMock).not.toHaveBeenCalled();
+    expect(callHubMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "notifications.createCodexTurnNotice",
+      }),
+    );
     writer.dispose?.(true);
   });
 

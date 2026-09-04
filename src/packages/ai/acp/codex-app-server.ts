@@ -108,11 +108,11 @@ function normalizeMaxConcurrentSubagents(value: unknown): number | undefined {
 }
 
 function attentionInputEnabled(supported: boolean): boolean {
-  return supported && process.env.COCALC_CODEX_ATTENTION_INPUT === "1";
+  return supported && process.env.COCALC_CODEX_ATTENTION_INPUT !== "0";
 }
 
 function asyncAttentionEnabled(): boolean {
-  return process.env.COCALC_CODEX_ATTENTION_ASYNC === "1";
+  return process.env.COCALC_CODEX_ATTENTION_ASYNC !== "0";
 }
 
 function threadConfig(

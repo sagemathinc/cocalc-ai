@@ -2497,7 +2497,7 @@ export class ChatStreamWriter {
   ): Promise<void> {
     if (
       this.completionNoticePublished ||
-      process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS !== "1"
+      process.env.COCALC_CODEX_COMPLETION_NOTIFICATIONS === "0"
     ) {
       return;
     }
