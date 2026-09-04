@@ -5220,6 +5220,78 @@ describe("CodexAppServerAgent", () => {
     expect(status.errors?.models).toContain("Method not found: model/list");
   });
 
+  it("bounds sequential account model discovery to one timeout", async () => {
+    jest.useFakeTimers();
+    try {
+      const proc = new FakeCodexAppServerProc((fake, message) => {
+        switch (message.method) {
+          case "initialize":
+            fake.sendResponse(message.id, {});
+            break;
+          case "initialized":
+            break;
+          case "account/read":
+            setTimeout(
+              () =>
+                fake.sendResponse(message.id, {
+                  account: { type: "chatgpt", planType: "pro" },
+                  requiresOpenaiAuth: false,
+                }),
+              40,
+            );
+            break;
+          case "account/rateLimits/read":
+            setTimeout(
+              () =>
+                fake.sendResponse(message.id, {
+                  rateLimits: { limitId: "codex" },
+                }),
+              40,
+            );
+            break;
+          case "model/list":
+            setTimeout(
+              () =>
+                fake.sendResponse(message.id, {
+                  data: [{ model: "too-late-model" }],
+                }),
+              40,
+            );
+            break;
+          default:
+            throw new Error(`unexpected method ${message.method}`);
+        }
+      });
+      setCodexProjectSpawner({
+        spawnCodexExec: jest.fn() as any,
+        spawnCodexAppServer: async () => ({
+          proc: proc as any,
+          args: ["app-server"],
+          cmd: "codex",
+        }),
+      });
+
+      const pending = getCodexAppServerAccountStatus({
+        projectId: "project-1",
+        accountId: "account-1",
+        includeModels: true,
+        timeoutMs: 100,
+      });
+      await jest.advanceTimersByTimeAsync(100);
+      const status = await pending;
+
+      expect(status.account?.account?.planType).toBe("pro");
+      expect(status.rateLimits).toEqual({
+        rateLimits: { limitId: "codex" },
+      });
+      expect(status.models).toBeUndefined();
+      expect(status.errors?.models).toContain("timed out");
+    } finally {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
+  });
+
   it("does not read token usage during the default account status check", async () => {
     const seen: Array<{ method: string; params: any }> = [];
     const proc = new FakeCodexAppServerProc((fake, message) => {
