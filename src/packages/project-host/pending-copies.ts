@@ -22,7 +22,7 @@ import {
   PROJECT_RUNTIME_HOME_ALIASES,
   projectRuntimeHomeRelativePath,
 } from "@cocalc/util/project-runtime";
-import { replacePathFromStaging } from "./path-copy-archive";
+import { installPathFromStaging } from "./path-copy-archive";
 
 const logger = getLogger("project-host:pending-copies");
 
@@ -149,36 +149,13 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
     scratch: getScratchMountpoint(row.dest_project_id),
     homeAliases: [...PROJECT_RUNTIME_HOME_ALIASES],
   });
-  let destAbs = await destFs.safeAbsPath(destPath);
+  const destAbs = await destFs.safeAbsPath(destPath);
   if (destAbs === projectRoot) {
     throw new Error("dest_path cannot be project root");
   }
 
-  let destStat = await statIfExists(destAbs);
-  if (!row.exact && destStat?.isDirectory() && srcPath) {
-    destPath = normalizeCopyPath(
-      path.posix.join(destPath, path.posix.basename(srcPath)),
-      "dest_path",
-    );
-    destAbs = await destFs.safeAbsPath(destPath);
-    if (destAbs === projectRoot) {
-      throw new Error("dest_path cannot be project root");
-    }
-    destStat = await statIfExists(destAbs);
-  }
-
-  const force = row.options?.force ?? true;
+  const destStat = await statIfExists(destAbs);
   const destExists = destStat != null;
-  if (destExists && !force) {
-    if (row.options?.errorOnExist) {
-      throw new Error("destination already exists");
-    }
-    logger.debug("copy skipped (destination exists)", {
-      dest_project_id: row.dest_project_id,
-      dest_path: destPath,
-    });
-    return;
-  }
   const stagingId = randomUUID();
   const stagingRel = path.posix.join(COPY_STAGING_DIR, stagingId, destPath);
   const stagingRoot = path.join(projectRoot, COPY_STAGING_DIR, stagingId);
@@ -197,10 +174,12 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
     if (!(await exists(stagingAbs))) {
       throw new Error(`restore produced no data at ${stagingRel}`);
     }
-    await replacePathFromStaging({
+    const installed = await installPathFromStaging({
       source: stagingAbs,
       destination: destAbs,
       destinationExists: destExists,
+      exact: row.exact,
+      options: row.options ?? undefined,
       copy: async (source, destination) => {
         await cpExec(source, destination, {
           ...row.options,
@@ -209,7 +188,9 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
         });
       },
     });
-    void touchProjectLastEdited(row.dest_project_id, "pending-copy");
+    if (installed) {
+      void touchProjectLastEdited(row.dest_project_id, "pending-copy");
+    }
   } finally {
     await rm(stagingRoot, { recursive: true, force: true }).catch(() => {});
   }

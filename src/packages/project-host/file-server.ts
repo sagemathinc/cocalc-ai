@@ -254,6 +254,7 @@ import {
 import {
   archivePathIsAllowed,
   decodePathCopyArchiveListing,
+  installPathFromStaging,
   replacePathFromStaging,
 } from "./path-copy-archive";
 import { flushJupyterNotebooksToDisk } from "./jupyter-collaborative-flush";
@@ -3032,45 +3033,22 @@ async function applyPathCopyArchive({
         if (!(await exists(sourceAbs))) {
           throw new Error(`archive did not extract ${archiveRootPath}`);
         }
-        let destPath = normalizePathCopyArchivePath(
+        const destPath = normalizePathCopyArchivePath(
           rootDest.dest_path,
           "destination path",
         );
-        let destAbs = await destFs.safeAbsPath(destPath);
+        const destAbs = await destFs.safeAbsPath(destPath);
         if (destAbs === projectRoot) {
           throw new Error("dest_path cannot be project root");
         }
 
-        let destStat = await lstatIfExists(destAbs);
-        if (!rootDest.exact && destStat?.isDirectory() && root.source_path) {
-          destPath = normalizePathCopyArchivePath(
-            path.posix.join(destPath, path.posix.basename(root.source_path)),
-            "destination path",
-          );
-          destAbs = await destFs.safeAbsPath(destPath);
-          if (destAbs === projectRoot) {
-            throw new Error("dest_path cannot be project root");
-          }
-          destStat = await lstatIfExists(destAbs);
-        }
-
-        const force = options?.force ?? true;
-        if (destStat && !force) {
-          if (options?.errorOnExist) {
-            const err = new Error(
-              "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
-            );
-            // @ts-ignore
-            err.code = "ERR_FS_CP_EEXIST";
-            throw err;
-          }
-          applied += 1;
-          continue;
-        }
-        await replacePathFromStaging({
+        const destStat = await lstatIfExists(destAbs);
+        const installed = await installPathFromStaging({
           source: sourceAbs,
           destination: destAbs,
           destinationExists: destStat != null,
+          exact: rootDest.exact,
+          options,
           copy: async (source, destination) => {
             await cpExec(source, destination, {
               ...options,
@@ -3080,7 +3058,9 @@ async function applyPathCopyArchive({
           },
         });
         applied += 1;
-        void touchProjectLastEdited(dest.project_id, "path-copy-archive");
+        if (installed) {
+          void touchProjectLastEdited(dest.project_id, "path-copy-archive");
+        }
       }
     }
     return { applied };

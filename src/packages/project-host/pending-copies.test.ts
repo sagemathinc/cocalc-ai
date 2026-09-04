@@ -1,6 +1,7 @@
 import path from "node:path";
 import os from "node:os";
 import {
+  cp,
   copyFile,
   mkdir,
   mkdtemp,
@@ -175,15 +176,53 @@ describe("project-host pending copies", () => {
     );
   });
 
-  it("retains directory-target behavior for ordinary queued copies", async () => {
+  it("merges an ordinary directory copy at its resolved destination", async () => {
     mockExact = false;
-    await mkdir(path.join(projectRoot, "foo"));
+    mockCallHub = jest.fn(async ({ name, args }) => {
+      if (name === "hosts.claimPendingCopies") {
+        return [
+          {
+            copy_id: "copy-1",
+            src_project_id: "src-project",
+            src_path: "handouts/lecture notes",
+            dest_project_id: "dest-project",
+            dest_path: "handouts/lecture notes",
+            snapshot_id: "snap-1",
+            options: { force: false, recursive: true },
+            exact: false,
+          },
+        ];
+      }
+      if (name === "hosts.updateCopyStatus") {
+        mockStatusUpdates.push(args[0]);
+        return;
+      }
+      throw new Error(`unexpected callHub name ${name}`);
+    });
+    mockRustic = jest.fn(async (args: string[], root: string) => {
+      const dest = path.join(root, args[2].replace(/^\/+/, ""));
+      await mkdir(dest, { recursive: true });
+      await writeFile(path.join(dest, "new.txt"), "new");
+    });
+    mockCpExec = jest.fn(async (src: string, dest: string) => {
+      await cp(src, dest, { force: false, recursive: true });
+    });
+    const destination = path.join(projectRoot, "handouts", "lecture notes");
+    await mkdir(destination, { recursive: true });
+    await writeFile(path.join(destination, "keep.txt"), "keep");
 
     const { applyPendingCopies } = await import("./pending-copies");
     await expect(applyPendingCopies({ limit: 1 })).resolves.toBe(1);
 
     await expect(
-      readFile(path.join(projectRoot, "foo", "test.ipynb"), "utf8"),
-    ).resolves.toBe("notebook payload");
+      readFile(path.join(destination, "new.txt"), "utf8"),
+    ).resolves.toBe("new");
+    await expect(
+      readFile(path.join(destination, "keep.txt"), "utf8"),
+    ).resolves.toBe("keep");
+    await expect(
+      readFile(path.join(destination, "lecture notes", "new.txt"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(mockCpExec.mock.calls[0][1]).toBe(destination);
   });
 });
