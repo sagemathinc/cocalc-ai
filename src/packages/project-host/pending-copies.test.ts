@@ -176,6 +176,47 @@ describe("project-host pending copies", () => {
     );
   });
 
+  it("skips an exact no-clobber copy before restoring its snapshot", async () => {
+    mockCallHub = jest.fn(async ({ name, args }) => {
+      if (name === "hosts.claimPendingCopies") {
+        return [
+          {
+            copy_id: "copy-1",
+            src_project_id: "src-project",
+            src_path: "test.ipynb",
+            dest_project_id: "dest-project",
+            dest_path: "foo",
+            snapshot_id: "expired-snapshot",
+            options: { force: false },
+            exact: true,
+          },
+        ];
+      }
+      if (name === "hosts.updateCopyStatus") {
+        mockStatusUpdates.push(args[0]);
+        return;
+      }
+      throw new Error(`unexpected callHub name ${name}`);
+    });
+    mockRustic.mockRejectedValue(new Error("snapshot not found"));
+    await writeFile(path.join(projectRoot, "foo"), "existing payload");
+
+    const { applyPendingCopies } = await import("./pending-copies");
+    await expect(applyPendingCopies({ limit: 1 })).resolves.toBe(1);
+
+    expect(mockRustic).not.toHaveBeenCalled();
+    expect(mockCpExec).not.toHaveBeenCalled();
+    await expect(readFile(path.join(projectRoot, "foo"), "utf8")).resolves.toBe(
+      "existing payload",
+    );
+    expect(mockStatusUpdates).toEqual([
+      expect.objectContaining({
+        copy_id: "copy-1",
+        status: "done",
+      }),
+    ]);
+  });
+
   it("merges an ordinary directory copy at its resolved destination", async () => {
     mockExact = false;
     mockCallHub = jest.fn(async ({ name, args }) => {

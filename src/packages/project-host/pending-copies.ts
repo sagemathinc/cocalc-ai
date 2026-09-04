@@ -156,6 +156,22 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
 
   const destStat = await statIfExists(destAbs);
   const destExists = destStat != null;
+  if (row.exact && destExists && !(row.options?.force ?? true)) {
+    if (row.options?.errorOnExist) {
+      const err = new Error(
+        "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
+      );
+      // @ts-ignore -- Node's SystemError code is not part of Error.
+      err.code = "ERR_FS_CP_EEXIST";
+      throw err;
+    }
+    logger.debug("copy skipped (exact destination exists)", {
+      copy_id: row.copy_id,
+      dest_project_id: row.dest_project_id,
+      dest_path: destPath,
+    });
+    return;
+  }
   const stagingId = randomUUID();
   const stagingRel = path.posix.join(COPY_STAGING_DIR, stagingId, destPath);
   const stagingRoot = path.join(projectRoot, COPY_STAGING_DIR, stagingId);
