@@ -1992,6 +1992,7 @@ function normalizeCodexModelCatalog(
       displayName:
         boundedCatalogText(entry.displayName, 200) || catalogLabel(model),
       description: boundedCatalogText(entry.description),
+      specialty: boundedCatalogText(entry.modelSpecialty, 100) || undefined,
       reasoning,
       serviceTiers,
       default: entry.isDefault === true || undefined,

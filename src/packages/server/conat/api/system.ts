@@ -6677,6 +6677,7 @@ export async function getCodexUsageStatus({
   account_id?: string;
   project_id?: string;
   include_models?: boolean;
+  refresh_models?: boolean;
   timeout?: number;
 }) {
   if (!account_id) {

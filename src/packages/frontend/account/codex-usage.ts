@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { CodexUsageStatusInfo } from "@cocalc/conat/hub/api/system";
+import type {
+  CodexModelCapabilityInfo,
+  CodexUsageStatusInfo,
+} from "@cocalc/conat/hub/api/system";
 import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
@@ -13,9 +16,17 @@ export const CODEX_USAGE_LABEL = "Open ChatGPT Codex Usage";
 
 export const CODEX_USAGE_STATUS_TIMEOUT_MS = 60_000;
 const CODEX_USAGE_STATUS_CACHE_PREFIX = "cocalc.chat.codexUsageStatusCache.v2";
+const CODEX_MODEL_CATALOG_CACHE_PREFIX =
+  "cocalc.chat.codexModelCatalogCache.v1";
+export const CODEX_MODEL_CATALOG_TTL_MS = 30 * 60_000;
 
 export interface CachedCodexUsageStatus {
   status: CodexUsageStatusInfo;
+  cachedAt: number;
+}
+
+export interface CachedCodexModelCatalog {
+  models: CodexModelCapabilityInfo[];
   cachedAt: number;
 }
 
@@ -68,6 +79,12 @@ export function getCodexSubscriptionConnection(
 
 function getCodexUsageStatusCacheKey(accountId?: string): string {
   return `${CODEX_USAGE_STATUS_CACHE_PREFIX}:${encodeURIComponent(
+    accountId || "account",
+  )}`;
+}
+
+function getCodexModelCatalogCacheKey(accountId?: string): string {
+  return `${CODEX_MODEL_CATALOG_CACHE_PREFIX}:${encodeURIComponent(
     accountId || "account",
   )}`;
 }
@@ -153,12 +170,16 @@ export function writeCachedCodexUsageStatus({
 }): void {
   if (!hasCodexUsageRateLimitWindows(status)) return;
   try {
+    const usageStatus = { ...status };
+    delete usageStatus.models;
+    delete usageStatus.modelsCheckedAt;
+    delete usageStatus.modelsCached;
     globalThis.localStorage?.setItem(
       getCodexUsageStatusCacheKey(accountId),
       JSON.stringify({
         version: 1,
         cachedAt: Date.now(),
-        status,
+        status: usageStatus,
       }),
     );
   } catch {
@@ -166,23 +187,91 @@ export function writeCachedCodexUsageStatus({
   }
 }
 
+export function readCachedCodexModelCatalog({
+  accountId,
+  now = Date.now(),
+}: {
+  accountId?: string;
+  now?: number;
+}): CachedCodexModelCatalog | undefined {
+  const key = getCodexModelCatalogCacheKey(accountId);
+  try {
+    const raw = globalThis.localStorage?.getItem(key);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    if (
+      !isObject(parsed) ||
+      parsed.version !== 1 ||
+      typeof parsed.cachedAt !== "number" ||
+      !Array.isArray(parsed.models)
+    ) {
+      return undefined;
+    }
+    if (now - parsed.cachedAt >= CODEX_MODEL_CATALOG_TTL_MS) {
+      globalThis.localStorage?.removeItem(key);
+      return undefined;
+    }
+    return { cachedAt: parsed.cachedAt, models: parsed.models };
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeCachedCodexModelCatalog({
+  accountId,
+  models,
+  cachedAt = Date.now(),
+}: {
+  accountId?: string;
+  models?: CodexModelCapabilityInfo[];
+  cachedAt?: number;
+}): void {
+  if (!models?.length) return;
+  try {
+    globalThis.localStorage?.setItem(
+      getCodexModelCatalogCacheKey(accountId),
+      JSON.stringify({ version: 1, cachedAt, models }),
+    );
+  } catch {
+    // Ignore storage errors; the project-host cache remains authoritative.
+  }
+}
+
+export function clearCachedCodexModelCatalog({
+  accountId,
+}: {
+  accountId?: string;
+}): void {
+  try {
+    globalThis.localStorage?.removeItem(
+      getCodexModelCatalogCacheKey(accountId),
+    );
+  } catch {
+    // Ignore storage errors; a forced refresh still bypasses backend caches.
+  }
+}
+
 export async function getLiveCodexUsageStatus({
   projectId,
   includeModels = false,
+  refreshModels = false,
 }: {
   projectId?: string;
   includeModels?: boolean;
+  refreshModels?: boolean;
 }): Promise<CodexUsageStatusInfo> {
   if (projectId && !lite) {
     return await webapp_client.conat_client.hub.projects.getCodexUsageStatus({
       project_id: projectId,
       include_models: includeModels,
+      refresh_models: refreshModels,
       timeout: CODEX_USAGE_STATUS_TIMEOUT_MS,
     });
   }
   return await webapp_client.conat_client.hub.system.getCodexUsageStatus({
     project_id: projectId || undefined,
     include_models: includeModels,
+    refresh_models: refreshModels,
     timeout: CODEX_USAGE_STATUS_TIMEOUT_MS,
   });
 }
