@@ -901,6 +901,9 @@ export class AppServerClient {
         if (!this.attentionHandler || !this.attentionContext) {
           throw new Error("Codex attention input is not available");
         }
+        if (!attentionInputEnabled(this.attentionInputSupported)) {
+          throw new Error("Codex attention input is disabled");
+        }
         const request = normalizeCodexSyncQuestionRequest(message.params);
         if (
           request.threadId !== this.attentionContext.threadId ||

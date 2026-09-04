@@ -10412,6 +10412,19 @@ function formatAttentionAnswer(
   return lines.join("\n");
 }
 
+function asyncAttentionNotificationMetadata(
+  record: AcpAttentionStoredRecord,
+): Pick<
+  AcpChatContext,
+  "notify_on_turn_finish" | "completion_notification_enabled"
+> {
+  return {
+    notify_on_turn_finish: record.chat.notify_on_turn_finish,
+    completion_notification_enabled:
+      record.chat.completion_notification_enabled,
+  };
+}
+
 async function enqueueAsyncAttentionAnswer(
   record: NonNullable<ReturnType<typeof getAcpAttention>>,
 ): Promise<void> {
@@ -10476,6 +10489,7 @@ async function enqueueAsyncAttentionAnswer(
         thread_id: record.thread_id,
         message_id: assistantMessageId,
         parent_message_id: userMessageId,
+        ...asyncAttentionNotificationMetadata(record),
       },
     },
     stream: async () => undefined,
@@ -11671,6 +11685,7 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  asyncAttentionNotificationMetadata,
   cancelDelayedAcpQueueWake,
   detachedWorkerCanClaimQueuedJob,
   enqueueFailureRecoveryContinuation,

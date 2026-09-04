@@ -6382,8 +6382,17 @@ describe("CodexAppServerAgent", () => {
     process.env.COCALC_CODEX_ATTENTION_INPUT = "0";
     process.env.COCALC_CODEX_ATTENTION_ASYNC = "0";
     const threadStartRequests: any[] = [];
+    const syncResponses: any[] = [];
+    const requestSyncQuestion = jest.fn(async () => ({}));
     const createAsyncQuestion = jest.fn(async () => {});
     const proc = new FakeCodexAppServerProc((fake, message) => {
+      if (message.id === 901 && message.error) {
+        syncResponses.push(message);
+        fake.sendNotification("turn/completed", {
+          turn: { id: "turn-attention-disabled", status: "completed" },
+        });
+        return;
+      }
       switch (message.method) {
         case "initialize":
           fake.sendResponse(message.id, {
@@ -6404,6 +6413,20 @@ describe("CodexAppServerAgent", () => {
             fake.sendNotification("turn/started", {
               turn: { id: "turn-attention-disabled", status: "inProgress" },
             });
+            fake.sendRequest(901, "item/tool/requestUserInput", {
+              threadId: "thr-attention-disabled",
+              turnId: "turn-attention-disabled",
+              itemId: "question-attention-disabled",
+              isBlocking: false,
+              questions: [
+                {
+                  id: "region",
+                  header: "Region",
+                  question: "Which region?",
+                  options: [{ label: "EU" }, { label: "US" }],
+                },
+              ],
+            });
             fake.sendNotification("item/completed", {
               threadId: "thr-attention-disabled",
               turnId: "turn-attention-disabled",
@@ -6419,9 +6442,6 @@ describe("CodexAppServerAgent", () => {
                   },
                 ],
               },
-            });
-            fake.sendNotification("turn/completed", {
-              turn: { id: "turn-attention-disabled", status: "completed" },
             });
           });
           break;
@@ -6446,7 +6466,7 @@ describe("CodexAppServerAgent", () => {
 
     await new CodexAppServerAgent({
       attentionHandler: {
-        requestSyncQuestion: jest.fn(async () => ({})),
+        requestSyncQuestion,
         createAsyncQuestion,
         serverRequestResolved: jest.fn(async () => {}),
       },
@@ -6466,7 +6486,17 @@ describe("CodexAppServerAgent", () => {
 
     expect(threadStartRequests).toHaveLength(1);
     expect(threadStartRequests[0].config).toBeUndefined();
+    expect(requestSyncQuestion).not.toHaveBeenCalled();
     expect(createAsyncQuestion).not.toHaveBeenCalled();
+    expect(syncResponses).toEqual([
+      {
+        id: 901,
+        error: {
+          code: -32000,
+          message: "Codex attention input is disabled",
+        },
+      },
+    ]);
   });
 
   it("keeps request attention context after a later turn becomes active", async () => {

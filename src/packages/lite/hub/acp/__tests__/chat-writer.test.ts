@@ -3348,6 +3348,22 @@ describe("ChatStreamWriter", () => {
   });
 });
 
+describe("async attention answers", () => {
+  it("preserves completion notification opt-outs", () => {
+    expect(
+      acpTestInternals.asyncAttentionNotificationMetadata({
+        chat: {
+          notify_on_turn_finish: false,
+          completion_notification_enabled: false,
+        },
+      } as any),
+    ).toEqual({
+      notify_on_turn_finish: false,
+      completion_notification_enabled: false,
+    });
+  });
+});
+
 describe("recoverOrphanedAcpTurns", () => {
   it("marks stale generating turn as interrupted with restart notice", async () => {
     const { syncdb, sets, setCurrent } = makeFakeSyncDB();
