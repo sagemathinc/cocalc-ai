@@ -60,7 +60,7 @@ export function parseIntrusionSnapshot(
   const parsed: unknown = JSON.parse(raw);
   if (
     !isRecord(parsed) ||
-    parsed.version !== 1 ||
+    (parsed.version !== 1 && parsed.version !== 2) ||
     typeof parsed.captured_at !== "string" ||
     typeof parsed.duration_ms !== "number" ||
     typeof parsed.hostname !== "string" ||
