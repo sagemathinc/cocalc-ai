@@ -291,6 +291,42 @@ describe("CodexConfigButton", () => {
     expect(getCodexUsageStatus).not.toHaveBeenCalled();
   });
 
+  it("preserves a stored catalog model before discovery runs", async () => {
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={{
+          model: "gpt-daybreak-blue-latest",
+          paymentSource: "subscription",
+        }}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("gpt-daybreak-blue-latest")).toBeTruthy();
+    });
+    expect(stableForm.setFieldsValue).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-daybreak-blue-latest" }),
+    );
+    expect(getCodexUsageStatus).not.toHaveBeenCalled();
+  });
+
   it("forces catalog discovery from the settings refresh button", async () => {
     render(
       <CodexConfigButton
