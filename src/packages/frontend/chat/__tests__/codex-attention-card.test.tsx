@@ -164,4 +164,29 @@ describe("Codex question attention", () => {
     );
     otherView.unmount();
   });
+
+  it("allows exactly one suggested answer", async () => {
+    const view = render(<CodexAttentionCard initialRecord={questionRecord} />);
+    const eu = screen.getByRole("radio", { name: "EU" });
+    const us = screen.getByRole("radio", { name: "US" });
+
+    fireEvent.click(eu);
+    expect(eu).toBeChecked();
+    expect(us).not.toBeChecked();
+
+    fireEvent.click(us);
+    expect(eu).not.toBeChecked();
+    expect(us).toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send response" }));
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "respond",
+          answers: { region: ["US"] },
+        }),
+      ),
+    );
+    view.unmount();
+  });
 });

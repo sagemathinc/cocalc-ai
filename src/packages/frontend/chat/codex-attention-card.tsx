@@ -4,7 +4,7 @@
  */
 
 import { SafetyCertificateOutlined } from "@ant-design/icons";
-import { Alert, Button, Checkbox, Input, Space, Tag, Typography } from "antd";
+import { Alert, Button, Input, Radio, Space, Tag, Typography } from "antd";
 import type {
   AcpAttentionQuestion,
   AcpAttentionRecord,
@@ -66,11 +66,11 @@ export function codexFreshAuthUrl(
 
 function answersForQuestion(opts: {
   question: AcpAttentionQuestion;
-  selected: string[];
+  selected?: string;
   other: string;
 }): string[] {
   const answer = opts.other.trim();
-  return answer ? [...opts.selected, answer] : opts.selected;
+  return answer ? [answer] : opts.selected ? [opts.selected] : [];
 }
 
 export function CodexAttentionCard({
@@ -79,7 +79,9 @@ export function CodexAttentionCard({
   initialRecord: AcpAttentionRecord;
 }) {
   const [record, setRecord] = useState(initialRecord);
-  const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [selected, setSelected] = useState<Record<string, string | undefined>>(
+    {},
+  );
   const [other, setOther] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
@@ -179,7 +181,7 @@ export function CodexAttentionCard({
           question.id,
           answersForQuestion({
             question,
-            selected: selected[question.id] ?? [],
+            selected: selected[question.id],
             other: other[question.id] ?? "",
           }),
         ]),
@@ -364,28 +366,32 @@ export function CodexAttentionCard({
                   {question.question}
                 </Paragraph>
                 {question.options?.length ? (
-                  <Checkbox.Group
+                  <Radio.Group
                     aria-label={`Suggested answers for ${question.header}`}
-                    value={selected[question.id] ?? []}
-                    onChange={(values) =>
+                    value={selected[question.id]}
+                    onChange={(event) => {
                       setSelected((current) => ({
                         ...current,
-                        [question.id]: values.map(String),
-                      }))
-                    }
+                        [question.id]: String(event.target.value),
+                      }));
+                      setOther((current) => ({
+                        ...current,
+                        [question.id]: "",
+                      }));
+                    }}
                     style={{ display: "grid", gap: 6, marginBottom: 8 }}
                   >
                     {question.options.map((option) => (
-                      <Checkbox key={option.label} value={option.label}>
+                      <Radio key={option.label} value={option.label}>
                         <Space orientation="vertical" size={0}>
                           <span>{option.label}</span>
                           {option.description ? (
                             <Text type="secondary">{option.description}</Text>
                           ) : null}
                         </Space>
-                      </Checkbox>
+                      </Radio>
                     ))}
-                  </Checkbox.Group>
+                  </Radio.Group>
                 ) : null}
                 {question.isOther || !question.options?.length ? (
                   <Input.TextArea
@@ -393,12 +399,18 @@ export function CodexAttentionCard({
                     autoSize={{ minRows: 2, maxRows: 6 }}
                     placeholder="Type an answer"
                     value={other[question.id] ?? ""}
-                    onChange={(event) =>
+                    onChange={(event) => {
                       setOther((current) => ({
                         ...current,
                         [question.id]: event.target.value,
-                      }))
-                    }
+                      }));
+                      if (event.target.value) {
+                        setSelected((current) => ({
+                          ...current,
+                          [question.id]: undefined,
+                        }));
+                      }
+                    }}
                   />
                 ) : null}
               </fieldset>
