@@ -36,6 +36,7 @@ import {
   getLiveCodexUsageStatus,
   readCachedCodexModelCatalog,
   readCachedCodexUsageStatus,
+  subscribeToCodexModelCatalogInvalidation,
   writeCachedCodexModelCatalog,
   writeCachedCodexUsageStatus,
 } from "@cocalc/frontend/account/codex-usage";
@@ -525,6 +526,20 @@ export function CodexConfigButton({
   const lastAppliedThreadRef = React.useRef<string | undefined>(undefined);
   const lastCodexUsageScopeRef = React.useRef<string | undefined>(undefined);
   const lastCodexModelRefreshRef = React.useRef(0);
+  const modelSelectionTouchedRef = React.useRef(false);
+
+  useEffect(
+    () =>
+      subscribeToCodexModelCatalogInvalidation({
+        accountId,
+        onInvalidate: () => {
+          setCodexModelCatalog(undefined);
+          setCodexModelRequestNonce((nonce) => nonce + 1);
+          setCodexModelRefreshNonce((nonce) => nonce + 1);
+        },
+      }),
+    [accountId],
+  );
 
   useEffect(() => {
     setModels(staticCodexModelOptions());
@@ -549,6 +564,9 @@ export function CodexConfigButton({
       return;
     }
     const threadChanged = lastAppliedThreadRef.current !== threadId;
+    if (threadChanged) {
+      modelSelectionTouchedRef.current = false;
+    }
     if (open && !threadChanged) {
       return;
     }
@@ -864,8 +882,17 @@ export function CodexConfigButton({
       "reasoning",
       "serviceTier",
     ]) as Partial<CodexThreadConfig>;
-    const model = current.model ?? selectedModelValue;
-    if (!model || !catalog.some((entry) => entry.model === model)) return;
+    const saved = threadConfig ?? actions?.getCodexConfig?.(threadKey);
+    const hasPersistedModel = !!`${saved?.model ?? ""}`.trim();
+    let model = current.model ?? selectedModelValue;
+    const patch: Partial<CodexThreadConfig> = {};
+    if (!model || !catalog.some((entry) => entry.model === model)) {
+      if (hasPersistedModel || modelSelectionTouchedRef.current) return;
+      model =
+        catalog.find((entry) => entry.default)?.model ?? catalog[0]?.model;
+      if (!model) return;
+      patch.model = model;
+    }
     const reasoning = getReasoningForModel({
       models,
       modelValue: model,
@@ -876,7 +903,6 @@ export function CodexConfigButton({
       modelSupportsFastMode(model)
         ? "fast"
         : "standard";
-    const patch: Partial<CodexThreadConfig> = {};
     if ((current.reasoning ?? selectedReasoningValue) !== reasoning) {
       patch.reasoning = reasoning;
     }
@@ -887,6 +913,7 @@ export function CodexConfigButton({
     form.setFieldsValue(patch);
     setValue((currentValue) => ({ ...(currentValue ?? {}), ...patch }));
   }, [
+    actions,
     codexModelCatalog,
     form,
     models,
@@ -895,6 +922,8 @@ export function CodexConfigButton({
     selectedModelValue,
     selectedReasoningValue,
     selectedServiceTierValue,
+    threadConfigKey,
+    threadKey,
   ]);
 
   const normalizeConfigForSave = (
@@ -925,6 +954,9 @@ export function CodexConfigButton({
   const onSave = () => saveConfig();
 
   const applyQuickConfigPatch = (patch: Partial<CodexThreadConfig>) => {
+    if (patch.model != null) {
+      modelSelectionTouchedRef.current = true;
+    }
     const nextValues: Partial<CodexThreadConfig> = {
       ...(value ?? {}),
       ...form.getFieldsValue(),
@@ -1477,8 +1509,6 @@ export function CodexConfigButton({
                       loading={codexModelsLoading}
                       onClick={() => {
                         clearCachedCodexModelCatalog({ accountId });
-                        setCodexModelRequestNonce((nonce) => nonce + 1);
-                        setCodexModelRefreshNonce((nonce) => nonce + 1);
                       }}
                     >
                       Refresh models
@@ -1549,6 +1579,7 @@ export function CodexConfigButton({
                           showSearch
                           allowClear
                           onChange={(val) => {
+                            modelSelectionTouchedRef.current = true;
                             const selected = models.find(
                               (m) => m.value === val,
                             );
@@ -1740,9 +1771,6 @@ export function CodexConfigButton({
         open={paymentOpen}
         projectId={projectId}
         refreshPaymentSource={() => {
-          clearCachedCodexModelCatalog({ accountId });
-          setCodexModelCatalog(undefined);
-          setCodexModelRefreshNonce((nonce) => nonce + 1);
           refreshPaymentSource?.();
         }}
         onClose={() => setPaymentOpen(false)}

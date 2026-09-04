@@ -5,6 +5,7 @@ import {
   clearCachedCodexModelCatalog,
   getCodexSubscriptionConnection,
   readCachedCodexModelCatalog,
+  subscribeToCodexModelCatalogInvalidation,
   writeCachedCodexModelCatalog,
 } from "./codex-usage";
 
@@ -96,5 +97,37 @@ describe("Codex model catalog cache", () => {
     expect(
       readCachedCodexModelCatalog({ accountId: "account-2" })?.models,
     ).toEqual(models);
+  });
+
+  it("notifies catalog consumers when an account cache is cleared", () => {
+    const onInvalidate = jest.fn();
+    const unsubscribe = subscribeToCodexModelCatalogInvalidation({
+      accountId: "account-1",
+      onInvalidate,
+    });
+    writeCachedCodexModelCatalog({ accountId: "account-1", models });
+
+    clearCachedCodexModelCatalog({ accountId: "account-1" });
+
+    expect(onInvalidate).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  it("notifies catalog consumers about invalidation from another tab", () => {
+    const onInvalidate = jest.fn();
+    const unsubscribe = subscribeToCodexModelCatalogInvalidation({
+      accountId: "account-1",
+      onInvalidate,
+    });
+
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "cocalc.chat.codexModelCatalogInvalidation.v1:account-1",
+        newValue: "changed",
+      }),
+    );
+
+    expect(onInvalidate).toHaveBeenCalledTimes(1);
+    unsubscribe();
   });
 });
