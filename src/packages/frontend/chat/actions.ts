@@ -459,12 +459,20 @@ export function resolveThreadAgentModel({
   const metadata = getThreadMetadata(derivedThreadId, {
     threadId: derivedThreadId,
   });
-  const model =
+  const agentModel =
     typeof metadata.agent_model === "string" && metadata.agent_model.trim()
       ? metadata.agent_model.trim()
       : undefined;
-  if (model && isCodexModelName(model)) {
-    return model;
+  const configuredModel =
+    typeof metadata.acp_config?.model === "string" &&
+    metadata.acp_config.model.trim()
+      ? metadata.acp_config.model.trim()
+      : undefined;
+  if (metadata.agent_kind === "acp" || metadata.acp_config != null) {
+    return configuredModel ?? agentModel ?? DEFAULT_CODEX_MODEL_NAME;
+  }
+  if (agentModel && isCodexModelName(agentModel)) {
+    return agentModel;
   }
   return false;
 }
@@ -2628,7 +2636,7 @@ export class ChatActions extends Actions<ChatState> {
 
   isCodexThread = (date?: Date): boolean => {
     const model = this.isLanguageModelThread(date);
-    return isCodexModelName(typeof model === "string" ? model : undefined);
+    return typeof model === "string" && model.trim().length > 0;
   };
 
   private processAI = async ({
@@ -2655,6 +2663,9 @@ export class ChatActions extends Actions<ChatState> {
     }
 
     const threadId = field<string>(message, "thread_id") ?? undefined;
+    const threadMetadata = threadId
+      ? this.getThreadMetadata(threadId, { threadId })
+      : undefined;
     const threadModel = threadId
       ? this.isLanguageModelThread(undefined, threadId)
       : null;
@@ -2665,6 +2676,9 @@ export class ChatActions extends Actions<ChatState> {
       tag,
       llm,
       threadModel,
+      isAcpThread:
+        threadMetadata?.agent_kind === "acp" ||
+        threadMetadata?.acp_config != null,
       dateLimit,
       acpSendMode,
       acpConfigOverride,
@@ -2761,7 +2775,14 @@ export class ChatActions extends Actions<ChatState> {
       });
       return;
     }
-    if (!isCodexModelName(model)) {
+    const metadata = this.getThreadMetadata(normalizedThreadId, {
+      threadId: normalizedThreadId,
+    });
+    if (
+      !isCodexModelName(model) &&
+      metadata.agent_kind !== "acp" &&
+      metadata.acp_config == null
+    ) {
       return;
     }
     if (

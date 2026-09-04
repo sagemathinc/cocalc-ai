@@ -2361,7 +2361,7 @@ export function ChatPanel({
         isAutomation={selectedThread.isAutomation}
         isCodexThread={
           selectedThread.isAI &&
-          isCodexModelName(`${selectedThreadMetadata?.agent_model ?? ""}`)
+          threadSupportsCodexAutomation(selectedThreadMetadata)
         }
         notificationMuted={
           !!(
