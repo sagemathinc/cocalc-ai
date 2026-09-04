@@ -18,6 +18,10 @@ export const CODEX_USAGE_STATUS_TIMEOUT_MS = 60_000;
 const CODEX_USAGE_STATUS_CACHE_PREFIX = "cocalc.chat.codexUsageStatusCache.v2";
 const CODEX_MODEL_CATALOG_CACHE_PREFIX =
   "cocalc.chat.codexModelCatalogCache.v1";
+const CODEX_MODEL_CATALOG_INVALIDATION_PREFIX =
+  "cocalc.chat.codexModelCatalogInvalidation.v1";
+const CODEX_MODEL_CATALOG_INVALIDATED_EVENT =
+  "cocalc:codex-model-catalog-invalidated";
 export const CODEX_MODEL_CATALOG_TTL_MS = 30 * 60_000;
 
 export interface CachedCodexUsageStatus {
@@ -85,6 +89,12 @@ function getCodexUsageStatusCacheKey(accountId?: string): string {
 
 function getCodexModelCatalogCacheKey(accountId?: string): string {
   return `${CODEX_MODEL_CATALOG_CACHE_PREFIX}:${encodeURIComponent(
+    accountId || "account",
+  )}`;
+}
+
+function getCodexModelCatalogInvalidationKey(accountId?: string): string {
+  return `${CODEX_MODEL_CATALOG_INVALIDATION_PREFIX}:${encodeURIComponent(
     accountId || "account",
   )}`;
 }
@@ -242,13 +252,55 @@ export function clearCachedCodexModelCatalog({
 }: {
   accountId?: string;
 }): void {
+  const key = getCodexModelCatalogCacheKey(accountId);
+  const invalidationKey = getCodexModelCatalogInvalidationKey(accountId);
   try {
-    globalThis.localStorage?.removeItem(
-      getCodexModelCatalogCacheKey(accountId),
+    globalThis.localStorage?.removeItem(key);
+    globalThis.localStorage?.setItem(
+      invalidationKey,
+      `${Date.now()}:${Math.random()}`,
     );
   } catch {
     // Ignore storage errors; a forced refresh still bypasses backend caches.
   }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent(CODEX_MODEL_CATALOG_INVALIDATED_EVENT, {
+        detail: { key },
+      }),
+    );
+  }
+}
+
+export function subscribeToCodexModelCatalogInvalidation({
+  accountId,
+  onInvalidate,
+}: {
+  accountId?: string;
+  onInvalidate: () => void;
+}): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  const key = getCodexModelCatalogCacheKey(accountId);
+  const invalidationKey = getCodexModelCatalogInvalidationKey(accountId);
+  const handleLocal = (event: Event) => {
+    if ((event as CustomEvent<{ key?: string }>).detail?.key === key) {
+      onInvalidate();
+    }
+  };
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === invalidationKey) {
+      onInvalidate();
+    }
+  };
+  window.addEventListener(CODEX_MODEL_CATALOG_INVALIDATED_EVENT, handleLocal);
+  window.addEventListener("storage", handleStorage);
+  return () => {
+    window.removeEventListener(
+      CODEX_MODEL_CATALOG_INVALIDATED_EVENT,
+      handleLocal,
+    );
+    window.removeEventListener("storage", handleStorage);
+  };
 }
 
 export async function getLiveCodexUsageStatus({

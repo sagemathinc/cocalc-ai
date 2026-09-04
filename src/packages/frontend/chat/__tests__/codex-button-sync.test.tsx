@@ -503,6 +503,60 @@ describe("CodexConfigButton", () => {
     );
   });
 
+  it("adopts the discovered default for an untouched new thread", async () => {
+    let resolveUsageStatus: (status: any) => void = () => undefined;
+    getCodexUsageStatus.mockReturnValue(
+      new Promise((resolve) => {
+        resolveUsageStatus = resolve;
+      }),
+    );
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex"));
+    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalled());
+    stableForm.setFieldsValue.mockClear();
+    resolveUsageStatus({
+      available: true,
+      models: [
+        {
+          model: "account-default-model",
+          displayName: "Account default",
+          description: "Default for this account",
+          reasoning: [],
+          serviceTiers: [],
+          default: true,
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(stableForm.setFieldsValue).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "account-default-model" }),
+      );
+    });
+  });
+
   it("updates the closed top bar when thread config arrives after mount", async () => {
     const actions = {
       getCodexConfig: jest.fn(() => undefined),
