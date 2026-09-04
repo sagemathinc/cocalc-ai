@@ -6224,9 +6224,9 @@ describe("CodexAppServerAgent", () => {
     }
   });
 
-  it("version-gates and answers synchronous attention requests", async () => {
-    process.env.COCALC_CODEX_ATTENTION_INPUT = "1";
-    process.env.COCALC_CODEX_ATTENTION_ASYNC = "1";
+  it("enables and version-gates attention requests by default", async () => {
+    delete process.env.COCALC_CODEX_ATTENTION_INPUT;
+    delete process.env.COCALC_CODEX_ATTENTION_ASYNC;
     const threadStartRequests: any[] = [];
     const syncResponses: any[] = [];
     const requestSyncQuestion = jest.fn(async () => ({
@@ -6328,6 +6328,7 @@ describe("CodexAppServerAgent", () => {
       chat: {
         path: "root/demo.chat",
         project_id: "00000000-0000-4000-8000-000000000000",
+        thread_id: "chat-thread-attention-1",
       } as any,
       config: {
         workingDirectory: "/home/user",
@@ -6378,6 +6379,151 @@ describe("CodexAppServerAgent", () => {
     );
   });
 
+  it.each([
+    {
+      name: "operator kill switches",
+      attentionInput: "0",
+      asyncAttention: "0",
+      chat: {
+        path: "root/demo.chat",
+        project_id: "00000000-0000-4000-8000-000000000000",
+        thread_id: "chat-thread-attention-disabled",
+      },
+      expectedError: "Codex attention input is disabled",
+    },
+    {
+      name: "chat-less ACP calls",
+      attentionInput: undefined,
+      asyncAttention: undefined,
+      chat: undefined,
+      expectedError: "Codex attention requires durable chat context",
+    },
+  ])("does not create attention for $name", async (testCase) => {
+    if (testCase.attentionInput == null) {
+      delete process.env.COCALC_CODEX_ATTENTION_INPUT;
+    } else {
+      process.env.COCALC_CODEX_ATTENTION_INPUT = testCase.attentionInput;
+    }
+    if (testCase.asyncAttention == null) {
+      delete process.env.COCALC_CODEX_ATTENTION_ASYNC;
+    } else {
+      process.env.COCALC_CODEX_ATTENTION_ASYNC = testCase.asyncAttention;
+    }
+    const threadStartRequests: any[] = [];
+    const syncResponses: any[] = [];
+    const requestSyncQuestion = jest.fn(async () => ({}));
+    const createAsyncQuestion = jest.fn(async () => {});
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      if (message.id === 901 && message.error) {
+        syncResponses.push(message);
+        fake.sendNotification("turn/completed", {
+          turn: { id: "turn-attention-disabled", status: "completed" },
+        });
+        return;
+      }
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, {
+            userAgent: "codex_cli_rs/0.151.0",
+          });
+          break;
+        case "thread/start":
+          threadStartRequests.push(message.params);
+          fake.sendResponse(message.id, {
+            thread: { id: "thr-attention-disabled" },
+          });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, {
+            turn: { id: "turn-attention-disabled" },
+          });
+          setImmediate(() => {
+            fake.sendNotification("turn/started", {
+              turn: { id: "turn-attention-disabled", status: "inProgress" },
+            });
+            fake.sendRequest(901, "item/tool/requestUserInput", {
+              threadId: "thr-attention-disabled",
+              turnId: "turn-attention-disabled",
+              itemId: "question-attention-disabled",
+              isBlocking: false,
+              questions: [
+                {
+                  id: "region",
+                  header: "Region",
+                  question: "Which region?",
+                  options: [{ label: "EU" }, { label: "US" }],
+                },
+              ],
+            });
+            fake.sendNotification("item/completed", {
+              threadId: "thr-attention-disabled",
+              turnId: "turn-attention-disabled",
+              item: {
+                id: "async-question-disabled",
+                type: "agentMessage",
+                delivery: "async",
+                text: "This request should stay disabled.",
+                questions: [
+                  {
+                    title: "Which environment should I use?",
+                    options: ["Staging", "Production"],
+                  },
+                ],
+              },
+            });
+          });
+          break;
+        default:
+          if (typeof message.id === "number") {
+            fake.sendResponse(message.id, {});
+          }
+      }
+    });
+
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/home/user",
+      }),
+    });
+
+    await new CodexAppServerAgent({
+      attentionHandler: {
+        requestSyncQuestion,
+        createAsyncQuestion,
+        serverRequestResolved: jest.fn(async () => {}),
+      },
+    }).evaluate({
+      project_id: "00000000-0000-4000-8000-000000000000",
+      account_id: "00000000-0000-4000-8000-000000000001",
+      prompt: "do not ask me",
+      stream: async () => {},
+      chat: testCase.chat as any,
+      config: {
+        workingDirectory: "/home/user",
+      } as any,
+    });
+
+    expect(threadStartRequests).toHaveLength(1);
+    expect(threadStartRequests[0].config).toBeUndefined();
+    expect(requestSyncQuestion).not.toHaveBeenCalled();
+    expect(createAsyncQuestion).not.toHaveBeenCalled();
+    expect(syncResponses).toEqual([
+      {
+        id: 901,
+        error: {
+          code: -32000,
+          message: testCase.expectedError,
+        },
+      },
+    ]);
+  });
+
   it("keeps request attention context after a later turn becomes active", async () => {
     let answerQuestion!: (
       answers: Record<string, { answers: string[] }>,
@@ -6418,6 +6564,13 @@ describe("CodexAppServerAgent", () => {
       accountId: "00000000-0000-4000-8000-000000000001",
       threadId: "thread-shared",
       turnId: "turn-first",
+      chat: {
+        project_id: "00000000-0000-4000-8000-000000000000",
+        path: "root/demo.chat",
+        message_date: "2026-09-04T00:00:00.000Z",
+        sender_id: "00000000-0000-4000-8000-000000000001",
+        thread_id: "chat-thread-shared",
+      },
       stream: async () => {},
     };
     client.setAttentionContext(firstContext);
