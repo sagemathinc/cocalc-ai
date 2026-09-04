@@ -3,6 +3,7 @@ import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import {
   appendStreamMessage,
   appendStreamMessages,
+  buildCodexAcpConfig,
   getAgentMessageTexts,
   getBestResponseText,
   getInterruptedResponseMarkdown,
@@ -15,6 +16,22 @@ import {
   getLatestSummaryText,
   mergeProgressiveMessageText,
 } from "../acp";
+
+describe("buildCodexAcpConfig", () => {
+  test("preserves Fast mode for a dynamically advertised model", () => {
+    expect(
+      buildCodexAcpConfig({
+        config: {
+          model: "newly-advertised-model",
+          serviceTier: "fast",
+        },
+      }),
+    ).toMatchObject({
+      model: "newly-advertised-model",
+      serviceTier: "fast",
+    });
+  });
+});
 
 function textEvent(
   type: "thinking" | "message",
