@@ -189,7 +189,7 @@ describe("project-host intrusion monitor normalization", () => {
         `INSERT INTO project_host_intrusion_snapshots
            (id, host_id, bay_id, captured_at, duration_ms, coverage,
             normalization_version, normalized)
-         VALUES ($1, $2, $3, NOW(), 1, 'complete', 1, '{}'::jsonb)`,
+         VALUES ($1, $2, $3, NOW(), 1, 'complete', 2, '{}'::jsonb)`,
         [id, hostId, bayId],
       );
 
@@ -305,7 +305,7 @@ describe("project-host intrusion monitor normalization", () => {
          (id, host_id, bay_id, captured_at, duration_ms, coverage,
           normalization_version, normalized)
        VALUES ($1, $2, 'intrusion-monitor-test', NOW(), 1, 'complete',
-               1, $3::jsonb)`,
+               2, $3::jsonb)`,
       [
         snapshotId,
         hostId,
@@ -410,10 +410,17 @@ describe("project-host intrusion monitor normalization", () => {
         process: "cloudflared",
         local: "*:64979",
       },
+      {
+        count: 1,
+        protocol: "tcp",
+        process: "sshpiperd",
+        local: "127.0.0.1:23507",
+      },
     );
     const after = structuredClone(before);
     after.network.listeners[1].local = "0.0.0.0:28003";
     after.network.listeners[2].local = "*:13887";
+    after.network.listeners[3].local = "127.0.0.1:15957";
     after.host_processes.summary.push(
       {
         count: 1,
@@ -452,7 +459,7 @@ describe("project-host intrusion monitor normalization", () => {
     expect(delta).toEqual({ added: {}, removed: {} });
   });
 
-  it("alerts on backup-like wrappers even while Rustic is active", () => {
+  it("does not alert on wrappers isolated in a backup-browser cgroup", () => {
     const before = snapshot();
     const after = structuredClone(before);
     after.host_processes.summary.push(
@@ -464,6 +471,7 @@ describe("project-host intrusion monitor normalization", () => {
         capability_mask: "0",
         executable_uid: 0,
         executable_mode: "0755",
+        cgroup: "/cocalc-backup-browsers/browser-*",
       },
       {
         count: 1,
@@ -473,6 +481,7 @@ describe("project-host intrusion monitor normalization", () => {
         capability_mask: "0",
         executable_uid: 2345,
         executable_mode: "0755",
+        cgroup: "/cocalc-backup-browsers/browser-*",
       },
       {
         count: 1,
@@ -482,6 +491,7 @@ describe("project-host intrusion monitor normalization", () => {
         capability_mask: "0",
         executable_uid: 0,
         executable_mode: "0755",
+        cgroup: "/cocalc-backup-browsers/browser-*",
       },
     );
 
@@ -490,14 +500,7 @@ describe("project-host intrusion monitor normalization", () => {
       normalizeHostIntrusionSnapshot(after),
     );
 
-    expect(delta.added["host_processes.summary"]).toHaveLength(2);
-    expect(delta.added["host_processes.summary"]?.join("\n")).toContain("bash");
-    expect(delta.added["host_processes.summary"]?.join("\n")).toContain(
-      "sleep",
-    );
-    expect(delta.added["host_processes.summary"]?.join("\n")).not.toContain(
-      "rustic",
-    );
+    expect(delta).toEqual({ added: {}, removed: {} });
   });
 
   it("still alerts on unknown processes and fixed listener changes", () => {
@@ -566,6 +569,52 @@ describe("project-host intrusion monitor normalization", () => {
     );
 
     expect(delta.added["host_processes.summary"]?.[0]).toContain("bash");
+  });
+
+  it("still alerts on a shell outside the dedicated backup-browser cgroup", () => {
+    const before = snapshot();
+    const after = structuredClone(before);
+    after.host_processes.summary.push({
+      count: 1,
+      uid: 2000,
+      comm: "bash",
+      exe: "/usr/bin/bash",
+      capability_mask: "0000000000000000",
+      executable_uid: 0,
+      executable_mode: "0755",
+      cgroup: "/user.slice/user-2000.slice/session-1.scope",
+    });
+
+    const delta = diffHostIntrusionSnapshots(
+      normalizeHostIntrusionSnapshot(before),
+      normalizeHostIntrusionSnapshot(after),
+    );
+
+    expect(delta.added["host_processes.summary"]?.[0]).toContain("bash");
+  });
+
+  it("keeps operational kernel history without treating it as intrusion state", () => {
+    const before = snapshot();
+    before.kernel_signals_7d = {};
+    const after = structuredClone(before);
+    after.kernel_signals_7d = {
+      oom: 3,
+      tainted: 1,
+      apparmor_denied: 2,
+    };
+
+    const normalized = normalizeHostIntrusionSnapshot(after);
+    const delta = diffHostIntrusionSnapshots(
+      normalizeHostIntrusionSnapshot(before),
+      normalized,
+    );
+
+    expect(normalized.counters.kernel_signals_7d).toEqual({
+      apparmor_denied: 2,
+      oom: 3,
+      tainted: 1,
+    });
+    expect(delta.added.kernel_signals_7d).toEqual(["apparmor_denied"]);
   });
 
   it("detects stable security-state additions and removals", () => {

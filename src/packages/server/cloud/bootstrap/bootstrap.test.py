@@ -4219,6 +4219,16 @@ reserve_project_startup_io_capacity
 
         namespace = {"__name__": "intrusion_snapshot_test"}
         exec(bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER, namespace)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = Path(tmpdir)
+            (proc / "cgroup").write_text(
+                "0::/cocalc-backup-browsers/browser-12345\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                namespace["process_cgroup"](proc),
+                "/cocalc-backup-browsers/browser-*",
+            )
         oversized = {
             "coverage": "complete",
             "accounts": {"uid_zero": [], "interactive": []},

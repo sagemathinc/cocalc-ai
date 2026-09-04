@@ -227,6 +227,7 @@ export interface HostIntrusionSnapshotResponse {
       capability_mask: string;
       executable_uid?: number;
       executable_mode?: string;
+      cgroup?: string;
     }>;
     findings: Array<{
       pid: number;
@@ -236,6 +237,7 @@ export interface HostIntrusionSnapshotResponse {
       capability_mask: string;
       executable_uid?: number;
       executable_mode?: string;
+      cgroup?: string;
       flags: string[];
     }>;
   };
