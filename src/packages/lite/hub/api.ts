@@ -115,6 +115,7 @@ import {
 } from "./codex-auth";
 import { getRow, listRows } from "./sqlite/database";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
+import { createInflightRequestCoalescer } from "./codex-model-catalog-inflight";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
@@ -129,6 +130,10 @@ const liteCodexModelCatalogCache = new Map<
   }
 >();
 const liteCodexModelCatalogGeneration = new Map<string, number>();
+const loadLiteCodexModelCatalogStatus =
+  createInflightRequestCoalescer<
+    Awaited<ReturnType<typeof getCodexAppServerAccountStatus>>
+  >();
 
 function clearLiteCodexModelCatalog(accountId: string): void {
   liteCodexModelCatalogGeneration.set(
@@ -752,10 +757,20 @@ async function getCodexUsageStatus(opts?: {
       cachedCatalog && cachedCatalog.expiresAt > now
         ? cachedCatalog
         : undefined;
-    const status = await getCodexAppServerAccountStatus({
-      appServerLogin,
-      includeModels: opts?.include_models && !usableCatalog,
-    });
+    const shouldLoadModels = !!opts?.include_models && !usableCatalog;
+    const status = shouldLoadModels
+      ? await loadLiteCodexModelCatalogStatus(
+          `${accountId}\0${subscriptionId ?? paymentSource.subscriptionRevision ?? "unknown"}\0${cacheGeneration}`,
+          async () =>
+            await getCodexAppServerAccountStatus({
+              appServerLogin,
+              includeModels: true,
+            }),
+        )
+      : await getCodexAppServerAccountStatus({
+          appServerLogin,
+          includeModels: false,
+        });
     const liveModels = status.models?.length ? status.models : undefined;
     if (
       cacheKey &&
