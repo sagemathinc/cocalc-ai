@@ -442,7 +442,7 @@ export async function assertCanCreateOrUpdateRootfs({
       image_id,
       reason,
     });
-    throw new Error(`${reason}; delete data or upgrade membership`);
+    throw new Error(`${reason}; delete files or upgrade membership`);
   }
 
   const maxCount = limits.rootfs_count;
