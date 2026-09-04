@@ -1945,6 +1945,7 @@ async function spawnCodexAppServerInProjectRuntime({
       runtimeEnv.CODEX_HOME = containerPath;
     }
   } catch (err) {
+    restrictedEgress?.close();
     await cliTokenLease?.close();
     await removeIsolatedCodexHome(isolatedCodexHomeHostPath);
     throw err;

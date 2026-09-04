@@ -539,6 +539,8 @@ describe("CodexCredentialsPanel", () => {
     });
     const onPaymentSourceChanged = jest.fn();
     writeCachedCodexModelCatalog({
+      projectId: "project-1",
+      runtimeVersion: "tools-v1",
       models: [
         {
           model: "old-account-model",
@@ -582,7 +584,12 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(onPaymentSourceChanged).toHaveBeenCalled();
     });
-    expect(readCachedCodexModelCatalog({})).toBeUndefined();
+    expect(
+      readCachedCodexModelCatalog({
+        projectId: "project-1",
+        runtimeVersion: "tools-v1",
+      }),
+    ).toBeUndefined();
   });
 
   it("keeps polling and does not notify parent while device auth is syncing", async () => {

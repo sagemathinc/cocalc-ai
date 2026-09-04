@@ -13,6 +13,7 @@ import {
 } from "../codex";
 
 const getCodexUsageStatus = jest.fn();
+let projectToolsVersion = "tools-v1";
 const stableForm = {
   resetFields: jest.fn(),
   setFieldsValue: jest.fn(),
@@ -96,6 +97,7 @@ jest.mock("@cocalc/frontend/app-framework", () => {
     useMemo: React.useMemo,
     useState: React.useState,
     useAccountOtherSetting: () => undefined,
+    useProjectMapField: () => projectToolsVersion,
     useTypedRedux: () => undefined,
     TypedMap,
     createTypedMap,
@@ -178,6 +180,7 @@ describe("CodexConfigButton", () => {
     stableForm.getFieldsValue.mockReturnValue({});
     getCodexUsageStatus.mockReset();
     getCodexUsageStatus.mockResolvedValue({ available: true });
+    projectToolsVersion = "tools-v1";
     window.localStorage.clear();
   });
 
@@ -246,6 +249,7 @@ describe("CodexConfigButton", () => {
   it("opens the compact picker from the fresh account catalog without a request", async () => {
     writeCachedCodexModelCatalog({
       projectId: "project-1",
+      runtimeVersion: "tools-v1",
       models: [
         {
           model: "gpt-daybreak-blue-latest",
@@ -293,6 +297,85 @@ describe("CodexConfigButton", () => {
     expect(getCodexUsageStatus).not.toHaveBeenCalled();
   });
 
+  it("reloads the catalog after the project tools version changes", async () => {
+    const props = {
+      threadKey: "thread-1",
+      chatPath: "foo.chat",
+      projectId: "project-1",
+      actions: {
+        getCodexConfig: jest.fn(() => undefined),
+        setCodexConfig: jest.fn(),
+      } as any,
+      threadConfig: null,
+      paymentSource: {
+        source: "subscription" as const,
+        hasSubscription: true,
+        hasProjectApiKey: false,
+        hasAccountApiKey: false,
+        hasSiteApiKey: false,
+        sharedHomeMode: "disabled" as const,
+      },
+    };
+    writeCachedCodexModelCatalog({
+      projectId: "project-1",
+      runtimeVersion: "tools-v1",
+      models: [
+        {
+          model: "old-runtime-model",
+          displayName: "Old runtime model",
+          description: "Only advertised by the old runtime",
+          reasoning: [],
+          serviceTiers: [],
+          default: true,
+        },
+      ],
+    });
+    getCodexUsageStatus.mockResolvedValue({
+      available: true,
+      models: [
+        {
+          model: "new-runtime-model",
+          displayName: "New runtime model",
+          description: "Advertised by the restarted runtime",
+          reasoning: [],
+          serviceTiers: [],
+          default: true,
+        },
+      ],
+    });
+    const view = render(<CodexConfigButton {...props} />);
+
+    const modelButton = screen.getByTitle("Change Codex model");
+    fireEvent.mouseEnter(modelButton);
+    fireEvent.click(modelButton);
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: "old-runtime-model" }),
+      ).toHaveLength(2);
+    });
+    expect(getCodexUsageStatus).not.toHaveBeenCalled();
+
+    projectToolsVersion = "tools-v2";
+    view.rerender(<CodexConfigButton {...props} />);
+
+    await waitFor(() => {
+      expect(getCodexUsageStatus).toHaveBeenCalledWith({
+        project_id: "project-1",
+        include_models: true,
+        refresh_models: false,
+        timeout: 60_000,
+      });
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryAllByRole("button", { name: "old-runtime-model" }),
+      ).toHaveLength(0);
+      expect(
+        screen.getAllByRole("button", { name: "new-runtime-model" }),
+      ).toHaveLength(2);
+    });
+  });
+
   it("clears an expired in-memory catalog before a failed refresh", async () => {
     const dynamicModel = {
       model: "newly-advertised-model",
@@ -304,6 +387,7 @@ describe("CodexConfigButton", () => {
     };
     writeCachedCodexModelCatalog({
       projectId: "project-1",
+      runtimeVersion: "tools-v1",
       models: [dynamicModel],
     });
     render(
@@ -341,6 +425,7 @@ describe("CodexConfigButton", () => {
 
     writeCachedCodexModelCatalog({
       projectId: "project-1",
+      runtimeVersion: "tools-v1",
       models: [dynamicModel],
       cachedAt: Date.now() - CODEX_MODEL_CATALOG_TTL_MS,
     });

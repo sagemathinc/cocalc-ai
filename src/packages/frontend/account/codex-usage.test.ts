@@ -70,18 +70,24 @@ describe("Codex model catalog cache", () => {
   it("keeps account catalogs for 30 minutes", () => {
     writeCachedCodexModelCatalog({
       accountId: "account-1",
+      projectId: "project-1",
+      runtimeVersion: "tools-v1",
       models,
       cachedAt: 1_000,
     });
     expect(
       readCachedCodexModelCatalog({
         accountId: "account-1",
+        projectId: "project-1",
+        runtimeVersion: "tools-v1",
         now: 1_000 + CODEX_MODEL_CATALOG_TTL_MS - 1,
       }),
     ).toEqual({ cachedAt: 1_000, models });
     expect(
       readCachedCodexModelCatalog({
         accountId: "account-1",
+        projectId: "project-1",
+        runtimeVersion: "tools-v1",
         now: 1_000 + CODEX_MODEL_CATALOG_TTL_MS,
       }),
     ).toBeUndefined();
@@ -91,22 +97,33 @@ describe("Codex model catalog cache", () => {
     writeCachedCodexModelCatalog({
       accountId: "account-1",
       projectId: "project-1",
+      runtimeVersion: "tools-v1",
       models,
     });
     writeCachedCodexModelCatalog({
       accountId: "account-1",
       projectId: "project-2",
+      runtimeVersion: "tools-v1",
       models,
     });
     writeCachedCodexModelCatalog({
       accountId: "account-2",
       projectId: "project-1",
+      runtimeVersion: "tools-v1",
       models,
     });
     expect(
       readCachedCodexModelCatalog({
         accountId: "account-1",
+        projectId: "project-1",
+        runtimeVersion: "tools-v2",
+      }),
+    ).toBeUndefined();
+    expect(
+      readCachedCodexModelCatalog({
+        accountId: "account-1",
         projectId: "project-3",
+        runtimeVersion: "tools-v1",
       }),
     ).toBeUndefined();
     clearCachedCodexModelCatalog({ accountId: "account-1" });
@@ -114,18 +131,21 @@ describe("Codex model catalog cache", () => {
       readCachedCodexModelCatalog({
         accountId: "account-1",
         projectId: "project-1",
+        runtimeVersion: "tools-v1",
       }),
     ).toBeUndefined();
     expect(
       readCachedCodexModelCatalog({
         accountId: "account-1",
         projectId: "project-2",
+        runtimeVersion: "tools-v1",
       }),
     ).toBeUndefined();
     expect(
       readCachedCodexModelCatalog({
         accountId: "account-2",
         projectId: "project-1",
+        runtimeVersion: "tools-v1",
       })?.models,
     ).toEqual(models);
   });
@@ -136,7 +156,12 @@ describe("Codex model catalog cache", () => {
       accountId: "account-1",
       onInvalidate,
     });
-    writeCachedCodexModelCatalog({ accountId: "account-1", models });
+    writeCachedCodexModelCatalog({
+      accountId: "account-1",
+      projectId: "project-1",
+      runtimeVersion: "tools-v1",
+      models,
+    });
 
     clearCachedCodexModelCatalog({ accountId: "account-1" });
 
