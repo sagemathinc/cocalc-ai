@@ -18,6 +18,7 @@ export async function processAI({
   tag,
   llm,
   threadModel,
+  isAcpThread = false,
   dateLimit,
   acpSendMode,
   acpConfigOverride,
@@ -27,6 +28,7 @@ export async function processAI({
   tag?: string;
   llm?: LanguageModel;
   threadModel?: LanguageModel | false | null;
+  isAcpThread?: boolean;
   dateLimit?: Date;
   acpSendMode?: "immediate";
   acpConfigOverride?: Partial<CodexThreadConfig>;
@@ -42,7 +44,13 @@ export async function processAI({
     (message as any)?.acp_send_mode === "immediate" ? "immediate" : undefined;
   const effectiveAcpSendMode = acpSendMode ?? messageAcpSendMode;
 
-  const model = resolveAIModel({ message, tag, llm, threadModel });
+  const model = resolveAIModel({
+    message,
+    tag,
+    llm,
+    threadModel,
+    isAcpThread,
+  });
   if (model === false || model == null) return;
 
   const threadIdForThread = (message as any)?.thread_id as string | undefined;
@@ -79,18 +87,20 @@ function resolveAIModel({
   tag,
   llm,
   threadModel,
+  isAcpThread,
 }: {
   message: ChatMessage;
   tag?: string;
   llm?: LanguageModel;
   threadModel?: LanguageModel | false | null;
+  isAcpThread: boolean;
 }): LanguageModel | false | null {
   if (typeof llm === "string") {
     if (tag !== "regenerate") {
       console.warn(`chat/ai: llm=${llm} is only allowed for tag=regenerate`);
       return null;
     }
-    if (isCodexModelName(llm)) {
+    if (isCodexModelName(llm) || isAcpThread) {
       return llm;
     }
     console.warn(`chat/ai: ignoring non-Codex regenerate model ${llm}`);
@@ -104,7 +114,10 @@ function resolveAIModel({
   if (mentionedAny && mentioned) return mentioned;
   if (mentionedAny && !mentioned) return null;
 
-  if (typeof threadModel === "string" && isCodexModelName(threadModel)) {
+  if (
+    typeof threadModel === "string" &&
+    (isCodexModelName(threadModel) || isAcpThread)
+  ) {
     return threadModel;
   }
   return null;

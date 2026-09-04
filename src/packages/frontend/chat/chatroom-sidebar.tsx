@@ -341,8 +341,12 @@ export function ChatRoomSidebarContent({
       typeof codexConfig?.model === "string"
         ? codexConfig.model
         : (threadMetadata?.agent_model as string | undefined);
-    const isCodexThread =
-      isAI && typeof model === "string" && isCodexModelName(model);
+    const isCodexThread = Boolean(
+      isAI &&
+      (threadMetadata?.agent_kind === "acp" ||
+        threadMetadata?.acp_config != null ||
+        (typeof model === "string" && isCodexModelName(model))),
+    );
     const rootThreadId =
       `${field<string>(thread.rootMessage, "thread_id") ?? ""}`.trim();
     const attentionCountForThread = Math.max(

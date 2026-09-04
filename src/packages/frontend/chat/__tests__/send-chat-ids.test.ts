@@ -928,6 +928,42 @@ describe("thread-config by thread_id", () => {
     expect(row?.agent_mode).toBe("interactive");
   });
 
+  it("updates dynamically advertised models for explicit ACP threads", () => {
+    const threadId = "36333333-3333-4333-8333-333333333333";
+    const existing = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: "2026-02-21T18:40:00.000Z",
+      thread_id: threadId,
+      agent_kind: "acp",
+      agent_model: "gpt-daybreak-blue-latest",
+      acp_config: { model: "gpt-daybreak-blue-latest" },
+    };
+    const actions = makeActions();
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (
+        where?.event === "chat-thread-config" &&
+        where?.thread_id === threadId
+      ) {
+        return existing;
+      }
+      return undefined;
+    });
+
+    actions.recordThreadAgentModel(threadId, "gpt-daybreak-blue-latest");
+
+    const row = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find(
+        (x: any) =>
+          x?.event === "chat-thread-config" &&
+          x?.thread_id === threadId &&
+          x?.agent_model === "gpt-daybreak-blue-latest",
+      );
+    expect(row?.agent_kind).toBe("acp");
+    expect(row?.agent_mode).toBe("interactive");
+  });
+
   it("migrates the legacy Codex notify setting when saving partial config", () => {
     const threadId = "37333333-3333-4333-8333-333333333333";
     const existing = {

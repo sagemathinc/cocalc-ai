@@ -292,4 +292,18 @@ describe("resolveThreadAgentModel", () => {
     });
     expect(model).toBe(false);
   });
+
+  it("trusts dynamically advertised models on explicit ACP threads", () => {
+    const model = resolveThreadAgentModel({
+      date: new Date("2026-02-21T00:00:00.000Z"),
+      messages: new Map(),
+      threadId: "thread-daybreak",
+      getThreadMetadata: () => ({
+        agent_kind: "acp",
+        agent_model: "gpt-daybreak-blue-latest",
+        acp_config: { model: "gpt-daybreak-blue-latest" },
+      }),
+    });
+    expect(model).toBe("gpt-daybreak-blue-latest");
+  });
 });

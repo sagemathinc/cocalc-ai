@@ -1307,7 +1307,7 @@ export function NavigatorShell({
               hasCustomName={Boolean(selectedThreadMetadata?.name?.trim())}
               isPinned={selectedThreadMetadata?.pin ?? false}
               isAI={selectedThreadIsAI}
-              isCodexThread={isCodexModelName(`${selectedThreadModel ?? ""}`)}
+              isCodexThread={selectedThreadIsAI}
               threadColor={selectedThreadMetadata?.thread_color}
               threadIcon={selectedThreadMetadata?.thread_icon}
               openAppearanceModal={
