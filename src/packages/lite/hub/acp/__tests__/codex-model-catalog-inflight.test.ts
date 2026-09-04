@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { createInflightRequestCoalescer } from "../../codex-model-catalog-inflight";
+import {
+  createInflightRequestCoalescer,
+  readCachedModelCatalogForRequest,
+} from "../../codex-model-catalog-inflight";
 
 describe("Lite Codex model catalog request coalescing", () => {
   it("shares identical concurrent loads and forgets completed work", async () => {
@@ -41,5 +44,18 @@ describe("Lite Codex model catalog request coalescing", () => {
       coalesce("account\x00subscription\x00generation-1", async () => 2),
     ]);
     expect(values).toEqual([1, 2]);
+  });
+
+  it("evicts stored models before a forced refresh", () => {
+    const cache = new Map([["account\x00subscription", "stale catalog"]]);
+
+    expect(
+      readCachedModelCatalogForRequest({
+        cache,
+        key: "account\x00subscription",
+        refresh: true,
+      }),
+    ).toBeUndefined();
+    expect(cache.has("account\x00subscription")).toBe(false);
   });
 });

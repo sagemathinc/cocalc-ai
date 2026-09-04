@@ -115,7 +115,10 @@ import {
 } from "./codex-auth";
 import { getRow, listRows } from "./sqlite/database";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
-import { createInflightRequestCoalescer } from "./codex-model-catalog-inflight";
+import {
+  createInflightRequestCoalescer,
+  readCachedModelCatalogForRequest,
+} from "./codex-model-catalog-inflight";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
@@ -746,10 +749,11 @@ async function getCodexUsageStatus(opts?: {
       : undefined;
     const cacheGeneration = liteCodexModelCatalogGeneration.get(accountId) ?? 0;
     const now = Date.now();
-    const cachedCatalog =
-      cacheKey && !opts?.refresh_models
-        ? liteCodexModelCatalogCache.get(cacheKey)
-        : undefined;
+    const cachedCatalog = readCachedModelCatalogForRequest({
+      cache: liteCodexModelCatalogCache,
+      key: cacheKey,
+      refresh: opts?.refresh_models,
+    });
     if (cacheKey && cachedCatalog && cachedCatalog.expiresAt <= now) {
       liteCodexModelCatalogCache.delete(cacheKey);
     }

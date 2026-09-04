@@ -1350,6 +1350,44 @@ describe("project host start ACP rehydrate ordering", () => {
       modelsCached: false,
     });
 
+    resolveCodexAuthRuntime.mockResolvedValueOnce({
+      source: "subscription",
+      contextId: "subscription-context",
+      codexHome: "/tmp/codex-home",
+      env: {},
+    });
+    getCodexAppServerAccountStatus.mockResolvedValueOnce({
+      ...liveStatus,
+      models: undefined,
+    });
+    const emptyRefresh = await hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+      refresh_models: true,
+    });
+    expect(emptyRefresh.models).toBeUndefined();
+
+    resolveCodexAuthRuntime.mockResolvedValueOnce({
+      source: "subscription",
+      contextId: "subscription-context",
+      codexHome: "/tmp/codex-home",
+      env: {},
+    });
+    getCodexAppServerAccountStatus.mockResolvedValueOnce(liveStatus);
+    const afterEmptyRefresh = await hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+    });
+    expect(getCodexAppServerAccountStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ includeModels: true }),
+    );
+    expect(afterEmptyRefresh).toMatchObject({
+      models: [expect.objectContaining({ model: "gpt-5.6-luna" })],
+      modelsCached: false,
+    });
+
     let releaseConcurrentRefresh:
       | ((status: typeof liveStatus) => void)
       | undefined;

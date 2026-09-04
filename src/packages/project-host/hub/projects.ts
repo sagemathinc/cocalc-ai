@@ -3064,6 +3064,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         ? codexModelCatalogCacheKey(accountId, subscriptionId, runtimeVersion!)
         : undefined;
       const cacheGeneration = codexModelCatalogGeneration.get(accountId) ?? 0;
+      if (cacheKey && refresh_models) {
+        codexModelCatalogCache.delete(cacheKey);
+      }
       const cachedCatalog =
         cacheKey && !refresh_models
           ? codexModelCatalogCache.get(cacheKey)

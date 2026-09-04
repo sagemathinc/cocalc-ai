@@ -18,3 +18,20 @@ export function createInflightRequestCoalescer<T>() {
     }
   };
 }
+
+export function readCachedModelCatalogForRequest<T>({
+  cache,
+  key,
+  refresh,
+}: {
+  cache: Pick<Map<string, T>, "get" | "delete">;
+  key?: string;
+  refresh?: boolean;
+}): T | undefined {
+  if (key == null) return;
+  if (refresh) {
+    cache.delete(key);
+    return;
+  }
+  return cache.get(key);
+}
