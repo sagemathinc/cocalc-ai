@@ -181,7 +181,21 @@ export function codexModelOptionsForCatalog(
   catalog?: CodexModelCapabilityInfo[],
   selectedModel?: string,
 ): ModelOption[] {
-  if (!catalog?.length) return staticCodexModelOptions();
+  if (!catalog?.length) {
+    const options = staticCodexModelOptions();
+    if (
+      selectedModel &&
+      !options.some(({ value }) => value === selectedModel)
+    ) {
+      options.push({
+        value: selectedModel,
+        label: selectedModel,
+        description:
+          "Previously selected Codex model. Account availability has not been checked yet.",
+      });
+    }
+    return options;
+  }
   const staticModels = new Map(
     DEFAULT_CODEX_MODELS.map((model) => [model.name, model]),
   );
@@ -567,9 +581,9 @@ export function CodexConfigButton({
     const merged: CodexThreadConfig = { ...defaults, ...saved };
     merged.sessionId =
       normalizeCodexSessionId(merged.sessionId) ?? liveSessionId ?? "";
-    const model = models.some((m) => m.value === merged.model)
-      ? merged.model
-      : baseModel;
+    // A model advertised for this account may not exist in the static fallback
+    // catalog. Never rewrite persisted thread state while discovery is pending.
+    const model = `${merged.model ?? ""}`.trim() || baseModel;
     const reasoning = getReasoningForModel({
       models,
       modelValue: model,
