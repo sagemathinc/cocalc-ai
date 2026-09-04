@@ -41,6 +41,7 @@ import {
 import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
+import { formatCodexErrorForDisplay } from "@cocalc/frontend/chat/codex-error-presentation";
 import { COLORS } from "@cocalc/util/theme";
 import type {
   CodexPaymentSourceInfo,
@@ -211,7 +212,7 @@ function formatCodexUsageReason(reason?: string): string | undefined {
   ) {
     return "Codex could not authenticate the stored ChatGPT sign-in. Sign in again, then retry the usage check.";
   }
-  return reason;
+  return formatCodexErrorForDisplay(reason, lite);
 }
 
 export function CodexCredentialsPanel(props: CodexCredentialsPanelProps = {}) {

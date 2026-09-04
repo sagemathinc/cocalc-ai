@@ -2016,6 +2016,7 @@ export async function getCodexAppServerAccountStatus(opts: {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   appServerLogin?: CodexAppServerLoginHint;
+  isolatedCodexHome?: boolean;
   includeTokenUsage?: boolean;
   includeModels?: boolean;
   timeoutMs?: number;
@@ -2029,6 +2030,7 @@ export async function getCodexAppServerAccountStatus(opts: {
           accountId: opts.accountId,
           cwd: opts.cwd,
           env: opts.env,
+          isolatedCodexHome: opts.isolatedCodexHome,
           touchReason: false,
         })
       : await spawnStandaloneAppServer(

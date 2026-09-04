@@ -1245,7 +1245,7 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(getCodexAppServerAccountStatus).toHaveBeenCalledWith({
       projectId: project_id,
       accountId: "acct-1",
-      env: { CODEX_HOME: "/run/cocalc/codex-subscription" },
+      isolatedCodexHome: true,
       includeModels: true,
       timeoutMs: 45_000,
     });
@@ -1280,7 +1280,7 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(getCodexAppServerAccountStatus).toHaveBeenLastCalledWith({
       projectId: project_id,
       accountId: "acct-1",
-      env: { CODEX_HOME: "/run/cocalc/codex-subscription" },
+      isolatedCodexHome: true,
       includeModels: false,
       timeoutMs: 45_000,
     });

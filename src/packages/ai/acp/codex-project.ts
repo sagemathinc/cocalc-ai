@@ -114,6 +114,7 @@ export type CodexProjectSpawner = {
     agentSessionKey?: string;
     cwd?: string;
     env?: NodeJS.ProcessEnv;
+    isolatedCodexHome?: boolean;
     touchReason?: string | false;
     siteFundedTurn?: CodexSiteFundedTurnRequest;
     paymentSource?: CodexPaymentSourcePreference;

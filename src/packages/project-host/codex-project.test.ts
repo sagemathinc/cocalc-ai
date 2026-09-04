@@ -345,6 +345,59 @@ describe("initCodexProjectRunner", () => {
     });
   });
 
+  it("uses and removes an isolated Codex home for account status probes", async () => {
+    const proc = new FakeProc();
+    spawnMock.mockReturnValue(proc);
+    execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
+      if (args[0] === "inspect" && args[1] === "-f") {
+        cb(null, "true\n", "");
+        return;
+      }
+      cb(null, "", "");
+    });
+    const tmp = await mkTempDir("codex-project-status-test-");
+    const home = path.join(tmp, "home");
+    const scratch = path.join(tmp, "scratch");
+    await fs.mkdir(home, { recursive: true });
+    await fs.mkdir(scratch, { recursive: true });
+    filesystem.localPath.mockResolvedValue({ home, scratch });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "subscription",
+      contextId: "subscription-account-1",
+      codexHome: path.join(tmp, "subscription-home"),
+      env: {},
+    });
+
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    await getCodexProjectSpawner()!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      isolatedCodexHome: true,
+    });
+
+    const args = spawnMock.mock.calls[0][1] as string[];
+    const codexHomeEnv = args.find((arg) =>
+      arg.startsWith("CODEX_HOME=/tmp/.cocalc/codex-account-status/"),
+    );
+    expect(codexHomeEnv).toBeDefined();
+    const containerPath = codexHomeEnv!.slice("CODEX_HOME=".length);
+    const hostPath = path.join(scratch, containerPath.slice("/tmp/".length));
+    await expect(fs.stat(hostPath)).resolves.toMatchObject({});
+
+    proc.emit("close", 0, null);
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        await fs.stat(hostPath);
+      } catch (err) {
+        expect(err).toMatchObject({ code: "ENOENT" });
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error("isolated Codex home was not removed");
+  });
+
   it("routes Codex through restricted OpenAI egress when project network is disabled", async () => {
     const proc = new FakeProc();
     spawnMock.mockReturnValue(proc);

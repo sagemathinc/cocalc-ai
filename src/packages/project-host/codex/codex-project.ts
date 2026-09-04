@@ -350,6 +350,18 @@ function shouldForceEphemeralAppServerAuthStorage(
   }
 }
 
+async function removeIsolatedCodexHome(hostPath?: string): Promise<void> {
+  if (!hostPath) return;
+  try {
+    await fs.rm(hostPath, { recursive: true, force: true });
+  } catch (err) {
+    logger.debug("codex project: failed removing isolated Codex home", {
+      hostPath,
+      err: `${err}`,
+    });
+  }
+}
+
 async function scrubBrokenProjectCodexAuthArtifacts(
   projectHome: string,
   authRuntime: CodexAuthRuntime,
@@ -1757,6 +1769,7 @@ type SpawnCodexAppServerInProjectRuntimeOptions = {
   agentSessionKey?: string;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  isolatedCodexHome?: boolean;
   forceRefreshSiteKey?: boolean;
   touchReason?: string | false;
   siteFundedTurn?: CodexSiteFundedTurnRequest;
@@ -1785,6 +1798,7 @@ async function spawnCodexAppServerInProjectRuntime({
   agentSessionKey,
   cwd,
   env: extraEnv,
+  isolatedCodexHome = false,
   forceRefreshSiteKey = false,
   touchReason = "codex",
   siteFundedTurn: siteFundedTurnRequest,
@@ -1801,6 +1815,14 @@ async function spawnCodexAppServerInProjectRuntime({
   const { home, scratch } = await localPath({ project_id: projectId });
   await scrubBrokenProjectCodexAuthArtifacts(home, authRuntime);
   const initialExecEnv = toStringEnv(extraEnv);
+  if (
+    isolatedCodexHome &&
+    !shouldForceEphemeralAppServerAuthStorage(authRuntime)
+  ) {
+    throw new Error(
+      "isolated Codex home requires host-managed app-server authentication",
+    );
+  }
   let siteFundedTurn: CodexSiteFundedTurnRuntime | undefined;
   if (authRuntime.source === "site-api-key" && siteFundedTurnRequest) {
     if (!accountId)
@@ -1851,6 +1873,7 @@ async function spawnCodexAppServerInProjectRuntime({
   ];
   const execEnv = initialExecEnv;
   let restrictedEgress: RestrictedCodexEgressProxySession | undefined;
+  let isolatedCodexHomeHostPath: string | undefined;
   if (siteFundedTurn) {
     execEnv.OPENAI_API_KEY = siteFundedTurn.providerToken;
   }
@@ -1900,8 +1923,30 @@ async function spawnCodexAppServerInProjectRuntime({
       projectId,
       execEnv,
     });
+    if (isolatedCodexHome) {
+      // Upstream's file model cache is not account-scoped. Status probes use a
+      // fresh home so one project collaborator cannot seed another's catalog.
+      const relativePath = join(
+        ".cocalc",
+        "codex-account-status",
+        randomUUID(),
+      );
+      const hostRoot = scratch ?? home;
+      isolatedCodexHomeHostPath = join(hostRoot, relativePath);
+      await fs.mkdir(isolatedCodexHomeHostPath, {
+        recursive: true,
+        mode: 0o700,
+      });
+      const containerPath = join(
+        scratch ? "/tmp" : PROJECT_RUNTIME_HOME,
+        relativePath,
+      );
+      execEnv.CODEX_HOME = containerPath;
+      runtimeEnv.CODEX_HOME = containerPath;
+    }
   } catch (err) {
     await cliTokenLease?.close();
+    await removeIsolatedCodexHome(isolatedCodexHomeHostPath);
     throw err;
   }
   for (const key in execEnv) {
@@ -1965,11 +2010,13 @@ async function spawnCodexAppServerInProjectRuntime({
   } catch (err) {
     restrictedEgress?.close();
     await cliTokenLease?.close();
+    await removeIsolatedCodexHome(isolatedCodexHomeHostPath);
     throw err;
   }
   proc.once("close", () => {
     restrictedEgress?.close();
     void cliTokenLease?.close();
+    void removeIsolatedCodexHome(isolatedCodexHomeHostPath);
   });
   proc.on("exit", async () => {
     try {
@@ -2066,6 +2113,7 @@ export function initCodexProjectRunner(): void {
       agentSessionKey,
       cwd,
       env: extraEnv,
+      isolatedCodexHome,
       touchReason,
       siteFundedTurn,
       paymentSource,
@@ -2076,6 +2124,7 @@ export function initCodexProjectRunner(): void {
         agentSessionKey,
         cwd,
         env: extraEnv,
+        isolatedCodexHome,
         touchReason: touchReason ?? "codex",
         siteFundedTurn,
         paymentSource,
