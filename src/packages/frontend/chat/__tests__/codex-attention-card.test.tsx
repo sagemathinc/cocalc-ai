@@ -7,7 +7,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
-import { showCodexNotificationBestEffort } from "@cocalc/frontend/notifications/codex-turn-toast";
 import { CodexAttentionCard, codexFreshAuthUrl } from "../codex-attention-card";
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -17,9 +16,6 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 }));
 jest.mock("@cocalc/frontend/misc/open-browser-tab", () => ({
   open_new_tab: jest.fn(),
-}));
-jest.mock("@cocalc/frontend/notifications/codex-turn-toast", () => ({
-  showCodexNotificationBestEffort: jest.fn(async () => undefined),
 }));
 jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
   appBasePath: "/base",
@@ -100,15 +96,6 @@ describe("Codex fresh-auth attention", () => {
           attention_id: record.attention_id,
         }),
       ),
-    );
-    expect(showCodexNotificationBestEffort).toHaveBeenCalledWith(
-      expect.objectContaining({
-        row: expect.objectContaining({
-          summary: expect.objectContaining({
-            message_date: record.message_date,
-          }),
-        }),
-      }),
     );
     view.unmount();
   });

@@ -22,7 +22,6 @@ import { appendUrlPath } from "@cocalc/util/url-path";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getControlPlaneAppUrl } from "@cocalc/frontend/control-plane-origin";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
-import { showCodexNotificationBestEffort } from "@cocalc/frontend/notifications/codex-turn-toast";
 import { lite } from "@cocalc/frontend/lite";
 
 const { Paragraph, Text, Title } = Typography;
@@ -111,27 +110,6 @@ export function CodexAttentionCard({
         markedSeenRef.current = false;
       });
   }, [initialRecord.attention_id, initialRecord.project_id]);
-
-  useEffect(() => {
-    void showCodexNotificationBestEffort({
-      account_id: record.account_id,
-      row: {
-        notification_id: record.attention_id,
-        kind: "account_notice",
-        project_id: record.project_id,
-        summary: {
-          notice_type: "codex_attention",
-          origin_label: "Codex",
-          attention_id: record.attention_id,
-          attention_state: record.state,
-          message_date: record.message_date,
-          path: record.path,
-          thread_id: record.thread_id,
-          stable_source_id: record.source_id,
-        },
-      },
-    });
-  }, [record]);
 
   useEffect(() => {
     let disposed = false;
