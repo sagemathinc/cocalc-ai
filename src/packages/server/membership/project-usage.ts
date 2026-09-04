@@ -224,29 +224,51 @@ export async function setProjectUsageAccountId(
     project_id,
     account_id,
     expected_current_usage_account_id,
+    expected_course_project_id,
+    expected_course_email_address,
   }: {
     project_id: string;
     account_id?: string | null;
     expected_current_usage_account_id?: string | null;
+    expected_course_project_id?: string;
+    expected_course_email_address?: string;
   },
   client?: PoolClient,
 ): Promise<boolean> {
-  if (expected_current_usage_account_id === undefined) {
-    const { rows } = await getQueryClient(client).query(
-      "UPDATE projects SET usage_account_id=$2 WHERE project_id=$1 RETURNING project_id",
-      [project_id, account_id ?? null],
-    );
-    return !!rows[0];
-  }
   const { rows } = await getQueryClient(client).query(
     `
       UPDATE projects
-      SET usage_account_id=$2
+      SET usage_account_id=$2::uuid
       WHERE project_id=$1
-        AND usage_account_id::text IS NOT DISTINCT FROM $3::text
+        AND (
+          $3::boolean IS FALSE
+          OR usage_account_id::text IS NOT DISTINCT FROM $4::text
+        )
+        AND (
+          $5::text IS NULL
+          OR (
+            COALESCE(course ->> 'type', '') = 'student'
+            AND COALESCE(course ->> 'project_id', '') = $5::text
+            AND (
+              NULLIF(BTRIM(course ->> 'account_id'), '') = $2::uuid::text
+              OR (
+                NULLIF(BTRIM(course ->> 'account_id'), '') IS NULL
+                AND $6::text IS NOT NULL
+                AND LOWER(BTRIM(course ->> 'email_address')) = $6::text
+              )
+            )
+          )
+        )
       RETURNING project_id
     `,
-    [project_id, account_id ?? null, expected_current_usage_account_id],
+    [
+      project_id,
+      account_id ?? null,
+      expected_current_usage_account_id !== undefined,
+      expected_current_usage_account_id ?? null,
+      expected_course_project_id ?? null,
+      expected_course_email_address?.trim().toLowerCase() || null,
+    ],
   );
   return !!rows[0];
 }
@@ -256,10 +278,14 @@ export async function setProjectUsageAccountIdOnOwningBay(
     project_id,
     account_id,
     expected_current_usage_account_id,
+    expected_course_project_id,
+    expected_course_email_address,
   }: {
     project_id: string;
     account_id?: string | null;
     expected_current_usage_account_id?: string | null;
+    expected_course_project_id?: string;
+    expected_course_email_address?: string;
   },
   client?: PoolClient,
 ): Promise<boolean> {
@@ -275,6 +301,8 @@ export async function setProjectUsageAccountIdOnOwningBay(
         project_id,
         account_id,
         expected_current_usage_account_id,
+        expected_course_project_id,
+        expected_course_email_address,
       },
       client,
     );
@@ -286,6 +314,8 @@ export async function setProjectUsageAccountIdOnOwningBay(
         project_id,
         usage_account_id: account_id ?? null,
         expected_current_usage_account_id,
+        expected_course_project_id,
+        expected_course_email_address,
         epoch: ownership.epoch,
       })
   ).updated;

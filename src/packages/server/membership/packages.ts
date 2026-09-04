@@ -81,6 +81,10 @@ type InstitutionalClaimDescriptor = {
   matched_email_address: string;
   claimed_domain: string;
 };
+type CourseSeatProjectValidation = {
+  course_project_id: string;
+  email_address?: string;
+};
 
 interface RawMembershipPackageRecord {
   id: string;
@@ -1254,6 +1258,7 @@ async function syncProjectUsageForAssignment({
   project_id,
   account_id,
   expected_current_usage_account_id,
+  course_validation,
   client,
 }: {
   owner_account_id: string;
@@ -1262,6 +1267,7 @@ async function syncProjectUsageForAssignment({
   project_id: string;
   account_id?: string | null;
   expected_current_usage_account_id?: string | null;
+  course_validation?: CourseSeatProjectValidation;
   client: PoolClient;
 }): Promise<void> {
   const localOwnership = await resolveProjectBayDirect(project_id);
@@ -1278,6 +1284,8 @@ async function syncProjectUsageForAssignment({
         project_id,
         account_id,
         expected_current_usage_account_id,
+        expected_course_project_id: course_validation?.course_project_id,
+        expected_course_email_address: course_validation?.email_address,
       },
       client,
     );
@@ -1295,6 +1303,8 @@ async function syncProjectUsageForAssignment({
       project_id,
       desired_account_id: account_id ?? null,
       expected_current_usage_account_id,
+      expected_course_project_id: course_validation?.course_project_id,
+      expected_course_email_address: course_validation?.email_address,
     },
     client,
   });
@@ -1303,10 +1313,12 @@ async function syncProjectUsageForAssignment({
 async function getCourseInfoForSeatProject({
   project_id,
   actor_account_id,
+  trusted_admin = false,
   client,
 }: {
   project_id: string;
   actor_account_id: string;
+  trusted_admin?: boolean;
   client: PoolClient;
 }): Promise<CourseInfo | null> {
   const localOwnership = await resolveProjectBayDirect(project_id);
@@ -1329,6 +1341,7 @@ async function getCourseInfoForSeatProject({
     await getInterBayBridge().projectDetails(ownership.bay_id).get({
       project_id,
       account_id: actor_account_id,
+      trusted_admin,
     })
   ).course;
 }
@@ -1371,6 +1384,7 @@ async function assertValidCourseSeatProject({
   email_address,
   verified_account_email_addresses,
   actor_account_id,
+  trusted_admin = false,
   client,
 }: {
   pkg: MembershipPackageRecord;
@@ -1379,8 +1393,9 @@ async function assertValidCourseSeatProject({
   email_address?: string;
   verified_account_email_addresses?: string[];
   actor_account_id: string;
+  trusted_admin?: boolean;
   client: PoolClient;
-}): Promise<void> {
+}): Promise<CourseSeatProjectValidation | undefined> {
   if (pkg.kind !== "course") return;
   const project_id = `${assignment_metadata?.project_id ?? ""}`.trim();
   if (!project_id) return;
@@ -1399,6 +1414,7 @@ async function assertValidCourseSeatProject({
   const course = await getCourseInfoForSeatProject({
     project_id,
     actor_account_id,
+    trusted_admin,
     client,
   });
   if (course?.type !== "student" || course.project_id !== course_project_id) {
@@ -1453,6 +1469,10 @@ async function assertValidCourseSeatProject({
       throw Error("course seat student project has no recipient identity");
     }
   }
+  return {
+    course_project_id,
+    ...(courseAccountId ? {} : { email_address: courseEmailAddress }),
+  };
 }
 
 async function withPackageOwnerWriteFence<T>({
@@ -2439,12 +2459,14 @@ export async function assignMembershipPackageSeat(
     account_id,
     email_address,
     assigned_by_account_id,
+    trusted_admin = false,
     metadata,
   }: {
     package_id: string;
     account_id?: string;
     email_address?: string;
     assigned_by_account_id: string;
+    trusted_admin?: boolean;
     metadata?: Record<string, unknown> | null;
   },
   client?: PoolClient,
@@ -2460,12 +2482,13 @@ export async function assignMembershipPackageSeat(
       if (!normalizedAccountId && !normalizedEmailAddress) {
         throw Error("account_id or email_address required");
       }
-      await assertValidCourseSeatProject({
+      const requestedCourseValidation = await assertValidCourseSeatProject({
         pkg,
         assignment_metadata: metadata,
         account_id: normalizedAccountId,
         email_address: normalizedEmailAddress,
         actor_account_id: assigned_by_account_id,
+        trusted_admin,
         client: dbClient,
       });
       if (pkg.expires_at && pkg.expires_at <= new Date()) {
@@ -2493,16 +2516,26 @@ export async function assignMembershipPackageSeat(
             client: dbClient,
           });
           if (!grantInfo) {
+            const mergedMetadata = {
+              ...normalizeMetadata(existingAssignment.metadata),
+              ...normalizeMetadata(metadata),
+            };
+            const courseValidation = await assertValidCourseSeatProject({
+              pkg,
+              assignment_metadata: mergedMetadata,
+              account_id: normalizedAccountId,
+              email_address: normalizedEmailAddress,
+              actor_account_id: assigned_by_account_id,
+              trusted_admin,
+              client: dbClient,
+            });
             grantInfo = await createGrantForAssignment({
               owner_account_id: pkg.owner_account_id,
               package_id,
               account_id: normalizedAccountId,
               assigned_by_account_id,
               assignment_id: existingAssignment.id,
-              metadata: {
-                ...normalizeMetadata(existingAssignment.metadata),
-                ...normalizeMetadata(metadata),
-              },
+              metadata: mergedMetadata,
               client: dbClient,
             });
             const assignmentMetadata: Record<string, unknown> = {
@@ -2530,6 +2563,7 @@ export async function assignMembershipPackageSeat(
                 assignment_id: existingAssignment.id,
                 project_id,
                 account_id: normalizedAccountId,
+                course_validation: courseValidation,
                 client: dbClient,
               });
             }
@@ -2605,6 +2639,7 @@ export async function assignMembershipPackageSeat(
             assignment_id,
             project_id,
             account_id: normalizedAccountId,
+            course_validation: requestedCourseValidation,
             client: dbClient,
           });
         }
@@ -3351,14 +3386,15 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
               site_license: terms,
             }),
           };
-          await assertValidCourseSeatProject({
+          const courseValidation = await assertValidCourseSeatProject({
             pkg,
             assignment_metadata: baseMetadata,
             account_id,
             email_address: pendingAssignment.email_address ?? undefined,
             verified_account_email_addresses: verifiedEmailAddresses,
-            actor_account_id:
-              pendingAssignment.assigned_by_account_id ?? pkg.owner_account_id,
+            // The package owner is the stable project authority. An admin who
+            // originally reserved the seat may not be an admin on this bay.
+            actor_account_id: pkg.owner_account_id,
             client: dbClient,
           });
           const grantInfo = await createGrantForAssignment({
@@ -3434,6 +3470,7 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
               assignment_id: pendingAssignment.id,
               project_id,
               account_id,
+              course_validation: courseValidation,
               client: dbClient,
             });
           }

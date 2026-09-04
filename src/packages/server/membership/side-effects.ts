@@ -62,6 +62,8 @@ type MembershipProjectUsageSyncPayload = {
   project_id: string;
   desired_account_id?: string | null;
   expected_current_usage_account_id?: string | null;
+  expected_course_project_id?: string;
+  expected_course_email_address?: string;
 };
 
 type MembershipClaimIdentitySyncPayload =
@@ -427,6 +429,8 @@ async function applyProjectUsageSyncPayload(
     account_id: payload.desired_account_id ?? null,
     expected_current_usage_account_id:
       payload.expected_current_usage_account_id,
+    expected_course_project_id: payload.expected_course_project_id,
+    expected_course_email_address: payload.expected_course_email_address,
   });
   if (!updated && payload.desired_account_id != null) {
     throw new Error(

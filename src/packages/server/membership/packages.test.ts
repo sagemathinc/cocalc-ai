@@ -1023,6 +1023,7 @@ describe("membership packages", () => {
       opts: {
         project_id,
         usage_account_id: student_account_id,
+        expected_course_project_id: course_project_id,
         epoch: 0,
       },
     });
@@ -1043,6 +1044,56 @@ describe("membership packages", () => {
         expected_current_usage_account_id: student_account_id,
         epoch: 0,
       },
+    });
+  });
+
+  it("preserves verified admin authority for remote course validation", async () => {
+    const owner_account_id = uuid();
+    const admin_account_id = uuid();
+    const student_account_id = uuid();
+    const course_project_id = uuid();
+    const project_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(admin_account_id);
+    await createTestAccount(student_account_id);
+    await createCourseStudentProject({
+      project_id,
+      course_project_id,
+      student_account_id,
+      owner_account_id,
+      owning_bay_id: "bay-2",
+    });
+    projectDetailsGetMock.mockImplementationOnce(
+      async (_dest_bay, { project_id: requestedProjectId, trusted_admin }) => {
+        expect(trusted_admin).toBe(true);
+        const { rows } = await getPool().query(
+          "SELECT course FROM projects WHERE project_id=$1 LIMIT 1",
+          [requestedProjectId],
+        );
+        return { course: rows[0]?.course };
+      },
+    );
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "course",
+      membership_class: "student",
+      seat_count: 1,
+      metadata: { course_project_id },
+    });
+
+    await expect(
+      assignMembershipPackageSeat({
+        package_id,
+        account_id: student_account_id,
+        assigned_by_account_id: admin_account_id,
+        trusted_admin: true,
+        metadata: { project_id },
+      }),
+    ).resolves.toMatchObject({ account_id: student_account_id });
+    expect(projectDetailsGetMock).toHaveBeenCalledWith("bay-2", {
+      project_id,
+      account_id: admin_account_id,
+      trusted_admin: true,
     });
   });
 

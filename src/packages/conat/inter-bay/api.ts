@@ -400,6 +400,8 @@ export interface ProjectControlSetUsageAccountRequest {
   project_id: string;
   usage_account_id?: string | null;
   expected_current_usage_account_id?: string | null;
+  expected_course_project_id?: string;
+  expected_course_email_address?: string;
   epoch?: number;
 }
 
@@ -519,6 +521,8 @@ export interface GetProjectReferenceRequest {
 export interface GetProjectDetailsRequest {
   project_id: string;
   account_id: string;
+  // Only inter-bay callers that already verified admin authority may set this.
+  trusted_admin?: boolean;
 }
 
 export interface GetHostConnectionRequest {

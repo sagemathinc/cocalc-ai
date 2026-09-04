@@ -2191,6 +2191,41 @@ describe("purchases membership packages", () => {
     expect(result.id).toBe("assignment-1");
   });
 
+  it("carries locally verified admin authority into seat assignment", async () => {
+    getMembershipPackageMock.mockResolvedValue({
+      id: "package-1",
+      owner_account_id: "owner-1",
+      kind: "course",
+      membership_class: "student",
+      seat_count: 3,
+    });
+    isAdminMock.mockResolvedValueOnce(true);
+    assignMembershipPackageSeatMock.mockResolvedValue({
+      id: "assignment-1",
+      package_id: "package-1",
+      account_id: "student-1",
+      assigned_by_account_id: "admin-1",
+    });
+
+    const { assignMembershipPackageSeat } = await import("./purchases");
+    await assignMembershipPackageSeat({
+      account_id: "admin-1",
+      session_hash: "session-1",
+      package_id: "package-1",
+      target_account_id: "student-1",
+      metadata: { project_id: "project-1" },
+    });
+
+    expect(assignMembershipPackageSeatMock).toHaveBeenCalledWith({
+      package_id: "package-1",
+      account_id: "student-1",
+      email_address: undefined,
+      assigned_by_account_id: "admin-1",
+      trusted_admin: true,
+      metadata: { project_id: "project-1" },
+    });
+  });
+
   it("requires fresh auth before assigning a package seat", async () => {
     requireFreshAuthForSessionHashMock.mockRejectedValueOnce(
       Object.assign(new Error("fresh auth is required"), {

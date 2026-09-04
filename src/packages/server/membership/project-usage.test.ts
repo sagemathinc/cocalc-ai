@@ -24,6 +24,7 @@ describe("project usage attribution", () => {
   const explicit_usage_account_id = uuid();
   const project_id = uuid();
   const course_project_id = uuid();
+  const guarded_project_id = uuid();
 
   beforeAll(async () => {
     await createTestAccount(owner_account_id);
@@ -51,6 +52,20 @@ describe("project usage attribution", () => {
           [owner_account_id]: { group: "owner" },
         }),
         explicit_usage_account_id,
+      ],
+    );
+    await getPool().query(
+      `INSERT INTO projects (project_id, title, users, course, last_edited)
+       VALUES ($1, $2, $3::jsonb, $4::jsonb, NOW())`,
+      [
+        guarded_project_id,
+        "Guarded course usage attribution",
+        JSON.stringify({ [owner_account_id]: { group: "owner" } }),
+        JSON.stringify({
+          type: "student",
+          project_id: course_project_id,
+          email_address: "student@example.com",
+        }),
       ],
     );
   });
@@ -124,6 +139,50 @@ describe("project usage attribution", () => {
     await expect(getProjectUsageAccountId(project_id)).resolves.toBe(
       explicit_usage_account_id,
     );
+  });
+
+  it("atomically rejects stale course recipient attribution", async () => {
+    await expect(
+      setProjectUsageAccountId({
+        project_id: guarded_project_id,
+        account_id: student_account_id,
+        expected_course_project_id: course_project_id,
+        expected_course_email_address: "STUDENT@example.com",
+      }),
+    ).resolves.toBe(true);
+    await getPool().query(
+      `UPDATE projects
+          SET course = jsonb_set(course, '{email_address}', $2::jsonb),
+              usage_account_id = NULL
+        WHERE project_id=$1`,
+      [guarded_project_id, JSON.stringify("other@example.com")],
+    );
+    await expect(
+      setProjectUsageAccountId({
+        project_id: guarded_project_id,
+        account_id: student_account_id,
+        expected_course_project_id: course_project_id,
+        expected_course_email_address: "student@example.com",
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it("accepts the expected account if an email-only course project is claimed", async () => {
+    await getPool().query(
+      `UPDATE projects
+          SET course = course || jsonb_build_object('account_id', $2::text),
+              usage_account_id = NULL
+        WHERE project_id=$1`,
+      [guarded_project_id, student_account_id],
+    );
+    await expect(
+      setProjectUsageAccountId({
+        project_id: guarded_project_id,
+        account_id: student_account_id,
+        expected_course_project_id: course_project_id,
+        expected_course_email_address: "student@example.com",
+      }),
+    ).resolves.toBe(true);
   });
 
   it("attributes managed-project collaboration to the parent course", async () => {
