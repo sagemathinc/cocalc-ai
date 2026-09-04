@@ -53,6 +53,7 @@ const ACCOUNT_STATUS_REQUEST_TIMEOUT_MS = Math.max(
   5_000,
   Number(process.env.COCALC_CODEX_ACCOUNT_STATUS_TIMEOUT_MS ?? 20_000),
 );
+const ACCOUNT_STATUS_SHUTDOWN_GRACE_MS = 200;
 const TURN_NOTIFICATION_IDLE_TIMEOUT_MS = Math.max(
   REQUEST_TIMEOUT_MS,
   Number(process.env.COCALC_CODEX_APP_SERVER_NOTIFICATION_TIMEOUT_MS ?? 60_000),
@@ -2009,6 +2010,24 @@ function isRateLimitsAuthError(error: string | undefined): boolean {
   );
 }
 
+function stopAccountStatusAppServer(proc: ReturnType<typeof spawn>): void {
+  if (proc.exitCode != null || proc.signalCode != null || proc.killed) return;
+  if (!proc.stdin || proc.stdin.destroyed) {
+    proc.kill("SIGKILL");
+    return;
+  }
+  // Codex treats stdin EOF as a graceful app-server shutdown. Give the inner
+  // process time to exit before killing the outer project-runtime launcher.
+  proc.stdin.end();
+  const timer = setTimeout(() => {
+    if (proc.exitCode == null && proc.signalCode == null && !proc.killed) {
+      proc.kill("SIGKILL");
+    }
+  }, ACCOUNT_STATUS_SHUTDOWN_GRACE_MS);
+  timer.unref?.();
+  proc.once("close", () => clearTimeout(timer));
+}
+
 export async function getCodexAppServerAccountStatus(opts: {
   projectId?: string;
   accountId?: string;
@@ -2136,9 +2155,7 @@ export async function getCodexAppServerAccountStatus(opts: {
       errors: normalizedErrors,
     };
   } finally {
-    if (spawned.proc.exitCode == null && !spawned.proc.killed) {
-      spawned.proc.kill("SIGKILL");
-    }
+    stopAccountStatusAppServer(spawned.proc);
   }
 }
 
