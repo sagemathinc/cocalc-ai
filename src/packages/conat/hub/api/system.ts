@@ -777,6 +777,8 @@ export interface CodexPaymentSourceInfo {
     | "shared-home"
     | "none";
   hasSubscription: boolean;
+  /** Opaque revision of the connected ChatGPT credential, never secret data. */
+  subscriptionRevision?: string;
   hasProjectApiKey: boolean;
   hasAccountApiKey: boolean;
   hasSiteApiKey: boolean;

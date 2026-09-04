@@ -71,7 +71,7 @@ import {
 } from "@cocalc/util/misc";
 import * as misc from "@cocalc/util/misc";
 import { join } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { setSshUi, ssh } from "./ssh";
@@ -608,18 +608,24 @@ async function codexUploadAuthFileLite(opts: {
   return { ok: true as const, ...result };
 }
 
-async function hasLocalSubscriptionAuth(codexHome: string): Promise<boolean> {
+async function getLocalSubscriptionAuthRevision(
+  codexHome: string,
+): Promise<string | undefined> {
   const authPath = join(codexHome, "auth.json");
   try {
-    const raw = await readFile(authPath, "utf8");
-    if (!raw.trim()) return false;
+    const [raw, info] = await Promise.all([
+      readFile(authPath, "utf8"),
+      stat(authPath),
+    ]);
+    if (!raw.trim()) return undefined;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return false;
+      return undefined;
     }
-    return Object.keys(parsed).length > 0;
+    if (!Object.keys(parsed).length) return undefined;
+    return `${info.size}:${Math.floor(info.mtimeMs)}`;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -653,7 +659,9 @@ async function getCodexPaymentSource(opts?: {
   const account_id = `${opts?.account_id ?? ACCOUNT_ID}`.trim() || ACCOUNT_ID;
   const project_id = `${opts?.project_id ?? ""}`.trim() || undefined;
   const codexHome = resolveLiteCodexHome();
-  const hasSubscription = await hasLocalSubscriptionAuth(codexHome);
+  const subscriptionRevision =
+    await getLocalSubscriptionAuthRevision(codexHome);
+  const hasSubscription = subscriptionRevision != null;
 
   const projectKeys = parseMap(
     process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEYS_JSON,
@@ -689,6 +697,7 @@ async function getCodexPaymentSource(opts?: {
   return {
     source,
     hasSubscription,
+    subscriptionRevision,
     hasProjectApiKey,
     hasAccountApiKey,
     hasSiteApiKey,

@@ -541,6 +541,7 @@ describe("CodexCredentialsPanel", () => {
     writeCachedCodexModelCatalog({
       projectId: "project-1",
       runtimeVersion: "tools-v1",
+      subscriptionRevision: "subscription-v1",
       models: [
         {
           model: "old-account-model",
@@ -588,6 +589,7 @@ describe("CodexCredentialsPanel", () => {
       readCachedCodexModelCatalog({
         projectId: "project-1",
         runtimeVersion: "tools-v1",
+        subscriptionRevision: "subscription-v1",
       }),
     ).toBeUndefined();
   });
