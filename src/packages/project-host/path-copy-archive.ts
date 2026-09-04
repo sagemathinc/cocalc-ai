@@ -92,3 +92,48 @@ export async function replacePathFromStaging({
     await rm(incoming, { recursive: true, force: true }).catch(() => {});
   }
 }
+
+export async function installPathFromStaging({
+  source,
+  destination,
+  destinationExists,
+  exact,
+  options,
+  copy,
+}: {
+  source: string;
+  destination: string;
+  destinationExists: boolean;
+  exact?: boolean;
+  options?: { force?: boolean; errorOnExist?: boolean };
+  copy: (source: string, destination: string) => Promise<void>;
+}): Promise<boolean> {
+  // The hub resolves array and base-relative sources to their final destination
+  // paths. Ordinary copies must therefore use cp's -T-style merge semantics;
+  // only collection requests explicitly opt into atomic replacement.
+  if (!exact) {
+    await mkdir(path.dirname(destination), { recursive: true });
+    await copy(source, destination);
+    return true;
+  }
+
+  if (destinationExists && !(options?.force ?? true)) {
+    if (options?.errorOnExist) {
+      const err = new Error(
+        "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
+      );
+      // @ts-ignore -- Node's SystemError code is not part of Error.
+      err.code = "ERR_FS_CP_EEXIST";
+      throw err;
+    }
+    return false;
+  }
+
+  await replacePathFromStaging({
+    source,
+    destination,
+    destinationExists,
+    copy,
+  });
+  return true;
+}

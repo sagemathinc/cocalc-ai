@@ -9,6 +9,7 @@ import path from "node:path";
 import {
   archivePathIsAllowed,
   decodePathCopyArchiveListing,
+  installPathFromStaging,
   replacePathFromStaging,
 } from "./path-copy-archive";
 
@@ -84,6 +85,55 @@ describe("path copy archive listings", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("merges an ordinary directory copy at the resolved destination", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cocalc-copy-merge-"));
+    try {
+      const source = path.join(root, "source");
+      const destination = path.join(root, "handouts", "lecture notes");
+      await mkdir(source);
+      await mkdir(destination, { recursive: true });
+      await writeFile(path.join(source, "new.txt"), "new");
+      await writeFile(path.join(destination, "keep.txt"), "keep");
+
+      await installPathFromStaging({
+        source,
+        destination,
+        destinationExists: true,
+        options: { force: false },
+        copy: async (src, dest) => {
+          await cp(src, dest, { force: false, recursive: true });
+        },
+      });
+
+      expect(await readFile(path.join(destination, "new.txt"), "utf8")).toBe(
+        "new",
+      );
+      expect(await readFile(path.join(destination, "keep.txt"), "utf8")).toBe(
+        "keep",
+      );
+      await expect(
+        readFile(path.join(destination, "source", "new.txt"), "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("skips an exact no-clobber copy when the destination exists", async () => {
+    const copy = jest.fn();
+    await expect(
+      installPathFromStaging({
+        source: "/staging/source",
+        destination: "/project/destination",
+        destinationExists: true,
+        exact: true,
+        options: { force: false },
+        copy,
+      }),
+    ).resolves.toBe(false);
+    expect(copy).not.toHaveBeenCalled();
   });
 
   it("leaves the destination untouched when staging the copy fails", async () => {
