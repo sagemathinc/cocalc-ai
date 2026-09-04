@@ -494,7 +494,7 @@ async function cancelRenewableMembershipSubscription({
       WHERE id=$3
         AND account_id=$1
         AND metadata->>'type'='membership'
-        AND status != 'canceled'`,
+        AND status='active'`,
     [account_id, `Changed membership to ${targetClass}`, subscription_id],
   );
   if (result.rowCount != 1) {

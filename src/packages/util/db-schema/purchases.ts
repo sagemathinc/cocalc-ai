@@ -35,9 +35,6 @@ export const STUDENT_PAY = "student-pay";
 // month-to-month payment for active subscription
 export const SUBSCRIPTION_RENEWAL = "subscription-renewal";
 
-// resuming a canceled subscription that has expired:
-export const RESUME_SUBSCRIPTION = "resume-subscription";
-
 // change membership tiers directly in-app
 export const MEMBERSHIP_CHANGE = "membership-change";
 

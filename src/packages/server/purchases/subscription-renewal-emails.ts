@@ -202,7 +202,7 @@ async function getRelevantSubscriptions() {
       current_period_end > NOW() AND
       current_period_end <= NOW() + INTERVAL '${request} days' AND
       (renewal_email IS NULL OR renewal_email < NOW() - INTERVAL '${request} days') AND
-      status != 'canceled'
+      status='active'
   `;
 
   const { rows } = await pool.query(query);

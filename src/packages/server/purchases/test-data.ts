@@ -23,7 +23,7 @@ export async function createTestMembershipSubscription(
     start?: Date;
     end?: Date;
     cost?: number;
-    status?: "active" | "canceled" | "unpaid" | "past_due";
+    status?: "active" | "canceled";
   },
 ) {
   const now = dayjs();

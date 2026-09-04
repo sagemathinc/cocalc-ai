@@ -357,8 +357,7 @@ async function refundMembership({
               payment=CASE
                 WHEN payment IS NULL THEN NULL
                 ELSE jsonb_set(payment, '{status}', '"canceled"')
-              END,
-              resume_payment_intent=NULL
+              END
         WHERE id=$1 AND account_id=$2`,
       [subscriptionId, purchase.account_id],
     );

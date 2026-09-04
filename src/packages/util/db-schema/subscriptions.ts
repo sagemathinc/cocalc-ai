@@ -4,7 +4,7 @@ import { SCHEMA as schema } from "./index";
 import { NOTES } from "./crm";
 import type { MoneyValue } from "@cocalc/util/money";
 
-export type Status = "active" | "canceled" | "unpaid" | "past_due";
+export type Status = "active" | "canceled";
 export type Interval = "month" | "year";
 export type MembershipClass = string;
 export interface PendingMembershipPlanChange {
@@ -58,23 +58,12 @@ export interface Subscription {
   status: Status;
   canceled_at?: Date;
   canceled_reason?: string;
-  resumed_at?: Date;
   metadata: Metadata;
   renewal_email?: Date;
   notes?: string;
   cost_per_hour?: MoneyValue;
   payment?: SubscriptionPayment;
-  // if resuming this is the payment intent
-  resume_payment_intent?: string;
 }
-
-export const STATUS_TO_COLOR = {
-  active: "blue",
-  canceled: "grey",
-  paid: "green",
-  unpaid: "red",
-  past_due: "red",
-};
 
 Table({
   name: "subscriptions",
@@ -108,7 +97,7 @@ Table({
     status: {
       title: "Status",
       type: "string",
-      desc: "The status of the description: 'active', 'canceled', 'unpaid', 'past_due'",
+      desc: "Whether this subscription renews automatically or is canceled.",
     },
     canceled_at: {
       type: "timestamp",
@@ -117,10 +106,6 @@ Table({
     canceled_reason: {
       type: "string",
       desc: "Why subscription was canceled",
-    },
-    resumed_at: {
-      type: "timestamp",
-      desc: "When subscription was resumed",
     },
     metadata: {
       title: "Metadata",
@@ -137,10 +122,6 @@ Table({
       type: "map",
       desc: "Data about the most recent payment intent for a subscription. The type is SubscriptionPayment (see typescript above).",
     },
-    resume_payment_intent: {
-      type: "string",
-      desc: "When resuming a canceled subscription and paying, this is the payment intent.  This is used to prevent any possibility of double payment.",
-    },
   },
   rules: {
     desc: "Subscriptions",
@@ -155,7 +136,7 @@ Table({
       {
         name: "subscriptions_one_renewable_personal_membership_idx",
         query:
-          "(account_id) WHERE metadata->>'type'='membership' AND status != 'canceled'",
+          "(account_id) WHERE metadata->>'type'='membership' AND status='active'",
         unique: true,
       },
     ],
@@ -170,7 +151,6 @@ Table({
           interval: null,
           status: null,
           canceled_at: null,
-          resumed_at: null,
           metadata: null,
           current_period_start: null,
           current_period_end: null,
@@ -203,7 +183,6 @@ Table({
           interval: null,
           status: null,
           canceled_at: null,
-          resumed_at: null,
           metadata: null,
           renewal_email: null,
           notes: null,
@@ -223,7 +202,6 @@ Table({
           interval: true,
           status: true,
           canceled_at: true,
-          resumed_at: true,
           metadata: true,
           notes: true,
         },

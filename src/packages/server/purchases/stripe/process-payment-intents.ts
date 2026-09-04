@@ -12,7 +12,6 @@ import { stripeToDecimal } from "@cocalc/util/stripe/calc";
 import {
   AUTO_CREDIT,
   SUBSCRIPTION_RENEWAL,
-  RESUME_SUBSCRIPTION,
   MEMBERSHIP_CHANGE,
   MEMBERSHIP_PACKAGE_PURCHASE,
   TEAM_LICENSE_CHANGE,
@@ -21,8 +20,7 @@ import {
 import {
   processSubscriptionRenewal,
   processSubscriptionRenewalFailure,
-  processResumeSubscription,
-  processResumeSubscriptionFailure,
+  type SubscriptionRenewalResult,
 } from "./create-subscription-payment";
 import { applyMembershipChange } from "../membership-change";
 import send, { support, url, name } from "@cocalc/server/messages/send";
@@ -593,6 +591,18 @@ export function paymentSuccessSubject({
   return `Payment received: ${moneyToCurrency(amount)}`;
 }
 
+export function subscriptionRenewalPaymentReason({
+  subscription_id,
+  result,
+}: {
+  subscription_id: string;
+  result: SubscriptionRenewalResult;
+}): string {
+  return result.status === "renewed"
+    ? `renew a subscription (id=${subscription_id})`
+    : "add credit to your account because the subscription renewal was not applied";
+}
+
 export function paymentSuccessBody({
   amount,
   reason,
@@ -937,12 +947,6 @@ customer.  So we don't know what to do with this.  Please manually investigate.
           account_id,
           paymentIntent,
         });
-      } else if (paymentIntent.metadata.purpose == RESUME_SUBSCRIPTION) {
-        result = `we did NOT resume subscription (id=${paymentIntent.metadata.subscription_id})`;
-        await processResumeSubscriptionFailure({
-          account_id,
-          paymentIntent,
-        });
       } else if (paymentIntent.metadata.purpose == MEMBERSHIP_CHANGE) {
         result = `the membership change to ${paymentIntent.metadata.membership_class} was not applied`;
       } else if (
@@ -1052,11 +1056,15 @@ ${await support()}`;
   let reason = "add credit to your account";
   try {
     if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
-      reason = `renew a subscription (id=${paymentIntent.metadata.subscription_id})`;
-      await processSubscriptionRenewal({ account_id, paymentIntent, amount });
-    } else if (paymentIntent.metadata.purpose == RESUME_SUBSCRIPTION) {
-      reason = `resume a subscription (id=${paymentIntent.metadata.subscription_id})`;
-      await processResumeSubscription({ account_id, paymentIntent, amount });
+      const result = await processSubscriptionRenewal({
+        account_id,
+        paymentIntent,
+        amount,
+      });
+      reason = subscriptionRenewalPaymentReason({
+        subscription_id: paymentIntent.metadata.subscription_id,
+        result,
+      });
     } else if (paymentIntent.metadata.purpose == MEMBERSHIP_CHANGE) {
       reason = `change membership to ${paymentIntent.metadata.membership_class}`;
       await applyMembershipChange({

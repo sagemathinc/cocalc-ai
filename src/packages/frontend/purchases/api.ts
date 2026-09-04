@@ -12,7 +12,6 @@ import type {
   Service,
 } from "@cocalc/util/db-schema/purchases";
 import LRU from "lru-cache";
-import type { Subscription } from "@cocalc/util/db-schema/subscriptions";
 import type { Interval, Statement } from "@cocalc/util/db-schema/statements";
 import type {
   ClaimableMembershipPackage,
@@ -31,8 +30,7 @@ import type {
   TeamLicenseOverview,
   TeamLicenseQuote,
 } from "@cocalc/conat/hub/api/purchases";
-import { hoursInInterval } from "@cocalc/util/stripe/timecalcs";
-import { toDecimal, type MoneyValue } from "@cocalc/util/money";
+import type { MoneyValue } from "@cocalc/util/money";
 import type {
   PaymentIntentSecret,
   PaymentIntentCancelReason,
@@ -170,70 +168,6 @@ export async function getBillingSummaryAdmin(
   account_id: string,
 ): Promise<AccountBillingSummary> {
   return await api("purchases/get-billing-summary-admin", { account_id });
-}
-
-export async function getSubscriptions(opts: {
-  limit?: number;
-  offset?: number;
-}): Promise<Subscription[]> {
-  return await api("purchases/get-subscriptions", opts);
-}
-
-export async function getSubscription(
-  subscription_id: number,
-): Promise<Subscription> {
-  const x = await api("user-query", {
-    query: {
-      subscriptions: {
-        id: subscription_id,
-        created: null,
-        cost: null,
-        interval: null,
-        status: null,
-        canceled_at: null,
-        resumed_at: null,
-        current_period_start: null,
-        current_period_end: null,
-        latest_purchase_id: null,
-        metadata: null,
-        payment: null,
-      },
-    },
-  });
-  const z = x.query.subscriptions;
-  for (const field of [
-    "created",
-    "canceled_at",
-    "resumed_at",
-    "current_period_start",
-    "current_period_end",
-  ]) {
-    if (z[field] != null) {
-      z[field] = new Date(z[field]);
-    }
-  }
-  const costValue = toDecimal(z.cost ?? 0);
-  return {
-    ...z,
-    cost_per_hour: costValue.div(hoursInInterval(z.interval)).toNumber(),
-  };
-}
-
-// This is the legacy/manual Stripe renewal-payment path. The React unpaid
-// subscription banner does NOT use this; it uses renewSubscription below.
-export async function createSubscriptionPayment(subscription_id: number) {
-  return await api("purchases/stripe/create-subscription-payment", {
-    subscription_id,
-  });
-}
-
-export interface LiveSubscription {
-  id: number;
-  cost: MoneyValue;
-  status: "unpaid" | "past_due" | "active";
-}
-export async function getLiveSubscriptions(): Promise<LiveSubscription[]> {
-  return await api("purchases/get-live-subscriptions");
 }
 
 export async function getStatements(opts: {
@@ -753,43 +687,6 @@ export async function adminCreateRefund(opts: {
   notes?: string;
 }) {
   return await api("purchases/create-refund", opts);
-}
-
-export async function cancelSubscription({
-  subscription_id,
-  reason,
-}: {
-  subscription_id: number;
-  reason: string;
-}) {
-  return await api("purchases/cancel-subscription", {
-    subscription_id,
-    reason,
-  });
-}
-
-export async function resumeSubscription(subscription_id: number) {
-  return await api("purchases/resume-subscription", {
-    subscription_id,
-  });
-}
-
-export async function costToResumeSubscription(
-  subscription_id: number,
-): Promise<{ periodicCost: MoneyValue; cost: MoneyValue }> {
-  return await api("purchases/cost-to-resume-subscription", {
-    subscription_id,
-  });
-}
-
-// User-facing unpaid subscription renewal path. If the backend requires fresh
-// auth, the React caller must wrap this in useFreshAuthAction/FreshAuthModal.
-export async function renewSubscription(
-  subscription_id: number,
-): Promise<{ purchase_id: number | null }> {
-  return await api("purchases/renew-subscription", {
-    subscription_id,
-  });
 }
 
 // will give error if user is not signed in - they can't make a purchase anyways in that case.
