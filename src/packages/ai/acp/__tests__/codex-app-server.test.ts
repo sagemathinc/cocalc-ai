@@ -949,7 +949,7 @@ describe("CodexAppServerAgent", () => {
     }
   });
 
-  it("passes explicit Codex Fast mode service tier to app-server", async () => {
+  it("passes Fast mode for a dynamically advertised model to app-server", async () => {
     const threadStartRequests: any[] = [];
     const turnStartRequests: any[] = [];
     const proc = new FakeCodexAppServerProc((fake, message) => {
@@ -1009,6 +1009,7 @@ describe("CodexAppServerAgent", () => {
         }
       },
       config: {
+        model: "newly-advertised-model",
         serviceTier: "fast",
         reasoning: "low",
         sessionMode: "full-access",
@@ -1018,13 +1019,13 @@ describe("CodexAppServerAgent", () => {
 
     expect(threadStartRequests).toEqual([
       expect.objectContaining({
-        model: "gpt-5.6-sol",
+        model: "newly-advertised-model",
         serviceTier: "fast",
       }),
     ]);
     expect(turnStartRequests).toEqual([
       expect.objectContaining({
-        model: "gpt-5.6-sol",
+        model: "newly-advertised-model",
         serviceTier: "fast",
       }),
     ]);
@@ -1034,7 +1035,7 @@ describe("CodexAppServerAgent", () => {
           type: "event",
           event: expect.objectContaining({
             type: "config",
-            model: "gpt-5.6-sol",
+            model: "newly-advertised-model",
             reasoning: "low",
             serviceTier: "fast",
             appServerServiceTier: "fast",

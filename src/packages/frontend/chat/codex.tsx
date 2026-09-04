@@ -773,7 +773,9 @@ export function CodexConfigButton({
     }
     if (cachedCatalog) {
       setCodexModelCatalog(cachedCatalog.models);
-    } else if (scopeChanged || forceModels) {
+    } else {
+      // Do not keep an expired catalog selectable while its replacement is in
+      // flight or failed. The static fallback remains available meanwhile.
       setCodexModelCatalog(undefined);
     }
     const includeModels = wantsModels && !cachedCatalog;
@@ -886,12 +888,21 @@ export function CodexConfigButton({
     const hasPersistedModel = !!`${saved?.model ?? ""}`.trim();
     let model = current.model ?? selectedModelValue;
     const patch: Partial<CodexThreadConfig> = {};
-    if (!model || !catalog.some((entry) => entry.model === model)) {
-      if (hasPersistedModel || modelSelectionTouchedRef.current) return;
-      model =
-        catalog.find((entry) => entry.default)?.model ?? catalog[0]?.model;
-      if (!model) return;
+    const advertisedDefault =
+      catalog.find((entry) => entry.default)?.model ?? catalog[0]?.model;
+    const mayAdoptAdvertisedDefault =
+      !hasPersistedModel && !modelSelectionTouchedRef.current;
+    if (
+      mayAdoptAdvertisedDefault &&
+      advertisedDefault &&
+      model !== advertisedDefault
+    ) {
+      model = advertisedDefault;
       patch.model = model;
+    } else if (!model || !catalog.some((entry) => entry.model === model)) {
+      // Preserve an explicit or persisted selection so the UI can show that it
+      // is unavailable instead of silently switching the thread.
+      return;
     }
     const reasoning = getReasoningForModel({
       models,

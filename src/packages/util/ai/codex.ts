@@ -330,7 +330,16 @@ export function resolveCodexServiceTier(
 ): CodexServiceTier {
   const serviceTier = normalizeCodexServiceTier(config?.serviceTier);
   if (serviceTier !== "fast") return "standard";
-  return codexModelSupportsFastMode(config?.model) ? "fast" : "standard";
+  const rawModel = `${config?.model ?? ""}`.trim().toLowerCase();
+  if (!rawModel) return "standard";
+  const model = CODEX_MODEL_CANONICAL_ALIASES.get(rawModel) ?? rawModel;
+  const knownModel = DEFAULT_CODEX_MODELS.find((entry) => entry.name === model);
+  // Dynamic account catalogs can advertise models before this fallback list is
+  // updated. Preserve an explicit Fast selection for those models; Codex is the
+  // final authority and will reject a stale or unsupported capability.
+  return knownModel == null || codexModelSupportsFastMode(model)
+    ? "fast"
+    : "standard";
 }
 
 export function codexServiceTierForAppServer(

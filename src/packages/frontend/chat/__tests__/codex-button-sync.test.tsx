@@ -2,6 +2,7 @@
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
+  CODEX_MODEL_CATALOG_TTL_MS,
   writeCachedCodexModelCatalog,
   writeCachedCodexUsageStatus,
 } from "@cocalc/frontend/account/codex-usage";
@@ -291,6 +292,64 @@ describe("CodexConfigButton", () => {
     expect(getCodexUsageStatus).not.toHaveBeenCalled();
   });
 
+  it("clears an expired in-memory catalog before a failed refresh", async () => {
+    const dynamicModel = {
+      model: "newly-advertised-model",
+      displayName: "Newly advertised model",
+      description: "Account-only model",
+      reasoning: [],
+      serviceTiers: [],
+      default: true,
+    };
+    writeCachedCodexModelCatalog({ models: [dynamicModel] });
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    const modelButton = screen.getByTitle("Change Codex model");
+    fireEvent.mouseEnter(modelButton);
+    fireEvent.click(modelButton);
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: "newly-advertised-model" }),
+      ).toHaveLength(2);
+    });
+    expect(getCodexUsageStatus).not.toHaveBeenCalled();
+
+    writeCachedCodexModelCatalog({
+      models: [dynamicModel],
+      cachedAt: Date.now() - CODEX_MODEL_CATALOG_TTL_MS,
+    });
+    getCodexUsageStatus.mockRejectedValueOnce(new Error("model/list failed"));
+    fireEvent.mouseEnter(modelButton);
+
+    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(
+        screen.queryAllByRole("button", { name: "newly-advertised-model" }),
+      ).toHaveLength(0);
+    });
+  });
+
   it("preserves a stored catalog model before discovery runs", async () => {
     render(
       <CodexConfigButton
@@ -539,6 +598,13 @@ describe("CodexConfigButton", () => {
     resolveUsageStatus({
       available: true,
       models: [
+        {
+          model: "gpt-5.6-sol",
+          displayName: "GPT-5.6 Sol",
+          description: "Static fallback that remains available",
+          reasoning: [],
+          serviceTiers: [],
+        },
         {
           model: "account-default-model",
           displayName: "Account default",
