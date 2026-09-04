@@ -111,14 +111,14 @@ type CodexArch = "x64" | "arm64";
 
 const CODEX_RELEASE_SHA256: Record<CodexArch, Record<CodexBinary, string>> = {
   x64: {
-    codex: "605b4b183f22c645f5def63a5b7191767407fb66a6feaec4eaf10b5b7e0058f6",
+    codex: "e8cd1160071f725d2a10cab81073dd6818fc8b096372125d27ef6e66fdf0979e",
     "codex-code-mode-host":
-      "332da68215f070321cb52ebe792ecce8dfd614d02ea5541309d0a5df01e14894",
+      "177a4507b9cc7f97f113ac034697b39f6a71a876a8bd508ff6d7f52f342ebe4a",
   },
   arm64: {
-    codex: "c1cf2baf375e261c1469381a52dc2c8fd05b6fb45cfff83fed0988fd6c5369b6",
+    codex: "878693f9b370320ea21793f99ea1f5687b7d9aa1f2c733de693d9ec0baa4e62a",
     "codex-code-mode-host":
-      "15515396675737d947dcb370da0a5b258e6aea871446639b065ca004b843a498",
+      "70fe485e6919a038b75f70be71aa5782a19a5f36ee85597301e90bd1c9bcbf07",
   },
 };
 
@@ -391,7 +391,7 @@ export const SPEC = {
     desc: "codex",
     path: join(binPath, "codex"),
     getVersion: "codex --version | awk '{print $2}'",
-    VERSION: "0.151.0",
+    VERSION: "0.153.2",
     platforms: ["linux"],
     script: () => getCodexInstallScript(SPEC.codex.VERSION),
     BASE: "https://github.com/openai/codex/releases",

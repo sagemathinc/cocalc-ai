@@ -23,7 +23,7 @@ describe("sandbox tool install scripts", () => {
   it("installs hash-pinned official Codex binaries atomically", () => {
     const script = SPEC.codex.script();
     expect(script).toContain(
-      "https://github.com/openai/codex/releases/download/rust-v0.151.0",
+      "https://github.com/openai/codex/releases/download/rust-v0.153.2",
     );
     expect(script).toMatch(
       /codex-(?:x86_64|aarch64)-unknown-linux-musl\.tar\.gz/,
