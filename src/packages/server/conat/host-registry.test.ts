@@ -223,6 +223,25 @@ describe("host-registry automatic convergence retry", () => {
 
   let currentMetadata: any;
 
+  function applyRestartRecoveryMetadataUpdate(params: any[]) {
+    const expectedHostSessionId = params[2];
+    if (
+      expectedHostSessionId != null &&
+      currentMetadata?.host_session_id !== expectedHostSessionId
+    ) {
+      return { rowCount: 0, rows: [] };
+    }
+    const patch = JSON.parse(params[1]);
+    currentMetadata = {
+      ...currentMetadata,
+      restart_recovery: {
+        ...(currentMetadata?.restart_recovery ?? {}),
+        ...patch,
+      },
+    };
+    return { rowCount: 1, rows: [] };
+  }
+
   it("records one rapid-preemption event per host session", async () => {
     const holdUntil = "2026-07-29T14:34:17.613Z";
     currentMetadata = {
@@ -319,6 +338,13 @@ describe("host-registry automatic convergence retry", () => {
         )
       ) {
         return { rows: [{ metadata: currentMetadata }] };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("'{restart_recovery}'")
+      ) {
+        expect(params[0]).toBe("host-1");
+        return applyRestartRecoveryMetadataUpdate(params);
       }
       if (
         sql.includes(
@@ -578,7 +604,7 @@ describe("host-registry automatic convergence retry", () => {
       host_boot_id: "boot-1",
       machine: { cloud: "gcp" },
     };
-    queryMock = jest.fn(async (sql: string) => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
       const availabilityResult = handleAvailabilityQuery(sql);
       if (availabilityResult) return availabilityResult;
       if (
@@ -597,6 +623,13 @@ describe("host-registry automatic convergence retry", () => {
         )
       ) {
         return { rows: [{ metadata: currentMetadata, bay_id: "bay-1" }] };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("'{restart_recovery}'")
+      ) {
+        expect(params[0]).toBe("host-1");
+        return applyRestartRecoveryMetadataUpdate(params);
       }
       if (
         sql.includes(
@@ -642,7 +675,7 @@ describe("host-registry automatic convergence retry", () => {
       host_boot_id: "boot-1",
       machine: { cloud: "gcp" },
     };
-    queryMock = jest.fn(async (sql: string) => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
       const availabilityResult = handleAvailabilityQuery(sql);
       if (availabilityResult) return availabilityResult;
       if (
@@ -661,6 +694,13 @@ describe("host-registry automatic convergence retry", () => {
         )
       ) {
         return { rows: [{ metadata: currentMetadata, bay_id: "bay-1" }] };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("'{restart_recovery}'")
+      ) {
+        expect(params[0]).toBe("host-1");
+        return applyRestartRecoveryMetadataUpdate(params);
       }
       if (
         sql.includes(
@@ -801,6 +841,13 @@ describe("host-registry automatic convergence retry", () => {
         return { rows: [{ metadata: currentMetadata }] };
       }
       if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("'{restart_recovery}'")
+      ) {
+        expect(params[0]).toBe("host-1");
+        return applyRestartRecoveryMetadataUpdate(params);
+      }
+      if (
         sql.includes(
           "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
         )
@@ -873,6 +920,13 @@ describe("host-registry automatic convergence retry", () => {
         )
       ) {
         return { rows: [{ metadata: currentMetadata }] };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("'{restart_recovery}'")
+      ) {
+        expect(params[0]).toBe("host-1");
+        return applyRestartRecoveryMetadataUpdate(params);
       }
       if (
         sql.includes(
@@ -949,6 +1003,13 @@ describe("host-registry automatic convergence retry", () => {
         return { rows: [{ metadata: currentMetadata }] };
       }
       if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("'{restart_recovery}'")
+      ) {
+        expect(params[0]).toBe("host-1");
+        return applyRestartRecoveryMetadataUpdate(params);
+      }
+      if (
         sql.includes(
           "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
         )
@@ -1023,6 +1084,74 @@ describe("host-registry automatic convergence retry", () => {
       skipped: 0,
       failed: 0,
     });
+  });
+
+  it("does not update recovery metadata after the host session changes", async () => {
+    currentMetadata = {
+      host_session_id: "session-old",
+      host_boot_id: "boot-new",
+      runtime_health: { status: "ready", ready: true },
+      heartbeat_sequence: 11,
+    };
+    let recoveryUpdateSql = "";
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (
+        sql.includes(
+          "SELECT status, last_seen, metadata FROM project_hosts WHERE id=$1",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              last_seen: new Date(),
+              metadata: currentMetadata,
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("'{restart_recovery}'")
+      ) {
+        recoveryUpdateSql = sql;
+        expect(params[2]).toBe("session-old");
+        currentMetadata = {
+          ...currentMetadata,
+          host_session_id: "session-new",
+          heartbeat_sequence: 12,
+        };
+        return applyRestartRecoveryMetadataUpdate(params);
+      }
+      if (
+        sql.includes(
+          "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return { rows: [{ metadata: currentMetadata }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { startHostRestartRecoveryForHost } = await import("./host-registry");
+    await startHostRestartRecoveryForHost({
+      host_id: "host-1",
+      host_boot_id: "boot-new",
+      previous_host_boot_id: "boot-old",
+      previous_host_session_id: "session-before-old",
+      host_session_id: "session-old",
+      source: "register",
+      max_parallel_starts: 1,
+    });
+
+    expect(recoveryUpdateSql).toContain("jsonb_set");
+    expect(recoveryUpdateSql).toContain("metadata->>'host_session_id'");
+    expect(currentMetadata).toMatchObject({
+      host_session_id: "session-new",
+      heartbeat_sequence: 12,
+    });
+    expect(currentMetadata.restart_recovery).toBeUndefined();
+    expect(startProjectOnHostMock).not.toHaveBeenCalled();
   });
 
   it("derives restart recovery parallelism from host capacity", async () => {

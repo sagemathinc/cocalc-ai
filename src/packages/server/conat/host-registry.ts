@@ -600,32 +600,39 @@ async function updateHostRestartRecoveryMetadata({
   patch: Record<string, unknown>;
   expected_host_session_id?: string;
 }): Promise<boolean> {
-  const { rows } = await pool().query<{ metadata: any }>(
-    "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
-    [host_id],
+  const recovery = {
+    ...patch,
+    updated_at: new Date().toISOString(),
+  };
+  const result = await pool().query(
+    `
+      UPDATE project_hosts
+         SET metadata=jsonb_set(
+               COALESCE(metadata, '{}'::jsonb),
+               '{restart_recovery}',
+               COALESCE(metadata->'restart_recovery', '{}'::jsonb) || $2::jsonb,
+               true
+             ),
+             updated=NOW()
+       WHERE id=$1
+         AND deleted IS NULL
+         AND ($3::text IS NULL OR COALESCE(metadata->>'host_session_id', '')=$3)
+    `,
+    [host_id, JSON.stringify(recovery), expected_host_session_id ?? null],
   );
-  const metadata = { ...(rows[0]?.metadata ?? {}) };
-  if (
-    expected_host_session_id &&
-    getHostSessionId(metadata) !== expected_host_session_id
-  ) {
+  if ((result.rowCount ?? 0) === 0) {
+    const { rows } = await pool().query<{ metadata: any }>(
+      "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+      [host_id],
+    );
     logger.warn("ignoring restart recovery update from a stale host session", {
       host_id,
       expected_host_session_id,
-      current_host_session_id: getHostSessionId(metadata),
+      current_host_session_id: getHostSessionId(rows[0]?.metadata),
       status: patch.status,
     });
     return false;
   }
-  metadata.restart_recovery = {
-    ...(metadata.restart_recovery ?? {}),
-    ...patch,
-    updated_at: new Date().toISOString(),
-  };
-  await pool().query(
-    "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
-    [host_id, metadata],
-  );
   return true;
 }
 
