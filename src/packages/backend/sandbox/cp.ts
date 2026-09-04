@@ -54,6 +54,11 @@ export default async function cp(
     }
     // silently does nothing if target exists
     opts.push("-n");
+  } else {
+    // Do not follow destination symlinks while overwriting.  This helper runs
+    // on the host for some project-to-project copies, where a project-created
+    // symlink may contain a path meaningful only in the host namespace.
+    opts.push("--remove-destination");
   }
 
   if (options.preserveTimestamps) {
