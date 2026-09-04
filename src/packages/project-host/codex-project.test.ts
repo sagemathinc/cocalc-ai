@@ -377,6 +377,7 @@ describe("initCodexProjectRunner", () => {
     });
 
     const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args).toContain('cli_auth_credentials_store="ephemeral"');
     const codexHomeEnv = args.find((arg) =>
       arg.startsWith("CODEX_HOME=/tmp/.cocalc/codex-account-status/"),
     );
