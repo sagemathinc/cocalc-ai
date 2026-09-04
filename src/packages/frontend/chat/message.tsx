@@ -57,6 +57,7 @@ import {
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
 import { messageToMarkdown } from "./message-to-markdown";
+import { isCodexAgentMessageAuthor } from "./message-author";
 import { codexEventsToMarkdown } from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
@@ -440,7 +441,21 @@ export default function Message({
   // Thread identity/model now comes from thread_config metadata.
   const isCodexThread = typeof isLLMThread === "string";
   const senderId = field<string>(message, "sender_id");
-  const isCodexAgentMessage = isCodexThread && !is_viewers_message;
+  const hasLanguageModelServiceAuthor = useMemo(() => {
+    const author_id = firstHistoryEntry?.author_id;
+    return typeof author_id === "string" && isLanguageModelService(author_id);
+  }, [firstHistoryEntry]);
+  const hasAcpAssistantMetadata = useMemo(
+    () => isAcpAssistantMessage(message),
+    [message],
+  );
+  const isCodexAgentMessage = isCodexAgentMessageAuthor({
+    threadModel: isLLMThread,
+    senderId,
+    historyAuthorId: firstHistoryEntry?.author_id,
+    hasAcpAssistantMetadata,
+  });
+  const msgWrittenByLLM = hasLanguageModelServiceAuthor || isCodexAgentMessage;
   const senderName = isCodexAgentMessage
     ? codexAgentName(senderId)
     : get_user_name(senderId);
@@ -632,11 +647,6 @@ export default function Message({
     };
   }, [anyOverlayOpen, onOverlayOpenChange, overlayKey]);
 
-  const msgWrittenByLLM = useMemo(() => {
-    const author_id = firstHistoryEntry?.author_id;
-    return typeof author_id === "string" && isLanguageModelService(author_id);
-  }, [firstHistoryEntry]);
-
   const threadRootMs = useMemo(() => {
     const root = getThreadRootDate({ date, messages });
     const rootMs =
@@ -730,9 +740,7 @@ export default function Message({
     };
   }, [message, project_id, path, messageThreadId]);
 
-  const showCodexActivity = useMemo(() => {
-    return isAcpAssistantMessage(message);
-  }, [message]);
+  const showCodexActivity = hasAcpAssistantMetadata;
   const inlineCodexActivityMode = useMemo(
     () =>
       resolveInlineCodexActivityMode({
@@ -1593,7 +1601,7 @@ export default function Message({
       );
     }
 
-    if (isCodexThread && !is_viewers_message) {
+    if (isCodexAgentMessage) {
       buttons.push(
         <Tooltip key="git-browser" placement="bottom" title="Open git browser">
           <Button
@@ -2211,9 +2219,7 @@ export default function Message({
           attachedSteers={attachedSteers}
           activitySteers={activitySteers}
           onOpenGitBrowser={
-            isCodexThread && !is_viewers_message
-              ? openGitBrowserFromMessage
-              : undefined
+            isCodexAgentMessage ? openGitBrowserFromMessage : undefined
           }
           onDrawerOpenChange={setIsActivityDrawerOpen}
         />

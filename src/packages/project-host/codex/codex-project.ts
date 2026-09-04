@@ -1982,7 +1982,9 @@ async function spawnCodexAppServerInProjectRuntime({
   if (shouldForceEphemeralAppServerAuthStorage(authRuntime)) {
     // Host-managed auth must stay in-process only. Otherwise app-server's
     // apiKey login path can write credentials into the collaborative
-    // project-local CODEX_HOME.
+    // project-local CODEX_HOME. ChatGPT tokens are installed as external
+    // in-memory auth; refreshes are delegated to the host request handler,
+    // which updates the registry-backed subscription home directly.
     codexArgs.push("--config", EPHEMERAL_AUTH_STORE_CONFIG);
   }
   execArgs.push(
