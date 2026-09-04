@@ -10,13 +10,17 @@ export function isChatBot(account_id?: string): boolean {
   return typeof account_id === "string" && isCodexModelName(account_id);
 }
 
-export function chatBotName(account_id?: string): string {
+export function codexAgentName(account_id?: string): string {
   if (typeof account_id !== "string") return "Codex Agent";
-  if (isCodexModelName(account_id)) {
-    if (account_id === "codex-agent" || account_id === "openai-codex-agent") {
-      return "Codex Agent";
-    }
-    return `Codex Agent (${account_id})`;
+  if (account_id === "codex-agent" || account_id === "openai-codex-agent") {
+    return "Codex Agent";
+  }
+  return `Codex Agent (${account_id})`;
+}
+
+export function chatBotName(account_id?: string): string {
+  if (typeof account_id === "string" && isCodexModelName(account_id)) {
+    return codexAgentName(account_id);
   }
   return "Codex Agent";
 }

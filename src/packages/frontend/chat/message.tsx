@@ -19,6 +19,7 @@ import {
 import { CSSProperties, ReactNode, useEffect, useLayoutEffect } from "react";
 import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import { codexAgentName } from "@cocalc/frontend/account/chatbot";
 import { CSS, useMemo, useRef, useState } from "@cocalc/frontend/app-framework";
 import {
   DropdownMenu,
@@ -438,6 +439,12 @@ export default function Message({
   );
   // Thread identity/model now comes from thread_config metadata.
   const isCodexThread = typeof isLLMThread === "string";
+  const senderId = field<string>(message, "sender_id");
+  const isCodexAgentMessage = isCodexThread && !is_viewers_message;
+  const senderName = isCodexAgentMessage
+    ? codexAgentName(senderId)
+    : get_user_name(senderId);
+  const avatarAccountId = isCodexAgentMessage ? "codex-agent" : senderId;
   const useCodexSelectToolbar = useMemo(
     () =>
       shouldUseCodexSelectToolbar({
@@ -1288,7 +1295,6 @@ export default function Message({
   }
 
   function avatar_column() {
-    const sender_id = field<string>(message, "sender_id");
     let style: CSSProperties = {};
     if (!is_prev_sender) {
       style.marginTop = "22px";
@@ -1307,8 +1313,8 @@ export default function Message({
     return (
       <Col key={0} xs={2}>
         <div style={style}>
-          {sender_id != null && show_avatar ? (
-            <Avatar size={40} account_id={sender_id} />
+          {avatarAccountId != null && show_avatar ? (
+            <Avatar size={40} account_id={avatarAccountId} />
           ) : undefined}
         </div>
       </Col>
@@ -2346,7 +2352,7 @@ export default function Message({
     };
     return (
       <Drawer
-        title={get_user_name(field(message, "sender_id"))}
+        title={senderName}
         open={showZenMessage}
         onClose={() => setShowZenMessage(false)}
         placement="right"
@@ -2506,10 +2512,8 @@ export default function Message({
             if (d != null) actions?.setFragment(d);
           }}
         >
-          {!is_prev_sender &&
-          !is_viewers_message &&
-          field<string>(message, "sender_id") ? (
-            <Name sender_name={get_user_name(field(message, "sender_id"))} />
+          {!is_prev_sender && !is_viewers_message && senderId ? (
+            <Name sender_name={senderName} />
           ) : undefined}
         </div>
         <div style={messageStyle} className="smc-chat-message">

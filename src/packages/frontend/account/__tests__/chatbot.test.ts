@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { chatBotName, isChatBot } from "../chatbot";
+import { chatBotName, codexAgentName, isChatBot } from "../chatbot";
 
 describe("codex chatbot identity", () => {
   it("treats codex model ids as chatbots", () => {
@@ -35,5 +35,12 @@ describe("codex chatbot identity", () => {
       "Codex Agent (gpt-5.3-codex-spark)",
     );
     expect(chatBotName("openai-codex-agent")).toBe("Codex Agent");
+  });
+
+  it("renders dynamically advertised model ids in trusted codex threads", () => {
+    expect(codexAgentName("gpt-daybreak-blue-latest")).toBe(
+      "Codex Agent (gpt-daybreak-blue-latest)",
+    );
+    expect(codexAgentName("codex-agent")).toBe("Codex Agent");
   });
 });
