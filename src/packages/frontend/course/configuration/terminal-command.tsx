@@ -5,6 +5,7 @@
 
 import {
   List as AntdList,
+  Alert,
   Button,
   Card,
   Form,
@@ -14,6 +15,7 @@ import {
 } from "antd";
 import { List, Map, fromJS } from "immutable";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import {
@@ -27,10 +29,18 @@ import { Icon } from "@cocalc/frontend/components";
 import HelpPopover from "@cocalc/frontend/course/common/help-popover";
 import { course, labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
-import { CourseActions } from "../actions";
-import { CourseStore, TerminalCommand, TerminalCommandOutput } from "../store";
+import type { CourseActions } from "../actions";
+import type {
+  CourseStore,
+  TerminalCommand,
+  TerminalCommandOutput,
+} from "../store";
 import { MAX_PARALLEL_TASKS } from "../student-projects/actions";
-import { Result } from "../student-projects/run-in-all-projects";
+import type {
+  Result,
+  ResultPhase,
+  ResultStatus,
+} from "../student-projects/run-in-all-projects";
 
 interface Props {
   name: string;
@@ -122,18 +132,26 @@ export function TerminalCommandPanel({ name }: Props) {
     if (c == null) return;
     const output = c.get("output");
     if (!output) return;
+    const expectedCount = c.get("expected_count", output.size);
     return (
-      <AntdList
-        size="small"
-        style={{ maxHeight: "400px", overflowY: "auto" }}
-        bordered
-        dataSource={output.toArray()}
-        renderItem={(item) => (
-          <AntdList.Item style={{ padding: "5px" }}>
-            <Output result={item} />
-          </AntdList.Item>
-        )}
-      />
+      <>
+        <OutputSummary
+          output={output}
+          expectedCount={expectedCount}
+          running={c.get("running", false)}
+        />
+        <AntdList
+          size="small"
+          style={{ maxHeight: "400px", overflowY: "auto" }}
+          bordered
+          dataSource={output.toArray()}
+          renderItem={(item) => (
+            <AntdList.Item style={{ padding: "5px" }}>
+              <Output result={item} />
+            </AntdList.Item>
+          )}
+        />
+      </>
     );
   }
 
@@ -141,7 +159,10 @@ export function TerminalCommandPanel({ name }: Props) {
     return actions.get_store();
   }
 
-  function set_field(field: "input" | "running" | "output", value: any): void {
+  function set_field(
+    field: "input" | "running" | "output" | "expected_count",
+    value: any,
+  ): void {
     const store: CourseStore = get_store();
     let terminal_command: TerminalCommand = store.get(
       "terminal_command",
@@ -180,12 +201,17 @@ export function TerminalCommandPanel({ name }: Props) {
     set_field("output", undefined);
     if (!input) return;
     try {
+      set_field("expected_count", get_store().get_student_project_ids().length);
       set_field("running", true);
-      await actions.student_projects.run_in_all_student_projects({
-        command: input,
-        timeout: (timeout ? timeout : 1) * 60,
-        log: run_log,
-      });
+      const results =
+        await actions.student_projects.run_in_all_student_projects({
+          command: input,
+          timeout: (timeout ? timeout : 1) * 60,
+          log: run_log,
+        });
+      // Incremental updates show progress. Reconcile with the complete,
+      // input-ordered result list so no project result can be omitted.
+      set_field("output", fromJS(results));
     } finally {
       set_field("running", false);
     }
@@ -225,6 +251,44 @@ export function TerminalCommandPanel({ name }: Props) {
   return <Card title={render_header()}>{render_terminal()}</Card>;
 }
 
+export function OutputSummary({
+  output,
+  expectedCount,
+  running,
+}: {
+  output: List<TerminalCommandOutput>;
+  expectedCount: number;
+  running: boolean;
+}) {
+  const counts: Record<ResultStatus, number> = {
+    succeeded: 0,
+    failed: 0,
+    timed_out: 0,
+  };
+  output.forEach((result) => {
+    const status = result.get("status");
+    if (status != null) {
+      counts[status] += 1;
+    } else if (result.get("exit_code") === 0) {
+      counts.succeeded += 1;
+    } else {
+      counts.failed += 1;
+    }
+  });
+  const description = `${counts.succeeded} succeeded, ${counts.failed} failed, ${counts.timed_out} timed out.`;
+  return (
+    <Alert
+      role="status"
+      aria-live="polite"
+      showIcon
+      type={counts.failed > 0 || counts.timed_out > 0 ? "warning" : "success"}
+      style={{ marginBottom: "10px" }}
+      message={`${running ? "Completed" : "Finished"} ${output.size} of ${expectedCount} projects`}
+      description={description}
+    />
+  );
+}
+
 const PROJECT_LINK_STYLE: CSS = {
   maxWidth: "80%",
   overflow: "hidden",
@@ -260,6 +324,8 @@ function Output({ result }: { result: TerminalCommandOutput }) {
   const stderr = result.get("stderr");
   const timeout = result.get("timeout");
   const total_time = result.get("total_time");
+  const status = result.get("status");
+  const phase = result.get("phase");
 
   return (
     <RenderOutput
@@ -272,25 +338,44 @@ function Output({ result }: { result: TerminalCommandOutput }) {
       stderr={stderr}
       timeout={timeout}
       total_time={total_time}
+      status={status}
+      phase={phase}
     />
   );
 }
 
-export function RenderOutput({ title, stdout, stderr, total_time, timeout }) {
+export function RenderOutput({
+  title,
+  stdout,
+  stderr,
+  total_time,
+  status,
+  phase,
+}: {
+  title: ReactNode;
+  stdout?: string;
+  stderr?: string;
+  total_time?: number;
+  timeout?: number;
+  status?: ResultStatus;
+  phase?: ResultPhase;
+}) {
   const noresult = !stdout && !stderr;
+  const statusMessage =
+    status === "timed_out"
+      ? phase === "starting"
+        ? "Timed out while starting the project."
+        : "Terminal command timed out."
+      : status === "failed"
+        ? "Terminal command failed."
+        : undefined;
   return (
     <div style={{ padding: 0, width: "100%", marginTop: "15px" }}>
       <b>{title}</b>
       {stdout && <pre style={CODE_STYLE}>{stdout.trim()}</pre>}
+      {statusMessage && <div>{statusMessage}</div>}
       {stderr && <pre style={ERR_STYLE}>{stderr.trim()}</pre>}
-      {noresult && (
-        <div>
-          No output{" "}
-          {total_time != null && timeout != null && total_time >= timeout - 5
-            ? "(possible timeout)"
-            : ""}
-        </div>
-      )}
+      {noresult && !statusMessage && <div>No output</div>}
       {total_time != null && <>(Time: {total_time} seconds)</>}
     </div>
   );
