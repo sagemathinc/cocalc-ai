@@ -80,10 +80,9 @@ export function PDFJS({
 }: PDFJSProps) {
   const { desc } = useFrameContext();
 
-  // Get the dark mode disabled state for this specific frame from Redux store
-  // This allows toggle_pdf_dark_mode action to control dark mode per frame
-  const pdfDarkModeDisabledMap = useRedux(name, "pdf_dark_mode_disabled");
-  const disableDarkMode = pdfDarkModeDisabledMap?.get?.(id) ?? false;
+  // Original document colors are the default, independent of app appearance.
+  const pdfInvertColorsMap = useRedux(name, "pdf_invert_colors");
+  const invertColors = pdfInvertColorsMap?.get?.(id) ?? false;
 
   const isMounted = useIsMountedRef();
   const pageActions = useActions("page");
@@ -714,7 +713,7 @@ export function PDFJS({
               key={n}
               scale={scale}
               syncHighlight={syncHighlight({ n, id })}
-              disableDarkMode={disableDarkMode}
+              invertColors={invertColors}
             />
           );
         }}

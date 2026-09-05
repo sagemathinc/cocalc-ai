@@ -81,6 +81,10 @@ export function getBrowserAppearanceStore(
   legacy?: "essential" | "scratchpad",
 ): AppearanceStore {
   if (typeof window === "undefined") return serverStore;
-  browserStore ??= createBrowserAppearanceStore(window, legacy);
+  const entry = window.document.body?.dataset.cocalcEntry;
+  browserStore ??= createBrowserAppearanceStore(
+    window,
+    legacy ?? (entry === "scratchpad" ? "scratchpad" : undefined),
+  );
   return browserStore.store;
 }

@@ -11,8 +11,6 @@ import type { PDFPageProxy, PDFPageViewport } from "pdfjs-dist/webpack.mjs";
 import { useCallback, useEffect, useRef } from "react";
 import { useDebouncedCallback } from "use-debounce";
 
-import { useAccountOtherSetting } from "@cocalc/frontend/app-framework";
-import { get_dark_mode_config } from "@cocalc/frontend/account/dark-mode";
 import AnnotationLayer, { SyncHighlight } from "./pdfjs-annotation";
 import TextLayer from "./pdfjs-text";
 
@@ -21,7 +19,7 @@ interface Props {
   scale: number;
   clickAnnotation: Function;
   syncHighlight?: SyncHighlight;
-  disableDarkMode?: boolean;
+  invertColors?: boolean;
 }
 
 export default function CanvasPage({
@@ -29,52 +27,23 @@ export default function CanvasPage({
   scale,
   clickAnnotation,
   syncHighlight,
-  disableDarkMode = false,
+  invertColors = false,
 }: Props) {
   const divRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastScaleRef = useRef<number>(scale);
   const lastRenderScaleRef = useRef<number>(scale);
 
-  // Get dark mode state and settings
-  const isDarkMode = useAccountOtherSetting<boolean>("dark_mode") ?? false;
-  const darkModeBrightness = useAccountOtherSetting<number>(
-    "dark_mode_brightness",
-  );
-  const darkModeContrast = useAccountOtherSetting<number>("dark_mode_contrast");
-  const darkModeSepia = useAccountOtherSetting<number>("dark_mode_sepia");
-  const darkModeConfig = isDarkMode
-    ? get_dark_mode_config({
-        dark_mode_brightness: darkModeBrightness,
-        dark_mode_contrast: darkModeContrast,
-        dark_mode_sepia: darkModeSepia,
-      })
-    : null;
-
   const viewport: PDFPageViewport = page.getViewport({
     scale: scale * window.devicePixelRatio,
   });
   const height = `${viewport.height / window.devicePixelRatio}px`;
 
-  // Build CSS filter string for dark mode
-  const getCssFilter = useCallback((): string => {
-    // If dark mode is disabled via prop, don't apply any filter
-    if (disableDarkMode || !isDarkMode || !darkModeConfig) {
-      return "";
-    }
-
-    // Convert brightness and contrast from percentage (0-100) to filter values
-    // For brightness: 100% = 1.0 (normal), lower values darken
-    // For contrast: 100% = 1.0 (normal), higher values increase contrast
-    const brightnessValue = darkModeConfig.brightness / 100;
-    const contrastValue = darkModeConfig.contrast / 100;
-
-    // Apply invert(1) to flip colors (white → black, black → white)
-    // Then adjust brightness and contrast for fine-tuning
-    // Add hue-rotate(180deg) to help preserve color relationships in images
-    // This makes the inversion more "natural" for colored content like images/diagrams
-    return `invert(1) hue-rotate(180deg) brightness(${brightnessValue}) contrast(${contrastValue})`;
-  }, [disableDarkMode, isDarkMode, darkModeConfig]);
+  // Document colors remain original unless explicitly changed for this view.
+  const getCssFilter = useCallback(
+    () => (invertColors ? "invert(1) hue-rotate(180deg)" : ""),
+    [invertColors],
+  );
 
   const scalePage = useCallback(
     async (scale) => {
@@ -145,7 +114,7 @@ export default function CanvasPage({
     }
   }, [scale]);
 
-  // Update canvas filter when dark mode settings change
+  // Update presentation without rerendering the PDF or changing its contents.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas) {

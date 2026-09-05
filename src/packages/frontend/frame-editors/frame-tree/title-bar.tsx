@@ -296,7 +296,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     "show_uncommitted_changes",
   ]);
   const is_saving: boolean = useRedux([props.editor_actions.name, "is_saving"]);
-  const darkMode = useAccountOtherSetting("dark_mode");
   const showSymbolBarLabels =
     useAccountOtherSetting<boolean>("show_symbol_bar_labels") ?? false;
   const disableTourRefs = useRef<boolean>(false);
@@ -517,8 +516,8 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
               props.actions.unset_frame_full();
             }}
             style={{
-              color: darkMode ? "yellowgreen" : undefined,
-              background: !darkMode ? "yellowgreen" : undefined,
+              color: "var(--cocalc-ui-success)",
+              background: "var(--cocalc-ui-successBg)",
             }}
           >
             <Icon name={"compress"} />

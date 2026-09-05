@@ -301,13 +301,6 @@ addCommands({
     title: editor.toggle_pdf_dark_mode_title,
     label: editor.toggle_pdf_dark_mode_label,
     icon: () => <Icon unicode={DARK_MODE_ICON} />,
-    isVisible: () => {
-      const other_settings = redux
-        .getStore("account")
-        .get("other_settings")
-        ?.toJS();
-      return other_settings?.dark_mode ?? false;
-    },
     onClick: ({ props }) => {
       props.actions.toggle_pdf_dark_mode?.(props.id);
     },
