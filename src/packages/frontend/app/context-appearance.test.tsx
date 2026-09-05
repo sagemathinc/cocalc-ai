@@ -19,4 +19,7 @@ it("preserves shared button contrast overrides when applying account styling", (
     expect.objectContaining(getBaseAntdTheme("dark").components!.Button),
   );
   expect(result.current.antdTheme.token?.motion).toBe(false);
+  expect(result.current.antdTheme.components?.Menu).toEqual(
+    getBaseAntdTheme("dark").components!.Menu,
+  );
 });

@@ -15,6 +15,14 @@ export function getBaseAntdTheme(
   const palette = appearancePalette(mode);
   return {
     components: {
+      ...(mode === "dark"
+        ? {
+            Menu: {
+              itemSelectedColor: palette.link,
+              itemSelectedBg: palette.selected,
+            },
+          }
+        : {}),
       Button: {
         defaultHoverColor: palette.linkHover,
         defaultActiveColor: palette.link,
@@ -39,6 +47,7 @@ export function getBaseAntdTheme(
       colorBorder: palette.controlBorder,
       colorBorderSecondary: palette.border,
       colorSuccess: palette.success,
+      ...(mode === "light" ? { colorSuccessBg: palette.successBg } : {}),
       colorWarning: palette.warning,
       colorError: palette.danger,
       colorInfo: palette.info,
