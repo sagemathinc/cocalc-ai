@@ -4,7 +4,10 @@
  */
 
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
-import { rootfsSupersedesOptions } from "./rootfs-publish-assist";
+import {
+  defaultRootfsSupersedesImageId,
+  rootfsSupersedesOptions,
+} from "./rootfs-publish-assist";
 
 function image(id: string, label: string, version?: string): RootfsImageEntry {
   return {
@@ -38,5 +41,37 @@ describe("rootfsSupersedesOptions", () => {
         publishSourceEntryId: source.id,
       }),
     ).toEqual([{ value: other.id, label: "CoCalc Basic (1.7)" }]);
+  });
+});
+
+describe("defaultRootfsSupersedesImageId", () => {
+  it("does not supersede an image the user cannot manage", () => {
+    expect(
+      defaultRootfsSupersedesImageId({
+        entry: image("official", "CoCalc Legacy"),
+        publishMode: "copy",
+      }),
+    ).toBe("");
+  });
+
+  it("supersedes the source when copying an image the user can manage", () => {
+    expect(
+      defaultRootfsSupersedesImageId({
+        entry: { ...image("custom", "Course Image"), can_manage: true },
+        publishMode: "copy",
+      }),
+    ).toBe("custom");
+  });
+
+  it("preserves the predecessor when managing an image", () => {
+    expect(
+      defaultRootfsSupersedesImageId({
+        entry: {
+          ...image("custom-v2", "Course Image"),
+          supersedes_image_id: "custom-v1",
+        },
+        publishMode: "manage",
+      }),
+    ).toBe("custom-v1");
   });
 });

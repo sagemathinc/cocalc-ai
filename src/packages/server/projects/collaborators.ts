@@ -1172,10 +1172,10 @@ export async function createCollabInvite({
   );
   ensureUuid(project_id, "project_id");
   ensureUuid(invitee_account_id, "invitee_account_id");
-  if (invitee_account_id === account_id) {
+  const actorIsAdmin = (direct && trusted_admin) || (await isAdmin(account_id));
+  if (invitee_account_id === account_id && !(direct && actorIsAdmin)) {
     throw new Error("cannot invite yourself");
   }
-  const actorIsAdmin = (direct && trusted_admin) || (await isAdmin(account_id));
   if (!(direct && actorIsAdmin)) {
     await assertLocalProjectCollaborator({ account_id, project_id });
     await assertCanManageProjectCollaborators({

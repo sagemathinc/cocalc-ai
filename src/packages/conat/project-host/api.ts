@@ -193,7 +193,7 @@ export interface HostFilesystemSnapshotResponse {
 }
 
 export interface HostIntrusionSnapshotResponse {
-  version: 1;
+  version: 1 | 2;
   captured_at: string;
   duration_ms: number;
   hostname: string;
@@ -227,6 +227,7 @@ export interface HostIntrusionSnapshotResponse {
       capability_mask: string;
       executable_uid?: number;
       executable_mode?: string;
+      cgroup?: string;
     }>;
     findings: Array<{
       pid: number;
@@ -236,6 +237,7 @@ export interface HostIntrusionSnapshotResponse {
       capability_mask: string;
       executable_uid?: number;
       executable_mode?: string;
+      cgroup?: string;
       flags: string[];
     }>;
   };
