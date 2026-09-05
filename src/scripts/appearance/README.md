@@ -58,3 +58,23 @@ JSON capture report after every route and restores the account-wide appearance
 preference on exit. Every row intentionally remains `unreviewed` until a human
 inspects its screenshot; a capture failure makes the command fail. Keep this
 authenticated evidence under `.local` and never commit it.
+
+The signed-in runner reloads before the sweep and rejects screenshots whose
+reported path/hash differs from the requested route. Run it only after the
+static build finishes, without rebuilding during the sweep. Correct business
+routes are `/admin/customers`, `/admin/receivables`, and
+`/admin/membership-tiers`. Disabled capabilities do not count as populated
+workflow coverage.
+
+Run anonymous startup and timing checks with:
+
+```sh
+node scripts/appearance/audit-runtime.mjs
+node --test scripts/appearance/route-check.test.mjs
+```
+
+Runtime checks measure native input-to-following-frame latency, keyboard focus,
+System changes, and prepaint with external scripts blocked, including blocked
+storage. Only unthrottled samples use the provisional 100 ms desktop p95 gate;
+4x throttled samples are separate diagnostics. They do not establish notebook,
+terminal, or streaming-chat state preservation or performance.

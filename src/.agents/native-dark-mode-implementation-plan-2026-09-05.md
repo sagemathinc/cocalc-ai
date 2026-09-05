@@ -6,7 +6,66 @@ Status: Implementation authorized on 2026-09-05 and in progress. Checked items
 below have been implemented and locally validated; rollout and live acceptance
 remain pending until their corresponding gates pass.
 
-Implementation evidence so far:
+## Acceptance Follow-Up (2026-09-05)
+
+The earlier "complete" audit was a representative screenshot sweep, not full
+acceptance. Subsequent maintainer spot checks found additional owned surfaces.
+Do not equate a successful capture with correct routing, current assets, visual
+review, or populated-workflow coverage.
+
+Current repeatable checks and evidence:
+
+- `scripts/appearance/audit-public.mjs`: 60 fresh Light/Dark desktop/mobile
+  probes passed axe and overflow checks in `.local/dark-mode/acceptance-public`.
+- `scripts/appearance/audit-runtime.mjs`: anonymous landing and docs native
+  input-to-following-frame p95 was 71.5/66.3 ms on this machine. Four-times CPU
+  throttling measured 321.9/253.9 ms separately; the provisional 100 ms target
+  applies to unthrottled desktop, not the throttled diagnostic. System changes
+  and dark prepaint with external scripts blocked passed, with and without
+  localStorage access. This is not a long-notebook/chat performance trace.
+- Shared appearance tests: 43 passing. Frontend appearance/public tests: 368
+  passing. Essential suite: 136 passing before the added CSS palette test.
+- Production module guards passed (593 named chunks, two existing grandfathered
+  matches). Source and built-JavaScript scans found no Dark Reader imports/code.
+- The signed-in runner now checks actual route identity and reloads at the
+  beginning so client navigation cannot silently keep a previous static build.
+  Old captures that redirected `/admin/crm` or `/admin/accounts-receivable` to
+  `/admin` are invalid coverage. Correct routes are `/admin/customers` and
+  `/admin/receivables`. `/essential` is not reached by this typed in-app
+  navigation path; verify it through its standalone entry instead.
+- Live screenshots identified low-contrast selected submenu headings, active
+  pagination and ghost buttons on CRM/receivables headers. These have focused
+  theme fixes and regression tests. Fresh-build desktop Light/Dark captures in
+  `.local/dark-mode/acceptance-current-build` confirm the corrections.
+- Appearance control labels now use the main app's locale context (with English
+  defaults when no provider exists). A French-label regression test passes;
+  this does not supply translated catalogs for every supported language.
+- Firefox's Ubuntu 24 fallback binary launched after manual extraction of the
+  installer archive. Explicit Light/Dark worked and System matched its reported
+  media query. OS-dark emulation reported false, so OS-change acceptance is not
+  established by that fallback. WebKit cannot launch: this Ubuntu 26 image lacks
+  the fallback's ICU 74, GStreamer and other required Ubuntu 24 libraries. Use a
+  supported browser-test environment for the remaining browser gate.
+- Essential's initial shell exceeded its 76 KiB Brotli limit (77.9 KiB).
+  Moving unchanged palette definitions from runtime objects to CSS reduced it
+  to 76.3 KiB; the gate still fails. All route budgets pass. Do not increase the
+  limit or claim this gate passed without resolving/reviewing the remaining
+  overhead.
+- CRM and receivables capabilities are disabled in the local site's settings.
+  Current screenshots cover their shells/empty/error states, not populated
+  workflows. No business feature flags were changed for this audit.
+- Typed in-app navigation also misroutes the historical Essential static entry
+  to `/settings`; those captures are explicitly failed, not Essential evidence.
+  Direct standalone-entry verification is still needed.
+
+Still required: remaining owned editor/dialog/state coverage; live persistence
+and account transitions; signup appearance handoff; signed-in accessibility;
+print/export verification; long-document state/performance traces; supported
+browser checks; Essential's final budget and standalone-entry validation;
+translation catalog coverage; and maintainer rollout approval. Keep each gate
+open until it has corresponding evidence.
+
+Implementation evidence so far (historical):
 
 - The representative native dark-mode audit is complete. Public coverage has
   60 Light/Dark desktop/mobile probes with no axe, overflow, or capture failures;

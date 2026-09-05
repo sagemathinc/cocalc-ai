@@ -2,6 +2,7 @@ import { renderHook } from "@testing-library/react";
 import { useAntdStyleProvider } from "./context";
 import { getBaseAntdTheme } from "./antd-base-theme";
 import { theme as antdTheme } from "antd";
+import { appearancePalette } from "@cocalc/util/appearance-palette";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useAccountOtherSetting: () => false,
@@ -44,3 +45,23 @@ it("preserves the original light-mode success tint and button text", () => {
   expect(theme.components?.Button?.defaultColor).toBe("#000000e0");
   expect(theme.components?.Button?.textTextColor).toBe("#000000e0");
 });
+
+it("uses readable selected submenu and pagination colors only in dark mode", () => {
+  const dark = getBaseAntdTheme("dark").components!;
+  expect(dark.Menu?.subMenuItemSelectedColor).toBe(
+    appearancePalette("dark").link,
+  );
+  expect(dark.Pagination?.colorPrimary).toBe(appearancePalette("dark").link);
+  expect(getBaseAntdTheme("light").components?.Pagination).toBeUndefined();
+});
+
+it.each(["light", "dark"] as const)(
+  "keeps ghost buttons readable on branded %s backgrounds",
+  (mode) => {
+    const button = getBaseAntdTheme(mode).components!.Button!;
+    expect(button.defaultGhostColor).toBe(appearancePalette(mode).onPrimary);
+    expect(button.defaultGhostBorderColor).toBe(
+      appearancePalette(mode).onPrimary,
+    );
+  },
+);

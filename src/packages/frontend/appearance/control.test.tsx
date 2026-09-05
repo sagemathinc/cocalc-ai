@@ -6,6 +6,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createAppearanceStore } from "@cocalc/util/appearance-store";
 import { AppearanceControl } from "./control";
+import { IntlProvider } from "react-intl";
 
 let mockStore: ReturnType<typeof createAppearanceStore>;
 jest.mock("@cocalc/util/appearance-browser", () => ({
@@ -14,6 +15,26 @@ jest.mock("@cocalc/util/appearance-browser", () => ({
 
 beforeEach(() => {
   mockStore = createAppearanceStore({ systemDark: true });
+});
+
+test("uses the app locale for the accessible name and choices", () => {
+  render(
+    <IntlProvider
+      locale="fr"
+      messages={{
+        "appearance.control.label": "Apparence",
+        "appearance.control.system": "Système",
+        "appearance.control.light": "Clair",
+        "appearance.control.dark": "Sombre",
+      }}
+    >
+      <AppearanceControl compact />
+    </IntlProvider>,
+  );
+  expect(screen.getByRole("combobox", { name: "Apparence" })).toHaveValue(
+    "system",
+  );
+  expect(screen.getByRole("option", { name: "Sombre" })).toHaveValue("dark");
 });
 
 test("exposes all three choices and retains keyboard focus during live changes", () => {

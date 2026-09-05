@@ -30,10 +30,18 @@ export function getBaseAntdTheme(
             Menu: {
               itemSelectedColor: palette.link,
               itemSelectedBg: palette.selected,
+              subMenuItemSelectedColor: palette.link,
+            },
+            Pagination: {
+              colorPrimary: palette.link,
+              colorPrimaryHover: palette.linkHover,
+              itemActiveBg: palette.surface,
             },
           }
         : {}),
       Button: {
+        defaultGhostColor: palette.onPrimary,
+        defaultGhostBorderColor: palette.onPrimary,
         defaultColor: palette.buttonText,
         textTextColor: palette.buttonText,
         defaultHoverColor: palette.linkHover,

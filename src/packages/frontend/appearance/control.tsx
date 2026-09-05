@@ -5,12 +5,23 @@
 
 import { DesktopOutlined, MoonOutlined, SunOutlined } from "@ant-design/icons";
 import { Popover } from "antd";
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
+import { defineMessages, IntlContext } from "react-intl";
 import { parseAppearancePreference } from "@cocalc/util/appearance";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useAppearance } from "./use-appearance";
 
+const messages = defineMessages({
+  appearance: { id: "appearance.control.label", defaultMessage: "Appearance" },
+  system: { id: "appearance.control.system", defaultMessage: "System" },
+  light: { id: "appearance.control.light", defaultMessage: "Light" },
+  dark: { id: "appearance.control.dark", defaultMessage: "Dark" },
+});
+
 export function AppearanceControl({ compact = false }: { compact?: boolean }) {
+  const intl = useContext(IntlContext);
+  const label = (key: keyof typeof messages) =>
+    intl?.formatMessage(messages[key]) ?? messages[key].defaultMessage;
   const { preference, resolved, setPreference, saveError } = useAppearance();
   const attempted = useRef(false);
   const [showError, setShowError] = useState(false);
@@ -43,7 +54,7 @@ export function AppearanceControl({ compact = false }: { compact?: boolean }) {
           color: UI_COLORS.text,
           position: "relative",
         }}
-        title={`Appearance: ${preference} (${resolved})`}
+        title={`${label("appearance")}: ${label(preference)} (${label(resolved)})`}
       >
         <ThemeIcon
           aria-hidden
@@ -58,7 +69,7 @@ export function AppearanceControl({ compact = false }: { compact?: boolean }) {
           }
         />
         <select
-          aria-label="Appearance"
+          aria-label={label("appearance")}
           onKeyDown={(event) => {
             if (event.key === "Escape" && showError) {
               setShowError(false);
@@ -94,19 +105,19 @@ export function AppearanceControl({ compact = false }: { compact?: boolean }) {
             style={{ color: UI_COLORS.text, background: UI_COLORS.surface }}
             value="system"
           >
-            System
+            {label("system")}
           </option>
           <option
             style={{ color: UI_COLORS.text, background: UI_COLORS.surface }}
             value="light"
           >
-            Light
+            {label("light")}
           </option>
           <option
             style={{ color: UI_COLORS.text, background: UI_COLORS.surface }}
             value="dark"
           >
-            Dark
+            {label("dark")}
           </option>
         </select>
       </label>

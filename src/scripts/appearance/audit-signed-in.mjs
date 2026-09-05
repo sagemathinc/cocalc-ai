@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { promisify, parseArgs } from "node:util";
+import { assertCapturedRoute } from "./route-check.mjs";
 
 const exec = promisify(execFile);
 const { values } = parseArgs({
@@ -103,6 +104,8 @@ async function appearanceSelector() {
   throw Error("No appearance selector found");
 }
 try {
+  // Client-side navigation retains old bundles after a static rebuild.
+  await cli(["browser", "action", "reload", ...target()]);
   for (const width of widths)
     for (const mode of ["light", "dark"]) {
       for (const [index, route] of routes.entries()) {
@@ -138,6 +141,10 @@ try {
           ]);
           row.screenshot = screenshot;
           row.actualUrl = result.page_url;
+          assertCapturedRoute(
+            new URL(route, values["base-url"]).href,
+            result.page_url,
+          );
         } catch (error) {
           row.status = "capture-failed";
           row.error = error.message;

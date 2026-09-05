@@ -4,10 +4,15 @@ Date: 2026-09-05
 
 ## Result
 
-The implementation audit is complete for the representative first-party public,
-signed-in, project, and Essential surfaces listed below. The audit found several
+The initial implementation audit covered the representative first-party public,
+signed-in, project, and Essential surfaces listed below. It did not complete the
+full implementation plan's acceptance gates. The audit found several
 remaining fixed-light application surfaces; the user-visible defects discovered
 during this pass were converted to semantic appearance tokens.
+
+See the implementation plan's Acceptance Follow-Up for newer findings and
+evidence. In particular, route capture success alone does not verify the route
+was reached or that the browser loaded the current build.
 
 This is not a claim that authored content is recolored. PDFs, notebook output,
 plots, whiteboard pages, syntax themes, images, and third-party applications
