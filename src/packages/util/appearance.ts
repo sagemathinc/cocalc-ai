@@ -26,13 +26,15 @@ export function resolveAppearance(
 }
 
 // Only call for a loaded account, not the pre-authentication store defaults.
-export function accountAppearancePreference(settings: {
-  appearance_theme?: unknown;
-  dark_mode?: unknown;
-}): AppearancePreference {
+export function accountAppearancePreference(
+  settings?: {
+    appearance_theme?: unknown;
+    dark_mode?: unknown;
+  } | null,
+): AppearancePreference {
   return (
-    parseAppearancePreference(settings.appearance_theme) ??
-    (settings.dark_mode === true ? "dark" : "light")
+    parseAppearancePreference(settings?.appearance_theme) ??
+    (settings?.dark_mode === true ? "dark" : "light")
   );
 }
 

@@ -55,7 +55,7 @@ const HOME_PAGE_CSS = `
 
   .cocalc-public-home-card-link:hover {
     border-color: ${PUBLIC_COLORS.linkHover} !important;
-    box-shadow: 0 18px 44px ${alpha(PUBLIC_COLORS.brandDark, 0.1)} !important;
+    box-shadow: 0 18px 44px ${alpha(PUBLIC_COLORS.shadowInk, 0.1)} !important;
     transform: translateY(-1px);
   }
 
@@ -638,7 +638,7 @@ function AgentDefinitionSection() {
               background: PUBLIC_COLORS.surface,
               border: `1px solid ${alpha(card.accent, 0.18)}`,
               borderRadius: PANEL_RADIUS,
-              boxShadow: `0 10px 30px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
+              boxShadow: `0 10px 30px ${alpha(PUBLIC_COLORS.shadowInk, 0.05)}`,
               minHeight: 190,
               padding: 18,
             }}
@@ -685,7 +685,7 @@ function AudienceRoutesSection() {
               background: PUBLIC_COLORS.surface,
               border: `1px solid ${alpha(route.accent, 0.18)}`,
               borderRadius: PANEL_RADIUS,
-              boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
+              boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.shadowInk, 0.05)}`,
               color: "inherit",
               display: "grid",
               gap: 16,
@@ -753,7 +753,7 @@ function WorkflowsSection() {
               aspectRatio: "16 / 9",
               border: `1px solid ${PUBLIC_COLORS.border}`,
               borderRadius: PANEL_RADIUS,
-              boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.brandDark, 0.06)}`,
+              boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.shadowInk, 0.06)}`,
               display: "block",
               objectFit: "contain",
               width: "100%",
@@ -765,7 +765,7 @@ function WorkflowsSection() {
               background: `linear-gradient(180deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.warningTint} 100%)`,
               border: `1px solid ${PUBLIC_COLORS.border}`,
               borderRadius: PANEL_RADIUS,
-              boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.brandDark, 0.07)}`,
+              boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.shadowInk, 0.07)}`,
               padding: 18,
             }}
           >
@@ -825,7 +825,7 @@ function WorkflowsSection() {
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
                 borderRadius: PANEL_RADIUS,
-                boxShadow: `0 10px 30px ${alpha(PUBLIC_COLORS.brandDark, 0.05)}`,
+                boxShadow: `0 10px 30px ${alpha(PUBLIC_COLORS.shadowInk, 0.05)}`,
                 color: "inherit",
                 minHeight: 190,
                 padding: 18,
@@ -886,7 +886,7 @@ function ProductsSection() {
           background: PUBLIC_COLORS.surface,
           border: `1px solid ${PUBLIC_COLORS.border}`,
           borderRadius: PANEL_RADIUS,
-          boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.brandDark, 0.07)}`,
+          boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.shadowInk, 0.07)}`,
           padding: 20,
         }}
       >

@@ -7,14 +7,17 @@ import {
   createContext,
   useContext,
   useEffect,
-  useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { getBrowserAppearanceStore } from "@cocalc/util/appearance-browser";
 import {
-  ESSENTIAL_THEME_STORAGE_KEY,
+  parseAppearancePreference,
+  type AppearancePreference,
+} from "@cocalc/util/appearance";
+import type { AuthBootstrap } from "./api";
+import {
   essentialThemeStyle,
-  parseEssentialThemePreference,
-  resolveEssentialTheme,
   type EssentialThemePreference,
   type ResolvedEssentialTheme,
 } from "./theme";
@@ -31,72 +34,72 @@ const EssentialThemeContext = createContext<EssentialThemeContextValue>({
   setPreference: () => undefined,
 });
 
-function storedPreference(): EssentialThemePreference {
-  try {
-    return parseEssentialThemePreference(
-      window.localStorage.getItem(ESSENTIAL_THEME_STORAGE_KEY),
+function saveAppearance(
+  account: { account_id: string; home_bay_url: string },
+  preference: AppearancePreference,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    require.ensure(
+      [],
+      () => {
+        void (
+          require("./appearance-account") as typeof import("./appearance-account")
+        )
+          .saveAccountAppearance(account, preference)
+          .then(resolve, reject);
+      },
+      reject,
+      "ultralite-appearance-account",
     );
-  } catch {
-    return "system";
-  }
+  });
 }
 
-function systemPrefersDark(): boolean {
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches === true;
-}
-
-export function EssentialThemeProvider({ children }: { children: ReactNode }) {
-  const [preference, setPreferenceState] = useState(storedPreference);
-  const [systemDark, setSystemDark] = useState(systemPrefersDark);
-  const resolved = resolveEssentialTheme(preference, systemDark);
-
-  useEffect(() => {
-    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
-    if (!media) return;
-    const onChange = (event: MediaQueryListEvent) =>
-      setSystemDark(event.matches);
-    media.addEventListener("change", onChange);
-    setSystemDark(media.matches);
-    return () => media.removeEventListener("change", onChange);
-  }, []);
-
-  useEffect(() => {
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === ESSENTIAL_THEME_STORAGE_KEY) {
-        setPreferenceState(parseEssentialThemePreference(event.newValue));
-      }
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
+export function EssentialThemeProvider({
+  children,
+  bootstrap,
+}: {
+  children: ReactNode;
+  bootstrap?: AuthBootstrap;
+}) {
+  const store = getBrowserAppearanceStore("essential");
+  const { preference, resolved, saveError } = useSyncExternalStore(
+    store.subscribe,
+    store.getSnapshot,
+    store.getSnapshot,
+  );
 
   useEffect(() => {
     document.documentElement.dataset.ulTheme = resolved;
-    document.documentElement.style.colorScheme = resolved;
   }, [resolved]);
-
-  const setPreference = (next: EssentialThemePreference) => {
-    setPreferenceState(next);
-    try {
-      if (next === "system") {
-        window.localStorage.removeItem(ESSENTIAL_THEME_STORAGE_KEY);
-      } else {
-        window.localStorage.setItem(ESSENTIAL_THEME_STORAGE_KEY, next);
-      }
-    } catch {
-      // A blocked local store must not make appearance controls unusable.
+  useEffect(() => {
+    if (bootstrap == null) return;
+    const { signed_in, account_id, home_bay_url, appearance_theme } = bootstrap;
+    if (!signed_in) {
+      store.receiveAccount(undefined);
+    } else if (account_id && home_bay_url) {
+      store.receiveAccount(
+        account_id,
+        parseAppearancePreference(appearance_theme),
+        (preference) =>
+          saveAppearance({ account_id, home_bay_url }, preference),
+      );
     }
-  };
+  }, [bootstrap, store]);
 
   return (
     <EssentialThemeContext.Provider
-      value={{ preference, resolved, setPreference }}
+      value={{ preference, resolved, setPreference: store.choose }}
     >
       <div
         className="ul-app"
         data-ul-theme={resolved}
         style={essentialThemeStyle(resolved)}
       >
+        {saveError ? (
+          <p className="ul-error" role="alert">
+            {saveError}
+          </p>
+        ) : null}
         {children}
       </div>
     </EssentialThemeContext.Provider>

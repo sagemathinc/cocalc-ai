@@ -13,6 +13,7 @@ import {
   normalizeDisplayName,
 } from "@cocalc/util/accounts/display-name";
 import { recordServerGrowthEvent } from "@cocalc/server/growth-analytics/server-events";
+import { parseAppearancePreference } from "@cocalc/util/appearance";
 
 const log = getLogger("server:accounts:create");
 
@@ -92,7 +93,12 @@ export default async function createAccount({
         ephemeral ?? null,
         customize ?? null,
         `${home_bay_id ?? ""}`.trim() || getConfiguredBayId(),
-        other_settings ?? null,
+        {
+          ...other_settings,
+          appearance_theme:
+            parseAppearancePreference(other_settings?.appearance_theme) ??
+            "system",
+        },
         trusted_product_access === true,
         trusted_product_access === true
           ? `${trusted_product_access_reason ?? ""}`.trim() || null

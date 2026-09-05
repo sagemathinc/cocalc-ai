@@ -3,10 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { isEqual, debounce } from "lodash";
-
 import { DARK_MODE_DEFAULTS } from "@cocalc/util/db-schema/accounts";
-import { AccountStore } from "./store";
+import { getBrowserAppearanceStore } from "@cocalc/util/appearance-browser";
 
 export const DARK_MODE_KEYS = ["brightness", "contrast", "sepia"] as const;
 
@@ -55,45 +53,6 @@ export function get_dark_mode_config(other_settings?: {
   return config;
 }
 
-let currentDarkMode: boolean = false;
-let last_dark_mode: boolean = false;
-let last_config: Config | undefined = undefined;
-
-export function init_dark_mode(account_store: AccountStore): void {
-  account_store.on(
-    "change",
-    debounce(
-      async () => {
-        const dark_mode = !!account_store.getIn([
-          "other_settings",
-          "dark_mode",
-        ]);
-        currentDarkMode = dark_mode;
-        const config = get_dark_mode_config(
-          account_store.get("other_settings")?.toJS(),
-        );
-        if (
-          dark_mode == last_dark_mode &&
-          (!dark_mode || isEqual(last_config, config))
-        ) {
-          return;
-        }
-        const { enable, disable } = await import("darkreader");
-        last_dark_mode = dark_mode;
-        last_config = config;
-        if (dark_mode) {
-          disable();
-          enable(config);
-        } else {
-          disable();
-        }
-      },
-      1000,
-      { trailing: true, leading: false },
-    ),
-  );
-}
-
 export function inDarkMode() {
-  return currentDarkMode;
+  return getBrowserAppearanceStore().getSnapshot().resolved === "dark";
 }

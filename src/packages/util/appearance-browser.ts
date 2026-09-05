@@ -69,6 +69,12 @@ export function createBrowserAppearanceStore(
 let browserStore: ReturnType<typeof createBrowserAppearanceStore> | undefined;
 const serverStore = createAppearanceStore();
 
+// Entry teardown (including tests/HMR) must release the OS and storage listeners.
+export function disposeBrowserAppearanceStore(): void {
+  browserStore?.dispose();
+  browserStore = undefined;
+}
+
 // Lazy initialization keeps server imports safe and gives every provider in an
 // entry the same root owner. Merely importing this module changes nothing.
 export function getBrowserAppearanceStore(

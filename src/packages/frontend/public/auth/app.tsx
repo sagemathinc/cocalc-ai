@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Flex } from "antd";
 
 import type { AuthView } from "@cocalc/frontend/auth/types";
+import { receiveAppearanceBootstrap } from "@cocalc/frontend/appearance/bootstrap-account";
 import {
   getControlPlaneAuthBootstrap,
   signOutAuthSession,
@@ -328,6 +329,7 @@ export default function PublicAuthApp({
       try {
         const bootstrap = await getControlPlaneAuthBootstrap();
         if (cancelled || typeof bootstrap?.signed_in !== "boolean") return;
+        receiveAppearanceBootstrap(bootstrap);
         setResolvedConfig((current) => ({
           ...(current ?? config ?? {}),
           account_display_name: bootstrap.display_name,

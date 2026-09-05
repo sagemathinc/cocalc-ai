@@ -16,6 +16,7 @@ import {
 } from "@cocalc/frontend/public/layout/shell";
 import {
   alpha,
+  publicAccent,
   PUBLIC_COLORS,
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
@@ -99,7 +100,7 @@ const FEATURE_INDEX_PRIORITY = [
 
 const FEATURE_GROUPS = [
   {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
+    accent: publicAccent(COLORS.ANTD_LINK_BLUE_DARK),
     description:
       "Use a persistent Linux environment for shells, packages, processes, and services.",
     icon: "terminal",
@@ -108,7 +109,7 @@ const FEATURE_GROUPS = [
     variant: "cards",
   },
   {
-    accent: COLORS.BLUE_D,
+    accent: publicAccent(COLORS.BLUE_D),
     description:
       "Create notebooks, papers, boards, slide decks, and project notes.",
     icon: "jupyter",
@@ -117,7 +118,7 @@ const FEATURE_GROUPS = [
     variant: "cards",
   },
   {
-    accent: COLORS.AI_ASSISTANT_FONT,
+    accent: publicAccent(COLORS.AI_ASSISTANT_FONT),
     description:
       "Use Codex, terminal-based agents, scripts, and pipelines with the same persistent project.",
     icon: "robot",
@@ -126,7 +127,7 @@ const FEATURE_GROUPS = [
     variant: "cards",
   },
   {
-    accent: COLORS.RUN,
+    accent: publicAccent(COLORS.RUN),
     description:
       "Use the language your work needs for analysis, modeling, and reproducible research.",
     icon: "python",
@@ -225,8 +226,8 @@ function FeatureLinkCardContent({ card }: { card: FeatureIndexCard }) {
           className={`cocalc-feature-card-icon cocalc-feature-card-icon-${card.slug}`}
           style={{
             alignItems: "center",
-            background: `${meta.accent}14`,
-            border: `1px solid ${meta.accent}33`,
+            background: alpha(meta.accent, 0.08),
+            border: `1px solid ${alpha(meta.accent, 0.2)}`,
             borderRadius: PUBLIC_RADIUS.panel,
             color: meta.accent,
             display: "flex",
@@ -330,8 +331,8 @@ function FeatureListLink({ card }: { card: FeatureIndexCard }) {
         style={{
           alignItems: "center",
           alignSelf: "center",
-          background: `${meta.accent}14`,
-          border: `1px solid ${meta.accent}33`,
+          background: alpha(meta.accent, 0.08),
+          border: `1px solid ${alpha(meta.accent, 0.2)}`,
           borderRadius: PUBLIC_RADIUS.panel,
           color: meta.accent,
           display: "flex",
@@ -424,7 +425,7 @@ function FeatureGroupSection({
               <div
                 style={{
                   alignItems: "center",
-                  background: `${group.accent}10`,
+                  background: alpha(group.accent, 0.06),
                   borderRadius: PUBLIC_RADIUS.panel,
                   color: group.accent,
                   display: "flex",
@@ -499,7 +500,7 @@ function TeachingWorkflowCallout() {
               <div
                 style={{
                   alignItems: "center",
-                  background: `${meta.accent}10`,
+                  background: alpha(meta.accent, 0.06),
                   borderRadius: PUBLIC_RADIUS.panel,
                   color: meta.accent,
                   display: "flex",
@@ -544,8 +545,8 @@ function TeachingWorkflowCallout() {
               <span
                 style={{
                   alignItems: "center",
-                  background: `${meta.accent}14`,
-                  border: `1px solid ${meta.accent}33`,
+                  background: alpha(meta.accent, 0.08),
+                  border: `1px solid ${alpha(meta.accent, 0.2)}`,
                   borderRadius: PUBLIC_RADIUS.panel,
                   color: meta.accent,
                   display: "flex",

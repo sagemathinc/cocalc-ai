@@ -42,6 +42,8 @@ describe("appearance preferences", () => {
   });
 
   test("preserves legacy account appearance without masking explicit System", () => {
+    expect(accountAppearancePreference(undefined)).toBe("light");
+    expect(accountAppearancePreference(null)).toBe("light");
     expect(accountAppearancePreference({})).toBe("light");
     expect(accountAppearancePreference({ dark_mode: false })).toBe("light");
     expect(accountAppearancePreference({ dark_mode: true })).toBe("dark");

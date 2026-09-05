@@ -11,7 +11,7 @@ features app chunk.
 */
 
 import { type IconName } from "@cocalc/frontend/components/icon";
-import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
+import { PUBLIC_COLORS, publicAccent } from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 
 import { FEATURE_ACCENTS } from "./feature-accents";
@@ -59,10 +59,9 @@ const FEATURE_META = {
 } satisfies Record<string, { accent: string; icon: IconName }>;
 
 export function featureMeta(slug: string): { accent: string; icon: IconName } {
-  return (
-    FEATURE_META[slug as keyof typeof FEATURE_META] ?? {
-      accent: PUBLIC_COLORS.brand,
-      icon: "star",
-    }
-  );
+  const meta = FEATURE_META[slug as keyof typeof FEATURE_META] ?? {
+    accent: PUBLIC_COLORS.brand,
+    icon: "star",
+  };
+  return { ...meta, accent: publicAccent(meta.accent) };
 }

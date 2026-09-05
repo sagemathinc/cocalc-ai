@@ -15,6 +15,10 @@ import basePath from "@cocalc/backend/base-path";
 import { clientProtocolCapabilities } from "@cocalc/util/client-capabilities";
 import { listAccountProjectWindow } from "@cocalc/server/projects/list-account-window";
 import getPool from "@cocalc/database/pool";
+import {
+  accountAppearancePreference,
+  type AppearancePreference,
+} from "@cocalc/util/appearance";
 
 const PROJECT_WINDOW_MAX_LIMIT = 100;
 
@@ -77,13 +81,16 @@ export default async function bootstrap(req, res) {
     `${account?.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
   const display_name = displayNameFromAccount(account) || undefined;
   let jupyter_line_numbers: boolean | undefined;
+  let appearance_theme: AppearancePreference | undefined;
   if (home_bay_id === getConfiguredBayId()) {
     const { rows } = await getPool().query(
-      "SELECT editor_settings FROM accounts WHERE account_id=$1::UUID",
+      "SELECT editor_settings, other_settings FROM accounts WHERE account_id=$1::UUID",
       [account_id],
     );
     jupyter_line_numbers =
       rows[0]?.editor_settings?.jupyter_line_numbers === true;
+    if (rows[0])
+      appearance_theme = accountAppearancePreference(rows[0].other_settings);
   }
   let requestedProjectWindow;
   try {
@@ -124,6 +131,7 @@ export default async function bootstrap(req, res) {
     email_address_verified: account?.email_address_verified === true,
     display_name,
     jupyter_line_numbers,
+    appearance_theme,
     home_bay_id,
     home_bay_url: await getBayPublicOriginForRequest(req, home_bay_id),
     impersonation: await getImpersonationBootstrapInfo({ req, account_id }),

@@ -3,6 +3,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import PublicHomeApp from "../app";
+import { PUBLIC_COLORS } from "../../theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
   combineLeak,
@@ -90,7 +91,7 @@ describe("PublicHomeApp", () => {
     expectHomepageSectionsLabeled(container);
     expect(
       screen.getByText("Shared Linux Workspace").closest(".ant-typography"),
-    ).toHaveStyle({ color: COLORS.BLUE_DD });
+    ).toHaveStyle({ color: PUBLIC_COLORS.linkHover });
 
     // Section identity + order are canaried by the aria-label array above.
     // Here we only hold the h2 count and an anti-sprawl length bound, so the

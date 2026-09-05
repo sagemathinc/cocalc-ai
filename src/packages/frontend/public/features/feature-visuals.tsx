@@ -9,6 +9,8 @@ import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import {
+  alpha,
+  publicAccent,
   PUBLIC_ELEVATION,
   PUBLIC_COLORS,
   PUBLIC_DARK,
@@ -26,6 +28,7 @@ export function IconBadge({
   icon: IconName;
   size?: "sm" | "md" | "lg";
 }) {
+  accent = publicAccent(accent);
   const { box, font } = {
     sm: { box: 36, font: 18 },
     md: { box: 46, font: 22 },
@@ -35,8 +38,8 @@ export function IconBadge({
     <span
       style={{
         alignItems: "center",
-        background: `${accent}14`,
-        border: `1px solid ${accent}33`,
+        background: alpha(accent, 0.08),
+        border: `1px solid ${alpha(accent, 0.2)}`,
         borderRadius: PUBLIC_RADIUS.panel,
         color: accent,
         display: "inline-flex",
@@ -96,11 +99,12 @@ export function ContextList({
   items: { icon: IconName; label: ReactNode }[];
   title?: ReactNode;
 }) {
+  accent = publicAccent(accent);
   return (
     <div
       className="cocalc-feature-context-list"
       style={{
-        borderLeft: `3px solid ${accent}33`,
+        borderLeft: `3px solid ${alpha(accent, 0.2)}`,
         paddingLeft: 18,
       }}
     >

@@ -5,23 +5,29 @@
 
 import type { CSSProperties } from "react";
 import { COLORS } from "@cocalc/util/theme";
+import {
+  parseAppearancePreference,
+  resolveAppearance,
+  type AppearancePreference,
+  type ResolvedAppearance,
+} from "@cocalc/util/appearance";
 
 export const ESSENTIAL_THEME_STORAGE_KEY = "cocalc-essential-theme";
 
-export type EssentialThemePreference = "system" | "light" | "dark";
-export type ResolvedEssentialTheme = "light" | "dark";
+export type EssentialThemePreference = AppearancePreference;
+export type ResolvedEssentialTheme = ResolvedAppearance;
 
 export function parseEssentialThemePreference(
   value: string | null | undefined,
 ): EssentialThemePreference {
-  return value === "light" || value === "dark" ? value : "system";
+  return parseAppearancePreference(value) ?? "system";
 }
 
 export function resolveEssentialTheme(
   preference: EssentialThemePreference,
   systemDark: boolean,
 ): ResolvedEssentialTheme {
-  return preference === "system" ? (systemDark ? "dark" : "light") : preference;
+  return resolveAppearance(preference, systemDark);
 }
 
 export const essentialLightTheme = {

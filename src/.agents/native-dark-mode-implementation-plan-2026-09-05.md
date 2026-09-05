@@ -13,8 +13,30 @@ Implementation evidence so far:
 - The util package build and focused appearance tests pass. The bootstrap tests
   compare initial painting with runtime resolution across modes, cookies,
   legacy preferences, and blocked storage; palette tests check text/status contrast.
-- This initial foundation is not yet connected to the app or deployed. Public,
-  main-app, editor, Essential, and live browser verification are still pending.
+- The shared controller is now connected to main-account preferences and the
+  main/public Ant Design providers, with native selectors in account settings
+  and public desktop/mobile navigation. New accounts explicitly default to
+  System; existing accounts retain the documented legacy fallback.
+- Essential now shares the preference/cache/bootstrap/controller while keeping
+  its local palette and lightweight dependency boundary. Its existing auth
+  bootstrap carries the home-bay appearance preference; explicit saves use a
+  lazy-loaded, appearance-only account query on the authoritative home bay.
+- Public palettes, syntax colors, shared docs surfaces, and standalone docs
+  export have initial native support. The cookie-consent overlay uses its
+  library's CSS variables, not DOM rewriting.
+- `pnpm static` completed and the resulting public frontend was exercised on
+  lite2b in Chromium at 1440px and 390px. Fourteen initial dark route/viewport
+  probes had no page exceptions. Visual inspection found cookie-dialog,
+  selected-nav, inline-code/link, and mobile docs-action overflow defects;
+  corrections are in progress and require a repeated browser audit.
+- Initial local evidence is under `src/.local/dark-mode/`: public baseline
+  accessibility reports (landing/features/docs, all passed), build log, and
+  screenshots/inspection JSON. These are working artifacts, not final rollout
+  acceptance evidence.
+- Main-app owned-surface conversion, editor/terminal Follow behavior, PDF and
+  scratchpad migration, full route/contrast/performance coverage, and complete
+  dependency removal are still pending. Do not treat the new toggle as proof
+  that the full migration is complete.
 
 ## 1. Goal And Scope
 
