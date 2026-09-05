@@ -11,6 +11,7 @@ FrameTitleBar - title bar in a frame, in the frame tree
 // cSpell:ignore rescan subframe
 
 import { useDraggable } from "@dnd-kit/core";
+import { PDFInvertColorsButton } from "../pdf-editor/invert-colors-button";
 import { ButtonGroup } from "@cocalc/frontend/antd-bootstrap";
 import { Button, Dropdown, Input, InputNumber, Popover } from "antd";
 import type * as CodeMirror from "codemirror";
@@ -1255,6 +1256,16 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       return null;
     }
     const { disabled, label, key, children, onClick } = item;
+    if (name === "toggle_pdf_dark_mode") {
+      return (
+        <PDFInvertColorsButton
+          key={key}
+          actions={props.actions}
+          id={props.id}
+          disabled={disabled}
+        />
+      );
+    }
     const style: CSS = {
       color: UI_COLORS.text,
       padding: showSymbolBarLabels ? "0" : "7.5px 0 0 0",
