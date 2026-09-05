@@ -7,7 +7,7 @@ import { Button, Card, Grid, Space, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
 
 import { CopyToClipBoard, Icon } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Project } from "./types";
 import {
   ProjectSettingsNavItem,
@@ -52,8 +52,7 @@ export function ProjectSettingsPageShell({
   return (
     <div
       style={{
-        background:
-          "linear-gradient(180deg, rgba(244, 247, 251, 0.9), rgba(255,255,255,0.95) 280px)",
+        background: UI_COLORS.page,
         margin: "-15px",
         minHeight: "100%",
         padding: "20px",
@@ -61,8 +60,8 @@ export function ProjectSettingsPageShell({
     >
       <Card
         style={{
-          border: "1px solid #d9e2ec",
-          boxShadow: "0 10px 34px rgba(15, 23, 42, 0.07)",
+          border: `1px solid ${UI_COLORS.border}`,
+          boxShadow: `0 10px 34px ${UI_COLORS.shadow}`,
           marginBottom: 18,
         }}
         styles={{ body: { padding: 20 } }}
@@ -85,7 +84,7 @@ export function ProjectSettingsPageShell({
             <Title
               level={2}
               style={{
-                color: COLORS.GRAY_DD,
+                color: UI_COLORS.text,
                 margin: 0,
                 overflowWrap: "anywhere",
               }}

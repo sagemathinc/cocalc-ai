@@ -62,9 +62,24 @@ Implementation evidence so far:
   classic/Studio notebook suites (57 tests), and four appearance/shared-panel
   suites (10 tests) pass. The static build and frontend lint pass. Targeted
   Chromium repeats clear the findings in the Python/Jupyter feature pages and
-  image catalog. Main-app native screenshot capture has stalled, and DOM capture
-  returns a QuickJS syntax error with raw execution disabled. Typed browser
-  reload works, but signed-in screenshot acceptance is not yet established.
+  image catalog.
+- Signed-in native screenshots now work with `browser screenshot --fullpage`:
+  the app's body has zero height despite its visible positioned children, so
+  element capture waits for visibility and blocks the daemon queue. Full-page
+  capture avoids that wait. No raw-execution policy change or new user auth was
+  needed. Typed `type` actions now support enabled single-select values so the
+  appearance selector can be exercised without raw browser code.
+- Signed-in project-list and settings captures exposed fixed-white surfaces and
+  fixed-dark text. Project-list backgrounds/search popups/mobile cards and
+  settings headings/navigation/health/runtime-sponsor surfaces now use paired
+  semantic tokens. Chromium before/after captures are in
+  `src/.local/dark-mode/settings-{dark-before,dark-after,light-after}.png`;
+  the project-list dark capture is `projects-dark.png`. The settings headings,
+  navigation and runtime status text are now visibly readable. The static build,
+  frontend lint and 31 focused tests pass, including native-select validation,
+  heading tokens and keyboard navigation. This is sampled visual evidence,
+  not a completed signed-in accessibility audit. Dim preset badges/icons and
+  the file-browser loading surface remain known follow-up findings.
 - Remaining acceptance work includes complete owned-surface conversion and
   signed-in workflow screenshots; direct signed-in docs preference saving;
   signup/alternate-account-creation preference handling; translation coverage;

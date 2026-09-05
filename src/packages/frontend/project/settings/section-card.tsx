@@ -7,7 +7,7 @@ import { Card, Typography } from "antd";
 import type { CSSProperties, ReactNode } from "react";
 
 import { Icon, IconName } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const { Text, Title } = Typography;
 
@@ -34,8 +34,8 @@ export function ProjectSettingsSectionCard({
     <section id={id} style={{ scrollMarginTop: 24, ...style }}>
       <Card
         style={{
-          borderColor: danger ? COLORS.BS_RED : undefined,
-          boxShadow: "0 8px 28px rgba(15, 23, 42, 0.06)",
+          borderColor: danger ? UI_COLORS.danger : undefined,
+          boxShadow: `0 8px 28px ${UI_COLORS.shadow}`,
         }}
         styles={{ body: { padding: 20 } }}
       >
@@ -47,7 +47,7 @@ export function ProjectSettingsSectionCard({
               alignItems: "center",
               gap: 10,
               margin: 0,
-              color: danger ? COLORS.BS_RED : COLORS.GRAY_DD,
+              color: danger ? UI_COLORS.danger : UI_COLORS.text,
             }}
           >
             <Icon name={icon} /> {title}
