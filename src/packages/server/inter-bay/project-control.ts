@@ -624,6 +624,8 @@ export async function handleProjectControlSetUsageAccount(
       project_id: req.project_id,
       account_id: req.usage_account_id ?? null,
       expected_current_usage_account_id: req.expected_current_usage_account_id,
+      expected_course_project_id: req.expected_course_project_id,
+      expected_course_email_address: req.expected_course_email_address,
     }),
   };
 }
@@ -800,10 +802,12 @@ async function assertLocalProjectReadAccessOrAdmin({
 export async function handleProjectDetailsGet(
   req: GetProjectDetailsRequest,
 ): Promise<ProjectDetails> {
-  await assertLocalProjectReadAccessOrAdmin({
-    account_id: req.account_id,
-    project_id: req.project_id,
-  });
+  if (!req.trusted_admin) {
+    await assertLocalProjectReadAccessOrAdmin({
+      account_id: req.account_id,
+      project_id: req.project_id,
+    });
+  }
   const details = await loadProjectReadDetailsDirect(req.project_id);
   if (details == null) {
     throw new Error(`project ${req.project_id} not found`);
