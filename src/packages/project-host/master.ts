@@ -582,32 +582,47 @@ async function readRuntimeLogTail(
   }) => {
     const common = ["-o", "cat", "-n", String(tailLines), "--no-pager"];
     const fullArgs = [...args, ...common];
+    let unprivilegedText = "";
+    let unprivilegedSucceeded = false;
     try {
-      const text = await runTail("journalctl", fullArgs);
+      unprivilegedText = await runTail("journalctl", fullArgs);
+      unprivilegedSucceeded = true;
+      if (unprivilegedText.trim()) {
+        return {
+          source: label,
+          lines: tailLines,
+          text: redactRuntimeLogText(unprivilegedText),
+        };
+      }
+    } catch (err) {
+      logger.debug("unprivileged journal read failed", {
+        source,
+        err: `${err}`,
+      });
+    }
+    try {
+      const retryArgs = fallbackArgs ? [...fallbackArgs, ...common] : fullArgs;
+      const text = await runTail("sudo", ["-n", "journalctl", ...retryArgs]);
       return {
         source: label,
         lines: tailLines,
         text: redactRuntimeLogText(text),
       };
-    } catch (err) {
-      try {
-        const retryArgs = fallbackArgs
-          ? [...fallbackArgs, ...common]
-          : fullArgs;
-        const text = await runTail("sudo", ["-n", "journalctl", ...retryArgs]);
+    } catch (sudoErr) {
+      logger.warn("privileged journal read failed", {
+        source,
+        sudo_err: `${sudoErr}`,
+      });
+      if (unprivilegedSucceeded) {
+        // An empty unprivileged result can be authoritative on installations
+        // without privileged journal access configured for this service.
         return {
           source: label,
           lines: tailLines,
-          text: redactRuntimeLogText(text),
+          text: redactRuntimeLogText(unprivilegedText),
         };
-      } catch (sudoErr) {
-        logger.warn("failed to read runtime log", {
-          source,
-          err: `${err}`,
-          sudo_err: `${sudoErr}`,
-        });
-        throw new Error(`failed to read runtime log '${source}': ${sudoErr}`);
       }
+      throw new Error(`failed to read runtime log '${source}': ${sudoErr}`);
     }
   };
 

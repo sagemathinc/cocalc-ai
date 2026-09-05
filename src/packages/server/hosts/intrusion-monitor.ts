@@ -15,7 +15,7 @@ import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 const logger = getLogger("server:hosts:intrusion-monitor");
 
 const TABLE = "project_host_intrusion_snapshots";
-const NORMALIZATION_VERSION = 1;
+const NORMALIZATION_VERSION = 2;
 const DEFAULT_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const MIN_INTERVAL_MS = 10 * 60 * 1000;
 const DEFAULT_RETENTION_DAYS = 90;
@@ -58,11 +58,14 @@ const DYNAMIC_LISTENER_PROCESSES = new Set([
   "project-host:ac",
   "project-host:ap",
   "rustic",
+  "sshpiperd",
 ]);
 const DYNAMIC_LISTENER_MIN_PORT = 10_000;
+const NON_INTRUSION_KERNEL_SIGNALS = new Set(["oom", "tainted"]);
+const BACKUP_BROWSER_CGROUP = "/cocalc-backup-browsers/browser-*";
 
 export interface NormalizedHostIntrusionSnapshot {
-  version: 1;
+  version: 2;
   identity: {
     hostname: string;
     kernel: string;
@@ -171,7 +174,8 @@ function decodeSignal(value: string): unknown[] | undefined {
 function isExpectedTransientProcess(value: string): boolean {
   const fields = decodeSignal(value);
   if (!fields) return false;
-  const [uid, comm, exe, capabilities, executableUid, executableMode] = fields;
+  const [uid, comm, exe, capabilities, executableUid, executableMode, cgroup] =
+    fields;
   const zeroCapabilities =
     typeof capabilities === "string" && /^0+$/.test(capabilities);
   const rootOwnedExecutable = executableUid === 0 && executableMode === "0755";
@@ -181,6 +185,17 @@ function isExpectedTransientProcess(value: string): boolean {
     exe === "/usr/bin/btrfs" &&
     capabilities === "000001ffffffffff" &&
     rootOwnedExecutable
+  ) {
+    return true;
+  }
+  if (
+    typeof uid === "number" &&
+    uid !== 0 &&
+    ((comm === "bash" && exe === "/usr/bin/bash") ||
+      (comm === "sleep" && exe === "/usr/bin/sleep")) &&
+    zeroCapabilities &&
+    rootOwnedExecutable &&
+    cgroup === BACKUP_BROWSER_CGROUP
   ) {
     return true;
   }
@@ -263,6 +278,7 @@ export function normalizeHostIntrusionSnapshot(
           "capability_mask",
           "executable_uid",
           "executable_mode",
+          "cgroup",
         ]),
       ),
     ),
@@ -320,6 +336,7 @@ export function normalizeHostIntrusionSnapshot(
     kernel_signals_7d: sortedUnique(
       Object.entries(snapshot.kernel_signals_7d)
         .filter(([, count]) => Number(count) > 0)
+        .filter(([name]) => !NON_INTRUSION_KERNEL_SIGNALS.has(name))
         .map(([name]) => name),
     ),
     "package_integrity.differences": sortedUnique(
@@ -714,6 +731,20 @@ function unavailableSource(host: CandidateHost): HostIntrusionSnapshotResponse {
   };
 }
 
+function requireCgroupAwareCollector(
+  source: HostIntrusionSnapshotResponse,
+): HostIntrusionSnapshotResponse {
+  if (source.version >= 2) return source;
+  return {
+    ...source,
+    coverage: source.coverage === "unavailable" ? "unavailable" : "partial",
+    issues: [
+      ...source.issues,
+      { section: "host_processes", code: "CGROUP_COVERAGE_UNAVAILABLE" },
+    ],
+  };
+}
+
 async function mapWithConcurrency<T>(
   values: T[],
   concurrency: number,
@@ -772,13 +803,15 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
     result.checked += 1;
     try {
       const previousCoverage = await loadRecentCoverage(host.id);
-      const source = await (
-        await getRoutedHostControlClient({
-          host_id: host.id,
-          timeout: HOST_RPC_TIMEOUT_MS,
-          fresh: true,
-        })
-      ).getIntrusionSnapshot();
+      const source = requireCgroupAwareCollector(
+        await (
+          await getRoutedHostControlClient({
+            host_id: host.id,
+            timeout: HOST_RPC_TIMEOUT_MS,
+            fresh: true,
+          })
+        ).getIntrusionSnapshot(),
+      );
       const normalized = normalizeHostIntrusionSnapshot(source);
       if (source.coverage !== "complete") {
         result.incomplete += 1;

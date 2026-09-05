@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260903-v51"
+HELPER_SCHEMA_VERSION = "20260904-v52"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -247,6 +247,20 @@ def collect_accounts():
     return {"uid_zero": uid_zero, "interactive": interactive}
 
 
+def process_cgroup(proc):
+    for line in read_text(proc / "cgroup", 16384).splitlines():
+        fields = line.split(":", 2)
+        if len(fields) != 3 or fields[0] != "0" or fields[1]:
+            continue
+        path = clean(fields[2], 512)
+        return re.sub(
+            r"^/cocalc-backup-browsers/browser-[0-9]+$",
+            "/cocalc-backup-browsers/browser-*",
+            path,
+        )
+    return ""
+
+
 def collect_processes():
     host_mnt = read_link("/proc/1/ns/mnt")
     host_user = read_link("/proc/1/ns/user")
@@ -303,6 +317,7 @@ def collect_processes():
                 "capability_mask": capability_mask,
                 "executable_uid": executable_uid,
                 "executable_mode": executable_mode,
+                "cgroup": process_cgroup(proc),
                 "flags": flags,
             }
         )
@@ -314,6 +329,7 @@ def collect_processes():
             record["capability_mask"],
             record["executable_uid"],
             record["executable_mode"],
+            record["cgroup"],
         )
         for record in records
     )
@@ -330,6 +346,8 @@ def collect_processes():
             item["executable_uid"] = key[4]
         if key[5] is not None:
             item["executable_mode"] = key[5]
+        if key[6]:
+            item["cgroup"] = key[6]
         summary.append(item)
     findings = []
     for record in records:
@@ -556,7 +574,7 @@ def main():
     kernel_signals = collect_kernel_signals()
     boot_id = clean(read_text("/proc/sys/kernel/random/boot_id", 256).strip(), 128)
     output = {
-        "version": 1,
+        "version": 2,
         "captured_at": captured_at,
         "duration_ms": 0,
         "hostname": clean(os.uname().nodename, 256),
