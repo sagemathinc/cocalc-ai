@@ -6557,35 +6557,44 @@ export async function getCodexPaymentSource({
       siteFundedCodex = { enabled: false };
     }
   }
-  const [hasSubscription, hasProjectApiKeyStored, hasAccountApiKeyStored] =
-    await Promise.all([
-      hasExternalCredentialRouted({
-        selector: {
-          provider: "openai",
-          kind: CODEX_SUBSCRIPTION_KIND,
-          scope: "account",
-          owner_account_id: account_id,
-        },
-      }),
-      project_id
-        ? hasExternalCredentialRouted({
-            selector: {
-              provider: "openai",
-              kind: OPENAI_API_KEY_KIND,
-              scope: "project",
-              project_id,
-            },
-          })
-        : Promise.resolve(false),
-      hasExternalCredentialRouted({
-        selector: {
-          provider: "openai",
-          kind: OPENAI_API_KEY_KIND,
-          scope: "account",
-          owner_account_id: account_id,
-        },
-      }),
-    ]);
+  const [
+    subscriptionCredentials,
+    hasProjectApiKeyStored,
+    hasAccountApiKeyStored,
+  ] = await Promise.all([
+    listAccountExternalCredentialsRouted({
+      owner_account_id: account_id,
+      provider: "openai",
+      kind: CODEX_SUBSCRIPTION_KIND,
+      scope: "account",
+    }),
+    project_id
+      ? hasExternalCredentialRouted({
+          selector: {
+            provider: "openai",
+            kind: OPENAI_API_KEY_KIND,
+            scope: "project",
+            project_id,
+          },
+        })
+      : Promise.resolve(false),
+    hasExternalCredentialRouted({
+      selector: {
+        provider: "openai",
+        kind: OPENAI_API_KEY_KIND,
+        scope: "account",
+        owner_account_id: account_id,
+      },
+    }),
+  ]);
+  const subscriptionCredential = subscriptionCredentials[0];
+  const hasSubscription = subscriptionCredential != null;
+  const subscriptionUpdatedAt = subscriptionCredential
+    ? new Date(subscriptionCredential.updated).toISOString()
+    : undefined;
+  const subscriptionRevision = subscriptionCredential
+    ? `${subscriptionCredential.id}:${subscriptionUpdatedAt}`
+    : undefined;
 
   const hasProjectApiKey =
     hasProjectApiKeyStored ||
@@ -6636,6 +6645,7 @@ export async function getCodexPaymentSource({
   return {
     source,
     hasSubscription,
+    subscriptionRevision,
     hasProjectApiKey,
     hasAccountApiKey,
     hasSiteApiKey,
@@ -6677,6 +6687,7 @@ export async function getCodexUsageStatus({
   account_id?: string;
   project_id?: string;
   include_models?: boolean;
+  refresh_models?: boolean;
   timeout?: number;
 }) {
   if (!account_id) {

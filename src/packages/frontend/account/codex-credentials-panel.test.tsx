@@ -9,6 +9,10 @@ import {
   CodexCredentialsPanel,
   CodexUsageMeters,
 } from "./codex-credentials-panel";
+import {
+  readCachedCodexModelCatalog,
+  writeCachedCodexModelCatalog,
+} from "./codex-usage";
 
 const getCodexPaymentSource = jest.fn();
 const getCodexUsageStatus = jest.fn();
@@ -165,6 +169,7 @@ describe("CodexCredentialsPanel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useRealTimers();
+    window.localStorage.clear();
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: mockClipboardWriteText },
@@ -321,6 +326,36 @@ describe("CodexCredentialsPanel", () => {
     });
   });
 
+  it("explains how to recover when starting device auth times out", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      paymentSource: { source: "subscription" },
+      reason:
+        "account/rateLimits/read: codex account authentication required to read rate limits",
+    });
+    codexDeviceAuthStart.mockRejectedValue(
+      new Error("Request timed out after 60 seconds"),
+    );
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Sign in again with ChatGPT")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText("Sign in again with ChatGPT"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText((text) =>
+          text.includes("CoCalc will not retry automatically"),
+        ),
+      ).toBeTruthy();
+    });
+    expect(codexDeviceAuthStart).toHaveBeenCalledTimes(1);
+  });
+
   it("does not call an unverified stored credential connected", async () => {
     getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
     getCodexUsageStatus.mockResolvedValue({
@@ -339,6 +374,28 @@ describe("CodexCredentialsPanel", () => {
       ).toBeTruthy();
       expect(screen.queryByText("ChatGPT is connected")).toBeNull();
     });
+  });
+
+  it("explains how to recover when the installed Codex is too old", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      checkedAt: "2026-06-10T00:00:00.000Z",
+      paymentSource: { source: "subscription" },
+      reason:
+        "codex app-server exited unexpectedly: Error: Unknown feature flag: background_paginated_rollout_migration",
+    });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "CoCalc Plus must be upgraded to update Codex. Upgrade and restart CoCalc Plus, then try again.",
+        ),
+      ).toBeTruthy();
+    });
+    expect(screen.queryByText(/Unknown feature flag/)).toBeNull();
   });
 
   it("refreshes Codex usage without reloading the whole payment panel", async () => {
@@ -481,6 +538,20 @@ describe("CodexCredentialsPanel", () => {
       updatedAt: 2,
     });
     const onPaymentSourceChanged = jest.fn();
+    writeCachedCodexModelCatalog({
+      projectId: "project-1",
+      runtimeVersion: "tools-v1",
+      subscriptionRevision: "subscription-v1",
+      models: [
+        {
+          model: "old-account-model",
+          displayName: "Old account model",
+          description: "Must be invalidated after sign-in.",
+          reasoning: [],
+          serviceTiers: [],
+        },
+      ],
+    });
 
     render(
       <CodexCredentialsPanel
@@ -514,6 +585,13 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(onPaymentSourceChanged).toHaveBeenCalled();
     });
+    expect(
+      readCachedCodexModelCatalog({
+        projectId: "project-1",
+        runtimeVersion: "tools-v1",
+        subscriptionRevision: "subscription-v1",
+      }),
+    ).toBeUndefined();
   });
 
   it("keeps polling and does not notify parent while device auth is syncing", async () => {

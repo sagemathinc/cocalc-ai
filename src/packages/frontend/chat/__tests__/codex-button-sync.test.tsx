@@ -1,14 +1,27 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { writeCachedCodexUsageStatus } from "@cocalc/frontend/account/codex-usage";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import {
+  CODEX_MODEL_CATALOG_TTL_MS,
+  writeCachedCodexModelCatalog,
+  writeCachedCodexUsageStatus,
+} from "@cocalc/frontend/account/codex-usage";
 import {
   CodexConfigButton,
-  codexModelOptionsForStatus,
+  codexModelOptionsForCatalog,
   codexThreadConfigKey,
 } from "../codex";
 
 const getCodexUsageStatus = jest.fn();
+let projectToolsVersion = "tools-v1";
+let mockWatchedFormValues: Record<string, unknown> = {};
+let mockModelSelectOnChange: ((value: string) => void) | undefined;
 const stableForm = {
   resetFields: jest.fn(),
   setFieldsValue: jest.fn(),
@@ -68,7 +81,12 @@ jest.mock("antd", () => {
       <div aria-label={ariaLabel} />
     ),
     Radio,
-    Select: ({ value }: any) => <div>{String(value ?? "")}</div>,
+    Select: ({ onChange, placeholder, value }: any) => {
+      if (placeholder === "e.g., gpt-5.6-sol") {
+        mockModelSelectOnChange = onChange;
+      }
+      return <div>{String(value ?? "")}</div>;
+    },
     Space: ({ children }: any) => <div>{children}</div>,
     Tag: ({ children }: any) => <span>{children}</span>,
     Tooltip: ({ children }: any) => <div>{children}</div>,
@@ -77,7 +95,7 @@ jest.mock("antd", () => {
     },
     Form: Object.assign(({ children }: any) => <div>{children}</div>, {
       useForm: () => [stableForm],
-      useWatch: () => undefined,
+      useWatch: (name: string) => mockWatchedFormValues[name],
       Item: ({ children }: any) => <div>{children}</div>,
     }),
   };
@@ -92,6 +110,7 @@ jest.mock("@cocalc/frontend/app-framework", () => {
     useMemo: React.useMemo,
     useState: React.useState,
     useAccountOtherSetting: () => undefined,
+    useProjectMapField: () => projectToolsVersion,
     useTypedRedux: () => undefined,
     TypedMap,
     createTypedMap,
@@ -172,14 +191,17 @@ describe("CodexConfigButton", () => {
     stableForm.setFieldsValue.mockClear();
     stableForm.getFieldsValue.mockClear();
     stableForm.getFieldsValue.mockReturnValue({});
+    mockWatchedFormValues = {};
+    mockModelSelectOnChange = undefined;
     getCodexUsageStatus.mockReset();
     getCodexUsageStatus.mockResolvedValue({ available: true });
+    projectToolsVersion = "tools-v1";
     window.localStorage.clear();
   });
 
-  it("disables models absent from the authenticated ChatGPT catalog", () => {
-    const options = codexModelOptionsForStatus({
-      models: [
+  it("uses the authenticated catalog and preserves only the selected unavailable model", () => {
+    const options = codexModelOptionsForCatalog(
+      [
         {
           model: "gpt-5.6-luna",
           displayName: "GPT-5.6 Luna",
@@ -200,8 +222,17 @@ describe("CodexConfigButton", () => {
           ],
           default: true,
         },
+        {
+          model: "gpt-daybreak-blue-latest",
+          displayName: "Daybreak Blue",
+          description: "Defensive cybersecurity model",
+          specialty: "cybersecurity",
+          reasoning: [],
+          serviceTiers: [],
+        },
       ],
-    } as any);
+      "gpt-5.4",
+    );
 
     expect(options[0]).toMatchObject({
       value: "gpt-5.6-luna",
@@ -219,6 +250,384 @@ describe("CodexConfigButton", () => {
       description: expect.stringContaining(
         "Not available with the connected ChatGPT account",
       ),
+    });
+    const daybreak = options.find(
+      ({ value }) => value === "gpt-daybreak-blue-latest",
+    );
+    expect(daybreak).toMatchObject({
+      description: expect.stringContaining("Cybersecurity model"),
+    });
+    expect(daybreak?.disabled).toBeUndefined();
+    expect(options).toHaveLength(3);
+  });
+
+  it("opens the compact picker from the fresh account catalog without a request", async () => {
+    writeCachedCodexModelCatalog({
+      projectId: "project-1",
+      runtimeVersion: "tools-v1",
+      subscriptionRevision: "subscription-v1",
+      models: [
+        {
+          model: "gpt-daybreak-blue-latest",
+          displayName: "Daybreak Blue",
+          description: "Defensive cybersecurity model",
+          specialty: "cybersecurity",
+          reasoning: [],
+          serviceTiers: [],
+          default: true,
+        },
+      ],
+    });
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          subscriptionRevision: "subscription-v1",
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    fireEvent.mouseEnter(screen.getByTitle("Change Codex model"));
+    fireEvent.click(screen.getByTitle("Change Codex model"));
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", {
+          name: "gpt-daybreak-blue-latest",
+        }),
+      ).toHaveLength(2);
+    });
+    expect(getCodexUsageStatus).not.toHaveBeenCalled();
+  });
+
+  it("reloads the catalog after the project tools version changes", async () => {
+    const props = {
+      threadKey: "thread-1",
+      chatPath: "foo.chat",
+      projectId: "project-1",
+      actions: {
+        getCodexConfig: jest.fn(() => undefined),
+        setCodexConfig: jest.fn(),
+      } as any,
+      threadConfig: null,
+      paymentSource: {
+        source: "subscription" as const,
+        hasSubscription: true,
+        subscriptionRevision: "subscription-v1",
+        hasProjectApiKey: false,
+        hasAccountApiKey: false,
+        hasSiteApiKey: false,
+        sharedHomeMode: "disabled" as const,
+      },
+    };
+    writeCachedCodexModelCatalog({
+      projectId: "project-1",
+      runtimeVersion: "tools-v1",
+      subscriptionRevision: "subscription-v1",
+      models: [
+        {
+          model: "old-runtime-model",
+          displayName: "Old runtime model",
+          description: "Only advertised by the old runtime",
+          reasoning: [],
+          serviceTiers: [],
+          default: true,
+        },
+      ],
+    });
+    getCodexUsageStatus.mockResolvedValue({
+      available: true,
+      models: [
+        {
+          model: "new-runtime-model",
+          displayName: "New runtime model",
+          description: "Advertised by the restarted runtime",
+          reasoning: [],
+          serviceTiers: [],
+          default: true,
+        },
+      ],
+    });
+    const view = render(<CodexConfigButton {...props} />);
+
+    const modelButton = screen.getByTitle("Change Codex model");
+    fireEvent.mouseEnter(modelButton);
+    fireEvent.click(modelButton);
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: "old-runtime-model" }),
+      ).toHaveLength(2);
+    });
+    expect(getCodexUsageStatus).not.toHaveBeenCalled();
+
+    projectToolsVersion = "tools-v2";
+    view.rerender(<CodexConfigButton {...props} />);
+
+    await waitFor(() => {
+      expect(getCodexUsageStatus).toHaveBeenCalledWith({
+        project_id: "project-1",
+        include_models: true,
+        refresh_models: false,
+        timeout: 60_000,
+      });
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryAllByRole("button", { name: "old-runtime-model" }),
+      ).toHaveLength(0);
+      expect(
+        screen.getAllByRole("button", { name: "new-runtime-model" }),
+      ).toHaveLength(2);
+    });
+  });
+
+  it("reloads the catalog after the ChatGPT credential changes", async () => {
+    const basePaymentSource = {
+      source: "subscription" as const,
+      hasSubscription: true,
+      hasProjectApiKey: false,
+      hasAccountApiKey: false,
+      hasSiteApiKey: false,
+      sharedHomeMode: "disabled" as const,
+    };
+    const props = {
+      threadKey: "thread-1",
+      chatPath: "foo.chat",
+      projectId: "project-1",
+      actions: {
+        getCodexConfig: jest.fn(() => undefined),
+        setCodexConfig: jest.fn(),
+      } as any,
+      threadConfig: null,
+    };
+    writeCachedCodexModelCatalog({
+      projectId: "project-1",
+      runtimeVersion: "tools-v1",
+      subscriptionRevision: "subscription-v1",
+      models: [
+        {
+          model: "old-account-model",
+          displayName: "Old account model",
+          description: "Only advertised for the previous credential",
+          reasoning: [],
+          serviceTiers: [],
+          default: true,
+        },
+      ],
+    });
+    getCodexUsageStatus.mockResolvedValue({
+      available: true,
+      models: [
+        {
+          model: "new-account-model",
+          displayName: "New account model",
+          description: "Advertised for the replacement credential",
+          reasoning: [],
+          serviceTiers: [],
+          default: true,
+        },
+      ],
+    });
+    const view = render(
+      <CodexConfigButton
+        {...props}
+        paymentSource={{
+          ...basePaymentSource,
+          subscriptionRevision: "subscription-v1",
+        }}
+      />,
+    );
+
+    const modelButton = screen.getByTitle("Change Codex model");
+    fireEvent.mouseEnter(modelButton);
+    fireEvent.click(modelButton);
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: "old-account-model" }),
+      ).toHaveLength(2);
+    });
+    expect(getCodexUsageStatus).not.toHaveBeenCalled();
+
+    view.rerender(
+      <CodexConfigButton
+        {...props}
+        paymentSource={{
+          ...basePaymentSource,
+          subscriptionRevision: "subscription-v2",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(getCodexUsageStatus).toHaveBeenCalledWith({
+        project_id: "project-1",
+        include_models: true,
+        refresh_models: false,
+        timeout: 60_000,
+      });
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryAllByRole("button", { name: "old-account-model" }),
+      ).toHaveLength(0);
+      expect(
+        screen.getAllByRole("button", { name: "new-account-model" }),
+      ).toHaveLength(2);
+    });
+  });
+
+  it("clears an expired in-memory catalog before a failed refresh", async () => {
+    const dynamicModel = {
+      model: "newly-advertised-model",
+      displayName: "Newly advertised model",
+      description: "Account-only model",
+      reasoning: [],
+      serviceTiers: [],
+      default: true,
+    };
+    writeCachedCodexModelCatalog({
+      projectId: "project-1",
+      runtimeVersion: "tools-v1",
+      subscriptionRevision: "subscription-v1",
+      models: [dynamicModel],
+    });
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          subscriptionRevision: "subscription-v1",
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    const modelButton = screen.getByTitle("Change Codex model");
+    fireEvent.mouseEnter(modelButton);
+    fireEvent.click(modelButton);
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: "newly-advertised-model" }),
+      ).toHaveLength(2);
+    });
+    expect(getCodexUsageStatus).not.toHaveBeenCalled();
+
+    writeCachedCodexModelCatalog({
+      projectId: "project-1",
+      runtimeVersion: "tools-v1",
+      subscriptionRevision: "subscription-v1",
+      models: [dynamicModel],
+      cachedAt: Date.now() - CODEX_MODEL_CATALOG_TTL_MS,
+    });
+    getCodexUsageStatus.mockRejectedValueOnce(new Error("model/list failed"));
+    fireEvent.mouseEnter(modelButton);
+
+    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(
+        screen.queryAllByRole("button", { name: "newly-advertised-model" }),
+      ).toHaveLength(0);
+    });
+  });
+
+  it("preserves a stored catalog model before discovery runs", async () => {
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={{
+          model: "gpt-daybreak-blue-latest",
+          paymentSource: "subscription",
+        }}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("gpt-daybreak-blue-latest")).toBeTruthy();
+    });
+    expect(stableForm.setFieldsValue).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-daybreak-blue-latest" }),
+    );
+    expect(getCodexUsageStatus).not.toHaveBeenCalled();
+  });
+
+  it("forces catalog discovery from the settings refresh button", async () => {
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex"));
+    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalled());
+    getCodexUsageStatus.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+    await waitFor(() => {
+      expect(getCodexUsageStatus).toHaveBeenCalledWith({
+        project_id: "project-1",
+        include_models: true,
+        refresh_models: true,
+        timeout: 60_000,
+      });
     });
   });
 
@@ -358,6 +767,127 @@ describe("CodexConfigButton", () => {
     expect(stableForm.setFieldsValue).not.toHaveBeenCalledWith(
       expect.objectContaining({ workingDirectory: expect.anything() }),
     );
+  });
+
+  it("warns when discovery excludes an unsaved model selection", async () => {
+    let resolveUsageStatus: (status: any) => void = () => undefined;
+    getCodexUsageStatus.mockReturnValue(
+      new Promise((resolve) => {
+        resolveUsageStatus = resolve;
+      }),
+    );
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          subscriptionRevision: "subscription-v1",
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex"));
+    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalled());
+    await waitFor(() => expect(mockModelSelectOnChange).toBeDefined());
+    await act(async () => {
+      mockWatchedFormValues.model = "gpt-5.4";
+      mockModelSelectOnChange?.("gpt-5.4");
+      resolveUsageStatus({
+        available: true,
+        models: [
+          {
+            model: "account-default-model",
+            displayName: "Account default",
+            description: "Only model advertised for this account",
+            reasoning: [],
+            serviceTiers: [],
+            default: true,
+          },
+        ],
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByText(/Model unavailable for this ChatGPT account/),
+      ).toBeTruthy();
+    });
+  });
+
+  it("adopts the discovered default for an untouched new thread", async () => {
+    let resolveUsageStatus: (status: any) => void = () => undefined;
+    getCodexUsageStatus.mockReturnValue(
+      new Promise((resolve) => {
+        resolveUsageStatus = resolve;
+      }),
+    );
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex"));
+    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalled());
+    stableForm.setFieldsValue.mockClear();
+    resolveUsageStatus({
+      available: true,
+      models: [
+        {
+          model: "gpt-5.6-sol",
+          displayName: "GPT-5.6 Sol",
+          description: "Static fallback that remains available",
+          reasoning: [],
+          serviceTiers: [],
+        },
+        {
+          model: "account-default-model",
+          displayName: "Account default",
+          description: "Default for this account",
+          reasoning: [],
+          serviceTiers: [],
+          default: true,
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(stableForm.setFieldsValue).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "account-default-model" }),
+      );
+    });
   });
 
   it("updates the closed top bar when thread config arrives after mount", async () => {
@@ -570,7 +1100,8 @@ describe("CodexConfigButton", () => {
     await waitFor(() => {
       expect(getCodexUsageStatus).toHaveBeenCalledWith({
         project_id: "project-1",
-        include_models: true,
+        include_models: false,
+        refresh_models: false,
         timeout: 60_000,
       });
       expect(
@@ -850,6 +1381,7 @@ describe("CodexConfigButton", () => {
       expect(getCodexUsageStatus).toHaveBeenCalledWith({
         project_id: "project-1",
         include_models: true,
+        refresh_models: false,
         timeout: 60_000,
       });
       expect(

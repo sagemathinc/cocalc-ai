@@ -71,7 +71,7 @@ import {
 } from "@cocalc/util/misc";
 import * as misc from "@cocalc/util/misc";
 import { join } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { setSshUi, ssh } from "./ssh";
@@ -115,10 +115,39 @@ import {
 } from "./codex-auth";
 import { getRow, listRows } from "./sqlite/database";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
+import {
+  createInflightRequestCoalescer,
+  readCachedModelCatalogForRequest,
+} from "./codex-model-catalog-inflight";
 
 const logger = getLogger("lite:hub:api");
 const execFile = promisify(execFileCb);
 const CODEX_DEVICE_AUTH_VERIFY_TIMEOUT_MS = 45_000;
+const CODEX_MODEL_CATALOG_TTL_MS = 30 * 60_000;
+const liteCodexModelCatalogCache = new Map<
+  string,
+  {
+    checkedAt: string;
+    expiresAt: number;
+    models: NonNullable<CodexUsageStatusInfo["models"]>;
+  }
+>();
+const liteCodexModelCatalogGeneration = new Map<string, number>();
+const loadLiteCodexModelCatalogStatus =
+  createInflightRequestCoalescer<
+    Awaited<ReturnType<typeof getCodexAppServerAccountStatus>>
+  >();
+
+function clearLiteCodexModelCatalog(accountId: string): void {
+  liteCodexModelCatalogGeneration.set(
+    accountId,
+    (liteCodexModelCatalogGeneration.get(accountId) ?? 0) + 1,
+  );
+  const prefix = `${accountId}\0`;
+  for (const key of liteCodexModelCatalogCache.keys()) {
+    if (key.startsWith(prefix)) liteCodexModelCatalogCache.delete(key);
+  }
+}
 
 function syncHistoryWithExplicitClient(
   opts: Parameters<typeof syncHistory>[0],
@@ -525,6 +554,9 @@ async function codexDeviceAuthStatusLite(opts: {
   ) {
     throw Error("unknown device auth id");
   }
+  if (status.state === "completed") {
+    clearLiteCodexModelCatalog(account_id);
+  }
   return status;
 }
 
@@ -572,7 +604,7 @@ async function codexUploadAuthFileLite(opts: {
   filename?: string;
   content: string;
 }) {
-  requireLiteAccountId(opts.account_id);
+  const accountId = requireLiteAccountId(opts.account_id);
   requireLiteProjectId(opts.project_id);
   if (opts.filename && !/auth\.json$/i.test(opts.filename.trim())) {
     throw Error("only auth.json uploads are supported");
@@ -580,21 +612,28 @@ async function codexUploadAuthFileLite(opts: {
   const result = await uploadLiteSubscriptionAuthFile({
     content: opts.content,
   });
+  clearLiteCodexModelCatalog(accountId);
   return { ok: true as const, ...result };
 }
 
-async function hasLocalSubscriptionAuth(codexHome: string): Promise<boolean> {
+async function getLocalSubscriptionAuthRevision(
+  codexHome: string,
+): Promise<string | undefined> {
   const authPath = join(codexHome, "auth.json");
   try {
-    const raw = await readFile(authPath, "utf8");
-    if (!raw.trim()) return false;
+    const [raw, info] = await Promise.all([
+      readFile(authPath, "utf8"),
+      stat(authPath),
+    ]);
+    if (!raw.trim()) return undefined;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return false;
+      return undefined;
     }
-    return Object.keys(parsed).length > 0;
+    if (!Object.keys(parsed).length) return undefined;
+    return `${info.size}:${Math.floor(info.mtimeMs)}`;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -628,7 +667,9 @@ async function getCodexPaymentSource(opts?: {
   const account_id = `${opts?.account_id ?? ACCOUNT_ID}`.trim() || ACCOUNT_ID;
   const project_id = `${opts?.project_id ?? ""}`.trim() || undefined;
   const codexHome = resolveLiteCodexHome();
-  const hasSubscription = await hasLocalSubscriptionAuth(codexHome);
+  const subscriptionRevision =
+    await getLocalSubscriptionAuthRevision(codexHome);
+  const hasSubscription = subscriptionRevision != null;
 
   const projectKeys = parseMap(
     process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEYS_JSON,
@@ -664,6 +705,7 @@ async function getCodexPaymentSource(opts?: {
   return {
     source,
     hasSubscription,
+    subscriptionRevision,
     hasProjectApiKey,
     hasAccountApiKey,
     hasSiteApiKey,
@@ -677,6 +719,7 @@ async function getCodexUsageStatus(opts?: {
   account_id?: string;
   project_id?: string;
   include_models?: boolean;
+  refresh_models?: boolean;
   timeout?: number;
 }): Promise<CodexUsageStatusInfo> {
   const checkedAt = new Date().toISOString();
@@ -694,11 +737,57 @@ async function getCodexUsageStatus(opts?: {
     };
   }
   try {
+    const accountId = requireLiteAccountId(opts?.account_id);
     const codexHome = resolveLiteCodexHome();
-    const status = await getCodexAppServerAccountStatus({
-      appServerLogin: await getLiteSubscriptionAppServerLogin(codexHome),
-      includeModels: opts?.include_models,
+    const appServerLogin = await getLiteSubscriptionAppServerLogin(codexHome);
+    const subscriptionId =
+      appServerLogin?.type === "chatgptAuthTokens"
+        ? appServerLogin.chatgptAccountId
+        : undefined;
+    const cacheKey = subscriptionId
+      ? `${accountId}\0${subscriptionId}`
+      : undefined;
+    const cacheGeneration = liteCodexModelCatalogGeneration.get(accountId) ?? 0;
+    const now = Date.now();
+    const cachedCatalog = readCachedModelCatalogForRequest({
+      cache: liteCodexModelCatalogCache,
+      key: cacheKey,
+      refresh: opts?.refresh_models,
     });
+    if (cacheKey && cachedCatalog && cachedCatalog.expiresAt <= now) {
+      liteCodexModelCatalogCache.delete(cacheKey);
+    }
+    const usableCatalog =
+      cachedCatalog && cachedCatalog.expiresAt > now
+        ? cachedCatalog
+        : undefined;
+    const shouldLoadModels = !!opts?.include_models && !usableCatalog;
+    const status = shouldLoadModels
+      ? await loadLiteCodexModelCatalogStatus(
+          `${accountId}\0${subscriptionId ?? paymentSource.subscriptionRevision ?? "unknown"}\0${cacheGeneration}`,
+          async () =>
+            await getCodexAppServerAccountStatus({
+              appServerLogin,
+              includeModels: true,
+            }),
+        )
+      : await getCodexAppServerAccountStatus({
+          appServerLogin,
+          includeModels: false,
+        });
+    const liveModels = status.models?.length ? status.models : undefined;
+    if (
+      cacheKey &&
+      liveModels &&
+      (liteCodexModelCatalogGeneration.get(accountId) ?? 0) === cacheGeneration
+    ) {
+      liteCodexModelCatalogCache.set(cacheKey, {
+        checkedAt,
+        expiresAt: now + CODEX_MODEL_CATALOG_TTL_MS,
+        models: liveModels,
+      });
+    }
+    const models = usableCatalog?.models ?? liveModels;
     return {
       available: !!status.rateLimits,
       checkedAt,
@@ -708,7 +797,10 @@ async function getCodexUsageStatus(opts?: {
       account: status.account,
       rateLimits: status.rateLimits,
       tokenUsage: status.tokenUsage,
-      models: status.models,
+      models,
+      modelsCheckedAt:
+        usableCatalog?.checkedAt ?? (models ? checkedAt : undefined),
+      modelsCached: usableCatalog ? true : models ? false : undefined,
       errors: status.errors,
       reason:
         !status.rateLimits && status.errors?.rateLimits

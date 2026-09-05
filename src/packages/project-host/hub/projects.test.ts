@@ -47,6 +47,7 @@ const hasRecentProjectBrowserActivity = jest.fn(() => false);
 const assertManagedRawNetworkStartAllowedBestEffortMock = jest.fn();
 const getCodexAppServerAccountStatus = jest.fn();
 const resolveCodexAuthRuntime = jest.fn();
+const getCodexSubscriptionIdentity = jest.fn();
 const uploadSubscriptionAuthFile = jest.fn();
 const ensureCodexAuthFileExists = jest.fn();
 const ensureCodexCredentialsStoreFile = jest.fn();
@@ -191,6 +192,8 @@ jest.mock("../codex/codex-auth", () => ({
   ensureCodexCredentialsStoreFile: (...args: any[]) =>
     ensureCodexCredentialsStoreFile(...args),
   resolveCodexAuthRuntime: (...args: any[]) => resolveCodexAuthRuntime(...args),
+  getCodexSubscriptionIdentity: (...args: any[]) =>
+    getCodexSubscriptionIdentity(...args),
   resolveSubscriptionCodexHome: () => "/tmp/codex-home",
   subscriptionRuntime: (...args: any[]) => ({
     source: "subscription",
@@ -285,8 +288,12 @@ describe("project host start ACP rehydrate ordering", () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    const { resetPortBindStateForTesting } = await import("./projects");
+    const {
+      resetCodexModelCatalogCacheForTesting,
+      resetPortBindStateForTesting,
+    } = await import("./projects");
     resetPortBindStateForTesting();
+    resetCodexModelCatalogCacheForTesting();
     (hubApi.projects as any) = {};
     getProject.mockReturnValue({
       image: DEFAULT_PROJECT_IMAGE,
@@ -327,6 +334,7 @@ describe("project host start ACP rehydrate ordering", () => {
     assertManagedRawNetworkStartAllowedBestEffortMock.mockReset();
     getCodexAppServerAccountStatus.mockReset();
     resolveCodexAuthRuntime.mockReset();
+    getCodexSubscriptionIdentity.mockReset();
     uploadSubscriptionAuthFile.mockReset();
     ensureCodexAuthFileExists.mockReset();
     ensureCodexCredentialsStoreFile.mockReset();
@@ -1195,13 +1203,18 @@ describe("project host start ACP rehydrate ordering", () => {
       start: jest.fn(),
       stop: jest.fn(),
     } as any;
+    getProject.mockReturnValue({
+      image: DEFAULT_PROJECT_IMAGE,
+      tools_version: "tools-v1",
+    });
     resolveCodexAuthRuntime.mockResolvedValueOnce({
       source: "subscription",
       contextId: "subscription-context",
       codexHome: "/tmp/codex-home",
       env: {},
     });
-    getCodexAppServerAccountStatus.mockResolvedValueOnce({
+    getCodexSubscriptionIdentity.mockResolvedValue("chatgpt-account-1");
+    const liveStatus = {
       authentication: { status: "connected" },
       account: { account: { email: "user@example.com" } },
       rateLimits: { rateLimits: true },
@@ -1216,7 +1229,8 @@ describe("project host start ACP rehydrate ordering", () => {
         },
       ],
       errors: {},
-    });
+    };
+    getCodexAppServerAccountStatus.mockResolvedValueOnce(liveStatus);
 
     const { wireProjectsApi } = await import("./projects");
     wireProjectsApi(runnerApi);
@@ -1235,6 +1249,7 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(getCodexAppServerAccountStatus).toHaveBeenCalledWith({
       projectId: project_id,
       accountId: "acct-1",
+      isolatedCodexHome: true,
       includeModels: true,
       timeoutMs: 45_000,
     });
@@ -1247,7 +1262,167 @@ describe("project host start ACP rehydrate ordering", () => {
       authentication: { status: "connected" },
       account: { account: { email: "user@example.com" } },
       models: [expect.objectContaining({ model: "gpt-5.6-luna" })],
+      modelsCached: false,
     });
+
+    resolveCodexAuthRuntime.mockResolvedValueOnce({
+      source: "subscription",
+      contextId: "subscription-context",
+      codexHome: "/tmp/codex-home",
+      env: {},
+    });
+    getCodexAppServerAccountStatus.mockResolvedValueOnce({
+      ...liveStatus,
+      models: undefined,
+    });
+    const cached = await hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+      timeout: 60_000,
+    });
+    expect(getCodexAppServerAccountStatus).toHaveBeenLastCalledWith({
+      projectId: project_id,
+      accountId: "acct-1",
+      isolatedCodexHome: true,
+      includeModels: false,
+      timeoutMs: 45_000,
+    });
+    expect(cached).toMatchObject({
+      models: [expect.objectContaining({ model: "gpt-5.6-luna" })],
+      modelsCached: true,
+    });
+
+    getProject.mockReturnValue({
+      image: DEFAULT_PROJECT_IMAGE,
+      tools_version: "tools-v2",
+    });
+    resolveCodexAuthRuntime.mockResolvedValueOnce({
+      source: "subscription",
+      contextId: "subscription-context",
+      codexHome: "/tmp/codex-home",
+      env: {},
+    });
+    getCodexAppServerAccountStatus.mockResolvedValueOnce({
+      ...liveStatus,
+      models: [
+        {
+          model: "gpt-daybreak-blue-latest",
+          displayName: "Daybreak Blue",
+          description: "Defensive cybersecurity model",
+          specialty: "cyber",
+          reasoning: [],
+          serviceTiers: [],
+        },
+      ],
+    });
+    const upgradedRuntime = await hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+    });
+    expect(getCodexAppServerAccountStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ includeModels: true }),
+    );
+    expect(upgradedRuntime).toMatchObject({
+      models: [expect.objectContaining({ model: "gpt-daybreak-blue-latest" })],
+      modelsCached: false,
+    });
+
+    resolveCodexAuthRuntime.mockResolvedValueOnce({
+      source: "subscription",
+      contextId: "subscription-context",
+      codexHome: "/tmp/codex-home",
+      env: {},
+    });
+    getCodexAppServerAccountStatus.mockResolvedValueOnce(liveStatus);
+    const refreshed = await hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+      refresh_models: true,
+    });
+    expect(getCodexAppServerAccountStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ includeModels: true }),
+    );
+    expect(refreshed).toMatchObject({
+      models: [expect.objectContaining({ model: "gpt-5.6-luna" })],
+      modelsCached: false,
+    });
+
+    resolveCodexAuthRuntime.mockResolvedValueOnce({
+      source: "subscription",
+      contextId: "subscription-context",
+      codexHome: "/tmp/codex-home",
+      env: {},
+    });
+    getCodexAppServerAccountStatus.mockResolvedValueOnce({
+      ...liveStatus,
+      models: undefined,
+    });
+    const emptyRefresh = await hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+      refresh_models: true,
+    });
+    expect(emptyRefresh.models).toBeUndefined();
+
+    resolveCodexAuthRuntime.mockResolvedValueOnce({
+      source: "subscription",
+      contextId: "subscription-context",
+      codexHome: "/tmp/codex-home",
+      env: {},
+    });
+    getCodexAppServerAccountStatus.mockResolvedValueOnce(liveStatus);
+    const afterEmptyRefresh = await hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+    });
+    expect(getCodexAppServerAccountStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ includeModels: true }),
+    );
+    expect(afterEmptyRefresh).toMatchObject({
+      models: [expect.objectContaining({ model: "gpt-5.6-luna" })],
+      modelsCached: false,
+    });
+
+    let releaseConcurrentRefresh:
+      | ((status: typeof liveStatus) => void)
+      | undefined;
+    resolveCodexAuthRuntime.mockResolvedValue({
+      source: "subscription",
+      contextId: "subscription-context",
+      codexHome: "/tmp/codex-home",
+      env: {},
+    });
+    getCodexAppServerAccountStatus.mockImplementationOnce(
+      async () =>
+        await new Promise<typeof liveStatus>((resolve) => {
+          releaseConcurrentRefresh = resolve;
+        }),
+    );
+    const callsBeforeConcurrentRefresh =
+      getCodexAppServerAccountStatus.mock.calls.length;
+    const refreshA = hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+      refresh_models: true,
+    });
+    const refreshB = hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+      refresh_models: true,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(getCodexAppServerAccountStatus).toHaveBeenCalledTimes(
+      callsBeforeConcurrentRefresh + 1,
+    );
+    releaseConcurrentRefresh?.(liveStatus);
+    await expect(Promise.all([refreshA, refreshB])).resolves.toHaveLength(2);
   });
 
   it("does not start the Codex app-server for API-key usage sources", async () => {

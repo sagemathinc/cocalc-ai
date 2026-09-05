@@ -84,6 +84,29 @@ describe("processAI Codex dispatch", () => {
     );
   });
 
+  it("routes a dynamically advertised ACP thread model", async () => {
+    const actions = makeActions();
+    const message = makeMessage();
+
+    await processAI({
+      actions,
+      message,
+      threadModel: "gpt-daybreak-blue-latest",
+      isAcpThread: true,
+    });
+
+    expect(actions.recordThreadAgentModel).toHaveBeenCalledWith(
+      "thread-test-1",
+      "gpt-daybreak-blue-latest",
+    );
+    expect(processAcpLLM).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-daybreak-blue-latest",
+        input: "hello",
+      }),
+    );
+  });
+
   it("uses the Codex mention when there is no thread model", async () => {
     const actions = makeActions();
     const message = makeMessage({

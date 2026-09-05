@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { CodexUsageStatusInfo } from "@cocalc/conat/hub/api/system";
+import type {
+  CodexModelCapabilityInfo,
+  CodexUsageStatusInfo,
+} from "@cocalc/conat/hub/api/system";
 import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
@@ -13,9 +16,21 @@ export const CODEX_USAGE_LABEL = "Open ChatGPT Codex Usage";
 
 export const CODEX_USAGE_STATUS_TIMEOUT_MS = 60_000;
 const CODEX_USAGE_STATUS_CACHE_PREFIX = "cocalc.chat.codexUsageStatusCache.v2";
+const CODEX_MODEL_CATALOG_CACHE_PREFIX =
+  "cocalc.chat.codexModelCatalogCache.v4";
+const CODEX_MODEL_CATALOG_INVALIDATION_PREFIX =
+  "cocalc.chat.codexModelCatalogInvalidation.v1";
+const CODEX_MODEL_CATALOG_INVALIDATED_EVENT =
+  "cocalc:codex-model-catalog-invalidated";
+export const CODEX_MODEL_CATALOG_TTL_MS = 30 * 60_000;
 
 export interface CachedCodexUsageStatus {
   status: CodexUsageStatusInfo;
+  cachedAt: number;
+}
+
+export interface CachedCodexModelCatalog {
+  models: CodexModelCapabilityInfo[];
   cachedAt: number;
 }
 
@@ -68,6 +83,31 @@ export function getCodexSubscriptionConnection(
 
 function getCodexUsageStatusCacheKey(accountId?: string): string {
   return `${CODEX_USAGE_STATUS_CACHE_PREFIX}:${encodeURIComponent(
+    accountId || "account",
+  )}`;
+}
+
+function getCodexModelCatalogCachePrefix(accountId?: string): string {
+  return `${CODEX_MODEL_CATALOG_CACHE_PREFIX}:${encodeURIComponent(
+    accountId || "account",
+  )}:`;
+}
+
+function getCodexModelCatalogCacheKey(
+  accountId: string | undefined,
+  projectId: string,
+  runtimeVersion: string,
+  subscriptionRevision: string,
+): string {
+  return `${getCodexModelCatalogCachePrefix(accountId)}${encodeURIComponent(
+    projectId,
+  )}:${encodeURIComponent(runtimeVersion)}:${encodeURIComponent(
+    subscriptionRevision,
+  )}`;
+}
+
+function getCodexModelCatalogInvalidationKey(accountId?: string): string {
+  return `${CODEX_MODEL_CATALOG_INVALIDATION_PREFIX}:${encodeURIComponent(
     accountId || "account",
   )}`;
 }
@@ -153,12 +193,16 @@ export function writeCachedCodexUsageStatus({
 }): void {
   if (!hasCodexUsageRateLimitWindows(status)) return;
   try {
+    const usageStatus = { ...status };
+    delete usageStatus.models;
+    delete usageStatus.modelsCheckedAt;
+    delete usageStatus.modelsCached;
     globalThis.localStorage?.setItem(
       getCodexUsageStatusCacheKey(accountId),
       JSON.stringify({
         version: 1,
         cachedAt: Date.now(),
-        status,
+        status: usageStatus,
       }),
     );
   } catch {
@@ -166,23 +210,170 @@ export function writeCachedCodexUsageStatus({
   }
 }
 
+export function readCachedCodexModelCatalog({
+  accountId,
+  projectId,
+  runtimeVersion,
+  subscriptionRevision,
+  now = Date.now(),
+}: {
+  accountId?: string;
+  projectId?: string;
+  runtimeVersion?: string;
+  subscriptionRevision?: string;
+  now?: number;
+}): CachedCodexModelCatalog | undefined {
+  if (!projectId || !runtimeVersion || !subscriptionRevision) return undefined;
+  const key = getCodexModelCatalogCacheKey(
+    accountId,
+    projectId,
+    runtimeVersion,
+    subscriptionRevision,
+  );
+  try {
+    const raw = globalThis.localStorage?.getItem(key);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    if (
+      !isObject(parsed) ||
+      parsed.version !== 1 ||
+      typeof parsed.cachedAt !== "number" ||
+      !Array.isArray(parsed.models)
+    ) {
+      return undefined;
+    }
+    if (now - parsed.cachedAt >= CODEX_MODEL_CATALOG_TTL_MS) {
+      globalThis.localStorage?.removeItem(key);
+      return undefined;
+    }
+    return { cachedAt: parsed.cachedAt, models: parsed.models };
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeCachedCodexModelCatalog({
+  accountId,
+  projectId,
+  runtimeVersion,
+  subscriptionRevision,
+  models,
+  cachedAt = Date.now(),
+}: {
+  accountId?: string;
+  projectId?: string;
+  runtimeVersion?: string;
+  subscriptionRevision?: string;
+  models?: CodexModelCapabilityInfo[];
+  cachedAt?: number;
+}): void {
+  if (
+    !projectId ||
+    !runtimeVersion ||
+    !subscriptionRevision ||
+    !models?.length
+  ) {
+    return;
+  }
+  try {
+    globalThis.localStorage?.setItem(
+      getCodexModelCatalogCacheKey(
+        accountId,
+        projectId,
+        runtimeVersion,
+        subscriptionRevision,
+      ),
+      JSON.stringify({ version: 1, cachedAt, models }),
+    );
+  } catch {
+    // Ignore storage errors; the project-host cache remains authoritative.
+  }
+}
+
+export function clearCachedCodexModelCatalog({
+  accountId,
+}: {
+  accountId?: string;
+}): void {
+  const prefix = getCodexModelCatalogCachePrefix(accountId);
+  const invalidationKey = getCodexModelCatalogInvalidationKey(accountId);
+  try {
+    const storage = globalThis.localStorage;
+    const keys: string[] = [];
+    for (let index = 0; index < (storage?.length ?? 0); index += 1) {
+      const key = storage?.key(index);
+      if (key?.startsWith(prefix)) keys.push(key);
+    }
+    for (const key of keys) storage?.removeItem(key);
+    globalThis.localStorage?.setItem(
+      invalidationKey,
+      `${Date.now()}:${Math.random()}`,
+    );
+  } catch {
+    // Ignore storage errors; a forced refresh still bypasses backend caches.
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent(CODEX_MODEL_CATALOG_INVALIDATED_EVENT, {
+        detail: { key: invalidationKey },
+      }),
+    );
+  }
+}
+
+export function subscribeToCodexModelCatalogInvalidation({
+  accountId,
+  onInvalidate,
+}: {
+  accountId?: string;
+  onInvalidate: () => void;
+}): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  const invalidationKey = getCodexModelCatalogInvalidationKey(accountId);
+  const handleLocal = (event: Event) => {
+    if (
+      (event as CustomEvent<{ key?: string }>).detail?.key === invalidationKey
+    ) {
+      onInvalidate();
+    }
+  };
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === invalidationKey) {
+      onInvalidate();
+    }
+  };
+  window.addEventListener(CODEX_MODEL_CATALOG_INVALIDATED_EVENT, handleLocal);
+  window.addEventListener("storage", handleStorage);
+  return () => {
+    window.removeEventListener(
+      CODEX_MODEL_CATALOG_INVALIDATED_EVENT,
+      handleLocal,
+    );
+    window.removeEventListener("storage", handleStorage);
+  };
+}
+
 export async function getLiveCodexUsageStatus({
   projectId,
   includeModels = false,
+  refreshModels = false,
 }: {
   projectId?: string;
   includeModels?: boolean;
+  refreshModels?: boolean;
 }): Promise<CodexUsageStatusInfo> {
   if (projectId && !lite) {
     return await webapp_client.conat_client.hub.projects.getCodexUsageStatus({
       project_id: projectId,
       include_models: includeModels,
+      refresh_models: refreshModels,
       timeout: CODEX_USAGE_STATUS_TIMEOUT_MS,
     });
   }
   return await webapp_client.conat_client.hub.system.getCodexUsageStatus({
     project_id: projectId || undefined,
     include_models: includeModels,
+    refresh_models: refreshModels,
     timeout: CODEX_USAGE_STATUS_TIMEOUT_MS,
   });
 }

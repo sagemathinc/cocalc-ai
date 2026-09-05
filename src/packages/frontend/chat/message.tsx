@@ -19,6 +19,7 @@ import {
 import { CSSProperties, ReactNode, useEffect, useLayoutEffect } from "react";
 import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import { codexAgentName } from "@cocalc/frontend/account/chatbot";
 import { CSS, useMemo, useRef, useState } from "@cocalc/frontend/app-framework";
 import {
   DropdownMenu,
@@ -45,7 +46,6 @@ import { User } from "@cocalc/frontend/users";
 import { isLanguageModelService } from "@cocalc/util/db-schema/ai-models";
 import { unreachable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import { isCodexModelName } from "@cocalc/util/ai/codex";
 import {
   deriveAcpLogRefs,
   getBestResponseText,
@@ -57,6 +57,7 @@ import {
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
 import { messageToMarkdown } from "./message-to-markdown";
+import { isCodexAgentMessageAuthor } from "./message-author";
 import { codexEventsToMarkdown } from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
@@ -438,8 +439,27 @@ export default function Message({
     [message, actions],
   );
   // Thread identity/model now comes from thread_config metadata.
-  const isCodexThread =
-    typeof isLLMThread === "string" && isCodexModelName(isLLMThread);
+  const isCodexThread = typeof isLLMThread === "string";
+  const senderId = field<string>(message, "sender_id");
+  const hasLanguageModelServiceAuthor = useMemo(() => {
+    const author_id = firstHistoryEntry?.author_id;
+    return typeof author_id === "string" && isLanguageModelService(author_id);
+  }, [firstHistoryEntry]);
+  const hasAcpAssistantMetadata = useMemo(
+    () => isAcpAssistantMessage(message),
+    [message],
+  );
+  const isCodexAgentMessage = isCodexAgentMessageAuthor({
+    threadModel: isLLMThread,
+    senderId,
+    historyAuthorId: firstHistoryEntry?.author_id,
+    hasAcpAssistantMetadata,
+  });
+  const msgWrittenByLLM = hasLanguageModelServiceAuthor || isCodexAgentMessage;
+  const senderName = isCodexAgentMessage
+    ? codexAgentName(senderId)
+    : get_user_name(senderId);
+  const avatarAccountId = isCodexAgentMessage ? "codex-agent" : senderId;
   const useCodexSelectToolbar = useMemo(
     () =>
       shouldUseCodexSelectToolbar({
@@ -627,11 +647,6 @@ export default function Message({
     };
   }, [anyOverlayOpen, onOverlayOpenChange, overlayKey]);
 
-  const msgWrittenByLLM = useMemo(() => {
-    const author_id = firstHistoryEntry?.author_id;
-    return typeof author_id === "string" && isLanguageModelService(author_id);
-  }, [firstHistoryEntry]);
-
   const threadRootMs = useMemo(() => {
     const root = getThreadRootDate({ date, messages });
     const rootMs =
@@ -725,9 +740,7 @@ export default function Message({
     };
   }, [message, project_id, path, messageThreadId]);
 
-  const showCodexActivity = useMemo(() => {
-    return isAcpAssistantMessage(message);
-  }, [message]);
+  const showCodexActivity = hasAcpAssistantMetadata;
   const inlineCodexActivityMode = useMemo(
     () =>
       resolveInlineCodexActivityMode({
@@ -1290,7 +1303,6 @@ export default function Message({
   }
 
   function avatar_column() {
-    const sender_id = field<string>(message, "sender_id");
     let style: CSSProperties = {};
     if (!is_prev_sender) {
       style.marginTop = "22px";
@@ -1309,8 +1321,8 @@ export default function Message({
     return (
       <Col key={0} xs={2}>
         <div style={style}>
-          {sender_id != null && show_avatar ? (
-            <Avatar size={40} account_id={sender_id} />
+          {avatarAccountId != null && show_avatar ? (
+            <Avatar size={40} account_id={avatarAccountId} />
           ) : undefined}
         </div>
       </Col>
@@ -1589,7 +1601,7 @@ export default function Message({
       );
     }
 
-    if (isCodexThread && !is_viewers_message) {
+    if (isCodexAgentMessage) {
       buttons.push(
         <Tooltip key="git-browser" placement="bottom" title="Open git browser">
           <Button
@@ -2207,9 +2219,7 @@ export default function Message({
           attachedSteers={attachedSteers}
           activitySteers={activitySteers}
           onOpenGitBrowser={
-            isCodexThread && !is_viewers_message
-              ? openGitBrowserFromMessage
-              : undefined
+            isCodexAgentMessage ? openGitBrowserFromMessage : undefined
           }
           onDrawerOpenChange={setIsActivityDrawerOpen}
         />
@@ -2348,7 +2358,7 @@ export default function Message({
     };
     return (
       <Drawer
-        title={get_user_name(field(message, "sender_id"))}
+        title={senderName}
         open={showZenMessage}
         onClose={() => setShowZenMessage(false)}
         placement="right"
@@ -2508,10 +2518,8 @@ export default function Message({
             if (d != null) actions?.setFragment(d);
           }}
         >
-          {!is_prev_sender &&
-          !is_viewers_message &&
-          field<string>(message, "sender_id") ? (
-            <Name sender_name={get_user_name(field(message, "sender_id"))} />
+          {!is_prev_sender && !is_viewers_message && senderId ? (
+            <Name sender_name={senderName} />
           ) : undefined}
         </div>
         <div style={messageStyle} className="smc-chat-message">

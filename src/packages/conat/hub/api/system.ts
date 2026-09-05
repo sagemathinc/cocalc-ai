@@ -777,6 +777,8 @@ export interface CodexPaymentSourceInfo {
     | "shared-home"
     | "none";
   hasSubscription: boolean;
+  /** Opaque revision of the connected ChatGPT credential, never secret data. */
+  subscriptionRevision?: string;
   hasProjectApiKey: boolean;
   hasAccountApiKey: boolean;
   hasSiteApiKey: boolean;
@@ -813,6 +815,7 @@ export interface CodexModelCapabilityInfo {
   model: string;
   displayName: string;
   description: string;
+  specialty?: string;
   reasoning: CodexModelReasoningEffortInfo[];
   serviceTiers: CodexModelServiceTierInfo[];
   default?: boolean;
@@ -831,6 +834,8 @@ export interface CodexUsageStatusInfo {
   rateLimits?: unknown;
   tokenUsage?: unknown;
   models?: CodexModelCapabilityInfo[];
+  modelsCheckedAt?: string;
+  modelsCached?: boolean;
   errors?: {
     account?: string;
     rateLimits?: string;
@@ -2762,6 +2767,7 @@ export interface System {
     account_id?: string;
     project_id?: string;
     include_models?: boolean;
+    refresh_models?: boolean;
     timeout?: number;
   }) => Promise<CodexUsageStatusInfo>;
 

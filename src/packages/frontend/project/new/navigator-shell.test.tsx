@@ -516,8 +516,8 @@ describe("NavigatorShell keyboard suppression", () => {
       ),
     ).toMatchObject({
       kind: "upgrade-required",
-      title: "Codex must be upgraded.",
-      description: "Upgrade Codex, then try again.",
+      title: "CoCalc Plus must be upgraded to update Codex.",
+      description: "Upgrade and restart CoCalc Plus, then try again.",
       actionLabel: undefined,
     });
   });

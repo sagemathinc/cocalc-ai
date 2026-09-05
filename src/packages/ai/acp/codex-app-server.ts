@@ -53,6 +53,7 @@ const ACCOUNT_STATUS_REQUEST_TIMEOUT_MS = Math.max(
   5_000,
   Number(process.env.COCALC_CODEX_ACCOUNT_STATUS_TIMEOUT_MS ?? 20_000),
 );
+const ACCOUNT_STATUS_SHUTDOWN_GRACE_MS = 200;
 const TURN_NOTIFICATION_IDLE_TIMEOUT_MS = Math.max(
   REQUEST_TIMEOUT_MS,
   Number(process.env.COCALC_CODEX_APP_SERVER_NOTIFICATION_TIMEOUT_MS ?? 60_000),
@@ -2002,6 +2003,7 @@ function normalizeCodexModelCatalog(
       displayName:
         boundedCatalogText(entry.displayName, 200) || catalogLabel(model),
       description: boundedCatalogText(entry.description),
+      specialty: boundedCatalogText(entry.modelSpecialty, 100) || undefined,
       reasoning,
       serviceTiers,
       default: entry.isDefault === true || undefined,
@@ -2018,6 +2020,24 @@ function isRateLimitsAuthError(error: string | undefined): boolean {
   );
 }
 
+function stopAccountStatusAppServer(proc: ReturnType<typeof spawn>): void {
+  if (proc.exitCode != null || proc.signalCode != null || proc.killed) return;
+  if (!proc.stdin || proc.stdin.destroyed) {
+    proc.kill("SIGKILL");
+    return;
+  }
+  // Codex treats stdin EOF as a graceful app-server shutdown. Give the inner
+  // process time to exit before killing the outer project-runtime launcher.
+  proc.stdin.end();
+  const timer = setTimeout(() => {
+    if (proc.exitCode == null && proc.signalCode == null && !proc.killed) {
+      proc.kill("SIGKILL");
+    }
+  }, ACCOUNT_STATUS_SHUTDOWN_GRACE_MS);
+  timer.unref?.();
+  proc.once("close", () => clearTimeout(timer));
+}
+
 export async function getCodexAppServerAccountStatus(opts: {
   projectId?: string;
   accountId?: string;
@@ -2025,11 +2045,20 @@ export async function getCodexAppServerAccountStatus(opts: {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   appServerLogin?: CodexAppServerLoginHint;
+  isolatedCodexHome?: boolean;
   includeTokenUsage?: boolean;
   includeModels?: boolean;
   timeoutMs?: number;
 }): Promise<CodexAppServerAccountStatus> {
   const timeoutMs = opts.timeoutMs ?? ACCOUNT_STATUS_REQUEST_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  const remainingTimeoutMs = () => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error(`Codex account status timed out after ${timeoutMs}ms`);
+    }
+    return remaining;
+  };
   const projectSpawner = getCodexProjectSpawner();
   const spawned =
     projectSpawner && opts.projectId && projectSpawner.spawnCodexAppServer
@@ -2038,6 +2067,7 @@ export async function getCodexAppServerAccountStatus(opts: {
           accountId: opts.accountId,
           cwd: opts.cwd,
           env: opts.env,
+          isolatedCodexHome: opts.isolatedCodexHome,
           touchReason: false,
         })
       : await spawnStandaloneAppServer(
@@ -2052,17 +2082,21 @@ export async function getCodexAppServerAccountStatus(opts: {
     spawned.handleAppServerRequest,
   );
   try {
-    await client.initialize(timeoutMs);
+    await client.initialize(remainingTimeoutMs());
     const appServerLogin = spawned.appServerLogin ?? opts.appServerLogin;
-    await loginAppServerIfNeeded(client, appServerLogin, timeoutMs);
+    await loginAppServerIfNeeded(client, appServerLogin, remainingTimeoutMs());
     // Validate the current token before rotating it. Status checks are common,
     // and forcing a refresh on every check creates avoidable refresh-token
     // churn across projects and browser tabs.
     const [accountResult] = await Promise.allSettled([
-      client.request("account/read", { refreshToken: false }, timeoutMs),
+      client.request(
+        "account/read",
+        { refreshToken: false },
+        remainingTimeoutMs(),
+      ),
     ]);
     const [rateLimitsResult] = await Promise.allSettled([
-      client.request("account/rateLimits/read", {}, timeoutMs),
+      client.request("account/rateLimits/read", {}, remainingTimeoutMs()),
     ]);
     let account = settledValue(accountResult);
     let rateLimits = settledValue(rateLimitsResult);
@@ -2077,11 +2111,15 @@ export async function getCodexAppServerAccountStatus(opts: {
           value: await client.request(
             "account/read",
             { refreshToken: true },
-            timeoutMs,
+            remainingTimeoutMs(),
           ),
         };
         rateLimits = {
-          value: await client.request("account/rateLimits/read", {}, timeoutMs),
+          value: await client.request(
+            "account/rateLimits/read",
+            {},
+            remainingTimeoutMs(),
+          ),
         };
       } catch (reason) {
         const error = `${reason}`;
@@ -2096,7 +2134,11 @@ export async function getCodexAppServerAccountStatus(opts: {
       try {
         tokenUsageResult = {
           status: "fulfilled",
-          value: await client.request("account/usage/read", {}, timeoutMs),
+          value: await client.request(
+            "account/usage/read",
+            {},
+            remainingTimeoutMs(),
+          ),
         };
       } catch (reason) {
         tokenUsageResult = { status: "rejected", reason };
@@ -2116,7 +2158,7 @@ export async function getCodexAppServerAccountStatus(opts: {
             await client.request(
               "model/list",
               { limit: MAX_MODEL_CATALOG_ENTRIES, includeHidden: false },
-              timeoutMs,
+              remainingTimeoutMs(),
             ),
           ),
         };
@@ -2143,9 +2185,7 @@ export async function getCodexAppServerAccountStatus(opts: {
       errors: normalizedErrors,
     };
   } finally {
-    if (spawned.proc.exitCode == null && !spawned.proc.killed) {
-      spawned.proc.kill("SIGKILL");
-    }
+    stopAccountStatusAppServer(spawned.proc);
   }
 }
 

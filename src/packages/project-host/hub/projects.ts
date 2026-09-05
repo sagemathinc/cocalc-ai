@@ -51,7 +51,10 @@ import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases"
 import type { ProjectSecretsRuntimeCache } from "@cocalc/util/project-secrets";
 import type { HostProjectStartMetadata } from "@cocalc/conat/project-host/api";
 import type { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
-import { getCodexAppServerAccountStatus } from "@cocalc/ai/acp";
+import {
+  getCodexAppServerAccountStatus,
+  type CodexAppServerAccountStatus,
+} from "@cocalc/ai/acp";
 import {
   DEFAULT_PROJECT_IMAGE,
   PROJECT_IMAGE_PATH,
@@ -104,6 +107,7 @@ import {
   cancelCodexDeviceAuth,
 } from "../codex/codex-device-auth";
 import {
+  getCodexSubscriptionIdentity,
   resolveCodexAuthRuntime,
   uploadSubscriptionAuthFile,
 } from "../codex/codex-auth";
@@ -221,6 +225,20 @@ const accountLimitsInflight = new Map<
   string,
   Promise<MembershipEffectiveLimits>
 >();
+const CODEX_MODEL_CATALOG_TTL_MS = 30 * 60_000;
+type CachedCodexModelCatalog = {
+  checkedAt: string;
+  models: NonNullable<CodexUsageStatusInfo["models"]>;
+};
+const codexModelCatalogCache = new TTL<string, CachedCodexModelCatalog>({
+  max: 10_000,
+  ttl: CODEX_MODEL_CATALOG_TTL_MS,
+});
+const codexModelCatalogInflight = new Map<
+  string,
+  Promise<CodexAppServerAccountStatus>
+>();
+const codexModelCatalogGeneration = new Map<string, number>();
 
 let occupiedProjectPortOffsetsCache:
   | {
@@ -325,6 +343,71 @@ export function resetPortBindStateForTesting(): void {
   recentFailedProjectPortOffsets.clear();
   occupiedProjectPortOffsetsCache = undefined;
   occupiedProjectPortOffsetsInflight = undefined;
+}
+
+export function resetCodexModelCatalogCacheForTesting(): void {
+  codexModelCatalogCache.clear();
+  codexModelCatalogInflight.clear();
+  codexModelCatalogGeneration.clear();
+}
+
+function codexModelCatalogCacheKey(
+  accountId: string,
+  subscriptionId: string,
+  runtimeVersion: string,
+): string {
+  return `${accountId}\0${subscriptionId}\0${runtimeVersion}`;
+}
+
+function codexModelCatalogRuntimeVersion(projectId: string): string {
+  const toolsVersion = `${getProject(projectId)?.tools_version ?? ""}`.trim();
+  // Missing legacy metadata must not permit catalogs to cross project
+  // runtimes, since those projects may still mount different Codex binaries.
+  return toolsVersion || `project:${projectId}`;
+}
+
+function invalidateCodexModelCatalog(accountId: string): void {
+  codexModelCatalogGeneration.set(
+    accountId,
+    (codexModelCatalogGeneration.get(accountId) ?? 0) + 1,
+  );
+  const prefix = `${accountId}\0`;
+  for (const key of codexModelCatalogCache.keys()) {
+    if (key.startsWith(prefix)) codexModelCatalogCache.delete(key);
+  }
+}
+
+async function loadCodexModelCatalogStatus({
+  dedupeKey,
+  projectId,
+  accountId,
+  timeoutMs,
+}: {
+  dedupeKey?: string;
+  projectId: string;
+  accountId: string;
+  timeoutMs: number;
+}): Promise<CodexAppServerAccountStatus> {
+  const pending = dedupeKey
+    ? codexModelCatalogInflight.get(dedupeKey)
+    : undefined;
+  if (pending) return await pending;
+  const load = getCodexAppServerAccountStatus({
+    projectId,
+    accountId,
+    isolatedCodexHome: true,
+    includeModels: true,
+    timeoutMs,
+  });
+  if (!dedupeKey) return await load;
+  codexModelCatalogInflight.set(dedupeKey, load);
+  try {
+    return await load;
+  } finally {
+    if (codexModelCatalogInflight.get(dedupeKey) === load) {
+      codexModelCatalogInflight.delete(dedupeKey);
+    }
+  }
 }
 
 async function collectPortBindDiagnostics({
@@ -2809,6 +2892,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     ) {
       throw Error("unknown device auth id");
     }
+    if (status.state === "completed") {
+      invalidateCodexModelCatalog(account_id);
+    }
     return status;
   }
 
@@ -2878,6 +2964,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       codexHome: result.codexHome,
       content,
     });
+    invalidateCodexModelCatalog(account_id);
     return { ok: true as const, synced: synced.ok, ...result };
   }
 
@@ -2903,23 +2990,26 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     account_id,
     project_id,
     include_models,
+    refresh_models,
     timeout,
   }: {
     account_id?: string;
     project_id: string;
     include_models?: boolean;
+    refresh_models?: boolean;
     timeout?: number;
   }): Promise<CodexUsageStatusInfo> {
     assertHostedProjectAccess({ account_id, project_id });
+    const accountId = account_id!;
     const checkedAt = new Date().toISOString();
     let source: CodexUsageStatusInfo["paymentSource"]["source"];
+    let authRuntime: Awaited<ReturnType<typeof resolveCodexAuthRuntime>>;
     try {
-      source = (
-        await resolveCodexAuthRuntime({
-          projectId: project_id,
-          accountId: account_id,
-        })
-      ).source;
+      authRuntime = await resolveCodexAuthRuntime({
+        projectId: project_id,
+        accountId,
+      });
+      source = authRuntime.source;
     } catch (err) {
       const reason = `${err}`;
       return {
@@ -2964,12 +3054,53 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       Math.max(5_000, Number(timeout ?? 45_000)),
     );
     try {
-      const status = await getCodexAppServerAccountStatus({
-        projectId: project_id,
-        accountId: account_id,
-        includeModels: include_models,
-        timeoutMs,
-      });
+      const subscriptionId = include_models
+        ? await getCodexSubscriptionIdentity(authRuntime)
+        : undefined;
+      const runtimeVersion = include_models
+        ? codexModelCatalogRuntimeVersion(project_id)
+        : undefined;
+      const cacheKey = subscriptionId
+        ? codexModelCatalogCacheKey(accountId, subscriptionId, runtimeVersion!)
+        : undefined;
+      const cacheGeneration = codexModelCatalogGeneration.get(accountId) ?? 0;
+      if (cacheKey && refresh_models) {
+        codexModelCatalogCache.delete(cacheKey);
+      }
+      const cachedCatalog =
+        cacheKey && !refresh_models
+          ? codexModelCatalogCache.get(cacheKey)
+          : undefined;
+      const status =
+        include_models && cacheKey && !cachedCatalog
+          ? await loadCodexModelCatalogStatus({
+              // Refresh bypasses a stored catalog, not an identical probe that
+              // is already running. Coalescing here prevents refresh fanout
+              // from spawning many Codex app-servers on the same host.
+              dedupeKey: `${cacheKey}\0${cacheGeneration}`,
+              projectId: project_id,
+              accountId,
+              timeoutMs,
+            })
+          : await getCodexAppServerAccountStatus({
+              projectId: project_id,
+              accountId,
+              isolatedCodexHome: true,
+              includeModels: include_models && !cachedCatalog,
+              timeoutMs,
+            });
+      const liveModels = status.models?.length ? status.models : undefined;
+      if (
+        cacheKey &&
+        liveModels &&
+        (codexModelCatalogGeneration.get(accountId) ?? 0) === cacheGeneration
+      ) {
+        codexModelCatalogCache.set(cacheKey, {
+          checkedAt,
+          models: liveModels,
+        });
+      }
+      const models = cachedCatalog?.models ?? liveModels;
       return {
         available: !!status.rateLimits,
         checkedAt,
@@ -2979,7 +3110,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         account: status.account,
         rateLimits: status.rateLimits,
         tokenUsage: status.tokenUsage,
-        models: status.models,
+        models,
+        modelsCheckedAt:
+          cachedCatalog?.checkedAt ?? (models ? checkedAt : undefined),
+        modelsCached: cachedCatalog ? true : models ? false : undefined,
         errors: status.errors,
         reason:
           !status.rateLimits && status.errors?.rateLimits

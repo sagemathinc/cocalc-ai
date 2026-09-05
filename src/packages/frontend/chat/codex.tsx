@@ -17,6 +17,7 @@ import {
   React,
   useEffect,
   useMemo,
+  useProjectMapField,
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
@@ -31,9 +32,13 @@ import CodexSessionsPanel from "@cocalc/frontend/account/codex-sessions-panel";
 import {
   CODEX_USAGE_LABEL,
   CODEX_USAGE_URL,
+  clearCachedCodexModelCatalog,
   getChatGptAccountInfo,
   getLiveCodexUsageStatus,
+  readCachedCodexModelCatalog,
   readCachedCodexUsageStatus,
+  subscribeToCodexModelCatalogInvalidation,
+  writeCachedCodexModelCatalog,
   writeCachedCodexUsageStatus,
 } from "@cocalc/frontend/account/codex-usage";
 import LiteAISettings from "@cocalc/frontend/account/lite-ai-settings";
@@ -137,16 +142,18 @@ type ModelOption = {
   description?: string;
   reasoning?: CodexReasoningLevel[];
   serviceTiers?: string[];
+  default?: boolean;
   disabled?: boolean;
 };
 
 function staticCodexModelOptions(): ModelOption[] {
-  return DEFAULT_CODEX_MODELS.map((model) => ({
+  return DEFAULT_CODEX_MODELS.map((model, index) => ({
     value: model.name,
     label: model.name,
     description: model.description,
     reasoning: model.reasoning,
     serviceTiers: model.serviceTiers?.map(({ id }) => id),
+    default: index === 0,
   }));
 }
 
@@ -172,37 +179,58 @@ function catalogReasoningLevels(
   });
 }
 
-export function codexModelOptionsForStatus(
-  status?: CodexUsageStatusInfo,
+export function codexModelOptionsForCatalog(
+  catalog?: CodexModelCapabilityInfo[],
+  selectedModel?: string,
 ): ModelOption[] {
-  const catalog = status?.models;
-  if (!catalog?.length) return staticCodexModelOptions();
+  if (!catalog?.length) {
+    const options = staticCodexModelOptions();
+    if (
+      selectedModel &&
+      !options.some(({ value }) => value === selectedModel)
+    ) {
+      options.push({
+        value: selectedModel,
+        label: selectedModel,
+        description:
+          "Previously selected Codex model. Account availability has not been checked yet.",
+      });
+    }
+    return options;
+  }
   const staticModels = new Map(
     DEFAULT_CODEX_MODELS.map((model) => [model.name, model]),
   );
-  const advertised = new Set(catalog.map(({ model }) => model));
-  return [
-    ...catalog.map((model) => {
-      const fallback = staticModels.get(model.model);
-      return {
-        value: model.model,
-        label: model.model,
-        description: model.description || fallback?.description,
-        reasoning: catalogReasoningLevels(model),
-        serviceTiers: model.serviceTiers.map(({ id }) => id),
-      };
-    }),
-    ...DEFAULT_CODEX_MODELS.filter((model) => !advertised.has(model.name)).map(
-      (model) => ({
-        value: model.name,
-        label: model.name,
-        description: `${model.description ?? "Codex model"} Not available with the connected ChatGPT account.`,
-        reasoning: model.reasoning,
-        serviceTiers: model.serviceTiers?.map(({ id }) => id),
-        disabled: true,
-      }),
-    ),
-  ];
+  const options: ModelOption[] = catalog.map((model) => {
+    const fallback = staticModels.get(model.model);
+    const specialty = ["cyber", "cybersecurity"].includes(
+      model.specialty?.toLowerCase() ?? "",
+    )
+      ? "Cybersecurity model."
+      : undefined;
+    return {
+      value: model.model,
+      label: model.model,
+      description: [model.description || fallback?.description, specialty]
+        .filter(Boolean)
+        .join(" "),
+      reasoning: catalogReasoningLevels(model),
+      serviceTiers: model.serviceTiers.map(({ id }) => id),
+      default: model.default,
+    };
+  });
+  if (selectedModel && !options.some(({ value }) => value === selectedModel)) {
+    const fallback = staticModels.get(selectedModel);
+    options.push({
+      value: selectedModel,
+      label: selectedModel,
+      description: `${fallback?.description ?? "Previously selected Codex model."} Not available with the connected ChatGPT account.`,
+      reasoning: fallback?.reasoning,
+      serviceTiers: fallback?.serviceTiers?.map(({ id }) => id),
+      disabled: true,
+    });
+  }
+  return options;
 }
 
 type LiteCodexLocalStatus = {
@@ -471,6 +499,10 @@ export function CodexConfigButton({
 }: CodexConfigButtonProps): React.ReactElement {
   const defaultSessionMode = getDefaultCodexSessionMode();
   const accountId = useTypedRedux("account", "account_id");
+  const codexRuntimeVersion = useProjectMapField<string>(projectId, [
+    "state",
+    "tools_version",
+  ]);
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(chatPath);
   const [open, setOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
@@ -487,23 +519,47 @@ export function CodexConfigButton({
   const [codexUsageLoading, setCodexUsageLoading] = useState(false);
   const [codexUsageStale, setCodexUsageStale] = useState(false);
   const [codexUsageRequested, setCodexUsageRequested] = useState(false);
+  const [codexModelRequestNonce, setCodexModelRequestNonce] = useState(0);
+  const [codexModelsLoading, setCodexModelsLoading] = useState(false);
+  const [codexModelCatalog, setCodexModelCatalog] = useState<
+    CodexModelCapabilityInfo[] | undefined
+  >(undefined);
+  const [codexModelRefreshNonce, setCodexModelRefreshNonce] = useState(0);
   const [hoveredPillSegment, setHoveredPillSegment] = useState<
     PillSegment | undefined
   >(undefined);
   const lastAppliedThreadRef = React.useRef<string | undefined>(undefined);
   const lastCodexUsageScopeRef = React.useRef<string | undefined>(undefined);
+  const lastCodexModelRefreshRef = React.useRef(0);
+  const modelSelectionTouchedRef = React.useRef(false);
+
+  useEffect(
+    () =>
+      subscribeToCodexModelCatalogInvalidation({
+        accountId,
+        onInvalidate: () => {
+          setCodexModelCatalog(undefined);
+          setCodexModelRequestNonce((nonce) => nonce + 1);
+          setCodexModelRefreshNonce((nonce) => nonce + 1);
+        },
+      }),
+    [accountId],
+  );
 
   useEffect(() => {
     setModels(staticCodexModelOptions());
   }, []);
 
+  const selectedModelValue =
+    Form.useWatch("model", form) ?? value?.model ?? threadConfig?.model;
+
   useEffect(() => {
     setModels(
       paymentSource?.source === "subscription"
-        ? codexModelOptionsForStatus(codexUsageStatus)
+        ? codexModelOptionsForCatalog(codexModelCatalog, selectedModelValue)
         : staticCodexModelOptions(),
     );
-  }, [codexUsageStatus, paymentSource?.source]);
+  }, [codexModelCatalog, paymentSource?.source, selectedModelValue]);
 
   const threadConfigKey = codexThreadConfigKey(threadConfig);
 
@@ -515,10 +571,16 @@ export function CodexConfigButton({
       return;
     }
     const threadChanged = lastAppliedThreadRef.current !== threadId;
+    if (threadChanged) {
+      modelSelectionTouchedRef.current = false;
+    }
     if (open && !threadChanged) {
       return;
     }
-    const baseModel = models[0]?.value ?? DEFAULT_MODEL_NAME;
+    const baseModel =
+      models.find((model) => model.default && !model.disabled)?.value ??
+      models.find((model) => !model.disabled)?.value ??
+      DEFAULT_MODEL_NAME;
     const baseReasoning = getReasoningForModel({
       models,
       modelValue: baseModel,
@@ -544,9 +606,9 @@ export function CodexConfigButton({
     const merged: CodexThreadConfig = { ...defaults, ...saved };
     merged.sessionId =
       normalizeCodexSessionId(merged.sessionId) ?? liveSessionId ?? "";
-    const model = models.some((m) => m.value === merged.model)
-      ? merged.model
-      : baseModel;
+    // A model advertised for this account may not exist in the static fallback
+    // catalog. Never rewrite persisted thread state while discovery is pending.
+    const model = `${merged.model ?? ""}`.trim() || baseModel;
     const reasoning = getReasoningForModel({
       models,
       modelValue: model,
@@ -581,7 +643,6 @@ export function CodexConfigButton({
     projectId,
   ]);
 
-  const selectedModelValue = Form.useWatch("model", form) ?? value?.model;
   const selectedReasoningValue =
     Form.useWatch("reasoning", form) ?? value?.reasoning;
   const currentSessionMode =
@@ -684,50 +745,107 @@ export function CodexConfigButton({
   );
 
   useEffect(() => {
+    const wantsModels = open || codexModelRequestNonce > 0;
+    const wantsUsage = open || codexUsageRequested;
     if (
-      (!open && !codexUsageRequested) ||
+      (!wantsModels && !wantsUsage) ||
       paymentSource?.source !== "subscription"
     ) {
       setCodexUsageStatus(undefined);
       setCodexUsageLoading(false);
       setCodexUsageStale(false);
+      setCodexModelsLoading(false);
+      setCodexModelCatalog(undefined);
       lastCodexUsageScopeRef.current = undefined;
       return;
     }
     let cancelled = false;
-    const scope = `${accountId ?? ""}\0${projectId ?? ""}`;
+    const scope = `${accountId ?? ""}\0${projectId ?? ""}\0${codexRuntimeVersion ?? ""}`;
     const scopeChanged = lastCodexUsageScopeRef.current !== scope;
     lastCodexUsageScopeRef.current = scope;
-    const cached = readCachedCodexUsageStatus({ accountId });
-    if (cached) {
-      setCodexUsageStatus(cached.status);
+    const forceModels =
+      codexModelRefreshNonce !== lastCodexModelRefreshRef.current;
+    lastCodexModelRefreshRef.current = codexModelRefreshNonce;
+    const cachedUsage = readCachedCodexUsageStatus({ accountId });
+    const cachedCatalog = forceModels
+      ? undefined
+      : readCachedCodexModelCatalog({
+          accountId,
+          projectId,
+          runtimeVersion: codexRuntimeVersion,
+          subscriptionRevision: paymentSource.subscriptionRevision,
+        });
+    if (cachedUsage) {
+      setCodexUsageStatus(cachedUsage.status);
       setCodexUsageStale(true);
     } else if (scopeChanged) {
       setCodexUsageStatus(undefined);
       setCodexUsageStale(false);
     }
-    setCodexUsageLoading(true);
-    void getLiveCodexUsageStatus({ projectId, includeModels: true })
+    if (cachedCatalog) {
+      setCodexModelCatalog(cachedCatalog.models);
+    } else {
+      // Do not keep an expired catalog selectable while its replacement is in
+      // flight or failed. The static fallback remains available meanwhile.
+      setCodexModelCatalog(undefined);
+    }
+    const includeModels = wantsModels && !cachedCatalog;
+    if (!wantsUsage && !includeModels) {
+      setCodexModelsLoading(false);
+      return;
+    }
+    setCodexUsageLoading(wantsUsage);
+    setCodexModelsLoading(includeModels);
+    void getLiveCodexUsageStatus({
+      projectId,
+      includeModels,
+      refreshModels: forceModels,
+    })
       .then((status: CodexUsageStatusInfo) => {
         if (cancelled) return;
         setCodexUsageStatus(status);
         setCodexUsageStale(false);
         writeCachedCodexUsageStatus({ accountId, status });
+        if (status.models?.length) {
+          setCodexModelCatalog(status.models);
+          const checkedAt = Date.parse(status.modelsCheckedAt ?? "");
+          writeCachedCodexModelCatalog({
+            accountId,
+            projectId,
+            runtimeVersion: codexRuntimeVersion,
+            subscriptionRevision: paymentSource.subscriptionRevision,
+            models: status.models,
+            cachedAt: Number.isFinite(checkedAt) ? checkedAt : Date.now(),
+          });
+        }
       })
       .catch(() => {
         if (cancelled) return;
-        if (!cached) {
+        if (!cachedUsage) {
           setCodexUsageStatus(undefined);
           setCodexUsageStale(false);
         }
       })
       .finally(() => {
-        if (!cancelled) setCodexUsageLoading(false);
+        if (!cancelled) {
+          setCodexUsageLoading(false);
+          setCodexModelsLoading(false);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [accountId, codexUsageRequested, open, paymentSource?.source, projectId]);
+  }, [
+    accountId,
+    codexModelRefreshNonce,
+    codexModelRequestNonce,
+    codexUsageRequested,
+    open,
+    paymentSource?.source,
+    paymentSource?.subscriptionRevision,
+    codexRuntimeVersion,
+    projectId,
+  ]);
 
   const modeLabel =
     modeOptions.find((option) => option.value === currentSessionMode)?.label ??
@@ -775,15 +893,33 @@ export function CodexConfigButton({
 
   useEffect(() => {
     if (!open || paymentSource?.source !== "subscription") return;
-    const catalog = codexUsageStatus?.models;
+    const catalog = codexModelCatalog;
     if (!catalog?.length) return;
     const current = form.getFieldsValue([
       "model",
       "reasoning",
       "serviceTier",
     ]) as Partial<CodexThreadConfig>;
-    const model = current.model ?? selectedModelValue;
-    if (!model || !catalog.some((entry) => entry.model === model)) return;
+    const saved = threadConfig ?? actions?.getCodexConfig?.(threadKey);
+    const hasPersistedModel = !!`${saved?.model ?? ""}`.trim();
+    let model = current.model ?? selectedModelValue;
+    const patch: Partial<CodexThreadConfig> = {};
+    const advertisedDefault =
+      catalog.find((entry) => entry.default)?.model ?? catalog[0]?.model;
+    const mayAdoptAdvertisedDefault =
+      !hasPersistedModel && !modelSelectionTouchedRef.current;
+    if (
+      mayAdoptAdvertisedDefault &&
+      advertisedDefault &&
+      model !== advertisedDefault
+    ) {
+      model = advertisedDefault;
+      patch.model = model;
+    } else if (!model || !catalog.some((entry) => entry.model === model)) {
+      // Preserve an explicit or persisted selection so the UI can show that it
+      // is unavailable instead of silently switching the thread.
+      return;
+    }
     const reasoning = getReasoningForModel({
       models,
       modelValue: model,
@@ -794,7 +930,6 @@ export function CodexConfigButton({
       modelSupportsFastMode(model)
         ? "fast"
         : "standard";
-    const patch: Partial<CodexThreadConfig> = {};
     if ((current.reasoning ?? selectedReasoningValue) !== reasoning) {
       patch.reasoning = reasoning;
     }
@@ -805,7 +940,8 @@ export function CodexConfigButton({
     form.setFieldsValue(patch);
     setValue((currentValue) => ({ ...(currentValue ?? {}), ...patch }));
   }, [
-    codexUsageStatus?.models,
+    actions,
+    codexModelCatalog,
     form,
     models,
     open,
@@ -813,6 +949,8 @@ export function CodexConfigButton({
     selectedModelValue,
     selectedReasoningValue,
     selectedServiceTierValue,
+    threadConfigKey,
+    threadKey,
   ]);
 
   const normalizeConfigForSave = (
@@ -843,6 +981,9 @@ export function CodexConfigButton({
   const onSave = () => saveConfig();
 
   const applyQuickConfigPatch = (patch: Partial<CodexThreadConfig>) => {
+    if (patch.model != null) {
+      modelSelectionTouchedRef.current = true;
+    }
     const nextValues: Partial<CodexThreadConfig> = {
       ...(value ?? {}),
       ...form.getFieldsValue(),
@@ -955,11 +1096,11 @@ export function CodexConfigButton({
     },
     onMouseEnter: () => {
       setHoveredPillSegment(segment);
-      if (
-        (segment === "source" || segment === "model") &&
-        paymentSource?.source === "subscription"
-      ) {
+      if (segment === "source" && paymentSource?.source === "subscription") {
         setCodexUsageRequested(true);
+      }
+      if (segment === "model" && paymentSource?.source === "subscription") {
+        setCodexModelRequestNonce((nonce) => nonce + 1);
       }
     },
     onMouseLeave: () => setHoveredPillSegment(undefined),
@@ -1109,7 +1250,15 @@ export function CodexConfigButton({
                   {displayedModel}
                 </button>
               ) : (
-                <Dropdown menu={modelMenu} trigger={["click"]}>
+                <Dropdown
+                  menu={modelMenu}
+                  trigger={["click"]}
+                  onOpenChange={(nextOpen) => {
+                    if (nextOpen && paymentSource?.source === "subscription") {
+                      setCodexModelRequestNonce((nonce) => nonce + 1);
+                    }
+                  }}
+                >
                   <button
                     type="button"
                     title="Change Codex model"
@@ -1370,7 +1519,29 @@ export function CodexConfigButton({
                 </div>
               ) : null}
               <div style={sectionStyle}>
-                <SectionTitle>Model and session</SectionTitle>
+                <div
+                  style={{
+                    alignItems: "center",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 8,
+                  }}
+                >
+                  <SectionTitle>Model and session</SectionTitle>
+                  {paymentSource?.source === "subscription" &&
+                  !siteFundedPolicy ? (
+                    <Button
+                      size="small"
+                      icon={<Icon name="refresh" />}
+                      loading={codexModelsLoading}
+                      onClick={() => {
+                        clearCachedCodexModelCatalog({ accountId });
+                      }}
+                    >
+                      Refresh models
+                    </Button>
+                  ) : null}
+                </div>
                 <div
                   style={{
                     color: COLORS.GRAY_M,
@@ -1435,6 +1606,7 @@ export function CodexConfigButton({
                           showSearch
                           allowClear
                           onChange={(val) => {
+                            modelSelectionTouchedRef.current = true;
                             const selected = models.find(
                               (m) => m.value === val,
                             );
@@ -1625,7 +1797,9 @@ export function CodexConfigButton({
       <CodexPaymentCredentialsModal
         open={paymentOpen}
         projectId={projectId}
-        refreshPaymentSource={refreshPaymentSource}
+        refreshPaymentSource={() => {
+          refreshPaymentSource?.();
+        }}
         onClose={() => setPaymentOpen(false)}
       />
       <Modal

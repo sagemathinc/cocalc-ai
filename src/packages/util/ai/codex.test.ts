@@ -94,6 +94,18 @@ describe("DEFAULT_CODEX_MODELS", () => {
         serviceTier: "fast",
       }),
     ).toBe("standard");
+    expect(
+      resolveCodexServiceTier({
+        model: "newly-advertised-model",
+        serviceTier: "fast",
+      }),
+    ).toBe("fast");
+    expect(
+      codexServiceTierForAppServer({
+        model: "newly-advertised-model",
+        serviceTier: "fast",
+      }),
+    ).toBe("fast");
     expect(codexServiceTierForAppServer({ model: "gpt-5.6-sol" })).toBe(null);
   });
 });

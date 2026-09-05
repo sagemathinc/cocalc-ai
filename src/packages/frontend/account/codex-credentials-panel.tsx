@@ -27,6 +27,7 @@ import {
 import {
   CODEX_USAGE_LABEL,
   CODEX_USAGE_URL,
+  clearCachedCodexModelCatalog,
   getChatGptAccountInfo,
   getCodexSubscriptionConnection,
   getLiveCodexUsageStatus,
@@ -41,6 +42,7 @@ import {
 import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
+import { formatCodexErrorForDisplay } from "@cocalc/frontend/chat/codex-error-presentation";
 import { COLORS } from "@cocalc/util/theme";
 import type {
   CodexPaymentSourceInfo,
@@ -211,7 +213,7 @@ function formatCodexUsageReason(reason?: string): string | undefined {
   ) {
     return "Codex could not authenticate the stored ChatGPT sign-in. Sign in again, then retry the usage check.";
   }
-  return reason;
+  return formatCodexErrorForDisplay(reason, lite);
 }
 
 export function CodexCredentialsPanel(props: CodexCredentialsPanelProps = {}) {
@@ -267,6 +269,7 @@ function CodexCredentialsPanelBody({
   hidePanelChrome = false,
   onPaymentSourceChanged,
 }: CodexCredentialsPanelProps = {}) {
+  const accountId = useTypedRedux("account", "account_id");
   const projectMap = useTypedRedux("projects", "project_map");
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
@@ -319,9 +322,10 @@ function CodexCredentialsPanelBody({
     setUsageRefreshToken((x) => x + 1);
   }, []);
   const refreshAfterPaymentSourceChange = useCallback(() => {
+    clearCachedCodexModelCatalog({ accountId });
     refresh();
     onPaymentSourceChanged?.();
-  }, [onPaymentSourceChanged, refresh]);
+  }, [accountId, onPaymentSourceChanged, refresh]);
   const deviceAuthPending =
     deviceAuthActionPending || deviceAuth?.state === "pending";
   const openSubscriptionAuthPanel = useCallback(() => {
@@ -540,6 +544,14 @@ function CodexCredentialsPanelBody({
     return `${err}`;
   };
 
+  const getDeviceAuthStartError = (err: unknown): string => {
+    const error = getErrorMessage(err);
+    if (/\b(?:timed? out|timeout)\b/i.test(error)) {
+      return "Starting ChatGPT sign-in timed out. Codex may still be starting in the selected project. Wait a few seconds, then click Sign in again; CoCalc will not retry automatically because that could start a duplicate login.";
+    }
+    return error;
+  };
+
   const copyText = async (text: string, label: string): Promise<void> => {
     try {
       if (navigator.clipboard?.writeText) {
@@ -602,7 +614,7 @@ function CodexCredentialsPanelBody({
       setDeviceAuth(status as DeviceAuthStatus);
       refresh();
     } catch (err) {
-      setDeviceAuthError(getErrorMessage(err));
+      setDeviceAuthError(getDeviceAuthStartError(err));
     } finally {
       setDeviceAuthActionPending(false);
     }
