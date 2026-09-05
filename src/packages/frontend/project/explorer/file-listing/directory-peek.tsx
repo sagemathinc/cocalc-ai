@@ -26,7 +26,7 @@ import { triggerFileAction as triggerProjectFileAction } from "@cocalc/frontend/
 import useFs from "@cocalc/frontend/project/listing/use-fs";
 import useListing from "@cocalc/frontend/project/listing/use-listing";
 import type { FileAction } from "@cocalc/frontend/project_actions";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import * as misc from "@cocalc/util/misc";
 
 interface Props {
@@ -110,8 +110,8 @@ export default function DirectoryPeek({
     <div
       ref={dropRef}
       style={{
-        borderLeft: `5px solid ${COLORS.ANTD_LINK_BLUE}`,
-        background: COLORS.BLUE_LLLL,
+        borderLeft: `5px solid ${UI_COLORS.link}`,
+        background: UI_COLORS.inset,
         padding: "8px 8px 8px 12px",
         maxHeight: MAX_HEIGHT,
         overflowY: "auto",
@@ -125,7 +125,7 @@ export default function DirectoryPeek({
           marginBottom: 6,
         }}
       >
-        <span style={{ fontSize: 11, color: COLORS.GRAY_M }}>
+        <span style={{ fontSize: 11, color: UI_COLORS.secondary }}>
           {entries.length} {misc.plural(entries.length, "item")}
         </span>
         <Button
@@ -135,7 +135,7 @@ export default function DirectoryPeek({
             e.stopPropagation();
             onClose();
           }}
-          style={{ color: COLORS.GRAY_M }}
+          style={{ color: UI_COLORS.secondary }}
         >
           <Icon name="times" />
         </Button>
@@ -148,14 +148,18 @@ export default function DirectoryPeek({
       )}
 
       {error && (
-        <div style={{ color: COLORS.ANTD_RED, fontSize: 12 }}>
+        <div style={{ color: UI_COLORS.danger, fontSize: 12 }}>
           Error loading directory: {String(error)}
         </div>
       )}
 
       {listing != null && !error && entries.length === 0 && (
         <div
-          style={{ color: COLORS.GRAY_M, fontSize: 12, fontStyle: "italic" }}
+          style={{
+            color: UI_COLORS.secondary,
+            fontSize: 12,
+            fontStyle: "italic",
+          }}
         >
           Empty directory
         </div>
@@ -231,12 +235,12 @@ function PeekItem({
             cursor: "pointer",
             width: ITEM_WIDTH,
             fontSize: 12,
-            color: entry.isDir ? COLORS.ANTD_LINK_BLUE : COLORS.GRAY_D,
+            color: entry.isDir ? UI_COLORS.link : UI_COLORS.text,
             opacity:
               isDragging && !disableActions ? 0.45 : entry.mask ? 0.65 : 1,
           }}
           onMouseEnter={(e) => {
-            (e.currentTarget as HTMLElement).style.background = COLORS.GRAY_LLL;
+            (e.currentTarget as HTMLElement).style.background = UI_COLORS.inset;
           }}
           onMouseLeave={(e) => {
             (e.currentTarget as HTMLElement).style.background = "transparent";
@@ -247,7 +251,7 @@ function PeekItem({
             style={{
               fontSize: 12,
               flexShrink: 0,
-              color: entry.isDir ? COLORS.FILE_ICON : undefined,
+              color: entry.isDir ? UI_COLORS.secondary : undefined,
             }}
           />
           <span

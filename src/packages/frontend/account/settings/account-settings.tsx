@@ -38,7 +38,7 @@ import {
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { keys, startswith } from "@cocalc/util/misc";
 import { displayNameFromParts } from "@cocalc/util/accounts/display-name";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
 import {
   FreshAuthModal,
@@ -62,10 +62,10 @@ type PublicSsoStrategy = {
 };
 
 const GOOGLE_ACCOUNT_BUTTON_STYLE = {
-  background: "white",
-  borderColor: "#ccc",
+  background: UI_COLORS.surface,
+  borderColor: UI_COLORS.controlBorder,
   boxShadow: "none",
-  color: COLORS.GRAY_D,
+  color: UI_COLORS.text,
   fontWeight: 600,
 } as const;
 

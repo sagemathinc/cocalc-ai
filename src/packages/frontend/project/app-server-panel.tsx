@@ -56,7 +56,7 @@ import {
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { displayPath } from "@cocalc/util/path-model";
 import { COCALC_CLI_DOWNLOAD_URL } from "@cocalc/util/consts/ui";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   appServerPresetsFromCatalogEntries,
   builtinAppServerPresets,
@@ -165,35 +165,35 @@ function getPresetTheme(preset: AppServerPreset): {
     { accent: string; surface: string; icon: IconName }
   > = {
     core: {
-      accent: COLORS.BLUE_D,
-      surface: COLORS.BLUE_LLLL,
+      accent: UI_COLORS.info,
+      surface: UI_COLORS.infoBg,
       icon: "server",
     },
     docs: {
-      accent: COLORS.BLUE_DOC,
-      surface: COLORS.BLUE_LLLL,
+      accent: UI_COLORS.info,
+      surface: UI_COLORS.infoBg,
       icon: "book",
     },
     publishing: {
-      accent: COLORS.BRWN,
-      surface: COLORS.YELL_LLL,
+      accent: UI_COLORS.warning,
+      surface: UI_COLORS.warningBg,
       icon: "layout",
     },
     "python-web": {
-      accent: COLORS.BS_GREEN_D,
-      surface: COLORS.BS_GREEN_LL,
+      accent: UI_COLORS.success,
+      surface: UI_COLORS.successBg,
       icon: "rocket",
     },
     "python-notebooks": {
-      accent: COLORS.COCALC_ORANGE,
-      surface: COLORS.YELL_LLL,
+      accent: UI_COLORS.warning,
+      surface: UI_COLORS.warningBg,
       icon: "edit",
     },
   };
   const fallback = defaults[preset.category ?? ""] ??
     defaults.core ?? {
-      accent: COLORS.BLUE_D,
-      surface: COLORS.GRAY_LLL,
+      accent: UI_COLORS.info,
+      surface: UI_COLORS.inset,
       icon: "server" as IconName,
     };
   const icon = preset.icon?.trim();
@@ -217,9 +217,9 @@ const PRESET_TAG_STYLE: CSSProperties = {
 
 const PRESET_KIND_TAG_STYLE: CSSProperties = {
   ...PRESET_TAG_STYLE,
-  background: COLORS.GRAY_LLL,
-  borderColor: COLORS.GRAY_L0,
-  color: COLORS.GRAY_M,
+  background: UI_COLORS.inset,
+  borderColor: UI_COLORS.border,
+  color: UI_COLORS.secondary,
 };
 const HIDDEN_APP_TEMPLATE_KEYS = new Set([
   "cocalc-public-viewer",
@@ -262,29 +262,29 @@ function presetCategoryLabel(category?: string): string | undefined {
 function presetCategoryTagStyle(category?: string): CSSProperties {
   const styles: Record<string, CSSProperties> = {
     core: {
-      background: COLORS.BLUE_LLLL,
-      borderColor: COLORS.BLUE_LLL,
-      color: COLORS.BLUE_D,
+      background: UI_COLORS.infoBg,
+      borderColor: UI_COLORS.border,
+      color: UI_COLORS.info,
     },
     docs: {
-      background: COLORS.BLUE_LLLL,
-      borderColor: COLORS.BLUE_LLL,
-      color: COLORS.BLUE_DOC,
+      background: UI_COLORS.infoBg,
+      borderColor: UI_COLORS.border,
+      color: UI_COLORS.info,
     },
     publishing: {
-      background: COLORS.YELL_LLL,
-      borderColor: COLORS.YELL_LL,
-      color: COLORS.YELL_D,
+      background: UI_COLORS.warningBg,
+      borderColor: UI_COLORS.border,
+      color: UI_COLORS.warning,
     },
     "python-web": {
-      background: COLORS.BS_GREEN_LL,
-      borderColor: COLORS.BS_GREEN,
-      color: COLORS.BS_GREEN_D,
+      background: UI_COLORS.successBg,
+      borderColor: UI_COLORS.border,
+      color: UI_COLORS.success,
     },
     "python-notebooks": {
-      background: COLORS.BLUE_LLLL,
-      borderColor: COLORS.BLUE_LL,
-      color: COLORS.BLUE_DD,
+      background: UI_COLORS.infoBg,
+      borderColor: UI_COLORS.border,
+      color: UI_COLORS.info,
     },
   };
   return {
@@ -318,8 +318,8 @@ function PresetSummaryCard({
   const theme = getPresetTheme(preset);
   const categoryLabel = presetCategoryLabel(preset.category);
   const categoryTagStyle = presetCategoryTagStyle(preset.category);
-  const accentColor = COLORS.ANTD_LINK_BLUE;
-  const accentSurface = COLORS.ANTD_BG_BLUE_L;
+  const accentColor = UI_COLORS.info;
+  const accentSurface = UI_COLORS.infoBg;
 
   function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
     if (!onClick) return;
@@ -336,8 +336,8 @@ function PresetSummaryCard({
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
       style={{
-        background: "white",
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        background: UI_COLORS.surface,
+        border: `1px solid ${UI_COLORS.border}`,
         borderLeft: `3px solid ${accentColor}`,
         borderRadius: 8,
         cursor: onClick ? "pointer" : undefined,
@@ -358,7 +358,7 @@ function PresetSummaryCard({
           style={{
             alignItems: "center",
             background: accentSurface,
-            border: `1px solid ${COLORS.BLUE_LLL}`,
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 8,
             color: accentColor,
             display: "flex",
@@ -537,7 +537,7 @@ function renderLogTailBlock({
         style={{
           maxHeight: "180px",
           overflow: "auto",
-          border: "1px solid #eee",
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: "6px",
           padding: "8px",
           background,
@@ -845,10 +845,10 @@ function MetricStat({
   return (
     <div
       style={{
-        border: "1px solid #f0f0f0",
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: "8px",
         padding: "8px 10px",
-        background: subtle ? "#fcfcfc" : "#fff",
+        background: subtle ? UI_COLORS.inset : UI_COLORS.surface,
         minHeight: "58px",
       }}
     >
@@ -985,7 +985,7 @@ function MetricsSparkline({
   values,
   width = 120,
   height = 28,
-  color = "#1677ff",
+  color = UI_COLORS.info,
 }: {
   values: number[];
   width?: number;
@@ -1000,7 +1000,7 @@ function MetricsSparkline({
           y1={height - 1}
           x2={width}
           y2={height - 1}
-          stroke="#d9d9d9"
+          stroke={UI_COLORS.border}
           strokeWidth="1"
         />
       </svg>
@@ -1022,7 +1022,7 @@ function MetricsSparkline({
         y1={height - 1}
         x2={width}
         y2={height - 1}
-        stroke="#d9d9d9"
+        stroke={UI_COLORS.border}
         strokeWidth="1"
       />
       <polyline
@@ -2954,7 +2954,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
         onCancel={() => setInstalledTemplatesOpen(false)}
         width={720}
       >
-        <Paragraph style={{ color: "#666" }}>
+        <Paragraph style={{ color: UI_COLORS.secondary }}>
           These are template runtimes detected in this project. Missing
           templates can still be configured, but may need installation before
           they start.
@@ -2982,7 +2982,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
       </Modal>
       <Card
         size="small"
-        style={{ background: "#fafafa", borderColor: "#efefef" }}
+        style={{ background: UI_COLORS.inset, borderColor: UI_COLORS.border }}
       >
         <Space wrap style={{ width: "100%", justifyContent: "space-between" }}>
           <Space wrap>
@@ -3078,8 +3078,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                   <div
                     key={`launch-${row.id}`}
                     style={{
-                      background: "white",
-                      border: `1px solid ${COLORS.GRAY_LL}`,
+                      background: UI_COLORS.surface,
+                      border: `1px solid ${UI_COLORS.border}`,
                       borderRadius: 8,
                       display: "grid",
                       gap: 8,
@@ -3175,8 +3175,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                   <div
                     key={`installed-${preset.key}`}
                     style={{
-                      background: "white",
-                      border: `1px solid ${COLORS.GRAY_LL}`,
+                      background: UI_COLORS.surface,
+                      border: `1px solid ${UI_COLORS.border}`,
                       borderRadius: 8,
                       display: "grid",
                       gap: 8,
@@ -3397,8 +3397,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                           whiteSpace: "pre-wrap",
                           overflowWrap: "anywhere",
                           padding: "8px",
-                          background: "#fafafa",
-                          border: "1px solid #eee",
+                          background: UI_COLORS.inset,
+                          border: `1px solid ${UI_COLORS.border}`,
                           borderRadius: "6px",
                         }}
                       >
@@ -3526,7 +3526,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                           </Space.Compact>
                           <Paragraph
                             style={{
-                              color: "#666",
+                              color: UI_COLORS.secondary,
                               margin: 0,
                               fontSize: "12px",
                             }}
@@ -3582,7 +3582,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                           </Space.Compact>
                           <Paragraph
                             style={{
-                              color: "#666",
+                              color: UI_COLORS.secondary,
                               margin: 0,
                               fontSize: "12px",
                             }}
@@ -3682,7 +3682,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                                   ) : (
                                     <Paragraph
                                       style={{
-                                        color: "#666",
+                                        color: UI_COLORS.secondary,
                                         margin: 0,
                                         fontSize: "12px",
                                       }}
@@ -3743,9 +3743,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                               style={{
                                 width: "100%",
                                 padding: "10px 12px",
-                                border: "1px solid #f0e2b2",
+                                border: `1px solid ${UI_COLORS.border}`,
                                 borderRadius: "10px",
-                                background: COLORS.YELL_LLL,
+                                background: UI_COLORS.warningBg,
                               }}
                               size={8}
                             >
@@ -3806,7 +3806,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                               />
                               <Paragraph
                                 style={{
-                                  color: "#666",
+                                  color: UI_COLORS.secondary,
                                   margin: 0,
                                   fontSize: "12px",
                                 }}
@@ -3913,7 +3913,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
               <div
                 key={`${item.port}-${item.hosts.join(",")}`}
                 style={{
-                  border: "1px solid #e5e5e5",
+                  border: `1px solid ${UI_COLORS.border}`,
                   borderRadius: "8px",
                   padding: "8px 10px",
                   fontSize: "12px",
@@ -4090,7 +4090,7 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
               <div
                 key={row.id}
                 style={{
-                  border: "1px solid #e5e5e5",
+                  border: `1px solid ${UI_COLORS.border}`,
                   borderRadius: "8px",
                   padding: "8px 10px",
                 }}
@@ -4235,9 +4235,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                     style={{
                       marginTop: "8px",
                       padding: "8px 10px",
-                      border: "1px solid #f0f0f0",
+                      border: `1px solid ${UI_COLORS.border}`,
                       borderRadius: "8px",
-                      background: "#fafafa",
+                      background: UI_COLORS.inset,
                       display: "grid",
                       gap: "6px",
                     }}
@@ -4381,8 +4381,8 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                               whiteSpace: "pre-wrap",
                               overflowWrap: "anywhere",
                               padding: "8px",
-                              background: "#fafafa",
-                              border: "1px solid #eee",
+                              background: UI_COLORS.inset,
+                              border: `1px solid ${UI_COLORS.border}`,
                               borderRadius: "6px",
                             }}
                           >
@@ -4426,14 +4426,14 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                           ? renderLogTailBlock({
                               label: "stderr (tail)",
                               content: startupFailure.stderrTail,
-                              background: "#fff7f7",
+                              background: UI_COLORS.dangerBg,
                             })
                           : null}
                         {startupFailure.stdoutTail
                           ? renderLogTailBlock({
                               label: "stdout (tail)",
                               content: startupFailure.stdoutTail,
-                              background: "#fafafa",
+                              background: UI_COLORS.inset,
                             })
                           : null}
                       </div>
@@ -4519,9 +4519,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                   style={{
                     marginBottom: 0,
                     padding: "10px 12px",
-                    border: "1px solid #eee",
+                    border: `1px solid ${UI_COLORS.border}`,
                     borderRadius: "8px",
-                    background: "#fafafa",
+                    background: UI_COLORS.inset,
                     fontFamily: "monospace",
                     overflowWrap: "anywhere",
                   }}
@@ -4544,9 +4544,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                   style={{
                     marginBottom: 0,
                     padding: "10px 12px",
-                    border: "1px solid #eee",
+                    border: `1px solid ${UI_COLORS.border}`,
                     borderRadius: "8px",
-                    background: "#fafafa",
+                    background: UI_COLORS.inset,
                     fontFamily: "monospace",
                     overflowWrap: "anywhere",
                     whiteSpace: "pre-wrap",
@@ -4578,9 +4578,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                       <div
                         style={{
                           padding: "10px 12px",
-                          border: "1px solid #eee",
+                          border: `1px solid ${UI_COLORS.border}`,
                           borderRadius: "8px",
-                          background: "#fafafa",
+                          background: UI_COLORS.inset,
                         }}
                       >
                         <StaticMarkdown value={installWithCodexPromptPreview} />
@@ -4646,9 +4646,9 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 style={{
                   marginBottom: 0,
                   padding: "10px 12px",
-                  border: "1px solid #eee",
+                  border: `1px solid ${UI_COLORS.border}`,
                   borderRadius: "8px",
-                  background: "#fafafa",
+                  background: UI_COLORS.inset,
                   fontFamily: "monospace",
                   overflowWrap: "anywhere",
                 }}
@@ -4758,10 +4758,10 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 style={{
                   maxHeight: "32vh",
                   overflow: "auto",
-                  border: "1px solid #eee",
+                  border: `1px solid ${UI_COLORS.border}`,
                   borderRadius: "6px",
                   padding: "8px",
-                  background: "#fafafa",
+                  background: UI_COLORS.inset,
                 }}
               >
                 <StaticMarkdown
@@ -4775,10 +4775,10 @@ export function AppServerPanel({ project_id }: { project_id: string }) {
                 style={{
                   maxHeight: "32vh",
                   overflow: "auto",
-                  border: "1px solid #eee",
+                  border: `1px solid ${UI_COLORS.border}`,
                   borderRadius: "6px",
                   padding: "8px",
-                  background: "#fafafa",
+                  background: UI_COLORS.inset,
                 }}
               >
                 <StaticMarkdown

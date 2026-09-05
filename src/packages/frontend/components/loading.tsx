@@ -10,6 +10,7 @@ import { TypedMap } from "@cocalc/frontend/app-framework";
 import useDelayedRender from "@cocalc/frontend/app-framework/delayed-render-hook";
 import { labels } from "@cocalc/frontend/i18n";
 import { Icon } from "./icon";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export type Estimate = TypedMap<{
   time: number; // Time in seconds
@@ -31,8 +32,8 @@ const LOADING_THEMES: { [keys: string]: CSSProperties } = {
     fontSize: "24pt",
     textAlign: "center",
     marginTop: "15px",
-    color: "#888",
-    background: "white",
+    color: UI_COLORS.secondary,
+    background: UI_COLORS.surface,
   },
 } as const;
 

@@ -8,6 +8,14 @@ remain pending until their corresponding gates pass.
 
 Implementation evidence so far:
 
+- The representative native dark-mode audit is complete. Public coverage has
+  60 Light/Dark desktop/mobile probes with no axe, overflow, or capture failures;
+  signed-in coverage has 76 Light/Dark desktop/mobile captures across 19 routes
+  with no capture failures. Direct state checks cover Recent Activity and Create
+  Project. Findings, intentional content boundaries, source inventory, evidence,
+  and remaining limitations are recorded in
+  `src/.agents/native-dark-mode-audit-2026-09-05.md`.
+
 - Shared preference/cache resolution, external store, semantic palettes, and
   generated prepaint support live in `src/packages/util/appearance*.ts`.
 - The util package build and focused appearance tests pass. The bootstrap tests

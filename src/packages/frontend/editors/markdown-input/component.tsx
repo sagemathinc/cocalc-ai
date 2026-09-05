@@ -33,6 +33,7 @@ import { effectiveImmutableEditorSettings } from "@cocalc/frontend/project/works
 import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import { useWorkspaceRecordForPath } from "@cocalc/frontend/project/workspaces/use-workspace-record";
 import { len, trunc, trunc_middle } from "@cocalc/util/misc";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Complete, Item } from "./complete";
 import {
   ALL_PROJECT_COLLABORATORS_MENTION_ID,
@@ -1201,10 +1202,10 @@ export function MarkdownInput(props: Props) {
     return (
       <div
         style={{
-          color: "#767676",
+          color: UI_COLORS.muted,
           fontSize: "12px",
           padding: "2.5px 15px",
-          background: "white",
+          background: UI_COLORS.surface,
           ...instructionsStyle,
         }}
       >
@@ -1226,10 +1227,10 @@ export function MarkdownInput(props: Props) {
     return (
       <div
         style={{
-          color: "#767676",
+          color: UI_COLORS.muted,
           fontSize: "12px",
           padding: "3px 15px",
-          background: "white",
+          background: UI_COLORS.surface,
           ...instructionsStyle,
         }}
       >

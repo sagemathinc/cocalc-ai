@@ -26,6 +26,7 @@ import {
 import { alert_message } from "@cocalc/frontend/alerts";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UxLatencyTrace } from "@cocalc/frontend/monitoring/ux-latency-trace";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 // very large upload limit -- should be plenty?
 // there is no cost for ingress, and as cocalc is a data platform
@@ -41,7 +42,8 @@ const CLOSE_BUTTON_STYLE = {
   right: "15px",
   top: "5px",
   zIndex: 1, // so it floats above text/markdown buttons
-  background: "white",
+  background: UI_COLORS.surface,
+  color: UI_COLORS.text,
   cursor: "pointer",
 } as const;
 

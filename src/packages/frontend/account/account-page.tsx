@@ -26,6 +26,7 @@ import { Icon, Loading, Title } from "@cocalc/frontend/components";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { I18NSelector } from "./i18n-selector";
 import { SETTINGS_OVERVIEW_PAGE } from "./settings-index";
 import {
@@ -302,11 +303,11 @@ export const AccountPage: React.FC = () => {
             inlineIndent={hidden ? 0 : 24}
             style={{
               width: hidden ? 50 : 220,
-              background: "#00000005",
+              background: UI_COLORS.inset,
               flex: "1 1 auto",
               overflowY: "auto",
               minHeight: 0,
-              borderBottom: `1px solid ${COLORS.GRAY_DDD}`,
+              borderBottom: `1px solid ${UI_COLORS.border}`,
             }}
           />
           <Button
@@ -318,7 +319,7 @@ export const AccountPage: React.FC = () => {
               minHeight: 0,
               textAlign: "left",
               padding: "15px 0",
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.secondary,
             }}
             onClick={handleHideToggle}
             icon={

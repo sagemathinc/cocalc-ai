@@ -36,6 +36,7 @@ import useFiles, {
 } from "@cocalc/frontend/project/listing/use-files";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const NEW_FOLDER = "New Folder";
 
@@ -299,7 +300,7 @@ export default function DirectorySelector({
       }
       style={{
         width: "20em",
-        backgroundColor: "white",
+        backgroundColor: UI_COLORS.surface,
         ...style,
       }}
       styles={{

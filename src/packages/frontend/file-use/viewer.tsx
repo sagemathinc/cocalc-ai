@@ -15,6 +15,7 @@ import { search_match, search_split } from "@cocalc/util/misc";
 import { FileUseInfo } from "./info";
 import { open_file_use_entry } from "./util";
 import type { RecentDocumentActivityEntry } from "./types";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 interface Props {
   rows: RecentDocumentActivityEntry[];
@@ -92,6 +93,8 @@ export default function FileUseViewer({
         flexDirection: "column",
         height: "100%",
         minHeight: 0,
+        background: UI_COLORS.surface,
+        color: UI_COLORS.text,
       }}
     >
       <VisibleMDLG>
@@ -144,7 +147,12 @@ export default function FileUseViewer({
       ) : null}
       <Virtuoso
         ref={virtuosoRef}
-        style={{ flex: 1, minHeight: 0, overflowX: "hidden" }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowX: "hidden",
+          background: UI_COLORS.surface,
+        }}
         totalCount={visibleRows.length}
         itemContent={(index) => {
           const info = visibleRows[index]?.row;

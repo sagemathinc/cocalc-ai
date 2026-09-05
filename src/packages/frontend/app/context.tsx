@@ -115,7 +115,9 @@ export function useAntdStyleProvider() {
         ...animationStyle,
       },
       components: {
+        ...baseTheme.components,
         Button: {
+          ...baseTheme.components?.Button,
           ...primaryColor,
         },
       },

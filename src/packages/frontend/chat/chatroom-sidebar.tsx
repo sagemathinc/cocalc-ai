@@ -19,6 +19,7 @@ import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { Resizable } from "re-resizable";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { dateValue, field } from "./access";
 import type { ChatActions } from "./actions";
@@ -31,7 +32,7 @@ import type * as immutable from "immutable";
 
 const THREAD_SIDEBAR_HEADER: React.CSSProperties = {
   padding: "0 20px 15px",
-  color: "#666",
+  color: UI_COLORS.secondary,
 } as const;
 
 const THREAD_ITEM_LABEL_STYLE: React.CSSProperties = {
@@ -48,7 +49,7 @@ const THREAD_SECTION_HEADER_STYLE: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "space-between",
   padding: "0 20px 6px",
-  color: COLORS.GRAY_D,
+  color: UI_COLORS.text,
 } as const;
 
 const ACTIVITY_RECENT_MS = 7_500;
@@ -120,8 +121,8 @@ export function resolveThreadStatusDot({
 }
 
 const THREAD_SIDEBAR_STYLE: React.CSSProperties = {
-  background: "#fafafa",
-  borderRight: "1px solid #eee",
+  background: UI_COLORS.surface,
+  borderRight: `1px solid ${UI_COLORS.border}`,
   padding: "15px 0",
   display: "flex",
   flexDirection: "column",

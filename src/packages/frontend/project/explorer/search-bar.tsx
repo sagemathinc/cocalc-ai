@@ -6,6 +6,7 @@
 import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
 import { Alert, Flex } from "antd";
 import { useIntl } from "react-intl";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Icon, SearchInput, Tooltip } from "@cocalc/frontend/components";
 import { ProjectActions } from "@cocalc/frontend/project_store";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -95,10 +96,11 @@ function describeFindPrefill(prefill: FindPrefill): string {
 }
 
 export const outputMinitermStyle: CSSProperties = {
-  background: "white",
+  background: UI_COLORS.elevated,
+  color: UI_COLORS.text,
   position: "absolute",
   zIndex: 10,
-  boxShadow: "-4px 4px 7px #aaa",
+  boxShadow: `-4px 4px 7px ${UI_COLORS.shadow}`,
   maxHeight: "450px",
   overflow: "auto",
   right: 0,
@@ -389,10 +391,10 @@ export const SearchBar = memo(
               style={{
                 right: "5px",
                 top: "0px",
-                color: "#666",
+                color: UI_COLORS.secondary,
                 fontSize: "14pt",
                 position: "absolute",
-                background: "white",
+                background: UI_COLORS.elevated,
               }}
             >
               <Icon name="times" />

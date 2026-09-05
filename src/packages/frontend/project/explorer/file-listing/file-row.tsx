@@ -22,6 +22,7 @@ import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspac
 
 import * as misc from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { url_href } from "@cocalc/frontend/project/utils";
 import { FileCheckbox } from "./file-checkbox";
 import { type DirectoryListing } from "@cocalc/frontend/project/explorer/types";
@@ -97,7 +98,7 @@ export function FileRow({
 
   function render_icon() {
     const style: React.CSSProperties = {
-      color: mask ? "#bbbbbb" : COLORS.FILE_ICON,
+      color: mask ? UI_COLORS.muted : UI_COLORS.secondary,
       verticalAlign: "sub",
     } as const;
     let body: React.JSX.Element;
@@ -133,7 +134,7 @@ export function FileRow({
     return (
       <a style={styles} cocalc-test="file-line">
         {misc.trunc_middle(name, 50)}
-        <span style={{ color: !mask ? COLORS.FILE_EXT : undefined }}>
+        <span style={{ color: !mask ? UI_COLORS.secondary : undefined }}>
           {ext === "" ? "" : `.${ext}`}
         </span>
         {linkTarget != null && linkTarget != name && (
@@ -171,7 +172,7 @@ export function FileRow({
       wordWrap: "break-word",
       overflowWrap: "break-word",
       verticalAlign: "middle",
-      color: mask ? "#bbbbbb" : COLORS.TAB,
+      color: mask ? UI_COLORS.muted : UI_COLORS.text,
       ...(isOpen ? FILE_ITEM_OPENED_STYLE : undefined),
       backgroundColor: undefined,
     };
@@ -211,7 +212,7 @@ export function FileRow({
         style={{
           cursor: "pointer",
           fontSize: "14pt",
-          color: starred ? COLORS.STAR : COLORS.GRAY_L,
+          color: starred ? COLORS.STAR : UI_COLORS.muted,
         }}
       />
     );
@@ -309,12 +310,12 @@ export function FileRow({
       return (
         <TimeAgo
           date={new Date(mtime).toISOString()}
-          style={{ color: COLORS.GRAY_M }}
+          style={{ color: UI_COLORS.secondary }}
         />
       );
     } catch (error) {
       return (
-        <div style={{ color: COLORS.GRAY_M, display: "inline" }}>
+        <div style={{ color: UI_COLORS.secondary, display: "inline" }}>
           Invalid Date Time
         </div>
       );
@@ -329,7 +330,7 @@ export function FileRow({
     const ext_lower = ext.toLowerCase();
     const style: CSS = {
       marginLeft: "10px",
-      color: COLORS.GRAY,
+      color: UI_COLORS.secondary,
       padding: 0,
     };
     const icon = <Icon name="eye" />;
@@ -392,10 +393,10 @@ export function FileRow({
           type="link"
           href={url}
           onClick={handle_download_click}
-          style={{ color: COLORS.GRAY, padding: 0 }}
+          style={{ color: UI_COLORS.secondary, padding: 0 }}
         >
           {displaySize}
-          <Icon name="cloud-download" style={{ color: COLORS.GRAY }} />
+          <Icon name="cloud-download" style={{ color: UI_COLORS.secondary }} />
         </Button>
       </Popover>
     );
@@ -405,12 +406,12 @@ export function FileRow({
     cursor: "pointer",
     borderRadius: "4px",
     backgroundColor: isOver
-      ? COLORS.BLUE_LLL
+      ? UI_COLORS.selected
       : isInvalidDrop
-        ? COLORS.ANTD_RED_WARN
+        ? UI_COLORS.dangerBg
         : color,
     borderStyle: "solid",
-    borderColor: selected ? "#08c" : "transparent",
+    borderColor: selected ? UI_COLORS.focus : "transparent",
     margin: "1px 1px 1px 1px",
     opacity: isDragging ? 0.45 : 1,
   } as const;
@@ -475,7 +476,7 @@ export function FileRow({
             {render_timestamp()}
           </div>
           {!isDir && (
-            <span style={{ color: COLORS.GRAY_M, flex: "0 0 auto" }}>
+            <span style={{ color: UI_COLORS.secondary, flex: "0 0 auto" }}>
               {render_download_button(url)}
               {render_view_button(url, name)}
             </span>

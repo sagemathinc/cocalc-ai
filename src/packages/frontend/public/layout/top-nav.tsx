@@ -372,7 +372,7 @@ export default function PublicTopNav({
           title="Navigation"
         >
           <div style={{ marginBottom: 16 }}>
-            <AppearanceControl />
+            <AppearanceControl compact />
           </div>
           <Menu
             aria-label="Public pages"
@@ -412,7 +412,7 @@ export default function PublicTopNav({
         }}
       />
       <Space>
-        <AppearanceControl />
+        <AppearanceControl compact />
         {isAuthenticated ? appActions : authActions}
       </Space>
     </Flex>
