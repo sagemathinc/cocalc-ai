@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -12,7 +13,6 @@ import { course, labels } from "@cocalc/frontend/i18n";
 import { MarkdownInput } from "@cocalc/frontend/markdown/markdown-input/main";
 import { UserMap } from "@cocalc/frontend/todo-types";
 import { capitalize, trunc_middle } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
 import type { CourseActions } from "../actions";
 import { CourseStore, HandoutRecord, StudentsMap } from "../store";
 import * as styles from "../styles";
@@ -591,7 +591,7 @@ export function Handout({
             style={{ alignItems: "center", display: "flex", marginLeft: 8 }}
           >
             {render_handout_button(status)}
-            <span style={{ color: COLORS.GRAY_D }}>
+            <span style={{ color: UI_COLORS.text }}>
               ({status.handout}/{status.handout + status.not_handout}{" "}
               transferred)
             </span>

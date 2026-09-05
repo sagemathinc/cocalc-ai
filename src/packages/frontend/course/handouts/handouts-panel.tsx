@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -141,7 +142,7 @@ export function HandoutsPanel({
     return (
       <Handout
         frame_id={frame_id}
-        backgroundColor={index % 2 === 0 ? "#eee" : undefined}
+        backgroundColor={index % 2 === 0 ? UI_COLORS.inset : undefined}
         key={handout_id}
         handout={get_handout(handout_id)}
         project_id={project_id}

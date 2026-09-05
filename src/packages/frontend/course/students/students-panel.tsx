@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -23,7 +24,6 @@ import type {
   CourseStudentPaymentStatus,
 } from "@cocalc/conat/hub/api/projects";
 import { search_match, search_split } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
 import type { CourseActions } from "../actions";
 import {
   getCourseMembershipPackage,
@@ -310,7 +310,7 @@ export function StudentsPanel({
           </Col>
           <Col flex="auto">
             {num_omitted ? (
-              <span style={{ color: COLORS.GRAY_D }}>
+              <span style={{ color: UI_COLORS.text }}>
                 {intl.formatMessage(
                   {
                     id: "course.students-panel.filter_students.info",
@@ -415,7 +415,7 @@ export function StudentsPanel({
     }
     return (
       <Student
-        background={index % 2 === 0 ? "#eee" : undefined}
+        background={index % 2 === 0 ? UI_COLORS.inset : undefined}
         key={student_id}
         student_id={student_id}
         student={student}

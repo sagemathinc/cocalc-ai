@@ -29,7 +29,8 @@ import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
 import { ManagedEgressCompactButton } from "@cocalc/frontend/purchases/managed-egress-history";
 import { User } from "@cocalc/frontend/users";
-import { rowBackground, search_match, search_split } from "@cocalc/util/misc";
+import { search_match, search_split } from "@cocalc/util/misc";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { COLORS } from "@cocalc/util/theme";
 import {
   FlyoutLogMode,
@@ -487,7 +488,9 @@ export const ProjectLog: React.FC<Props> = ({
         event={x.get("event").toJS()}
         account_id={x.get("account_id")}
         user_map={user_map}
-        backgroundStyle={{ background: rowBackground({ index }) }}
+        backgroundStyle={{
+          background: index % 2 ? UI_COLORS.surface : UI_COLORS.inset,
+        }}
         project_id={project_id}
       />
     );
@@ -515,7 +518,7 @@ export const ProjectLog: React.FC<Props> = ({
         }}
         style={{
           alignItems: "center",
-          background: rowBackground({ index }),
+          background: index % 2 ? UI_COLORS.surface : UI_COLORS.inset,
           boxSizing: "border-box",
           cursor: "pointer",
           display: "flex",

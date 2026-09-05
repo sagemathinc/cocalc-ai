@@ -1,3 +1,4 @@
+import { useMinimapColors } from "@cocalc/frontend/components/minimap/use-colors";
 /*
  *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -33,10 +34,7 @@ import React, {
 import { throttle } from "lodash";
 
 import { canvasBackingStoreSize } from "@cocalc/frontend/components/canvas-backing-store";
-import {
-  MINIMAP_COLORS,
-  MINIMAP_SYNTAX,
-} from "@cocalc/frontend/components/minimap/colors";
+import { MINIMAP_COLORS } from "@cocalc/frontend/components/minimap/colors";
 import { MinimapControls } from "@cocalc/frontend/components/minimap/controls";
 import {
   BlockMinimap,
@@ -108,7 +106,9 @@ function drawCodeMirrorMinimapTextLine(
   y: number,
   charWidth: number,
   maxChars: number,
+  syntax: Record<"text" | "comment" | "string" | "number" | "keyword", string>,
 ): void {
+  const MINIMAP_SYNTAX = syntax;
   const line = text.slice(0, maxChars);
   if (line.length === 0) return;
   ctx.fillStyle = MINIMAP_SYNTAX.text;
@@ -172,6 +172,7 @@ const CodeMirrorTextMinimap: React.FC<{
   cm: CodeMirror.Editor;
   width: number;
 }> = ({ cm, width }) => {
+  const { colors: MINIMAP_COLORS, syntax } = useMinimapColors();
   // false while the whole document fits on screen: then the map is just an
   // outline, with no viewport rectangle to drag
   const [scrollable, setScrollable] = useState(true);
@@ -285,6 +286,7 @@ const CodeMirrorTextMinimap: React.FC<{
         y,
         charWidth,
         maxChars,
+        syntax,
       );
     }
 
@@ -308,7 +310,7 @@ const CodeMirrorTextMinimap: React.FC<{
     );
     ctx.fillStyle = MINIMAP_COLORS.canvasCurrentLine;
     ctx.fillRect(0, currentY, cssWidth, currentH);
-  }, [cm]);
+  }, [cm, MINIMAP_COLORS, syntax]);
 
   const getGeometry = useCallback((): TextMinimapGeometry | null => {
     const scroller = cm.getScrollerElement() as HTMLElement | null;

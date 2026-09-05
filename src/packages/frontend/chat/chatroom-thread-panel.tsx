@@ -1537,7 +1537,7 @@ export function ChatRoomThreadPanel({
             <Icon
               name={icon}
               style={{
-                color: selected ? COLORS.BLUE_D : COLORS.GRAY_M,
+                color: selected ? UI_COLORS.link : UI_COLORS.secondary,
                 fontSize: 18,
               }}
             />
@@ -1545,7 +1545,7 @@ export function ChatRoomThreadPanel({
               <div
                 style={{
                   fontWeight: 600,
-                  color: selected ? COLORS.BLUE_DD : COLORS.GRAY_DD,
+                  color: selected ? UI_COLORS.link : UI_COLORS.text,
                 }}
               >
                 {title}

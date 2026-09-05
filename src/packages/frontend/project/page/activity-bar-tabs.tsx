@@ -766,7 +766,7 @@ export function HiddenActivityBarLauncher() {
             fontSize: "22px",
             color: menuOpen ? UI_COLORS.link : UI_COLORS.secondary,
             transitionDuration: "0s",
-            background: "#fafafa",
+            background: UI_COLORS.surface,
           }}
         >
           <Icon name="bars" style={{ verticalAlign: "4px" }} />
