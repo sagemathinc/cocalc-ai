@@ -246,6 +246,16 @@ the required Rustic restore improvements and historical-recovery tests still
 apply. Compare total lifecycle complexity against an upstream hole-aware backup
 optimization before choosing either approach.
 
+The [disposable sparse-packing experiment](experiments/sparse-packing/README.md)
+passed round trips and small-edit deduplication with Rustic 0.11.1 and 0.11.4.
+It also exposed an incremental-work requirement: regenerating unchanged packed
+files loses Rustic's metadata fast path even when no new file blobs are stored.
+Reusing a persistent packed tree avoided this; reflink-copying it to fresh file
+inodes did not. Qualify cache identity through actual Btrfs snapshots, without
+weakening ordinary-file change detection, before choosing this architecture.
+Keep cache storage bounded and evictable. Deterministic encoding also needs work:
+the tested PAX sparse output included process IDs; GNU sparse output was stable.
+
 ## Restore Capacity and Early Admission
 
 Use a conservative dense-restore bound only as an interim rejection guard until
