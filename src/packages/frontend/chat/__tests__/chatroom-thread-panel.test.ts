@@ -1,6 +1,8 @@
 import {
   DEFAULT_NEW_THREAD_SETUP,
   applyNewThreadSetupPatch,
+  getReasoningForModel,
+  resolveNewThreadCodexServiceTier,
   resolveActiveThreadSearchMatchDate,
   resolveCompactThreadBadgeAppearance,
   resolveSelectedThreadRunningCodexMessage,
@@ -29,6 +31,47 @@ describe("new thread setup patching", () => {
     expect(withSessionMode.model).toBe("gpt-5.4");
     expect(withSessionMode.codexConfig.model).toBe("gpt-5.4");
     expect(withSessionMode.codexConfig.sessionMode).toBe("workspace-write");
+  });
+
+  it("uses capabilities advertised for a dynamic Codex model", () => {
+    const models = [
+      {
+        value: "gpt-6-astra",
+        reasoning: [
+          {
+            id: "ultra" as const,
+            label: "Ultra",
+            description: "Maximum reasoning with task delegation.",
+            default: true,
+          },
+        ],
+        serviceTiers: ["fast"],
+      },
+    ];
+
+    expect(
+      getReasoningForModel({
+        models,
+        modelValue: "gpt-6-astra",
+      }),
+    ).toBe("ultra");
+    expect(
+      resolveNewThreadCodexServiceTier({
+        models,
+        model: "gpt-6-astra",
+        serviceTier: "fast",
+      }),
+    ).toBe("fast");
+  });
+
+  it("drops Fast mode when the advertised model does not support it", () => {
+    expect(
+      resolveNewThreadCodexServiceTier({
+        models: [{ value: "account-limited-model", serviceTiers: [] }],
+        model: "account-limited-model",
+        serviceTier: "fast",
+      }),
+    ).toBe("standard");
   });
 });
 
