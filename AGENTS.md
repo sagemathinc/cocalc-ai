@@ -77,7 +77,8 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 
 - Use `@cocalc/*` absolute imports for cross-package imports.
 - Use `import type` for type-only imports.
-- Use `COLORS` from `@cocalc/util/theme` instead of ad-hoc color literals.
+- For theme-aware frontend UI, use `UI_COLORS` from `@cocalc/util/appearance-palette`, not fixed `COLORS` values or ad-hoc color literals. Pair semantic foreground/background tokens and check both light and dark mode. Prefer the existing Ant Design theme for standard controls; do not override their colors unnecessarily. See [UI colors and appearance](docs/STYLE.md#ui-colors-and-appearance).
+- Reserve literal `COLORS` from `@cocalc/util/theme` for intentionally fixed colors (such as branding or authored content). APIs requiring concrete colors, such as canvas/chart renderers, must use resolved palette values rather than CSS-variable strings; do not redefine `COLORS` to be theme-dependent.
 - Use package logging utilities (`getLogger`) for persistent logging; avoid `console.log` except temporary debugging.
 - Prefer Conat RPC APIs (`src/packages/conat/hub/api`) over Next API routes in `src/packages/next/pages/api/v2`.
 - For direct DB access in hub/backend, use `getPool()` from `@cocalc/database/pool`.
