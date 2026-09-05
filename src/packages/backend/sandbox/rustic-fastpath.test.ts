@@ -58,6 +58,7 @@ describe("rustic TOML fast path", () => {
     });
 
     expect(execMock).toHaveBeenCalledTimes(1);
+    expect(execMock.mock.calls[0][0].killProcessGroup).toBe(true);
     expect(execMock.mock.calls[0][0].safety).toEqual([
       "-P",
       "/tmp/project-repo",

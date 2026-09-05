@@ -106,6 +106,7 @@ export default async function rustic(
       safety: [...common, args[0], ...sanitizedArgs],
       maxSize,
       timeout,
+      killProcessGroup: true,
       env,
       onStdoutLine,
       onStderrLine,
@@ -354,6 +355,7 @@ async function ensureInitializedWithCommon(repo: string, common: string[]) {
         cmd: rusticPath,
         safety: ["--no-progress", ...common, "init"],
         timeout: 30_000,
+        killProcessGroup: true,
       }),
     );
     logger.debug(
@@ -378,6 +380,7 @@ async function initializeTomlRepo(repo: string, common: string[]) {
         cmd: rusticPath,
         safety: ["--no-progress", ...common, "init"],
         timeout: 30_000,
+        killProcessGroup: true,
       }),
     );
     initializedTomlRepos.add(repo);
@@ -488,6 +491,7 @@ export async function getSnapshot({
     cmd: rusticPath,
     safety: [...common, "snapshots", "--json", id],
     timeout,
+    killProcessGroup: true,
   });
   if (!stdout) {
     throw Error(`no snapshot with id ${id}`);
