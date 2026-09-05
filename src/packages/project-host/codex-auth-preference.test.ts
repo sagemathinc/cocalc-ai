@@ -5,6 +5,26 @@ import path from "node:path";
 const mockGetSiteOpenAiApiKeyFromHub = jest.fn(async () => "site-key");
 const mockHasSubscriptionAuthInRegistry = jest.fn(async () => true);
 
+function chatGptAccessToken({
+  accountId,
+  plan,
+  signature,
+}: {
+  accountId: string;
+  plan: string;
+  signature: string;
+}): string {
+  const claims = Buffer.from(
+    JSON.stringify({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: accountId,
+        chatgpt_plan_type: plan,
+      },
+    }),
+  ).toString("base64url");
+  return `header.${claims}.${signature}`;
+}
+
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
   default: () => ({
@@ -77,5 +97,43 @@ describe("Codex auth source preference", () => {
       forceRefresh: true,
     });
     expect(mockHasSubscriptionAuthInRegistry).not.toHaveBeenCalled();
+  });
+
+  it("changes the subscription identity when credentials are refreshed", async () => {
+    const { getCodexSubscriptionIdentity } = await import("./codex/codex-auth");
+    const codexHome = path.join(root, accountId);
+    const writeAuth = async (accessToken: string) => {
+      await fs.writeFile(
+        path.join(codexHome, "auth.json"),
+        JSON.stringify({ tokens: { access_token: accessToken } }),
+      );
+    };
+    await writeAuth(
+      chatGptAccessToken({
+        accountId: "chatgpt-account-1",
+        plan: "plus",
+        signature: "revision-1",
+      }),
+    );
+    const runtime = {
+      source: "subscription" as const,
+      contextId: "subscription-context",
+      codexHome,
+      env: {},
+    };
+    const first = await getCodexSubscriptionIdentity(runtime);
+
+    await writeAuth(
+      chatGptAccessToken({
+        accountId: "chatgpt-account-1",
+        plan: "plus",
+        signature: "revision-2",
+      }),
+    );
+    const second = await getCodexSubscriptionIdentity(runtime);
+
+    expect(first).toMatch(/^chatgpt-account-1:plus:[0-9a-f]{16}$/);
+    expect(second).toMatch(/^chatgpt-account-1:plus:[0-9a-f]{16}$/);
+    expect(second).not.toBe(first);
   });
 });

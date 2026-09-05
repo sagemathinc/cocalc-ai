@@ -687,6 +687,45 @@ describe("CodexConfigButton", () => {
     });
   });
 
+  it("forces catalog discovery from the compact model picker", async () => {
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          subscriptionRevision: "subscription-v1",
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByTitle("Change Codex model"));
+    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalled());
+    getCodexUsageStatus.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+    await waitFor(() => {
+      expect(getCodexUsageStatus).toHaveBeenCalledWith({
+        project_id: "project-1",
+        include_models: true,
+        refresh_models: true,
+        timeout: 60_000,
+      });
+    });
+  });
+
   it("marks the configured model unavailable after account discovery", async () => {
     getCodexUsageStatus.mockResolvedValue({
       available: true,
