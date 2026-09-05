@@ -2,8 +2,19 @@
 
 Date: 2026-09-05
 
-Status: Proposed for review and approval. This document does not authorize or
-implement application changes. All implementation checkboxes below are pending.
+Status: Implementation authorized on 2026-09-05 and in progress. Checked items
+below have been implemented and locally validated; rollout and live acceptance
+remain pending until their corresponding gates pass.
+
+Implementation evidence so far:
+
+- Shared preference/cache resolution, external store, semantic palettes, and
+  generated prepaint support live in `src/packages/util/appearance*.ts`.
+- The util package build and focused appearance tests pass. The bootstrap tests
+  compare initial painting with runtime resolution across modes, cookies,
+  legacy preferences, and blocked storage; palette tests check text/status contrast.
+- This initial foundation is not yet connected to the app or deployed. Public,
+  main-app, editor, Essential, and live browser verification are still pending.
 
 ## 1. Goal And Scope
 
@@ -485,7 +496,7 @@ output is a correct dark-mode design specification.
 
 ### Phase 1: Preference, Tokens, And Startup
 
-- [ ] Add pure resolution/migration helpers and tests.
+- [x] Add pure resolution/migration helpers and tests.
 - [ ] Implement account/local adapters with explicit authority and race behavior.
 - [ ] Add semantic paired palettes and concrete-color adapters.
 - [ ] Add/test prepaint resolution in every relevant static/public entry.
