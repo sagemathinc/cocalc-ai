@@ -14,6 +14,7 @@ import {
 } from "@cocalc/util/accounts/display-name";
 import { recordServerGrowthEvent } from "@cocalc/server/growth-analytics/server-events";
 import { parseAppearancePreference } from "@cocalc/util/appearance";
+import { FOLLOW_APPEARANCE } from "@cocalc/util/appearance-editor";
 
 const log = getLogger("server:accounts:create");
 
@@ -79,7 +80,7 @@ export default async function createAccount({
       "Anonymous User";
     const pool = getPool();
     await pool.query(
-      "INSERT INTO accounts (email_address, password_hash, display_name, first_name, last_name, account_id, created, tags, sign_up_usage_intent, owner_id, ephemeral, customize, home_bay_id, other_settings, trusted_product_access, trusted_product_access_reason, created_by, email_address_verified) VALUES($1::TEXT, $2::TEXT, $3::TEXT, $4::TEXT, $5::TEXT, $6::UUID, NOW(), $7::TEXT[], $8::TEXT, $9::UUID, $10::BIGINT, $11::JSONB, $12::TEXT, COALESCE($13::JSONB, '{}'::JSONB), $14::BOOL, $15::TEXT, $16::INET, $17::JSONB)",
+      "INSERT INTO accounts (email_address, password_hash, display_name, first_name, last_name, account_id, created, tags, sign_up_usage_intent, owner_id, ephemeral, customize, home_bay_id, other_settings, trusted_product_access, trusted_product_access_reason, created_by, email_address_verified, editor_settings, terminal) VALUES($1::TEXT, $2::TEXT, $3::TEXT, $4::TEXT, $5::TEXT, $6::UUID, NOW(), $7::TEXT[], $8::TEXT, $9::UUID, $10::BIGINT, $11::JSONB, $12::TEXT, COALESCE($13::JSONB, '{}'::JSONB), $14::BOOL, $15::TEXT, $16::INET, $17::JSONB, $18::JSONB, $19::JSONB)",
       [
         email ? email : undefined, // can't insert "" more than once!
         password ? passwordHash(password) : undefined, // definitely don't set password_hash to hash of empty string, e.g., anonymous accounts can then NEVER switch to email/password.  This was a bug in production for a while.
@@ -109,6 +110,8 @@ export default async function createAccount({
               [verified_email.address]: verified_email.verified_at,
             }
           : null,
+        { theme: FOLLOW_APPEARANCE },
+        { color_scheme: FOLLOW_APPEARANCE },
       ],
     );
     recordServerGrowthEvent({

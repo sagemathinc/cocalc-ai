@@ -22,6 +22,11 @@ import {
 import { labels } from "@cocalc/frontend/i18n";
 import { DEFAULT_TERMINAL_COLOR_SCHEME } from "@cocalc/util/db-schema/accounts";
 import { set_account_table } from "./util";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
+import {
+  FOLLOW_APPEARANCE,
+  resolveAppearanceEditorTheme,
+} from "@cocalc/util/appearance-editor";
 
 declare global {
   interface Window {
@@ -33,7 +38,10 @@ export function TerminalSettings() {
   const intl = useIntl();
 
   const terminal = useTypedRedux("account", "terminal");
-  const color_scheme = getThemeName(terminal?.get("color_scheme"));
+  const { resolved } = useAppearance();
+  const selected = terminal?.get("color_scheme");
+  const color_scheme =
+    selected === FOLLOW_APPEARANCE ? selected : getThemeName(selected);
 
   if (terminal == null) {
     return <Loading />;
@@ -74,7 +82,9 @@ export function TerminalSettings() {
           showSearch={true}
         />
       </LabeledRow>
-      <TerminalPreview color_scheme={color_scheme} />
+      <TerminalPreview
+        color_scheme={resolveAppearanceEditorTheme(color_scheme, resolved)}
+      />
     </Panel>
   );
 }

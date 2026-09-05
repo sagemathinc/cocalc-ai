@@ -24,6 +24,7 @@ import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
 import { is_different } from "@cocalc/util/misc";
 import { isChatPath } from "@cocalc/frontend/chat/paths";
 import { effectiveImmutableEditorSettings } from "@cocalc/frontend/project/workspaces/editor-theme";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import { useWorkspaceRecordForPath } from "@cocalc/frontend/project/workspaces/use-workspace-record";
 import { afterNextPaint } from "@cocalc/frontend/monitoring/ux-latency-trace";
 import {
@@ -86,10 +87,15 @@ const FrameTreeEditor: React.FC<FrameTreeEditorProps> = React.memo(
     const editor_settings = useTypedRedux("account", "editor_settings");
     const terminal = useTypedRedux("account", "terminal");
     const workspaceRecord = useWorkspaceRecordForPath(project_id, path);
+    const { resolved } = useAppearance();
     const effectiveEditorSettings =
       editor_settings == null
         ? editor_settings
-        : effectiveImmutableEditorSettings(editor_settings, workspaceRecord);
+        : effectiveImmutableEditorSettings(
+            editor_settings,
+            workspaceRecord,
+            resolved,
+          );
 
     const has_unsaved_changes: boolean = useRedux(name, "has_unsaved_changes");
     const has_uncommitted_changes: boolean = useRedux(

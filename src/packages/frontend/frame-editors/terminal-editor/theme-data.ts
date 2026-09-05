@@ -262,7 +262,9 @@ export const COLOR_THEMES = {
 
 // Use theme_desc for UI to select a theme.
 
-export const theme_desc = {};
+export const theme_desc = {
+  "follow-appearance": "Follow application appearance",
+};
 for (const name in COLOR_THEMES) {
   theme_desc[name] = COLOR_THEMES[name].comment;
 }

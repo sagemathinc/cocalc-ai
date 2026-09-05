@@ -78,6 +78,8 @@ describe("accounts.createAccount", () => {
         null,
         "10.1.2.3",
         null,
+        { theme: "follow-appearance" },
+        { color_scheme: "follow-appearance" },
       ],
     );
   });
@@ -113,6 +115,8 @@ describe("accounts.createAccount", () => {
         null,
         null,
         null,
+        { theme: "follow-appearance" },
+        { color_scheme: "follow-appearance" },
       ],
     );
   });
