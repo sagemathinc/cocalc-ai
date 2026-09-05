@@ -10532,9 +10532,9 @@ function asyncAttentionNotificationMetadata(
   };
 }
 
-async function enqueueAsyncAttentionAnswer(
+async function deliverAsyncAttentionAnswer(
   record: NonNullable<ReturnType<typeof getAcpAttention>>,
-): Promise<void> {
+): Promise<AcpSteerResponse> {
   if (!conatClient) throw new Error("conat client must be initialized");
   const responseIdentity = `${record.attention_id}:${record.response_id ?? "response"}`;
   const responseSubmittedAt =
@@ -10548,6 +10548,8 @@ async function enqueueAsyncAttentionAnswer(
   const content = formatAttentionAnswer(record);
   let config: any = {};
   const senderId = record.account_id;
+  let assistantSenderId = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
+  let alreadyDelivered = false;
   await withChatSyncDB({
     client: conatClient,
     project_id: record.project_id,
@@ -10557,6 +10559,16 @@ async function enqueueAsyncAttentionAnswer(
       config = syncdbField(threadConfig, "acp_config") ?? {};
       if (typeof config?.toJS === "function") {
         config = config.toJS();
+      }
+      assistantSenderId = resolveAutomationChatSenderId(
+        syncdbField<string>(threadConfig, "agent_model") ?? config.model,
+      );
+      const existingAnswer = findChatRowByMessageId(syncdb, userMessageId);
+      if (existingAnswer) {
+        alreadyDelivered =
+          Number(syncdbField(existingAnswer, "acp_guidance_delivered_at_ms")) >
+          0;
+        return;
       }
       const parentMessageId = latestThreadMessageIdInSyncDB({
         syncdb,
@@ -10578,28 +10590,30 @@ async function enqueueAsyncAttentionAnswer(
       await syncdb.save();
     },
   });
-  await enqueueChatAcpTurn({
-    request: {
+  if (alreadyDelivered) {
+    return { ok: true, state: "steered", threadId: record.thread_id };
+  }
+  // Use the same delivery path as Send Immediately, including routing to a
+  // detached turn owner and falling back to a new turn when no turn is active.
+  return await handleAcpSteerRequest({
+    project_id: record.project_id,
+    account_id: record.account_id,
+    prompt: content,
+    session_id: normalizeCodexSessionId(config?.sessionId) ?? record.thread_id,
+    config,
+    chat: {
       project_id: record.project_id,
-      account_id: record.account_id,
-      prompt: content,
-      session_id:
-        normalizeCodexSessionId(config?.sessionId) ?? record.thread_id,
-      config,
-      chat: {
-        project_id: record.project_id,
-        path: record.path,
-        sender_id: senderId,
-        user_message_date: userDate.toISOString(),
-        user_message_content: content,
-        message_date: assistantDate.toISOString(),
-        thread_id: record.thread_id,
-        message_id: assistantMessageId,
-        parent_message_id: userMessageId,
-        ...asyncAttentionNotificationMetadata(record),
-      },
+      path: record.path,
+      sender_id: assistantSenderId,
+      send_mode: "immediate",
+      user_message_date: userDate.toISOString(),
+      user_message_content: content,
+      message_date: assistantDate.toISOString(),
+      thread_id: record.thread_id,
+      message_id: assistantMessageId,
+      parent_message_id: userMessageId,
+      ...asyncAttentionNotificationMetadata(record),
     },
-    stream: async () => undefined,
   });
 }
 
@@ -10607,11 +10621,14 @@ async function dispatchClaimedAsyncAttentionResponse(
   record: AcpAttentionStoredRecord,
 ): Promise<AcpAttentionResponse> {
   try {
-    await enqueueAsyncAttentionAnswer(record);
+    const delivery = await deliverAsyncAttentionAnswer(record);
     const resolved = resolveAcpAttention({
       attention_id: record.attention_id,
       state: record.response_declined ? "declined" : "answered",
-      reason: "Answer queued as a new Codex message",
+      reason:
+        delivery.state === "steered"
+          ? "Answer submitted as guidance to the active Codex turn"
+          : "Answer queued as a new Codex message",
     });
     if (resolved && conatClient) {
       void publishStoredAttentionNoticeBestEffort({
@@ -10630,7 +10647,7 @@ async function dispatchClaimedAsyncAttentionResponse(
     const stale = resolveAcpAttention({
       attention_id: record.attention_id,
       state: "stale",
-      reason: `Unable to queue the answer: ${(err as Error)?.message ?? err}`,
+      reason: `Unable to deliver the answer: ${(err as Error)?.message ?? err}`,
     });
     if (stale && conatClient) {
       void publishStoredAttentionNoticeBestEffort({
@@ -10686,11 +10703,14 @@ async function continueStaleAttentionAnswer(
     };
   }
   try {
-    await enqueueAsyncAttentionAnswer(claimed);
+    const delivery = await deliverAsyncAttentionAnswer(claimed);
     const resolved = resolveAcpAttention({
       attention_id: request.attention_id,
       state: "answered",
-      reason: "Stored answer continued as a new Codex message",
+      reason:
+        delivery.state === "steered"
+          ? "Stored answer submitted as guidance to the active Codex turn"
+          : "Stored answer continued as a new Codex message",
     });
     if (resolved && conatClient) {
       void publishStoredAttentionNoticeBestEffort({
@@ -11773,6 +11793,8 @@ export function getAcpAgentRuntimeStatus(): {
 
 export const acpTestInternals = {
   asyncAttentionNotificationMetadata,
+  deliverAsyncAttentionAnswer,
+  initializeAcpRuntime,
   cancelDelayedAcpQueueWake,
   detachedWorkerCanClaimQueuedJob,
   enqueueFailureRecoveryContinuation,
