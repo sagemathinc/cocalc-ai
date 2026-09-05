@@ -2,17 +2,39 @@
 
 Date: 2026-09-05.
 
-Status: implementation plan revised after policy review. This document edit
-does not authorize implementation, deployment, or source deletion. Numeric
-limits and production rollout decisions still require separate approval.
+Status: native Rustic sparse-file improvements are the agreed architecture.
+This change records the implementation plan, not a deployment or permission to
+delete source data. Numeric limits and production rollout decisions still
+require separate approval.
+
+## Decided Architecture
+
+Invest in Rustic itself: first correct sparse restoration, then make backup
+hole-aware without changing the repository format or encoding user files into
+CoCalc-specific wrappers. Both improvements are required milestones. Preserve
+ordinary incremental-backup efficiency as well as sparse-file correctness.
+
+Develop in [sagemathinc/rustic](https://github.com/sagemathinc/rustic), the
+CoCalc-maintained fork. CoCalc already distributes its own Rustic binary to
+project hosts, so a reviewed, tested patch set can ship independently of upstream
+acceptance. Pursue focused upstream contributions, but neither their merge nor
+an upstream release is a prerequisite for CoCalc deployment. CoCalc must own
+maintenance and recovery assurance for any patches it ships.
+
+Linux/Btrfs is the production qualification target. Keep platform-specific code
+isolated and portable behavior correct; do not make support for every filesystem
+a prerequisite for CoCalc. Retain bounded apparent-size, entry-count, memory,
+and runtime policies: faster sparse processing does not make huge logical files
+or their chunk-reference metadata free.
 
 ## Scope and Policy
 
 Protect managed-project hosts from unbounded backup work without building a
 new membership-quota product. Deliver resource containment and safe lifecycle
-admission first, then improve and qualify Rustic sparse restoration, then ship
-a fixed file-size policy with honest exclusion reporting. Sparse-safe restore
-is a required deliverable, not an optional follow-up to the size limit.
+admission first, then qualify native sparse restoration before shipping a fixed
+file-size policy with honest exclusion reporting. Complete native hole-aware
+backup as a required milestone too; it need not delay the restore correctness
+fix. Neither improvement is an optional follow-up replaced by a size limit.
 
 The user-facing rule is:
 
@@ -117,11 +139,11 @@ for in-place restores. A fresh, inaccessible staging tree avoids this specific
 case, but copy/merge paths and resumed partial restores need equal scrutiny.
 
 Required direction: fix both overwrite correctness and mixed-chunk inflation
-in Rustic, pursue focused upstream PRs, then qualify the resulting pinned
-binary in CoCalc. These restore-writer improvements do not require a repository
-format change: the bytes are already available. Phase 2 below makes them a
-release prerequisite. This plan itself does not authorize opening PRs or deploying
-a binary.
+in the CoCalc-maintained Rustic build and qualify that pinned binary. Pursue
+upstream PRs in parallel, not as a prerequisite. These restore-writer improvements
+do not require a repository format change: the bytes are already available.
+Phase 2A below makes them a release prerequisite. This document update itself
+does not open PRs or deploy a binary.
 
 This restore-only feature does not prevent the original 70 TiB backup from
 reading holes. Apparent-size/work limits and process supervision remain needed.
@@ -164,7 +186,7 @@ Stage worker death, timeout escalation, concurrent retries, and huge-apparent
 inputs before a small production canary. Verify healthy backups still restore,
 the host remains responsive, and failed jobs cannot satisfy archive readiness.
 
-## Phase 2: Improve Rustic and Qualify Sparse-Safe Restore
+## Phase 2: Native Rustic Sparse Support
 
 This is a core part of the project, not a best-effort upgrade to 0.11.4. Until
 qualified, conservative admission must preserve the live source rather than
@@ -172,7 +194,9 @@ archive it into a backup that cannot be restored under its entitlement. Phase 1
 containment may ship independently; completing the size-policy rollout may not
 substitute permanent rejection of ordinary sparse files for this work.
 
-1. Add focused upstream regressions and fixes for zero ranges over existing
+### Phase 2A: Correct and Qualify Sparse-Safe Restore
+
+1. Add focused regressions and fixes for zero ranges over existing
    nonzero data, including resumed partial restores. Clear only ranges being
    replaced; do not blindly truncate a file whose matching chunks the planner
    intends to reuse. Preserve correct final length and propagate I/O failures.
@@ -205,61 +229,65 @@ substitute permanent rejection of ordinary sparse files for this work.
    after these tests pass; do not treat this plan or upstream merge as deployment
    approval.
 
-Backup-side hole skipping is separate follow-up work, not a prerequisite for
-this restore fix and not a replacement for apparent-size/work limits. An
-extent-aware zero-chunk fast path may avoid reading/hashing long holes without
-changing the format, but the current format still records each chunk reference.
+### Phase 2B: Efficient Hole-Aware Backup
+
+This is a required milestone, not speculative follow-up work. Implement it in
+Rustic's native source/chunking pipeline, separately from the restore fixes so
+it does not delay Phase 1 or 2A.
+
+1. Read hole information from immutable Linux/Btrfs backup sources. Distinguish
+   actual holes from allocated zero-filled or compressed data; `st_blocks` alone
+   is not an extent map. Use ordinary reads where hole discovery is unsupported,
+   within the same work budgets. Never interpret an I/O error as a hole.
+2. Add a zero-run fast path that avoids reading, buffering, and repeatedly hashing
+   the entire logical hole. Process mixed boundaries with the normal chunker;
+   emit ordinary zero-chunk references for proven long-zero interiors, preserving
+   the configured chunker's results. Ensure every referenced blob really exists
+   in the repository. Preserve bytes and the existing format: no new hole marker,
+   packed-file representation, or CoCalc-only decoder.
+3. Preserve unchanged-file parent reuse without weakening change detection.
+   Exercise actual Btrfs staging snapshots, not just repeated backups of one
+   directory or reflink copies with new inodes. Unchanged backups must not reread
+   file contents. A few edited files must not trigger reprocessing of unrelated
+   files; do not globally ignore ctime or trust restored mtime to obtain reuse.
+4. Measure content reads, hashing work, peak memory, elapsed time, and newly
+   stored bytes separately. Target work proportional to data, extents, and emitted
+   references rather than logical hole bytes. Preserve small-edit deduplication;
+   this does not promise reading only the modified bytes of a changed file.
+   Bound fragmentation, extent enumeration, and reference generation as well as
+   I/O. Use disposable benchmarks, never a production 70 TiB read experiment.
+5. Differential-test optimized output against ordinary chunking across supported
+   chunker configurations, randomized hole/data boundaries, trailing holes, and
+   fragmented files. Independently verify restored contents and test existing
+   repository readers on bounded fixtures. Include cancellation, read errors,
+   retries, and parent snapshots; a lower uploaded-byte count alone is not proof
+   of either correctness or less work.
+
+The unchanged format still records each chunk reference, even with hole-aware
+processing. Keep explicit admission limits rather than promising arbitrary size.
 A disposable 0.11.4 backup of a 32 MiB all-hole file contained 64 references to
 one zero chunk. At that default chunking, 70 TiB needs about 147 million
 references (4.375 GiB for raw 32-byte IDs alone). Bound metadata, memory, entries,
 aggregate work, and runtime even if zero processing becomes faster.
 
-### Alternative to Prototype: Pack Sparse Files Before Rustic
-
-Evaluate encoding each sparse file as its logical size, extent map, and packed
-data in a private backup staging snapshot, then decoding after Rustic restores it.
-Rustic would process the packed size rather than the logical zero stream, avoiding
-both hole reads and millions of repeated zero-chunk references. Prefer testing an
-existing format, such as per-file GNU tar PAX sparse 1.0, before inventing one;
-[GNU tar supports seek-based hole detection and sparse extraction](https://www.gnu.org/software/tar/manual/html_node/sparse.html).
-Do not turn the whole project into one opaque archive.
-
-Use one private writable Btrfs staging snapshot instead of creating it read-only
-as the current code does. Keep it inaccessible to project processes, perform
-original-file policy checks and encoding there, then make that same snapshot
-read-only before Rustic reads it. No second clone is required, and transformation
-must not modify the live project. A tiny packed representation cannot bypass
-logical-size, entry/extent, or decode budgets. Hole detection must distinguish
-real holes from merely compressed/allocated data.
-
-This changes CoCalc's stored-file representation, even if it leaves Rustic's
-repository format unchanged. Prototype versioned, host-authored encoding metadata,
-collision-safe names, hard-link/metadata preservation, bounded validated decoding
-into fresh staging, and quota enforcement. All restore/copy/browse/download and
-offline recovery paths must recognize encoded files; old workers must fail closed,
-not return packed bytes as the original file. Document recovery using standalone
-tools and test incremental backup behavior as well as full round trips.
-
-This is an alternative to investigate, not a selected encoding or permission to
-change production backups. It would not retrofit existing unencoded backups, so
-the required Rustic restore improvements and historical-recovery tests still
-apply. Compare total lifecycle complexity against an upstream hole-aware backup
-optimization before choosing either approach.
+### Evaluated but Not Selected: CoCalc Sparse Packing
 
 The [disposable sparse-packing experiment](experiments/sparse-packing/README.md)
 passed round trips and small-edit deduplication with Rustic 0.11.1 and 0.11.4.
-It also exposed an incremental-work requirement: regenerating unchanged packed
-files loses Rustic's metadata fast path even when no new file blobs are stored.
-Reusing a persistent packed tree avoided this; reflink-copying it to fresh file
-inodes did not. Qualify cache identity through actual Btrfs snapshots, without
-weakening ordinary-file change detection, before choosing this architecture.
-Keep cache storage bounded and evictable. Deterministic encoding also needs work:
-the tested PAX sparse output included process IDs; GNU sparse output was stable.
+Packing can avoid repeated zero references, but introduces an additional stored
+representation across browsing, copies, restores, and offline recovery. It also
+needs deterministic encoding and safe cache identity to avoid re-encoding and
+rehashing unchanged files; it does not fix historical unencoded backups.
+
+Retain the experiment as research evidence, not an active implementation track.
+Do not build the production packing/decoding layer or persistent encoded-file
+cache alongside the native work. Reopening that architecture requires a new
+explicit decision based on a demonstrated obstacle in the selected approach.
 
 ## Restore Capacity and Early Admission
 
 Use a conservative dense-restore bound only as an interim rejection guard until
-the Phase 2 sparse-aware path passes its capacity/correctness gates. This bound
+the Phase 2A sparse-aware path passes its capacity/correctness gates. This bound
 is not permission to attempt a dense restore that might strand the project.
 Improve Rustic rather than build a parallel restore system; neither the existing
 flag nor an apparent-size cap is proof of recoverability.
@@ -495,9 +523,10 @@ Starting points, relative to the repository root:
   `archive-lifecycle-policy.ts`, `archive.ts`, `move.ts`, and `copy.ts`: audit
   freshness and destructive/restore consumers; retain existing lifecycle checks.
 - `src/packages/project-host/rustic-cache-maintenance.ts`: job/cleanup coordination.
-- Upstream `rustic_core` restore planning and `local_destination` range writes:
-  zero-range correctness and mixed-chunk sparsity; CoCalc binary packaging and
-  restore callers must pin and require the qualified implementation.
+- `rustic_core` restore planning and `local_destination` range writes:
+  zero-range correctness and mixed-chunk sparsity. Its source, chunker, and file
+  archiver paths implement hole-aware backup and unchanged-file parent reuse.
+  The CLI fork must explicitly include the reviewed core changes in its build.
 - Copy RPC types, `copy-db.ts`, queue consumers, CLI, and frontend copy controls:
   default-preserving option propagation and truthful per-destination results.
 
@@ -513,14 +542,40 @@ project lifecycle authority. Cross-project copies may span both hosts and bays.
 Read `accessibility.md` before implementing warnings/downloads. A new interactive
 quota administration interface and report browser are not prerequisites.
 
+## Fork Builds and Maintenance
+
+- Use `sagemathinc/rustic` as the development and distribution fork. Audit its
+  existing CoCalc changes and choose a reviewed upstream baseline before updating
+  it; do not discard prior fixes in a wholesale reset.
+- The CLI depends on `rustic_core`; changing the CLI fork alone does not change
+  that library. Pin the reviewed core source explicitly, using a maintained core
+  fork or vendored source as appropriate. Record exact CLI/core revisions, lockfile,
+  Rust toolchain, build procedure, and artifact checksums. Never deploy a floating
+  branch or assume a new version number proves the required capabilities.
+- Keep restore correctness, hole-aware backup, and CoCalc integration changes
+  independently reviewable. Submit focused upstream contributions and track
+  divergence; upstream acceptance is desirable, not a release gate. Carrying a
+  fork does not waive review, security updates, or regression qualification.
+- Publish pinned artifacts through CoCalc's existing host distribution mechanism.
+  Verify both newly bootstrapped and existing shared/private hosts, including
+  privileged helpers and fallback executors. Enforce required capabilities at
+  operation admission throughout a mixed-version rollout.
+- Retain source, build instructions, artifacts, and version metadata needed for
+  standalone recovery without a running CoCalc control plane. Test old backups
+  with the improved reader and new backups with independent compatible readers.
+  Repository compatibility does not imply quota-safe restore with an old dense
+  reader; constrained recovery still requires the qualified sparse path.
+
 ## Release Gates and Acceptance
 
 Deploy resource containment and conservative restore/admission guards first,
 after staging verification; they do not depend on implementing sparse restore.
-Next complete Phase 2: qualify improved Rustic on Linux/Btrfs, canary the managed
+Next complete Phase 2A: qualify improved Rustic on Linux/Btrfs, canary the managed
 sparse-required restore paths, and verify host capability enforcement. Do not
-declare the plan complete or enable Phase 3 exclusions without that gate; the
-file cap does not protect against restore expansion even for eligible files.
+enable Phase 3 exclusions without that gate; the file cap does not protect
+against restore expansion even for eligible files. Phase 2B may ship separately
+after correctness and incremental-performance qualification, but the plan is not
+complete without it. Neither milestone waits for an upstream merge or release.
 For Phase 3, first ship backward-compatible outcome consumers, upgraded
 bootstrap/helpers and hosts, and the warning/copy UI with exclusions disabled.
 Inventory and canary the policy, then enable it only on hosts with verified
@@ -550,6 +605,18 @@ Acceptance tests must demonstrate:
   Test fresh sparse restores from old snapshots and mixed-chunk allocation, too.
   Sparse-required capability failures and old binaries must never trigger dense
   fallback. Exercise the final staging-to-destination transfer as well as Rustic.
+- Hole-aware backup matches ordinary chunking on differential/property tests and
+  preserves byte contents on independent restore verification. Cover actual
+  Btrfs snapshots, all-hole and mixed files, fragmented extents, hard links, and
+  mtime-reset edits. Unchanged backups retain parent reuse; few-file edits do not
+  reread unrelated files. Report real reads/hashing separately from deduplicated
+  upload size, with bounded memory/reference growth and a dense-file regression
+  benchmark. Unsupported hole discovery remains correct and bounded.
+- Keep a permanent recovery regression suite and recurring disposable restore
+  drills, not only a one-time canary. Include old/new repositories, pinned build
+  upgrades, interrupted jobs, and quota-enforced end-to-end archive/dearchive and
+  copy paths. Check final bytes, metadata, allocation, and source preservation on
+  failure before relying on backups as deletion authority.
 - Both execution paths enforce policy; worker death, ignored SIGTERM, privileged
   children, service replacement, and retry recovery leave no orphaned workers.
 - Many eligible files and large directory trees hit bounded admission limits
@@ -588,6 +655,7 @@ Never benchmark large sparse-content reads against production.
 - Explicit defaults for self-hosted deployments.
 - Notice/grace rules for existing files, including unreachable users, and the
   separate go/no-go decision for automatic archival with exclusions.
-- The pinned Rustic/core fix set, capacity evidence, and sparse-restore canary
-  rollout approval. Doing Phase 2 is required; only its specific implementation
-  and deployment approval remain open. Unmodified 0.11.4 is not sufficient.
+- The pinned Rustic/core fix set, capacity and performance evidence, and staged
+  rollout approval. Native sparse-safe restore and hole-aware backup, using the
+  CoCalc fork, are decided; implementation details and deployment approval remain
+  open. Unmodified 0.11.4 is not sufficient, and upstream acceptance is not a gate.
