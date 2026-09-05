@@ -29,6 +29,8 @@ import {
   Typography,
 } from "antd";
 import dayjs from "dayjs";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import "./membership-tiers.css";
 import jsonic from "jsonic";
 import { sortBy, pick } from "lodash";
 import { useIntl } from "react-intl";
@@ -106,7 +108,7 @@ function compactColumnTitle(label: string, title: string) {
   );
 }
 
-const GROUP_BOUNDARY = `2px solid ${COLORS.GRAY_L}`;
+const GROUP_BOUNDARY = `2px solid ${UI_COLORS.border}`;
 
 function groupBoundaryCell({
   left,
@@ -1148,21 +1150,21 @@ export function MembershipTiers() {
       marginBottom: "16px",
       borderRadius: "14px",
       boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)",
-      border: `1px solid ${COLORS.GRAY_LL}`,
+      border: `1px solid ${UI_COLORS.border}`,
     };
     const cardBodyStyle: React.CSSProperties = {
       background:
-        "linear-gradient(135deg, rgba(255,255,255,0.98), rgba(248,250,252,0.86))",
+        "var(--membership-panel, linear-gradient(135deg, rgba(255,255,255,0.98), rgba(248,250,252,0.86)))",
       borderRadius: "0 0 14px 14px",
     };
     const collapseStyle: React.CSSProperties = {
       ...cardStyle,
       overflow: "hidden",
       background:
-        "linear-gradient(135deg, rgba(255,255,255,0.98), rgba(248,250,252,0.9))",
+        "var(--membership-panel, linear-gradient(135deg, rgba(255,255,255,0.98), rgba(248,250,252,0.9)))",
     };
     const sectionIntroStyle = {
-      color: COLORS.GRAY,
+      color: UI_COLORS.secondary,
       marginTop: "-4px",
       marginBottom: "16px",
     };
@@ -1211,7 +1213,7 @@ export function MembershipTiers() {
               </Space>
               <div
                 style={{
-                  color: COLORS.GRAY,
+                  color: UI_COLORS.secondary,
                   fontSize: "12px",
                   fontWeight: 400,
                   marginTop: "2px",
@@ -1238,10 +1240,10 @@ export function MembershipTiers() {
     }) => (
       <div
         style={{
-          border: `1px solid ${COLORS.GRAY_LL}`,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: "10px",
           padding: "14px",
-          background: "rgba(255,255,255,0.7)",
+          background: "var(--membership-panel, rgba(255,255,255,0.7))",
           marginBottom: "14px",
         }}
       >
@@ -1249,13 +1251,15 @@ export function MembershipTiers() {
           <Text strong>{title}</Text>
         </div>
         {note && (
-          <div style={{ color: COLORS.GRAY, marginBottom: "12px" }}>{note}</div>
+          <div style={{ color: UI_COLORS.secondary, marginBottom: "12px" }}>
+            {note}
+          </div>
         )}
         {children}
       </div>
     );
     const fieldHelp = (text: string) => (
-      <span style={{ color: COLORS.GRAY }}>{text}</span>
+      <span style={{ color: UI_COLORS.secondary }}>{text}</span>
     );
     const pricingInputFromForm = (
       getFieldValue: (name: string) => unknown,
@@ -1374,22 +1378,26 @@ export function MembershipTiers() {
     ) => (
       <div
         style={{
-          border: `1px solid ${COLORS.GRAY_LL}`,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: "10px",
           padding: "12px",
-          background: "rgba(255,255,255,0.74)",
+          background: "var(--membership-panel, rgba(255,255,255,0.74))",
           minHeight: "76px",
         }}
       >
-        <div style={{ color: COLORS.GRAY, fontSize: "12px" }}>{label}</div>
+        <div style={{ color: UI_COLORS.secondary, fontSize: "12px" }}>
+          {label}
+        </div>
         <div style={{ fontSize: "18px", fontWeight: 600 }}>{value}</div>
         {note && (
-          <div style={{ color: COLORS.GRAY, fontSize: "12px" }}>{note}</div>
+          <div style={{ color: UI_COLORS.secondary, fontSize: "12px" }}>
+            {note}
+          </div>
         )}
       </div>
     );
     const costTableCellStyle: React.CSSProperties = {
-      borderTop: `1px solid ${COLORS.GRAY_LLL}`,
+      borderTop: `1px solid ${UI_COLORS.border}`,
       padding: "10px 12px",
       verticalAlign: "top",
     };
@@ -1401,12 +1409,12 @@ export function MembershipTiers() {
     };
     const costTableHeaderStyle: React.CSSProperties = {
       padding: "9px 12px",
-      color: COLORS.GRAY,
+      color: UI_COLORS.secondary,
       fontSize: "12px",
       fontWeight: 600,
       textAlign: "left",
-      borderBottom: `1px solid ${COLORS.GRAY_LL}`,
-      background: COLORS.GRAY_LLL,
+      borderBottom: `1px solid ${UI_COLORS.border}`,
+      background: UI_COLORS.inset,
     };
     const expectedUsageInput = (
       key: ExpectedUsageEstimateKey,
@@ -2478,7 +2486,7 @@ export function MembershipTiers() {
                           justifyContent: "space-between",
                           gap: "12px",
                           fontSize: "12px",
-                          color: COLORS.GRAY,
+                          color: UI_COLORS.secondary,
                         }}
                       >
                         <span>{label}</span>
@@ -2494,7 +2502,7 @@ export function MembershipTiers() {
                         style={{
                           height: "8px",
                           borderRadius: "999px",
-                          background: COLORS.GRAY_LL,
+                          background: UI_COLORS.border,
                           overflow: "hidden",
                         }}
                       >
@@ -2512,9 +2520,10 @@ export function MembershipTiers() {
                     <div
                       style={{
                         overflowX: "auto",
-                        border: `1px solid ${COLORS.GRAY_LL}`,
+                        border: `1px solid ${UI_COLORS.border}`,
                         borderRadius: "10px",
-                        background: "rgba(255,255,255,0.82)",
+                        background:
+                          "var(--membership-panel, rgba(255,255,255,0.82))",
                       }}
                     >
                       <table
@@ -2569,7 +2578,7 @@ export function MembershipTiers() {
                                 {row.scaled && (
                                   <div
                                     style={{
-                                      color: COLORS.GRAY,
+                                      color: UI_COLORS.secondary,
                                       fontSize: "12px",
                                     }}
                                   >
@@ -2596,7 +2605,7 @@ export function MembershipTiers() {
                             <td
                               style={{
                                 ...costTableCellStyle,
-                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                borderTop: `2px solid ${UI_COLORS.border}`,
                                 fontWeight: 700,
                               }}
                             >
@@ -2605,13 +2614,13 @@ export function MembershipTiers() {
                             <td
                               style={{
                                 ...costTableNumberCellStyle,
-                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                borderTop: `2px solid ${UI_COLORS.border}`,
                               }}
                             />
                             <td
                               style={{
                                 ...costTableNumberCellStyle,
-                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                borderTop: `2px solid ${UI_COLORS.border}`,
                                 fontWeight: 700,
                               }}
                             >
@@ -2620,13 +2629,13 @@ export function MembershipTiers() {
                             <td
                               style={{
                                 ...costTableNumberCellStyle,
-                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                borderTop: `2px solid ${UI_COLORS.border}`,
                               }}
                             />
                             <td
                               style={{
                                 ...costTableNumberCellStyle,
-                                borderTop: `2px solid ${COLORS.GRAY_LL}`,
+                                borderTop: `2px solid ${UI_COLORS.border}`,
                                 fontWeight: 700,
                               }}
                             >
@@ -2650,10 +2659,11 @@ export function MembershipTiers() {
                     >
                       <div
                         style={{
-                          border: `1px solid ${COLORS.GRAY_LL}`,
+                          border: `1px solid ${UI_COLORS.border}`,
                           borderRadius: "10px",
                           overflow: "hidden",
-                          background: "rgba(255,255,255,0.82)",
+                          background:
+                            "var(--membership-panel, rgba(255,255,255,0.82))",
                         }}
                       >
                         <table
@@ -2680,14 +2690,16 @@ export function MembershipTiers() {
                                 color:
                                   expectedProfitLossUsd >= 0
                                     ? COLORS.BS_GREEN_D
-                                    : COLORS.FG_RED,
+                                    : UI_COLORS.danger,
                               },
                               {
                                 label:
                                   "Exposure: maximum possible loss / month",
                                 value: exposureUsd,
                                 color:
-                                  exposureUsd > 0 ? COLORS.FG_RED : COLORS.GRAY,
+                                  exposureUsd > 0
+                                    ? UI_COLORS.danger
+                                    : UI_COLORS.secondary,
                               },
                             ].map((row) => (
                               <tr key={row.label}>
@@ -2716,13 +2728,15 @@ export function MembershipTiers() {
                           color:
                             expectedProfitLossUsd >= 0
                               ? COLORS.BS_GREEN
-                              : COLORS.FG_RED,
+                              : UI_COLORS.danger,
                         })}
                         {economicsBar({
                           label: "Worst-case exposure",
                           value: exposureUsd,
                           color:
-                            exposureUsd > 0 ? COLORS.FG_RED : COLORS.GRAY_L,
+                            exposureUsd > 0
+                              ? UI_COLORS.danger
+                              : UI_COLORS.border,
                         })}
                       </Space>
                     </div>
