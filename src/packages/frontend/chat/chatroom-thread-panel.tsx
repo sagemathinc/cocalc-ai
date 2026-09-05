@@ -291,6 +291,54 @@ export function getDefaultNewThreadSetup(): NewThreadSetup {
 export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup =
   getDefaultNewThreadSetup();
 
+export function reconcileNewThreadSetupWithCodexCatalog({
+  setup,
+  catalog,
+}: {
+  setup: NewThreadSetup;
+  catalog?: CodexModelCapabilityInfo[];
+}): NewThreadSetup {
+  if (!catalog?.length) return setup;
+  const selectedModel =
+    setup.codexConfig.model ?? setup.model ?? DEFAULT_CODEX_MODEL;
+  const options = codexModelOptionsForCatalog(catalog, selectedModel);
+  const selected = options.find(({ value }) => value === selectedModel);
+  const model =
+    selected && !selected.disabled
+      ? selectedModel
+      : (options.find(({ default: isDefault, disabled }) =>
+          Boolean(isDefault && !disabled),
+        )?.value ?? options.find(({ disabled }) => !disabled)?.value);
+  if (!model) return setup;
+  const reasoning = getReasoningForModel({
+    models: options,
+    modelValue: model,
+    desired: setup.codexConfig.reasoning,
+  });
+  const serviceTier = resolveNewThreadCodexServiceTier({
+    models: options,
+    model,
+    serviceTier: setup.codexConfig.serviceTier,
+  });
+  if (
+    setup.model === model &&
+    setup.codexConfig.model === model &&
+    setup.codexConfig.reasoning === reasoning &&
+    (setup.codexConfig.serviceTier ?? "standard") === serviceTier
+  ) {
+    return setup;
+  }
+  return applyNewThreadSetupPatch(setup, {
+    model,
+    codexConfig: {
+      ...setup.codexConfig,
+      model,
+      reasoning,
+      serviceTier,
+    },
+  });
+}
+
 export function resolveActiveThreadSearchMatchDate({
   threadSearchOpen,
   matchCount,
@@ -626,13 +674,19 @@ export function ChatRoomThreadPanel({
       forceRefresh || cachedCatalog
         ? undefined
         : readCachedCodexModelCatalog({ ...cacheScope, allowExpired: true });
+    const applyCatalog = (catalog: CodexModelCapabilityInfo[]) => {
+      onNewThreadSetupChange((current) =>
+        reconcileNewThreadSetupWithCodexCatalog({ setup: current, catalog }),
+      );
+      setNewThreadCodexModelCatalog(catalog);
+    };
     if (cachedCatalog) {
-      setNewThreadCodexModelCatalog(cachedCatalog.models);
+      applyCatalog(cachedCatalog.models);
       setNewThreadCodexModelsLoading(false);
       return;
     }
     if (staleCatalog) {
-      setNewThreadCodexModelCatalog(staleCatalog.models);
+      applyCatalog(staleCatalog.models);
     } else if (scopeChanged) {
       setNewThreadCodexModelCatalog(undefined);
     }
@@ -644,7 +698,7 @@ export function ChatRoomThreadPanel({
     })
       .then((status) => {
         if (cancelled || !status.models?.length) return;
-        setNewThreadCodexModelCatalog(status.models);
+        applyCatalog(status.models);
         const checkedAt = Date.parse(status.modelsCheckedAt ?? "");
         writeCachedCodexModelCatalog({
           ...cacheScope,
@@ -666,6 +720,7 @@ export function ChatRoomThreadPanel({
     codexRuntimeVersion,
     newThreadCodexModelRefreshNonce,
     newThreadSetup.agentMode,
+    onNewThreadSetupChange,
     project_id,
     selectedThreadKey,
   ]);

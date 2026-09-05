@@ -2,6 +2,7 @@ import {
   DEFAULT_NEW_THREAD_SETUP,
   applyNewThreadSetupPatch,
   getReasoningForModel,
+  reconcileNewThreadSetupWithCodexCatalog,
   resolveNewThreadCodexServiceTier,
   resolveActiveThreadSearchMatchDate,
   resolveCompactThreadBadgeAppearance,
@@ -72,6 +73,65 @@ describe("new thread setup patching", () => {
         serviceTier: "fast",
       }),
     ).toBe("standard");
+  });
+
+  it("replaces an unavailable saved model with the advertised default", () => {
+    const setup = applyNewThreadSetupPatch(DEFAULT_NEW_THREAD_SETUP, {
+      model: "retired-model",
+      codexConfig: {
+        ...DEFAULT_NEW_THREAD_SETUP.codexConfig,
+        model: "retired-model",
+        reasoning: "high",
+        serviceTier: "fast",
+      },
+    });
+    const reconciled = reconcileNewThreadSetupWithCodexCatalog({
+      setup,
+      catalog: [
+        {
+          model: "gpt-6-astra",
+          displayName: "GPT-6-Astra",
+          description: "Current model",
+          default: true,
+          reasoning: [{ id: "medium", description: "Medium", default: true }],
+          serviceTiers: [],
+        },
+      ],
+    });
+
+    expect(reconciled.model).toBe("gpt-6-astra");
+    expect(reconciled.codexConfig).toMatchObject({
+      model: "gpt-6-astra",
+      reasoning: "medium",
+      serviceTier: "standard",
+    });
+  });
+
+  it("persists a catalog downgrade from Fast to Standard", () => {
+    const setup = applyNewThreadSetupPatch(DEFAULT_NEW_THREAD_SETUP, {
+      model: "gpt-6-astra",
+      codexConfig: {
+        ...DEFAULT_NEW_THREAD_SETUP.codexConfig,
+        model: "gpt-6-astra",
+        reasoning: "medium",
+        serviceTier: "fast",
+      },
+    });
+    const reconciled = reconcileNewThreadSetupWithCodexCatalog({
+      setup,
+      catalog: [
+        {
+          model: "gpt-6-astra",
+          displayName: "GPT-6-Astra",
+          description: "Current model",
+          default: true,
+          reasoning: [{ id: "medium", description: "Medium", default: true }],
+          serviceTiers: [],
+        },
+      ],
+    });
+
+    expect(reconciled.codexConfig.serviceTier).toBe("standard");
   });
 });
 
