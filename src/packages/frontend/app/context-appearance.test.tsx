@@ -1,6 +1,7 @@
 import { renderHook } from "@testing-library/react";
 import { useAntdStyleProvider } from "./context";
 import { getBaseAntdTheme } from "./antd-base-theme";
+import { theme as antdTheme } from "antd";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useAccountOtherSetting: () => false,
@@ -23,6 +24,19 @@ it("preserves shared button contrast overrides when applying account styling", (
     getBaseAntdTheme("dark").components!.Menu,
   );
 });
+
+it.each(["Success", "Info", "Warning", "Error"])(
+  "uses official light alert %s colors without changing dark alerts",
+  (status) => {
+    const defaults = antdTheme.getDesignToken();
+    const alert = getBaseAntdTheme("light").components!.Alert!;
+    for (const suffix of ["", "Bg", "Border"]) {
+      const key = `color${status}${suffix}`;
+      expect(alert[key]).toBe(defaults[key]);
+    }
+    expect(getBaseAntdTheme("dark").components?.Alert).toBeUndefined();
+  },
+);
 
 it("preserves the original light-mode success tint and button text", () => {
   const theme = getBaseAntdTheme("light");

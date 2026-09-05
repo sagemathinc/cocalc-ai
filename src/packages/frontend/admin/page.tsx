@@ -20,6 +20,8 @@ import { Icon, Title, type IconName } from "@cocalc/frontend/components";
 import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { set_url_with_search } from "@cocalc/frontend/history";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import { RegistrationToken } from "./registration-token";
 import { RevenueAnalyticsAdmin } from "./revenue-analytics";
 import { MembershipTiers } from "./membership-tiers";
@@ -123,6 +125,9 @@ export function AdminPage({
   route?: AdminRoute;
 }) {
   route = normalizeAdminRoute(route);
+  const { resolved } = useAppearance();
+  const navBackground =
+    resolved === "dark" ? UI_COLORS.surface : COLORS.YELL_LLL;
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const pageActions = useActions("page");
@@ -381,8 +386,8 @@ export function AdminPage({
       {!isMobile && (
         <div
           style={{
-            background: COLORS.YELL_LLL,
-            borderRight: "1px solid rgba(5, 5, 5, 0.06)",
+            background: navBackground,
+            borderRight: `1px solid ${UI_COLORS.border}`,
             display: "flex",
             flexDirection: "column",
           }}
@@ -392,7 +397,7 @@ export function AdminPage({
             type="text"
             style={{
               borderRadius: 0,
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.secondary,
               height: "44px",
               justifyContent: navCollapsed ? "center" : "flex-start",
               paddingLeft: navCollapsed ? 0 : "24px",
@@ -417,8 +422,8 @@ export function AdminPage({
             }
             inlineIndent={navCollapsed ? 0 : 24}
             style={{
-              background: COLORS.YELL_LLL,
-              borderBottom: `1px solid ${COLORS.GRAY_DDD}`,
+              background: navBackground,
+              borderBottom: `1px solid ${UI_COLORS.border}`,
               flex: "1 1 auto",
               minHeight: 0,
               overflowY: "auto",
@@ -430,7 +435,7 @@ export function AdminPage({
             size="small"
             type="text"
             style={{
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.secondary,
               flex: "0 0 auto",
               minHeight: 0,
               padding: "15px 0",

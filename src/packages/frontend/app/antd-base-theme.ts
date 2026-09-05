@@ -4,10 +4,19 @@
  */
 
 import type { ThemeConfig } from "antd";
+import { theme } from "antd";
 
 import { COLORS } from "@cocalc/util/theme";
 import type { ResolvedAppearance } from "@cocalc/util/appearance";
 import { appearancePalette } from "@cocalc/util/appearance-palette";
+
+// Keep light alerts identical to Ant Design without changing other status UI.
+const defaultTokens = theme.getDesignToken();
+const lightAlertColors = Object.fromEntries(
+  Object.entries(defaultTokens).filter(([key]) =>
+    /^color(Success|Warning|Error|Info|Text|Icon|Link)/.test(key),
+  ),
+);
 
 export function getBaseAntdTheme(
   mode: ResolvedAppearance = "light",
@@ -15,6 +24,7 @@ export function getBaseAntdTheme(
   const palette = appearancePalette(mode);
   return {
     components: {
+      ...(mode === "light" ? { Alert: lightAlertColors } : {}),
       ...(mode === "dark"
         ? {
             Menu: {

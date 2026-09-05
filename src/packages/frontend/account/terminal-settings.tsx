@@ -20,7 +20,6 @@ import {
   theme_desc,
 } from "@cocalc/frontend/frame-editors/terminal-editor/theme-data";
 import { labels } from "@cocalc/frontend/i18n";
-import { DEFAULT_TERMINAL_COLOR_SCHEME } from "@cocalc/util/db-schema/accounts";
 import { set_account_table } from "./util";
 import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import {
@@ -67,9 +66,9 @@ export function TerminalSettings() {
     >
       <LabeledRow label={label}>
         <Button
-          disabled={color_scheme === DEFAULT_TERMINAL_COLOR_SCHEME}
+          disabled={color_scheme === FOLLOW_APPEARANCE}
           style={{ float: "right" }}
-          onClick={() => setTerminalColorScheme(DEFAULT_TERMINAL_COLOR_SCHEME)}
+          onClick={() => setTerminalColorScheme(FOLLOW_APPEARANCE)}
         >
           {intl.formatMessage(labels.reset)}
         </Button>

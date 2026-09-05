@@ -34,7 +34,14 @@ export function NotificationNav({
     {
       key: "attention",
       label: (
-        <Text strong style={{ fontSize: "125%", textOverflow: "ellipsis" }}>
+        <Text
+          strong
+          style={{
+            fontSize: "125%",
+            textOverflow: "ellipsis",
+            color: "inherit",
+          }}
+        >
           <Icon name="exclamation-circle" /> Needs attention ({attention_count})
         </Text>
       ),
@@ -42,7 +49,14 @@ export function NotificationNav({
     {
       key: "unread",
       label: (
-        <Text strong style={{ fontSize: "125%", textOverflow: "ellipsis" }}>
+        <Text
+          strong
+          style={{
+            fontSize: "125%",
+            textOverflow: "ellipsis",
+            color: "inherit",
+          }}
+        >
           <Icon name="eye-slash" /> {intl.formatMessage(MSGS.unread)} (
           {unread_count})
         </Text>
@@ -51,7 +65,14 @@ export function NotificationNav({
     {
       key: "read",
       label: (
-        <Text strong style={{ fontSize: "125%", textOverflow: "ellipsis" }}>
+        <Text
+          strong
+          style={{
+            fontSize: "125%",
+            textOverflow: "ellipsis",
+            color: "inherit",
+          }}
+        >
           <Icon name="eye" /> {intl.formatMessage(MSGS.read)}
         </Text>
       ),
@@ -59,7 +80,14 @@ export function NotificationNav({
     {
       key: "allNews",
       label: (
-        <Text strong style={{ fontSize: "125%", textOverflow: "ellipsis" }}>
+        <Text
+          strong
+          style={{
+            fontSize: "125%",
+            textOverflow: "ellipsis",
+            color: "inherit",
+          }}
+        >
           <Icon name={"mail" as IconName} /> {intl.formatMessage(MSGS.news)} (
           {news_unread})
         </Text>
