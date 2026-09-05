@@ -10,7 +10,9 @@ limits and production rollout decisions still require separate approval.
 
 Protect managed-project hosts from unbounded backup work without building a
 new membership-quota product. Deliver resource containment and safe lifecycle
-admission first, then a fixed file-size policy with honest exclusion reporting.
+admission first, then improve and qualify Rustic sparse restoration, then ship
+a fixed file-size policy with honest exclusion reporting. Sparse-safe restore
+is a required deliverable, not an optional follow-up to the size limit.
 
 The user-facing rule is:
 
@@ -77,6 +79,11 @@ The per-file cap alone does not solve this: multiple smaller sparse files can
 also exceed the quota when restored. Preserve the backup, but do not equate
 content completeness with permission to delete the source.
 
+Even a hypothetical 100 GiB cap permits a file using only 1 MiB to expand toward
+100 GiB on restore, stranding an otherwise small project behind its quota. This
+is a data-access risk, not merely a backup-performance issue. The cap bounds
+work; improving the restore path protects recoverability. Both are required.
+
 ### Upstream Sparse Support: Available, Not A Complete Solution
 
 [rustic_core PR #530](https://github.com/rustic-rs/rustic_core/pull/530) was opened
@@ -109,14 +116,12 @@ The inspected core code skips zero-chunk writes while `set_length` opens with
 for in-place restores. A fresh, inaccessible staging tree avoids this specific
 case, but copy/merge paths and resumed partial restores need equal scrutiny.
 
-Implementation direction: qualify 0.11.4 or a maintained successor in staging,
-report/fix the overwrite failure upstream, and investigate zero-range handling
-inside mixed chunks if same-quota sparse restores are to be supported generally.
-This is a focused restore-writer improvement, not a new repository format: the
-bytes are already available. Clear or punch only the replaced ranges safely;
-blindly truncating entire files can destroy chunks the restore planner intends
-to reuse. Keep metadata/quota verification and fresh staging regardless.
-Opening an upstream issue/PR or deploying an upgraded binary is separate work.
+Required direction: fix both overwrite correctness and mixed-chunk inflation
+in Rustic, pursue focused upstream PRs, then qualify the resulting pinned
+binary in CoCalc. These restore-writer improvements do not require a repository
+format change: the bytes are already available. Phase 2 below makes them a
+release prerequisite. This plan itself does not authorize opening PRs or deploying
+a binary.
 
 This restore-only feature does not prevent the original 70 TiB backup from
 reading holes. Apparent-size/work limits and process supervision remain needed.
@@ -159,12 +164,93 @@ Stage worker death, timeout escalation, concurrent retries, and huge-apparent
 inputs before a small production canary. Verify healthy backups still restore,
 the host remains responsive, and failed jobs cannot satisfy archive readiness.
 
+## Phase 2: Improve Rustic and Qualify Sparse-Safe Restore
+
+This is a core part of the project, not a best-effort upgrade to 0.11.4. Until
+qualified, conservative admission must preserve the live source rather than
+archive it into a backup that cannot be restored under its entitlement. Phase 1
+containment may ship independently; completing the size-policy rollout may not
+substitute permanent rejection of ordinary sparse files for this work.
+
+1. Add focused upstream regressions and fixes for zero ranges over existing
+   nonzero data, including resumed partial restores. Clear only ranges being
+   replaced; do not blindly truncate a file whose matching chunks the planner
+   intends to reuse. Preserve correct final length and propagate I/O failures.
+2. Handle zero ranges inside mixed chunks, not just wholly zero chunks. Create
+   holes during writing, not after dense allocation has already exhausted quota.
+   Coalesce suitable ranges without erasing neighboring nonzero bytes. Guarantee
+   byte contents, not an identical original extent map or preallocation layout.
+3. Target Linux/Btrfs for CoCalc qualification. Use the safe `nix` hole-punching
+   interface (`FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE`) where existing bytes
+   must be cleared. Keep platform-specific code isolated for upstream. CoCalc's
+   sparse-required restore must return an explicit error if required operations
+   are unsupported; never fall back silently to dense writes. An upstream
+   portability fallback must not weaken this CoCalc contract.
+4. Integrate a pinned, tested Rustic/core version and explicit sparse mode into
+   every managed restore entry point: backup recovery, archive/dearchive, moves,
+   and Rustic-based path copies, including privileged and fallback execution.
+   Verify old snapshots with the new reader; re-backing up user data must not be
+   necessary to benefit from improved restoration. Mixed-version hosts must
+   reject unsupported operations before lifecycle side effects, not ignore flags
+   or retry densely.
+5. Restore into fresh host-controlled staging inaccessible to project processes.
+   Reserve and enforce its real quota/headroom, validate contents and metadata,
+   then publish without a dense intermediate copy. Preserve original sources and
+   existing destinations on failure. Exercise interruption/retry and hard-link
+   handling even with staging; a reused partial tree is not a fresh destination.
+6. Gate staging and production canaries on actual Btrfs quota-enforced round
+   trips, including a sub-cap 10 GiB sparse file in a 4 GiB project, mixed-chunk
+   files, and old backups. Measure peak staging usage and final quota accounting.
+   A successful exit or small repository is not proof. Only promote the path
+   after these tests pass; do not treat this plan or upstream merge as deployment
+   approval.
+
+Backup-side hole skipping is separate follow-up work, not a prerequisite for
+this restore fix and not a replacement for apparent-size/work limits. An
+extent-aware zero-chunk fast path may avoid reading/hashing long holes without
+changing the format, but the current format still records each chunk reference.
+A disposable 0.11.4 backup of a 32 MiB all-hole file contained 64 references to
+one zero chunk. At that default chunking, 70 TiB needs about 147 million
+references (4.375 GiB for raw 32-byte IDs alone). Bound metadata, memory, entries,
+aggregate work, and runtime even if zero processing becomes faster.
+
+### Alternative to Prototype: Pack Sparse Files Before Rustic
+
+Evaluate encoding each sparse file as its logical size, extent map, and packed
+data in a private backup staging clone, then decoding after Rustic restores it.
+Rustic would process the packed size rather than the logical zero stream, avoiding
+both hole reads and millions of repeated zero-chunk references. Prefer testing an
+existing format, such as per-file GNU tar PAX sparse 1.0, before inventing one;
+[GNU tar supports seek-based hole detection and sparse extraction](https://www.gnu.org/software/tar/manual/html_node/sparse.html).
+Do not turn the whole project into one opaque archive.
+
+The current backup snapshot is read-only. Preserve that immutable source, create
+an inaccessible writable transform clone, then freeze the completed encoded tree
+before Rustic reads it. Keep original-file policy checks before encoding: a tiny
+packed representation cannot bypass logical-size, entry/extent, or decode budgets.
+Hole detection must distinguish real holes from merely compressed/allocated data.
+
+This changes CoCalc's stored-file representation, even if it leaves Rustic's
+repository format unchanged. Prototype versioned, host-authored encoding metadata,
+collision-safe names, hard-link/metadata preservation, bounded validated decoding
+into fresh staging, and quota enforcement. All restore/copy/browse/download and
+offline recovery paths must recognize encoded files; old workers must fail closed,
+not return packed bytes as the original file. Document recovery using standalone
+tools and test incremental backup behavior as well as full round trips.
+
+This is an alternative to investigate, not a selected encoding or permission to
+change production backups. It would not retrofit existing unencoded backups, so
+the required Rustic restore improvements and historical-recovery tests still
+apply. Compare total lifecycle complexity against an upstream hole-aware backup
+optimization before choosing either approach.
+
 ## Restore Capacity and Early Admission
 
-Use a conservative dense-restore model initially, until a specific sparse-aware
-path passes the capacity/correctness gates above. Qualify upstream support rather
-than build a new restore system, but do not treat the existence of the flag as
-proof or delay containment while improving it.
+Use a conservative dense-restore bound only as an interim rejection guard until
+the Phase 2 sparse-aware path passes its capacity/correctness gates. This bound
+is not permission to attempt a dense restore that might strand the project.
+Improve Rustic rather than build a parallel restore system; neither the existing
+flag nor an apparent-size cap is proof of recoverability.
 
 1. From the immutable source or trusted backup manifest, calculate retained
    apparent bytes and entry counts with bounded, overflow-safe arithmetic.
@@ -216,7 +302,7 @@ over-quota restore, preserve the backup and existing destination, fail clearly,
 and offer operator-assisted recovery or a verified sparse-capable path. Do not
 raise production quotas without bounds or retry dense restores indefinitely.
 
-## Phase 2: Size Exclusions and Evidence
+## Phase 3: Size Exclusions and Evidence
 
 1. Run a bounded metadata-only inventory and select the site-wide limit from
    measured impact. Validate and capture the effective policy per job; project
@@ -397,6 +483,9 @@ Starting points, relative to the repository root:
   `archive-lifecycle-policy.ts`, `archive.ts`, `move.ts`, and `copy.ts`: audit
   freshness and destructive/restore consumers; retain existing lifecycle checks.
 - `src/packages/project-host/rustic-cache-maintenance.ts`: job/cleanup coordination.
+- Upstream `rustic_core` restore planning and `local_destination` range writes:
+  zero-range correctness and mixed-chunk sparsity; CoCalc binary packaging and
+  restore callers must pin and require the qualified implementation.
 - Copy RPC types, `copy-db.ts`, queue consumers, CLI, and frontend copy controls:
   default-preserving option propagation and truthful per-destination results.
 
@@ -416,7 +505,11 @@ quota administration interface and report browser are not prerequisites.
 
 Deploy resource containment and conservative restore/admission guards first,
 after staging verification; they do not depend on implementing sparse restore.
-For Phase 2, first ship backward-compatible outcome consumers, upgraded
+Next complete Phase 2: qualify improved Rustic on Linux/Btrfs, canary the managed
+sparse-required restore paths, and verify host capability enforcement. Do not
+declare the plan complete or enable Phase 3 exclusions without that gate; the
+file cap does not protect against restore expansion even for eligible files.
+For Phase 3, first ship backward-compatible outcome consumers, upgraded
 bootstrap/helpers and hosts, and the warning/copy UI with exclusions disabled.
 Inventory and canary the policy, then enable it only on hosts with verified
 enforcement/reporting capabilities. Do not fall back to unguarded execution on
@@ -431,7 +524,10 @@ Acceptance tests must demonstrate:
   4 GiB quota, both above and below the chosen cap, and many sub-cap sparse files
   whose retained logical total exceeds quota. Dense restores must be blocked
   before archive/move side effects, regardless of small repository size or a
-  warning acknowledgement. Smaller scaled fixtures belong in routine CI.
+  warning acknowledgement. The qualified sparse path must successfully round-trip
+  admitted fixtures whose actual restored usage fits, including through the full
+  archive/dearchive RPC; rejecting all sparse files is not a passing result.
+  Smaller scaled fixtures belong in routine CI.
 - Measure content integrity, allocated blocks, actual quota accounting, and peak
   staging usage, not just restore exit status. Exercise privileged and fallback
   restores, tar, and `cp`, including zero-only/mixed/trailing holes, pre-existing
@@ -440,6 +536,8 @@ Acceptance tests must demonstrate:
   zeros over nonzero bytes, including after interrupted/retried restores, must
   reproduce the backup exactly; `--verify-existing` is not a post-restore check.
   Test fresh sparse restores from old snapshots and mixed-chunk allocation, too.
+  Sparse-required capability failures and old binaries must never trigger dense
+  fallback. Exercise the final staging-to-destination transfer as well as Rustic.
 - Both execution paths enforce policy; worker death, ignored SIGTERM, privileged
   children, service replacement, and retry recovery leave no orphaned workers.
 - Many eligible files and large directory trees hit bounded admission limits
@@ -464,6 +562,10 @@ Acceptance tests must demonstrate:
 
 Rollback disables exclusions or partial archival without removing historical
 reports/warnings, weakening Phase 1 containment, or resuming unbounded retries.
+If the qualified sparse implementation must be withdrawn, block dependent
+archive/move finalization and preserve recovery sources; do not route its archives
+through an unqualified dense reader. Retain the qualified recovery artifact and
+its version metadata for operator-assisted recovery where safe to use.
 Never benchmark large sparse-content reads against production.
 
 ## Remaining Operator Decisions
@@ -474,5 +576,6 @@ Never benchmark large sparse-content reads against production.
 - Explicit defaults for self-hosted deployments.
 - Notice/grace rules for existing files, including unreachable users, and the
   separate go/no-go decision for automatic archival with exclusions.
-- The qualified sparse-restore rollout: 0.11.4 has useful upstream support but
-  the reproduced overwrite and mixed-chunk issues prevent a blanket enablement.
+- The pinned Rustic/core fix set, capacity evidence, and sparse-restore canary
+  rollout approval. Doing Phase 2 is required; only its specific implementation
+  and deployment approval remain open. Unmodified 0.11.4 is not sufficient.
