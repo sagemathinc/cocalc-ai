@@ -85,6 +85,7 @@ import {
 const { Text } = Typography;
 const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODELS[0].name;
 const CODEX_CONTROLS_COLLAPSED_KEY = "cocalc.chat.codexControlsCollapsed";
+const REFRESH_MODELS_MENU_KEY = "__refresh-models__";
 
 type ModeOption = {
   value: CodexSessionMode;
@@ -1040,14 +1041,31 @@ export function CodexConfigButton({
 
   const modelMenu: MenuProps = {
     selectedKeys: selectedModelValue ? [selectedModelValue] : [],
-    items: models.map((model) => ({
-      key: model.value,
-      label: model.label,
-      disabled: model.disabled,
-      title: model.description,
-    })),
+    items: [
+      ...models.map((model) => ({
+        key: model.value,
+        label: model.label,
+        disabled: model.disabled,
+        title: model.description,
+      })),
+      ...(paymentSource?.source === "subscription"
+        ? [
+            { key: "__refresh-models-divider__", type: "divider" as const },
+            {
+              key: REFRESH_MODELS_MENU_KEY,
+              label: "Refresh models",
+              icon: <Icon name="refresh" spin={codexModelsLoading} />,
+              disabled: codexModelsLoading,
+            },
+          ]
+        : []),
+    ],
     onClick: ({ domEvent, key }) => {
       domEvent.stopPropagation();
+      if (key === REFRESH_MODELS_MENU_KEY) {
+        clearCachedCodexModelCatalog({ accountId });
+        return;
+      }
       applyQuickConfigPatch({ model: `${key}` });
     },
   };

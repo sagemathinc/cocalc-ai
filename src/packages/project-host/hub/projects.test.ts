@@ -1293,6 +1293,40 @@ describe("project host start ACP rehydrate ordering", () => {
       modelsCached: true,
     });
 
+    getCodexSubscriptionIdentity.mockResolvedValueOnce(
+      "chatgpt-account-1:credential-v2",
+    );
+    resolveCodexAuthRuntime.mockResolvedValueOnce({
+      source: "subscription",
+      contextId: "subscription-context",
+      codexHome: "/tmp/codex-home",
+      env: {},
+    });
+    getCodexAppServerAccountStatus.mockResolvedValueOnce({
+      ...liveStatus,
+      models: [
+        {
+          model: "gpt-6-astra",
+          displayName: "GPT-6 Astra",
+          description: "Newly available account model",
+          reasoning: [],
+          serviceTiers: [],
+        },
+      ],
+    });
+    const refreshedCredential = await hubApi.projects.getCodexUsageStatus({
+      account_id: "acct-1",
+      project_id,
+      include_models: true,
+    });
+    expect(getCodexAppServerAccountStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ includeModels: true }),
+    );
+    expect(refreshedCredential).toMatchObject({
+      models: [expect.objectContaining({ model: "gpt-6-astra" })],
+      modelsCached: false,
+    });
+
     getProject.mockReturnValue({
       image: DEFAULT_PROJECT_IMAGE,
       tools_version: "tools-v2",
