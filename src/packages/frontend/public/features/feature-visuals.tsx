@@ -231,7 +231,14 @@ export function StartCard({
       <Button
         href={href}
         size="large"
-        style={{ marginTop: 22, width: "fit-content" }}
+        style={{
+          marginTop: 22,
+          width: "fit-content",
+          maxWidth: "100%",
+          minHeight: 40,
+          height: "auto",
+          whiteSpace: "normal",
+        }}
         type="primary"
       >
         {label}
@@ -304,7 +311,14 @@ export function FeatureFinalBand({
               <Button
                 href={action.href}
                 size="large"
-                style={{ marginTop: 4, width: "fit-content" }}
+                style={{
+                  marginTop: 4,
+                  width: "fit-content",
+                  maxWidth: "100%",
+                  minHeight: 40,
+                  height: "auto",
+                  whiteSpace: "normal",
+                }}
                 type="primary"
               >
                 {action.label}

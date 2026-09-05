@@ -19,11 +19,11 @@
 }
 
 .lighten {
-  color: #666;
+  color: var(--cocalc-ui-secondary);
 }
 
 .lighten-2 {
-  color: #999;
+  color: var(--cocalc-ui-muted);
 }
 
 .small {
@@ -57,22 +57,22 @@
 .cc-frame-drag-handle {
   cursor: grab;
   padding: 0 10px;
-  color: var(--cocalc-col-gray);
+  color: var(--cocalc-ui-secondary);
   display: flex;
   align-items: center;
-  border-right: 1px solid var(--cocalc-col-gray-l);
+  border-right: 1px solid var(--cocalc-ui-border);
   margin-right: 4px;
   transition:
     background 0.15s,
     color 0.15s;
 }
 .cc-frame-drag-handle:hover {
-  background: var(--cocalc-col-blue-llll);
-  color: var(--cocalc-col-blue-d);
+  background: var(--cocalc-ui-hover);
+  color: var(--cocalc-ui-link);
 }
 
 .cc-frame-leaf-container:has(.cc-frame-drag-handle:hover) {
-  outline: 2px dashed var(--cocalc-col-blue-l);
+  outline: 2px dashed var(--cocalc-ui-focus);
   outline-offset: -2px;
 }
 
@@ -96,7 +96,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
   line-height: 1.42857143;
-  color: var(--cocalc-col-gray-dd);
+  color: var(--cocalc-ui-text);
 }
 
 button,
@@ -116,7 +116,7 @@ textarea {
 }
 
 .ant-table-row > td.cc-explorer-cell-expanded {
-  background-color: var(--cocalc-col-blue-llll) !important;
+  background-color: var(--cocalc-ui-hover) !important;
 }
 
 @media (hover: none) {
@@ -271,10 +271,11 @@ select {
   padding: 5px 0;
   margin: 2px 0 0;
   list-style: none;
-  background: white;
-  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: var(--cocalc-ui-elevated);
+  color: var(--cocalc-ui-text);
+  border: 1px solid var(--cocalc-ui-border);
   border-radius: 6px;
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.175);
+  box-shadow: 0 6px 12px var(--cocalc-ui-shadow);
   background-clip: padding-box;
 }
 
@@ -282,22 +283,23 @@ select {
   display: block;
   padding: 3px 20px;
   clear: both;
-  color: var(--cocalc-col-gray-dd);
+  color: var(--cocalc-ui-text);
   text-decoration: none;
   white-space: nowrap;
 }
 
 .dropdown-menu > li > a:hover,
 .dropdown-menu > li > a:focus {
-  background: var(--cocalc-col-blue-llll);
-  color: var(--cocalc-col-gray-dd);
-  outline: none;
+  background: var(--cocalc-ui-hover);
+  color: var(--cocalc-ui-text);
+  outline: 2px solid var(--cocalc-ui-focus);
+  outline-offset: -2px;
 }
 
 .dropdown-menu > .disabled > a,
 .dropdown-menu > .disabled > a:hover,
 .dropdown-menu > .disabled > a:focus {
-  color: var(--cocalc-col-gray);
+  color: var(--cocalc-ui-secondary);
   background: transparent;
   cursor: default;
 }
@@ -307,7 +309,7 @@ select {
   padding: 3px 20px;
   font-size: 12px;
   line-height: 1.42857143;
-  color: var(--cocalc-col-gray-m);
+  color: var(--cocalc-ui-muted);
   white-space: nowrap;
 }
 
@@ -315,7 +317,7 @@ select {
   height: 1px;
   margin: 9px 0;
   overflow: hidden;
-  background: var(--cocalc-col-gray-l);
+  background: var(--cocalc-ui-border);
 }
 
 .caret {
@@ -347,12 +349,12 @@ select {
   padding: 8px;
   line-height: 1.42857143;
   vertical-align: top;
-  border-top: 1px solid var(--cocalc-col-gray-l);
+  border-top: 1px solid var(--cocalc-ui-border);
 }
 
 .table > thead > tr > th {
   vertical-align: bottom;
-  border-bottom: 2px solid var(--cocalc-col-gray-l);
+  border-bottom: 2px solid var(--cocalc-ui-border);
 }
 
 .table > caption + thead > tr:first-child > th,
@@ -365,7 +367,7 @@ select {
 }
 
 .table > tbody + tbody {
-  border-top: 2px solid var(--cocalc-col-gray-l);
+  border-top: 2px solid var(--cocalc-ui-border);
 }
 
 a[role="button"] {
@@ -463,10 +465,10 @@ a[role="button"] {
 }
 
 footer {
-  color: var(--cocalc-col-gray-m);
+  color: var(--cocalc-ui-muted);
 }
 footer a {
-  color: var(--cocalc-col-gray-m);
+  color: var(--cocalc-ui-muted);
 }
 
 @keyframes pulse {
@@ -548,7 +550,7 @@ footer a {
 }
 
 .webapp-landing-sign-up-highlight a {
-  color: var(--cocalc-col-gray-ll);
+  color: var(--cocalc-ui-border);
 }
 .webapp-landing-sign-up-highlight a:hover {
   color: white;
@@ -623,7 +625,7 @@ details summary {
 }
 
 div.cc-project-fixedtab:hover {
-  background-color: var(--cocalc-col-blue-llll);
+  background-color: var(--cocalc-ui-hover);
   cursor: pointer;
 }
 
@@ -631,26 +633,26 @@ span.cc-project-fixedtab-close {
   flex: 0;
   float: right;
   font-size: 12px;
-  color: var(--cocalc-col-gray);
+  color: var(--cocalc-ui-secondary);
 }
 span.cc-project-fixedtab-close:hover {
-  background-color: var(--cocalc-col-gray-l0);
+  background-color: var(--cocalc-ui-hover);
 }
 
 span.cc-project-fixedtab-drag:hover {
-  background-color: var(--cocalc-col-gray-l0);
+  background-color: var(--cocalc-ui-hover);
   cursor: move;
 }
 
 div.cc-project-flyout-file-item:hover {
-  background-color: var(--cocalc-col-blue-llll);
+  background-color: var(--cocalc-ui-hover);
 }
 
 body.cc-file-dragging [data-folder-drop-path] {
-  box-shadow: inset 0 0 0 1px var(--cocalc-col-antd-green);
+  box-shadow: inset 0 0 0 1px var(--cocalc-ui-success);
 }
 
 body.cc-file-dragging .cocalc-top-bar-element[data-node-key] {
-  box-shadow: inset 0 0 0 1px var(--cocalc-col-antd-green);
-  background-color: var(--cocalc-col-bs-green-ll);
+  box-shadow: inset 0 0 0 1px var(--cocalc-ui-success);
+  background-color: var(--cocalc-ui-successBg);
 }

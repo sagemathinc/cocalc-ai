@@ -17,7 +17,7 @@ import {
 
 import type { MembershipTierWithPresentation } from "./membership-tier-benefits";
 import { currency } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -177,9 +177,10 @@ function MembershipPricingTierPayment({
       >
         <Tag
           aria-hidden={promotion == null}
-          color="green"
           style={{
-            color: COLORS.BS_GREEN_DD,
+            color: UI_COLORS.success,
+            background: UI_COLORS.successBg,
+            borderColor: UI_COLORS.success,
             marginInlineEnd: 0,
             visibility: promotion == null ? "hidden" : undefined,
           }}

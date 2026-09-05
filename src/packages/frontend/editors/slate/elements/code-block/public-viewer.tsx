@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from "react";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Element } from "slate";
 import type { RenderElementProps } from "../register";
 import { register } from "../register";
@@ -105,12 +106,14 @@ function StaticCodeBlockElement({
           style={{
             cursor: "default",
             padding: "8px 12px 10px 12px",
-            background: "white",
-            border: "1px solid #dfdfdf",
+            background: UI_COLORS.codeBg,
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: "8px",
           }}
         >
           <pre
+            tabIndex={0}
+            aria-label="Code block"
             className="cocalc-slate-code-block"
             style={{ margin: 0 }}
             dangerouslySetInnerHTML={{
@@ -130,7 +133,7 @@ function StaticCodeBlockElement({
             style={{
               marginTop: "6px",
               fontSize: "12px",
-              color: "#666",
+              color: UI_COLORS.secondary,
               cursor: "pointer",
             }}
           >
@@ -139,6 +142,8 @@ function StaticCodeBlockElement({
         </div>
       ) : (
         <pre
+          tabIndex={0}
+          aria-label="Code block"
           className="cocalc-slate-code-block"
           style={{ margin: 0 }}
           dangerouslySetInnerHTML={{

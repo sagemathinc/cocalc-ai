@@ -5,7 +5,10 @@
 
 import { COLORS } from "@cocalc/util/theme";
 import type { ResolvedAppearance } from "@cocalc/util/appearance";
-import { darkAppearance } from "@cocalc/util/appearance-palette";
+import {
+  darkAppearance,
+  lightAppearance,
+} from "@cocalc/util/appearance-palette";
 
 export const PUBLIC_DISPLAY_FONT_FAMILY =
   '"Space Grotesk", "Helvetica Neue", Arial, sans-serif';
@@ -42,7 +45,7 @@ export const PUBLIC_LIGHT_COLORS = {
   onPrimary: COLORS.WHITE,
   heroBackground: COLORS.BLUE_DD,
   shadowInk: COLORS.BLUE_DDD,
-  success: COLORS.RUN,
+  success: lightAppearance.success,
   successBorder: COLORS.BS_GREEN,
   successTint: COLORS.BS_GREEN_LL,
   surface: COLORS.TOP_BAR.ACTIVE,
@@ -123,6 +126,11 @@ const ACCENT_PAIRS = [
   [COLORS.FEATURE_ORANGE, darkAppearance.number],
   ["#d46b08", darkAppearance.number],
   [COLORS.RUN, darkAppearance.success],
+  [COLORS.ANTD_GREEN_D, darkAppearance.success],
+  [COLORS.BRWN, darkAppearance.warning],
+  [COLORS.GRAY_D, darkAppearance.secondary],
+  [COLORS.GRAY_M, darkAppearance.secondary],
+  [COLORS.ANTD_RED, darkAppearance.danger],
   [COLORS.FG_RED, darkAppearance.danger],
   [COLORS.FEATURE_RED, darkAppearance.danger],
   [COLORS.FEATURE_JULIA_PURPLE, darkAppearance.keyword],

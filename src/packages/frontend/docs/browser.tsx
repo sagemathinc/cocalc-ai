@@ -1206,6 +1206,7 @@ export function DocsActions({
               {action.parameters?.map((parameter) =>
                 parameter.type === "project-host" ? (
                   <Select
+                    aria-label={parameter.label}
                     allowClear
                     disabled={state.disabled || onRunAction == null}
                     key={parameter.name}
@@ -1246,6 +1247,7 @@ export function DocsActions({
                   />
                 ) : parameter.type === "project" ? (
                   <Select
+                    aria-label={parameter.label}
                     disabled
                     key={parameter.name}
                     placeholder={parameter.placeholder ?? parameter.label}

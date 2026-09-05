@@ -45,7 +45,7 @@ import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { User } from "@cocalc/frontend/users";
 import { isLanguageModelService } from "@cocalc/util/db-schema/ai-models";
 import { unreachable } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   deriveAcpLogRefs,
   getBestResponseText,
@@ -142,10 +142,14 @@ const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
 const MARKDOWN_STYLE = undefined;
 export const SELECTABLE_MARKDOWN_STYLE: CSSProperties = {
-  ["--cocalc-slate-link" as string]: COLORS.ANTD_LINK_BLUE,
+  ["--cocalc-slate-link" as string]: UI_COLORS.link,
+  ["--cocalc-slate-inline-code-bg" as string]: UI_COLORS.codeBg,
+  ["--cocalc-slate-inline-code-fg" as string]: UI_COLORS.codeText,
+  ["--cocalc-slate-inline-code-border" as string]: UI_COLORS.border,
+  ["--cocalc-slate-link-chip-bg" as string]: "transparent",
 };
 
-const BORDER = "2px solid #ccc";
+const BORDER = `2px solid ${UI_COLORS.border}`;
 
 function stringArray(value: unknown): string[] | undefined {
   if (value == null) return;
@@ -349,7 +353,7 @@ function getLatestCodexActivityAtMs(
 
 export function getFocusMessageButtonStyle(): CSSProperties {
   return {
-    color: COLORS.GRAY_M,
+    color: UI_COLORS.muted,
     fontSize: "12px",
   };
 }
@@ -1229,7 +1233,7 @@ export default function Message({
       return (
         <div
           style={{
-            color: COLORS.GRAY_M,
+            color: UI_COLORS.muted,
             fontSize: "14px" /* matches Reply button */,
           }}
         >
@@ -1244,7 +1248,7 @@ export default function Message({
       );
     }
     return (
-      <div style={{ color: COLORS.GRAY_M }}>
+      <div style={{ color: UI_COLORS.muted }}>
         {text}
         {queuedMessageEditHelpText ? (
           <div style={{ marginTop: "5px" }}>{queuedMessageEditHelpText}</div>
@@ -1405,7 +1409,7 @@ export default function Message({
               : 0;
     const showOtherFeedback = otherFeedback > 0;
 
-    const iconColor = showOtherFeedback ? "darkblue" : COLORS.GRAY_D;
+    const iconColor = showOtherFeedback ? UI_COLORS.link : UI_COLORS.secondary;
     return (
       <Tip
         placement={"top"}
@@ -1444,10 +1448,10 @@ export default function Message({
           }}
         >
           {showOtherFeedback ? (
-            <Badge count={otherFeedback} color="darkblue" size="small">
+            <Badge count={otherFeedback} color={UI_COLORS.link} size="small">
               <Icon
                 name="thumbs-up"
-                style={{ color: "darkblue", fontSize: 14 }}
+                style={{ color: UI_COLORS.link, fontSize: 14 }}
               />
             </Badge>
           ) : (
@@ -1526,7 +1530,7 @@ export default function Message({
           <Button
             type="text"
             size="small"
-            style={{ color: COLORS.GRAY_M }}
+            style={{ color: UI_COLORS.muted }}
             onClick={() => {
               setReplying(true);
               setAutoFocusReply(true);
@@ -1577,7 +1581,7 @@ export default function Message({
           <Button
             size="small"
             type="text"
-            style={{ color: COLORS.GRAY_M }}
+            style={{ color: UI_COLORS.muted }}
             onClick={edit_message}
             icon={<Icon name="pencil" />}
           ></Button>
@@ -1609,7 +1613,7 @@ export default function Message({
           <Button
             size="small"
             type="text"
-            style={{ color: COLORS.GRAY_M }}
+            style={{ color: UI_COLORS.muted }}
             onClick={openGitBrowserFromMessage}
             icon={<Icon name="git" />}
           />
@@ -1647,7 +1651,7 @@ export default function Message({
           size="small"
           type="text"
           aria-label="Message actions"
-          style={{ color: COLORS.GRAY_M }}
+          style={{ color: UI_COLORS.muted }}
           onClick={() => setShowTouchActions((prev) => !prev)}
         >
           <Icon name="ellipsis-vertical" />
@@ -1738,7 +1742,7 @@ export default function Message({
           <Button
             size="small"
             type="text"
-            style={{ color: COLORS.GRAY_M }}
+            style={{ color: UI_COLORS.muted }}
             onClick={openGitBrowserFromMessage}
             icon={<Icon name="git" />}
           />
@@ -1766,7 +1770,7 @@ export default function Message({
               disabled={showActivityButtonState.disabled}
               loading={showActivityButtonState.loading}
               style={{
-                color: COLORS.GRAY_M,
+                color: UI_COLORS.muted,
                 fontSize: "12px",
               }}
               onClick={() => {
@@ -1831,7 +1835,7 @@ export default function Message({
     if (showDeleteButton) {
       overflowItems.push({
         key: "delete",
-        label: <span style={{ color: COLORS.ANTD_RED }}>Delete message</span>,
+        label: <span style={{ color: UI_COLORS.danger }}>Delete message</span>,
         onClick: confirm_delete_message,
       });
     }
@@ -1851,7 +1855,7 @@ export default function Message({
           items={overflowItems}
           title={<Icon name="ellipsis-vertical" />}
           size="small"
-          style={{ color: COLORS.GRAY_M }}
+          style={{ color: UI_COLORS.muted }}
         />,
       );
     }
@@ -2056,13 +2060,13 @@ export default function Message({
     }
     return renderCodexSectionChrome({
       label: "Agent activity",
-      accentColor: COLORS.GRAY_D,
-      borderColor: COLORS.GRAY_LL,
+      accentColor: UI_COLORS.secondary,
+      borderColor: UI_COLORS.border,
       action: onHideActivity ? (
         <Button
           size="small"
           type="text"
-          style={{ color: COLORS.GRAY_M }}
+          style={{ color: UI_COLORS.muted }}
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -2235,7 +2239,7 @@ export default function Message({
         {showCodexActivity && acpRecoveryCount ? (
           <div
             style={{
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.muted,
               fontSize: `${Math.max((font_size ?? 14) - 2, 11)}px`,
               marginBottom: "8px",
               display: "flex",
@@ -2269,8 +2273,8 @@ export default function Message({
         {shouldRenderCompletedFinalResponse ? (
           renderCodexSectionChrome({
             label: "Final response",
-            accentColor: COLORS.BLUE_DD,
-            borderColor: COLORS.BLUE_LLL,
+            accentColor: UI_COLORS.link,
+            borderColor: UI_COLORS.infoBg,
             action: <CodexFinalResponseCopy value={value} />,
             children: (
               <div onClickCapture={openCommitFromMessage}>

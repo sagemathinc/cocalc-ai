@@ -14,6 +14,14 @@ export function getBaseAntdTheme(
 ): ThemeConfig {
   const palette = appearancePalette(mode);
   return {
+    components: {
+      Button: {
+        defaultHoverColor: palette.linkHover,
+        defaultActiveColor: palette.link,
+        defaultHoverBorderColor: palette.linkHover,
+        defaultActiveBorderColor: palette.link,
+      },
+    },
     token: {
       colorPrimary: COLORS.COCALC_BLUE,
       colorLink: palette.link,
@@ -22,6 +30,9 @@ export function getBaseAntdTheme(
       colorText: palette.text,
       colorTextSecondary: palette.secondary,
       colorTextDescription: palette.secondary,
+      colorTextPlaceholder: palette.muted,
+      colorTextDisabled: palette.muted,
+      colorBgContainerDisabled: palette.inset,
       colorBgBase: palette.page,
       colorBgContainer: palette.surface,
       colorBgElevated: palette.elevated,

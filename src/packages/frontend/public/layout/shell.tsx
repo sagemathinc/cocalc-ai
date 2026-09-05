@@ -77,6 +77,11 @@ export const PUBLIC_PAGE_CSS = `
     color: ${PUBLIC_COLORS.accent} !important;
   }
 
+  .cocalc-public-page .ant-typography a:not(.ant-btn) {
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+
   .cocalc-public-page .ant-row {
     margin-inline: 0 !important;
   }
@@ -427,6 +432,7 @@ export function PublicPage({
         algorithm:
           resolved === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
         components: {
+          ...baseTheme.components,
           Menu: {
             itemSelectedColor: colors.link,
           },

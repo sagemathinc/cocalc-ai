@@ -12,7 +12,7 @@
 import { Segmented, Switch } from "antd";
 
 import { Icon, Tooltip } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { SwitchToClassicButton } from "./frame-type-toggle";
 import StudioNotebookHelp from "./studio-help";
 import type { StudioLayout } from "./types";
@@ -33,7 +33,7 @@ function Divider() {
   return (
     <div
       style={{
-        borderLeft: `1px solid ${COLORS.GRAY_L}`,
+        borderLeft: `1px solid ${UI_COLORS.muted}`,
         height: "18px",
       }}
     />

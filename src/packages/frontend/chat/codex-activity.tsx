@@ -27,7 +27,7 @@ import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspa
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { containingPath, humanSize, plural } from "@cocalc/util/misc";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { AttachedSteerMessage } from "./agent-message-status";
 import { formatCodexErrorForDisplay } from "./codex-error-presentation";
 import { lite } from "@cocalc/frontend/lite";
@@ -178,34 +178,34 @@ function renderSteerStatus(state: AttachedSteerMessage["state"]) {
     case "sending":
       return {
         label: "Sending guidance",
-        borderColor: COLORS.BLUE_LLL,
-        background: COLORS.BLUE_LLLL,
-        pillBackground: COLORS.BLUE_LLL,
-        pillColor: COLORS.BLUE_DDD,
+        borderColor: UI_COLORS.infoBg,
+        background: UI_COLORS.infoBg,
+        pillBackground: UI_COLORS.infoBg,
+        pillColor: UI_COLORS.info,
       };
     case "queued":
       return {
         label: "Guidance queued",
-        borderColor: COLORS.YELL_LL,
-        background: COLORS.YELL_LLL,
-        pillBackground: COLORS.YELL_LL,
-        pillColor: COLORS.BRWN,
+        borderColor: UI_COLORS.warningBg,
+        background: UI_COLORS.warningBg,
+        pillBackground: UI_COLORS.warningBg,
+        pillColor: UI_COLORS.warning,
       };
     case "not-sent":
       return {
         label: "Guidance not sent",
-        borderColor: COLORS.ANTD_BG_RED_M,
-        background: COLORS.ANTD_BG_RED_L,
-        pillBackground: COLORS.ANTD_BG_RED_M,
-        pillColor: "white",
+        borderColor: UI_COLORS.danger,
+        background: UI_COLORS.dangerBg,
+        pillBackground: UI_COLORS.dangerBg,
+        pillColor: UI_COLORS.danger,
       };
     default:
       return {
         label: "Guidance sent",
-        borderColor: COLORS.BLUE_LLL,
-        background: COLORS.BLUE_LLLL,
-        pillBackground: COLORS.BLUE_LLL,
-        pillColor: COLORS.BLUE_DDD,
+        borderColor: UI_COLORS.infoBg,
+        background: UI_COLORS.infoBg,
+        pillBackground: UI_COLORS.infoBg,
+        pillColor: UI_COLORS.info,
       };
   }
 }
@@ -364,7 +364,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
       onClick={() => setExpanded(false)}
       style={{
         fontSize: "16pt",
-        color: "#434343",
+        color: UI_COLORS.secondary,
         opacity: showCloseButton ? 1 : 0,
         transition: "opacity 150ms ease",
         ...style,
@@ -436,7 +436,10 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
         style={{ cursor: "pointer" }}
         onClick={() => setExpanded(false)}
       >
-        <Text strong style={{ color: COLORS.GRAY_D, fontSize: baseFontSize }}>
+        <Text
+          strong
+          style={{ color: UI_COLORS.secondary, fontSize: baseFontSize }}
+        >
           Activity
         </Text>
         {durationLabel ? (
@@ -526,7 +529,7 @@ function ActivityRow({
           aria-label="Codex subagent activity"
           data-codex-activity-entry-index={rowIndex}
           style={{
-            border: `1px solid ${COLORS.GRAY_LL}`,
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 8,
             padding: "8px 10px",
           }}
@@ -547,7 +550,7 @@ function ActivityRow({
               <details
                 key={agent.threadId}
                 style={{
-                  borderTop: `1px solid ${COLORS.GRAY_LLL}`,
+                  borderTop: `1px solid ${UI_COLORS.inset}`,
                   padding: "7px 0",
                 }}
               >
@@ -701,7 +704,7 @@ function ActivityRow({
             <div
               style={{
                 fontSize: 12,
-                color: COLORS.GRAY_D,
+                color: UI_COLORS.secondary,
                 flex: "1 1 220px",
                 minWidth: 0,
               }}
@@ -710,7 +713,7 @@ function ActivityRow({
                 value={entry.text}
                 style={{
                   fontSize: 12,
-                  color: COLORS.GRAY_D,
+                  color: UI_COLORS.secondary,
                   overflowWrap: "anywhere",
                 }}
                 editorTheme={editorTheme}
@@ -1433,8 +1436,8 @@ function PathLink({
     <code
       style={{
         fontSize,
-        color: COLORS.GRAY_D,
-        background: COLORS.GRAY_LLL,
+        color: UI_COLORS.secondary,
+        background: UI_COLORS.inset,
         padding: "0 4px",
         borderRadius: 3,
         fontWeight: bold ? 600 : undefined,
@@ -1507,7 +1510,7 @@ function DiffPreview({
         marginTop: 6,
         fontFamily: "monospace",
         fontSize: codeFontSize,
-        border: `1px solid ${COLORS.GRAY_L}`,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: 6,
         overflow: "hidden",
       }}
@@ -1516,10 +1519,14 @@ function DiffPreview({
         const op = diff.types[i] ?? 0;
         const gutter = diff.gutters[i] ?? "";
         const background =
-          op === -1 ? "#ffeef0" : op === 1 ? "#e6ffed" : "transparent";
-        const color = op === 0 ? COLORS.GRAY_D : "inherit";
+          op === -1
+            ? UI_COLORS.dangerBg
+            : op === 1
+              ? UI_COLORS.successBg
+              : "transparent";
+        const color = op === 0 ? UI_COLORS.secondary : "inherit";
         const borderTop = chunkEnds.has(i)
-          ? `1px solid ${COLORS.GRAY_L}`
+          ? `1px solid ${UI_COLORS.border}`
           : "none";
         const html = highlightedByLine[i] ?? "";
         return (
@@ -1536,7 +1543,7 @@ function DiffPreview({
               whiteSpace: "pre-wrap",
             }}
           >
-            <span style={{ color: COLORS.GRAY_D }}>{gutter}</span>
+            <span style={{ color: UI_COLORS.secondary }}>{gutter}</span>
             <span
               dangerouslySetInnerHTML={{
                 __html: html.length > 0 ? html : "&nbsp;",
@@ -2105,7 +2112,7 @@ function ActivityTimestamp({ time }: { time?: number }) {
   if (typeof time !== "number" || !Number.isFinite(time)) return null;
   return (
     <TimestampTooltip timestamp={formatEntryTimestamp(time)}>
-      <Text style={{ fontSize: "9pt", color: COLORS.GRAY_M }}>
+      <Text style={{ fontSize: "9pt", color: UI_COLORS.muted }}>
         <TimeAgo date={new Date(time)} />
       </Text>
     </TimestampTooltip>

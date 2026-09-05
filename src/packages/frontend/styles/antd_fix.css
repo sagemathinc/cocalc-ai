@@ -1,5 +1,5 @@
 a {
-  color: var(--cocalc-col-antd-link-blue);
+  color: var(--cocalc-ui-link);
 }
 
 html {
@@ -7,7 +7,7 @@ html {
 }
 
 .ant-popover-content .ant-popover-arrow {
-  border-color: var(--cocalc-col-gray-l) !important;
+  border-color: var(--cocalc-ui-border) !important;
   z-index: -1 !important;
 }
 

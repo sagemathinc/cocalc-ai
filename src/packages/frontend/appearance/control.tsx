@@ -10,7 +10,7 @@ import { parseAppearancePreference } from "@cocalc/util/appearance";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useAppearance } from "./use-appearance";
 
-export function AppearanceControl() {
+export function AppearanceControl({ compact = false }: { compact?: boolean }) {
   const { preference, resolved, setPreference, saveError } = useAppearance();
   const attempted = useRef(false);
   const [showError, setShowError] = useState(false);
@@ -41,10 +41,22 @@ export function AppearanceControl() {
           alignItems: "center",
           gap: 6,
           color: UI_COLORS.text,
+          position: "relative",
         }}
         title={`Appearance: ${preference} (${resolved})`}
       >
-        <ThemeIcon aria-hidden />
+        <ThemeIcon
+          aria-hidden
+          style={
+            compact
+              ? {
+                  position: "absolute",
+                  insetInlineStart: 8,
+                  pointerEvents: "none",
+                }
+              : undefined
+          }
+        />
         <select
           aria-label="Appearance"
           onKeyDown={(event) => {
@@ -62,20 +74,40 @@ export function AppearanceControl() {
             }
           }}
           style={{
-            background: UI_COLORS.surface,
-            color: UI_COLORS.text,
-            border: `1px solid ${saveError ? UI_COLORS.danger : UI_COLORS.controlBorder}`,
+            background: compact ? "transparent" : UI_COLORS.surface,
+            color: compact ? "transparent" : UI_COLORS.text,
+            border:
+              compact && !saveError
+                ? "none"
+                : `1px solid ${saveError ? UI_COLORS.danger : UI_COLORS.controlBorder}`,
             borderRadius: 4,
             font: "inherit",
-            height: 32,
-            width: 108,
+            height: compact ? 24 : 32,
+            width: compact ? 32 : 108,
+            appearance: compact ? "none" : undefined,
+            cursor: "pointer",
             maxWidth: "100%",
             padding: "0 6px",
           }}
         >
-          <option value="system">System</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
+          <option
+            style={{ color: UI_COLORS.text, background: UI_COLORS.surface }}
+            value="system"
+          >
+            System
+          </option>
+          <option
+            style={{ color: UI_COLORS.text, background: UI_COLORS.surface }}
+            value="light"
+          >
+            Light
+          </option>
+          <option
+            style={{ color: UI_COLORS.text, background: UI_COLORS.surface }}
+            value="dark"
+          >
+            Dark
+          </option>
         </select>
       </label>
     </Popover>

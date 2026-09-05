@@ -15,7 +15,12 @@ import {
   type PublicConfig,
 } from "@cocalc/frontend/public/config";
 import { PublicPage } from "@cocalc/frontend/public/layout/shell";
-import { PUBLIC_COLORS, PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  alpha,
+  publicAccent,
+  PUBLIC_COLORS,
+  PUBLIC_TYPE,
+} from "@cocalc/frontend/public/theme";
 import { COLORS } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { builtinPolicyPath } from "../common";
@@ -419,25 +424,13 @@ const DIFFERENTIATORS = [
   title: string;
 }>;
 
-function alpha(hexColor: string, opacity: number): string {
-  if (hexColor === COLORS.TOP_BAR.ACTIVE) {
-    return `rgba(255, 255, 255, ${opacity})`;
-  }
-  const hex = hexColor.replace("#", "");
-  if (hex.length !== 6) return hexColor;
-  const red = parseInt(hex.slice(0, 2), 16);
-  const green = parseInt(hex.slice(2, 4), 16);
-  const blue = parseInt(hex.slice(4, 6), 16);
-  return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
-}
-
 function accessibleAccentTextColor(accent: string): string {
-  if (accent === COLORS.RUN) return COLORS.ANTD_GREEN_D;
+  if (accent === COLORS.RUN) return publicAccent(COLORS.ANTD_GREEN_D);
   if (accent === COLORS.AI_ASSISTANT_FONT || accent === PUBLIC_COLORS.warning) {
-    return COLORS.BRWN;
+    return publicAccent(COLORS.BRWN);
   }
   if (accent === PUBLIC_COLORS.link) return PUBLIC_COLORS.linkHover;
-  return accent;
+  return publicAccent(accent);
 }
 
 function appPath(path: string): string {
@@ -470,6 +463,7 @@ function IconTile({
   icon: IconName;
   size?: number;
 }) {
+  accent = publicAccent(accent);
   return (
     <span
       aria-hidden="true"

@@ -45,7 +45,7 @@ import {
   tab_to_path,
 } from "@cocalc/util/misc";
 import { pathMatchesWorkspace } from "@cocalc/conat/workspaces";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   ProjectContext,
   useProjectContext,
@@ -946,7 +946,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
             ? {
                 display: "flex",
                 flexDirection: "row",
-                backgroundColor: COLORS.GRAY_LL,
+                backgroundColor: UI_COLORS.border,
               }
             : {
                 position: "absolute",
@@ -956,7 +956,7 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
                 width: flyoutWidth,
                 display: "flex",
                 flexDirection: "row",
-                backgroundColor: COLORS.GRAY_LL,
+                backgroundColor: UI_COLORS.border,
                 visibility: "hidden",
                 pointerEvents: "none",
               }
@@ -1278,8 +1278,8 @@ function OpenFixedTabAsFlyoutButton({ tab }: { tab: FixedTab }) {
       title="Open as flyout"
       type="text"
       style={{
-        background: "rgba(255,255,255,0.88)",
-        border: `1px solid ${COLORS.GRAY_LLL}`,
+        background: UI_COLORS.elevated,
+        border: `1px solid ${UI_COLORS.inset}`,
         boxShadow: "0 2px 10px rgba(0,0,0,0.08)",
         position: "absolute",
         right: 12,
@@ -1316,11 +1316,11 @@ function ViewerReadOnlyTag({ project_id }: { project_id: string }) {
   return (
     <>
       <Tag
-        color={COLORS.BG_WARNING}
+        color={UI_COLORS.warningBg}
         onClick={() => setOpen(true)}
         style={{
           alignSelf: "center",
-          color: "black",
+          color: UI_COLORS.warning,
           cursor: "pointer",
           margin: "2px 6px 0px 4px",
           whiteSpace: "nowrap",
@@ -1386,7 +1386,7 @@ function ProjectAccessSignInRequired() {
         alignItems: "center",
         justifyContent: "center",
         padding: 24,
-        background: COLORS.GRAY_LLL,
+        background: UI_COLORS.inset,
       }}
     >
       <Card style={{ maxWidth: 520, width: "100%" }}>
@@ -1589,7 +1589,7 @@ function ProjectAccessLandingPage({
         alignItems: "center",
         justifyContent: "center",
         padding: 24,
-        background: COLORS.GRAY_LLL,
+        background: UI_COLORS.inset,
       }}
     >
       <Card style={{ width: "100%", maxWidth: 680 }}>
@@ -1605,10 +1605,10 @@ function ProjectAccessLandingPage({
           </div>
           <div
             style={{
-              border: `1px solid ${COLORS.GRAY_LL}`,
+              border: `1px solid ${UI_COLORS.border}`,
               borderRadius: 10,
               padding: 14,
-              background: "white",
+              background: UI_COLORS.surface,
             }}
           >
             <Title level={4} style={{ marginTop: 0 }}>
@@ -1779,7 +1779,7 @@ function RetainedFlyoutBodies({
         height: "100%",
         flex: `0 0 ${flyoutWidth}px`,
         overflow: "hidden",
-        backgroundColor: COLORS.GRAY_LL,
+        backgroundColor: UI_COLORS.border,
       }}
     >
       {visibleFlyouts.map((flyout) => {
@@ -1794,7 +1794,7 @@ function RetainedFlyoutBodies({
               visibility: isVisible ? "visible" : "hidden",
               pointerEvents: isVisible ? "auto" : "none",
               zIndex: isVisible ? 1 : 0,
-              backgroundColor: COLORS.GRAY_LL,
+              backgroundColor: UI_COLORS.border,
             }}
           >
             <FlyoutBody
@@ -1832,15 +1832,15 @@ function HardDeleteProjectStatus({
         alignItems: "center",
         justifyContent: "center",
         padding: 24,
-        background: failed ? COLORS.ANTD_BG_RED_L : COLORS.YELL_LLL,
+        background: failed ? UI_COLORS.dangerBg : UI_COLORS.warningBg,
       }}
     >
       <div
         style={{
           maxWidth: 720,
           width: "100%",
-          background: "white",
-          border: `1px solid ${failed ? COLORS.ANTD_BG_RED_M : COLORS.YELL_LL}`,
+          background: UI_COLORS.surface,
+          border: `1px solid ${failed ? UI_COLORS.danger : UI_COLORS.warning}`,
           borderRadius: 12,
           padding: 24,
           boxShadow: "0 12px 32px rgba(15, 23, 42, 0.14)",
@@ -1851,12 +1851,12 @@ function HardDeleteProjectStatus({
             <span
               style={{
                 alignItems: "center",
-                background: failed ? COLORS.ANTD_BG_RED_L : COLORS.YELL_LLL,
+                background: failed ? UI_COLORS.dangerBg : UI_COLORS.warningBg,
                 border: `1px solid ${
-                  failed ? COLORS.ANTD_BG_RED_M : COLORS.YELL_LL
+                  failed ? UI_COLORS.danger : UI_COLORS.warning
                 }`,
                 borderRadius: 12,
-                color: failed ? COLORS.FG_RED : COLORS.YELL_D,
+                color: failed ? UI_COLORS.danger : UI_COLORS.warning,
                 display: "inline-flex",
                 fontSize: 22,
                 height: 44,
@@ -1872,7 +1872,7 @@ function HardDeleteProjectStatus({
                   ? "Project deletion failed"
                   : "Project deletion in progress"}
               </h2>
-              <div style={{ color: COLORS.GRAY_M }}>
+              <div style={{ color: UI_COLORS.muted }}>
                 {failed
                   ? "Permanent deletion could not finish. Normal project actions are disabled until deletion is retried or support resolves the failure."
                   : "This project is being permanently deleted. It cannot be opened, started, edited, archived, or moved."}
@@ -1983,8 +1983,8 @@ function FlyoutDragbar({
         cursor: "col-resize",
         display: "flex",
         justifyContent: "flex-start",
-        backgroundColor: COLORS.GRAY_LL,
-        ...(active ? { zIndex: 1000, backgroundColor: COLORS.GRAY_L } : {}),
+        backgroundColor: UI_COLORS.border,
+        ...(active ? { zIndex: 1000, backgroundColor: UI_COLORS.hover } : {}),
       }}
       {...listeners}
       {...attributes}
@@ -2002,7 +2002,7 @@ function FlyoutGutterLine({ active = false }: { active?: boolean }) {
       style={{
         width: 1,
         height: "100%",
-        backgroundColor: active ? COLORS.GRAY_M : COLORS.GRAY_L,
+        backgroundColor: active ? UI_COLORS.muted : UI_COLORS.hover,
       }}
     />
   );

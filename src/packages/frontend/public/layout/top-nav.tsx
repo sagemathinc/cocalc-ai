@@ -57,6 +57,12 @@ const { Text } = Typography;
 // Compact styling for the Features dropdown popup (16 entries): smaller
 // rows than antd's default menu size, scrollable if the viewport is low.
 const FEATURES_POPUP_CSS = `
+  /* Menu overflow placeholders still contain links. Keep their measured width
+     without leaving invisible links in the keyboard tab order. */
+  .cocalc-public-navigation > .ant-menu-overflow-item[aria-hidden="true"] {
+    visibility: hidden;
+  }
+
   .cocalc-features-nav-popup .ant-menu {
     max-height: min(560px, 75vh);
     overflow-y: auto;
@@ -382,7 +388,7 @@ export default function PublicTopNav({
 
   return (
     <Flex align="center">
-      {featuresDropdownItems != null && <style>{FEATURES_POPUP_CSS}</style>}
+      <style>{FEATURES_POPUP_CSS}</style>
       <HomeLogoLink
         active={active}
         config={config}
@@ -392,6 +398,7 @@ export default function PublicTopNav({
       />
       <Menu
         aria-label="Public pages"
+        className="cocalc-public-navigation"
         items={menuItems}
         mode="horizontal"
         selectedKeys={selectedKeys}

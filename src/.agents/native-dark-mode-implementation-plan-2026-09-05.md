@@ -33,10 +33,44 @@ Implementation evidence so far:
   accessibility reports (landing/features/docs, all passed), build log, and
   screenshots/inspection JSON. These are working artifacts, not final rollout
   acceptance evidence.
-- Main-app owned-surface conversion, editor/terminal Follow behavior, PDF and
-  scratchpad migration, full route/contrast/performance coverage, and complete
-  dependency removal are still pending. Do not treat the new toggle as proof
-  that the full migration is complete.
+- Dark Reader and its frontend dependency have been removed. PDF inversion is
+  now an explicit per-view choice that does not rerender the PDF canvas, and
+  scratchpad uses the shared appearance controller.
+- Follow application appearance is available for editor and terminal settings,
+  with new-account defaults and conservative handling of existing named themes.
+  Focused tests verify terminal theme updates without reset/reconnect and live
+  notebook/editor option updates. A static notebook renderer's shared-style
+  mutation was also fixed so a default cell cannot leak a white background into
+  subsequent dark-themed cells.
+- Main shell, project tabs/toolbars, shared panels, Codex activity, and initial
+  classic/Studio notebook surfaces use semantic colors. These are incremental
+  conversions, not a completed main-app audit. The main toolbar has a compact
+  System/Light/Dark selector in addition to Appearance settings.
+- `scripts/appearance/audit-public.mjs` now provides repeatable anonymous
+  Chromium/axe audits, screenshots, overflow checks, explicit toggles, and live
+  system-theme changes. The first expanded pass covered 15 routes at 1440px and
+  320px in both themes (60 probes), including consent dialogs. No page exceptions
+  were observed. It found inline-link, badge, and long-button issues; source
+  corrections and targeted repeat audits are in progress. Artifacts are in
+  `src/.local/dark-mode/public-expanded` and `public-corrections`.
+- The static frontend has been rebuilt repeatedly on lite2b. A dedicated
+  authenticated browser session is now available through the local hub for
+  main-app verification. Use a named CLI profile with explicit loopback API and
+  cookie-backed dev elevation; ambient master-host credentials caused misleading
+  authentication failures during the initial attempts.
+- Latest validation: all 22 public frontend test suites (290 tests), 10 focused
+  classic/Studio notebook suites (57 tests), and four appearance/shared-panel
+  suites (10 tests) pass. The static build and frontend lint pass. Targeted
+  Chromium repeats clear the findings in the Python/Jupyter feature pages and
+  image catalog. Main-app native screenshot capture has stalled, and DOM capture
+  returns a QuickJS syntax error with raw execution disabled. Typed browser
+  reload works, but signed-in screenshot acceptance is not yet established.
+- Remaining acceptance work includes complete owned-surface conversion and
+  signed-in workflow screenshots; direct signed-in docs preference saving;
+  signup/alternate-account-creation preference handling; translation coverage;
+  complete route, state, contrast and performance coverage; and final Essential
+  bundle/behavior verification. Do not treat the new toggle or the sampled
+  screenshots as proof that the full migration is complete.
 
 ## 1. Goal And Scope
 

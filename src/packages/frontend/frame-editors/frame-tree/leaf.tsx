@@ -207,7 +207,7 @@ export const FrameTreeLeaf: React.FC<Props> = React.memo(
       <div
         id={`frame-${desc.get("id")}`}
         className="smc-vfill"
-        style={{ background: "white", zIndex: 1 }}
+        style={{ background: "var(--cocalc-ui-surface)", zIndex: 1 }}
       >
         {render_error()}
         {render_leaf()}

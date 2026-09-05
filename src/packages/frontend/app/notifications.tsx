@@ -14,6 +14,7 @@ import { useUnreadIncomingInviteCount } from "@cocalc/frontend/collaborators";
 import { Icon } from "@cocalc/frontend/components";
 import { unreachable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { PageStyle, TOP_BAR_ELEMENT_CLASS } from "./top-nav-consts";
 import { useEffect, useMemo } from "react";
@@ -51,7 +52,8 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
     cursor: "pointer",
     padding: `${topPaddingIcons} ${sidePaddingIcons}`,
     height: `${pageStyle.height}px`,
-    ...(active ? { backgroundColor: COLORS.TOP_BAR.ACTIVE } : {}),
+    color: UI_COLORS.text,
+    ...(active ? { backgroundColor: UI_COLORS.selected } : {}),
   };
 
   const inner_style: CSS = {

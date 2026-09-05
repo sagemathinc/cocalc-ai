@@ -54,3 +54,13 @@ test("save failures stay available rather than disappearing in a transient toast
   expect(select).toHaveFocus();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
+
+test("compact shell control retains a named native selector and three choices", () => {
+  render(<AppearanceControl compact />);
+  const select = screen.getByRole("combobox", { name: "Appearance" });
+  select.focus();
+  fireEvent.change(select, { target: { value: "dark" } });
+  expect(select).toHaveFocus();
+  expect(select).toHaveValue("dark");
+  expect(screen.getByRole("option", { name: "System" })).toBeInTheDocument();
+});

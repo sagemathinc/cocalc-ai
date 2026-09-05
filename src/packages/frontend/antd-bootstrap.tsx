@@ -34,7 +34,6 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Gap } from "@cocalc/frontend/components/gap";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { r_join } from "@cocalc/frontend/components/r_join";
-import { COLORS } from "@cocalc/util/theme";
 import { CSS } from "./app-framework";
 
 // Note regarding buttons -- there are 6 semantics meanings in bootstrap, but
@@ -157,8 +156,8 @@ export const Button = (props: {
     size = "small";
   }
   if (props.active) {
-    style.backgroundColor = "#d4d4d4";
-    style.boxShadow = "inset 0 3px 5px rgb(0 0 0 / 13%)";
+    style.backgroundColor = UI_COLORS.selected;
+    style.boxShadow = `inset 0 3px 5px ${UI_COLORS.shadow}`;
   }
   const btn = (
     <AntdButton
@@ -244,7 +243,10 @@ export function Well(props: {
   onMouseDown?;
 }) {
   let style: React.CSSProperties = {
-    ...{ backgroundColor: "white", border: "1px solid #e3e3e3" },
+    ...{
+      backgroundColor: UI_COLORS.surface,
+      border: `1px solid ${UI_COLORS.border}`,
+    },
     ...props.style,
   };
   return (
@@ -482,7 +484,7 @@ export function Alert(props: AlertProps) {
 }
 
 const PANEL_DEFAULT_STYLES: { header: CSS } = {
-  header: { color: COLORS.GRAY_DD, backgroundColor: COLORS.GRAY_LLL },
+  header: { color: UI_COLORS.text, backgroundColor: UI_COLORS.inset },
 } as const;
 
 export function Panel(props: {
