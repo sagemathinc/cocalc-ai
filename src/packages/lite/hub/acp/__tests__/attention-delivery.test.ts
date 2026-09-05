@@ -13,6 +13,7 @@ import {
 import { decodeAcpJobRequest, listQueuedAcpJobs } from "../../sqlite/acp-jobs";
 import { listRunningAcpTurnLeases } from "../../sqlite/acp-turns";
 import {
+  claimAcpSteer,
   decodeAcpSteerRequest,
   getAcpSteer,
   listPendingAcpSteers,
@@ -256,6 +257,7 @@ it("retries a failed durable steer only through the explicit continue path", asy
     path: record.path,
     user_message_id: rows[2].message_id,
   })!;
+  expect(claimAcpSteer({ id: steer.id })).toBe(true);
   markAcpSteerError({ id: steer.id, error: "worker stopped" });
   await expect(
     acpTestInternals.deliverAsyncAttentionAnswer(record),

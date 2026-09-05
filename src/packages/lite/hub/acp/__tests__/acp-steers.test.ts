@@ -4,6 +4,8 @@ import {
   getAcpDatabase,
 } from "../../sqlite/acp-database";
 import {
+  ACP_STEER_CLAIM_LEASE_MS,
+  claimAcpSteer,
   decodeAcpSteerCandidateIds,
   decodeAcpSteerRequest,
   enqueueAcpSteer,
@@ -78,6 +80,7 @@ describe("acp steer queue", () => {
     const row = enqueueAcpSteer({
       request: makeRequest(),
     });
+    expect(claimAcpSteer({ id: row.id })).toBe(true);
     markAcpSteerHandled({ id: row.id });
     expect(listPendingAcpSteers()).toEqual([]);
     const stored = getAcpDatabase()
@@ -88,6 +91,7 @@ describe("acp steer queue", () => {
 
   it("requeues a failed steer without duplicating its durable identity", () => {
     const first = enqueueAcpSteer({ request: makeRequest() });
+    expect(claimAcpSteer({ id: first.id })).toBe(true);
     markAcpSteerError({ id: first.id, error: "worker stopped" });
     expect(listPendingAcpSteers()).toEqual([]);
 
@@ -104,5 +108,19 @@ describe("acp steer queue", () => {
         user_message_id: retried.user_message_id,
       }),
     ).toMatchObject({ id: first.id, state: "pending" });
+  });
+
+  it("serializes delivery claims and recovers an expired claimant", () => {
+    const row = enqueueAcpSteer({ request: makeRequest() });
+    const now = 1_000_000;
+    expect(claimAcpSteer({ id: row.id, now })).toBe(true);
+    expect(claimAcpSteer({ id: row.id, now })).toBe(false);
+    expect(listPendingAcpSteers(50, now)).toEqual([]);
+    expect(
+      listPendingAcpSteers(50, now + ACP_STEER_CLAIM_LEASE_MS),
+    ).toHaveLength(1);
+    expect(
+      claimAcpSteer({ id: row.id, now: now + ACP_STEER_CLAIM_LEASE_MS }),
+    ).toBe(true);
   });
 });

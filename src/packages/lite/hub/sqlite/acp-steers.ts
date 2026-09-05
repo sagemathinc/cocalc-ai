@@ -4,7 +4,9 @@ import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 
 const TABLE = "acp_steers";
 
-export type AcpSteerState = "pending" | "handled" | "error";
+export const ACP_STEER_CLAIM_LEASE_MS = 30_000;
+
+export type AcpSteerState = "pending" | "processing" | "handled" | "error";
 
 export interface AcpSteerRow {
   id: string;
@@ -158,17 +160,63 @@ export function getAcpSteer({
     .get(project_id, path, user_message_id) as AcpSteerRow | undefined;
 }
 
-export function listPendingAcpSteers(limit = 50): AcpSteerRow[] {
+export function listPendingAcpSteers(
+  limit = 50,
+  now = Date.now(),
+): AcpSteerRow[] {
   ensureInit();
   const db = getAcpDatabase();
   return db
     .prepare(
       `SELECT * FROM ${TABLE}
        WHERE state = 'pending'
+          OR (state = 'processing' AND updated_at <= ?)
        ORDER BY created_at ASC
        LIMIT ?`,
     )
-    .all(limit) as AcpSteerRow[];
+    .all(now - ACP_STEER_CLAIM_LEASE_MS, limit) as AcpSteerRow[];
+}
+
+export function claimAcpSteer({
+  id,
+  now = Date.now(),
+}: {
+  id: string;
+  now?: number;
+}): boolean {
+  ensureInit();
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET state = 'processing', updated_at = ?
+       WHERE id = ?
+         AND (state = 'pending' OR
+              (state = 'processing' AND updated_at <= ?))`,
+    )
+    .run(now, id, now - ACP_STEER_CLAIM_LEASE_MS);
+  return Number(result?.changes ?? 0) === 1;
+}
+
+export function releaseAcpSteerClaim({ id }: { id: string }): void {
+  ensureInit();
+  getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET state = 'pending', updated_at = ?
+       WHERE id = ? AND state = 'processing'`,
+    )
+    .run(Date.now(), id);
+}
+
+export function heartbeatAcpSteerClaim({ id }: { id: string }): void {
+  ensureInit();
+  getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET updated_at = ?
+       WHERE id = ? AND state = 'processing'`,
+    )
+    .run(Date.now(), id);
 }
 
 export function markAcpSteerHandled({ id }: { id: string }): void {
@@ -182,7 +230,7 @@ export function markAcpSteerHandled({ id }: { id: string }): void {
           handled_at = ?,
           error = NULL
       WHERE id = ?
-        AND state = 'pending'`,
+        AND state = 'processing'`,
   ).run(now, now, id);
 }
 
@@ -203,7 +251,7 @@ export function markAcpSteerError({
           handled_at = ?,
           error = ?
       WHERE id = ?
-        AND state = 'pending'`,
+        AND state = 'processing'`,
   ).run(now, now, error, id);
 }
 

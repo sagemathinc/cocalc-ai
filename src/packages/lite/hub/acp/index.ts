@@ -227,13 +227,16 @@ import {
   markAcpInterruptsHandledForThread,
 } from "../sqlite/acp-interrupts";
 import {
+  claimAcpSteer,
   decodeAcpSteerCandidateIds,
   decodeAcpSteerRequest,
   enqueueAcpSteer,
   getAcpSteer,
+  heartbeatAcpSteerClaim,
   listPendingAcpSteers,
   markAcpSteerError,
   markAcpSteerHandled,
+  releaseAcpSteerClaim,
 } from "../sqlite/acp-steers";
 import {
   claimAcpAttentionResponseDispatch,
@@ -10290,40 +10293,27 @@ async function processPendingAcpSteersOnce(): Promise<void> {
   acpSteerPollInFlight = true;
   try {
     for (const row of listPendingAcpSteers()) {
+      if (!claimAcpSteer({ id: row.id })) {
+        continue;
+      }
+      const claimHeartbeat = setInterval(() => {
+        heartbeatAcpSteerClaim({ id: row.id });
+      }, 10_000);
+      claimHeartbeat.unref?.();
       const request = decodeAcpSteerRequest(row);
       try {
-        const candidateIds = resolveSteerCandidateIds({
-          project_id: row.project_id,
-          path: row.path,
-          thread_id: row.thread_id,
-          session_id: request.session_id,
-          chat: request.chat,
-        }).concat(decodeAcpSteerCandidateIds(row));
-        const result = await trySteerCandidateIds({
-          projectId: row.project_id,
-          threadId: row.thread_id,
-          chat: request.chat,
+        const result = await attemptAcpSteerRequest(
           request,
-          candidateIds,
-        });
+          decodeAcpSteerCandidateIds(row),
+        );
         if (result.state === "steered") {
-          await recordAcpGuidanceDelivered(request);
           markAcpSteerHandled({ id: row.id });
           continue;
         }
-        // During drain/replace, every worker can observe the shared steer
-        // queue, but only the worker holding the live turn can deliver it.
-        // Leave the request pending for that worker instead of converting it
-        // into a follow-up turn on a non-owning worker.
-        if (
-          result.state === "missing" &&
-          hasOtherWorkerRunningAcpTurn({
-            project_id: row.project_id,
-            path: row.path,
-            thread_id: row.thread_id,
-            candidateIds,
-          })
-        ) {
+        if (result.state === "pending") {
+          // Another worker owns the live turn. Release the claim so that owner
+          // can atomically claim and deliver the same durable steer row.
+          releaseAcpSteerClaim({ id: row.id });
           continue;
         }
         await fallbackAcpSteerToQueuedTurn(request);
@@ -10333,6 +10323,8 @@ async function processPendingAcpSteersOnce(): Promise<void> {
           id: row.id,
           error: `${(err as Error)?.message ?? err}`,
         });
+      } finally {
+        clearInterval(claimHeartbeat);
       }
     }
   } finally {
@@ -10643,24 +10635,53 @@ async function deliverAsyncAttentionAnswer(
     path: record.path,
     user_message_id: userMessageId,
   });
-  if (existingSteer?.state === "pending") {
-    return { ok: true, state: "pending", threadId: record.thread_id };
-  }
   if (existingSteer?.state === "handled") {
     return { ok: true, state: "steered", threadId: record.thread_id };
   }
   if (existingSteer?.state === "error" && !retryFailed) {
     throw new Error(existingSteer.error ?? "queued Codex guidance failed");
   }
-  const result = await attemptAcpSteerRequest(request);
-  if (result.state === "steered" || result.state === "pending") {
+  enqueueSteerRequestForExecution({ request });
+  if (liteUseDetachedAcpWorker()) {
+    try {
+      await ensureDetachedWorkerRunning({ force: true });
+    } catch (err) {
+      logger.debug("failed waking detached ACP worker for attention answer", {
+        project_id: record.project_id,
+        path: record.path,
+        thread_id: record.thread_id,
+        err,
+      });
+    }
+  }
+  // The unique durable steer row serializes delivery before any worker calls
+  // the non-idempotent agent.steer method. Try once here for low latency; a
+  // detached owner will otherwise pick it up on the 250ms poller.
+  await processPendingAcpSteersOnce();
+  const queuedJob = getAcpJob({
+    project_id: record.project_id,
+    path: record.path,
+    user_message_id: userMessageId,
+  });
+  if (queuedJob) {
     return {
       ok: true,
-      state: result.state,
-      threadId: result.threadId ?? record.thread_id,
+      state: queuedJob.state === "running" ? "running" : "queued",
+      threadId: record.thread_id,
     };
   }
-  return await fallbackAcpSteerToQueuedTurn(request);
+  const queuedSteer = getAcpSteer({
+    project_id: record.project_id,
+    path: record.path,
+    user_message_id: userMessageId,
+  });
+  if (queuedSteer?.state === "handled") {
+    return { ok: true, state: "steered", threadId: record.thread_id };
+  }
+  if (queuedSteer?.state === "error") {
+    throw new Error(queuedSteer.error ?? "queued Codex guidance failed");
+  }
+  return { ok: true, state: "pending", threadId: record.thread_id };
 }
 
 async function dispatchClaimedAsyncAttentionResponse(
@@ -11071,6 +11092,7 @@ function startCodexActionReconcilePoller(client: ConatClient): void {
 
 async function attemptAcpSteerRequest(
   request: AcpSteerRequest,
+  extraCandidateIds: string[] = [],
 ): Promise<AcpSteerAttemptResult> {
   if (!request.chat) {
     throw new Error("chat metadata is required to steer an ACP turn");
@@ -11115,7 +11137,7 @@ async function attemptAcpSteerRequest(
     thread_id: threadId,
     session_id: request.session_id,
     chat: request.chat,
-  });
+  }).concat(extraCandidateIds);
   const result = await trySteerCandidateIds({
     projectId,
     threadId,
