@@ -147,17 +147,28 @@ textarea {
   color: var(--ul-on-accent);
   display: inline-flex;
   font-size: 12px;
-  gap: 5px;
-  min-height: 36px;
+  position: relative;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  justify-content: center;
+}
+
+.ul-theme-control > svg {
+  position: absolute;
+  pointer-events: none;
 }
 
 .ul-theme-control select {
-  background: color-mix(in srgb, var(--ul-topbar) 78%, var(--ul-on-accent) 22%);
-  border: 1px solid rgb(255 255 255 / 55%);
+  appearance: none;
+  background: transparent;
+  border: 0;
   border-radius: 3px;
-  color: var(--ul-on-accent);
-  min-height: 30px;
-  padding: 3px 6px;
+  color: transparent;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  padding: 0;
 }
 
 .ul-theme-control option {
@@ -1539,14 +1550,6 @@ textarea {
 
   .ul-topbar-link {
     font-size: 0;
-  }
-
-  .ul-theme-control > span {
-    display: none;
-  }
-
-  .ul-theme-control select {
-    max-width: 78px;
   }
 
   .ul-project-layout {

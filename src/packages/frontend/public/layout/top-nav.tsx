@@ -411,10 +411,14 @@ export default function PublicTopNav({
           marginInlineStart: DESKTOP_LOGO_MENU_GAP_PX,
         }}
       />
-      <Space>
+      <Flex
+        align="center"
+        gap={8}
+        style={{ flexShrink: 0, lineHeight: "normal" }}
+      >
         <AppearanceControl compact />
         {isAuthenticated ? appActions : authActions}
-      </Space>
+      </Flex>
     </Flex>
   );
 }
