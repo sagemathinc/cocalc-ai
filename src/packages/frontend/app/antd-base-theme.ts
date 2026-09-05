@@ -24,6 +24,8 @@ export function getBaseAntdTheme(
           }
         : {}),
       Button: {
+        defaultColor: palette.buttonText,
+        textTextColor: palette.buttonText,
         defaultHoverColor: palette.linkHover,
         defaultActiveColor: palette.link,
         defaultHoverBorderColor: palette.linkHover,

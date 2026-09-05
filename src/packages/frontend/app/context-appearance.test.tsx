@@ -23,3 +23,10 @@ it("preserves shared button contrast overrides when applying account styling", (
     getBaseAntdTheme("dark").components!.Menu,
   );
 });
+
+it("preserves the original light-mode success tint and button text", () => {
+  const theme = getBaseAntdTheme("light");
+  expect(theme.token?.colorSuccessBg).toBe("#f6ffed");
+  expect(theme.components?.Button?.defaultColor).toBe("#000000e0");
+  expect(theme.components?.Button?.textTextColor).toBe("#000000e0");
+});
