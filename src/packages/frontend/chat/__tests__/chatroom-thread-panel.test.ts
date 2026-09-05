@@ -1,6 +1,9 @@
 import {
   DEFAULT_NEW_THREAD_SETUP,
   applyNewThreadSetupPatch,
+  getReasoningForModel,
+  reconcileNewThreadSetupWithCodexCatalog,
+  resolveNewThreadCodexServiceTier,
   resolveActiveThreadSearchMatchDate,
   resolveCompactThreadBadgeAppearance,
   resolveSelectedThreadRunningCodexMessage,
@@ -29,6 +32,106 @@ describe("new thread setup patching", () => {
     expect(withSessionMode.model).toBe("gpt-5.4");
     expect(withSessionMode.codexConfig.model).toBe("gpt-5.4");
     expect(withSessionMode.codexConfig.sessionMode).toBe("workspace-write");
+  });
+
+  it("uses capabilities advertised for a dynamic Codex model", () => {
+    const models = [
+      {
+        value: "gpt-6-astra",
+        reasoning: [
+          {
+            id: "ultra" as const,
+            label: "Ultra",
+            description: "Maximum reasoning with task delegation.",
+            default: true,
+          },
+        ],
+        serviceTiers: ["fast"],
+      },
+    ];
+
+    expect(
+      getReasoningForModel({
+        models,
+        modelValue: "gpt-6-astra",
+      }),
+    ).toBe("ultra");
+    expect(
+      resolveNewThreadCodexServiceTier({
+        models,
+        model: "gpt-6-astra",
+        serviceTier: "fast",
+      }),
+    ).toBe("fast");
+  });
+
+  it("drops Fast mode when the advertised model does not support it", () => {
+    expect(
+      resolveNewThreadCodexServiceTier({
+        models: [{ value: "account-limited-model", serviceTiers: [] }],
+        model: "account-limited-model",
+        serviceTier: "fast",
+      }),
+    ).toBe("standard");
+  });
+
+  it("replaces an unavailable saved model with the advertised default", () => {
+    const setup = applyNewThreadSetupPatch(DEFAULT_NEW_THREAD_SETUP, {
+      model: "retired-model",
+      codexConfig: {
+        ...DEFAULT_NEW_THREAD_SETUP.codexConfig,
+        model: "retired-model",
+        reasoning: "high",
+        serviceTier: "fast",
+      },
+    });
+    const reconciled = reconcileNewThreadSetupWithCodexCatalog({
+      setup,
+      catalog: [
+        {
+          model: "gpt-6-astra",
+          displayName: "GPT-6-Astra",
+          description: "Current model",
+          default: true,
+          reasoning: [{ id: "medium", description: "Medium", default: true }],
+          serviceTiers: [],
+        },
+      ],
+    });
+
+    expect(reconciled.model).toBe("gpt-6-astra");
+    expect(reconciled.codexConfig).toMatchObject({
+      model: "gpt-6-astra",
+      reasoning: "medium",
+      serviceTier: "standard",
+    });
+  });
+
+  it("persists a catalog downgrade from Fast to Standard", () => {
+    const setup = applyNewThreadSetupPatch(DEFAULT_NEW_THREAD_SETUP, {
+      model: "gpt-6-astra",
+      codexConfig: {
+        ...DEFAULT_NEW_THREAD_SETUP.codexConfig,
+        model: "gpt-6-astra",
+        reasoning: "medium",
+        serviceTier: "fast",
+      },
+    });
+    const reconciled = reconcileNewThreadSetupWithCodexCatalog({
+      setup,
+      catalog: [
+        {
+          model: "gpt-6-astra",
+          displayName: "GPT-6-Astra",
+          description: "Current model",
+          default: true,
+          reasoning: [{ id: "medium", description: "Medium", default: true }],
+          serviceTiers: [],
+        },
+      ],
+    });
+
+    expect(reconciled.codexConfig.serviceTier).toBe("standard");
   });
 });
 
