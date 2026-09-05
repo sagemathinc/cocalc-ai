@@ -1921,6 +1921,12 @@ describe("turnNeedsInterruptedRepair", () => {
       worker_bundle_version: "bundle-a",
     });
     expect(running?.state).toBe("running");
+    (workers.getAcpWorker as jest.Mock).mockReturnValue({
+      worker_id: "worker-a",
+      state: "active",
+      pid: process.pid,
+      last_heartbeat_at: Date.now(),
+    });
 
     await expect(
       turnNeedsInterruptedRepair({
@@ -1934,5 +1940,45 @@ describe("turnNeedsInterruptedRepair", () => {
         },
       }),
     ).resolves.toBe(false);
+  });
+
+  it("repairs a running turn after its detached worker has stopped", async () => {
+    const request = makeRequest();
+    const queued = enqueueAcpJob(request as any);
+    const running = claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-dead",
+      worker_bundle_version: "bundle-a",
+    });
+    expect(running?.state).toBe("running");
+    (workers.getAcpWorker as jest.Mock).mockReturnValue({
+      worker_id: "worker-dead",
+      state: "stopped",
+      pid: 999_999_999,
+      last_heartbeat_at: Date.now() - 60_000,
+    });
+    const rows = [
+      {
+        event: "chat-thread-state",
+        thread_id: request.chat.thread_id,
+        state: "running",
+      },
+    ];
+    (chatServer.acquireChatSyncDB as jest.Mock).mockResolvedValue(
+      makeSyncdb(rows),
+    );
+
+    await expect(
+      turnNeedsInterruptedRepair({
+        client: {} as ConatClient,
+        turn: {
+          project_id: queued.project_id,
+          path: queued.path,
+          message_id: queued.assistant_message_id,
+        },
+      }),
+    ).resolves.toBe(true);
   });
 });
