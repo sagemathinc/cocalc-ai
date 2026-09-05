@@ -539,7 +539,6 @@ export function CodexConfigButton({
         accountId,
         onInvalidate: () => {
           setCodexModelCatalog(undefined);
-          setCodexModelRequestNonce((nonce) => nonce + 1);
           setCodexModelRefreshNonce((nonce) => nonce + 1);
         },
       }),
@@ -747,10 +746,7 @@ export function CodexConfigButton({
   useEffect(() => {
     const wantsModels = open || codexModelRequestNonce > 0;
     const wantsUsage = open || codexUsageRequested;
-    if (
-      (!wantsModels && !wantsUsage) ||
-      paymentSource?.source !== "subscription"
-    ) {
+    if (paymentSource?.source !== "subscription") {
       setCodexUsageStatus(undefined);
       setCodexUsageLoading(false);
       setCodexUsageStale(false);
@@ -759,9 +755,20 @@ export function CodexConfigButton({
       lastCodexUsageScopeRef.current = undefined;
       return;
     }
-    let cancelled = false;
-    const scope = `${accountId ?? ""}\0${projectId ?? ""}\0${codexRuntimeVersion ?? ""}`;
+    const scope = `${accountId ?? ""}\0${projectId ?? ""}\0${codexRuntimeVersion ?? ""}\0${paymentSource.subscriptionRevision ?? ""}`;
     const scopeChanged = lastCodexUsageScopeRef.current !== scope;
+    if (!wantsModels && !wantsUsage) {
+      if (scopeChanged) {
+        setCodexUsageStatus(undefined);
+        setCodexUsageStale(false);
+        setCodexModelCatalog(undefined);
+        lastCodexUsageScopeRef.current = scope;
+      }
+      setCodexUsageLoading(false);
+      setCodexModelsLoading(false);
+      return;
+    }
+    let cancelled = false;
     lastCodexUsageScopeRef.current = scope;
     const forceModels =
       codexModelRefreshNonce !== lastCodexModelRefreshRef.current;
@@ -775,6 +782,16 @@ export function CodexConfigButton({
           runtimeVersion: codexRuntimeVersion,
           subscriptionRevision: paymentSource.subscriptionRevision,
         });
+    const staleCatalog =
+      forceModels || cachedCatalog
+        ? undefined
+        : readCachedCodexModelCatalog({
+            accountId,
+            projectId,
+            runtimeVersion: codexRuntimeVersion,
+            subscriptionRevision: paymentSource.subscriptionRevision,
+            allowExpired: true,
+          });
     if (cachedUsage) {
       setCodexUsageStatus(cachedUsage.status);
       setCodexUsageStale(true);
@@ -784,9 +801,11 @@ export function CodexConfigButton({
     }
     if (cachedCatalog) {
       setCodexModelCatalog(cachedCatalog.models);
-    } else {
-      // Do not keep an expired catalog selectable while its replacement is in
-      // flight or failed. The static fallback remains available meanwhile.
+    } else if (staleCatalog) {
+      // Keep a same-account/runtime/credential catalog stable while it is
+      // revalidated. A changed scope has a different cache key and is cleared.
+      setCodexModelCatalog(staleCatalog.models);
+    } else if (scopeChanged) {
       setCodexModelCatalog(undefined);
     }
     const includeModels = wantsModels && !cachedCatalog;
@@ -1099,9 +1118,6 @@ export function CodexConfigButton({
       if (segment === "source" && paymentSource?.source === "subscription") {
         setCodexUsageRequested(true);
       }
-      if (segment === "model" && paymentSource?.source === "subscription") {
-        setCodexModelRequestNonce((nonce) => nonce + 1);
-      }
     },
     onMouseLeave: () => setHoveredPillSegment(undefined),
   });
@@ -1254,7 +1270,11 @@ export function CodexConfigButton({
                   menu={modelMenu}
                   trigger={["click"]}
                   onOpenChange={(nextOpen) => {
-                    if (nextOpen && paymentSource?.source === "subscription") {
+                    if (
+                      nextOpen &&
+                      paymentSource?.source === "subscription" &&
+                      !codexModelsLoading
+                    ) {
                       setCodexModelRequestNonce((nonce) => nonce + 1);
                     }
                   }}
