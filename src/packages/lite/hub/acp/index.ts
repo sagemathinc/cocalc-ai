@@ -236,6 +236,7 @@ import {
   listPendingAcpSteers,
   markAcpSteerError,
   markAcpSteerHandled,
+  ownsAcpSteerClaim,
   releaseAcpSteerClaim,
 } from "../sqlite/acp-steers";
 import {
@@ -10027,12 +10028,14 @@ async function trySteerCandidateIds({
   chat,
   request,
   candidateIds,
+  claimGuard,
 }: {
   projectId: string;
   threadId?: string;
   chat?: AcpChatContext;
   request: AcpSteerRequest;
   candidateIds?: string[];
+  claimGuard?: () => boolean;
 }): Promise<AcpSteerAttemptResult> {
   const ids = new Set<string>();
   const writer = findChatWriter({ threadId, chat });
@@ -10058,6 +10061,9 @@ async function trySteerCandidateIds({
     for (const agent of agentsForProject(projectId)) {
       if (typeof agent.steer !== "function") {
         continue;
+      }
+      if (claimGuard && !claimGuard()) {
+        throw new Error("durable ACP steer claim was lost");
       }
       try {
         const result = await agent.steer(id, request);
@@ -10293,34 +10299,64 @@ async function processPendingAcpSteersOnce(): Promise<void> {
   acpSteerPollInFlight = true;
   try {
     for (const row of listPendingAcpSteers()) {
-      if (!claimAcpSteer({ id: row.id })) {
+      const claimToken = claimAcpSteer({ id: row.id });
+      if (!claimToken) {
         continue;
       }
+      let claimHeartbeatFailed = false;
       const claimHeartbeat = setInterval(() => {
-        heartbeatAcpSteerClaim({ id: row.id });
+        try {
+          if (
+            !heartbeatAcpSteerClaim({
+              id: row.id,
+              claim_token: claimToken,
+            })
+          ) {
+            claimHeartbeatFailed = true;
+          }
+        } catch (err) {
+          claimHeartbeatFailed = true;
+          logger.warn("failed to heartbeat durable ACP steer claim", {
+            id: row.id,
+            project_id: row.project_id,
+            path: row.path,
+            err,
+          });
+        }
       }, 10_000);
       claimHeartbeat.unref?.();
       const request = decodeAcpSteerRequest(row);
+      const ownsClaim = () =>
+        !claimHeartbeatFailed &&
+        ownsAcpSteerClaim({ id: row.id, claim_token: claimToken });
       try {
+        if (!ownsClaim()) {
+          throw new Error("durable ACP steer claim was lost");
+        }
         const result = await attemptAcpSteerRequest(
           request,
           decodeAcpSteerCandidateIds(row),
+          ownsClaim,
         );
         if (result.state === "steered") {
-          markAcpSteerHandled({ id: row.id });
+          markAcpSteerHandled({ id: row.id, claim_token: claimToken });
           continue;
+        }
+        if (!ownsClaim()) {
+          throw new Error("durable ACP steer claim was lost");
         }
         if (result.state === "pending") {
           // Another worker owns the live turn. Release the claim so that owner
           // can atomically claim and deliver the same durable steer row.
-          releaseAcpSteerClaim({ id: row.id });
+          releaseAcpSteerClaim({ id: row.id, claim_token: claimToken });
           continue;
         }
         await fallbackAcpSteerToQueuedTurn(request);
-        markAcpSteerHandled({ id: row.id });
+        markAcpSteerHandled({ id: row.id, claim_token: claimToken });
       } catch (err) {
         markAcpSteerError({
           id: row.id,
+          claim_token: claimToken,
           error: `${(err as Error)?.message ?? err}`,
         });
       } finally {
@@ -11093,6 +11129,7 @@ function startCodexActionReconcilePoller(client: ConatClient): void {
 async function attemptAcpSteerRequest(
   request: AcpSteerRequest,
   extraCandidateIds: string[] = [],
+  claimGuard?: () => boolean,
 ): Promise<AcpSteerAttemptResult> {
   if (!request.chat) {
     throw new Error("chat metadata is required to steer an ACP turn");
@@ -11144,6 +11181,7 @@ async function attemptAcpSteerRequest(
     chat: request.chat,
     request,
     candidateIds,
+    claimGuard,
   });
   if (result.state === "steered") {
     await recordAcpGuidanceDelivered(request);

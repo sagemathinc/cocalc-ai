@@ -17,6 +17,7 @@ export interface AcpSteerRow {
   candidate_ids_json: string;
   request_json: string;
   state: AcpSteerState;
+  claim_token?: string | null;
   error?: string | null;
   created_at: number;
   updated_at: number;
@@ -35,6 +36,7 @@ function init(): void {
       candidate_ids_json TEXT NOT NULL,
       request_json TEXT NOT NULL,
       state TEXT NOT NULL,
+      claim_token TEXT,
       error TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
@@ -42,6 +44,12 @@ function init(): void {
       UNIQUE(project_id, path, user_message_id)
     )
   `);
+  const columns = db.prepare(`PRAGMA table_info(${TABLE})`).all() as Array<{
+    name?: string;
+  }>;
+  if (!columns.some(({ name }) => name === "claim_token")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN claim_token TEXT`);
+  }
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_steers_state_created_idx ON ${TABLE}(state, created_at)`,
   );
@@ -106,6 +114,7 @@ export function enqueueAcpSteer({
           SET candidate_ids_json = ?,
               request_json = ?,
               state = CASE WHEN state = 'error' THEN 'pending' ELSE state END,
+              claim_token = CASE WHEN state = 'error' THEN NULL ELSE claim_token END,
               error = CASE WHEN state = 'error' THEN NULL ELSE error END,
               handled_at = CASE WHEN state = 'error' THEN NULL ELSE handled_at END,
               updated_at = ?
@@ -123,8 +132,8 @@ export function enqueueAcpSteer({
   const id = randomUUID();
   db.prepare(
     `INSERT INTO ${TABLE}
-      (id, project_id, path, thread_id, user_message_id, candidate_ids_json, request_json, state, error, created_at, updated_at, handled_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, NULL)`,
+      (id, project_id, path, thread_id, user_message_id, candidate_ids_json, request_json, state, claim_token, error, created_at, updated_at, handled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, NULL)`,
   ).run(
     id,
     project_id,
@@ -183,62 +192,104 @@ export function claimAcpSteer({
 }: {
   id: string;
   now?: number;
+}): string | undefined {
+  ensureInit();
+  const claimToken = randomUUID();
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET state = 'processing', claim_token = ?, updated_at = ?
+       WHERE id = ?
+         AND (state = 'pending' OR
+              (state = 'processing' AND updated_at <= ?))`,
+    )
+    .run(claimToken, now, id, now - ACP_STEER_CLAIM_LEASE_MS);
+  return Number(result?.changes ?? 0) === 1 ? claimToken : undefined;
+}
+
+export function releaseAcpSteerClaim({
+  id,
+  claim_token,
+}: {
+  id: string;
+  claim_token: string;
+}): void {
+  ensureInit();
+  getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET state = 'pending', claim_token = NULL, updated_at = ?
+       WHERE id = ? AND state = 'processing' AND claim_token = ?`,
+    )
+    .run(Date.now(), id, claim_token);
+}
+
+export function heartbeatAcpSteerClaim({
+  id,
+  claim_token,
+}: {
+  id: string;
+  claim_token: string;
 }): boolean {
   ensureInit();
   const result = getAcpDatabase()
     .prepare(
       `UPDATE ${TABLE}
-       SET state = 'processing', updated_at = ?
-       WHERE id = ?
-         AND (state = 'pending' OR
-              (state = 'processing' AND updated_at <= ?))`,
+       SET updated_at = ?
+       WHERE id = ? AND state = 'processing' AND claim_token = ?`,
     )
-    .run(now, id, now - ACP_STEER_CLAIM_LEASE_MS);
+    .run(Date.now(), id, claim_token);
   return Number(result?.changes ?? 0) === 1;
 }
 
-export function releaseAcpSteerClaim({ id }: { id: string }): void {
+export function ownsAcpSteerClaim({
+  id,
+  claim_token,
+}: {
+  id: string;
+  claim_token: string;
+}): boolean {
   ensureInit();
-  getAcpDatabase()
-    .prepare(
-      `UPDATE ${TABLE}
-       SET state = 'pending', updated_at = ?
-       WHERE id = ? AND state = 'processing'`,
-    )
-    .run(Date.now(), id);
+  return (
+    getAcpDatabase()
+      .prepare(
+        `SELECT 1 FROM ${TABLE}
+         WHERE id = ? AND state = 'processing' AND claim_token = ?
+         LIMIT 1`,
+      )
+      .get(id, claim_token) != null
+  );
 }
 
-export function heartbeatAcpSteerClaim({ id }: { id: string }): void {
-  ensureInit();
-  getAcpDatabase()
-    .prepare(
-      `UPDATE ${TABLE}
-       SET updated_at = ?
-       WHERE id = ? AND state = 'processing'`,
-    )
-    .run(Date.now(), id);
-}
-
-export function markAcpSteerHandled({ id }: { id: string }): void {
+export function markAcpSteerHandled({
+  id,
+  claim_token,
+}: {
+  id: string;
+  claim_token: string;
+}): void {
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
   db.prepare(
     `UPDATE ${TABLE}
       SET state = 'handled',
+          claim_token = NULL,
           updated_at = ?,
           handled_at = ?,
           error = NULL
       WHERE id = ?
-        AND state = 'processing'`,
-  ).run(now, now, id);
+        AND state = 'processing' AND claim_token = ?`,
+  ).run(now, now, id, claim_token);
 }
 
 export function markAcpSteerError({
   id,
+  claim_token,
   error,
 }: {
   id: string;
+  claim_token: string;
   error: string;
 }): void {
   ensureInit();
@@ -247,12 +298,13 @@ export function markAcpSteerError({
   db.prepare(
     `UPDATE ${TABLE}
       SET state = 'error',
+          claim_token = NULL,
           updated_at = ?,
           handled_at = ?,
           error = ?
       WHERE id = ?
-        AND state = 'processing'`,
-  ).run(now, now, error, id);
+        AND state = 'processing' AND claim_token = ?`,
+  ).run(now, now, error, id, claim_token);
 }
 
 export function decodeAcpSteerCandidateIds(row: AcpSteerRow): string[] {

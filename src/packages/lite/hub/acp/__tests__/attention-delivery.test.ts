@@ -257,8 +257,13 @@ it("retries a failed durable steer only through the explicit continue path", asy
     path: record.path,
     user_message_id: rows[2].message_id,
   })!;
-  expect(claimAcpSteer({ id: steer.id })).toBe(true);
-  markAcpSteerError({ id: steer.id, error: "worker stopped" });
+  const claimToken = claimAcpSteer({ id: steer.id });
+  expect(claimToken).toEqual(expect.any(String));
+  markAcpSteerError({
+    id: steer.id,
+    claim_token: claimToken!,
+    error: "worker stopped",
+  });
   await expect(
     acpTestInternals.deliverAsyncAttentionAnswer(record),
   ).rejects.toThrow("worker stopped");

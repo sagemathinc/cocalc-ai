@@ -10,9 +10,12 @@ import {
   decodeAcpSteerRequest,
   enqueueAcpSteer,
   getAcpSteer,
+  heartbeatAcpSteerClaim,
   listPendingAcpSteers,
   markAcpSteerError,
   markAcpSteerHandled,
+  ownsAcpSteerClaim,
+  releaseAcpSteerClaim,
 } from "../../sqlite/acp-steers";
 
 function makeRequest() {
@@ -80,8 +83,9 @@ describe("acp steer queue", () => {
     const row = enqueueAcpSteer({
       request: makeRequest(),
     });
-    expect(claimAcpSteer({ id: row.id })).toBe(true);
-    markAcpSteerHandled({ id: row.id });
+    const claimToken = claimAcpSteer({ id: row.id });
+    expect(claimToken).toEqual(expect.any(String));
+    markAcpSteerHandled({ id: row.id, claim_token: claimToken! });
     expect(listPendingAcpSteers()).toEqual([]);
     const stored = getAcpDatabase()
       .prepare("SELECT state FROM acp_steers WHERE id = ?")
@@ -91,8 +95,13 @@ describe("acp steer queue", () => {
 
   it("requeues a failed steer without duplicating its durable identity", () => {
     const first = enqueueAcpSteer({ request: makeRequest() });
-    expect(claimAcpSteer({ id: first.id })).toBe(true);
-    markAcpSteerError({ id: first.id, error: "worker stopped" });
+    const claimToken = claimAcpSteer({ id: first.id });
+    expect(claimToken).toEqual(expect.any(String));
+    markAcpSteerError({
+      id: first.id,
+      claim_token: claimToken!,
+      error: "worker stopped",
+    });
     expect(listPendingAcpSteers()).toEqual([]);
 
     const retried = enqueueAcpSteer({
@@ -113,14 +122,72 @@ describe("acp steer queue", () => {
   it("serializes delivery claims and recovers an expired claimant", () => {
     const row = enqueueAcpSteer({ request: makeRequest() });
     const now = 1_000_000;
-    expect(claimAcpSteer({ id: row.id, now })).toBe(true);
-    expect(claimAcpSteer({ id: row.id, now })).toBe(false);
+    const firstClaimToken = claimAcpSteer({ id: row.id, now });
+    expect(firstClaimToken).toEqual(expect.any(String));
+    expect(claimAcpSteer({ id: row.id, now })).toBeUndefined();
     expect(listPendingAcpSteers(50, now)).toEqual([]);
     expect(
       listPendingAcpSteers(50, now + ACP_STEER_CLAIM_LEASE_MS),
     ).toHaveLength(1);
+    const secondClaimToken = claimAcpSteer({
+      id: row.id,
+      now: now + ACP_STEER_CLAIM_LEASE_MS,
+    });
+    expect(secondClaimToken).toEqual(expect.any(String));
+    expect(secondClaimToken).not.toBe(firstClaimToken);
     expect(
-      claimAcpSteer({ id: row.id, now: now + ACP_STEER_CLAIM_LEASE_MS }),
+      ownsAcpSteerClaim({
+        id: row.id,
+        claim_token: firstClaimToken!,
+      }),
+    ).toBe(false);
+    expect(
+      ownsAcpSteerClaim({
+        id: row.id,
+        claim_token: secondClaimToken!,
+      }),
     ).toBe(true);
+    expect(
+      heartbeatAcpSteerClaim({
+        id: row.id,
+        claim_token: firstClaimToken!,
+      }),
+    ).toBe(false);
+
+    releaseAcpSteerClaim({
+      id: row.id,
+      claim_token: firstClaimToken!,
+    });
+    markAcpSteerError({
+      id: row.id,
+      claim_token: firstClaimToken!,
+      error: "stale claimant",
+    });
+    markAcpSteerHandled({
+      id: row.id,
+      claim_token: firstClaimToken!,
+    });
+    expect(
+      getAcpSteer({
+        project_id: row.project_id,
+        path: row.path,
+        user_message_id: row.user_message_id,
+      }),
+    ).toMatchObject({
+      state: "processing",
+      claim_token: secondClaimToken,
+    });
+
+    markAcpSteerHandled({
+      id: row.id,
+      claim_token: secondClaimToken!,
+    });
+    expect(
+      getAcpSteer({
+        project_id: row.project_id,
+        path: row.path,
+        user_message_id: row.user_message_id,
+      }),
+    ).toMatchObject({ state: "handled", claim_token: null });
   });
 });
