@@ -998,6 +998,8 @@ export default function Message({
           ),
     [is_viewers_message, renderedMessageValue],
   );
+  const showCodexErrorHelp =
+    isCodexThread && !is_viewers_message && acpState === "error";
   const acpResubmitParentMessage = (() => {
     if (!actions) return undefined;
     const parentId = parentMessageId(message);
@@ -2041,7 +2043,11 @@ export default function Message({
             : null}
         </div>
         {showQuotaHelp ? (
-          <CodexQuotaHelp message={combinedAgentText} projectId={project_id} />
+          <CodexQuotaHelp
+            message={combinedAgentText}
+            projectId={project_id}
+            isError={showCodexErrorHelp}
+          />
         ) : null}
       </div>
     );
@@ -2289,7 +2295,11 @@ export default function Message({
                     inlineCodeProjectRoot={activityBasePath}
                   />
                 )}
-                <CodexQuotaHelp message={value} projectId={project_id} />
+                <CodexQuotaHelp
+                  message={value}
+                  projectId={project_id}
+                  isError={showCodexErrorHelp}
+                />
               </div>
             ),
           })
@@ -2316,7 +2326,11 @@ export default function Message({
                 inlineCodeProjectRoot={activityBasePath}
               />
             )}
-            <CodexQuotaHelp message={value} projectId={project_id} />
+            <CodexQuotaHelp
+              message={value}
+              projectId={project_id}
+              isError={showCodexErrorHelp}
+            />
           </div>
         ) : null}
         {!showCodexActivity ? (

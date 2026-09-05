@@ -98,11 +98,23 @@ describe("CodexQuotaHelp", () => {
     expect(screen.queryByText("Open AI Settings")).toBeNull();
 
     rerender(
-      <CodexQuotaHelp message="You have reached your 5-hour AI usage limit. Please try again later or upgrade your membership." />,
+      <CodexQuotaHelp
+        message="You have reached your 5-hour AI usage limit. Please try again later or upgrade your membership."
+        isError
+      />,
     );
     expect(screen.queryByText("Upgrade membership")).toBeNull();
     expect(screen.getByText("Open AI Settings")).toBeTruthy();
     expect(screen.getByText("Open ChatGPT Codex Usage")).toBeTruthy();
+  });
+
+  it("does not infer an error from user-authored quota text", () => {
+    render(
+      <CodexQuotaHelp message="I just saw AI usage limit reached in another message." />,
+    );
+
+    expect(screen.queryByText("Open AI Settings")).toBeNull();
+    expect(screen.queryByText("Open ChatGPT Codex Usage")).toBeNull();
   });
 
   it("opens the settings modal for usage limits", async () => {
@@ -110,6 +122,7 @@ describe("CodexQuotaHelp", () => {
       <CodexQuotaHelp
         message="You have reached your 5-hour AI usage limit. Please try again later or upgrade your membership."
         projectId="project-1"
+        isError
       />,
     );
 
@@ -124,6 +137,7 @@ describe("CodexQuotaHelp", () => {
       <CodexQuotaHelp
         message="CoCalc AI usage is not included on this site. To use AI in CoCalc, sign up for a ChatGPT plan at https://chatgpt.com/pricing, then connect it in CoCalc AI settings."
         projectId="project-1"
+        isError
       />,
     );
 
@@ -137,6 +151,7 @@ describe("CodexQuotaHelp", () => {
       <CodexQuotaHelp
         message="Codex authentication expired."
         projectId="project-1"
+        isError
       />,
     );
 

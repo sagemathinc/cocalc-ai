@@ -82,9 +82,11 @@ export function classifyCodexAuthErrorMessage(
 export function CodexQuotaHelp({
   message,
   projectId,
+  isError = false,
 }: {
   message?: string;
   projectId?: string;
+  isError?: boolean;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const authError = useMemo(
@@ -100,7 +102,7 @@ export function CodexQuotaHelp({
     [message],
   );
 
-  if (!showUsageLimit && !authError) return null;
+  if (!isError || (!showUsageLimit && !authError)) return null;
 
   return (
     <>

@@ -10,6 +10,8 @@ function threadStateToAcpState(state: unknown): string | undefined {
       return "queue";
     case "running":
       return "running";
+    case "error":
+      return "error";
     default:
       return undefined;
   }
@@ -63,7 +65,10 @@ function chatRowToAcpState({
       if (threadStateName === "queued") {
         return "queue";
       }
-      return threadStateName === "running" ? "running" : undefined;
+      if (threadStateName === "running" || threadStateName === "error") {
+        return threadStateName;
+      }
+      return undefined;
     }
     default:
       return undefined;
