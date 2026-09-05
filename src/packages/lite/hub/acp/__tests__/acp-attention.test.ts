@@ -7,6 +7,7 @@ import {
   ACP_ATTENTION_DISPATCH_LEASE_MS,
   claimAcpAttentionResponseDispatch,
   claimStaleAcpAttentionContinue,
+  deferAcpAttentionResponseDispatch,
   getAcpAttention,
   listPendingAcpActions,
   listPendingAcpAttentionResponseDispatches,
@@ -182,6 +183,51 @@ describe("ACP attention storage", () => {
         attention_id: record.attention_id,
         response_id: "response-recovery",
         now: now + ACP_ATTENTION_DISPATCH_LEASE_MS,
+      }),
+    ).toBe(true);
+  });
+
+  it("reconciles deferred delivery without treating normal sync answers as async", () => {
+    const asyncRecord = createAttention({
+      source_kind: "codex_async_question",
+      source_id: "async-deferred-delivery",
+    });
+    submitAcpAttentionResponse({
+      attention_id: asyncRecord.attention_id,
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      response_id: "async-response",
+      answers: { choice: ["Yes"] },
+    });
+    expect(
+      claimAcpAttentionResponseDispatch({
+        attention_id: asyncRecord.attention_id,
+        response_id: "async-response",
+      }),
+    ).toBe(true);
+    expect(
+      deferAcpAttentionResponseDispatch({
+        attention_id: asyncRecord.attention_id,
+        response_id: "async-response",
+      }),
+    ).toMatchObject({ resolution_reason: "awaiting_delivery" });
+
+    const syncRecord = createAttention({ source_id: "sync-normal-response" });
+    submitAcpAttentionResponse({
+      attention_id: syncRecord.attention_id,
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      response_id: "sync-response",
+      answers: { choice: ["Yes"] },
+    });
+    const pending = listPendingAcpAttentionResponseDispatches();
+    expect(pending).toEqual([
+      expect.objectContaining({ attention_id: asyncRecord.attention_id }),
+    ]);
+    expect(
+      claimAcpAttentionResponseDispatch({
+        attention_id: asyncRecord.attention_id,
+        response_id: "async-response",
       }),
     ).toBe(true);
   });

@@ -14,7 +14,9 @@ import { decodeAcpJobRequest, listQueuedAcpJobs } from "../../sqlite/acp-jobs";
 import { listRunningAcpTurnLeases } from "../../sqlite/acp-turns";
 import {
   decodeAcpSteerRequest,
+  getAcpSteer,
   listPendingAcpSteers,
+  markAcpSteerError,
 } from "../../sqlite/acp-steers";
 import type { AcpAttentionStoredRecord } from "../../sqlite/acp-attention";
 
@@ -196,7 +198,10 @@ it.each(["missing", "not_steerable"])(
       },
     });
     expect(rows[2]).toMatchObject({ sender_id: accountId });
+    const calls = mockSteer.mock.calls.length;
+    mockSteer.mockResolvedValue({ state: "steered", threadId: sessionId });
     await acpTestInternals.deliverAsyncAttentionAnswer(record);
+    expect(mockSteer).toHaveBeenCalledTimes(calls);
     expect(listQueuedAcpJobs()).toHaveLength(1);
     expect(rows[2].parent_message_id).toBe("original-assistant");
   },
@@ -215,7 +220,7 @@ it("forwards guidance to the detached owner instead of creating a follow-up job"
   ]);
   expect(
     await acpTestInternals.deliverAsyncAttentionAnswer(record),
-  ).toMatchObject({ state: "steered" });
+  ).toMatchObject({ state: "pending" });
   expect(listQueuedAcpJobs()).toEqual([]);
   expect(listPendingAcpSteers()).toHaveLength(1);
   expect(decodeAcpSteerRequest(listPendingAcpSteers()[0]).chat).toMatchObject({
@@ -225,6 +230,43 @@ it("forwards guidance to the detached owner instead of creating a follow-up job"
   expect(rows[2].acp_guidance_delivered_at_ms).toBeUndefined();
   await acpTestInternals.deliverAsyncAttentionAnswer(record);
   expect(listPendingAcpSteers()).toHaveLength(1);
+  mockSteer.mockResolvedValue({ state: "steered", threadId: sessionId });
+  await acpTestInternals.processPendingAcpSteersOnce();
+  expect(listPendingAcpSteers()).toHaveLength(0);
+  expect(rows[2].acp_guidance_delivered_at_ms).toEqual(expect.any(Number));
+  await expect(
+    acpTestInternals.deliverAsyncAttentionAnswer(record),
+  ).resolves.toMatchObject({ state: "steered" });
+});
+
+it("retries a failed durable steer only through the explicit continue path", async () => {
+  mockSteer.mockResolvedValue({ state: "missing" });
+  jest.mocked(listRunningAcpTurnLeases).mockReturnValue([
+    {
+      project_id: projectId,
+      path: record.path,
+      thread_id: record.thread_id,
+      session_id: sessionId,
+      owner_instance_id: "other-worker",
+    } as any,
+  ]);
+  await acpTestInternals.deliverAsyncAttentionAnswer(record);
+  const steer = getAcpSteer({
+    project_id: projectId,
+    path: record.path,
+    user_message_id: rows[2].message_id,
+  })!;
+  markAcpSteerError({ id: steer.id, error: "worker stopped" });
+  await expect(
+    acpTestInternals.deliverAsyncAttentionAnswer(record),
+  ).rejects.toThrow("worker stopped");
+
+  jest.mocked(listRunningAcpTurnLeases).mockReturnValue([]);
+  mockSteer.mockResolvedValue({ state: "steered", threadId: sessionId });
+  await expect(
+    acpTestInternals.deliverAsyncAttentionAnswer(record, { retryFailed: true }),
+  ).resolves.toMatchObject({ state: "steered" });
+  expect(rows[2].acp_guidance_delivered_at_ms).toEqual(expect.any(Number));
 });
 
 it("uses the generic agent identity if the thread has no model", async () => {

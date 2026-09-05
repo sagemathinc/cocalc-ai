@@ -230,6 +230,7 @@ import {
   decodeAcpSteerCandidateIds,
   decodeAcpSteerRequest,
   enqueueAcpSteer,
+  getAcpSteer,
   listPendingAcpSteers,
   markAcpSteerError,
   markAcpSteerHandled,
@@ -237,6 +238,7 @@ import {
 import {
   claimAcpAttentionResponseDispatch,
   claimStaleAcpAttentionContinue,
+  deferAcpAttentionResponseDispatch,
   getAcpAttention,
   listAcpAttention,
   listPendingAcpAttentionResponseDispatches,
@@ -10012,7 +10014,7 @@ function resolveSteerCandidateIds({
 }
 
 type AcpSteerAttemptResult = {
-  state: "steered" | "missing" | "not_steerable";
+  state: "steered" | "pending" | "missing" | "not_steerable";
   threadId?: string;
 };
 
@@ -10190,8 +10192,8 @@ function enqueueSteerRequestForExecution({
 }: {
   request: AcpSteerRequest;
   candidateIds?: string[];
-}): void {
-  enqueueAcpSteer({
+}) {
+  return enqueueAcpSteer({
     request,
     candidate_ids: candidateIds,
   });
@@ -10486,6 +10488,14 @@ async function handleAcpSteerRequest(
       threadId: result.threadId ?? threadId,
     };
   }
+  if (result.state === "pending") {
+    const threadId = `${request.chat?.thread_id ?? ""}`.trim();
+    return {
+      ok: true,
+      state: "steered",
+      threadId: result.threadId ?? threadId,
+    };
+  }
   if (result.state === "not_steerable") {
     return await fallbackAcpSteerToQueuedTurn(request);
   }
@@ -10534,7 +10544,10 @@ function asyncAttentionNotificationMetadata(
 
 async function deliverAsyncAttentionAnswer(
   record: NonNullable<ReturnType<typeof getAcpAttention>>,
-): Promise<AcpSteerResponse> {
+  { retryFailed = false }: { retryFailed?: boolean } = {},
+): Promise<
+  AcpSteerResponse | { ok: true; state: "pending"; threadId: string }
+> {
   if (!conatClient) throw new Error("conat client must be initialized");
   const responseIdentity = `${record.attention_id}:${record.response_id ?? "response"}`;
   const responseSubmittedAt =
@@ -10593,9 +10606,7 @@ async function deliverAsyncAttentionAnswer(
   if (alreadyDelivered) {
     return { ok: true, state: "steered", threadId: record.thread_id };
   }
-  // Use the same delivery path as Send Immediately, including routing to a
-  // detached turn owner and falling back to a new turn when no turn is active.
-  return await handleAcpSteerRequest({
+  const request: AcpSteerRequest = {
     project_id: record.project_id,
     account_id: record.account_id,
     prompt: content,
@@ -10614,7 +10625,42 @@ async function deliverAsyncAttentionAnswer(
       parent_message_id: userMessageId,
       ...asyncAttentionNotificationMetadata(record),
     },
+  };
+  const existingJob = getAcpJob({
+    project_id: record.project_id,
+    path: record.path,
+    user_message_id: userMessageId,
   });
+  if (existingJob) {
+    return {
+      ok: true,
+      state: existingJob.state === "running" ? "running" : "queued",
+      threadId: record.thread_id,
+    };
+  }
+  const existingSteer = getAcpSteer({
+    project_id: record.project_id,
+    path: record.path,
+    user_message_id: userMessageId,
+  });
+  if (existingSteer?.state === "pending") {
+    return { ok: true, state: "pending", threadId: record.thread_id };
+  }
+  if (existingSteer?.state === "handled") {
+    return { ok: true, state: "steered", threadId: record.thread_id };
+  }
+  if (existingSteer?.state === "error" && !retryFailed) {
+    throw new Error(existingSteer.error ?? "queued Codex guidance failed");
+  }
+  const result = await attemptAcpSteerRequest(request);
+  if (result.state === "steered" || result.state === "pending") {
+    return {
+      ok: true,
+      state: result.state,
+      threadId: result.threadId ?? record.thread_id,
+    };
+  }
+  return await fallbackAcpSteerToQueuedTurn(request);
 }
 
 async function dispatchClaimedAsyncAttentionResponse(
@@ -10622,6 +10668,17 @@ async function dispatchClaimedAsyncAttentionResponse(
 ): Promise<AcpAttentionResponse> {
   try {
     const delivery = await deliverAsyncAttentionAnswer(record);
+    if (delivery.state === "pending") {
+      const deferred = deferAcpAttentionResponseDispatch({
+        attention_id: record.attention_id,
+        response_id: record.response_id!,
+      });
+      return {
+        ok: true,
+        state: "pending",
+        record: deferred ? publicAttentionRecord(deferred) : undefined,
+      };
+    }
     const resolved = resolveAcpAttention({
       attention_id: record.attention_id,
       state: record.response_declined ? "declined" : "answered",
@@ -10703,7 +10760,20 @@ async function continueStaleAttentionAnswer(
     };
   }
   try {
-    const delivery = await deliverAsyncAttentionAnswer(claimed);
+    const delivery = await deliverAsyncAttentionAnswer(claimed, {
+      retryFailed: true,
+    });
+    if (delivery.state === "pending") {
+      const deferred = deferAcpAttentionResponseDispatch({
+        attention_id: request.attention_id,
+        response_id: claimed.response_id!,
+      });
+      return {
+        ok: true,
+        state: "pending",
+        record: deferred ? publicAttentionRecord(deferred) : undefined,
+      };
+    }
     const resolved = resolveAcpAttention({
       attention_id: request.attention_id,
       state: "answered",
@@ -11069,7 +11139,7 @@ async function attemptAcpSteerRequest(
       candidateIds,
     })
   ) {
-    enqueueSteerRequestForExecution({
+    const queued = enqueueSteerRequestForExecution({
       request,
       candidateIds,
     });
@@ -11084,7 +11154,7 @@ async function attemptAcpSteerRequest(
       });
     }
     return {
-      state: "steered",
+      state: queued.state === "handled" ? "steered" : "pending",
       threadId: result.threadId ?? candidateIds[0] ?? threadId,
     };
   }
@@ -11795,6 +11865,7 @@ export const acpTestInternals = {
   asyncAttentionNotificationMetadata,
   deliverAsyncAttentionAnswer,
   initializeAcpRuntime,
+  processPendingAcpSteersOnce,
   cancelDelayedAcpQueueWake,
   detachedWorkerCanClaimQueuedJob,
   enqueueFailureRecoveryContinuation,

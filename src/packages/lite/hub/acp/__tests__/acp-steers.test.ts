@@ -7,7 +7,9 @@ import {
   decodeAcpSteerCandidateIds,
   decodeAcpSteerRequest,
   enqueueAcpSteer,
+  getAcpSteer,
   listPendingAcpSteers,
+  markAcpSteerError,
   markAcpSteerHandled,
 } from "../../sqlite/acp-steers";
 
@@ -82,5 +84,25 @@ describe("acp steer queue", () => {
       .prepare("SELECT state FROM acp_steers WHERE id = ?")
       .get(row.id);
     expect(stored && stored.state).toBe("handled");
+  });
+
+  it("requeues a failed steer without duplicating its durable identity", () => {
+    const first = enqueueAcpSteer({ request: makeRequest() });
+    markAcpSteerError({ id: first.id, error: "worker stopped" });
+    expect(listPendingAcpSteers()).toEqual([]);
+
+    const retried = enqueueAcpSteer({
+      request: makeRequest(),
+      candidate_ids: ["thread-1"],
+    });
+    expect(retried.id).toBe(first.id);
+    expect(retried).toMatchObject({ state: "pending", error: null });
+    expect(
+      getAcpSteer({
+        project_id: retried.project_id,
+        path: retried.path,
+        user_message_id: retried.user_message_id,
+      }),
+    ).toMatchObject({ id: first.id, state: "pending" });
   });
 });

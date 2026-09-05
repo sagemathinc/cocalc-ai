@@ -89,7 +89,6 @@ export function enqueueAcpSteer({
        WHERE project_id = ?
          AND path = ?
          AND user_message_id = ?
-         AND state = 'pending'
        LIMIT 1`,
     )
     .get(project_id, path, user_message_id) as AcpSteerRow | undefined;
@@ -104,6 +103,9 @@ export function enqueueAcpSteer({
       `UPDATE ${TABLE}
           SET candidate_ids_json = ?,
               request_json = ?,
+              state = CASE WHEN state = 'error' THEN 'pending' ELSE state END,
+              error = CASE WHEN state = 'error' THEN NULL ELSE error END,
+              handled_at = CASE WHEN state = 'error' THEN NULL ELSE handled_at END,
               updated_at = ?
         WHERE id = ?`,
     ).run(
@@ -135,6 +137,25 @@ export function enqueueAcpSteer({
   return db
     .prepare(`SELECT * FROM ${TABLE} WHERE id = ?`)
     .get(id) as AcpSteerRow;
+}
+
+export function getAcpSteer({
+  project_id,
+  path,
+  user_message_id,
+}: {
+  project_id: string;
+  path: string;
+  user_message_id: string;
+}): AcpSteerRow | undefined {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(
+      `SELECT * FROM ${TABLE}
+       WHERE project_id = ? AND path = ? AND user_message_id = ?
+       LIMIT 1`,
+    )
+    .get(project_id, path, user_message_id) as AcpSteerRow | undefined;
 }
 
 export function listPendingAcpSteers(limit = 50): AcpSteerRow[] {

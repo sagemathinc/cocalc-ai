@@ -465,7 +465,7 @@ export function claimAcpAttentionResponseDispatch(opts: {
       `UPDATE ${TABLE}
        SET resolution_reason = 'dispatching', updated_at = ?
        WHERE attention_id = ? AND state = 'pending' AND response_id = ?
-         AND (resolution_reason IS NULL OR
+         AND (resolution_reason IS NULL OR resolution_reason = 'awaiting_delivery' OR
               (resolution_reason = 'dispatching' AND updated_at <= ?))`,
     )
     .run(
@@ -477,6 +477,25 @@ export function claimAcpAttentionResponseDispatch(opts: {
   return Number(result?.changes ?? 0) === 1;
 }
 
+export function deferAcpAttentionResponseDispatch(opts: {
+  attention_id: string;
+  response_id: string;
+}): AcpAttentionStoredRecord | undefined {
+  ensureInit();
+  const now = Date.now();
+  const result = getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET resolution_reason = 'awaiting_delivery', updated_at = ?
+       WHERE attention_id = ? AND state = 'pending' AND response_id = ?
+         AND resolution_reason IN ('dispatching', 'continuing')`,
+    )
+    .run(now, opts.attention_id, opts.response_id);
+  return Number(result?.changes ?? 0) === 1
+    ? getAcpAttention(opts.attention_id)
+    : undefined;
+}
+
 export function listPendingAcpAttentionResponseDispatches(
   now = Date.now(),
 ): AcpAttentionStoredRecord[] {
@@ -485,9 +504,11 @@ export function listPendingAcpAttentionResponseDispatches(
     getAcpDatabase()
       .prepare(
         `SELECT * FROM ${TABLE}
-         WHERE source_kind = 'codex_async_question'
+         WHERE (source_kind = 'codex_async_question' OR
+                (source_kind = 'codex_sync_question' AND
+                 resolution_reason = 'awaiting_delivery'))
            AND state = 'pending' AND response_id IS NOT NULL
-           AND (resolution_reason IS NULL OR
+           AND (resolution_reason IS NULL OR resolution_reason = 'awaiting_delivery' OR
                 (resolution_reason = 'dispatching' AND updated_at <= ?))
          ORDER BY response_submitted_at ASC, attention_id ASC`,
       )
