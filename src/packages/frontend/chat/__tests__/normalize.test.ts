@@ -164,6 +164,49 @@ describe("handleSyncDBChange", () => {
     expect(store.state.acpState?.get("message:msg-queued")).toBe("queue");
   });
 
+  it("keeps error thread-state on the active assistant message", () => {
+    const store = new MockStore();
+    const threadStateDate = new Date("2024-01-02T03:04:05.000Z");
+    const assistantDate = "2024-01-02T03:04:04.000Z";
+    const threadState = {
+      event: "chat-thread-state",
+      sender_id: "__thread_state__",
+      date: threadStateDate,
+      thread_id: "thread-error",
+      active_message_id: "msg-error",
+      state: "error",
+    };
+    const assistantMessage = {
+      event: "chat",
+      sender_id: "openai-codex-agent",
+      date: assistantDate,
+      message_id: "msg-error",
+      thread_id: "thread-error",
+      acp_state: "running",
+      history: [],
+      editing: {},
+      feedback: {},
+      schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+    };
+    const syncdb = new MockSyncDB([threadState, assistantMessage]);
+
+    handleSyncDBChange({
+      syncdb,
+      store,
+      changes: [
+        {
+          event: "chat-thread-state",
+          sender_id: "__thread_state__",
+          date: threadStateDate,
+          thread_id: "thread-error",
+        },
+      ],
+    });
+
+    expect(store.state.acpState?.get("thread:thread-error")).toBe("error");
+    expect(store.state.acpState?.get("message:msg-error")).toBe("error");
+  });
+
   it("does not let plain chat rows clear queued thread-state for the active message", () => {
     const store = new MockStore();
     const date = new Date("2024-01-02T03:04:05.000Z");
@@ -468,6 +511,7 @@ describe("initFromSyncDB", () => {
     const runningDate = new Date("2024-01-02T03:04:05.000Z");
     const queuedDate = new Date("2024-01-03T03:04:05.000Z");
     const completeDate = new Date("2024-01-04T03:04:05.000Z");
+    const errorDate = new Date("2024-01-05T03:04:05.000Z");
     const syncdb = new MockSyncDB([
       {
         event: "chat-thread-state",
@@ -493,6 +537,14 @@ describe("initFromSyncDB", () => {
         active_message_id: "msg-complete",
         state: "complete",
       },
+      {
+        event: "chat-thread-state",
+        sender_id: "__thread_state__",
+        date: errorDate,
+        thread_id: "thread-error",
+        active_message_id: "msg-error",
+        state: "error",
+      },
     ]);
 
     initFromSyncDB({ syncdb, store });
@@ -508,9 +560,11 @@ describe("initFromSyncDB", () => {
     expect(store.state.acpState?.get("thread:thread-running")).toBe("running");
     expect(store.state.acpState?.get("thread:thread-queued")).toBe("queue");
     expect(store.state.acpState?.get("thread:thread-complete")).toBeUndefined();
+    expect(store.state.acpState?.get("thread:thread-error")).toBe("error");
     expect(store.state.acpState?.get("message:msg-running")).toBe("running");
     expect(store.state.acpState?.get("message:msg-queued")).toBe("queue");
     expect(store.state.acpState?.get("message:msg-complete")).toBeUndefined();
+    expect(store.state.acpState?.get("message:msg-error")).toBe("error");
   });
 
   it("hydrates queued acp state from chat rows", () => {

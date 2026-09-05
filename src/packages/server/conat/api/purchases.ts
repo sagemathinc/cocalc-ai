@@ -1931,7 +1931,9 @@ export async function assignMembershipPackageSeat({
       "site-license seats must be claimed or approved through site-license workflows",
     );
   }
-  if (pkg.owner_account_id !== account_id && !(await isAdmin(account_id))) {
+  const trustedAdmin =
+    pkg.owner_account_id !== account_id && (await isAdmin(account_id));
+  if (pkg.owner_account_id !== account_id && !trustedAdmin) {
     throw Error("must own membership package");
   }
   return await assignMembershipPackageSeat0({
@@ -1939,6 +1941,7 @@ export async function assignMembershipPackageSeat({
     account_id: target_account_id,
     email_address: target_email_address,
     assigned_by_account_id: account_id,
+    ...(trustedAdmin ? { trusted_admin: true } : {}),
     metadata: metadata ?? null,
   });
 }

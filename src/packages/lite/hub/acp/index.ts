@@ -4867,6 +4867,54 @@ type InterruptedAcpTurnTarget = {
   owner_instance_id?: string | null;
 };
 
+function acpJobTurnTarget(job: AcpJobRow): InterruptedAcpTurnTarget {
+  return {
+    project_id: job.project_id,
+    path: job.path,
+    message_date: job.assistant_message_date,
+    message_id: job.assistant_message_id,
+    thread_id: job.thread_id,
+    account_id: job.account_id,
+    owner_instance_id: job.worker_id,
+  };
+}
+
+function resolveInterruptedAcpTurnTarget(
+  turn: InterruptedAcpTurnTarget,
+): InterruptedAcpTurnTarget {
+  const target = {
+    project_id: `${turn.project_id ?? ""}`.trim(),
+    path: `${turn.path ?? ""}`.trim(),
+    message_date: `${turn.message_date ?? ""}`.trim() || undefined,
+    message_id: `${turn.message_id ?? ""}`.trim() || undefined,
+    thread_id: `${turn.thread_id ?? ""}`.trim() || undefined,
+  };
+  if (!target.project_id || !target.path) return turn;
+  const lease = listRunningAcpTurnLeases().find((row) =>
+    runningTurnMatchesTarget(row, target),
+  );
+  const job = listRunningAcpJobs().find((row) =>
+    runningTurnMatchesTarget(acpJobTurnTarget(row), target),
+  );
+  return {
+    ...turn,
+    message_date:
+      target.message_date ?? lease?.message_date ?? job?.assistant_message_date,
+    sender_id:
+      `${turn.sender_id ?? ""}`.trim() || lease?.sender_id || undefined,
+    message_id:
+      target.message_id ?? lease?.message_id ?? job?.assistant_message_id,
+    thread_id: target.thread_id ?? lease?.thread_id ?? job?.thread_id,
+    account_id:
+      `${turn.account_id ?? ""}`.trim() || job?.account_id || undefined,
+    owner_instance_id:
+      `${turn.owner_instance_id ?? ""}`.trim() ||
+      lease?.owner_instance_id ||
+      job?.worker_id ||
+      undefined,
+  };
+}
+
 export function finalizeInterruptedAcpBackendState({
   turn,
   recoveryReason = INTERRUPT_STATUS_TEXT,
@@ -5717,24 +5765,29 @@ export async function turnNeedsInterruptedRepair({
     thread_id?: string | null;
   };
 }): Promise<boolean> {
-  const project_id = `${turn.project_id ?? ""}`.trim();
-  const path = `${turn.path ?? ""}`.trim();
-  const thread_id = `${turn.thread_id ?? ""}`.trim();
+  const resolvedTurn = resolveInterruptedAcpTurnTarget(turn);
+  const project_id = `${resolvedTurn.project_id ?? ""}`.trim();
+  const path = `${resolvedTurn.path ?? ""}`.trim();
+  const thread_id = `${resolvedTurn.thread_id ?? ""}`.trim();
   const target = {
     project_id,
     path,
-    message_date: `${turn.message_date ?? ""}`.trim() || undefined,
-    message_id: `${turn.message_id ?? ""}`.trim() || undefined,
+    message_date: `${resolvedTurn.message_date ?? ""}`.trim() || undefined,
+    message_id: `${resolvedTurn.message_id ?? ""}`.trim() || undefined,
     thread_id: thread_id || undefined,
   };
-  // A live running job/lease means the detached ACP worker still owns this
-  // turn. In that case an interrupt request must be forwarded to the worker,
-  // not "repaired" locally as if the turn were orphaned.
+  const matchingJobs = listRunningAcpJobs().filter((row) =>
+    runningTurnMatchesTarget(acpJobTurnTarget(row), target),
+  );
+  const matchingLeases = listRunningAcpTurnLeases().filter((row) =>
+    runningTurnMatchesTarget(row, target),
+  );
+  // Only a live owner protects a running row from repair. A dead worker leaves
+  // the job and lease marked running, which is exactly the orphan state this
+  // path must repair after a failed direct interrupt.
   if (
-    listRunningAcpJobs().some((row) => runningTurnMatchesTarget(row, target)) ||
-    listRunningAcpTurnLeases().some((row) =>
-      runningTurnMatchesTarget(row, target),
-    )
+    matchingJobs.some((row) => jobStillLikelyOwnedByLiveWorker(row)) ||
+    matchingLeases.some((row) => turnStillLikelyOwnedByLiveWorker(row))
   ) {
     return false;
   }
@@ -5758,9 +5811,9 @@ export async function turnNeedsInterruptedRepair({
       }
       const current =
         findRecoverableChatRow(syncdb as any, {
-          message_date: `${turn.message_date ?? ""}`.trim(),
-          sender_id: `${turn.sender_id ?? "openai-codex-agent"}`.trim(),
-          message_id: `${turn.message_id ?? ""}`.trim() || undefined,
+          message_date: `${resolvedTurn.message_date ?? ""}`.trim(),
+          sender_id: `${resolvedTurn.sender_id ?? "openai-codex-agent"}`.trim(),
+          message_id: `${resolvedTurn.message_id ?? ""}`.trim() || undefined,
         }) ?? findLatestGeneratingChatRow(syncdb, thread_id);
       needsRepair = syncdbField<boolean>(current, "generating") === true;
     },
@@ -10144,6 +10197,38 @@ function enqueueSteerRequestForExecution({
   });
 }
 
+async function repairOrphanedAcpInterrupt({
+  project_id,
+  path,
+  thread_id,
+  chat,
+}: {
+  project_id: string;
+  path: string;
+  thread_id?: string;
+  chat?: AcpChatContext;
+}): Promise<boolean> {
+  if (!conatClient) return false;
+  const turn = resolveInterruptedAcpTurnTarget({
+    project_id,
+    path,
+    message_date: chat?.message_date,
+    sender_id: chat?.sender_id,
+    message_id: chat?.message_id,
+    thread_id: thread_id || chat?.thread_id,
+  });
+  if (!(await turnNeedsInterruptedRepair({ client: conatClient, turn }))) {
+    return false;
+  }
+  return await repairInterruptedAcpTurn({
+    client: conatClient,
+    turn,
+    interruptedNotice: INTERRUPT_STATUS_TEXT,
+    interruptedReasonId: "interrupt",
+    recoveryReason: INTERRUPT_STATUS_TEXT,
+  });
+}
+
 async function processPendingAcpInterruptsOnce(): Promise<void> {
   if (acpInterruptPollInFlight) return;
   acpInterruptPollInFlight = true;
@@ -10176,6 +10261,15 @@ async function processPendingAcpInterruptsOnce(): Promise<void> {
           },
           recoveryReason: INTERRUPT_STATUS_TEXT,
         });
+        markAcpInterruptHandled({ id: row.id });
+      } else if (
+        await repairOrphanedAcpInterrupt({
+          project_id: row.project_id,
+          path: row.path,
+          thread_id: row.thread_id,
+          chat,
+        })
+      ) {
         markAcpInterruptHandled({ id: row.id });
       } else if (ageMs >= ACP_INTERRUPT_MAX_AGE_MS) {
         markAcpInterruptError({
@@ -11534,33 +11628,13 @@ async function handleInterruptRequest(
     (threadId || `${request.chat.message_id ?? ""}`.trim())
   ) {
     try {
-      const repaired = await turnNeedsInterruptedRepair({
-        client: conatClient,
-        turn: {
+      if (
+        await repairOrphanedAcpInterrupt({
           project_id,
           path,
-          message_date: request.chat.message_date,
-          sender_id: request.chat.sender_id,
-          message_id: request.chat.message_id,
           thread_id: threadId || request.chat.thread_id,
-        },
-      });
-      if (
-        repaired &&
-        (await repairInterruptedAcpTurn({
-          client: conatClient,
-          turn: {
-            project_id,
-            path,
-            message_date: request.chat.message_date,
-            sender_id: request.chat.sender_id,
-            message_id: request.chat.message_id,
-            thread_id: threadId || request.chat.thread_id,
-          },
-          interruptedNotice: INTERRUPT_STATUS_TEXT,
-          interruptedReasonId: "interrupt",
-          recoveryReason: INTERRUPT_STATUS_TEXT,
-        }))
+          chat: request.chat,
+        })
       ) {
         markAcpInterruptsHandledForThread({
           project_id,

@@ -3064,6 +3064,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         ? codexModelCatalogCacheKey(accountId, subscriptionId, runtimeVersion!)
         : undefined;
       const cacheGeneration = codexModelCatalogGeneration.get(accountId) ?? 0;
+      if (cacheKey && refresh_models) {
+        codexModelCatalogCache.delete(cacheKey);
+      }
       const cachedCatalog =
         cacheKey && !refresh_models
           ? codexModelCatalogCache.get(cacheKey)
@@ -3071,9 +3074,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       const status =
         include_models && cacheKey && !cachedCatalog
           ? await loadCodexModelCatalogStatus({
-              dedupeKey: refresh_models
-                ? undefined
-                : `${cacheKey}\0${cacheGeneration}`,
+              // Refresh bypasses a stored catalog, not an identical probe that
+              // is already running. Coalescing here prevents refresh fanout
+              // from spawning many Codex app-servers on the same host.
+              dedupeKey: `${cacheKey}\0${cacheGeneration}`,
               projectId: project_id,
               accountId,
               timeoutMs,

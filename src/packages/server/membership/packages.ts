@@ -60,6 +60,7 @@ import {
 } from "@cocalc/server/cluster-config";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 
 type Queryable = PoolClient | ReturnType<typeof getPool>;
 type ClaimableMembershipPackageWithBay = ClaimableMembershipPackage & {
@@ -79,6 +80,10 @@ type InstitutionalClaimDescriptor = {
   canonical_identity: string;
   matched_email_address: string;
   claimed_domain: string;
+};
+type CourseSeatProjectValidation = {
+  course_project_id: string;
+  email_address?: string;
 };
 
 interface RawMembershipPackageRecord {
@@ -1253,6 +1258,7 @@ async function syncProjectUsageForAssignment({
   project_id,
   account_id,
   expected_current_usage_account_id,
+  course_validation,
   client,
 }: {
   owner_account_id: string;
@@ -1261,6 +1267,7 @@ async function syncProjectUsageForAssignment({
   project_id: string;
   account_id?: string | null;
   expected_current_usage_account_id?: string | null;
+  course_validation?: CourseSeatProjectValidation;
   client: PoolClient;
 }): Promise<void> {
   const localOwnership = await resolveProjectBayDirect(project_id);
@@ -1277,6 +1284,8 @@ async function syncProjectUsageForAssignment({
         project_id,
         account_id,
         expected_current_usage_account_id,
+        expected_course_project_id: course_validation?.course_project_id,
+        expected_course_email_address: course_validation?.email_address,
       },
       client,
     );
@@ -1294,9 +1303,176 @@ async function syncProjectUsageForAssignment({
       project_id,
       desired_account_id: account_id ?? null,
       expected_current_usage_account_id,
+      expected_course_project_id: course_validation?.course_project_id,
+      expected_course_email_address: course_validation?.email_address,
     },
     client,
   });
+}
+
+async function getCourseInfoForSeatProject({
+  project_id,
+  actor_account_id,
+  trusted_admin = false,
+  client,
+}: {
+  project_id: string;
+  actor_account_id: string;
+  trusted_admin?: boolean;
+  client: PoolClient;
+}): Promise<CourseInfo | null> {
+  const localOwnership = await resolveProjectBayDirect(project_id);
+  const ownership =
+    localOwnership ?? (await resolveProjectBayAcrossCluster(project_id));
+  if (ownership == null) {
+    throw Error(`course seat project ${project_id} not found`);
+  }
+  if (ownership.bay_id === getConfiguredBayId()) {
+    const { rows } = await client.query<{ course: CourseInfo | null }>(
+      "SELECT course FROM projects WHERE project_id=$1 LIMIT 1",
+      [project_id],
+    );
+    if (!rows[0]) {
+      throw Error(`course seat project ${project_id} not found`);
+    }
+    return rows[0].course ?? null;
+  }
+  return (
+    await getInterBayBridge().projectDetails(ownership.bay_id).get({
+      project_id,
+      account_id: actor_account_id,
+      trusted_admin,
+    })
+  ).course;
+}
+
+async function getVerifiedSeatAccountEmails({
+  account_id,
+  client,
+}: {
+  account_id: string;
+  client: PoolClient;
+}): Promise<string[]> {
+  const homeBayId = await getHomeBayForAccount(account_id, client);
+  const emailAddresses =
+    homeBayId === getConfiguredBayId()
+      ? [
+          await getVerifiedEmailAddressForAccount({
+            account_id,
+            client,
+          }),
+        ]
+      : (
+          await createInterBayAccountLocalClient({
+            client: getInterBayFabricClient(),
+            dest_bay: homeBayId,
+          }).getVerifiedEmailAddresses({ account_id })
+        ).email_addresses;
+  return Array.from(
+    new Set(
+      emailAddresses
+        .map((email) => normalizeEmailAddress(email))
+        .filter((email): email is string => !!email),
+    ),
+  );
+}
+
+async function assertValidCourseSeatProject({
+  pkg,
+  assignment_metadata,
+  account_id,
+  email_address,
+  verified_account_email_addresses,
+  actor_account_id,
+  trusted_admin = false,
+  client,
+}: {
+  pkg: MembershipPackageRecord;
+  assignment_metadata?: Record<string, unknown> | null;
+  account_id?: string;
+  email_address?: string;
+  verified_account_email_addresses?: string[];
+  actor_account_id: string;
+  trusted_admin?: boolean;
+  client: PoolClient;
+}): Promise<CourseSeatProjectValidation | undefined> {
+  if (pkg.kind !== "course") return;
+  const project_id = `${assignment_metadata?.project_id ?? ""}`.trim();
+  if (!project_id) return;
+  if (!isValidUUID(project_id)) {
+    throw Error("course seat project_id must be a valid UUID");
+  }
+  const course_project_id = `${pkg.metadata?.course_project_id ?? ""}`.trim();
+  if (!isValidUUID(course_project_id)) {
+    throw Error("course package is missing a valid course_project_id");
+  }
+  if (project_id === course_project_id) {
+    throw Error(
+      "course seat must target a student project, not the instructor course project",
+    );
+  }
+  const course = await getCourseInfoForSeatProject({
+    project_id,
+    actor_account_id,
+    trusted_admin,
+    client,
+  });
+  if (course?.type !== "student" || course.project_id !== course_project_id) {
+    throw Error(
+      `course seat project must be a student project linked to course ${course_project_id}`,
+    );
+  }
+  const courseAccountId = `${course.account_id ?? ""}`.trim() || undefined;
+  const courseEmailAddress = normalizeEmailAddress(course.email_address);
+  if (account_id) {
+    if (courseAccountId) {
+      if (courseAccountId !== account_id) {
+        throw Error(
+          "course seat account does not match the student project account",
+        );
+      }
+    } else if (courseEmailAddress) {
+      const verifiedEmails =
+        verified_account_email_addresses ??
+        (await getVerifiedSeatAccountEmails({ account_id, client }));
+      if (
+        !verifiedEmails
+          .map((email) => normalizeEmailAddress(email))
+          .includes(courseEmailAddress)
+      ) {
+        throw Error(
+          "course seat account does not match the student project email",
+        );
+      }
+    } else {
+      throw Error("course seat student project has no recipient identity");
+    }
+  }
+  if (email_address) {
+    if (courseEmailAddress) {
+      if (courseEmailAddress !== email_address) {
+        throw Error(
+          "course seat email does not match the student project email",
+        );
+      }
+    } else if (courseAccountId) {
+      const verifiedEmails = await getVerifiedSeatAccountEmails({
+        account_id: courseAccountId,
+        client,
+      });
+      if (!verifiedEmails.includes(email_address)) {
+        throw Error(
+          "course seat email does not match the student project account",
+        );
+      }
+    } else {
+      throw Error("course seat student project has no recipient identity");
+    }
+  }
+  return {
+    course_project_id,
+    ...(courseAccountId ? {} : { email_address: courseEmailAddress }),
+  };
 }
 
 async function withPackageOwnerWriteFence<T>({
@@ -2283,12 +2459,14 @@ export async function assignMembershipPackageSeat(
     account_id,
     email_address,
     assigned_by_account_id,
+    trusted_admin = false,
     metadata,
   }: {
     package_id: string;
     account_id?: string;
     email_address?: string;
     assigned_by_account_id: string;
+    trusted_admin?: boolean;
     metadata?: Record<string, unknown> | null;
   },
   client?: PoolClient,
@@ -2304,6 +2482,15 @@ export async function assignMembershipPackageSeat(
       if (!normalizedAccountId && !normalizedEmailAddress) {
         throw Error("account_id or email_address required");
       }
+      const requestedCourseValidation = await assertValidCourseSeatProject({
+        pkg,
+        assignment_metadata: metadata,
+        account_id: normalizedAccountId,
+        email_address: normalizedEmailAddress,
+        actor_account_id: assigned_by_account_id,
+        trusted_admin,
+        client: dbClient,
+      });
       if (pkg.expires_at && pkg.expires_at <= new Date()) {
         throw Error("membership package has expired");
       }
@@ -2329,16 +2516,26 @@ export async function assignMembershipPackageSeat(
             client: dbClient,
           });
           if (!grantInfo) {
+            const mergedMetadata = {
+              ...normalizeMetadata(existingAssignment.metadata),
+              ...normalizeMetadata(metadata),
+            };
+            const courseValidation = await assertValidCourseSeatProject({
+              pkg,
+              assignment_metadata: mergedMetadata,
+              account_id: normalizedAccountId,
+              email_address: normalizedEmailAddress,
+              actor_account_id: assigned_by_account_id,
+              trusted_admin,
+              client: dbClient,
+            });
             grantInfo = await createGrantForAssignment({
               owner_account_id: pkg.owner_account_id,
               package_id,
               account_id: normalizedAccountId,
               assigned_by_account_id,
               assignment_id: existingAssignment.id,
-              metadata: {
-                ...normalizeMetadata(existingAssignment.metadata),
-                ...normalizeMetadata(metadata),
-              },
+              metadata: mergedMetadata,
               client: dbClient,
             });
             const assignmentMetadata: Record<string, unknown> = {
@@ -2366,6 +2563,7 @@ export async function assignMembershipPackageSeat(
                 assignment_id: existingAssignment.id,
                 project_id,
                 account_id: normalizedAccountId,
+                course_validation: courseValidation,
                 client: dbClient,
               });
             }
@@ -2441,6 +2639,7 @@ export async function assignMembershipPackageSeat(
             assignment_id,
             project_id,
             account_id: normalizedAccountId,
+            course_validation: requestedCourseValidation,
             client: dbClient,
           });
         }
@@ -3187,6 +3386,17 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
               site_license: terms,
             }),
           };
+          const courseValidation = await assertValidCourseSeatProject({
+            pkg,
+            assignment_metadata: baseMetadata,
+            account_id,
+            email_address: pendingAssignment.email_address ?? undefined,
+            verified_account_email_addresses: verifiedEmailAddresses,
+            // The package owner is the stable project authority. An admin who
+            // originally reserved the seat may not be an admin on this bay.
+            actor_account_id: pkg.owner_account_id,
+            client: dbClient,
+          });
           const grantInfo = await createGrantForAssignment({
             owner_account_id: pkg.owner_account_id,
             package_id,
@@ -3260,6 +3470,7 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
               assignment_id: pendingAssignment.id,
               project_id,
               account_id,
+              course_validation: courseValidation,
               client: dbClient,
             });
           }
