@@ -2,210 +2,208 @@
 
 Date: 2026-09-05.
 
-Status: proposal for later discussion. No implementation or production policy
-change is authorized by this document. Numeric limits and rollout policy remain
-undecided.
+Status: implementation plan revised after policy review. This document edit
+does not authorize implementation, deployment, or source deletion. Numeric
+limits and production rollout decisions still require separate approval.
 
-## Incident and Motivation
+## Scope and Policy
 
-Two orphaned Rustic 0.11.1 backup processes on us-south-1 spent roughly 15 hours
-reading separate snapshot copies of a file named `70T`. Its apparent size was
-70 TiB (76,965,813,944,320 bytes), with zero allocated blocks. Each process had
-read tens of terabytes of logical data. Both survived their original parent,
-consumed backup resources, and prevented cache maintenance from proceeding.
-The operator-authorized termination of both processes completed with SIGTERM.
+Protect managed-project hosts from unbounded backup work without building a
+new membership-quota product. Deliver resource containment first, then a fixed
+file-size policy with honest exclusion reporting.
 
-The operator reports that the free account used CoCalc only briefly and has now
-deleted the offending file. Intent is not established by the file alone. No
-account deletion or further incident cleanup is requested by this plan. Existing
-snapshot copies and scheduler state would need separate inspection before
-assuming retries cannot encounter the same file.
+The user-facing rule is:
 
-Any user could reproduce this resource amplification. Physical disk quotas do
-not bound the logical work required to read sparse or highly compressed files.
-Deleting this one file does not solve the underlying problem.
+> Files larger than the managed-project apparent-size limit are excluded from
+> backups and cannot be recovered from archives that exclude them. Use a
+> dedicated VM for workloads requiring larger files.
 
-## Proposed Product Contract
+- Use one centrally configured positive integer limit in bytes, independent of
+  membership and physical disk usage. Files exactly at the limit remain eligible.
+- Apply it consistently to managed projects on shared and private hosts. Keep
+  self-hosted deployment configuration explicit; do not silently impose the
+  hosted-site policy on CoCalc Star.
+- Allow ordinary sparsity. NumPy arrays, geospatial data, and other legitimate
+  files can be sparse without FUSE or filesystem mounts. Test apparent size,
+  not a sparsity ratio or presumed user intent.
+- Do not change file creation, writes, physical disk charging, scratch behavior,
+  or runtime quotas. An OS-wide file-size limit is not the solution here.
+- Defer membership tiers, per-project overrides, a rich report-browser UI, and
+  per-operation acknowledgement tokens. Dedicated VMs are the escape hatch.
 
-Introduce a project quota named **Maximum backed-up file size**, measured in
-apparent bytes, independently of physical disk usage.
+## Incident and Verified Findings
 
-- Membership tiers provide defaults through the existing entitlement/quota
-  resolver; authorized administrators can override the effective project limit.
-- This is a backup eligibility limit, not a filesystem creation limit. It must
-  not change writes, runtime limits, disk charging, or the ability to use a file.
-- Files larger than the effective limit are omitted from backups and explicitly
-  reported. Files exactly at the limit remain eligible.
-- Treat all regular files alike; do not require a sparsity heuristic. A large
-  database and a sparse file have the same apparent-size eligibility test.
-- Never label a snapshot with policy exclusions as a complete backup.
-- Changing limits does not rewrite historical backup completeness. Raising a
-  limit does not establish protection until a subsequent backup includes files.
-- Do not add an OS-wide file-size limit: it would also affect scratch space and
-  still would not cover host-side writers or aggregate backup work.
+Two orphaned Rustic 0.11.1 processes on us-south-1 spent roughly 15 hours reading
+separate snapshot copies of `70T`: a 70 TiB apparent-size file with zero allocated
+blocks. Each read tens of terabytes and blocked cache maintenance. Both were
+terminated with operator-authorized SIGTERM. The user reportedly deleted the
+file, but retained snapshots and retry state may still reference it. Intent is
+not established; this plan does not authorize further incident cleanup.
 
-No tier values are selected yet. Define units, override precedence, validation,
-legacy defaults, and any self-hosted opt-out explicitly before implementation.
-Membership changes must not silently turn previously protected files into
-immediately disposable data.
+The backup API already defaults to a 30-minute timeout. A local process test
+confirmed that the fallback executor's `!child.killed` check can suppress
+SIGKILL even while the child remains alive: that property records signal
+delivery, not exit. Production also uses a privileged wrapper; this finding
+alone does not establish the incident's cause. Both execution paths need work.
 
-## Backup Guard and Evidence
+Current backup-success reporting and archive eligibility do not distinguish
+policy exclusions. Adding a Rustic flag without updating those consumers is
+not a safe implementation.
 
-Scan metadata in the same immutable snapshot that Rustic will read. Do not
-read file contents to detect oversize, follow symlinks outside that snapshot,
-cross unintended mount boundaries, or modify users' files.
+## Phase 1: Resource Containment
 
-The scan should produce a durable manifest tied to the snapshot and policy
-version: relative path, apparent size, exclusion reason, effective limit,
-timestamp, and counts. Keep UI summaries bounded and paginate full manifests.
-Handle arbitrary filenames safely, including newlines, glob metacharacters,
-invalid text encodings, and hard links; no shell interpolation or executable
-HTML in reporting.
+This phase introduces no policy exclusions or new permission to delete data.
 
-Investigate Rustic's `--exclude-larger-than` as a matching enforcement guard.
-Verify exact boundary semantics, units, directory traversal, and installed
-version behavior. Do not assume a preflight manifest and CLI exclusions agree
-without tests. Check local `/home/user/upstream/rustic`, its core dependency,
-and current upstream before choosing the implementation. Sparse restore
-behavior remains to be verified, not assumed.
+1. Give each backup a supervised lifetime covering the entire sudo/helper/Rustic
+   process tree. Enforce deadlines across privilege boundaries, preferably in
+   a root-owned per-job service/cgroup. Handle cancellation, worker death, and
+   service replacement; escalate using actual exit state, not `child.killed`.
+2. Enforce internal CPU/memory/I/O, runtime, and per-project/per-host concurrency
+   budgets. A new worker must not retry while its predecessor is still running.
+   Confirm exit before releasing job locks or deleting its temporary snapshot.
+3. Add a bounded metadata preflight on the same immutable snapshot Rustic reads.
+   Bound traversal time, entry count, and aggregate apparent bytes before reading
+   contents. Respect normal backup exclusions; do not follow symlinks or cross
+   unintended mounts. Initially count each regular-file directory entry's size
+   toward admission, conservatively including hard links, with overflow-safe
+   arithmetic and bounded memory.
+4. On budget exhaustion or incomplete inspection, fail with a durable reason and
+   preserve source data. Bound retries across worker restarts and put repeatedly
+   over-budget projects into operator review instead of an endless retry loop.
+   Cheap, rate-limited preflights may detect when changed data fits again.
+5. Coordinate with cache-maintenance work already in progress. Locks must protect
+   active repository users without an unrelated job blocking all cache cleanup.
 
-Distinguish these outcomes explicitly:
+Stage worker death, timeout escalation, concurrent retries, and huge-apparent
+inputs before a small production canary. Verify healthy backups still restore,
+the host remains responsive, and failed jobs cannot satisfy archive readiness.
 
-- Complete: all supported source data was successfully backed up.
-- Complete with policy exclusions: supported data succeeded, with a durable
-  manifest; the project backup is visibly incomplete from the user's viewpoint.
-- Failed/unknown: timeout, unreadable files, interrupted scan, upload failure,
-  or unavailable evidence. This is not permission to discard source data.
+## Phase 2: Size Exclusions and Evidence
 
-Prefer unambiguous internal names such as `partial_policy_exclusions` over
-overloading existing success fields. Audit every consumer of backup success,
-especially archive, restore, migration, and `last_backup` indicators.
+1. Run a bounded metadata-only inventory and select the site-wide limit from
+   measured impact. Validate and capture the effective policy per job; project
+   code must not be able to raise or bypass it. A missing required hosted-site
+   policy is an error, not an unlimited fallback.
+2. Extend preflight to record regular files above the limit without reading their
+   contents. Count eligible files against the aggregate work budget. Budget
+   exhaustion still fails the job; do not choose additional files to discard.
+3. Enforce identical exclusions in the privileged wrapper and fallback. Verify
+   `--exclude-larger-than` against the deployed Rustic/core versions, including
+   units, the exact boundary, parent snapshots, hard links, and restore behavior.
+   Local `/home/user/upstream/rustic` may differ from the installed version.
+4. Persist a trusted exclusion report linked to the source snapshot and resulting
+   backup ID: effective limit, policy version, relative paths, apparent sizes,
+   reasons, timestamp, and counts. Store it with protected backup metadata, not
+   as user-editable project evidence, and retain it after host-data deletion.
+   Stream the full report; keep control-plane and UI summaries bounded.
+5. Propagate explicit outcomes through backup status, scheduling, archive, move,
+   copy/restore, and `last_backup` consumers before enabling any exclusions.
+   Tie freshness to the captured source snapshot, not a later live-tree state.
 
-## Project Warning and Restore UX
+Use exactly these semantic outcomes:
 
-Display a prominent non-dismissible banner across the project, not just in its
-backup settings. Show a bounded list of paths and sizes, the effective limit,
-and a link to the full exclusion report. All collaborators should see it while
-authorized to access the project.
+- `complete`: the normal backup scope was preserved, with no size exclusions or
+  operational failures.
+- `partial_policy_exclusions`: all eligible data and the linked exclusion report
+  were successfully preserved. Do not present this as a complete project backup.
+- `failed`: timeout, budget exhaustion, unreadable data, incomplete scan, failed
+  upload/report persistence, or other unknown outcome. Never deletion authority.
 
-Suggested wording, subject to the final retention policy:
+A backup process exiting successfully is not sufficient evidence of completeness.
+Do not interpret legacy or missing exclusion metadata as proof that a newly
+enabled exclusion workflow succeeded.
 
-> These files exceed this project's maximum backed-up file size and are not
-> backed up. They will be permanently lost if this project is automatically
-> archived under its retention policy. Delete unneeded files or move them to
-> storage suitable for large files.
+Display a persistent project-wide warning for collaborators, with the limit,
+count, sample paths, and a downloadable full report. Explain the impact on
+backups and archives and direct exceptional workloads to a dedicated VM. Before
+enabling lossy archival, explicitly warn that excluded files will be permanently
+lost on that operation. Distinguish "now eligible, awaiting backup" from protected.
+Historical partial backups keep their warnings when current files or limits
+change; increasing the limit does not retroactively repair them.
 
-Recommend `/scratch` with an explicit temporary/no-backup warning, or a dedicated
-VM with its backup responsibilities clearly stated. Verify the actual scratch
-restart lifecycle and dedicated-VM backup policy before publishing exact claims.
+## Archival and Migration Rules
 
-A refresh/rescan can detect deletion or changed eligibility. Distinguish
-"no longer oversized, awaiting backup" from "successfully backed up". Historical
-partial snapshots retain their warnings even after current exclusions resolve.
-Restoring a partial archive must show that excluded files cannot be recovered;
-persist the manifest somewhere that survives deletion of the source host data.
+- Ordinary backup-based moves and user-requested archives must stop when the
+  required backup has exclusions. Explain that users must resolve the files and
+  complete a new backup. Do not build lossy-move acknowledgements in this phase.
+- Transfer paths that preserve all files may continue; the size cap must not turn
+  an otherwise lossless migration into a lossy one.
+- Keep automatic deletion with exclusions disabled until separately approved
+  policy, advance notices, and an existing-file grace period are in place.
+  A banner alone is not notice to absent users. Future reductions in the cap
+  also require an explicit transition, not immediate disposal of existing data.
+- After that gate, only otherwise-eligible inactive free projects may use a
+  verified partial backup for automatic archival. Preserve paid-collaborator and
+  publication protections in `project-archive-lifecycle-plan-2026-08-22.md`.
+  Recheck authoritative eligibility and matching source/backup/report evidence
+  before deletion; an intervening edit, placement change, or upgrade invalidates
+  stale readiness.
+- Operational failures, missing evidence, and aggregate-budget exhaustion always
+  block destructive finalization. Restoring an approved partial archive must
+  visibly disclose its exclusions.
 
-## Retention and Migration Decisions
+Explicit compromise: many sub-limit files can still exceed aggregate budgets
+and block archival. Pause expensive retries and surface these cases for operator
+resolution. This plan does not guarantee unattended archival of every adversarial
+filesystem and does not infer permission to discard files from a timeout.
 
-An unsupported file must not provide a permanent veto on automatic archival.
-However, policy exclusions and operational backup failures are different.
+## Implementation Boundaries
 
-Proposed distinction for discussion:
+Starting points, relative to the repository root:
 
-- Scheduled archival of eligible inactive free projects may discard explicitly
-  excluded files after an announced policy/grace period, provided supported
-  files and the exclusion manifest were successfully preserved and verified.
-- User-requested archive or migration that would lose excluded files requires
-  acknowledgement of the exact exclusions before source deletion. Bind the
-  acknowledgement to the snapshot/manifest and policy; invalidate it if the
-  relevant source or exclusions change.
-- A migration path that actually preserves all files need not lose them merely
-  because the backup-size limit exists. Audit transfer mechanisms individually.
-- Timeouts, unknown entitlement, incomplete scans, and backup/storage failures
-  do not qualify for the policy-exclusion exception.
+- `src/packages/server/cloud/bootstrap/bootstrap.py` and
+  `src/packages/project-host/project-rustic.ts`: privileged supervision and guard.
+- `src/packages/backend/sandbox/exec.ts`, `rustic.ts`, and
+  `src/packages/backend/execute-code.ts`: fallback execution and timeout handling.
+- `src/packages/file-server/btrfs/subvolume-rustic.ts` and
+  `src/packages/project-host/file-server.ts`: immutable staging, preflight, reports,
+  and backup outcome publication.
+- `src/packages/server/projects/change-tracking.ts`,
+  `archive-lifecycle-policy.ts`, `archive.ts`, `move.ts`, and `copy.ts`: audit
+  freshness and destructive/restore consumers; retain existing lifecycle checks.
+- `src/packages/project-host/rustic-cache-maintenance.ts`: job/cleanup coordination.
 
-Preserve the paid-collaborator and publication protections in
-`project-archive-lifecycle-plan-2026-08-22.md`. This proposal does not newly
-authorize automatic archival of paid projects. Recheck authoritative eligibility
-before destructive finalization, including a paid upgrade during a grace period.
+Follow `scalable-architecture.md`: the owning bay authorizes project lifecycle
+operations and records bounded status; route host work through the host's bay.
+Resolve existing account-based archival protections through account home bays.
+Hosts scan and back up data; serve detailed reports via authorized project-host
+or storage interfaces, not bulk hub proxying. Keep filenames private and safely
+encode arbitrary names, including invalid text encodings and glob characters.
 
-Decide advance notices, existing-project grace periods, downgrade behavior, and
-the handling of missing email delivery before enabling source deletion with
-exclusions. A banner alone is not notice to someone who never returns.
+Read `accessibility.md` before implementing warnings/downloads. A new interactive
+quota administration interface and report browser are not prerequisites.
 
-## Resource and Abuse Controls
+## Release Gates and Acceptance
 
-A per-file limit is necessary but insufficient. Many eligible files can still
-create enormous logical workloads. Bound metadata traversal, aggregate logical
-input, backup runtime, retries, and per-project/per-host concurrency. Define
-hard-link accounting and avoid unbounded in-memory filename lists.
+Deploy Phase 1 independently after staging verification. For Phase 2, first ship
+backward-compatible outcome consumers, upgraded bootstrap/helpers and hosts, and
+the warning UI with exclusions disabled. Inventory and canary the policy, then
+enable it only on hosts with verified enforcement/reporting capabilities. Do not
+fall back to unguarded execution on old hosts. Approval to exclude from backups
+is separate from approval to delete source data during automatic archival.
 
-Exhausting a work budget should initially fail safely with an operator-visible
-reason, not silently create additional disposable exclusions. Any policy for
-discarding aggregate-budget overflow requires a separate explicit decision.
+Acceptance tests must demonstrate:
 
-Ensure worker cancellation, death, and host-service replacement terminate the
-associated backup process tree, with bounded graceful termination and safe
-escalation. Recover durable job state after restart without overlapping retries.
-Coordinate cache retention with active repository users through appropriate
-locking; an unrelated long backup should not block all cache maintenance.
+- Huge-apparent sparse inputs are rejected/excluded without reading their holes;
+  ordinary sparse files and exact-boundary files round-trip correctly.
+- Both execution paths enforce policy; worker death, ignored SIGTERM, privileged
+  children, service replacement, and retry recovery leave no orphaned workers.
+- Many eligible files and large directory trees hit bounded admission limits
+  without unbounded memory, content reads, or automatic retry storms.
+- Hostile filenames, symlinks, hard links, scan/upload/report failures, and policy
+  changes cannot forge completeness or permit unsupported source deletion.
+- Complete/partial/failed outcomes reach all lifecycle consumers; blocked moves,
+  mixed host versions, cross-bay operations, intervening edits/upgrades, and
+  partial restores preserve the specified safety and warning behavior.
 
-## Architecture and Implementation Map
+Rollback disables exclusions or partial archival without removing historical
+reports/warnings, weakening Phase 1 containment, or resuming unbounded retries.
+Never benchmark large sparse-content reads against production.
 
-Follow `scalable-architecture.md`: the project's owning bay authorizes and stores
-project policy/state; entitlement resolution uses authoritative account home
-bays. The host's bay routes work to the owning project host. Do not infer paid
-status from local account rows or bypass inter-bay routing.
+## Remaining Operator Decisions
 
-Hosts perform snapshot scans and backup data-plane work. Send bounded durable
-status to the control plane; serve authorized detailed evidence through scoped
-project-host/storage interfaces rather than proxying bulk file data through hubs.
-Keep manifests private to authorized project collaborators/admins, and avoid
-leaking filenames in global logs or notification previews.
-
-Starting points to inspect, not a final change inventory:
-
-- `src/packages/file-server/btrfs/subvolume-rustic.ts`: snapshot staging lifecycle.
-- `src/packages/backend/sandbox/rustic.ts`: Rustic invocation and option validation.
-- `src/packages/project-host/rustic-cache-maintenance.ts`: active-job coordination.
-- Existing membership/quota resolution, backup state, archive/move/restore
-  finalization, and project-wide frontend layout.
-
-Read `accessibility.md` before UI implementation. Define mixed-version behavior:
-old hosts lacking guard/manifest support must not receive newly enabled
-destructive exclusion workflows. Missing evidence must never imply completeness.
-
-## Phased Delivery and Verification
-
-1. Verify upstream behavior and trace all backup-dependent deletion paths.
-2. Implement tested limits, manifests, and process/resource containment behind
-   explicit rollout controls; no automatic source deletion with exclusions yet.
-3. Add quota/admin configuration, persistent banner, backup/restore indicators,
-   and dry-run fleet inventory. Select tier limits from measured impact.
-4. Stage end-to-end tests and a small canary; review false positives, overhead,
-   incomplete-state propagation, and mixed-version compatibility.
-5. Only after product-policy approval and notice/grace requirements are met,
-   enable the scheduled-archive exception for eligible free projects.
-
-Tests must cover tiny-allocated/huge-apparent files without reading their holes,
-boundary sizes, ordinary large files, many sub-limit files, hostile filenames,
-symlinks, hard links, scan errors, worker death, duplicate retries, quota changes,
-cross-bay authorization, stale acknowledgements, failed manifest persistence,
-partial restore, and source preservation after any operational failure.
-
-Rollback may disable new partial archival, but must retain existing manifests
-and warnings. It must not restart unbounded backup attempts on known oversized
-inputs. No large sparse-content benchmark should run against production.
-
-## Open Questions for the Next Review
-
-- What per-tier apparent-size limits and admin override rules should apply?
-- What aggregate budgets protect hosts without excluding normal workloads?
-- Which default and opt-out semantics fit self-hosted deployments?
-- What notice/grace period applies to existing files and membership downgrades?
-- How frequently should current exclusions be rescanned and warnings refreshed?
-- Where should manifests live so archive restore remains independent of hosts?
-- What exact acknowledgement and retention policy should govern data loss?
-
-This document intentionally leaves these decisions open for the operator to
-mull over. Do not implement or deploy the policy merely because the plan exists.
+- The single hosted-site size limit, internal work budgets, and canary cohort,
+  informed by the bounded inventory and staging measurements.
+- Explicit defaults for self-hosted deployments.
+- Notice/grace rules for existing files, including unreachable users, and the
+  separate go/no-go decision for automatic archival with exclusions.
