@@ -217,18 +217,20 @@ aggregate work, and runtime even if zero processing becomes faster.
 ### Alternative to Prototype: Pack Sparse Files Before Rustic
 
 Evaluate encoding each sparse file as its logical size, extent map, and packed
-data in a private backup staging clone, then decoding after Rustic restores it.
+data in a private backup staging snapshot, then decoding after Rustic restores it.
 Rustic would process the packed size rather than the logical zero stream, avoiding
 both hole reads and millions of repeated zero-chunk references. Prefer testing an
 existing format, such as per-file GNU tar PAX sparse 1.0, before inventing one;
 [GNU tar supports seek-based hole detection and sparse extraction](https://www.gnu.org/software/tar/manual/html_node/sparse.html).
 Do not turn the whole project into one opaque archive.
 
-The current backup snapshot is read-only. Preserve that immutable source, create
-an inaccessible writable transform clone, then freeze the completed encoded tree
-before Rustic reads it. Keep original-file policy checks before encoding: a tiny
-packed representation cannot bypass logical-size, entry/extent, or decode budgets.
-Hole detection must distinguish real holes from merely compressed/allocated data.
+Use one private writable Btrfs staging snapshot instead of creating it read-only
+as the current code does. Keep it inaccessible to project processes, perform
+original-file policy checks and encoding there, then make that same snapshot
+read-only before Rustic reads it. No second clone is required, and transformation
+must not modify the live project. A tiny packed representation cannot bypass
+logical-size, entry/extent, or decode budgets. Hole detection must distinguish
+real holes from merely compressed/allocated data.
 
 This changes CoCalc's stored-file representation, even if it leaves Rustic's
 repository format unchanged. Prototype versioned, host-authored encoding metadata,
