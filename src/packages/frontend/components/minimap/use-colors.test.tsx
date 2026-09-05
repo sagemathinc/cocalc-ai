@@ -13,6 +13,8 @@ it("updates concrete canvas colors on appearance changes", () => {
   mockResolved = "dark";
   rerender();
   const dark = result.current;
+  expect(dark.colors.block).not.toBe(MINIMAP_COLORS.block);
+  expect(dark.colors.current).not.toBe(MINIMAP_COLORS.current);
   expect(dark.colors.canvasBackground).not.toBe(
     MINIMAP_COLORS.canvasBackground,
   );

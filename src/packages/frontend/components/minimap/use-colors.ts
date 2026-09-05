@@ -21,8 +21,9 @@ const darkColors = {
   canvasCurrentRow: p.selected,
   canvasCurrentRowStroke: p.link,
   canvasCurrentLine: p.selected,
-  block: p.secondary,
-  blockQuiet: p.muted,
+  current: p.link,
+  block: p.muted,
+  blockQuiet: p.controlBorder,
 };
 const darkCells = Object.fromEntries(
   Object.keys(MINIMAP_CELL_THEME).map((kind) => [

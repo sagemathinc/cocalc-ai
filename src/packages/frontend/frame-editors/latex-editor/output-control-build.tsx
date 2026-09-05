@@ -9,6 +9,7 @@ Provides build, force build, clean, download, and print controls
 */
 
 import type { SizeType } from "antd/es/config-provider/SizeContext";
+import { MoonOutlined, SunOutlined } from "@ant-design/icons";
 
 import type { MenuProps } from "antd";
 import { Button, Dropdown, Space } from "antd";
@@ -26,7 +27,6 @@ import {
 } from "@cocalc/frontend/frame-editors/frame-tree/commands/const";
 import { server_time } from "@cocalc/frontend/frame-editors/generic/client";
 import { editor, IntlMessage } from "@cocalc/frontend/i18n";
-import { DARK_MODE_ICON } from "@cocalc/util/consts/ui";
 
 import { Actions } from "./actions";
 
@@ -160,7 +160,11 @@ export function BuildControls({
           onClick={() => actions.toggle_pdf_dark_mode(id)}
           title={intl.formatMessage(editor.toggle_pdf_dark_mode_title)}
         >
-          <Icon unicode={DARK_MODE_ICON} />
+          {pdfInvertColors ? (
+            <MoonOutlined aria-hidden />
+          ) : (
+            <SunOutlined aria-hidden />
+          )}
         </BSButton>
       )}
     </>

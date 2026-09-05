@@ -34,7 +34,6 @@ import React, {
 import { throttle } from "lodash";
 
 import { canvasBackingStoreSize } from "@cocalc/frontend/components/canvas-backing-store";
-import { MINIMAP_COLORS } from "@cocalc/frontend/components/minimap/colors";
 import { MinimapControls } from "@cocalc/frontend/components/minimap/controls";
 import {
   BlockMinimap,
@@ -623,6 +622,7 @@ const CodeMirrorBlockMinimap: React.FC<{
   cm: CodeMirror.Editor;
   width: number;
 }> = ({ cm, width }) => {
+  const { colors: MINIMAP_COLORS } = useMinimapColors();
   const height = useEditorVisibleHeight(cm);
   const [docVersion, setDocVersion] = useState<number>(0);
   const [cursorLine, setCursorLine] = useState<number>(0);
@@ -676,7 +676,7 @@ const CodeMirrorBlockMinimap: React.FC<{
       color: i === currentIdx ? MINIMAP_COLORS.current : MINIMAP_COLORS.block,
       opacity: i === currentIdx ? 0.8 : 0.7,
     }));
-  }, [blocks, cm, cursorLine]);
+  }, [blocks, cm, cursorLine, MINIMAP_COLORS]);
 
   if (height <= 0) return null;
 
