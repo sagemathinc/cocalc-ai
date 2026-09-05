@@ -96,12 +96,12 @@ function getCodexModelCatalogCachePrefix(accountId?: string): string {
 function getCodexModelCatalogCacheKey(
   accountId: string | undefined,
   projectId: string,
-  runtimeVersion: string,
+  runtimeVersion: string | undefined,
   subscriptionRevision: string,
 ): string {
   return `${getCodexModelCatalogCachePrefix(accountId)}${encodeURIComponent(
     projectId,
-  )}:${encodeURIComponent(runtimeVersion)}:${encodeURIComponent(
+  )}:${encodeURIComponent(runtimeVersion || "unknown-runtime")}:${encodeURIComponent(
     subscriptionRevision,
   )}`;
 }
@@ -216,14 +216,16 @@ export function readCachedCodexModelCatalog({
   runtimeVersion,
   subscriptionRevision,
   now = Date.now(),
+  allowExpired = false,
 }: {
   accountId?: string;
   projectId?: string;
   runtimeVersion?: string;
   subscriptionRevision?: string;
   now?: number;
+  allowExpired?: boolean;
 }): CachedCodexModelCatalog | undefined {
-  if (!projectId || !runtimeVersion || !subscriptionRevision) return undefined;
+  if (!projectId || !subscriptionRevision) return undefined;
   const key = getCodexModelCatalogCacheKey(
     accountId,
     projectId,
@@ -242,8 +244,7 @@ export function readCachedCodexModelCatalog({
     ) {
       return undefined;
     }
-    if (now - parsed.cachedAt >= CODEX_MODEL_CATALOG_TTL_MS) {
-      globalThis.localStorage?.removeItem(key);
+    if (!allowExpired && now - parsed.cachedAt >= CODEX_MODEL_CATALOG_TTL_MS) {
       return undefined;
     }
     return { cachedAt: parsed.cachedAt, models: parsed.models };
@@ -267,12 +268,7 @@ export function writeCachedCodexModelCatalog({
   models?: CodexModelCapabilityInfo[];
   cachedAt?: number;
 }): void {
-  if (
-    !projectId ||
-    !runtimeVersion ||
-    !subscriptionRevision ||
-    !models?.length
-  ) {
+  if (!projectId || !subscriptionRevision || !models?.length) {
     return;
   }
   try {

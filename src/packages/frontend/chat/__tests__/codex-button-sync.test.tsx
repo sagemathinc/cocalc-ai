@@ -45,7 +45,7 @@ jest.mock("antd", () => {
       <button onClick={onClick}>{children}</button>
     ),
     Divider: () => <div />,
-    Dropdown: ({ children, menu }: any) => {
+    Dropdown: ({ children, menu, onOpenChange }: any) => {
       const [open, setOpen] = React.useState(false);
       const child = React.Children.only(children);
       return (
@@ -53,7 +53,9 @@ jest.mock("antd", () => {
           {React.cloneElement(child, {
             onClick: (event: any) => {
               child.props.onClick?.(event);
-              setOpen((value: boolean) => !value);
+              const nextOpen = !open;
+              onOpenChange?.(nextOpen);
+              setOpen(nextOpen);
             },
           })}
           {open ? (
@@ -490,7 +492,7 @@ describe("CodexConfigButton", () => {
     });
   });
 
-  it("clears an expired in-memory catalog before a failed refresh", async () => {
+  it("keeps an expired same-scope catalog during a failed refresh", async () => {
     const dynamicModel = {
       model: "newly-advertised-model",
       displayName: "Newly advertised model",
@@ -504,7 +506,61 @@ describe("CodexConfigButton", () => {
       runtimeVersion: "tools-v1",
       subscriptionRevision: "subscription-v1",
       models: [dynamicModel],
+      cachedAt: Date.now() - CODEX_MODEL_CATALOG_TTL_MS,
     });
+    let rejectUsageStatus: (error: Error) => void = () => undefined;
+    getCodexUsageStatus.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectUsageStatus = reject;
+      }),
+    );
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={null}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          subscriptionRevision: "subscription-v1",
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    const modelButton = screen.getByTitle("Change Codex model");
+    fireEvent.click(modelButton);
+
+    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalled());
+    expect(
+      screen.getAllByRole("button", { name: "newly-advertised-model" }),
+    ).toHaveLength(2);
+    await act(async () => {
+      rejectUsageStatus(new Error("model/list failed"));
+      await Promise.resolve();
+    });
+    expect(
+      screen.getAllByRole("button", { name: "newly-advertised-model" }),
+    ).toHaveLength(2);
+  });
+
+  it("starts only one catalog request when pointer open follows hover", async () => {
+    let resolveUsageStatus: (status: any) => void = () => undefined;
+    getCodexUsageStatus.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveUsageStatus = resolve;
+      }),
+    );
     render(
       <CodexConfigButton
         threadKey="thread-1"
@@ -531,30 +587,30 @@ describe("CodexConfigButton", () => {
 
     const modelButton = screen.getByTitle("Change Codex model");
     fireEvent.mouseEnter(modelButton);
-    fireEvent.click(modelButton);
-    await waitFor(() => {
-      expect(
-        screen.getAllByRole("button", { name: "newly-advertised-model" }),
-      ).toHaveLength(2);
-    });
     expect(getCodexUsageStatus).not.toHaveBeenCalled();
+    fireEvent.click(modelButton);
 
-    writeCachedCodexModelCatalog({
-      projectId: "project-1",
-      runtimeVersion: "tools-v1",
-      subscriptionRevision: "subscription-v1",
-      models: [dynamicModel],
-      cachedAt: Date.now() - CODEX_MODEL_CATALOG_TTL_MS,
+    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalledTimes(1));
+    fireEvent.click(modelButton);
+    fireEvent.click(modelButton);
+    expect(getCodexUsageStatus).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveUsageStatus({
+        available: true,
+        models: [
+          {
+            model: "account-model",
+            displayName: "Account model",
+            reasoning: [],
+            serviceTiers: [],
+          },
+        ],
+      });
+      await Promise.resolve();
     });
-    getCodexUsageStatus.mockRejectedValueOnce(new Error("model/list failed"));
-    fireEvent.mouseEnter(modelButton);
-
-    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalled());
-    await waitFor(() => {
-      expect(
-        screen.queryAllByRole("button", { name: "newly-advertised-model" }),
-      ).toHaveLength(0);
-    });
+    fireEvent.click(modelButton);
+    fireEvent.click(modelButton);
+    expect(getCodexUsageStatus).toHaveBeenCalledTimes(1);
   });
 
   it("preserves a stored catalog model before discovery runs", async () => {
@@ -668,11 +724,8 @@ describe("CodexConfigButton", () => {
     );
 
     const modelButton = screen.getByTitle("Change Codex model");
-    fireEvent.mouseEnter(modelButton);
-    await waitFor(() => {
-      expect(getCodexUsageStatus).toHaveBeenCalled();
-    });
     fireEvent.click(modelButton);
+    await waitFor(() => expect(getCodexUsageStatus).toHaveBeenCalled());
     await waitFor(() => {
       expect(
         screen
