@@ -29,7 +29,7 @@ import React, {
   useState,
 } from "react";
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type {
   MinimapKind,
@@ -211,7 +211,8 @@ export function useMinimapSettingsModal({
                 rowGap: "8px",
                 padding: "8px",
                 borderRadius: "6px",
-                background: active ? COLORS.ANTD_BG_BLUE_L : undefined,
+                background: active ? UI_COLORS.selected : undefined,
+                color: UI_COLORS.text,
               }}
             >
               <div
@@ -224,7 +225,7 @@ export function useMinimapSettingsModal({
                 <span>
                   <span id={labelId}>{label} minimap width</span>
                   {active && (
-                    <span style={{ color: COLORS.GRAY_M }}>
+                    <span style={{ color: UI_COLORS.secondary }}>
                       {" "}
                       (selected style)
                     </span>
@@ -302,7 +303,7 @@ export function useMinimapMenuItems({
       padding: "2px 0",
     };
     const labelStyle: React.CSSProperties = {
-      color: COLORS.GRAY_M,
+      color: UI_COLORS.secondary,
       minWidth: "3.5em",
     };
     // Each kind has its own width, so the step is relative to its range.
@@ -346,7 +347,9 @@ export function useMinimapMenuItems({
                 onClick={() => api.adjustWidth(step)}
               />
             </Space.Compact>
-            <span style={{ color: COLORS.GRAY_M }}>{settings.width}px</span>
+            <span style={{ color: UI_COLORS.secondary }}>
+              {settings.width}px
+            </span>
           </div>
         ),
       },

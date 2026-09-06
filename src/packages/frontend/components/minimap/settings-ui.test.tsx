@@ -6,6 +6,7 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { createMinimapSettings } from "./settings";
 import { useMinimapSettingsModal } from "./settings-ui";
@@ -48,6 +49,20 @@ beforeEach(() => {
 });
 
 describe("minimap settings dialog", () => {
+  it("pairs the selected panel with themed text when switching styles", () => {
+    openModal();
+    for (const style of ["Text", "Stylized"]) {
+      fireEvent.click(screen.getByRole("radio", { name: style }));
+      const label = screen.getByText(`${style} minimap width`);
+      const panel = label.parentElement!.parentElement!.parentElement!;
+      expect(panel.style.background).toBe(UI_COLORS.selected);
+      expect(panel.style.color).toBe(UI_COLORS.text);
+      expect(screen.getByText("(selected style)").style.color).toBe(
+        UI_COLORS.secondary,
+      );
+    }
+  });
+
   it("gives every control an accessible name", () => {
     openModal();
     expect(
