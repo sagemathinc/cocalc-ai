@@ -11,6 +11,7 @@ import { withBtrfsMutationContext } from "@cocalc/file-server/btrfs/operation-ca
 import {
   ProjectRusticUnsupportedError,
   PartialProjectBackupError,
+  releaseProjectBackupReport,
   projectRusticBackup,
   projectRusticRestore,
   runManagedRustic,
@@ -119,6 +120,7 @@ describe("project rustic wrapper", () => {
     process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
     mockedExec.mockResolvedValueOnce(output(JSON.stringify(produced())));
     mockedExec.mockResolvedValueOnce(output(""));
+    mockedExec.mockResolvedValueOnce(output(""));
     let release!: () => void;
     let completed = false;
     const accept = jest.fn(
@@ -133,9 +135,22 @@ describe("project rustic wrapper", () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(accept).toHaveBeenCalledTimes(1);
     expect(completed).toBe(false);
+    expect(mockedExec).toHaveBeenCalledTimes(2);
     release();
     await pending;
     expect(completed).toBe(true);
+    expect(mockedExec).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        prefixArgs: [
+          "-n",
+          "/usr/local/sbin/cocalc-runtime-storage",
+          "rustic-report-release",
+          `${projectId}.ndjson`,
+          "d".repeat(64),
+        ],
+      }),
+    );
   });
 
   it("does not publish success when durable evidence acceptance fails", async () => {
@@ -147,11 +162,13 @@ describe("project rustic wrapper", () => {
         throw new Error("record failed");
       }),
     ).rejects.toThrow("record failed");
+    expect(mockedExec).toHaveBeenCalledTimes(2);
   });
 
   it("records partial evidence but refuses legacy complete-backup return", async () => {
     process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
     mockedExec.mockResolvedValueOnce(output(JSON.stringify(produced(true))));
+    mockedExec.mockResolvedValueOnce(output(""));
     mockedExec.mockResolvedValueOnce(output(""));
     const accept = jest.fn(async () => {});
     await expect(evidenceBackup(accept)).rejects.toBeInstanceOf(
@@ -160,7 +177,36 @@ describe("project rustic wrapper", () => {
     expect(accept).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "partial_policy_exclusions" }),
     );
+    expect(mockedExec).toHaveBeenCalledTimes(3);
   });
+
+  it("retains successful durable coverage after a local report release failure", async () => {
+    process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+    mockedExec.mockResolvedValueOnce(output(JSON.stringify(produced())));
+    mockedExec.mockResolvedValueOnce(output(""));
+    mockedExec.mockResolvedValueOnce(output("release failed", 1));
+    await expect(evidenceBackup(async () => {})).resolves.toMatchObject({
+      id: "b".repeat(64),
+    });
+    expect(mockedExec).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    "/etc/shadow",
+    "/var/lib/cocalc-rustic-reports/../elsewhere",
+    "/var/lib/cocalc-rustic-reports/.lock",
+  ])(
+    "rejects arbitrary local release path %s before sudo",
+    async (report_path) => {
+      await expect(
+        releaseProjectBackupReport({
+          report_path,
+          binding: { report: { sha256: "a".repeat(64) } },
+        } as any),
+      ).rejects.toThrow("Invalid backup report release");
+      expect(mockedExec).not.toHaveBeenCalled();
+    },
+  );
 
   it("refuses evidence-required backup before starting an unsupervised helper", async () => {
     await expect(evidenceBackup(jest.fn())).rejects.toThrow(
