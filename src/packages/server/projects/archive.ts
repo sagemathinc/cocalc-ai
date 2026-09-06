@@ -538,9 +538,15 @@ export async function archiveProjectStorage({
         expectedArchiveGeneration = Number(finalBackup.generation);
         expectedArchiveBackupId = finalBackup.id;
       }
-    } else if (!hostDeprovisioned && row.last_backup == null) {
+    } else if (
+      !hostDeprovisioned &&
+      !isProjectArchiveBackupCurrent({
+        ...row,
+        active_published_path: false,
+      })
+    ) {
       throw new Error(
-        "project must have at least one backup before it can be archived",
+        "project must have a current backup before it can be archived; complete a new backup and try again",
       );
     }
 

@@ -392,9 +392,37 @@ describe("projects.archiveProject", () => {
         project_id: "proj-1",
       }),
     ).rejects.toThrow(
-      "project must have at least one backup before it can be archived",
+      "project must have a current backup before it can be archived",
     );
 
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    expect(poolConnectQueryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE projects"),
+      expect.anything(),
+    );
+  });
+
+  it("rejects a known stale manual archive before stopping or deleting project data", async () => {
+    poolQueryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          host_id: "host-1",
+          backup_repo_id: "repo-1",
+          provisioned: true,
+          state: { state: "running" },
+          host_status: "running",
+          last_backup: new Date("2026-06-15T04:32:34.102Z"),
+          last_changed: new Date("2026-06-15T04:33:00Z"),
+          last_changed_generation: 12,
+          last_backup_generation: 11,
+        },
+      ],
+    });
+    const { archiveProject } = await import("./projects");
+    await expect(
+      archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+    ).rejects.toThrow("current backup");
+    expect(interBayStopMock).not.toHaveBeenCalled();
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
     expect(poolConnectQueryMock).not.toHaveBeenCalledWith(
       expect.stringContaining("UPDATE projects"),

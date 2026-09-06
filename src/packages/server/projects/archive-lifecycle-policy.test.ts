@@ -226,6 +226,50 @@ describe("project archive lifecycle policy", () => {
     });
   });
 
+  it("compares BIGINT generations without rounding a stale backup into equality", () => {
+    expect(
+      isProjectArchiveBackupCurrent(
+        project({
+          last_changed_generation: "9007199254740993",
+          last_backup_generation: "9007199254740992",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isProjectArchiveBackupCurrent(
+        project({
+          last_changed_generation: "9007199254740993",
+          last_backup_generation: "9007199254740993",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it.each(["invalid", "", "1.5", -1, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects malformed freshness evidence %s",
+    (value) => {
+      expect(
+        isProjectArchiveBackupCurrent(
+          project({ last_changed_generation: value }),
+        ),
+      ).toBe(false);
+      expect(
+        isProjectArchiveBackupCurrent(
+          project({ last_backup_generation: value }),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("does not discard an invalid change time or missing backup generation", () => {
+    expect(
+      isProjectArchiveBackupCurrent(project({ last_changed: "invalid" })),
+    ).toBe(false);
+    expect(
+      isProjectArchiveBackupCurrent(project({ last_backup_generation: null })),
+    ).toBe(false);
+  });
+
   it("enforces bay and host canaries", () => {
     expect(
       decide({ policy: { ...config, canaryBays: ["other-bay"] } }),
