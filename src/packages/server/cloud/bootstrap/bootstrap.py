@@ -5534,7 +5534,9 @@ def btrfs_backup_identity(datafd):
         generation, flags = struct.unpack_from("=QQ", info, 280)
         snapshot_uuid = uuid.UUID(bytes=bytes(info[296:312]))
         parent_uuid = uuid.UUID(bytes=bytes(info[312:328]))
-        if not flags & 2 or snapshot_uuid.int == 0:
+        # GET_SUBVOL_INFO exposes BTRFS_ROOT_SUBVOL_RDONLY (bit 0), NOT
+        # BTRFS_SUBVOL_RDONLY (bit 1) used by SUBVOL_GETFLAGS/SETFLAGS.
+        if not flags & 1 or snapshot_uuid.int == 0:
             fail("backup evidence requires an identified read-only Btrfs source")
         return {"snapshot_uuid": str(snapshot_uuid),
                 "subvolume_uuid": str(parent_uuid) if parent_uuid.int else None,
