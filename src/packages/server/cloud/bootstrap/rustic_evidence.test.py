@@ -43,7 +43,7 @@ class RusticEvidenceTest(unittest.TestCase):
             self.assertEqual(request, 0x81f8943c)
             self.assertEqual(len(buf), 504)
             self.assertTrue(mutate)
-            struct.pack_into("=QQ", buf, 280, 9007199254740993, 2)
+            struct.pack_into("=QQ", buf, 280, 9007199254740993, 1)
             buf[296:312] = uuid.UUID(self.source["snapshot_uuid"]).bytes
             buf[312:328] = uuid.UUID(self.source["subvolume_uuid"]).bytes
         with tempfile.TemporaryDirectory() as tmp:
@@ -54,6 +54,13 @@ class RusticEvidenceTest(unittest.TestCase):
                 with mock.patch("fcntl.ioctl", return_value=0):
                     with self.assertRaises(ValueError):
                         self.api["btrfs_backup_identity"](fd)
+                for flags in [0, 2]:
+                    def wrong_flags(fd, request, buf, mutate):
+                        ioctl(fd, request, buf, mutate)
+                        struct.pack_into("=Q", buf, 288, flags)
+                    with mock.patch("fcntl.ioctl", side_effect=wrong_flags):
+                        with self.assertRaises(ValueError):
+                            self.api["btrfs_backup_identity"](fd)
             finally:
                 os.close(fd)
 
