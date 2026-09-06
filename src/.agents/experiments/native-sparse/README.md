@@ -126,7 +126,7 @@ The current release build passed; full report is local
 
 These are bounded fixtures, not proof of maximum unique-index growth, extreme
 xattrs/depth, global concurrency or production throughput. A trial 4 GiB virtual
-address-space cap aborted the 1,000-file run despite modest resident usage;
-allocator/thread reservations are distinct from RSS. The probe uses a 16 GiB
+address-space cap aborted the 1,000-file run; that failure alone does not establish
+a 4 GiB RSS requirement. Virtual reservations are distinct from RSS. The probe uses a 16 GiB
 virtual cap. Production memory enforcement uses the separately qualified cgroup
 MemoryMax, not RLIMIT_AS. Do not infer a production RSS budget from either cap.
