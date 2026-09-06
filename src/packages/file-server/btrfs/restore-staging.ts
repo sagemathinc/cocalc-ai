@@ -20,6 +20,28 @@ const RESTORE_STALE_MS = 30 * 60 * 1000;
 
 const restoring = new Set<string>();
 
+/** Validate a transported handle against a host-derived home, never its own
+ * claimed home. Handles are descriptive data, not filesystem capabilities.
+ */
+export function validateRestoreStagingHandle(
+  handle: RestoreStagingHandle,
+  home: string,
+): void {
+  if (!handle || !isValidUUID(handle.project_id))
+    throw new Error("Invalid restore staging project");
+  const stagingRoot = join(dirname(home), RESTORE_STAGING_ROOT);
+  if (
+    handle.home !== home ||
+    handle.stagingRoot !== stagingRoot ||
+    handle.stagingPath !== join(stagingRoot, `project-${handle.project_id}`) ||
+    handle.markerPath !==
+      join(stagingRoot, `${RESTORE_MARKER}.${handle.project_id}`) ||
+    !["auto", "recover", "required"].includes(handle.restore) ||
+    typeof handle.homeExists !== "boolean"
+  )
+    throw new Error("Restore staging handle does not match its project");
+}
+
 export interface RestoreStagingProgress {
   step: "skip" | "prepare" | "lock" | "staging" | "finalize" | "cleanup";
   message?: string;
@@ -309,9 +331,12 @@ export async function releaseRestoreStaging(
 
 export async function cleanupRestoreStaging(opts: {
   root: string;
+  project_id?: string;
   onProgress?: RestoreProgressFn;
 }): Promise<void> {
-  const { root, onProgress } = opts;
+  const { root, onProgress, project_id } = opts;
+  if (project_id != null && !isValidUUID(project_id))
+    throw new Error("Invalid restore staging project");
   const stagingRoot = join(root, RESTORE_STAGING_ROOT);
   if (!(await exists(stagingRoot))) return;
   let entries: string[] = [];
@@ -329,6 +354,8 @@ export async function cleanupRestoreStaging(opts: {
     if (!entry.startsWith(`${RESTORE_MARKER}.`)) continue;
     const projectId = entry.slice(`${RESTORE_MARKER}.`.length);
     if (!isValidUUID(projectId)) continue;
+    if (project_id != null && projectId !== project_id) continue;
+    if (restoring.has(projectId)) continue;
     const markerPath = join(stagingRoot, entry);
     let markerAgeMs = 0;
     try {

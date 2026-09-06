@@ -322,6 +322,25 @@ activation has been enabled.
 
 ## Still Required
 
+### September 6 Recovery Checkpoint
+
+- Workspace recovered after two ACP interruptions; no deployment process had
+  started. `a6b3ac55c9` completes path preference matching and the second UI
+  choice. Backend index/cache tests (31), frontend controller/panel tests (17),
+  and host coverage/archive routing tests (9) passed, with typechecks and lint.
+- Built and pushed immutable hub artifact
+  `20260906T192743Z-a6b3ac55-20260906-backup-recovery-a6b3ac55` from clean source.
+  SHA-256: `8beda90dc7e4969f7a3a9cc2d778caa3f5ec9738a16ea32e9b57476d65c40aa4`.
+  This is an artifact upload only, not a deployment or activation. It predates
+  the subsequent restore-handle validation work and must not be mistaken for a
+  release containing that fix.
+- Restore-boundary audit found transported staging paths were used without
+  matching them against the authorized project's canonical host home. New
+  validation rejects forged homes/staging/marker paths before storage work.
+  Project cleanup now filters by project ID; local active restores are skipped.
+  Durable root-owned operation fencing, quota staging and final publication
+  fencing still remain necessary; these changes alone do not establish them.
+
 ### September 6 UI Integration Checkpoint
 
 - `0efc5be17e` connects protected historical outcome reads and exact signed GET

@@ -71,6 +71,7 @@ import {
 } from "@cocalc/file-server/btrfs/backup-index";
 import {
   beginRestoreStaging as beginRestoreStagingBtrfs,
+  validateRestoreStagingHandle,
   ensureRestoreStaging as ensureRestoreStagingBtrfs,
   finalizeRestoreStaging as finalizeRestoreStagingBtrfs,
   releaseRestoreStaging as releaseRestoreStagingBtrfs,
@@ -4499,7 +4500,11 @@ async function beginRestoreStaging({
   home?: string;
   restore?: RestoreMode;
 }): Promise<RestoreStagingHandle | null> {
-  const resolvedHome = home ?? projectMountpoint(project_id);
+  if (!isValidUUID(project_id))
+    throw new Error("Invalid restore staging project");
+  const resolvedHome = projectMountpoint(project_id);
+  if (home != null && home !== resolvedHome)
+    throw new Error("Restore home does not match its project");
   return await beginRestoreStagingBtrfs({
     project_id,
     home: resolvedHome,
@@ -4512,6 +4517,7 @@ async function ensureRestoreStaging({
 }: {
   handle: RestoreStagingHandle;
 }): Promise<void> {
+  validateRestoreStagingHandle(handle, projectMountpoint(handle.project_id));
   await ensureRestoreStagingBtrfs(handle);
 }
 
@@ -4520,6 +4526,7 @@ async function finalizeRestoreStaging({
 }: {
   handle: RestoreStagingHandle;
 }): Promise<void> {
+  validateRestoreStagingHandle(handle, projectMountpoint(handle.project_id));
   await finalizeRestoreStagingBtrfs(handle);
   invalidateProjectFsServer(handle.project_id);
   void touchProjectLastEdited(handle.project_id, "restore-staging");
@@ -4532,7 +4539,20 @@ async function releaseRestoreStaging({
   handle: RestoreStagingHandle;
   cleanupStaging?: boolean;
 }): Promise<void> {
+  validateRestoreStagingHandle(handle, projectMountpoint(handle.project_id));
   await releaseRestoreStagingBtrfs(handle, { cleanupStaging });
+}
+
+async function cleanupProjectRestoreStaging(opts: {
+  project_id: string;
+  root?: string;
+}): Promise<void> {
+  if (!opts || !isValidUUID(opts.project_id))
+    throw new Error("Invalid restore staging project");
+  const root = path.dirname(projectMountpoint(opts.project_id));
+  if (opts.root != null && opts.root !== root)
+    throw new Error("Restore staging root does not match its project");
+  await cleanupRestoreStagingBtrfs({ root, project_id: opts.project_id });
 }
 
 async function cleanupRestoreStaging(opts?: { root?: string }): Promise<void> {
@@ -5506,7 +5526,7 @@ export async function initFileServer({
     ensureRestoreStaging,
     finalizeRestoreStaging,
     releaseRestoreStaging,
-    cleanupRestoreStaging,
+    cleanupRestoreStaging: cleanupProjectRestoreStaging,
     deleteBackup: reuseInFlight(deleteBackup),
     updateBackups: reuseInFlight(updateBackups),
     getBackups: reuseInFlight(getBackups),

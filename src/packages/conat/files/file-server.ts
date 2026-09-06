@@ -402,7 +402,10 @@ export interface Fileserver {
     handle: RestoreStagingHandle;
     cleanupStaging?: boolean;
   }) => Promise<void>;
-  cleanupRestoreStaging: (opts?: { root?: string }) => Promise<void>;
+  cleanupRestoreStaging: (opts: {
+    project_id: string;
+    root?: string;
+  }) => Promise<void>;
   // delete the given backup
   deleteBackup: (opts: { project_id: string; id: string }) => Promise<void>;
   // Return list of id's and timestamps of all backups of this project.
