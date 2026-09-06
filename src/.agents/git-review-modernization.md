@@ -172,7 +172,28 @@ Foundation implemented without changing the default renderer or V2 persistence:
   unchanged checkout/index/dirty state after reads. Foundation plus existing
   drawer/store regression suites: 100 tests passed; frontend types/lint passed.
 
-Still pending: real Slate/header lifecycle checks and native clipboard tests;
+Custom-header integration spike completed:
+
+- `ReviewFileHeader` is renderer-neutral and renders through Pierre's
+  `renderCustomHeader` in the preview. It uses a fixed two-row layout and
+  matching `itemMetrics.diffHeaderHeight`; long paths ellipsize with full text
+  available for selection/copy and in the accessible name/title. Extra actions
+  use a menu rather than unbounded height changes.
+- Historical opening and working-copy editing are separate callbacks. Without
+  an exact source/open callback there is no misleading Open fallback. The
+  frozen preview currently offers repository-relative copy only.
+- Real Chromium verifies pinned headers across files, 14-to-22px font changes,
+  narrow containment, keyboard activation with actual clipboard reads, and
+  preserving clipboard content when path text is selected. Three header Jest
+  tests cover callbacks and unavailable-action behavior. Native multi-line
+  diff-text copying (especially across virtualization) remains a separate gate.
+- Local dev fresh-auth elevation succeeded but subsequent browser discovery
+  still encountered stale master-host tokens; the cookie-only attempt reported
+  no auth cookie and disabled automatic login in the project environment.
+  Do not work around that restriction or call the stubbed Slate tests full-app
+  validation. Arrange a supported session or maintainer-driven editor checks.
+
+Still pending: real Slate lifecycle checks and native diff clipboard tests;
 production renderer toggle and adapter wiring; worktree/ref/comparison controls;
 arbitrary-revision TimeTravel wiring; comparison persistence and canonical-key
 migration; validated agent routing; activity adaptation; release acceptance and

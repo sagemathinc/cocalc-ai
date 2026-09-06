@@ -28,7 +28,12 @@ const built = await build({
     contents: `import React from 'react';
       import { createRoot } from 'react-dom/client';
       import { DiffPreviewButton } from './components/diff-viewer/preview-button';
-      createRoot(document.getElementById('root')).render(<DiffPreviewButton getSource={() => ({kind:'patch',label:'Browser fixture',patch:${JSON.stringify(patch)}})} />);`,
+      function Harness() {
+        const [fontSize, setFontSize] = React.useState(14);
+        window.previewSetFontSize = setFontSize;
+        return <DiffPreviewButton fontSize={fontSize} getSource={() => ({kind:'patch',label:'Browser fixture',patch:${JSON.stringify(patch)}})} />;
+      }
+      createRoot(document.getElementById('root')).render(<Harness />);`,
     loader: "tsx",
   },
   bundle: true,
@@ -80,6 +85,7 @@ try {
   const page = await browser.newPage({
     viewport: { width: 1200, height: 900 },
   });
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   const errors = [];
   page.setDefaultTimeout(10000);
   page.on("pageerror", (error) => errors.push(error.message));
@@ -123,6 +129,40 @@ try {
       .toBe(true);
   };
   await pinnedHeader("first.ts");
+  const pathButton = page.getByRole("button", {
+    name: "Copy repository-relative path: first.ts",
+    exact: true,
+  });
+  await pathButton.focus();
+  await page.keyboard.press("Enter");
+  assert.equal(
+    await page.evaluate(() => navigator.clipboard.readText()),
+    "first.ts",
+  );
+  await page.evaluate(() => navigator.clipboard.writeText("keep selection"));
+  await pathButton.evaluate((button) => {
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(button);
+    selection.addRange(range);
+    button.click();
+  });
+  assert.equal(
+    await page.evaluate(() => navigator.clipboard.readText()),
+    "keep selection",
+  );
+  await page.evaluate(() => window.getSelection().removeAllRanges());
+  await page.evaluate(() => window.previewSetFontSize(22));
+  await expect(pathButton).toHaveCSS("font-size", "22px");
+  await pinnedHeader("first.ts");
+  const header = pathButton.locator("..");
+  await expect(header).toHaveCSS("height", "77px");
+  assert.equal(
+    await header.evaluate((node) => node.scrollHeight <= node.clientHeight),
+    true,
+  );
+  await page.evaluate(() => window.previewSetFontSize(14));
   await page.evaluate(() => {
     window.previewEscapedKeys = [];
     window.addEventListener("keydown", (event) =>
@@ -228,7 +268,7 @@ try {
     page.getByRole("button", { name: "Preview with Pierre" }),
   ).toBeFocused();
   console.log(
-    "PASS: GitHub light/dark colors, sticky filenames, scoped scroll shortcuts, editable spaces, background shortcut isolation, Escape/focus, wheel scrolling, file selection, line jump, live split/wrap updates, annotation draft across layout changes, and 1200/600/320px containment (real Pierre).",
+    "PASS: GitHub light/dark colors, custom sticky filenames, keyboard clipboard copy/selection suppression, header font metrics, scoped scroll shortcuts, editable spaces, background shortcut isolation, Escape/focus, wheel scrolling, file selection, line jump, live split/wrap updates, annotation draft across layout changes, and 1200/600/320px containment (real Pierre).",
   );
 } finally {
   await browser?.close();

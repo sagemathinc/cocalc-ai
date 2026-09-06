@@ -24,6 +24,7 @@ import {
 } from "@cocalc/frontend/keyboard/boundary";
 import { containsPreviewLine, parsePreviewSource } from "./pierre-model";
 import type { DiffPreviewSource } from "./preview-types";
+import { ReviewFileHeader, reviewFileHeaderHeight } from "./review-file-header";
 
 type PreviewComment = {
   id: string;
@@ -105,12 +106,13 @@ export default function PierrePreview({
       lineDiffType: "word" as const,
       enableLineSelection: true,
       stickyHeaders: true,
+      itemMetrics: { diffHeaderHeight: reviewFileHeaderHeight(fontSize) },
       // A collapsed context jump only reaches its separator in Pierre 1.3.6.
       expandUnchanged: source.kind === "documents",
       theme: { light: "github-light", dark: "github-dark" },
       overflow: wrap ? ("wrap" as const) : ("scroll" as const),
     }),
-    [split, wrap, source.kind],
+    [split, wrap, source.kind, fontSize],
   );
 
   const goToLine = () => {
@@ -308,6 +310,30 @@ export default function PierrePreview({
         options={options}
         selectedLines={selection}
         onSelectedLinesChange={setSelection}
+        renderCustomHeader={(item) => {
+          if (item.type !== "diff") return null;
+          const copy = async () => {
+            try {
+              await navigator.clipboard.writeText(item.fileDiff.name);
+              setMessage(
+                `Copied repository-relative path: ${item.fileDiff.name}`,
+              );
+            } catch {
+              setMessage(
+                "Unable to copy path; select the filename and copy manually.",
+              );
+            }
+          };
+          return (
+            <ReviewFileHeader
+              path={item.fileDiff.name}
+              oldPath={item.fileDiff.prevName}
+              fontSize={fontSize}
+              description="Frozen preview; file opening requires a resolved revision/worktree"
+              onCopyPath={() => void copy()}
+            />
+          );
+        }}
         style={{
           height: "60vh",
           minHeight: 200,
