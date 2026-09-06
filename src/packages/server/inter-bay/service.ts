@@ -420,6 +420,7 @@ import {
   recordProjectBackupIndexLocal,
   recordProjectBackupLocal,
   recordProjectBackupOutcomeLocal,
+  getProjectBackupOutcomeLocal,
   resolveHostConnectionLocal,
   removeHostAccess,
   setHostOwnerSpendLimits,
@@ -2724,6 +2725,8 @@ async function startHostConnectionService(): Promise<void> {
       }),
     recordProjectBackupOutcome: async (opts) =>
       await recordProjectBackupOutcomeLocal(opts),
+    getProjectBackupOutcome: async (opts) =>
+      await getProjectBackupOutcomeLocal(opts),
     markProjectChanged: async ({
       host_id,
       project_id,

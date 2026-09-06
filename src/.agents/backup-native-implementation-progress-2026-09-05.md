@@ -258,6 +258,16 @@ not a completion claim or deployment approval. Production remains unchanged.
   authorized project-host API or its aggregate bounded session cache; those and
   account acknowledgements must be connected before mounting the existing UI.
 
+- The host-authenticated `getProjectBackupOutcome` RPC now reads either latest
+  or exact historical evidence through the project's owning bay. One SQL snapshot
+  checks current placement, non-deletion and ownership while selecting a bounded
+  receipt. Reads revalidate the receipt digest and retain the original bucket ID,
+  not the current repository assignment. Absent evidence is `null`, never assumed
+  complete. Remote failure does not fall back to a non-authoritative local read.
+  All 140 focused server routing/outcome tests and the server typecheck pass.
+  This is the protected metadata API; scoped historical object access, browsing
+  leases and per-account acknowledgement integration remain to be connected.
+
 Next integration work is abandoned-report reconciliation and bucket-retention fencing,
 durable failed-attempt status, paginated report access and account-specific UI
 acknowledgements, then protected quota-enforced restore staging and early/final
