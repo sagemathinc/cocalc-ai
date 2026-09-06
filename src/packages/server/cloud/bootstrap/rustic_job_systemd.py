@@ -168,10 +168,13 @@ secret_access_key = "disposable"
 
         case, proc = start("closed-fds", "closed-fds", shared)
         identity = await_started(case, proc)
+        for pid in [identity["worker"], identity["pid"]]:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         proc.kill()
         proc.wait(timeout=5)
-        os.kill(identity["worker"], signal.SIGKILL)
-        os.kill(identity["pid"], signal.SIGKILL)
         barrier(case, shared)
         assert_gone(identity, immediate=True)
         proc.communicate(timeout=5)
