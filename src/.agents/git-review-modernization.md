@@ -215,11 +215,29 @@ pnpm -C src/packages/frontend exec jest --runInBand components/diff-viewer
 pnpm -C src/packages/frontend exec node --experimental-strip-types --test components/diff-viewer/pierre-model.test.mjs
 ```
 
-Live browser verification is outstanding: local hub discovery returned no active
-browser sessions, and dedicated session spawning could not obtain the required
-cookie-backed authentication in this project runtime. No performance, real Slate
-image-paste/undo, virtualized selection/copy, or visual compatibility claim is
-made yet. The preview is for evaluation, not a production renderer replacement.
+The initial manual trial exposed missing viewport overflow styling and a file
+selector that changed only the line-jump target. The follow-up gives CodeView its
+own bounded scroll viewport, navigates immediately on file selection, and wraps
+long lines by default with an explicit toggle. Split/unified settings update in
+place; no renderer remount workaround is used. Annotation additions also publish
+an item version: Pierre otherwise retains the old payload despite new React
+item objects. Draft body edits remain React-only and do not change that version.
+
+A standalone Chromium regression now exercises the actual React/Ant Design/Pierre
+integration: wheel scrolling, file selection, line jumping, split/unified and
+wrap updates, annotation draft preservation across a layout change, and width
+containment at 1200, 600, and 320 pixels. Only application services and the rich
+editor are stubbed, so it does not validate real Slate behavior. Run it with:
+
+```sh
+node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs
+```
+
+It defaults to `/usr/bin/chromium`; override with `CHROMIUM_PATH`. Full live-app
+automation is still outstanding: hub discovery returned no active sessions and
+dedicated spawning could not obtain cookie-backed authentication in this runtime.
+Large-diff benchmarks, real Slate image-paste/undo, and virtualized source copying
+remain acceptance gates. The preview is not a production renderer replacement.
 
 Initial plan sources: https://diffs.com/, Pierre's package source and
 https://pierre.computer/writing/on-rendering-diffs. Consult the installed pinned

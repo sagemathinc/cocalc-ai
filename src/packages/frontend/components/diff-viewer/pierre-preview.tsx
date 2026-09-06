@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Space } from "antd";
+import { Alert, Button } from "antd";
 import { useId, useMemo, useRef, useState } from "react";
 import type {
   CodeViewItem,
@@ -38,6 +38,7 @@ export default function PierrePreview({
   const [line, setLine] = useState("1");
   const [side, setSide] = useState<SelectionSide>("additions");
   const [split, setSplit] = useState(false);
+  const [wrap, setWrap] = useState(true);
   const [message, setMessage] = useState("");
   const [selection, setSelection] = useState<CodeViewLineSelection | null>(
     null,
@@ -57,18 +58,24 @@ export default function PierrePreview({
   }, [source]);
   const items = useMemo<CodeViewItem<string>[]>(
     () =>
-      parsed.files.map((fileDiff, index) => ({
-        id: String(index),
-        type: "diff",
-        fileDiff,
-        annotations: comments
+      parsed.files.map((fileDiff, index) => {
+        const annotations = comments
           .filter((comment) => comment.fileId === String(index))
           .map((comment) => ({
             side: comment.side,
             lineNumber: comment.line,
             metadata: comment.id,
-          })),
-      })),
+          }));
+        return {
+          id: String(index),
+          type: "diff",
+          fileDiff,
+          annotations,
+          // Pierre retains item payloads until their version changes. Source is
+          // frozen and anchors only append; editing draft text is React-only.
+          version: annotations.length,
+        };
+      }),
     [parsed.files, comments],
   );
   const options = useMemo(
@@ -79,9 +86,9 @@ export default function PierrePreview({
       // A collapsed context jump only reaches its separator in Pierre 1.3.6.
       expandUnchanged: source.kind === "documents",
       theme: { light: "github-light", dark: "github-dark" },
-      overflow: "scroll" as const,
+      overflow: wrap ? ("wrap" as const) : ("scroll" as const),
     }),
-    [split, source.kind],
+    [split, wrap, source.kind],
   );
 
   const goToLine = () => {
@@ -140,21 +147,56 @@ export default function PierrePreview({
       />
     );
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        minWidth: 0,
+        width: "100%",
+      }}
+    >
       <Alert
         type="info"
         title="Prototype: comments are temporary"
         description="Comments stay while you scroll, but closing this preview discards them. Nothing is submitted to an agent or saved as a review."
       />
-      <div>{source.label}</div>
-      <Space wrap>
-        <label>
+      <div style={{ overflowWrap: "anywhere" }}>{source.label}</div>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: 8,
+          minWidth: 0,
+        }}
+      >
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            minWidth: 0,
+            maxWidth: "100%",
+          }}
+        >
           File{" "}
           <select
             aria-label="Preview file"
             value={fileIndex}
-            onChange={(event) => setFileIndex(Number(event.target.value))}
-            style={{ maxWidth: "65vw" }}
+            onChange={(event) => {
+              const id = event.target.value;
+              setFileIndex(Number(id));
+              setSelection(null);
+              setMessage("");
+              viewer.current?.scrollTo({
+                type: "item",
+                id,
+                align: "start",
+                behavior: "instant",
+              });
+            }}
+            style={{ width: "min(32rem, 65vw)", minWidth: 0, maxWidth: "100%" }}
           >
             {parsed.files.map((file, index) => (
               <option key={index} value={index}>
@@ -197,15 +239,24 @@ export default function PierrePreview({
           />{" "}
           Side by side
         </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={wrap}
+            onChange={(event) => setWrap(event.target.checked)}
+          />{" "}
+          Wrap long lines
+        </label>
         <Button disabled={!selection} onClick={addComment}>
           Add temporary comment
         </Button>
-      </Space>
+      </div>
       <div role="status">
         {message ||
           `${parsed.files.length} files; parsed in ${parsed.ms.toFixed(1)} ms. Select a line number to attach a comment.`}
       </div>
       <CodeView<string>
+        className="cocalc-pierre-preview-viewport"
         ref={viewer}
         items={items}
         options={options}
@@ -214,6 +265,12 @@ export default function PierrePreview({
         style={{
           height: "60vh",
           minHeight: 200,
+          // Pierre virtualizes against this element's own scroll viewport.
+          overflow: "auto",
+          minWidth: 0,
+          width: "100%",
+          maxWidth: "100%",
+          boxSizing: "border-box",
           border: `1px solid ${COLORS.GRAY_L}`,
           fontSize,
         }}

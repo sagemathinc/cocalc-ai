@@ -16,6 +16,9 @@ jest.mock(
           <div
             data-testid="pierre-view"
             data-expanded={props.options.expandUnchanged}
+            data-overflow={props.options.overflow}
+            data-layout={props.options.diffStyle}
+            style={props.style}
           >
             {props.items.flatMap((item: any) =>
               item.annotations.map((annotation: any) => (
@@ -32,7 +35,7 @@ jest.mock(
   { virtual: true },
 );
 jest.mock("./pierre-model", () => ({
-  parsePreviewSource: () => [{ name: "example.ts" }],
+  parsePreviewSource: () => [{ name: "example.ts" }, { name: "second.ts" }],
   containsPreviewLine: (_file: any, line: number) => line === 10,
 }));
 jest.mock("@cocalc/frontend/chat/git-commit/review-editors", () => ({
@@ -48,6 +51,30 @@ jest.mock("@cocalc/frontend/chat/git-commit/review-editors", () => ({
 const source = { kind: "patch" as const, patch: "", label: "Fixture" };
 
 beforeEach(() => mockScrollTo.mockClear());
+
+it("navigates immediately on keyboard file selection and updates layout options", async () => {
+  const user = userEvent.setup();
+  render(<PierrePreview source={source} fontSize={14} />);
+  const file = screen.getByRole("combobox", { name: "Preview file" });
+  file.focus();
+  await user.selectOptions(file, "1");
+  expect(document.activeElement).toBe(file);
+  expect(mockScrollTo).toHaveBeenLastCalledWith({
+    type: "item",
+    id: "1",
+    align: "start",
+    behavior: "instant",
+  });
+  const view = screen.getByTestId("pierre-view");
+  expect(view.style.overflow).toBe("auto");
+  expect(view.getAttribute("data-overflow")).toBe("wrap");
+  const split = screen.getByRole("checkbox", { name: "Side by side" });
+  split.focus();
+  await user.keyboard(" ");
+  expect(view.getAttribute("data-layout")).toBe("split");
+  await user.click(screen.getByRole("checkbox", { name: "Wrap long lines" }));
+  expect(view.getAttribute("data-overflow")).toBe("scroll");
+});
 
 it("expands full-document context so line navigation can reveal unchanged lines", () => {
   render(
