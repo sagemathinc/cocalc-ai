@@ -17,6 +17,7 @@ let waitForLroCompletionMock: jest.Mock;
 let getLroMock: jest.Mock;
 let updateLroMock: jest.Mock;
 let assertPortableProjectRootfsMock: jest.Mock;
+let assertNoKnownBackupExclusionsMock: jest.Mock;
 let resolveHostConnectionMock: jest.Mock;
 let getProjectBackupAssignmentStateMock: jest.Mock;
 let ensureProjectBackupRepoForRegionMock: jest.Mock;
@@ -41,6 +42,11 @@ const mockProjectDangerousInternalAuth = Symbol(
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({ query: queryMock })),
+}));
+
+jest.mock("@cocalc/server/project-backup/lifecycle-preflight", () => ({
+  assertNoKnownBackupExclusions: (...args: any[]) =>
+    assertNoKnownBackupExclusionsMock(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -171,6 +177,7 @@ describe("moveProjectToHost", () => {
 
   beforeEach(() => {
     jest.resetModules();
+    assertNoKnownBackupExclusionsMock = jest.fn(async () => undefined);
     projectLogRows = [];
     moveCallOrder = [];
     currentRoutedHostId = SOURCE_HOST_ID;
@@ -431,6 +438,31 @@ describe("moveProjectToHost", () => {
       invalidateBackupConfig: invalidateBackupConfigMock,
       stopProject: stopProjectOnExplicitHostMock,
     }));
+  });
+
+  it("rejects known excluded files before acquiring a move guard or touching either host", async () => {
+    assertNoKnownBackupExclusionsMock.mockRejectedValue(
+      new Error("backup excludes files"),
+    );
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+      }),
+    ).rejects.toThrow("backup excludes files");
+    expect(assertNoKnownBackupExclusionsMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      expected_host_id: SOURCE_HOST_ID,
+    });
+    expect(acquireProjectMoveGuardMock).not.toHaveBeenCalled();
+    expect(stopProjectOnHostMock).not.toHaveBeenCalled();
+    expect(stopProjectOnExplicitHostMock).not.toHaveBeenCalled();
+    expect(createBackupLroMock).not.toHaveBeenCalled();
+    expect(savePlacementMock).not.toHaveBeenCalled();
+    expect(startProjectOnHostMock).not.toHaveBeenCalled();
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
   });
 
   it("skips a same-host move without stopping or backing up the project", async () => {

@@ -18,6 +18,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { createBackup } from "@cocalc/server/conat/api/project-backups";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import { assertNoKnownBackupExclusions } from "@cocalc/server/project-backup/lifecycle-preflight";
 import {
   attestReleasedLroDedupeSuccesses,
   listLrosByDedupe,
@@ -492,6 +493,11 @@ export async function archiveProjectStorage({
   let row = await loadArchiveRow(project_id);
   const currentState = `${row.state?.state ?? ""}`.trim();
   if (currentState === "archived" && row.provisioned === false) return;
+
+  await assertNoKnownBackupExclusions({
+    project_id,
+    expected_host_id: row.host_id ?? null,
+  });
 
   const automatic = mode === "automatic";
   const reason = automatic ? providedReason : (providedReason ?? "manual");
