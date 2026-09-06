@@ -5,8 +5,10 @@
 
 import type { CSSProperties } from "react";
 import { merge } from "@cocalc/util/misc";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export const OUT_STYLE: CSSProperties = {
+  color: UI_COLORS.text,
   whiteSpace: "pre-wrap",
   wordWrap: "break-word",
   fontFamily: "monospace",
@@ -17,12 +19,12 @@ export const OUT_STYLE: CSSProperties = {
 export const STDOUT_STYLE: CSSProperties = OUT_STYLE;
 
 export const STDERR_STYLE: CSSProperties = merge(
-  { backgroundColor: "#fdd" },
+  { backgroundColor: UI_COLORS.dangerBg },
   STDOUT_STYLE,
 );
 
 export const TRACEBACK_STYLE: CSSProperties = merge(
-  { backgroundColor: "#f9f2f4" },
+  { backgroundColor: UI_COLORS.dangerBg },
   OUT_STYLE,
 );
 
@@ -32,7 +34,8 @@ export const OUTPUT_STYLE: CSSProperties = {
   maxWidth: "100%",
   overflowX: "auto",
   lineHeight: "normal",
-  backgroundColor: "#fff",
+  backgroundColor: UI_COLORS.surface,
+  color: UI_COLORS.text,
   border: 0,
   marginBottom: 0,
   marginLeft: "1px",
