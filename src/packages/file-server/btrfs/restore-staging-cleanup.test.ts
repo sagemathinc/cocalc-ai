@@ -7,13 +7,16 @@ jest.mock("node:fs/promises", () => ({
 jest.mock("@cocalc/backend/misc/async-utils-node", () => ({
   exists: jest.fn(async () => true),
 }));
-jest.mock("./util", () => ({ btrfs: jest.fn(), sudo: jest.fn() }));
-jest.mock("./subvolume", () => ({
+jest.mock("@cocalc/file-server/btrfs/util", () => ({
+  btrfs: jest.fn(),
+  sudo: jest.fn(),
+}));
+jest.mock("@cocalc/file-server/btrfs/subvolume", () => ({
   isBtrfsSubvolume: jest.fn(async () => true),
 }));
 
 import { readdir, stat } from "node:fs/promises";
-import { btrfs } from "./util";
+import { btrfs } from "@cocalc/file-server/btrfs/util";
 import { cleanupRestoreStaging } from "./restore-staging";
 
 it("a project cleanup never inspects or deletes another project's stale staging", async () => {
