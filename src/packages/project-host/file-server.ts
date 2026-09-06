@@ -3999,6 +3999,9 @@ async function backupProjectToExternalRepository({
               join(snapshotPath, PROJECT_SITE_MIGRATION_ROOTFS_STATE_PATH),
             ],
           });
+          await btrfs({
+            args: ["property", "set", "-ts", snapshotPath, "ro", "true"],
+          });
           const backup = await projectRusticBackup({
             src: snapshotPath,
             repoProfile: profilePath,

@@ -86,6 +86,27 @@ class RusticJobTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 api["verify_native_rustic"](str(path), {}, ())
 
+    def test_native_project_source_must_have_btrfs_readonly_flag(self):
+        api = {"__name__": "path_test"}
+        exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, api)
+        with tempfile.TemporaryDirectory() as tmp:
+            fd = os.open(tmp, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                def readonly(_fd, operation, flags, mutate):
+                    self.assertEqual(operation, 0x80089419)
+                    self.assertTrue(mutate)
+                    flags[0] = 2
+                with mock.patch("fcntl.ioctl", side_effect=readonly):
+                    api["require_readonly_btrfs_source"](fd)
+                with mock.patch("fcntl.ioctl", return_value=0):
+                    with self.assertRaises(ValueError):
+                        api["require_readonly_btrfs_source"](fd)
+                with mock.patch("fcntl.ioctl", side_effect=OSError("unsupported")):
+                    with self.assertRaises(OSError):
+                        api["require_readonly_btrfs_source"](fd)
+            finally:
+                os.close(fd)
+
     def test_policy_has_no_unlimited_or_environment_fallback(self):
         for key in self.policy:
             for value in [0, -1, True, "1", None]:

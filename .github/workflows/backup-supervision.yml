@@ -26,5 +26,7 @@ jobs:
       - name: Qualify full process-tree supervision on a disposable runner
         working-directory: src/packages/server/cloud/bootstrap
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y btrfs-progs
           sudo touch /run/cocalc-disposable-rustic-job-test
           sudo env GITHUB_ACTIONS=true COCALC_DISPOSABLE_JOB_TEST=1 python3 rustic_job_systemd.py

@@ -80,6 +80,8 @@ def main():
     exec(bootstrap.RUSTIC_JOB_HELPER, api)
     profiles = []
     processes = []
+    native_mount = root / "native-btrfs"
+    native_mounted = False
 
     def install(path, content, mode):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -109,10 +111,19 @@ secret_access_key = "disposable"
                 "--profile-root", "/mnt/cocalc", "--profile-path", profile_name,
                 "--host", "qualification"]
 
-    def start(name, mode, profile_name, through_sudo=False):
-        case = root / name
-        case.mkdir()
+    def start(name, mode, profile_name, through_sudo=False, immutable=False):
+        case = (native_mount if immutable else root) / name
+        if immutable:
+            subprocess.run(["btrfs", "subvolume", "create", str(case)], check=True, capture_output=True)
+            events = root / ("events-" + name)
+            events.mkdir()
+            for filename in ["started", "descendant", "invocation"]:
+                (case / filename).symlink_to(events / filename)
+        else:
+            case.mkdir()
         (case / "mode").write_text(mode)
+        if immutable:
+            subprocess.run(["btrfs", "property", "set", "-ts", str(case), "ro", "true"], check=True)
         command = [str(helper), "run", *args(case, profile_name)]
         if through_sudo:
             command = ["/usr/sbin/runuser", "-u", "runner", "--", "/usr/bin/sudo", "-n", str(wrapper),
@@ -248,6 +259,13 @@ secret_access_key = "disposable"
         result(proc, False)
         assert_gone(json.loads((case / "started").read_text()))
         barrier(case, shared)
+        native_disk = root / "native.img"
+        with native_disk.open("xb") as file:
+            file.truncate(512 * 1024**2)
+        native_mount.mkdir()
+        subprocess.run(["mkfs.btrfs", "-q", str(native_disk)], check=True)
+        subprocess.run(["mount", "-o", "loop", str(native_disk), str(native_mount)], check=True)
+        native_mounted = True
         policy["native"] = {
             "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
             "admission": {"max-entries": 100, "max-apparent-bytes": 2**30,
@@ -256,7 +274,10 @@ secret_access_key = "disposable"
                 "preflight-timeout-seconds": 2},
         }
         policy_path.write_text(json.dumps(policy))
-        case, proc = start("native-backup", "normal", shared, through_sudo=True)
+        mutable, proc = start("mutable-native-source", "normal", shared, through_sudo=True)
+        result(proc, False)
+        assert not (mutable / "started").exists()
+        case, proc = start("native-backup", "normal", shared, through_sudo=True, immutable=True)
         result(proc, True)
         flags = json.loads((case / "invocation").read_text())
         assert "--strict" in flags
@@ -269,14 +290,14 @@ secret_access_key = "disposable"
         assert "--strict" in flags and flags[flags.index("--sparse") + 1] == "by-content-required"
         policy["native"]["binary_sha256"] = "0" * 64
         policy_path.write_text(json.dumps(policy))
-        case, proc = start("wrong-binary", "normal", shared, through_sudo=True)
+        case, proc = start("wrong-binary", "normal", shared, through_sudo=True, immutable=True)
         result(proc, False)
         assert not (case / "started").exists()
         barrier(case, shared)
         print(json.dumps({"ok": True, "cases": ["normal", "failure", "deadline",
               "sudo-normal", "sudo-caller-death", "caller-death", "closed-fds",
               "worker-death", "same-repo", "host-full", "orphan", "oom",
-              "native-backup", "native-restore", "wrong-binary"]}))
+              "mutable-native-source", "native-backup", "native-restore", "wrong-binary"]}))
     finally:
         for proc in processes:
             if proc.poll() is None:
@@ -284,6 +305,8 @@ secret_access_key = "disposable"
                 proc.wait(timeout=5)
         # Leases/deadlines still apply if an assertion interrupted the test.
         time.sleep(12)
+        if native_mounted:
+            subprocess.run(["umount", str(native_mount)], check=True, timeout=15)
         for path in [helper, path_helper, binary, wrapper, policy_path, *profiles]:
             path.unlink(missing_ok=True)
         shutil.rmtree(root)
