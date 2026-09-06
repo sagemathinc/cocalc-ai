@@ -109,10 +109,19 @@ not a completion claim or deployment approval. Production remains unchanged.
   Btrfs quota and unchanged/edit reuse. Downloaded bundles were independently
   verified with GitHub CLI 2.100.0 against repository, workflow, exact source
   commit and hosted-runner identity; a wrong source digest was rejected.
-  `8e8e801` adds that positive/negative verification to subsequent CI runs.
+  `8e8e801` adds that positive/negative verification to subsequent CI runs;
+  follow-up run `34007280494` passes both architectures and verification.
   These GNU builds require GLIBC symbols through 2.39; this is not a universal
   Linux/musl artifact. Binary reproducibility and a full SBOM remain unfinished.
   No release tag, installer pin, or fleet deployment has changed.
+- `2afc703091` passes follow-up systemd/Btrfs CI `34007379326`: 25 helper
+  unit/OS tests, 92 bootstrap tests and all 24 systemd qualification cases.
+- `1a025051ed` shares the supervision gate with the sandbox runner and rejects
+  legacy backup/restore fallback before repository initialization or path lookup.
+  This covers otherwise unconverted ordinary-file/preview/copy callers when the
+  gate is enabled; it does not implement their protected staging yet. Backend
+  and project-host builds pass, with 19 backend and 21 project/RootFS tests.
+  Gate-disabled installations and browsing behavior are unchanged.
 
 ## Working Repositories
 
