@@ -200,8 +200,10 @@ Shared highlighting pool wired into the preview:
   workers, removing one consumer retains them, removing the last terminates
   them, reopening starts a fresh bounded pool, and blocked worker downloads
   leave readable diff text without page errors. The standalone harness bundles
-  the same upstream worker using esbuild; the Rspack build passes, but its live
-  worker smoke check is pending because the supplied CDP port stopped responding.
+  the same upstream worker using esbuild. With CDP restored, the signed-in
+  lite1b smoke test also passes against the actual Rspack build: exactly two
+  named same-origin workers, highlighted source, no fallback status or page
+  errors, and zero workers after dismissing the preview.
 - Native Ctrl+C tests cover multi-line old/new split-view source copying,
   retaining literal leading plus/minus operators without gutters/patch markers.
   Cross-virtual-window selection and partial-token ranges remain separate gates.
@@ -246,6 +248,7 @@ Trees navigation implemented in the main drawer and Pierre preview:
   facade, and revalidate against the production Pierre adapter. Existing review
   store schema and default diff renderer are unchanged. No reviewed-file badge
   is invented from commit-level review state.
+- The maintainer also reports that the file tree works well in manual use.
 
 Foundation implemented without changing the default renderer or V2 persistence:
 

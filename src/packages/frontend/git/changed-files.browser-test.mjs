@@ -69,7 +69,7 @@ try {
   await expect.poll(() => page.workers().length).toBe(0);
   expect(errors).toEqual([]);
   console.log(
-    "Passed: main drawer Trees selection, active highlight, collapse/reopen preserving filter, compact navigation, unchanged review target.",
+    "Passed: main drawer Trees selection, active highlight, collapse/reopen preserving filter, compact navigation, unchanged review target, two same-origin highlighting workers, and worker cleanup without page errors.",
   );
 } catch (error) {
   console.error(error);
