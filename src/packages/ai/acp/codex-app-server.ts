@@ -151,10 +151,6 @@ function normalizeDiffLines(text: string): string[] {
   return lines;
 }
 
-function shouldClearActiveGoalBeforeTurn(request: AcpEvaluateRequest): boolean {
-  return !!request.chat;
-}
-
 function formatDiffGutter(
   left: number | undefined,
   right: number | undefined,
@@ -1464,52 +1460,6 @@ function getCodexHomeHostPath(
   return undefined;
 }
 
-function clearPersistedCodexGoalsBeforeTurn({
-  spawned,
-  cwd,
-}: {
-  spawned: SpawnedCodexAppServer;
-  cwd: string;
-}): void {
-  const codexHome = getCodexHomeHostPath(spawned, cwd);
-  if (!codexHome) return;
-  const goalsDbPath = path.join(codexHome, "goals_1.sqlite");
-  if (!existsSync(goalsDbPath)) return;
-  let db: DatabaseSync | undefined;
-  try {
-    db = new DatabaseSync(goalsDbPath);
-    const table = db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'thread_goals'",
-      )
-      .get() as { name?: string } | undefined;
-    if (!table?.name) return;
-    const result = db.prepare("DELETE FROM thread_goals").run();
-    const deleted = Number(result.changes ?? 0);
-    if (deleted > 0) {
-      try {
-        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      } catch (err) {
-        logger.debug("codex app-server: goal DB checkpoint failed", {
-          codexHome,
-          err: `${err}`,
-        });
-      }
-      logger.info("codex app-server: cleared persisted Codex goals", {
-        codexHome,
-        deleted,
-      });
-    }
-  } catch (err) {
-    logger.warn("codex app-server: failed to clear persisted Codex goals", {
-      codexHome,
-      err: `${err}`,
-    });
-  } finally {
-    db?.close();
-  }
-}
-
 function toUsageFromTokenCount(info: any): AcpStreamUsage | undefined {
   const usage = info?.last_token_usage ?? info?.lastTokenUsage;
   if (!usage || typeof usage !== "object") {
@@ -2753,9 +2703,8 @@ export class CodexAppServerAgent implements AcpAgent {
         ...(spawned.runtimeEnv ?? {}),
       }).filter(([, value]) => typeof value === "string" && !!`${value}`),
     ) as Record<string, string>;
-    if (shouldClearActiveGoalBeforeTurn(request)) {
-      clearPersistedCodexGoalsBeforeTurn({ spawned, cwd });
-    }
+    // Goal lifecycle belongs to Codex and explicit user actions. Starting a
+    // chat or automation turn must not clear this or other threads' goals.
     const errors: string[] = [];
     let lastErrorNotification: any | undefined;
     let lastFailedTurnCompletion: any | undefined;
