@@ -76,7 +76,17 @@ def main():
 
     def profile(name):
         path = root / f"{name}.toml"
-        install(path, '[repository]\nrepository = "s3:https://example.invalid/bucket/test"\npassword = "disposable"\n', 0o600)
+        install(path, '''[repository]
+repository = "opendal:s3"
+password = "disposable"
+[repository.options]
+endpoint = "https://example.invalid"
+bucket = "qualification"
+root = "test"
+region = "test"
+access_key_id = "disposable"
+secret_access_key = "disposable"
+''', 0o600)
         profiles.append(path)
         return str(path.relative_to("/mnt/cocalc"))
 
