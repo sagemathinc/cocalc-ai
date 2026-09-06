@@ -33,7 +33,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 
 import { redux } from "@cocalc/frontend/app-framework";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { FONT_SIZE_EM } from "./font-size";
 import { type LatexEditMode, setLatexEditMode } from "./mode";
@@ -72,8 +72,9 @@ const BAR_STYLE = {
   flexWrap: "nowrap",
   overflow: "hidden",
   padding: "4px 8px",
-  borderBottom: `1px solid ${COLORS.GRAY_LL}`,
-  background: COLORS.GRAY_LLL,
+  borderBottom: `1px solid ${UI_COLORS.border}`,
+  background: UI_COLORS.inset,
+  color: UI_COLORS.text,
   flexShrink: 0,
   gap: 2,
 } as const;
@@ -91,7 +92,7 @@ const AREA_STYLE = {
 const BTN_STYLE = {
   border: "none",
   background: "transparent",
-  color: COLORS.GRAY_D,
+  color: UI_COLORS.text,
 } as const;
 
 interface Props {
