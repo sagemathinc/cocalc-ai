@@ -225,6 +225,9 @@ export async function initProjectArchiveInfoService(client: Client) {
     subject: PROJECT_ARCHIVE_INFO_SUBJECT,
   });
   return await client.service(PROJECT_ARCHIVE_INFO_SUBJECT, {
+    getBackupCoverage(opts?: { backup_id?: string; cursor?: string | null }) {
+      return handleProjectGetBackupCoverageRequest.call(this, opts, client);
+    },
     getBackups(opts?: { indexed_only?: boolean }) {
       return handleProjectGetBackupsRequest.call(this, opts, client);
     },
@@ -251,5 +254,20 @@ export async function initProjectArchiveInfoService(client: Client) {
     }) {
       return handleProjectGetSnapshotFileTextRequest.call(this, opts, client);
     },
+  });
+}
+
+export async function handleProjectGetBackupCoverageRequest(
+  this: { subject?: string },
+  opts?: { backup_id?: string; cursor?: string | null },
+  client?: Client,
+) {
+  return await fileServerClient(
+    requireClient(client),
+    BACKUP_SEARCH_TIMEOUT_MS,
+  ).getBackupCoverage({
+    project_id: extractProjectId(this?.subject),
+    backup_id: opts?.backup_id,
+    cursor: opts?.cursor,
   });
 }

@@ -30,6 +30,12 @@ export interface BackupFileEntry {
 }
 
 interface Api {
+  getBackupCoverage: (opts: {
+    backup_id?: string;
+    cursor?: string | null;
+  }) => Promise<
+    import("@cocalc/util/types/backup-coverage").BackupCoveragePage | null
+  >;
   getBackups: (opts?: { indexed_only?: boolean }) => Promise<BackupSummary[]>;
   getBackupFiles: (opts: {
     id: string;
@@ -53,6 +59,24 @@ interface Api {
     path: string;
     max_bytes?: number;
   }) => Promise<FileTextPreview>;
+}
+
+export async function getBackupCoverage({
+  client,
+  project_id,
+  backup_id,
+  cursor,
+}: {
+  client?: ConatClient;
+  project_id: string;
+  backup_id?: string;
+  cursor?: string | null;
+}) {
+  return await requireExplicitConatClient(client)
+    .call<Api>(getSubject({ project_id }), {
+      timeout: BACKUP_SEARCH_TIMEOUT_MS,
+    })
+    .getBackupCoverage({ backup_id, cursor });
 }
 
 function requireExplicitConatClient(client?: ConatClient): ConatClient {

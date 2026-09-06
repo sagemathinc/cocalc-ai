@@ -9,6 +9,8 @@ let deleteObjectMock: jest.Mock;
 let seedBackupConfigMock: jest.Mock;
 let rusticMock: jest.Mock;
 let installSandboxBinaryMock: jest.Mock;
+let getHostBackupOutcomeMock: jest.Mock;
+let signedDownloadMock: jest.Mock;
 let settings: Record<string, any> = {};
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -52,6 +54,11 @@ jest.mock("./r2", () => ({
   createBucket: (...args: any[]) => createBucketMock(...args),
   deleteObject: (...args: any[]) => deleteObjectMock(...args),
   listBuckets: (...args: any[]) => listBucketsMock(...args),
+  issueSignedObjectDownload: (...args: any[]) => signedDownloadMock(...args),
+}));
+
+jest.mock("./outcomes", () => ({
+  getHostBackupOutcome: (...args: any[]) => getHostBackupOutcomeMock(...args),
 }));
 
 const HOST_ID = "11111111-1111-1111-1111-111111111111";
@@ -144,6 +151,11 @@ describe("project-backup", () => {
 
   beforeEach(() => {
     jest.resetModules();
+    getHostBackupOutcomeMock = jest.fn(async () => null);
+    signedDownloadMock = jest.fn(() => ({
+      url: "https://signed.invalid/object",
+      headers: { authorization: "scoped" },
+    }));
     settings = {};
     seedBackupConfigMock = jest.fn(async () => ({
       toml: "seed-toml",
@@ -932,6 +944,84 @@ describe("project-backup", () => {
         compression: "gzip",
       }),
     ]);
+  });
+
+  it("signs only the historical report object after host authorization", async () => {
+    const outcome = {
+      bucket_id: BUCKET_ID,
+      receipt: {
+        bucket: bucketRow().name,
+        object_key: "project-backup-exclusions/v1/exact-report.ndjson",
+        producer: { binding: { backup_id: "b".repeat(64) } },
+      },
+    };
+    getHostBackupOutcomeMock.mockResolvedValue(outcome);
+    const { getHostBackupReportAccess } = await import("./index");
+    const opts = { host_id: HOST_ID, project_id: PROJECT_ID };
+    const result = await getHostBackupReportAccess(opts);
+    expect(result).toEqual({
+      ...outcome,
+      report_download: signedDownloadMock.mock.results[0].value,
+    });
+    expect(signedDownloadMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bucket: outcome.receipt.bucket,
+        key: outcome.receipt.object_key,
+      }),
+    );
+    expect(getHostBackupOutcomeMock.mock.calls).toEqual([
+      [opts],
+      [{ ...opts, backup_id: "b".repeat(64) }],
+    ]);
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        sql.includes("FROM buckets WHERE id=$1"),
+      ),
+    ).toBe(true);
+    expect(
+      queryMock.mock.calls.some(([sql]) => sql.includes("UPDATE projects")),
+    ).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("secret_access_key");
+  });
+
+  it("does not sign on missing evidence or failed authorization", async () => {
+    const { getHostBackupReportAccess } = await import("./index");
+    const opts = { host_id: HOST_ID, project_id: PROJECT_ID };
+    await expect(getHostBackupReportAccess(opts)).resolves.toBeNull();
+    getHostBackupOutcomeMock.mockRejectedValue(new Error("host changed"));
+    await expect(getHostBackupReportAccess(opts)).rejects.toThrow(
+      "host changed",
+    );
+    expect(signedDownloadMock).not.toHaveBeenCalled();
+  });
+
+  it("does not return the capability if placement changed during signing", async () => {
+    getHostBackupOutcomeMock
+      .mockResolvedValueOnce({
+        bucket_id: BUCKET_ID,
+        receipt: {
+          bucket: bucketRow().name,
+          object_key: "report",
+          producer: { binding: { backup_id: "b".repeat(64) } },
+        },
+      })
+      .mockRejectedValueOnce(new Error("host changed"));
+    const { getHostBackupReportAccess } = await import("./index");
+    await expect(
+      getHostBackupReportAccess({ host_id: HOST_ID, project_id: PROJECT_ID }),
+    ).rejects.toThrow("host changed");
+  });
+
+  it("rejects replacement of the historical bucket", async () => {
+    getHostBackupOutcomeMock.mockResolvedValue({
+      bucket_id: BUCKET_ID,
+      receipt: { bucket: "different-bucket" },
+    });
+    const { getHostBackupReportAccess } = await import("./index");
+    await expect(
+      getHostBackupReportAccess({ host_id: HOST_ID, project_id: PROJECT_ID }),
+    ).rejects.toThrow("Historical backup evidence bucket");
+    expect(signedDownloadMock).not.toHaveBeenCalled();
   });
 
   it("syncs and deletes backup index manifests", async () => {

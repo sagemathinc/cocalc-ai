@@ -8,6 +8,7 @@ import { mkdtemp, open, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { cleanupBackupEvidence } from "./backup-exclusion-cleanup";
 import {
   backupExclusionObjectKey,
   withBackupEvidenceAbort,
@@ -232,9 +233,11 @@ export async function withBackupExclusionIndex<T>(
   } finally {
     active = false;
     try {
-      db?.close();
+      await cleanupBackupEvidence(() => db?.close());
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await cleanupBackupEvidence(() =>
+        rm(dir, { recursive: true, force: true }),
+      );
     }
   }
 }

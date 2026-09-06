@@ -1963,6 +1963,16 @@ export async function getProjectBackupOutcomeLocal(
     import("@cocalc/conat/hub/api/hosts").Hosts["getProjectBackupOutcome"]
   >[0],
 ) {
+  if (
+    opts.report_access !== undefined &&
+    typeof opts.report_access !== "boolean"
+  )
+    throw new Error("Invalid backup report access option");
+  if (opts.report_access) {
+    const { getHostBackupReportAccess } =
+      await import("@cocalc/server/project-backup");
+    return await getHostBackupReportAccess(opts);
+  }
   const { getHostBackupOutcome } =
     await import("@cocalc/server/project-backup/outcomes");
   return await getHostBackupOutcome(opts);

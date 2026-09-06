@@ -2164,9 +2164,11 @@ export interface Hosts {
     host_id?: string;
     project_id: string;
     backup_id?: string;
+    report_access?: boolean;
   }) => Promise<{
     receipt: import("@cocalc/util/types/backup-evidence").BackupOutcomeReceipt;
     bucket_id: string;
+    report_download?: { url: string; headers: Record<string, string> };
   } | null>;
   recordProjectBackupIndex: (opts: {
     host_id?: string;

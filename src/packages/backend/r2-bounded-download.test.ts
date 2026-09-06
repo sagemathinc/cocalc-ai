@@ -4,7 +4,7 @@ import https from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
-import { getR2ObjectToFile, putR2ObjectFromFile } from "./r2";
+import { getR2ObjectToFile, putR2ObjectFromFile, signR2Request } from "./r2";
 
 let dir: string;
 let request: jest.SpyInstance;
@@ -56,6 +56,87 @@ function download(maxBytes?: number, signal?: AbortSignal) {
     signal,
   });
 }
+
+function signedDownload() {
+  const signed = signR2Request({
+    auth,
+    method: "GET",
+    key: "report",
+    payloadSha256: createHash("sha256").update("").digest("hex"),
+  });
+  const { host: _, ...headers } = signed.headers;
+  return { url: signed.url, headers };
+}
+
+it("downloads an exact signed GET without bucket credentials", async () => {
+  const signed = signedDownload();
+  respond([Buffer.from("data")]);
+  expect(
+    (
+      await getR2ObjectToFile({
+        download: signed,
+        key: "report",
+        outputPath: join(dir, "signed"),
+        maxBytes: 4,
+      })
+    ).bytes,
+  ).toBe(4);
+  expect(request.mock.calls[0][0]).toMatchObject({
+    method: "GET",
+    host: "example.test",
+    path: "/test/report",
+    headers: signed.headers,
+  });
+});
+
+it.each(["http:", "file:", "redirect", "host", "cookie", "newline", "missing"])(
+  "rejects invalid signed capabilities before connecting (%s)",
+  async (kind) => {
+    const signed = signedDownload();
+    if (kind.endsWith(":")) signed.url = signed.url.replace("https:", kind);
+    if (kind === "redirect") signed.url += "?redirect=http://localhost";
+    if (kind === "host") signed.headers.host = "localhost";
+    if (kind === "cookie") signed.headers.cookie = "no";
+    if (kind === "newline") signed.headers.authorization += "\r\nCookie: no";
+    if (kind === "missing") delete signed.headers.authorization;
+    respond([]);
+    await expect(
+      getR2ObjectToFile({
+        download: signed,
+        key: "report",
+        outputPath: join(dir, "signed"),
+        maxBytes: 4,
+      }),
+    ).rejects.toThrow();
+    expect(request).not.toHaveBeenCalled();
+  },
+);
+
+it("never follows signed download redirects", async () => {
+  respond([], 302, { location: "https://other.invalid/private" });
+  await expect(
+    getR2ObjectToFile({
+      download: signedDownload(),
+      key: "report",
+      outputPath: join(dir, "signed"),
+      maxBytes: 4,
+    }),
+  ).rejects.toThrow("302");
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+it("rejects ambiguous credentials", async () => {
+  respond([]);
+  await expect(
+    getR2ObjectToFile({
+      auth,
+      download: signedDownload(),
+      key: "report",
+      outputPath: join(dir, "signed"),
+    }),
+  ).rejects.toThrow("Exactly one");
+  expect(request).not.toHaveBeenCalled();
+});
 
 it("accepts exactly the limit and hashes the bytes actually written", async () => {
   const bytes = Buffer.from("abcdef");

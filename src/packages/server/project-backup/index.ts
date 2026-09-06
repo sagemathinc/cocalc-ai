@@ -27,7 +27,13 @@ import {
   readOptionalMasterKeyFile,
   resolveLegacyMasterKeyFiles,
 } from "@cocalc/util/master-key-lifecycle";
-import { createBucket, deleteObject, listBuckets, R2BucketInfo } from "./r2";
+import {
+  createBucket,
+  deleteObject,
+  listBuckets,
+  R2BucketInfo,
+  issueSignedObjectDownload,
+} from "./r2";
 import { ensureCopySchema } from "@cocalc/server/projects/copy-db";
 import type {
   HostMachine,
@@ -1522,6 +1528,39 @@ export async function getHostBackupEvidenceStore({
   const bucket = await getProjectBackupIndexBucket({ project_id });
   if (!bucket) throw new Error("Backup evidence storage bucket is unavailable");
   return { id: bucket.id, name: bucket.name };
+}
+
+export async function getHostBackupReportAccess(opts: {
+  host_id?: string;
+  project_id: string;
+  backup_id?: string;
+}) {
+  const { getHostBackupOutcome } = await import("./outcomes");
+  const outcome = await getHostBackupOutcome(opts);
+  if (!outcome) return null;
+  const bucket = await loadBucketById(outcome.bucket_id);
+  if (!bucket || bucket.name !== outcome.receipt.bucket)
+    throw new Error("Historical backup evidence bucket is unavailable");
+  const config = await buildBackupIndexStoreConfigForBucket({ bucket });
+  if (!config) throw new Error("Backup evidence download is unavailable");
+  // Do not redirect old evidence to a newly assigned repository or expose the
+  // bucket credentials. This capability signs precisely the recorded object.
+  const report_download = issueSignedObjectDownload({
+    endpoint: config.endpoint,
+    accessKey: config.access_key_id,
+    secretKey: config.secret_access_key,
+    bucket: config.bucket,
+    key: outcome.receipt.object_key,
+  });
+  // Configuration resolution can await external services; recheck placement
+  // before returning a new capability to a potentially replaced host.
+  const current = await getHostBackupOutcome({
+    ...opts,
+    backup_id: outcome.receipt.producer.binding.backup_id,
+  });
+  if (!current || JSON.stringify(current) !== JSON.stringify(outcome))
+    throw new Error("Backup evidence changed before download authorization");
+  return { ...outcome, report_download };
 }
 
 async function deleteProjectBackupIndexObject(

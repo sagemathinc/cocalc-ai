@@ -27,6 +27,58 @@ export interface R2ObjectStoreAuth {
   region?: string;
 }
 
+export interface SignedR2ObjectDownload {
+  url: string;
+  headers: Record<string, string>;
+}
+
+// Accept only a pre-authorized exact GET, never redirects or caller-controlled
+// request overrides. The caller must obtain this capability from its owning bay.
+function captureSignedDownload(
+  download: SignedR2ObjectDownload,
+): SignedR2Request {
+  if (
+    !download ||
+    typeof download.url !== "string" ||
+    download.url.length > 32768
+  )
+    throw new Error("Invalid signed object download");
+  const parsed = new URL(download.url);
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.hash ||
+    parsed.search
+  )
+    throw new Error("Invalid signed object download URL");
+  const headers: Record<string, string> = {};
+  const expected = ["authorization", "x-amz-date", "x-amz-content-sha256"];
+  if (
+    !download.headers ||
+    Object.keys(download.headers).length !== expected.length
+  )
+    throw new Error("Invalid signed object download headers");
+  for (const name of expected) {
+    const value = download.headers[name];
+    if (
+      typeof value !== "string" ||
+      !value ||
+      value.length > 16384 ||
+      /[\r\n]/.test(value)
+    )
+      throw new Error("Invalid signed object download headers");
+    headers[name] = value;
+  }
+  return {
+    parsed,
+    url: parsed.href,
+    canonicalUri: parsed.pathname,
+    canonicalQuery: "",
+    headers,
+  };
+}
+
 export type R2RequestMethod = "GET" | "PUT" | "POST" | "DELETE";
 
 type R2QueryValue = string | number | boolean | undefined;
@@ -498,12 +550,14 @@ export async function putR2ObjectFromFile({
 
 export async function getR2ObjectToFile({
   auth,
+  download,
   key,
   outputPath,
   maxBytes,
   signal,
 }: {
-  auth: R2ObjectStoreAuth;
+  auth?: R2ObjectStoreAuth;
+  download?: SignedR2ObjectDownload;
   key: string;
   outputPath: string;
   maxBytes?: number;
@@ -512,6 +566,11 @@ export async function getR2ObjectToFile({
   if (maxBytes != null && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) {
     throw new Error("Invalid R2 download byte limit");
   }
+  if ((auth == null) === (download == null))
+    throw new Error("Exactly one object download credential is required");
+  const authorized =
+    download == null ? undefined : captureSignedDownload(download);
+  const authSnapshot = auth == null ? undefined : { ...auth };
   return await retryOperation({
     signal,
     label: `R2 GET ${key}`,
@@ -526,12 +585,14 @@ export async function getR2ObjectToFile({
         requestAttempt += 1
       ) {
         signal?.throwIfAborted();
-        const signed = signR2Request({
-          auth,
-          method: "GET",
-          key,
-          payloadSha256: sha256Hex(""),
-        });
+        const signed =
+          authorized ??
+          signR2Request({
+            auth: authSnapshot!,
+            method: "GET",
+            key,
+            payloadSha256: sha256Hex(""),
+          });
         const hash = createHash("sha256");
         let bytes = 0;
         const family = requestAttempt >= 2 ? 4 : undefined;

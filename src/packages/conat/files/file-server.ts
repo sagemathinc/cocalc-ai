@@ -421,6 +421,15 @@ export interface Fileserver {
   >;
 
   // Return list of files in the given backup for the given directory path
+  getBackupCoverage: (opts: {
+    project_id: string;
+    backup_id?: string;
+    cursor?: string | null;
+  }) => Promise<
+    import("@cocalc/util/types/backup-coverage").BackupCoveragePage | null
+  >;
+
+  // Return list of files in the given backup for the given directory path
   // (non-recursive). Entries include basic metadata.
   getBackupFiles: (opts: {
     project_id: string;

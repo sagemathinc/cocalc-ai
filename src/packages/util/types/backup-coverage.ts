@@ -27,3 +27,20 @@ export interface BackupCoverageView {
   next_cursor: string | null;
   report_available: boolean;
 }
+// Direct project-host data plane. Account acknowledgement state is deliberately
+// separate; neither this page nor a cursor grants permission to omit data.
+export interface BackupCoveragePage {
+  project_id: string;
+  backup_id: string;
+  outcome: "complete" | "partial_policy_exclusions";
+  captured_at: string;
+  policy_sha256: string;
+  exclude_larger_than_bytes: string;
+  excluded_files: string;
+  files: Array<{
+    path_hex: string;
+    apparent_bytes: string;
+    acknowledgement_key: string | null;
+  }>;
+  next_cursor: string | null;
+}

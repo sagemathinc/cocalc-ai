@@ -126,4 +126,27 @@ describe("project archive info service", () => {
       ),
     ).rejects.toThrow("invalid project archive subject");
   });
+
+  it("derives coverage authorization from the subject, never request project_id", async () => {
+    const getBackupCoverage = jest.fn().mockResolvedValue(null);
+    fileServerClientMock.mockReturnValue({ getBackupCoverage });
+    const { handleProjectGetBackupCoverageRequest } =
+      await import("./archive-info-service");
+    await handleProjectGetBackupCoverageRequest.call(
+      {
+        subject: "project.11111111-1111-4111-8111-111111111111.archive-info.-",
+      },
+      {
+        project_id: "22222222-2222-4222-8222-222222222222",
+        backup_id: "b".repeat(64),
+        cursor: "page",
+      } as any,
+      {} as any,
+    );
+    expect(getBackupCoverage).toHaveBeenCalledWith({
+      project_id: "11111111-1111-4111-8111-111111111111",
+      backup_id: "b".repeat(64),
+      cursor: "page",
+    });
+  });
 });

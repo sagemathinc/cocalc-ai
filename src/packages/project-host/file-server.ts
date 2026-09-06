@@ -5,6 +5,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { ProjectBackupCoverage } from "./backup-coverage";
+import type { BackupCoverageRequest } from "./backup-coverage";
 import {
   chmod,
   lstat,
@@ -4792,6 +4794,37 @@ export async function runScheduledBackupMaintenance({
   });
 }
 
+let backupCoverage: ProjectBackupCoverage | undefined;
+
+async function getBackupCoverage(opts: BackupCoverageRequest) {
+  if (!backupCoverage) {
+    // Activation requires explicit, capacity-qualified host limits. Do not
+    // silently create an unbounded download/index cache on older deployments.
+    const settings = process.env.COCALC_BACKUP_REPORT_CACHE_LIMITS;
+    if (!settings)
+      throw new Error(
+        "Backup coverage browsing is not configured on this host",
+      );
+    backupCoverage = new ProjectBackupCoverage(
+      async ({ project_id, backup_id }) => {
+        const client = getMasterConatClient();
+        const host_id = getLocalHostId();
+        if (!client || !host_id)
+          throw new Error("Backup coverage requires the owning-bay connection");
+        return await callHub({
+          client,
+          host_id,
+          name: "hosts.getProjectBackupOutcome",
+          args: [{ project_id, backup_id, report_access: true }],
+          timeout: 30000,
+        });
+      },
+      JSON.parse(settings),
+    );
+  }
+  return await backupCoverage.page(opts);
+}
+
 export async function getBackups({
   project_id,
   indexed_only,
@@ -5422,6 +5455,9 @@ export async function initFileServer({
     deleteBackup: reuseInFlight(deleteBackup),
     updateBackups: reuseInFlight(updateBackups),
     getBackups: reuseInFlight(getBackups),
+    // Do not coalesce authorization: the bounded content cache shares only
+    // immutable report work, after each request checks current ownership.
+    getBackupCoverage,
     getBackupFiles: reuseInFlight(getBackupFiles),
     findBackupFiles: reuseInFlight(findBackupFiles),
     getBackupFileText: reuseInFlight(getBackupFileText),
@@ -5710,6 +5746,14 @@ export async function writeManagedAuthorizedKeys(
 }
 
 export function closeFileServer() {
+  // Keep a failed-cleanup cache charged rather than replacing it with a new
+  // empty cache. A process restart requires separate crash reconciliation.
+  if (backupCoverage)
+    void backupCoverage
+      .close()
+      .catch((err) =>
+        logger.error("backup coverage cache cleanup failed", err),
+      );
   if (servers == null) {
     return;
   }

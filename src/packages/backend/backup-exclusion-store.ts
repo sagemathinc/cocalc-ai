@@ -13,7 +13,8 @@ import {
 } from "./backup-exclusion-report";
 import type { VerifiedBackupExclusionInventory } from "./backup-exclusion-report";
 import { getR2ObjectToFile, putR2ObjectFromFile } from "./r2";
-import type { R2ObjectStoreAuth } from "./r2";
+import type { R2ObjectStoreAuth, SignedR2ObjectDownload } from "./r2";
+import { cleanupBackupEvidence } from "./backup-exclusion-cleanup";
 import type {
   BackupExclusionBinding,
   BackupExclusionReadLimits,
@@ -101,7 +102,8 @@ export function backupExclusionObjectKey(
 }
 
 export interface BackupExclusionStoreOptions {
-  auth: R2ObjectStoreAuth;
+  auth?: R2ObjectStoreAuth;
+  download?: SignedR2ObjectDownload;
   binding: BackupExclusionBinding;
   limits: BackupExclusionReadLimits;
   timeout_ms: number;
@@ -111,6 +113,7 @@ export interface BackupExclusionStoreOptions {
 type StoreOptions = BackupExclusionStoreOptions;
 
 function capture(options: StoreOptions) {
+  if ((options.auth == null) === (options.download == null)) invalid();
   const binding = copyBinding(options.binding);
   const limits = { ...options.limits };
   if (
@@ -135,7 +138,14 @@ function capture(options: StoreOptions) {
     binding,
     limits,
     signal,
-    auth: { ...options.auth },
+    auth: options.auth == null ? undefined : { ...options.auth },
+    download:
+      options.download == null
+        ? undefined
+        : {
+            url: options.download.url,
+            headers: { ...options.download.headers },
+          },
     object_key: backupExclusionObjectKey(binding),
   };
 }
@@ -155,6 +165,7 @@ async function verifyFile(path: string, options: ReturnType<typeof capture>) {
 async function download(path: string, options: ReturnType<typeof capture>) {
   const result = await getR2ObjectToFile({
     auth: options.auth,
+    download: options.download,
     key: options.object_key,
     outputPath: path,
     maxBytes: options.binding.report.bytes,
@@ -212,9 +223,13 @@ function nextWithAbort(
  * never an authoritative partial backup.
  */
 export async function storeBackupExclusionReport(
-  options: StoreOptions & { chunks: AsyncIterable<Uint8Array> },
+  options: StoreOptions & {
+    auth: R2ObjectStoreAuth;
+    chunks: AsyncIterable<Uint8Array>;
+  },
 ): Promise<StoredBackupExclusionReport> {
   const captured = capture(options);
+  if (!captured.auth || captured.download) invalid();
   const chunks = options.chunks;
   const dir = await mkdtemp(join(tmpdir(), "cocalc-exclusion-upload-"));
   try {
@@ -281,7 +296,9 @@ export async function storeBackupExclusionReport(
       inventory,
     };
   } finally {
-    await rm(dir, { force: true, recursive: true });
+    await cleanupBackupEvidence(() =>
+      rm(dir, { force: true, recursive: true }),
+    );
   }
 }
 
@@ -343,6 +360,8 @@ export async function withVerifiedBackupExclusionFile<T>(
       captured.signal,
     );
   } finally {
-    await rm(dir, { force: true, recursive: true });
+    await cleanupBackupEvidence(() =>
+      rm(dir, { force: true, recursive: true }),
+    );
   }
 }
