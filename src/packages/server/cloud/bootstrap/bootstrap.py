@@ -3960,6 +3960,8 @@ installed below /usr/local with root ownership.
 
 import ctypes
 import errno
+import array
+import fcntl
 import hashlib
 import json
 import os
@@ -4375,6 +4377,19 @@ def verify_native_rustic(binary, env, pass_fds):
         proc.stdout.close()
 
 
+def require_readonly_btrfs_source(datafd):
+    # linux/btrfs.h: _IOR(BTRFS_IOCTL_MAGIC=0x94, 25, __u64), identical on
+    # qualified Linux amd64/arm64; BTRFS_SUBVOL_RDONLY is (1ULL << 1).
+    fd = os.open(f"/proc/self/fd/{datafd}", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        flags = array.array("Q", [0])
+        fcntl.ioctl(fd, 0x80089419, flags, True)
+        if not flags[0] & 2:
+            fail("native project backup requires a read-only Btrfs snapshot")
+    finally:
+        os.close(fd)
+
+
 def run_rustic(
     argv,
     allowed_roots=ALLOWED_ROOTS,
@@ -4396,6 +4411,8 @@ def run_rustic(
             values["path"],
             O_PATH | os.O_DIRECTORY | os.O_CLOEXEC,
         )
+        if native is not None and command == "rustic-project-backup":
+            require_readonly_btrfs_source(datafd)
         profile_data = read_validated_rustic_profile(
             profile_rootfd, values["profile-path"]
         )
