@@ -60,7 +60,7 @@ not a completion claim or deployment approval. Production remains unchanged.
   CoCalc `3472559a63` verifies the read-only Btrfs source flag before native
   project backups and freezes sanitized migration staging before backup.
   `fc22f5f80f` additionally reserves capacity before asking systemd to create a
-  service; its follow-up CI is pending. Sixteen helper unit/OS tests and all
+  service; follow-up CI `34004557783` passes. Sixteen helper unit/OS tests and all
   92 bootstrap tests pass. Earlier clean-CI
   runs exposed two unmocked legacy host writes, fixed in `d1a70225c9`.
   Current supervision is still a gated component, not a completed fleet rollout.
