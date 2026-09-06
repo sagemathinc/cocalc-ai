@@ -893,6 +893,7 @@ function CompactMetricLine({
         {display != null ? `${display}%` : (unknownLabel ?? "n/a")}
       </Typography.Text>
       <Progress
+        aria-label={label}
         percent={display ?? 0}
         size="small"
         status={tone ? "normal" : progressStatus(displayPercent)}
@@ -987,6 +988,7 @@ function MetricBar({
       <Sparkline points={trendPoints} color={color} compact={compact} />
       <div>
         <Progress
+          aria-label={label}
           percent={display ?? 0}
           size="small"
           status={tone ? "normal" : progressStatus(displayPercent)}

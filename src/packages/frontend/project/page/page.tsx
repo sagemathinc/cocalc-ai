@@ -1989,6 +1989,7 @@ function FlyoutDragbar({
       {...listeners}
       {...attributes}
       onDoubleClick={resetFlyoutWidth}
+      aria-label="Resize sidebar"
     >
       <FlyoutGutterLine active={!!active} />
     </div>

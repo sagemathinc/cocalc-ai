@@ -21,7 +21,7 @@ import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import api from "@cocalc/frontend/client/api";
 import RecentFiles from "@cocalc/frontend/public/support/recent-files";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { openSupportTicketsPage } from "./open";
 import SupportSubmissionNotice from "./submission-notice";
 import type { Options as SupportOpenOptions } from "./url";
@@ -532,7 +532,7 @@ export default function SupportCreateModal() {
         <div
           style={{
             marginTop: 8,
-            border: `1px solid ${COLORS.GRAY_LL}`,
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 12,
             padding: 8,
             background: "white",

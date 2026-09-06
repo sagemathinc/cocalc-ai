@@ -22,5 +22,10 @@ describe("host resource appearance", () => {
       background: UI_COLORS.surface,
       color: UI_COLORS.text,
     });
+    const progress = container.querySelectorAll('[role="progressbar"]');
+    expect(progress.length).toBeGreaterThan(0);
+    for (const bar of progress) {
+      expect(bar).toHaveAccessibleName();
+    }
   });
 });

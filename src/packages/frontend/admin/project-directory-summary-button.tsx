@@ -9,7 +9,7 @@ import { useCallback, useState } from "react";
 import type { ProjectDirectorySummary } from "@cocalc/conat/hub/api/projects";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { humanSize } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const { Text } = Typography;
 
@@ -84,8 +84,9 @@ export function ProjectDirectorySummaryButton({
             marginTop: "8px",
             maxHeight: "220px",
             overflow: "auto",
-            background: COLORS.GRAY_LLL,
-            border: `1px solid ${COLORS.GRAY_LL}`,
+            background: UI_COLORS.surface,
+            color: UI_COLORS.text,
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: "6px",
             padding: "8px",
             whiteSpace: "pre",

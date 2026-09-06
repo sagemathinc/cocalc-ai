@@ -205,6 +205,7 @@ export function NotificationPage() {
           {intl.formatMessage(labels.notifications)}
           <Button
             type="link"
+            aria-label={intl.formatMessage(labels.help)}
             style={{ fontSize: "12pt" }}
             onClick={() => setShowHelp(true)}
           >

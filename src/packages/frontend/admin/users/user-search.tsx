@@ -46,6 +46,7 @@ export function UserSearch({}) {
           }}
         />
         <InputNumber
+          aria-label="Search result limit"
           style={{ width: "150px" }}
           size="large"
           defaultValue={limit}

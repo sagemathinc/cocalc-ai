@@ -100,3 +100,46 @@ package manifests or built static JavaScript chunks.
 
 Keep these limits visible when reviewing the original implementation plan;
 do not mark its complete acceptance checklist solely from this audit.
+
+## Accessibility and Fixed-Color Follow-up
+
+The next pass migrated account membership copy, email/SSH explanations, user
+selector secondary text, support-dialog borders, admin CPU/egress borders, and
+admin directory-summary output to semantic appearance tokens. The raw directory
+output now explicitly pairs its foreground and background.
+
+Added accessible names to host sorting/filter switches and resource progress
+bars, admin search result limit, site-settings switches, notification Help, and
+the project sidebar resize handle. No underlying actions or settings defaults
+were changed.
+
+Live evidence: `accessibility-followup-sept6` contains eight 1440px screenshots
+and axe reports (four routes in both themes), against the rebuilt frontend:
+
+- Hosts, empty admin user search, and site settings: no reported violations in
+  either theme. User search and site settings retain five incomplete
+  `aria-valid-attr-value` checks each; incomplete is not a pass.
+- Notifications: the unnamed Help button is resolved; three existing
+  `nested-interactive` header findings remain in each theme.
+- Dark hosts, user-search, and notifications screenshots were visually reviewed.
+  This does not establish populated user-search or every hidden settings control.
+- The sidebar name change has not yet received a new loaded-project live audit.
+
+Focused verification: five tests across directory-summary output, the three
+host-metrics layouts, and notification navigation passed. Frontend lint passed.
+
+Further source review identified specific remaining work:
+
+- `notifications/notification-mentions.tsx`: Collapse headers contain project
+  links and mark-all buttons inside a button role. Remediation must preserve
+  separate keyboard access to expansion, navigation, and marking notifications.
+- `project/page/flyouts/active-tabs.tsx`: sortable button-role wrappers contain
+  interactive file rows. A separate keyboard drag handle is needed, not removal
+  of accessibility roles without a replacement interaction.
+- `admin/retention-overview.tsx`: fixed light retention-cell backgrounds remain.
+  Its Plotly trace also uses a concrete color; do not substitute a CSS variable
+  into a renderer without verifying that renderer's color support.
+
+Actual iPhone/iOS Safari testing remains unavailable through the supplied
+desktop Chrome CDP session. Chromium screenshots or narrow viewport emulation
+must not be reported as real-device coverage. This follow-up is not full signoff.

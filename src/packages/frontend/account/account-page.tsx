@@ -25,7 +25,6 @@ import {
 import { Icon, Loading, Title } from "@cocalc/frontend/components";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { COLORS } from "@cocalc/util/theme";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { I18NSelector } from "./i18n-selector";
 import { SETTINGS_OVERVIEW_PAGE } from "./settings-index";
@@ -377,7 +376,7 @@ function getMobileNavigationOptions(
           label: (
             <span>
               {prefix != null && (
-                <span style={{ color: COLORS.GRAY_M }}>{prefix}: </span>
+                <span style={{ color: UI_COLORS.secondary }}>{prefix}: </span>
               )}
               {subTab.label}
             </span>

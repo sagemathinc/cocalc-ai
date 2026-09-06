@@ -10,7 +10,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { ErrorDisplay, LabeledRow, Saving } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import {
   isFreshAuthRequiredError,
@@ -218,7 +218,7 @@ export const EmailAddressSetting = ({
   return (
     <LabeledRow
       label={label}
-      style={disabled ? { color: COLORS.GRAY_M } : undefined}
+      style={disabled ? { color: UI_COLORS.secondary } : undefined}
     >
       <div
         style={{

@@ -1570,6 +1570,7 @@ export default function SiteSettings({
                 <span>
                   <Switch
                     checked={showHidden}
+                    aria-label="Show hidden"
                     onChange={(value) => setShowHidden(value)}
                   />{" "}
                   Show hidden
@@ -1578,6 +1579,11 @@ export default function SiteSettings({
               <span>
                 <Switch
                   checked={showAdvanced}
+                  aria-label={
+                    scope === "codex-pools"
+                      ? "Show advanced safety controls"
+                      : "Show advanced"
+                  }
                   onChange={(value) => setShowAdvanced(value)}
                 />{" "}
                 {scope === "codex-pools"
@@ -1588,6 +1594,7 @@ export default function SiteSettings({
                 <span>
                   <Switch
                     checked={expandAll}
+                    aria-label="Expand all"
                     onChange={(value) => setExpandAll(value)}
                   />{" "}
                   Expand all

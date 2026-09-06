@@ -17,7 +17,7 @@ import {
   search_split,
   is_valid_email_address as isValidEmailAddress,
 } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { User } from "./user";
 
 const AVATAR_SIZE = 22;
@@ -50,7 +50,7 @@ function UserLabel({
         avatarSize={AVATAR_SIZE}
         style={{ overflow: "hidden", textOverflow: "ellipsis", flex: 0.7 }}
         addonAfter={
-          <span style={{ color: COLORS.GRAY, marginLeft: "10px" }}>
+          <span style={{ color: UI_COLORS.secondary, marginLeft: "10px" }}>
             ({label}
             {last_active ? (
               <span>
