@@ -3285,9 +3285,11 @@ reserve_project_startup_io_capacity
                 script.index('counter drop comment "%s-deny"'),
             )
             self.assertIn(
-                '"maintenance_process_count": len(maintenance_processes.split())',
+                '"maintenance_process_count": len(set(maintenance_processes.split()))',
                 script,
             )
+            self.assertIn('"maintenance_cgroup": maintenance_cgroup', script)
+            self.assertIn('"${MAINTENANCE_CGROUP_DEFAULT}"/*/cgroup.procs', script)
             self.assertIn('result["capability"] = "validated"', script)
             self.assertIn(
                 'PROJECT_IO_CAPACITY_DEFAULT="/etc/cocalc/project-io-capacity.json"',
