@@ -43,7 +43,6 @@ import ProgressEstimate from "../components/progress-estimate";
 import { labels } from "../i18n";
 import { JupyterActions } from "./browser-actions";
 import Logo from "./logo";
-import { SwitchToStudioButton } from "./studio/frame-type-toggle";
 import { StudioControls } from "./studio/studio-controls";
 import type { StudioLayout } from "./studio/types";
 import { KernelSelector } from "./select-kernel";
@@ -1280,22 +1279,6 @@ export function Kernel({
               onClick={openKernelDrawer}
             >
               {renderUsage()}
-            </div>
-          )}
-          {!IS_MOBILE && (
-            <div
-              style={{
-                // flex wrapper so the inline-block button doesn't add
-                // baseline descender space and grow the status bar height;
-                // small margin only — the header padding (now border-box)
-                // provides the rest of the gap to the frame edge
-                display: "flex",
-                alignItems: "center",
-                flex: "0 0 auto",
-                marginRight: "3px",
-              }}
-            >
-              <SwitchToStudioButton iconsOnly={iconsOnly} />
             </div>
           )}
         </div>

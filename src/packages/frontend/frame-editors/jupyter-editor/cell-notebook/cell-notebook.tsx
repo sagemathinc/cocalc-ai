@@ -9,7 +9,8 @@ Frame that display a Jupyter notebook in the traditional way with input and outp
 
 import { Map } from "immutable";
 
-import { Rendered } from "@cocalc/frontend/app-framework";
+import { Rendered, useRedux, useEffect } from "@cocalc/frontend/app-framework";
+import { hasNbgraderMetadata } from "../nbgrader-layout";
 import { EditorState } from "@cocalc/frontend/frame-editors/frame-tree/types";
 import { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import { JupyterEditor } from "@cocalc/frontend/jupyter/main";
@@ -36,8 +37,17 @@ export function CellNotebook(props: Props): Rendered {
 
   // Actions for the underlying Jupyter notebook state, kernel state, etc.
   const jupyter_actions: JupyterActions = props.actions.jupyter_actions;
+  const cells = useRedux([jupyter_actions.name, "cells"]);
+  const blocked = hasNbgraderMetadata(cells);
+  useEffect(() => {
+    if (blocked && props.desc.get("type") === "jupyter_studio") {
+      props.actions.set_frame_type(props.id, "jupyter_cell_notebook");
+    }
+  }, [blocked, props.desc, props.actions, props.id]);
   const cellViewMode =
-    props.desc.get("type") === "jupyter_studio" ? "studio" : "default";
+    props.desc.get("type") === "jupyter_studio" && cells != null && !blocked
+      ? "studio"
+      : "default";
 
   return (
     <JupyterEditor

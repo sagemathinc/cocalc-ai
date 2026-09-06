@@ -9,6 +9,11 @@ Jupyter Frame Editor Actions
 */
 
 import { delay } from "awaiting";
+import { alert_message } from "@cocalc/frontend/alerts";
+import {
+  hasNbgraderMetadata,
+  NBGRADER_CLASSIC_REASON,
+} from "./nbgrader-layout";
 import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { isJupyterNotebookFrameType } from "./util";
 import { markdown_to_slate } from "@cocalc/frontend/editors/slate/markdown-to-slate";
@@ -28,6 +33,7 @@ import {
 import { revealjs_slideshow_html } from "./slideshow-revealjs/nbconvert";
 
 export interface JupyterEditorState extends CodeEditorState {
+  has_nbgrader?: boolean;
   slideshow?: {
     state?: "built" | "building" | "";
     url?: string;
@@ -192,7 +198,13 @@ export class JupyterEditorActions
 
   private watchJupyterStore = (): void => {
     const store = this.jupyter_actions.store;
+    let cells = store.get("cells");
+    this.enforceNbgraderLayout();
     store.on("change", () => {
+      if (cells !== store.get("cells")) {
+        cells = store.get("cells");
+        this.enforceNbgraderLayout();
+      }
       // sync read only state -- source of true is jupyter_actions.store.get('read_only')
       const read_only = store.get("read_only");
       if (read_only != this.store.get("read_only")) {
@@ -218,6 +230,47 @@ export class JupyterEditorActions
       kernel_state = kernel;
     });
   };
+
+  public studioUnavailableReason(): string | undefined {
+    const cells = this.jupyter_actions?.store.get("cells");
+    if (cells == null) return "Notebook metadata is still loading.";
+    return hasNbgraderMetadata(cells) ? NBGRADER_CLASSIC_REASON : undefined;
+  }
+
+  set_frame_type(id: string, type: string): void {
+    if (type === "jupyter_studio" && this.studioUnavailableReason()) {
+      type = "jupyter_cell_notebook";
+    }
+    super.set_frame_type(id, type);
+  }
+
+  public new_frame(...args: Parameters<BaseActions["new_frame"]>): string {
+    if (args[0] === "jupyter_studio" && this.studioUnavailableReason()) {
+      args[0] = "jupyter_cell_notebook";
+    }
+    return super.new_frame(...args);
+  }
+
+  private enforceNbgraderLayout(): void {
+    const has_nbgrader = hasNbgraderMetadata(
+      this.jupyter_actions.store.get("cells"),
+    );
+    if (this.store.get("has_nbgrader") !== has_nbgrader)
+      this.setState({ has_nbgrader });
+    if (!has_nbgrader) return;
+    let changed = false;
+    for (const id in this._get_leaf_ids()) {
+      if (this._get_frame_type(id) !== "jupyter_studio") continue;
+      this.set_frame_type(id, "jupyter_cell_notebook");
+      changed = true;
+    }
+    if (changed)
+      alert_message({
+        type: "info",
+        message:
+          "Switched to Classic to display assignment grading information.",
+      });
+  }
 
   private normalizeTerminalArgs = (args: any): string[] => {
     if (args == null) {
