@@ -223,8 +223,8 @@ export async function storeBackupExclusionReport(
   const dir = await mkdtemp(join(tmpdir(), "cocalc-exclusion-upload-"));
   try {
     const path = join(dir, "report.ndjson");
-    const file = await open(path, "wx", 0o600);
     const input = chunks[Symbol.asyncIterator]();
+    const file = await open(path, "wx", 0o600);
     let inputComplete = false;
     try {
       let bytes = 0;
