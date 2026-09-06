@@ -35,15 +35,45 @@ not a completion claim or deployment approval. Production remains unchanged.
   backups reuse unchanged files; an mtime-reset edit reprocesses only that file.
 - CLI `737ba53` exposes `backup-inventory`, backup admission flags and profile-
   independent `version --json` capabilities. All ordinary CLI tests and strict
-  Clippy pass locally. Its follow-up qualification run `34002157054` is pending.
+  Clippy pass locally. Follow-up qualification run `34002157054` passes on both
+  native amd64 and arm64 for the currently pinned core `f45990d`.
 - A root-owned transient-service supervision helper is implemented and installed
-  by the bootstrap template, but not yet called by the storage wrapper. It
+  by the bootstrap template. The explicit supervised project commands call it
+  behind `COCALC_MANAGED_RUSTIC_SUPERVISION=1`; no host has been enabled. It
   requires an explicit root-owned policy, checks cgroup controls, watches a
   caller pipe lease and PID/start-time identities, and holds repository/host-slot/
-  cache locks inherited by Rustic. The `wait` barrier is intended for snapshot
-  cleanup. Eight new unit/OS-lock tests and all 92 existing bootstrap tests pass.
-  Real systemd timeout/worker-death/descendant tests and caller wiring remain
-  mandatory; installation alone is not a production containment claim.
+  cache locks inherited by Rustic. Persistent unit records also guard retries,
+  slots and cleanup when descendants close inherited file descriptors.
+- CoCalc `510424d51a` connects project backup/restore calls to a root cleanup
+  barrier. Uncertain termination preserves backup/migration staging and prevents
+  a deterministic migration staging path from being overwritten on retry.
+  File-server/project-host builds and 20 focused Jest tests pass. RootFS and
+  unprivileged managed restore/copy entry points still require integration.
+- CoCalc `463427d0a2` supports a native section in the root-owned job policy:
+  exact binary SHA-256 plus every positive admission budget. The worker hashes
+  and executes the same opened inode, checks bounded typed capabilities, passes
+  strict/admission backup flags and strict sparse-required restore flags.
+  This does not install a policy or select production numeric values.
+- `Backup Supervision` CI run `34004370788` passes on disposable Ubuntu/systemd
+  and a disposable Btrfs loop filesystem. Sixteen fault/normal cases include actual wrapper/sudo caller death, forced
+  descendants, timeout, worker death, OOM, slots, native flags and wrong binaries.
+  CoCalc `3472559a63` verifies the read-only Btrfs source flag before native
+  project backups and freezes sanitized migration staging before backup.
+  `fc22f5f80f` additionally reserves capacity before asking systemd to create a
+  service; its follow-up CI is pending. Sixteen helper unit/OS tests and all
+  92 bootstrap tests pass. Earlier clean-CI
+  runs exposed two unmocked legacy host writes, fixed in `d1a70225c9`.
+  Current supervision is still a gated component, not a completed fleet rollout.
+- Bounded admission/metadata probes pass with the current optimized binary:
+  a 70 TiB all-hole source is rejected by a reference budget in 0.32 seconds,
+  before repository writes. Its JSON reference bound alone is 9,835,642,880
+  bytes. Five thousand empty/xattr-heavy files produced a 16.28 MB raw tree
+  but only 50.7 kB compressed. Entry/metadata rejections write no artifacts;
+  unchanged backups reuse all files. The repeated probe with explicit reuse
+  assertions also passes (`/tmp/cocalc-native-admission-asserted-report-2026-09-05.json`).
+  Local qualified development binary SHA-256:
+  `ba614f0d1f2d96277fc8aeab66a542a5dca8a75500623f1ef78f34375bdade95`.
+  See the native experiment README/report; this is not a published fleet artifact.
 
 ## Working Repositories
 
@@ -61,8 +91,13 @@ not a completion claim or deployment approval. Production remains unchanged.
 
 ## Still Required
 
-- Complete root-owned job supervision, cancellation/lifetime locks, CPU/memory/I/O
-  budgets, bounded immutable-source preflight, and durable retry/backoff handling.
+- Complete supervision across RootFS/fallback/copy paths, aggregate maintenance
+  I/O integration, production policy installation/capability admission, and
+  durable retry/backoff handling. The transient service does not automatically
+  inherit the old manual maintenance cgroup's absolute I/O limits. Do not enable
+  the rollout gate before that is addressed. Extend immutable-source admission
+  beyond the now-checked project/sanitized migration snapshots to every other
+  managed backup/copy path, not merely flag propagation.
 - Add one shared bounded inventory and exclusion manifest used by backup and
   every copy transport; account for chunk-reference and metadata expansion, not
   just compressed repository bytes or physical source allocation.
