@@ -7,6 +7,16 @@ import {
 const actor = "11111111-1111-4111-a111-111111111111";
 const date = new Date("2026-09-05T00:00:00Z");
 describe("local customer fixtures", () => {
+  it("can extend the dataset past 100-row pagination without replacing existing ids", () => {
+    expect(generateCustomerFixtures(actor, date, 120).slice(0, 240)).toEqual(
+      generateCustomerFixtures(actor, date),
+    );
+    expect(generateCustomerFixtures(actor, date, 120)).toHaveLength(1200);
+    for (const count of [0, -1, 1.5, 501, NaN])
+      expect(() => generateCustomerFixtures(actor, date, count)).toThrow(
+        "count",
+      );
+  });
   it("requires explicit confirmation on a non-production seed bay", () => {
     const confirm = "seed-local-customer-fixtures";
     expect(() =>

@@ -26,14 +26,17 @@ function id(key: string): string {
 export function generateCustomerFixtures(
   actor: string,
   asOf: Date = new Date(),
+  count = 24,
 ): Fixture {
+  if (!Number.isInteger(count) || count < 1 || count > 500)
+    throw Error("count must be an integer from 1 to 500");
   if (!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(actor))
     throw Error("--actor must be an account UUID");
   if (!Number.isFinite(asOf.valueOf())) throw Error("invalid --as-of date");
   const rows: Fixture = [];
   const date = (days: number) =>
     new Date(asOf.valueOf() + days * 86400000).toISOString();
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < count; i++) {
     const org = id(`org-${i}`),
       person = id(`person-${i}`),
       order = id(`order-${i}`);
@@ -179,6 +182,7 @@ async function main() {
   const { values } = parseArgs({
     options: {
       actor: { type: "string" },
+      count: { type: "string" },
       "as-of": { type: "string" },
       apply: { type: "boolean" },
       confirm: { type: "string" },
@@ -187,17 +191,18 @@ async function main() {
   });
   if (values.help) {
     process.stdout.write(
-      "customer fixtures: --actor <local admin UUID> [--as-of <ISO date>] [--apply --confirm seed-local-customer-fixtures]\nDry-run by default; insert-only and repeatable. Never run against production.\n",
+      "customer fixtures: --actor <local admin UUID> [--count <1-500>] [--as-of <ISO date>] [--apply --confirm seed-local-customer-fixtures]\nDry-run by default; insert-only and repeatable. Never run against production.\n",
     );
     return;
   }
   const fixture = generateCustomerFixtures(
     values.actor ?? "",
     values["as-of"] ? new Date(values["as-of"]) : new Date(),
+    values.count == null ? 24 : Number(values.count),
   );
   if (!values.apply) {
     process.stdout.write(
-      `Would insert up to ${fixture.length} rows: 24 linked CRM customers and manual draft AR orders.\n`,
+      `Would insert up to ${fixture.length} rows: ${fixture.length / 10} linked CRM customers and manual draft AR orders.\n`,
     );
     return;
   }

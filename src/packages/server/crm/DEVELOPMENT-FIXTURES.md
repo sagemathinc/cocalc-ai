@@ -12,7 +12,9 @@ pnpm customer:fixtures --actor <local-admin-account-uuid> --apply --confirm seed
 ```
 
 Default is a database-free dry run. `--as-of 2026-09-05T00:00:00Z` makes dates
-repeatable. Apply rejects production, remote databases, attached bays, and
+repeatable. Use `--count 120` to exercise the queues' 100-row pagination (default
+24, maximum 500). Increasing the count adds records without resetting existing
+ones. Apply rejects production, remote databases, attached bays, and
 non-admin actors. Inserts are atomic. Stable IDs make reruns insert-only: they
 do not overwrite UI edits or duplicate records. There is intentionally no broad
 delete/reset command; use a disposable dev database snapshot to reset workflows.
