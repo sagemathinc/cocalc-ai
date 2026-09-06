@@ -288,6 +288,18 @@ it("aborts a stalled input without uploading a provisional report", async () => 
   expect(put).not.toHaveBeenCalled();
 }, 2000);
 
+it("cleans staging when constructing the input iterator throws", async () => {
+  const input = {
+    [Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
+      throw new Error("producer setup failed");
+    },
+  };
+  await expect(
+    storeBackupExclusionReport({ ...options(), chunks: input }),
+  ).rejects.toThrow("producer setup failed");
+  expect(put).not.toHaveBeenCalled();
+});
+
 it.each(["../outside", "A".repeat(64), "abc"])(
   "rejects invalid backup identifier %s before any storage access",
   async (id) => {
