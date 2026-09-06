@@ -49,6 +49,29 @@ describe("rustic TOML fast path", () => {
     execMock.mockReset();
   });
 
+  test.each(["backup", "restore"])(
+    "managed %s rejects fallback before repo initialization or path lookup",
+    async (command) => {
+      const previous = process.env.COCALC_MANAGED_RUSTIC_SUPERVISION;
+      process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+      const safeAbsPath = jest.fn();
+      try {
+        await expect(
+          rustic([command, "source", "destination"], {
+            repo: "/tmp/never-create-managed-fallback-repository",
+            safeAbsPath,
+          }),
+        ).rejects.toThrow("unsupervised fallback is disabled");
+        expect(execMock).not.toHaveBeenCalled();
+        expect(safeAbsPath).not.toHaveBeenCalled();
+      } finally {
+        if (previous == null)
+          delete process.env.COCALC_MANAGED_RUSTIC_SUPERVISION;
+        else process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = previous;
+      }
+    },
+  );
+
   test.each([
     { code: 1, truncated: false },
     { code: 0, truncated: true },

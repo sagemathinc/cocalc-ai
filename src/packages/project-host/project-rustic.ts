@@ -5,6 +5,7 @@
 
 import { executeCode } from "@cocalc/backend/execute-code";
 import exec, { parseOutput } from "@cocalc/backend/sandbox/exec";
+import { managedRusticSupervisionEnabled } from "@cocalc/backend/sandbox/managed-rustic";
 import { RusticJobCleanupError } from "@cocalc/file-server/btrfs/rustic-job-errors";
 import {
   createRusticProgressHandler,
@@ -15,14 +16,7 @@ import type { ExecuteCodeStreamEvent } from "@cocalc/util/types/execute-code";
 
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
-// Rollout gate only: resource limits come from the root-owned policy, never
-// this environment. Do not enable until that policy and helper are qualified.
-export function managedRusticSupervisionEnabled(): boolean {
-  const value = process.env.COCALC_MANAGED_RUSTIC_SUPERVISION;
-  if (value == null || value === "0") return false;
-  if (value === "1") return true;
-  throw new Error("COCALC_MANAGED_RUSTIC_SUPERVISION must be 0 or 1");
-}
+export { managedRusticSupervisionEnabled };
 
 async function waitForRusticJob(
   command: ManagedRusticCommand,

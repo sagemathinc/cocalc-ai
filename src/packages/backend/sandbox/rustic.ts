@@ -51,6 +51,7 @@ import exec, {
   validate,
 } from "./exec";
 import { rustic as rusticPath } from "./install";
+import { assertLegacyRusticOperationAllowed } from "./managed-rustic";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { isAbsolute, join, relative } from "path";
 import { rusticRepo } from "@cocalc/backend/data";
@@ -78,6 +79,9 @@ export default async function rustic(
   args: string[],
   options: RusticOptions,
 ): Promise<ExecOutput> {
+  // Check before repository initialization, destination lookup or any process
+  // launch. Preview/path-copy callers must not bypass native recovery safety.
+  assertLegacyRusticOperationAllowed(args[0]);
   const {
     timeout,
     maxSize,
