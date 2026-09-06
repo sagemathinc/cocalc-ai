@@ -6,8 +6,13 @@
 import type { DiffLocation } from "@cocalc/frontend/components/diff-viewer/review-model";
 import { diffFileKey } from "@cocalc/frontend/components/diff-viewer/review-model";
 import type { GitReviewCommentV2 } from "../git-review-store";
-import type { DiffLineMeta, GitDiffFindMatch, GitShowFile } from "./types";
-import { buildDiffLineMetas } from "./diff-lines";
+import type {
+  CommentAnchor,
+  DiffLineMeta,
+  GitDiffFindMatch,
+  GitShowFile,
+} from "./types";
+import { buildDiffLineMetas, makeCommentAnchor } from "./diff-lines";
 
 export interface LegacyFileLocations {
   file: GitShowFile;
@@ -54,6 +59,80 @@ export function legacyFindLocation(
         ? undefined
         : legacyLineLocation(targetId, file, match.lineIndex),
   };
+}
+
+/** A selected context line keeps its V2 context anchor, even in the old pane. */
+export function legacyAnchorForLocation(
+  file: LegacyFileLocations,
+  side: "old" | "new",
+  line: number,
+): CommentAnchor | undefined {
+  if (!Number.isSafeInteger(line) || line < 1) return;
+  const rows = file.lines.filter(
+    (row) =>
+      row.commentable &&
+      (side === "old" ? row.oldLineNumber : row.newLineNumber) === line,
+  );
+  if (rows.length !== 1) return;
+  return makeCommentAnchor(rows[0], file.file.path) ?? undefined;
+}
+
+export interface LegacyReviewAnnotation {
+  side: "additions" | "deletions";
+  lineNumber: number;
+  comments: GitReviewCommentV2[];
+}
+
+export interface LegacyReviewAnnotations {
+  byFile: Map<string, LegacyReviewAnnotation[]>;
+  unmatched: Array<Extract<LegacyCommentLocation, { kind: "unmatched" }>>;
+}
+
+/** Group for rendering without rewriting a stored ID, anchor, or submitted state. */
+export function buildLegacyReviewAnnotations({
+  targetId,
+  files,
+  comments,
+  firstParentProvenance,
+  showResolvedComments,
+}: {
+  targetId: string;
+  files: LegacyFileLocations[];
+  comments: GitReviewCommentV2[];
+  firstParentProvenance: boolean;
+  showResolvedComments: boolean;
+}): LegacyReviewAnnotations {
+  const result: LegacyReviewAnnotations = { byFile: new Map(), unmatched: [] };
+  const groups = new Map<string, LegacyReviewAnnotation>();
+  for (const comment of comments) {
+    if (!showResolvedComments && comment.status === "resolved") continue;
+    const match = locateLegacyComment({
+      targetId,
+      files,
+      comment,
+      firstParentProvenance,
+    });
+    if (match.kind === "unmatched") {
+      result.unmatched.push(match);
+      continue;
+    }
+    const { fileId, side, line } = match.location;
+    const key = JSON.stringify([fileId, side, line]);
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        side: side === "old" ? "deletions" : "additions",
+        lineNumber: line,
+        comments: [],
+      };
+      groups.set(key, group);
+      const list = result.byFile.get(fileId) ?? [];
+      list.push(group);
+      result.byFile.set(fileId, list);
+    }
+    group.comments.push(comment);
+  }
+  return result;
 }
 
 export type LegacyCommentLocation =

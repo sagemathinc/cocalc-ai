@@ -10,7 +10,6 @@ import { useMemo, useRef } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { getAntdNotificationInstance } from "@cocalc/frontend/app/antd-notification";
 import { copyTextToClipboard } from "@cocalc/frontend/components/copy-button";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { filenameMode } from "@cocalc/frontend/file-associations";
 import { COLORS } from "@cocalc/util/theme";
 import { memo } from "react";
@@ -25,13 +24,8 @@ import {
   buildGitReviewFileSectionId,
   buildGitReviewLineElementId,
 } from "./ids";
-import {
-  buildGitInlineDraftEditorId,
-  buildGitInlineEditEditorId,
-  buildGitReviewEditorScope,
-  InlineDraftCommentEditor,
-  InlineEditCommentEditor,
-} from "./review-editors";
+import { buildGitReviewEditorScope } from "./review-editors";
+import { InlineReviewCards } from "./inline-review-cards";
 import type { CommentAnchor, GitDiffFindMatch, GitShowFile } from "./types";
 import { hasExpandedTextSelectionWithin } from "./utils";
 import { highlightPrismLines, languageHintFromPath } from "../diff-prism";
@@ -103,9 +97,6 @@ export const DiffBlock = memo(function DiffBlock({
 }) {
   const diffRootRef = useRef<HTMLDivElement | null>(null);
   const codeFontSize = Math.max(11, fontSize - 1);
-  const commentFontSize = Math.max(13, fontSize);
-  const commentFontFamily =
-    'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
   const lineMetas = useMemo(() => buildDiffLineMetas(lines), [lines]);
   const lineNumberWidth = useMemo(() => {
     const maxLine = lineMetas.reduce((max, meta) => {
@@ -140,14 +131,6 @@ export const DiffBlock = memo(function DiffBlock({
     minWidth: 22,
     height: 22,
   } as const;
-
-  const resolveComment = async (id: string) => {
-    await onResolveComment(id);
-  };
-
-  const reopenComment = async (id: string) => {
-    await onReopenComment(id);
-  };
 
   const shouldSuppressActionForSelection = (): boolean =>
     hasExpandedTextSelectionWithin(diffRootRef.current);
@@ -296,158 +279,30 @@ export const DiffBlock = memo(function DiffBlock({
                 dangerouslySetInnerHTML={{ __html: html }}
               />
             </div>
-            {lineComments.length > 0
-              ? lineComments.map((comment) => {
-                  const isEditing = activeEditingId === comment.id;
-                  return (
-                    <div
-                      key={comment.id}
-                      style={{
-                        margin: "0 8px 6px 92px",
-                        border: `1px solid #d9d9d9`,
-                        borderLeft: `4px solid ${COLORS.BLUE}`,
-                        borderRadius: 8,
-                        padding: "10px 12px",
-                        background: "#fff",
-                        boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-                        fontFamily: commentFontFamily,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
-                          marginBottom: 8,
-                        }}
-                      >
-                        <Typography.Text strong style={{ fontSize: 13 }}>
-                          Inline review comment
-                        </Typography.Text>
-                        <Typography.Text
-                          type="secondary"
-                          style={{ fontSize: 11 }}
-                        >
-                          {comment.side}:{comment.line ?? "?"}
-                        </Typography.Text>
-                      </div>
-                      {isEditing ? (
-                        <InlineEditCommentEditor
-                          key={comment.id}
-                          historyId={buildGitInlineEditEditorId({
-                            scope: editorHistoryScope,
-                            filePath,
-                            commentId: comment.id,
-                          })}
-                          value={activeEditingBody}
-                          fontSize={commentFontSize}
-                          loading={pendingKey === `edit:${comment.id}`}
-                          onChange={onEditingBodyChange}
-                          onCancel={onCancelEdit}
-                          onSave={(value) =>
-                            void onUpdateComment(comment.id, value)
-                          }
-                        />
-                      ) : (
-                        <StaticMarkdown
-                          value={comment.body_md}
-                          style={{
-                            fontSize: commentFontSize,
-                            fontFamily: commentFontFamily,
-                            lineHeight: 1.5,
-                          }}
-                          editorTheme={editorTheme}
-                        />
-                      )}
-                      <div
-                        style={{
-                          marginTop: 10,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
-                        }}
-                      >
-                        <Typography.Text
-                          type="secondary"
-                          style={{ fontSize: 11 }}
-                        >
-                          {comment.status === "resolved"
-                            ? "Resolved"
-                            : comment.status === "submitted"
-                              ? "Submitted"
-                              : "Draft"}
-                        </Typography.Text>
-                        {isEditing ? null : (
-                          <Space.Compact size="small">
-                            <Button
-                              size="small"
-                              onClick={() => onOpenEdit(comment)}
-                            >
-                              Edit
-                            </Button>
-                            {comment.status === "resolved" ? (
-                              <Button
-                                size="small"
-                                type="primary"
-                                onClick={() => void reopenComment(comment.id)}
-                                loading={pendingKey === `reopen:${comment.id}`}
-                              >
-                                Reopen
-                              </Button>
-                            ) : (
-                              <Button
-                                size="small"
-                                type="primary"
-                                onClick={() => void resolveComment(comment.id)}
-                                loading={pendingKey === `resolve:${comment.id}`}
-                              >
-                                Resolve
-                              </Button>
-                            )}
-                          </Space.Compact>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              : null}
-            {showDraft ? (
-              <div
-                style={{
-                  margin: "0 8px 8px 92px",
-                  border: `1px solid #d9d9d9`,
-                  borderLeft: `4px solid ${COLORS.BLUE}`,
-                  borderRadius: 8,
-                  padding: "10px 12px",
-                  background: "#fff",
-                  boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-                  fontFamily: commentFontFamily,
-                }}
-              >
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  Add inline review comment
-                </Typography.Text>
-                <InlineDraftCommentEditor
-                  key={anchorId}
-                  historyId={buildGitInlineDraftEditorId({
-                    scope: editorHistoryScope,
-                    filePath,
-                    anchorId,
-                  })}
-                  value={activeDraftBody}
-                  fontSize={commentFontSize}
-                  loading={pendingKey === `create:${anchorId}`}
-                  onChange={onDraftBodyChange}
-                  onCancel={onCancelDraft}
-                  onSave={(value) => {
-                    if (!anchor) return;
-                    void onCreateComment(anchor, value);
-                  }}
-                />
-              </div>
-            ) : null}
+            <InlineReviewCards
+              filePath={filePath}
+              editorHistoryScope={editorHistoryScope}
+              fontSize={fontSize}
+              editorTheme={editorTheme}
+              lineComments={lineComments}
+              anchor={anchor}
+              anchorId={anchorId}
+              showDraft={showDraft}
+              activeDraftBody={activeDraftBody}
+              activeEditingId={activeEditingId}
+              activeEditingBody={activeEditingBody}
+              pendingKey={pendingKey}
+              inset={92}
+              onDraftBodyChange={onDraftBodyChange}
+              onCancelDraft={onCancelDraft}
+              onOpenEdit={onOpenEdit}
+              onEditingBodyChange={onEditingBodyChange}
+              onCancelEdit={onCancelEdit}
+              onCreateComment={onCreateComment}
+              onUpdateComment={onUpdateComment}
+              onResolveComment={onResolveComment}
+              onReopenComment={onReopenComment}
+            />
           </div>
         );
       })}

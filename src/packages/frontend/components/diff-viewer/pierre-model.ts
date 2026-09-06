@@ -45,3 +45,37 @@ export function containsPreviewLine(
     return line >= start && line < start + count;
   });
 }
+
+/** Preserve the legacy list's identity until the Git metadata facade replaces it. */
+export function parseReviewPatchFiles(
+  files: ReadonlyArray<{ path: string; lines: readonly string[] }>,
+  linesTruncated: boolean,
+): FileDiffMetadata[] {
+  if (linesTruncated)
+    throw Error("Cannot render an incomplete review with Pierre.");
+  let lineCount = 0;
+  let byteCount = 0;
+  const encoder = new TextEncoder();
+  const patches = files.map((file) => {
+    lineCount += file.lines.length;
+    if (lineCount > 20_000)
+      throw Error("Review exceeds the 20,000-line limit.");
+    const patch = file.lines.join("\n") + "\n";
+    byteCount += encoder.encode(patch).byteLength;
+    if (byteCount > 4 * 1024 * 1024)
+      throw Error("Review exceeds the 4 MB limit.");
+    return patch;
+  });
+  return patches.map((patch, index) => {
+    const parsed = parsePatchFiles(patch, undefined, true).flatMap(
+      (x) => x.files,
+    );
+    if (parsed.length !== 1)
+      throw Error("A review file did not parse as exactly one diff.");
+    if (parsed[0].name !== files[index].path)
+      throw Error(
+        "Git filename interpretations differ; retain the original review renderer.",
+      );
+    return parsed[0];
+  });
+}

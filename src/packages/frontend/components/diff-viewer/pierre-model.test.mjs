@@ -1,7 +1,11 @@
 // Run with node --experimental-strip-types --test; tests the real ESM Pierre.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { containsPreviewLine, parsePreviewSource } from "./pierre-model.ts";
+import {
+  containsPreviewLine,
+  parsePreviewSource,
+  parseReviewPatchFiles,
+} from "./pierre-model.ts";
 
 test("a sparse patch retains old/new line positions and excludes missing context", () => {
   const [file] = parsePreviewSource({
@@ -42,5 +46,76 @@ test("a truncated patch reports an error instead of presenting a complete review
       patch:
         "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n-old\n+new\n",
     }),
+  );
+});
+
+test("production parsing preserves file indexes, renames, deletion sides, and source operators", () => {
+  const files = [
+    {
+      path: "new.ts",
+      lines: [
+        "diff --git a/old.ts b/new.ts",
+        "similarity index 90%",
+        "rename from old.ts",
+        "rename to new.ts",
+        "--- a/old.ts",
+        "+++ b/new.ts",
+        "@@ -1 +1 @@",
+        "--before",
+        "++after",
+      ],
+    },
+    {
+      path: "gone.ts",
+      lines: [
+        "diff --git a/gone.ts b/gone.ts",
+        "deleted file mode 100644",
+        "--- a/gone.ts",
+        "+++ /dev/null",
+        "@@ -1 +0,0 @@",
+        "-deleted",
+      ],
+    },
+  ];
+  const parsed = parseReviewPatchFiles(files, false);
+  assert.deepEqual(
+    parsed.map((x) => x.name),
+    ["new.ts", "gone.ts"],
+  );
+  assert.equal(parsed[0].prevName, "old.ts");
+  assert.equal(parsed[1].type, "deleted");
+  assert.equal(parsed[0].additionLines[0].trimEnd(), "+after");
+  assert.equal(parsed[0].deletionLines[0].trimEnd(), "-before");
+  assert.throws(() => parseReviewPatchFiles(files, true), /incomplete/);
+  assert.throws(
+    () => parseReviewPatchFiles([{ ...files[0], path: "wrong.ts" }], false),
+    /filename/,
+  );
+  assert.throws(
+    () =>
+      parseReviewPatchFiles(
+        [{ ...files[0], lines: [...files[0].lines, ...files[1].lines] }],
+        false,
+      ),
+    /exactly one/,
+  );
+});
+
+test("production parsing enforces aggregate bounds before invoking the renderer", () => {
+  assert.throws(
+    () =>
+      parseReviewPatchFiles(
+        [{ path: "a", lines: Array(20_001).fill("x") }],
+        false,
+      ),
+    /20,000/,
+  );
+  assert.throws(
+    () =>
+      parseReviewPatchFiles(
+        [{ path: "a", lines: ["x".repeat(4 * 1024 * 1024)] }],
+        false,
+      ),
+    /4 MB/,
   );
 });

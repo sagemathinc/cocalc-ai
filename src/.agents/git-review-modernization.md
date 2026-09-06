@@ -181,6 +181,26 @@ source viewers are separate from the diff toolbar.
 
 ### Implementation progress (2026-09-06)
 
+Durable-comment integration groundwork:
+
+- Extracted `InlineReviewCards` from the legacy renderer. Both renderers can
+  now share the saved-comment display, draft/edit Slate inputs, stable legacy
+  cache IDs, and create/update/resolve/reopen callbacks. The original renderer
+  already uses the extracted component; no review-store schema change occurred.
+- Numeric old/new selections map back to exact legacy anchors. Selecting an
+  old-side context line retains the same V2 context anchor as its new-side
+  counterpart, even when their line numbers differ. Ambiguous or absent rows
+  do not create anchors. Annotation grouping retains original comment objects
+  and exposes unmatched records separately rather than silently attaching them.
+- The production parser entry point validates one parsed file per legacy file,
+  identical filename interpretation, and aggregate 4 MB / 20,000-line limits.
+  It rejects known truncation. Filename disagreement requires staying with the
+  original renderer until authoritative Git metadata replaces the legacy parser.
+- Focused coverage checks keyboard comment actions, buffered edit saves across
+  layout changes, cache IDs, unchanged submitted records, context coordinates,
+  and real-Pierre rename/deletion parsing and limits. This is not yet a wired
+  production Pierre toggle and does not establish the pending-upload/undo gate.
+
 Shared highlighting pool wired into the preview:
 
 - `DiffHighlightingProvider` uses Pierre's shared singleton lifecycle, capped

@@ -5,6 +5,8 @@
 
 import {
   buildLegacyFileLocations,
+  buildLegacyReviewAnnotations,
+  legacyAnchorForLocation,
   legacyFindLocation,
   legacySourceRange,
   locateLegacyComment,
@@ -41,6 +43,64 @@ const comment: GitReviewCommentV2 = {
   updated_at: 2,
   local_revision: 3,
 };
+
+test("old and new context selections create the same unchanged V2 anchor", () => {
+  expect(legacyAnchorForLocation(files[0], "old", 10)).toEqual(anchor);
+  expect(legacyAnchorForLocation(files[0], "new", 20)).toEqual(anchor);
+  expect(legacyAnchorForLocation(files[0], "old", 11)).toMatchObject({
+    side: "old",
+    line: 11,
+    snippet: "-oldOperator",
+  });
+  expect(legacyAnchorForLocation(files[0], "new", 21)).toMatchObject({
+    side: "new",
+    line: 21,
+    snippet: "+newOperator",
+  });
+  for (const line of [0, -1, 1.5, NaN, 999])
+    expect(legacyAnchorForLocation(files[0], "new", line)).toBeUndefined();
+  expect(
+    legacyAnchorForLocation(
+      { ...files[0], lines: [...files[0].lines, ...files[0].lines] },
+      "new",
+      20,
+    ),
+  ).toBeUndefined();
+});
+
+test("annotations group exact locations and retain unmatched and submitted records", () => {
+  const second = { ...comment, id: "second" };
+  const unmatched = { ...comment, id: "unmatched", snippet: "different" };
+  const resolved = { ...comment, id: "resolved", status: "resolved" as const };
+  const comments = [comment, second, unmatched, resolved];
+  const before = JSON.stringify(comments);
+  const input = {
+    targetId: "target",
+    files,
+    comments,
+    firstParentProvenance: true,
+    showResolvedComments: false,
+  };
+  const result = buildLegacyReviewAnnotations(input);
+  expect(result.byFile.get(files[0].fileId)).toEqual([
+    { side: "additions", lineNumber: 20, comments: [comment, second] },
+  ]);
+  expect(result.unmatched.map((x) => x.comment)).toEqual([unmatched]);
+  expect(result.byFile.get(files[0].fileId)![0].comments[0]).toBe(comment);
+  expect(
+    buildLegacyReviewAnnotations({
+      ...input,
+      showResolvedComments: true,
+    }).byFile.get(files[0].fileId)![0].comments,
+  ).toEqual([comment, second, resolved]);
+  expect(
+    buildLegacyReviewAnnotations({
+      ...input,
+      firstParentProvenance: false,
+    }).unmatched.map((x) => x.comment),
+  ).toEqual([comment, second, unmatched]);
+  expect(JSON.stringify(comments)).toBe(before);
+});
 
 test("V2 context anchors retain unequal old/new lines and the original record", () => {
   const before = JSON.stringify(comment);
