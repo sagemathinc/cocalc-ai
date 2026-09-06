@@ -262,6 +262,21 @@ class RusticJobTest(unittest.TestCase):
                 self.api["take_slot"](10, 1, "current")
             close.assert_called_once_with(42)
 
+    def test_startup_capacity_is_claimed_before_spawning_any_service(self):
+        with mock.patch.dict(self.api, {
+            "job_key": lambda *_: "key",
+            "caller_chain": lambda: [[10, 20]],
+            "open_lock_directory": lambda: 40,
+            "take_lock": lambda *_: 41,
+            "read_unit": lambda *_: None,
+            "unit_busy": lambda _: False,
+            "take_slot": mock.Mock(side_effect=BlockingIOError("full")),
+        }), mock.patch("os.close"), mock.patch("subprocess.Popen") as spawn:
+            with self.assertRaises(BlockingIOError):
+                self.api["launch"](["rustic-project-backup"], {}, self.policy)
+            spawn.assert_not_called()
+            self.assertEqual(self.api["take_slot"].call_args.kwargs, {"prefix": "launch-slot"})
+
 
 if __name__ == "__main__":
     unittest.main()
