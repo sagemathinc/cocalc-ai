@@ -19,6 +19,7 @@ import { debounce } from "lodash";
 import { MutableRefObject, useEffect, useRef } from "react";
 
 import { AccountState } from "@cocalc/frontend/account/types";
+import { DiffPreviewButton } from "@cocalc/frontend/components/diff-viewer/preview-button";
 import { cm_options } from "../codemirror/cm-options";
 import { init_style_hacks } from "../codemirror/util";
 import { set_cm_line_diff } from "./diff-util";
@@ -49,7 +50,10 @@ export function Diff(props: Props) {
     options.readOnly = true;
     cmRef.current = CodeMirror.fromTextArea(textarea, options);
     init_style_hacks(cmRef.current);
-    $(cmRef.current.getWrapperElement()).css({ height: "100%" });
+    $(cmRef.current.getWrapperElement()).css({
+      flex: "1 1 0",
+      minHeight: 0,
+    });
     set_cm_line_diff(cmRef.current, props.v0, props.v1);
     requestAnimationFrame(() => cmRef.current?.refresh());
     const f = (v0: string, v1: string): void => {
@@ -84,6 +88,18 @@ export function Diff(props: Props) {
         overflow: "hidden",
       }}
     >
+      <div style={{ padding: 4, flexShrink: 0 }}>
+        <DiffPreviewButton
+          fontSize={props.font_size}
+          getSource={() => ({
+            kind: "documents",
+            path: props.use_json ? "history.json" : props.path,
+            before: props.v0,
+            after: props.v1,
+            label: `${props.path}: selected TimeTravel versions`,
+          })}
+        />
+      </div>
       <textarea ref={textAreaRef} style={{ display: "none" }} />
     </div>
   );

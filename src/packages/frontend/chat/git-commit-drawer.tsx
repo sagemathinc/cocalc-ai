@@ -21,6 +21,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { DiffPreviewButton } from "@cocalc/frontend/components/diff-viewer/preview-button";
 import { matchFontSizeShortcut } from "@cocalc/frontend/editors/markdown-input/font-size-shortcut";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -3165,6 +3166,17 @@ export function GitCommitDrawer({
               <GitEmptyCommitDiff />
             ) : (
               <>
+                <DiffPreviewButton
+                  fontSize={effectiveFontSize}
+                  getSource={() => ({
+                    kind: "patch",
+                    patch:
+                      currentData.files
+                        .map((file) => file.lines.join("\n"))
+                        .join("\n") + "\n",
+                    label: `${commit}: currently loaded patch${currentData.linesTruncated ? " (truncated)" : ""}`,
+                  })}
+                />
                 <GitChangedFilesPanel
                   files={currentData.files}
                   inlineCommentsByFile={inlineCommentsByFile}
