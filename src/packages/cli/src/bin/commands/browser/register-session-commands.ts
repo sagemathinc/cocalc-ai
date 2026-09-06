@@ -18,6 +18,45 @@ import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 
 const DEFAULT_SIGN_IN_COOKIE_MAX_AGE_MS = 12 * 3600 * 1000;
 
+export async function authorizeTestingBrowser(
+  ctx: BrowserCommandContext,
+  accountId: string,
+  apiUrl: string,
+  targetUrl?: string,
+) {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+      accountId,
+    ) ||
+    ctx.accountId !== accountId
+  )
+    throw new Error("Select a signed-in profile for the exact testing account");
+  const origin = new URL(ctx.apiBaseUrl).origin;
+  for (const value of [apiUrl, targetUrl ?? apiUrl]) {
+    const url = new URL(value);
+    if (url.origin !== origin || url.username || url.password)
+      throw new Error(
+        "Testing browser targets must match the authenticated site origin",
+      );
+  }
+  const cookie = await ctx.hub.system.issueBrowserSignInCookie({
+    testing_account_id: accountId,
+    max_age_ms: 3600000,
+  });
+  if (
+    cookie.testing_account !== true ||
+    cookie.account_id !== accountId ||
+    !cookie.remember_me ||
+    !Number.isSafeInteger(cookie.max_age_ms) ||
+    (cookie.max_age_ms ?? 0) <= 0 ||
+    (cookie.max_age_ms ?? Infinity) > 3600000
+  )
+    throw new Error(
+      "Server did not authorize a dedicated testing browser session; upgrade the server",
+    );
+  return cookie;
+}
+
 function normalizeBoolean(value: unknown): boolean {
   const normalized = `${value ?? ""}`.trim().toLowerCase();
   return ["1", "true", "yes", "on"].includes(normalized);
@@ -419,6 +458,10 @@ export function registerBrowserSessionCommands({
       "explicit Chromium executable path (defaults to auto-detect from PATH)",
     )
     .option("--headless", "launch Chromium in headless mode (default)")
+    .option(
+      "--testing-account <id>",
+      "spawn using an explicitly designated non-admin testing account profile",
+    )
     .option("--headed", "launch Chromium in visible headed mode")
     .option(
       "--ready-timeout <duration>",
@@ -445,6 +488,7 @@ export function registerBrowserSessionCommands({
           spawnId?: string;
           chromium?: string;
           headless?: boolean;
+          testingAccount?: string;
           headed?: boolean;
           readyTimeout?: string;
           timeout?: string;
@@ -457,7 +501,7 @@ export function registerBrowserSessionCommands({
             "browser session spawn is unsupported in standalone SEA binary; use JS CLI (e.g. node ./packages/cli/dist/bin/cocalc.js ...).",
           );
         }
-        if (isCliAgentMode()) {
+        if (isCliAgentMode() && !opts.testingAccount) {
           throw new Error(
             "browser session spawn is unavailable under agent auth; use a signed-in CLI context to spawn a dedicated browser session, or reuse an existing COCALC_BROWSER_ID",
           );
@@ -480,16 +524,26 @@ export function registerBrowserSessionCommands({
             } catch {
               throw new Error(`invalid --api-url '${apiUrl}'`);
             }
-            await reapSpawnStates({
-              timeoutMs: 1_500,
-              stopRunning: false,
-              removeStateFiles: true,
-            });
-            await reapSpawnStatesWithMissingRemoteSessions({
-              ctx,
-              timeoutMs: 1_500,
-              removeStateFiles: true,
-            });
+            const testingCookie = opts.testingAccount
+              ? await authorizeTestingBrowser(
+                  ctx,
+                  opts.testingAccount,
+                  parsedApiUrl,
+                  opts.targetUrl,
+                )
+              : undefined;
+            if (!opts.testingAccount)
+              await reapSpawnStates({
+                timeoutMs: 1_500,
+                stopRunning: false,
+                removeStateFiles: true,
+              });
+            if (!opts.testingAccount)
+              await reapSpawnStatesWithMissingRemoteSessions({
+                ctx,
+                timeoutMs: 1_500,
+                removeStateFiles: true,
+              });
             const projectHint =
               `${opts.projectId ?? opts.project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
             const project_id = !projectHint
@@ -518,15 +572,21 @@ export function registerBrowserSessionCommands({
                 "unable to find Chromium executable; pass --chromium <path> or set COCALC_CHROMIUM_BIN",
               );
             }
-            const hubPassword = resolveSecret(
-              globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
-            );
-            const apiKey = resolveSecret(
-              globals.apiKey ?? process.env.COCALC_API_KEY,
-            );
-            const signInCookie = await resolveSpawnRememberMeCookie({
-              ctx,
-            });
+            const hubPassword = opts.testingAccount
+              ? undefined
+              : resolveSecret(
+                  globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
+                );
+            const apiKey = opts.testingAccount
+              ? undefined
+              : resolveSecret(globals.apiKey ?? process.env.COCALC_API_KEY);
+            const signInCookie: Awaited<
+              ReturnType<typeof resolveSpawnRememberMeCookie>
+            > =
+              testingCookie ??
+              (await resolveSpawnRememberMeCookie({
+                ctx,
+              }));
             const cookieApiUrls = Array.from(
               new Set(
                 [parsedApiUrl, new URL(markedTargetUrl).origin]
@@ -601,7 +661,22 @@ export function registerBrowserSessionCommands({
               {
                 detached: true,
                 stdio: "ignore",
-                env: process.env,
+                env: opts.testingAccount
+                  ? Object.fromEntries(
+                      [
+                        "PATH",
+                        "HOME",
+                        "TMPDIR",
+                        "DISPLAY",
+                        "XAUTHORITY",
+                        "XDG_RUNTIME_DIR",
+                        "LANG",
+                        "LC_ALL",
+                      ]
+                        .filter((key) => process.env[key] !== undefined)
+                        .map((key) => [key, process.env[key]]),
+                    )
+                  : process.env,
               },
             );
             child.unref();

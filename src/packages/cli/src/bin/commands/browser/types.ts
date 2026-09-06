@@ -258,10 +258,14 @@ export type BrowserCommandContext = {
       removeBrowserSession: (opts: {
         browser_id: string;
       }) => Promise<{ removed?: boolean }>;
-      issueBrowserSignInCookie: (opts?: { max_age_ms?: number }) => Promise<{
+      issueBrowserSignInCookie: (opts?: {
+        max_age_ms?: number;
+        testing_account_id?: string;
+      }) => Promise<{
         remember_me?: string;
         account_id?: string;
         max_age_ms?: number;
+        testing_account?: boolean;
       }>;
     };
     hosts?: {

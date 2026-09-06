@@ -5,9 +5,63 @@ import test from "node:test";
 import { Command } from "commander";
 
 import { registerBrowserCommand } from "./browser";
-import { resolveBrowserSessionDaemonScriptPath } from "./browser/register-session-commands";
+import {
+  resolveBrowserSessionDaemonScriptPath,
+  authorizeTestingBrowser,
+} from "./browser/register-session-commands";
 
 const PROJECT_A = "00000000-1000-4000-8000-0000000000aa";
+
+test("testing browser rejects wrong identities, cross-origin targets and old servers", async () => {
+  let calls = 0;
+  const cookie = {
+    account_id: PROJECT_A,
+    remember_me: "test",
+    max_age_ms: 3600000,
+    testing_account: true,
+  };
+  const ctx = {
+    accountId: PROJECT_A,
+    apiBaseUrl: "https://staging.test",
+    hub: {
+      system: {
+        issueBrowserSignInCookie: async (opts: any) => {
+          calls++;
+          assert.equal(opts.testing_account_id, PROJECT_A);
+          assert.equal(opts.max_age_ms, 3600000);
+          return cookie;
+        },
+      },
+    },
+  } as any;
+  await assert.rejects(
+    authorizeTestingBrowser(ctx, "other", ctx.apiBaseUrl),
+    /exact/,
+  );
+  await assert.rejects(
+    authorizeTestingBrowser(ctx, PROJECT_A, "https://other.test"),
+    /origin/,
+  );
+  await assert.rejects(
+    authorizeTestingBrowser(
+      ctx,
+      PROJECT_A,
+      ctx.apiBaseUrl,
+      "https://other.test",
+    ),
+    /origin/,
+  );
+  assert.equal(calls, 0);
+  assert.equal(
+    await authorizeTestingBrowser(ctx, PROJECT_A, ctx.apiBaseUrl),
+    cookie,
+  );
+  cookie.testing_account = false;
+  await assert.rejects(
+    authorizeTestingBrowser(ctx, PROJECT_A, ctx.apiBaseUrl),
+    /Server did not authorize/,
+  );
+});
 const PROJECT_B = "00000000-1000-4000-8000-0000000000bb";
 const ORIGINAL_COCALC_CLI_AGENT_MODE = process.env.COCALC_CLI_AGENT_MODE;
 const ORIGINAL_COCALC_AGENT_MODE = process.env.COCALC_AGENT_MODE;
@@ -813,6 +867,25 @@ test("browser session spawn fails fast with a clear message under agent auth", a
         PROJECT_A,
       ]),
     /browser session spawn is unavailable under agent auth/,
+  );
+});
+
+test("agent testing spawn reaches explicit server authorization, not ordinary cookie fallback", async () => {
+  process.env.COCALC_CLI_AGENT_MODE = "1";
+  const { program } = makeProgram({ openFiles: [] });
+  await assert.rejects(
+    program.parseAsync([
+      "node",
+      "test",
+      "browser",
+      "session",
+      "spawn",
+      "--testing-account",
+      "00000000-1000-4000-8000-000000000001",
+      "--project-id",
+      PROJECT_A,
+    ]),
+    /Server did not authorize a dedicated testing browser/,
   );
 });
 

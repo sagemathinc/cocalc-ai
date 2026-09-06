@@ -6863,28 +6863,42 @@ export async function issueBrowserSignInCookie({
   browser_id,
   session_hash,
   max_age_ms,
+  testing_account_id,
 }: {
   account_id?: string;
   browser_id?: string | null;
   session_hash?: string | null;
   max_age_ms?: number;
+  testing_account_id?: string;
 }) {
   if (!account_id) {
     throw Error("must be signed in");
+  }
+  if (testing_account_id !== undefined) {
+    const { assertBrowserTestingAccount } =
+      await import("@cocalc/server/auth/browser-testing-account");
+    await assertBrowserTestingAccount(account_id, testing_account_id);
   }
   await requireDangerousSessionAuth({
     account_id,
     browser_id,
     session_hash,
+    ...(testing_account_id !== undefined
+      ? { allow_actor_impersonation: false }
+      : {}),
   });
   const cleanMaxAgeMs = Number(max_age_ms);
   const resolvedMaxAgeMs =
     Number.isFinite(cleanMaxAgeMs) && cleanMaxAgeMs > 0
       ? Math.min(
-          DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS,
+          testing_account_id !== undefined
+            ? 3600000
+            : DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS,
           Math.floor(cleanMaxAgeMs),
         )
-      : DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS;
+      : testing_account_id !== undefined
+        ? 3600000
+        : DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS;
   const { value, hash, expire } = await createRememberMeCookie(
     account_id,
     Math.max(60, Math.floor(resolvedMaxAgeMs / 1000)),
@@ -6897,12 +6911,18 @@ export async function issueBrowserSignInCookie({
     password_verified_at: new Date(),
     factor_level: "none",
     fresh_auth_until: null,
-    metadata: { issued_by: "issueBrowserSignInCookie" },
+    metadata: {
+      issued_by: "issueBrowserSignInCookie",
+      ...(testing_account_id !== undefined ? { testing_account: true } : {}),
+    },
   });
   return {
     account_id,
     remember_me: value,
     max_age_ms: resolvedMaxAgeMs,
+    ...(testing_account_id !== undefined
+      ? { testing_account: true as const }
+      : {}),
   };
 }
 

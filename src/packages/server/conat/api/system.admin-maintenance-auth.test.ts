@@ -10,6 +10,10 @@ let requireDangerousSessionAuthMock: jest.Mock;
 let manageApiKeysMock: jest.Mock;
 let createRememberMeCookieMock: jest.Mock;
 let recordNewAuthSessionMock: jest.Mock;
+const testingAccountMock = jest.fn();
+jest.mock("@cocalc/server/auth/browser-testing-account", () => ({
+  assertBrowserTestingAccount: (...args: any[]) => testingAccountMock(...args),
+}));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
@@ -43,6 +47,7 @@ describe("admin maintenance dangerous-session auth", () => {
   const SUBJECT_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
 
   beforeEach(() => {
+    testingAccountMock.mockReset();
     isAdminMock = jest.fn(async () => true);
     requireDangerousSessionAuthMock = jest.fn(async () => {
       throw Object.assign(new Error("fresh auth is required"), {
@@ -466,6 +471,38 @@ describe("admin maintenance dangerous-session auth", () => {
         metadata: { issued_by: "issueBrowserSignInCookie" },
       }),
     );
+  });
+
+  it("requires a designated account and direct fresh auth for testing browsers", async () => {
+    const { issueBrowserSignInCookie } = await import("./system");
+    testingAccountMock.mockRejectedValueOnce(new Error("not designated"));
+    await expect(
+      issueBrowserSignInCookie({
+        account_id: ACCOUNT_ID,
+        testing_account_id: ACCOUNT_ID,
+      }),
+    ).rejects.toThrow("not designated");
+    expect(createRememberMeCookieMock).not.toHaveBeenCalled();
+    requireDangerousSessionAuthMock = jest.fn(async () => ({}));
+    await expect(
+      issueBrowserSignInCookie({
+        account_id: ACCOUNT_ID,
+        testing_account_id: ACCOUNT_ID,
+        session_hash: "test-session",
+        max_age_ms: 12 * 3600000,
+      }),
+    ).resolves.toMatchObject({
+      testing_account: true,
+      account_id: ACCOUNT_ID,
+      max_age_ms: 3600000,
+    });
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allow_actor_impersonation: false,
+        session_hash: "test-session",
+      }),
+    );
+    expect(createRememberMeCookieMock).toHaveBeenCalledWith(ACCOUNT_ID, 3600);
   });
 
   it("allows listing account API keys without fresh auth", async () => {
