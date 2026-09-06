@@ -94,6 +94,25 @@ not a completion claim or deployment approval. Production remains unchanged.
   Project-host typecheck and 21 project/RootFS runner tests pass; 92 bootstrap
   and 20 helper tests pass. Disposable CI `34005567806` passes 20 cases including
   native RootFS flags and cleanup barriers.
+- `66313e8458` adds an explicitly configured root-owned retry journal outside
+  `/run`, atomic durable outcomes, finite exponential backoff, and a persistent
+  operator-review threshold. A launcher crash counts conservatively as an
+  interrupted attempt once its process tree is proven gone. Backup and restore
+  histories are separate; new staging paths/tags cannot clear failures. Root-only
+  status/reset commands serialize with launches and reject reset of active jobs.
+  Disposable systemd/Btrfs CI `34007063803` passes all 24 cases. Follow-up hardening
+  also fsyncs first creation of the persistent directory. This is host-local
+  containment, not yet bay-level reporting or cross-host retry history.
+- CLI `89d907e` produces candidate recovery bundles with pinned source/toolchain,
+  dependency inventory/lockfile, binary-bound qualification reports and signed
+  GitHub provenance. Native amd64/arm64 CI `34006659613` passes, including actual
+  Btrfs quota and unchanged/edit reuse. Downloaded bundles were independently
+  verified with GitHub CLI 2.100.0 against repository, workflow, exact source
+  commit and hosted-runner identity; a wrong source digest was rejected.
+  `8e8e801` adds that positive/negative verification to subsequent CI runs.
+  These GNU builds require GLIBC symbols through 2.39; this is not a universal
+  Linux/musl artifact. Binary reproducibility and a full SBOM remain unfinished.
+  No release tag, installer pin, or fleet deployment has changed.
 
 ## Working Repositories
 
@@ -112,7 +131,9 @@ not a completion claim or deployment approval. Production remains unchanged.
 ## Still Required
 
 - Complete supervision across RootFS/fallback/copy paths, production policy
-  installation/capability admission, and durable retry/backoff handling.
+  installation/capability admission, and central retry/reporting integration.
+  The root helper now supports durable per-repository/per-operation retries;
+  activation must require an approved retry policy alongside native admission.
   Aggregate maintenance I/O integration now passes disposable qualification;
   activation must still drain old wrapper/maintenance work and qualify the
   actual host policy and disk topology. Extend immutable-source admission

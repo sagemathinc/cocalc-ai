@@ -194,6 +194,16 @@ class RusticJobTest(unittest.TestCase):
         name = self.api["retry_name"]
         self.assertEqual(name(key, ["rustic-project-backup", "stage1"]), name(key, ["rustic-project-backup", "stage2"]))
         self.assertNotEqual(name(key, ["rustic-project-backup"]), name(key, ["rustic-project-restore"]))
+
+    def test_first_persistent_directory_creation_syncs_parent(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("os.fsync") as sync:
+            path = str(Path(tmp) / "retry")
+            directory = self.api["open_lock_directory"](path, required_uid=os.getuid(), durable=True)
+            os.close(directory)
+            sync.assert_called_once()
+            directory = self.api["open_lock_directory"](path, required_uid=os.getuid(), durable=True)
+            os.close(directory)
+            sync.assert_called_once()
         with mock.patch.dict(self.api, {"trusted_regular": lambda _: json.dumps(self.policy)}):
             self.assertEqual(self.api["load_policy"](), self.policy)
         for invalid in [{}, [], {**self.policy, "command": "arbitrary"}]:

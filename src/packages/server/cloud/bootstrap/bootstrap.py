@@ -4589,9 +4589,11 @@ def callers_alive(chain):
     return True
 
 
-def open_lock_directory(path=LOCKS, required_uid=0):
+def open_lock_directory(path=LOCKS, required_uid=0, durable=False):
+    created = False
     try:
         os.mkdir(path, 0o700)
+        created = True
     except FileExistsError:
         pass
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -4599,6 +4601,16 @@ def open_lock_directory(path=LOCKS, required_uid=0):
     if info.st_uid != required_uid or info.st_mode & 0o077:
         os.close(fd)
         raise PermissionError("untrusted Rustic job lock directory")
+    if durable and created:
+        try:
+            parent = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(parent)
+            finally:
+                os.close(parent)
+        except BaseException:
+            os.close(fd)
+            raise
     return fd
 
 
@@ -4731,9 +4743,10 @@ def retry_admission(directory, name, retry):
 def retry_control(argv, api, reset=False):
     key = job_key(argv, api)
     directory = open_lock_directory()
-    persistent = open_lock_directory(RETRY_STATE)
+    persistent = None
     held = []
     try:
+        persistent = open_lock_directory(RETRY_STATE, durable=True)
         held.append(take_lock(directory, key + ".launch.lock"))
         held.append(take_lock(directory, key + ".job.lock"))
         name = retry_name(key, argv)
@@ -4748,7 +4761,8 @@ def retry_control(argv, api, reset=False):
     finally:
         for fd in reversed(held):
             os.close(fd)
-        os.close(persistent)
+        if persistent is not None:
+            os.close(persistent)
         os.close(directory)
 
 
@@ -4938,7 +4952,7 @@ def launch(argv, api, policy):
         if unit_busy(read_unit(directory, f"{key}.unit")):
             raise BlockingIOError("Rustic predecessor unit is still stopping")
         if retry is not None:
-            persistent = open_lock_directory(RETRY_STATE)
+            persistent = open_lock_directory(RETRY_STATE, durable=True)
             retry_state = retry_admission(persistent, name, retry)
         # Bound service creation too, not just workers after Python has started.
         # Unit records retain this reservation if the launcher is killed.
