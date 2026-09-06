@@ -77,3 +77,25 @@ read and verified new backups correctly. They are not substitutes for the
 qualified quota-safe reader: old Rustic allocated 128 MiB for the zero file;
 Restic's `--sparse` still allocated 16 MiB for the mixed file. Format
 compatibility and sparse allocation safety are separate properties.
+
+## Native Btrfs Quota And Snapshot Gate
+
+[Qualification run 34001212323](https://github.com/sagemathinc/rustic/actions/runs/34001212323)
+passed on both native `ubuntu-24.04` (amd64) and `ubuntu-24.04-arm`. CLI source
+`0ef705a619cf07996d4711cf8e8c5701d6bb70ce` pins core `5b6146b`.
+
+Each runner creates a marked, disposable 8 GiB Btrfs loop filesystem. The test
+uses actual read-only snapshots for three successive backups and sets a 4 GiB
+qgroup limit on the restore subvolume. A deliberate 5 GiB allocation must fail
+with EDQUOT, not ENOSPC, before the restore test counts as quota-enforced.
+
+Both architectures restored the 10 GiB / three-island fixture in 12,288 bytes,
+the mixed 16 MiB fixture in 1,048,576 bytes, and preserved hardlinks and symlinks.
+Independent union-of-data-extents comparisons and `check --read-data` passed.
+The unchanged backup reused all five file entries with zero new file data; an
+ordinary-file edit followed by resetting mtime changed only that file.
+
+This qualifies the native binary on those fixtures, not CoCalc's production
+staging reservation, privileged service supervision or archive deletion logic.
+No rollout or policy exclusion was enabled. Keep this distinction when using
+these results for parameter or lifecycle decisions.
