@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { React } from "@cocalc/frontend/app-framework";
 import { Tabs } from "antd";
 import { FreshAuthModal } from "@cocalc/frontend/auth/fresh-auth";
@@ -133,7 +134,8 @@ export const HostsPage: React.FC = () => {
     <div className="smc-vfill" style={WRAP_STYLE}>
       <div
         style={{
-          background: "white",
+          background: UI_COLORS.surface,
+          color: UI_COLORS.text,
           height: "100%",
           minHeight: 0,
           overflow: "auto",

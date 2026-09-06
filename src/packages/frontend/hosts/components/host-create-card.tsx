@@ -646,7 +646,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
                     ? UI_COLORS.inset
                     : active
                       ? UI_COLORS.infoBg
-                      : "white",
+                      : UI_COLORS.surface,
                   borderColor: active ? UI_COLORS.link : undefined,
                   borderRadius: 10,
                   boxShadow: active
