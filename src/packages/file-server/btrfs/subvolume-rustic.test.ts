@@ -35,6 +35,7 @@ import {
   withBtrfsMutationContext,
 } from "./operation-cache";
 import { TEMP_RUSTIC_SNAPSHOT_PREFIX } from "./snapshots";
+import { RusticJobCleanupError } from "./rustic-job-errors";
 
 describe("parseRusticSnapshotsOutput", () => {
   it("parses grouped rustic snapshot JSON", () => {
@@ -455,6 +456,31 @@ describe("SubvolumeRustic.backup", () => {
     );
     expect(staleDeletes).toHaveLength(32);
   });
+  it.each([false, true])(
+    "only cleans a failed backup snapshot when termination is verified (%s)",
+    async (unsafe) => {
+      const rustic = new SubvolumeRustic({
+        name: "project-1",
+        path: "/mnt/test/project-1",
+        filesystem: { opts: { mount: "/mnt/test" } },
+        fs: { rusticRepo: "/repo", rustic: jest.fn() },
+      } as any);
+      const error = unsafe
+        ? new RusticJobCleanupError("unit is stopping")
+        : new Error("job failed");
+      await expect(
+        rustic.backup({
+          runner: async () => {
+            throw error;
+          },
+        }),
+      ).rejects.toBe(error);
+      const deletes = btrfsMock.mock.calls.filter(
+        ([opts]) => opts.args[1] === "delete",
+      );
+      expect(deletes).toHaveLength(unsafe ? 0 : 1);
+    },
+  );
 
   it("passes an explicit parent snapshot to rustic backup", async () => {
     const rustic = new SubvolumeRustic({

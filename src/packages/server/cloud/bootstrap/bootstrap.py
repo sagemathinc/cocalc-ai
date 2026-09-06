@@ -9188,7 +9188,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       --snapshot "$snapshot" \
       "${delete_args[@]}"
     ;;
-  project-rustic-backup|project-rustic-backup-maintenance)
+  project-rustic-backup|project-rustic-backup-maintenance|project-rustic-backup-supervised|project-rustic-backup-maintenance-supervised|project-rustic-backup-wait)
     if [ "$#" -lt 3 ]; then
       echo "usage: cocalc-runtime-storage project-rustic-backup <src> <repo-profile> <host> [--tag <tag>] [--parent <snapshot>]..." >&2
       exit 2
@@ -9234,11 +9234,18 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     source_root="$ALLOWED_PATH_ROOT"
     source_rel="$ALLOWED_PATH_REL"
     set_rustic_profile_parts "$repo_profile"
+    rustic_command=(/usr/local/libexec/cocalc-runtime-storage-path-helper)
+    case "$cmd" in
+      *-supervised) rustic_command=(/usr/local/libexec/cocalc-rustic-job run) ;;
+      *-wait) rustic_command=(/usr/local/libexec/cocalc-rustic-job wait) ;;
+    esac
     if [ "$cmd" = "project-rustic-backup-maintenance" ]; then
       attach_maintenance_worker
     fi
-    prepare_privileged_rustic_cache
-    exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+    if [ "$cmd" != "project-rustic-backup-wait" ]; then
+      prepare_privileged_rustic_cache
+    fi
+    exec "${rustic_command[@]}" \
       rustic-project-backup \
       --root "$source_root" \
       --path "$source_rel" \
@@ -9248,7 +9255,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       "${tag_args[@]}" \
       "${parent_args[@]}"
     ;;
-  project-rustic-restore)
+  project-rustic-restore|project-rustic-restore-supervised|project-rustic-restore-wait)
     if [ "$#" -ne 3 ]; then
       echo "usage: cocalc-runtime-storage project-rustic-restore <repo-profile> <snapshot> <dest>" >&2
       exit 2
@@ -9265,8 +9272,15 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     dest_root="$ALLOWED_PATH_ROOT"
     dest_rel="$ALLOWED_PATH_REL"
     set_rustic_profile_parts "$repo_profile"
-    prepare_privileged_rustic_cache
-    exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+    rustic_command=(/usr/local/libexec/cocalc-runtime-storage-path-helper)
+    case "$cmd" in
+      *-supervised) rustic_command=(/usr/local/libexec/cocalc-rustic-job run) ;;
+      *-wait) rustic_command=(/usr/local/libexec/cocalc-rustic-job wait) ;;
+    esac
+    if [ "$cmd" != "project-rustic-restore-wait" ]; then
+      prepare_privileged_rustic_cache
+    fi
+    exec "${rustic_command[@]}" \
       rustic-project-restore \
       --root "$dest_root" \
       --path "$dest_rel" \

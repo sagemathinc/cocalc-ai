@@ -40,6 +40,7 @@ import {
   type RusticProgressUpdate,
 } from "./rustic-progress";
 import { btrfs, sudo } from "./util";
+import { RusticJobCleanupError } from "./rustic-job-errors";
 import {
   invalidateBtrfsQgroupShowRaw,
   invalidateBtrfsSubvolumeShow,
@@ -345,6 +346,7 @@ export class SubvolumeRustic {
     const tempSnapshot = makeTempRusticSnapshotName();
     const { snapshotPath, generation: snapshotGeneration } =
       await this.createTempBackupSnapshot(tempSnapshot);
+    let cleanupSafe = true;
     try {
       logger.debug(
         `backup: created ${tempSnapshot} at ${snapshotPath} to get a consistent backup`,
@@ -395,16 +397,28 @@ export class SubvolumeRustic {
         summary,
         snapshotGeneration,
       };
+    } catch (error) {
+      if (error instanceof RusticJobCleanupError) cleanupSafe = false;
+      throw error;
     } finally {
       this.snapshotsCache = null;
-      logger.debug(`backup: deleting temporary ${tempSnapshot}`);
-      try {
-        await this.deleteTempBackupSnapshot(snapshotPath, { mandatory: true });
-      } catch (err) {
-        logger.warn("backup: unable to delete temporary snapshot", {
-          snapshotPath,
-          err: `${err}`,
-        });
+      if (cleanupSafe) {
+        logger.debug(`backup: deleting temporary ${tempSnapshot}`);
+        try {
+          await this.deleteTempBackupSnapshot(snapshotPath, { mandatory: true });
+        } catch (err) {
+          logger.warn("backup: unable to delete temporary snapshot", {
+            snapshotPath,
+            err: `${err}`,
+          });
+        }
+      } else {
+        logger.warn(
+          "backup: retaining snapshot until worker termination is verified",
+          {
+            snapshotPath,
+          },
+        );
       }
     }
   };

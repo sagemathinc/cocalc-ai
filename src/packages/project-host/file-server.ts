@@ -225,8 +225,10 @@ import {
 import {
   ProjectRusticUnsupportedError,
   projectRusticBackup,
+  projectRusticBackupWait,
   projectRusticRestore,
 } from "./project-rustic";
+import { RusticJobCleanupError } from "@cocalc/file-server/btrfs/rustic-job-errors";
 import { isMissingRusticRepositoryError } from "./backup-index-errors";
 import {
   checkManagedBackupAllowedBestEffort,
@@ -3967,6 +3969,11 @@ async function backupProjectToExternalRepository({
           migration_id,
         });
         const snapshotPath = join(stagingRoot, "home");
+        await projectRusticBackupWait({
+          src: snapshotPath,
+          repoProfile: profilePath,
+          host: projectRusticSnapshotHost(destination_project_id),
+        });
         await withBtrfsMutationLock({
           mount: vol.filesystem.opts.mount,
           operation: "project-site-migration-snapshot-create",
@@ -3983,6 +3990,7 @@ async function backupProjectToExternalRepository({
             });
           },
         });
+        let cleanupSafe = true;
         try {
           await sudo({
             command: "rm",
@@ -4004,18 +4012,30 @@ async function backupProjectToExternalRepository({
             id: backup.id,
             summary: backup.summary,
           };
+        } catch (error) {
+          if (error instanceof RusticJobCleanupError) cleanupSafe = false;
+          throw error;
         } finally {
-          try {
-            await withBtrfsMutationLock({
-              mount: vol.filesystem.opts.mount,
-              operation: "project-site-migration-snapshot-delete",
-              run: async () => {
-                await deleteProjectSiteMigrationSnapshot(snapshotPath);
+          if (cleanupSafe) {
+            try {
+              await withBtrfsMutationLock({
+                mount: vol.filesystem.opts.mount,
+                operation: "project-site-migration-snapshot-delete",
+                run: async () => {
+                  await deleteProjectSiteMigrationSnapshot(snapshotPath);
+                },
+              });
+            } finally {
+              await rm(stagingRoot, { recursive: true, force: true }).catch(
+                () => {},
+              );
+            }
+          } else {
+            logger.warn(
+              "site migration: retaining staging until Rustic exits",
+              {
+                snapshotPath,
               },
-            });
-          } finally {
-            await rm(stagingRoot, { recursive: true, force: true }).catch(
-              () => {},
             );
           }
         }
