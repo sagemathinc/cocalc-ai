@@ -4,6 +4,7 @@ import { Button } from "antd";
 import { Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { TimeTravelActions } from "./actions";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 interface Props {
   actions: TimeTravelActions;
@@ -39,14 +40,20 @@ export function LogView({
   const rows = buildRows({ actions, source, versions, firstVersion });
   return (
     <div style={{ padding: "10px 15px", overflowY: "auto", height: "100%" }}>
-      <div style={{ color: "#666", fontSize: "12px", marginBottom: "8px" }}>
+      <div
+        style={{
+          color: UI_COLORS.secondary,
+          fontSize: "12px",
+          marginBottom: "8px",
+        }}
+      >
         Click a title to compare with the previous version. Shift+click another
         row to compare with selected.
       </div>
       {loading ? (
         <Loading theme="medium" />
       ) : rows.length === 0 ? (
-        <div style={{ color: "#666" }}>No versions found.</div>
+        <div style={{ color: UI_COLORS.secondary }}>No versions found.</div>
       ) : (
         rows.map((row) => {
           const selected = currentVersion === row.version;
@@ -61,8 +68,9 @@ export function LogView({
                 padding: "8px 10px",
                 borderRadius: "6px",
                 marginBottom: "6px",
-                border: selected ? "1px solid #1677ff" : "1px solid #eee",
-                background: selected ? "#f0f6ff" : "white",
+                border: `1px solid ${selected ? UI_COLORS.link : UI_COLORS.border}`,
+                background: selected ? UI_COLORS.selected : UI_COLORS.surface,
+                color: UI_COLORS.text,
               }}
             >
               <div
@@ -103,7 +111,7 @@ export function LogView({
                   />
                 </Tooltip>
               </div>
-              <div style={{ color: "#666", fontSize: "12px" }}>
+              <div style={{ color: UI_COLORS.secondary, fontSize: "12px" }}>
                 {row.subtitle ?? ""}
                 {row.timeMs != null && (
                   <>
