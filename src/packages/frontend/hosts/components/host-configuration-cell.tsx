@@ -7,7 +7,7 @@ import {
 } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Space, Typography } from "antd";
 import { Tooltip } from "@cocalc/frontend/components";
 import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
@@ -70,26 +70,26 @@ export function HostConfigChip({
   const colors =
     tone === "blue"
       ? {
-          border: COLORS.BLUE_LL,
-          background: COLORS.BLUE_LLLL,
-          text: COLORS.ANTD_LINK_BLUE,
+          border: UI_COLORS.info,
+          background: UI_COLORS.infoBg,
+          text: UI_COLORS.link,
         }
       : tone === "amber"
         ? {
-            border: COLORS.YELL_LL,
-            background: COLORS.YELL_LLL,
-            text: COLORS.YELL_D,
+            border: UI_COLORS.warning,
+            background: UI_COLORS.warningBg,
+            text: UI_COLORS.warning,
           }
         : tone === "muted"
           ? {
-              border: COLORS.GRAY_LL,
-              background: COLORS.GRAY_LLL,
-              text: COLORS.GRAY_M,
+              border: UI_COLORS.border,
+              background: UI_COLORS.inset,
+              text: UI_COLORS.secondary,
             }
           : {
-              border: COLORS.GRAY_LL,
-              background: "white",
-              text: COLORS.GRAY_D,
+              border: UI_COLORS.border,
+              background: UI_COLORS.surface,
+              text: UI_COLORS.text,
             };
   const content = (
     <>

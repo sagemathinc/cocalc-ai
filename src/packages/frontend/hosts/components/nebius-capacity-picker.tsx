@@ -6,7 +6,7 @@
 import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import { Alert, Flex, Radio, Space, Switch, Tag, Typography } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   getNebiusPlacementOptions,
   type NebiusPlacementOption,
@@ -201,8 +201,8 @@ export function NebiusCapacityPicker({
                   value={option.key}
                   style={{
                     alignItems: "flex-start",
-                    background: active ? COLORS.BLUE_LLLL : COLORS.GRAY_LLL,
-                    border: `1px solid ${active ? COLORS.BLUE_D : COLORS.GRAY_LL}`,
+                    background: active ? UI_COLORS.infoBg : UI_COLORS.inset,
+                    border: `1px solid ${active ? UI_COLORS.link : UI_COLORS.border}`,
                     borderRadius: 8,
                     display: "flex",
                     margin: 0,

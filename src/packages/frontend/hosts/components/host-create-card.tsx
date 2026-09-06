@@ -14,7 +14,7 @@ import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { mapCountryRegionToR2Region } from "@cocalc/util/consts";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import {
@@ -101,8 +101,8 @@ const providerBadgeStyle = (value: string): React.CSSProperties => {
     };
   }
   return {
-    background: COLORS.BLUE_LLL,
-    color: COLORS.BLUE_D,
+    background: UI_COLORS.infoBg,
+    color: UI_COLORS.link,
   };
 };
 
@@ -120,9 +120,9 @@ function SectionTitle({
       <span
         style={{
           alignItems: "center",
-          background: COLORS.BLUE_LLLL,
+          background: UI_COLORS.infoBg,
           borderRadius: 8,
-          color: COLORS.BLUE_D,
+          color: UI_COLORS.link,
           display: "inline-flex",
           height: 24,
           justifyContent: "center",
@@ -630,7 +630,9 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
           {presets.map((preset) => {
             const active = !preset.disabled && selectedPresetId === preset.id;
             const accentColor =
-              preset.id === "low-cost-spot" ? COLORS.BS_GREEN_D : COLORS.BLUE_D;
+              preset.id === "low-cost-spot"
+                ? UI_COLORS.success
+                : UI_COLORS.link;
             return (
               <Button
                 key={preset.id}
@@ -641,16 +643,16 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
                 onClick={() => applyCreatePreset(preset.id)}
                 style={{
                   background: preset.disabled
-                    ? COLORS.GRAY_LLL
+                    ? UI_COLORS.inset
                     : active
-                      ? COLORS.ANTD_BG_BLUE_L
+                      ? UI_COLORS.infoBg
                       : "white",
-                  borderColor: active ? COLORS.BS_BLUE_BGRND : undefined,
+                  borderColor: active ? UI_COLORS.link : undefined,
                   borderRadius: 10,
                   boxShadow: active
-                    ? `0 0 0 1px ${COLORS.BS_BLUE_BGRND} inset`
+                    ? `0 0 0 1px ${UI_COLORS.link} inset`
                     : undefined,
-                  color: preset.disabled ? COLORS.GRAY : COLORS.GRAY_DD,
+                  color: preset.disabled ? UI_COLORS.secondary : UI_COLORS.text,
                   height: "auto",
                   justifyContent: "flex-start",
                   minHeight: 62,
@@ -662,7 +664,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
                 <Space size={8} align="start">
                   <span
                     style={{
-                      color: active ? COLORS.BS_BLUE_TEXT : accentColor,
+                      color: active ? UI_COLORS.link : accentColor,
                       fontSize: 16,
                       lineHeight: "18px",
                     }}
@@ -760,7 +762,9 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
                   </Typography.Text>
                   <Typography.Text
                     style={{
-                      color: selected ? "rgba(255,255,255,0.82)" : COLORS.GRAY,
+                      color: selected
+                        ? "rgba(255,255,255,0.82)"
+                        : UI_COLORS.secondary,
                       display: "block",
                       fontSize: 12,
                       lineHeight: 1.2,
@@ -803,15 +807,15 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
       style={{
         position: "sticky",
         top: 0,
-        boxShadow: `0 8px 24px ${COLORS.GRAY_DDD}`,
+        boxShadow: `0 8px 24px ${UI_COLORS.border}`,
       }}
       styles={CARD_STYLES}
     >
       <Space orientation="vertical" style={{ width: "100%" }} size="small">
         <div
           style={{
-            background: COLORS.GRAY_LLL,
-            border: `1px solid ${COLORS.GRAY_LL}`,
+            background: UI_COLORS.inset,
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 10,
             padding: 10,
           }}
@@ -853,8 +857,8 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
     <Card bordered={false} styles={{ body: { padding: 0 } }}>
       <div
         style={{
-          background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL}, white 62%, ${COLORS.GRAY_LLL})`,
-          border: `1px solid ${COLORS.GRAY_LL}`,
+          background: `linear-gradient(135deg, ${UI_COLORS.infoBg}, ${UI_COLORS.surface} 62%, ${UI_COLORS.inset})`,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: 14,
           marginBottom: 10,
           padding: "10px 12px",
@@ -864,9 +868,9 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({
           <span
             style={{
               alignItems: "center",
-              background: COLORS.BLUE_D,
+              background: UI_COLORS.infoBg,
               borderRadius: 12,
-              color: "white",
+              color: UI_COLORS.link,
               display: "inline-flex",
               height: 34,
               justifyContent: "center",
