@@ -36,6 +36,8 @@ signal.signal(signal.SIGTERM, signal.SIG_IGN)
 child = os.fork()
 if child == 0:
     os.setsid()
+    if mode == "closed-fds":
+        os.closerange(0, 65536)
     Path("descendant").write_text(str(os.getpid()))
     while True:
         time.sleep(1)
@@ -122,10 +124,10 @@ secret_access_key = "disposable"
         identity["descendant"] = int((case / "descendant").read_text())
         return identity
 
-    def assert_gone(identity):
+    def assert_gone(identity, immediate=False):
         deadline = time.monotonic() + 15
         while any(api["process_identity"](pid) is not None for pid in identity.values()):
-            assert time.monotonic() < deadline, ("process escaped cleanup", identity)
+            assert not immediate and time.monotonic() < deadline, ("process escaped cleanup", identity)
             time.sleep(.1)
 
     def barrier(case, profile_name):
@@ -161,7 +163,17 @@ secret_access_key = "disposable"
         proc.kill()
         proc.wait(timeout=5)
         barrier(case, shared)
-        assert_gone(identity)
+        assert_gone(identity, immediate=True)
+        proc.communicate(timeout=5)
+
+        case, proc = start("closed-fds", "closed-fds", shared)
+        identity = await_started(case, proc)
+        proc.kill()
+        proc.wait(timeout=5)
+        os.kill(identity["worker"], signal.SIGKILL)
+        os.kill(identity["pid"], signal.SIGKILL)
+        barrier(case, shared)
+        assert_gone(identity, immediate=True)
         proc.communicate(timeout=5)
 
         case, proc = start("worker-death", "hang", shared)
@@ -186,7 +198,8 @@ secret_access_key = "disposable"
         proc.communicate(timeout=5)
 
         case, proc = start("orphan", "orphan", shared)
-        result(proc, True)
+        # A "success" JSON followed by forced descendant cleanup is not success.
+        result(proc, False)
         assert_gone(json.loads((case / "started").read_text()) | {
             "descendant": int((case / "descendant").read_text())})
         barrier(case, shared)
@@ -196,7 +209,7 @@ secret_access_key = "disposable"
         assert_gone(json.loads((case / "started").read_text()))
         barrier(case, shared)
         print(json.dumps({"ok": True, "cases": ["normal", "failure", "deadline",
-              "caller-death", "worker-death", "same-repo", "host-full", "orphan", "oom"]}))
+              "caller-death", "closed-fds", "worker-death", "same-repo", "host-full", "orphan", "oom"]}))
     finally:
         for proc in processes:
             if proc.poll() is None:

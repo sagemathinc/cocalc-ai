@@ -139,6 +139,45 @@ class RusticJobTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.api["job_key"](["rustic-project-backup", "x" * 16384], api)
 
+    def test_unit_records_survive_launchers_and_reject_untrusted_content(self):
+        unit = "cocalc-rustic-" + "a" * 32 + ".service"
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = os.open(tmp, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                read = lambda: self.api["read_unit"](directory, "job.unit", required_uid=os.getuid())
+                self.assertIsNone(read())
+                self.api["record_unit"](directory, "job.unit", unit)
+                self.assertEqual(read(), unit)
+                (Path(tmp) / "job.unit").write_text("ssh.service")
+                with self.assertRaises(ValueError):
+                    read()
+            finally:
+                os.close(directory)
+
+    def test_service_state_is_authoritative_even_without_a_lock(self):
+        unit = "cocalc-rustic-" + "a" * 32 + ".service"
+        for state, busy in [("active", True), ("activating", True), ("deactivating", True), ("failed", False), ("inactive", False)]:
+            result = subprocess.CompletedProcess([], 0, f"LoadState=loaded\nActiveState={state}\nControlGroup=\n")
+            with mock.patch("subprocess.run", return_value=result):
+                self.assertEqual(self.api["unit_busy"](unit), busy)
+        result = subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveState=failed\nControlGroup=/system.slice/" + unit)
+        with mock.patch("subprocess.run", return_value=result), mock.patch("builtins.open", mock.mock_open(read_data="populated 1\nfrozen 0\n")):
+            self.assertTrue(self.api["unit_busy"](unit))
+        with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("systemctl", 5)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.api["unit_busy"](unit)
+
+    def test_slot_cannot_be_reused_while_previous_unit_stops(self):
+        with mock.patch.dict(self.api, {
+            "take_lock": lambda _directory, _name: 42,
+            "read_unit": lambda _directory, _name: "predecessor",
+            "unit_busy": lambda _unit: True,
+            "record_unit": lambda *_args: self.fail("replaced an active unit"),
+        }), mock.patch("os.close") as close:
+            with self.assertRaises(BlockingIOError):
+                self.api["take_slot"](10, 1, "current")
+            close.assert_called_once_with(42)
+
 
 if __name__ == "__main__":
     unittest.main()

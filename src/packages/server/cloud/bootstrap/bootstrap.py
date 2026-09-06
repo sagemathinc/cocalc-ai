@@ -3667,12 +3667,84 @@ def take_lock(directory, name, shared=False, required_uid=0):
         raise
 
 
-def take_slot(directory, count):
+def read_unit(directory, name, required_uid=0):
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_mode & 0o022:
+            raise PermissionError("untrusted Rustic unit record")
+        unit = os.read(fd, 256).decode("ascii").strip()
+        identifier = unit.removeprefix("cocalc-rustic-").removesuffix(".service")
+        if len(identifier) != 32 or any(char not in "0123456789abcdef" for char in identifier) or unit != f"cocalc-rustic-{identifier}.service":
+            raise ValueError("invalid Rustic unit record")
+        return unit
+    finally:
+        os.close(fd)
+
+
+def record_unit(directory, name, unit):
+    temporary = f".unit-{uuid.uuid4().hex}"
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            stream.write(unit + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.rename(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+
+
+def unit_busy(unit):
+    if unit is None:
+        return False
+    result = subprocess.run([
+        "/usr/bin/systemctl", "--no-ask-password", "show", unit,
+        "--property=LoadState,ActiveState,ControlGroup",
+    ], env=ENV, check=True, capture_output=True, text=True, timeout=5)
+    values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    if values.get("LoadState") not in {"loaded", "not-found"} or "ActiveState" not in values:
+        raise RuntimeError("cannot verify Rustic service termination")
+    if values["ActiveState"] not in {"inactive", "failed"}:
+        return True
+    group = values.get("ControlGroup", "")
+    if group:
+        if not group.startswith("/") or ".." in group.split("/") or group.rsplit("/", 1)[1] != unit:
+            raise RuntimeError("unexpected Rustic service control group")
+        try:
+            with open("/sys/fs/cgroup" + group + "/cgroup.events", encoding="ascii") as stream:
+                events = dict(line.split() for line in stream.read(4096).splitlines())
+            if events.get("populated") not in {"0", "1"}:
+                raise RuntimeError("cannot verify Rustic cgroup population")
+            return events["populated"] != "0"
+        except FileNotFoundError:
+            pass
+    return False
+
+
+def take_slot(directory, count, unit=None):
     for slot in range(count):
         try:
-            return take_lock(directory, f"slot-{slot}.lock")
+            fd = take_lock(directory, f"slot-{slot}.lock")
         except BlockingIOError:
             continue
+        try:
+            if unit is not None:
+                name = f"slot-{slot}.unit"
+                if unit_busy(read_unit(directory, name)):
+                    os.close(fd)
+                    continue
+                record_unit(directory, name, unit)
+            return fd
+        except BaseException:
+            os.close(fd)
+            raise
     raise BlockingIOError(errno.EAGAIN, "Rustic host job budget is occupied")
 
 
@@ -3716,6 +3788,7 @@ def check_cgroup(policy):
         weight = stream.read(1024).splitlines()
     if f"default {policy['io_weight']}" not in weight:
         raise RuntimeError("Rustic I/O controller is not enforcing its weight")
+    return group.rsplit("/", 1)[1]
 
 
 def lease_valid(chain, timeout=5):
@@ -3726,7 +3799,7 @@ def lease_valid(chain, timeout=5):
 
 
 def worker(argv, chain, api, policy):
-    check_cgroup(policy)
+    unit = check_cgroup(policy)
     if not lease_valid(chain):
         raise RuntimeError("Rustic caller lease expired before job start")
     directory = open_lock_directory()
@@ -3735,7 +3808,7 @@ def worker(argv, chain, api, policy):
     try:
         key = job_key(argv, api)
         locks.append(take_lock(directory, f"{key}.job.lock"))
-        locks.append(take_slot(directory, policy["max_jobs"]))
+        locks.append(take_slot(directory, policy["max_jobs"], unit))
         cache_dir = os.open("/run/lock", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             locks.append(take_lock(cache_dir, os.path.basename(CACHE_LOCK), shared=True))
@@ -3774,7 +3847,11 @@ def barrier(argv, api, policy):
             try:
                 held.append(take_lock(directory, f"{key}.launch.lock"))
                 held.append(take_lock(directory, f"{key}.job.lock"))
-                return
+                # Descendants can close inherited lock descriptors. The unit
+                # remains authoritative until systemd has reaped the full tree.
+                if not unit_busy(read_unit(directory, f"{key}.unit")):
+                    return
+                raise BlockingIOError("Rustic unit is still stopping")
             except BlockingIOError:
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Rustic job still owns its source; cleanup is unsafe")
@@ -3798,6 +3875,9 @@ def launch(argv, api, policy):
         # Reject a surviving predecessor before asking systemd for another unit.
         old = take_lock(directory, f"{key}.job.lock")
         os.close(old)
+        if unit_busy(read_unit(directory, f"{key}.unit")):
+            raise BlockingIOError("Rustic predecessor unit is still stopping")
+        record_unit(directory, f"{key}.unit", unit)
         proc = subprocess.Popen(service_command(unit, argv, chain, policy), env=ENV,
                                 stdin=subprocess.PIPE, close_fds=True)
         os.set_blocking(proc.stdin.fileno(), False)
