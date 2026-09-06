@@ -245,8 +245,9 @@ export async function verifyBackupExclusionReport({
     if (!(chunk instanceof Uint8Array) || chunk.byteLength > max_bytes - bytes)
       invalid();
     bytes += chunk.byteLength;
-    hash.update(chunk);
-    const data = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    // Hash and parse the same owned bytes, even if a producer reuses its buffer.
+    const data = Buffer.from(chunk);
+    hash.update(data);
     let offset = 0;
     while (offset < data.length) {
       const newline = data.indexOf(10, offset);

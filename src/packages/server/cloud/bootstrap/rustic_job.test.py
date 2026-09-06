@@ -65,7 +65,7 @@ class RusticJobTest(unittest.TestCase):
         exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, api)
         caps = {"strict_backup": True, "strict_restore": True,
                 "sparse_required_restore": True, "hole_aware_backup": True,
-                "backup_inventory": 1, "backup_admission": 1}
+                "backup_inventory": 1, "backup_admission": 1, "strict_local_metadata": 1}
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "rustic"
             documents = [
@@ -73,6 +73,8 @@ class RusticJobTest(unittest.TestCase):
                 {"schema_version": True, "capabilities": caps},
                 {"schema_version": 1, "capabilities": {**caps, "backup_admission": True}},
                 {"schema_version": 1, "capabilities": {**caps, "sparse_required_restore": False}},
+                {"schema_version": 1, "capabilities": {**caps, "strict_local_metadata": None}},
+                {"schema_version": 1, "capabilities": {**caps, "strict_local_metadata": True}},
             ]
             for index, document in enumerate(documents):
                 path.write_text("#!/usr/bin/python3 -I\nprint(" + repr(json.dumps(document)) + ")\n")
