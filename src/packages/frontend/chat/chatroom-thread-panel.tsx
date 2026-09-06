@@ -22,9 +22,11 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useProjectMapField,
   useProjectFromMap,
   useRef,
   useState,
+  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { createPortal } from "react-dom";
 import { debounce } from "lodash";
@@ -36,7 +38,6 @@ import {
   DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
   isCodexModelName,
-  resolveCodexServiceTier,
   resolveCodexSessionMode,
   type CodexReasoningLevel,
   type CodexReasoningId,
@@ -51,7 +52,7 @@ import type {
 } from "@cocalc/conat/ai/acp/types";
 import { ChatLog } from "./chat-log";
 import { AgentMessageStatus } from "./agent-message-status";
-import CodexConfigButton from "./codex";
+import CodexConfigButton, { codexModelOptionsForCatalog } from "./codex";
 import { ThreadAnchorButton } from "./thread-anchor-button";
 import { ThreadBadge } from "./thread-badge";
 import { ThreadResolveButton } from "./thread-resolve-button";
@@ -62,7 +63,10 @@ import type { ThreadIndexEntry } from "./message-cache";
 import type { ThreadListItem, ThreadMeta } from "./threads";
 import { dateValue, field, isAcpAssistantMessage } from "./access";
 import { getThreadRootDate, newest_content } from "./utils";
-import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
+import type {
+  CodexModelCapabilityInfo,
+  CodexPaymentSourceInfo,
+} from "@cocalc/conat/hub/api/system";
 import type {
   ChatStoreArchivedRow,
   ChatStoreStats,
@@ -91,6 +95,13 @@ import { useCodexLiveActivityStatus } from "./use-codex-log";
 import { CodexFullAccessNotice } from "./codex-full-access";
 import { CodexAttentionCard } from "./codex-attention-card";
 import { getCodexPaymentSourceOptions } from "./use-codex-payment-source";
+import {
+  clearCachedCodexModelCatalog,
+  getLiveCodexUsageStatus,
+  readCachedCodexModelCatalog,
+  subscribeToCodexModelCatalogInvalidation,
+  writeCachedCodexModelCatalog,
+} from "@cocalc/frontend/account/codex-usage";
 import {
   automationConfigMissingReason,
   AutomationConfigFields,
@@ -279,6 +290,54 @@ export function getDefaultNewThreadSetup(): NewThreadSetup {
 
 export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup =
   getDefaultNewThreadSetup();
+
+export function reconcileNewThreadSetupWithCodexCatalog({
+  setup,
+  catalog,
+}: {
+  setup: NewThreadSetup;
+  catalog?: CodexModelCapabilityInfo[];
+}): NewThreadSetup {
+  if (!catalog?.length) return setup;
+  const selectedModel =
+    setup.codexConfig.model ?? setup.model ?? DEFAULT_CODEX_MODEL;
+  const options = codexModelOptionsForCatalog(catalog, selectedModel);
+  const selected = options.find(({ value }) => value === selectedModel);
+  const model =
+    selected && !selected.disabled
+      ? selectedModel
+      : (options.find(({ default: isDefault, disabled }) =>
+          Boolean(isDefault && !disabled),
+        )?.value ?? options.find(({ disabled }) => !disabled)?.value);
+  if (!model) return setup;
+  const reasoning = getReasoningForModel({
+    models: options,
+    modelValue: model,
+    desired: setup.codexConfig.reasoning,
+  });
+  const serviceTier = resolveNewThreadCodexServiceTier({
+    models: options,
+    model,
+    serviceTier: setup.codexConfig.serviceTier,
+  });
+  if (
+    setup.model === model &&
+    setup.codexConfig.model === model &&
+    setup.codexConfig.reasoning === reasoning &&
+    (setup.codexConfig.serviceTier ?? "standard") === serviceTier
+  ) {
+    return setup;
+  }
+  return applyNewThreadSetupPatch(setup, {
+    model,
+    codexConfig: {
+      ...setup.codexConfig,
+      model,
+      reasoning,
+      serviceTier,
+    },
+  });
+}
 
 export function resolveActiveThreadSearchMatchDate({
   threadSearchOpen,
@@ -504,6 +563,11 @@ export function ChatRoomThreadPanel({
   readOnly = false,
 }: ChatRoomThreadPanelProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
+  const accountId = useTypedRedux("account", "account_id");
+  const codexRuntimeVersion = useProjectMapField<string>(project_id, [
+    "state",
+    "tools_version",
+  ]);
   const showGitBrowserButton = useShowGitBrowserButton({ project_id, path });
   const codexNewChatDefaultsSetting = useAccountOtherSetting(
     OTHER_SETTINGS_CODEX_NEW_CHAT_DEFAULTS,
@@ -513,6 +577,15 @@ export function ChatRoomThreadPanel({
     [codexNewChatDefaultsSetting],
   );
   const [threadSearchOpen, setThreadSearchOpen] = useState(false);
+  const [newThreadCodexModelCatalog, setNewThreadCodexModelCatalog] = useState<
+    CodexModelCapabilityInfo[] | undefined
+  >(undefined);
+  const [newThreadCodexModelsLoading, setNewThreadCodexModelsLoading] =
+    useState(false);
+  const [newThreadCodexModelRefreshNonce, setNewThreadCodexModelRefreshNonce] =
+    useState(0);
+  const lastNewThreadCodexModelRefreshRef = useRef(0);
+  const lastNewThreadCodexModelScopeRef = useRef<string | undefined>(undefined);
   const [threadSearchInput, setThreadSearchInput] = useState("");
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [threadSearchCursor, setThreadSearchCursor] = useState(0);
@@ -558,6 +631,100 @@ export function ChatRoomThreadPanel({
   const anyOverlayOpen = useAnyChatOverlayOpen();
   const panelRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<any>(null);
+
+  useEffect(
+    () =>
+      subscribeToCodexModelCatalogInvalidation({
+        accountId,
+        onInvalidate: () => {
+          setNewThreadCodexModelCatalog(undefined);
+          setNewThreadCodexModelRefreshNonce((nonce) => nonce + 1);
+        },
+      }),
+    [accountId],
+  );
+
+  useEffect(() => {
+    const shouldLoad =
+      !selectedThreadKey &&
+      newThreadSetup.agentMode === "codex" &&
+      codexPaymentSource?.source === "subscription";
+    if (!shouldLoad) {
+      setNewThreadCodexModelsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const scope = `${accountId ?? ""}\0${project_id ?? ""}\0${codexRuntimeVersion ?? ""}\0${codexPaymentSource.subscriptionRevision ?? ""}`;
+    const scopeChanged = lastNewThreadCodexModelScopeRef.current !== scope;
+    lastNewThreadCodexModelScopeRef.current = scope;
+    const forceRefresh =
+      newThreadCodexModelRefreshNonce !==
+      lastNewThreadCodexModelRefreshRef.current;
+    lastNewThreadCodexModelRefreshRef.current = newThreadCodexModelRefreshNonce;
+    const cacheScope = {
+      accountId,
+      projectId: project_id,
+      runtimeVersion: codexRuntimeVersion,
+      subscriptionRevision: codexPaymentSource.subscriptionRevision,
+    };
+    const cachedCatalog = forceRefresh
+      ? undefined
+      : readCachedCodexModelCatalog(cacheScope);
+    const staleCatalog =
+      forceRefresh || cachedCatalog
+        ? undefined
+        : readCachedCodexModelCatalog({ ...cacheScope, allowExpired: true });
+    const applyCatalog = (catalog: CodexModelCapabilityInfo[]) => {
+      onNewThreadSetupChange((current) =>
+        reconcileNewThreadSetupWithCodexCatalog({ setup: current, catalog }),
+      );
+      setNewThreadCodexModelCatalog(catalog);
+    };
+    if (cachedCatalog) {
+      applyCatalog(cachedCatalog.models);
+      setNewThreadCodexModelsLoading(false);
+      return;
+    }
+    if (staleCatalog) {
+      applyCatalog(staleCatalog.models);
+    } else if (scopeChanged) {
+      setNewThreadCodexModelCatalog(undefined);
+    }
+    setNewThreadCodexModelsLoading(true);
+    void getLiveCodexUsageStatus({
+      projectId: project_id,
+      includeModels: true,
+      refreshModels: forceRefresh,
+    })
+      .then((status) => {
+        if (cancelled || !status.models?.length) return;
+        applyCatalog(status.models);
+        const checkedAt = Date.parse(status.modelsCheckedAt ?? "");
+        writeCachedCodexModelCatalog({
+          ...cacheScope,
+          models: status.models,
+          cachedAt: Number.isFinite(checkedAt) ? checkedAt : Date.now(),
+        });
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setNewThreadCodexModelsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    accountId,
+    codexPaymentSource?.source,
+    codexPaymentSource?.subscriptionRevision,
+    codexRuntimeVersion,
+    newThreadCodexModelRefreshNonce,
+    newThreadSetup.agentMode,
+    onNewThreadSetupChange,
+    project_id,
+    selectedThreadKey,
+  ]);
+
   const selectedThreadId = useMemo(
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
@@ -1223,20 +1390,25 @@ export function ChatRoomThreadPanel({
       label: string;
       description?: string;
       reasoning?: CodexReasoningLevel[];
+      serviceTiers?: string[];
+      default?: boolean;
+      disabled?: boolean;
     };
     const update = (patch: Partial<NewThreadSetup>) =>
       onNewThreadSetupChange((current) =>
         applyNewThreadSetupPatch(current, patch),
       );
     const codexModel = newThreadSetup.codexConfig.model ?? DEFAULT_CODEX_MODEL;
-    const codexModelOptions: ModelOption[] = DEFAULT_CODEX_MODELS.map(
-      (model) => ({
-        value: model.name,
-        label: model.name,
-        description: model.description,
-        reasoning: model.reasoning,
-      }),
-    );
+    const codexModelOptions: ModelOption[] =
+      codexPaymentSource?.source === "subscription"
+        ? codexModelOptionsForCatalog(newThreadCodexModelCatalog, codexModel)
+        : DEFAULT_CODEX_MODELS.map((model) => ({
+            value: model.name,
+            label: model.name,
+            description: model.description,
+            reasoning: model.reasoning,
+            serviceTiers: model.serviceTiers?.map(({ id }) => id),
+          }));
     const codexReasoningOptions = (
       codexModelOptions.find((model) => model.value === codexModel)
         ?.reasoning ?? []
@@ -1249,17 +1421,23 @@ export function ChatRoomThreadPanel({
     const stagedCodexDefaults = {
       model: codexModel,
       reasoning: getReasoningForModel({
+        models: codexModelOptions,
         modelValue: codexModel,
         desired: newThreadSetup.codexConfig.reasoning,
       }),
-      serviceTier: resolveCodexServiceTier({
+      serviceTier: resolveNewThreadCodexServiceTier({
+        models: codexModelOptions,
         model: codexModel,
         serviceTier: newThreadSetup.codexConfig.serviceTier,
       }),
       sessionMode:
         normalizeSessionMode(newThreadSetup.codexConfig) ?? defaultSessionMode,
     };
-    const codexFastModeSupported = codexModelSupportsFastMode(codexModel);
+    const codexFastModeSupported =
+      codexModelOptions
+        .find(({ value }) => value === codexModel)
+        ?.serviceTiers?.includes("fast") ??
+      codexModelSupportsFastMode(codexModel);
     const paymentSourceOptions =
       getCodexPaymentSourceOptions(codexPaymentSource);
     const siteFundedPolicy =
@@ -1286,9 +1464,12 @@ export function ChatRoomThreadPanel({
       : undefined;
     const selectAgentMode = (mode: NewThreadAgentMode) => {
       if (mode === "codex") {
-        const model = isCodexModelName(newThreadSetup.model)
-          ? newThreadSetup.model
-          : DEFAULT_CODEX_MODEL;
+        const model =
+          codexModelOptions.some(
+            ({ value }) => value === newThreadSetup.model,
+          ) || isCodexModelName(newThreadSetup.model)
+            ? newThreadSetup.model
+            : DEFAULT_CODEX_MODEL;
         update({
           agentMode: mode,
           automationConfig: buildAutomationDraft({
@@ -1304,8 +1485,14 @@ export function ChatRoomThreadPanel({
               normalizeSessionMode(newThreadSetup.codexConfig) ??
               defaultSessionMode,
             reasoning: getReasoningForModel({
+              models: codexModelOptions,
               modelValue: model,
               desired: newThreadSetup.codexConfig.reasoning,
+            }),
+            serviceTier: resolveNewThreadCodexServiceTier({
+              models: codexModelOptions,
+              model,
+              serviceTier: newThreadSetup.codexConfig.serviceTier,
             }),
           },
         });
@@ -1558,12 +1745,39 @@ export function ChatRoomThreadPanel({
                 }}
               >
                 <div>
-                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
-                    Codex model
+                  <div
+                    style={{
+                      alignItems: "center",
+                      color: COLORS.GRAY_D,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      marginBottom: 4,
+                    }}
+                  >
+                    <span>Codex model</span>
+                    {codexPaymentSource?.source === "subscription" ? (
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={
+                          <Icon
+                            name="refresh"
+                            spin={newThreadCodexModelsLoading}
+                          />
+                        }
+                        disabled={newThreadCodexModelsLoading}
+                        onClick={() =>
+                          clearCachedCodexModelCatalog({ accountId })
+                        }
+                      >
+                        Refresh models
+                      </Button>
+                    ) : null}
                   </div>
                   <Select
                     value={codexModel}
                     disabled={siteFundedPolicy != null}
+                    loading={newThreadCodexModelsLoading}
                     style={{ width: "100%" }}
                     options={codexModelOptions}
                     optionRender={(option) =>
@@ -1582,10 +1796,12 @@ export function ChatRoomThreadPanel({
                           ...newThreadSetup.codexConfig,
                           model,
                           reasoning: getReasoningForModel({
+                            models: codexModelOptions,
                             modelValue: model,
                             desired: newThreadSetup.codexConfig.reasoning,
                           }),
-                          serviceTier: resolveCodexServiceTier({
+                          serviceTier: resolveNewThreadCodexServiceTier({
+                            models: codexModelOptions,
                             model,
                             serviceTier: newThreadSetup.codexConfig.serviceTier,
                           }),
@@ -2785,20 +3001,48 @@ function formatBytes(value: unknown): string {
   return humanSize(n, { binary: true });
 }
 
-function getReasoningForModel({
+export function getReasoningForModel({
+  models,
   modelValue,
   desired,
 }: {
+  models?: readonly {
+    value: string;
+    reasoning?: CodexReasoningLevel[];
+  }[];
   modelValue?: string;
   desired?: CodexReasoningId;
 }): CodexReasoningId | undefined {
+  const availableModels =
+    models ??
+    DEFAULT_CODEX_MODELS.map(({ name: value, reasoning }) => ({
+      value,
+      reasoning,
+    }));
   const model =
-    DEFAULT_CODEX_MODELS.find((m) => m.name === modelValue) ??
-    DEFAULT_CODEX_MODELS[0];
+    availableModels.find(({ value }) => value === modelValue) ??
+    availableModels[0];
   const options = model?.reasoning ?? [];
   if (!options.length) return undefined;
   const match = options.find((r) => r.id === desired);
   return match?.id ?? options.find((r) => r.default)?.id ?? options[0]?.id;
+}
+
+export function resolveNewThreadCodexServiceTier({
+  models,
+  model,
+  serviceTier,
+}: {
+  models: readonly { value: string; serviceTiers?: string[] }[];
+  model?: string;
+  serviceTier?: CodexServiceTier;
+}): CodexServiceTier {
+  if (serviceTier !== "fast") return "standard";
+  const advertised = models.find(({ value }) => value === model);
+  const supportsFast =
+    advertised?.serviceTiers?.includes("fast") ??
+    codexModelSupportsFastMode(model);
+  return supportsFast ? "fast" : "standard";
 }
 
 function normalizeSessionMode(

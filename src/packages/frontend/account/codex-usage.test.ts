@@ -94,6 +94,33 @@ describe("Codex model catalog cache", () => {
         now: 1_000 + CODEX_MODEL_CATALOG_TTL_MS,
       }),
     ).toBeUndefined();
+    expect(
+      readCachedCodexModelCatalog({
+        accountId: "account-1",
+        projectId: "project-1",
+        runtimeVersion: "tools-v1",
+        subscriptionRevision: "subscription-v1",
+        now: 1_000 + CODEX_MODEL_CATALOG_TTL_MS,
+        allowExpired: true,
+      }),
+    ).toEqual({ cachedAt: 1_000, models });
+  });
+
+  it("caches catalogs while runtime metadata is temporarily unavailable", () => {
+    writeCachedCodexModelCatalog({
+      accountId: "account-1",
+      projectId: "project-1",
+      subscriptionRevision: "subscription-v1",
+      models,
+    });
+
+    expect(
+      readCachedCodexModelCatalog({
+        accountId: "account-1",
+        projectId: "project-1",
+        subscriptionRevision: "subscription-v1",
+      })?.models,
+    ).toEqual(models);
   });
 
   it("separates projects and explicitly clears every account catalog", () => {

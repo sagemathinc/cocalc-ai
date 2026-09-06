@@ -44,9 +44,15 @@ export async function getCodexSubscriptionIdentity(
     const login = codexAuthJsonToAppServerLogin(
       await fs.readFile(join(runtime.codexHome, "auth.json"), "utf8"),
     );
-    return login?.type === "chatgptAuthTokens"
-      ? login.chatgptAccountId
-      : undefined;
+    if (login?.type !== "chatgptAuthTokens") return undefined;
+    // The same ChatGPT account can gain or lose models after a plan or token
+    // refresh. Include the credential revision so one host cannot keep serving
+    // a catalog discovered with older account capabilities.
+    const credentialRevision = createHash("sha256")
+      .update(login.accessToken)
+      .digest("hex")
+      .slice(0, 16);
+    return `${login.chatgptAccountId}:${login.chatgptPlanType ?? "unknown"}:${credentialRevision}`;
   } catch {
     return undefined;
   }
