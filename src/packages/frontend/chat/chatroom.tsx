@@ -35,6 +35,13 @@ import { ChatRoomComposer } from "./composer";
 import { ChatRoomLayout } from "./chatroom-layout";
 import { ChatRoomSidebarContent } from "./chatroom-sidebar";
 import { GitCommitDrawer } from "./git-commit-drawer";
+import {
+  APP_NAVIGATION_EVENT,
+  ownsGitReviewRoute,
+  readGitReviewRoute,
+  writeGitReviewRoute,
+  type GitReviewRoute,
+} from "@cocalc/frontend/git/review-route";
 import type { ChatRoomModalHandlers } from "./chatroom-modals";
 import { ChatRoomModals } from "./chatroom-modals";
 import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
@@ -937,6 +944,50 @@ export function ChatPanel({
   const [gitBrowserThreadKey, setGitBrowserThreadKey] = useState<
     string | undefined
   >(undefined);
+  const lastAppliedGitRouteRef = useRef<string | undefined>(undefined);
+  const updateGitBrowserRoute = useCallback(
+    (route?: GitReviewRoute, push = false) => {
+      if (!ownsGitReviewRoute(new URL(window.location.href), project_id, path))
+        return;
+      writeGitReviewRoute(project_id, path, route, push);
+      lastAppliedGitRouteRef.current = JSON.stringify(route ?? null);
+    },
+    [project_id, path],
+  );
+  useEffect(() => {
+    if (readOnly || !isVisible || !tabIsVisible) return;
+    const restore = () => {
+      const url = new URL(window.location.href);
+      if (!ownsGitReviewRoute(url, project_id, path)) {
+        lastAppliedGitRouteRef.current = undefined;
+        setGitBrowserOpen(false);
+        return;
+      }
+      const route = readGitReviewRoute(url);
+      const key = JSON.stringify(route ?? null);
+      if (lastAppliedGitRouteRef.current === key) return;
+      lastAppliedGitRouteRef.current = key;
+      setGitBrowserCwd(route?.cwd);
+      setGitBrowserCommitHash(route?.commit);
+      setGitBrowserThreadKey(undefined);
+      setGitBrowserCommitSelectionRequestToken((current) => current + 1);
+      setGitBrowserOpen(route != null);
+    };
+    restore();
+    window.addEventListener("popstate", restore);
+    window.addEventListener(APP_NAVIGATION_EVENT, restore);
+    return () => {
+      window.removeEventListener("popstate", restore);
+      window.removeEventListener(APP_NAVIGATION_EVENT, restore);
+    };
+  }, [project_id, path, readOnly, isVisible, tabIsVisible]);
+
+  const syncGitBrowserSelection = useCallback(
+    (commit: string) => {
+      updateGitBrowserRoute({ commit, cwd: gitBrowserCwd });
+    },
+    [updateGitBrowserRoute, gitBrowserCwd],
+  );
   const [activityJumpDate, setActivityJumpDate] = useState<string | undefined>(
     undefined,
   );
@@ -2254,8 +2305,9 @@ export function ChatPanel({
       setGitBrowserCommitHash(undefined);
       setGitBrowserCommitSelectionRequestToken((current) => current + 1);
       setGitBrowserOpen(true);
+      updateGitBrowserRoute({ commit: "HEAD", cwd: wd }, true);
     },
-    [actions],
+    [actions, updateGitBrowserRoute],
   );
 
   const openAutomationModalForThread = useCallback(
@@ -2293,8 +2345,15 @@ export function ChatPanel({
       setGitBrowserCommitHash(`${commitHash ?? ""}`.trim() || undefined);
       setGitBrowserCommitSelectionRequestToken((current) => current + 1);
       setGitBrowserOpen(true);
+      updateGitBrowserRoute(
+        {
+          commit: commitHash?.trim() || "HEAD",
+          cwd: cwdOverride?.trim() || undefined,
+        },
+        true,
+      );
     },
-    [],
+    [updateGitBrowserRoute],
   );
 
   const sendGitBrowserAgentPrompt = useCallback(
@@ -2349,8 +2408,9 @@ export function ChatPanel({
       await findInChatAndOpenFirstResult({ actions, project_id, path, query });
       setGitBrowserOpen(false);
       setGitBrowserThreadKey(undefined);
+      updateGitBrowserRoute();
     },
-    [actions, path, project_id],
+    [actions, path, project_id, updateGitBrowserRoute],
   );
 
   const openActivityFromGitBrowser = useCallback(() => {
@@ -2373,10 +2433,17 @@ export function ChatPanel({
     }
     setGitBrowserOpen(false);
     setGitBrowserThreadKey(undefined);
+    updateGitBrowserRoute();
     setActivityJumpAttentionId(undefined);
     setActivityJumpDate(`${newestCodexDate}`);
     setActivityJumpToken((n) => n + 1);
-  }, [actions, gitBrowserThreadKey, selectedThreadKey, setSelectedThreadKey]);
+  }, [
+    actions,
+    gitBrowserThreadKey,
+    selectedThreadKey,
+    setSelectedThreadKey,
+    updateGitBrowserRoute,
+  ]);
 
   const selectedThreadMenuControl =
     !readOnly && selectedThreadKey && selectedThread ? (
@@ -2891,17 +2958,30 @@ export function ChatPanel({
             commitHash={gitBrowserCommitHash}
             commitSelectionRequestToken={gitBrowserCommitSelectionRequestToken}
             open={gitBrowserOpen}
+            onSelectedCommitChange={syncGitBrowserSelection}
             onClose={() => {
               setGitBrowserOpen(false);
               setGitBrowserThreadKey(undefined);
+              updateGitBrowserRoute();
             }}
             fontSize={fontSize}
             onIncreaseFontSize={onIncreaseFontSize}
             onDecreaseFontSize={onDecreaseFontSize}
-            onRequestAgentTurn={sendGitBrowserAgentPrompt}
-            onDirectCommitLogged={logGitBrowserDirectCommit}
+            onRequestAgentTurn={
+              gitBrowserThreadKey ? sendGitBrowserAgentPrompt : undefined
+            }
+            reviewSubmissionHelpText={
+              gitBrowserThreadKey
+                ? undefined
+                : "Open Git review from an agent thread to send feedback. A review URL does not select an agent or change its working directory."
+            }
+            onDirectCommitLogged={
+              gitBrowserThreadKey ? logGitBrowserDirectCommit : undefined
+            }
             onFindInChat={findCommitInCurrentChat}
-            onOpenActivityLog={openActivityFromGitBrowser}
+            onOpenActivityLog={
+              gitBrowserThreadKey ? openActivityFromGitBrowser : undefined
+            }
           />
         </>
       ) : null}

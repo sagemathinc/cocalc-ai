@@ -258,6 +258,7 @@ interface GitCommitDrawerProps {
   commitSelectionRequestToken?: number;
   open: boolean;
   onClose: () => void;
+  onSelectedCommitChange?: (commit: string) => void;
   fontSize?: number;
   onRequestAgentTurn?: (
     prompt: string,
@@ -442,6 +443,7 @@ export function GitCommitDrawer({
   commitSelectionRequestToken = 0,
   open,
   onClose,
+  onSelectedCommitChange,
   fontSize = 14,
   onRequestAgentTurn,
   onDirectCommitLogged,
@@ -525,6 +527,9 @@ export function GitCommitDrawer({
     requestTokenChanged: hasPendingCommitSelectionRequest,
   });
   const isHeadSelected = isHeadCommit(commit);
+  useEffect(() => {
+    if (open && commit) onSelectedCommitChange?.(commit);
+  }, [open, commit, onSelectedCommitChange]);
   const effectiveFontSize =
     onIncreaseFontSize != null || onDecreaseFontSize != null
       ? fontSize

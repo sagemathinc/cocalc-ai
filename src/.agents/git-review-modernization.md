@@ -193,7 +193,26 @@ Custom-header integration spike completed:
   Do not work around that restriction or call the stubbed Slate tests full-app
   validation. Arrange a supported session or maintainer-driven editor checks.
 
-Still pending: real Slate lifecycle checks and native diff clipboard tests;
+Chat review URL navigation implemented:
+
+- `git-hash=<commit>` (or `HEAD` for working changes) opens the matching chat's
+  drawer; optional `git-cwd` retains its repository/worktree locator. Commit
+  navigation replaces the selection in the URL, opening adds a history entry,
+  and dismissal removes only review parameters. No repository scan or checkout.
+- Direct landing state survives the app's intermediate project-directory URL
+  during startup, but ordinary navigation does not carry it to another file.
+  Back/Forward restore drawer state; unrelated query/fragment updates do not
+  reset its thread association. URL inputs use the existing drawer's validated
+  commit parser; SHA-256 UI support still belongs to the pending facade wiring.
+- A URL does not authorize association with the currently selected agent:
+  submission/activity/logging callbacks are unavailable until opened from a
+  thread. Full validated worktree-aware agent routing remains pending.
+- Real signed-in Chrome tests cover initial deep links, commit navigation,
+  reload, Escape dismissal, opening from the Git button and Back, and preserving
+  unrelated parameters. Run `git/review-route.browser-test.mjs` with an explicit
+  chat URL and commit; it uses CDP and creates/closes only its own test tab.
+
+Still pending: remaining Slate lifecycle checks and native diff clipboard tests;
 production renderer toggle and adapter wiring; worktree/ref/comparison controls;
 arbitrary-revision TimeTravel wiring; comparison persistence and canonical-key
 migration; validated agent routing; activity adaptation; release acceptance and
@@ -562,14 +581,16 @@ It defaults to `/usr/bin/chromium`; override with `CHROMIUM_PATH`. Full live-app
 automation is still outstanding: hub discovery returned no active sessions and
 dedicated spawning could not obtain cookie-backed authentication in this runtime.
 The maintainer subsequently supplied an isolated signed-in Chrome through CDP
-on port 9222, and live preview inspection now works. A reported image disappearing
-after scrolling retains its Markdown source and reappears on mode toggling.
-Markdown-inserted images survived automated unmount/remount trials; the exact
-reported failure has not yet been reproduced. A related Slate sizing defect was
-confirmed with a regression test: a hidden/detached image load overwrote valid
-dimensions with zero. The load handler now ignores zero-size measurements.
-Do not consider the real image-paste/scroll acceptance gate passed on that basis
-alone; inspect a failing live comment and repeat paste, scroll, resize, and undo.
+on port 9222, and live preview inspection now works. The disappearing comment
+image was observed with naturalWidth 1194 but rendered width/height zero and an
+inline width of 0px, while its Markdown source remained present. A regression
+test confirms the old image-load handler overwrote dimensions with zero when
+layout was unavailable. The handler now ignores zero-size measurements.
+The maintainer confirmed the fix; the rebuilt frontend also passed 15 real
+Slate/Pierre unmount/remount cycles with the same image in a temporary comment
+(final rendered size 694x838). That automated trial inserted the image through
+Markdown mode, not the upload pipeline. In-flight uploads and local undo remain
+separate acceptance gates; do not infer them from image rendering persistence.
 
 Large-diff benchmarks, real Slate image-paste/undo, and virtualized source copying
 remain acceptance gates. The preview is not a production renderer replacement.
