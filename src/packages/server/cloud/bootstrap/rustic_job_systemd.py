@@ -8,6 +8,9 @@ import signal
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
+from unittest import mock
+import uuid
 
 import bootstrap
 
@@ -61,9 +64,10 @@ def main():
     helper = Path("/usr/local/libexec/cocalc-rustic-job")
     path_helper = Path("/usr/local/libexec/cocalc-runtime-storage-path-helper")
     binary = Path("/usr/local/libexec/cocalc-rustic")
+    wrapper = Path("/usr/local/sbin/cocalc-runtime-storage")
     policy_path = Path("/etc/cocalc/rustic-job-policy.json")
     root = Path("/mnt/cocalc/rustic-job-qualification")
-    for path in [helper, path_helper, binary, policy_path, root]:
+    for path in [helper, path_helper, binary, wrapper, policy_path, root]:
         assert not os.path.lexists(path), f"refusing to replace existing {path}"
     api = {"__name__": "test_job"}
     exec(bootstrap.RUSTIC_JOB_HELPER, api)
@@ -77,7 +81,7 @@ def main():
         path.chmod(mode)
 
     def profile(name):
-        path = root / f"{name}.toml"
+        path = Path("/mnt/cocalc/data/secrets/rustic") / f"project-{uuid.uuid4()}.toml"
         install(path, '''[repository]
 repository = "opendal:s3"
 password = "disposable"
@@ -98,11 +102,16 @@ secret_access_key = "disposable"
                 "--profile-root", "/mnt/cocalc", "--profile-path", profile_name,
                 "--host", "qualification"]
 
-    def start(name, mode, profile_name):
+    def start(name, mode, profile_name, through_sudo=False):
         case = root / name
         case.mkdir()
         (case / "mode").write_text(mode)
-        proc = subprocess.Popen([str(helper), "run", *args(case, profile_name)],
+        command = [str(helper), "run", *args(case, profile_name)]
+        if through_sudo:
+            command = ["/usr/sbin/runuser", "-u", "runner", "--", "/usr/bin/sudo", "-n", str(wrapper),
+                       "project-rustic-backup-supervised", str(case),
+                       "/mnt/cocalc/" + profile_name, "qualification"]
+        proc = subprocess.Popen(command,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         processes.append(proc)
         return case, proc
@@ -138,6 +147,12 @@ secret_access_key = "disposable"
         install(helper, bootstrap.RUSTIC_JOB_HELPER, 0o755)
         install(path_helper, bootstrap.RUNTIME_STORAGE_PATH_HELPER, 0o755)
         install(binary, FAKE_RUSTIC, 0o755)
+        captured = {}
+        with mock.patch.object(bootstrap, "text_write_atomic", side_effect=lambda path, data, **_: captured.__setitem__(str(path), data)), \
+             mock.patch.object(bootstrap.os, "chown"), mock.patch.object(bootstrap.os, "chmod"), \
+             mock.patch.object(bootstrap, "write_project_io_configuration"):
+            bootstrap.install_privileged_wrappers(SimpleNamespace(ssh_user="runner", container_runtime_bundle=None))
+        install(wrapper, captured[str(wrapper)], 0o755)
         # Numeric values are only adversarial test budgets, not fleet policy.
         install(policy_path, json.dumps({
             "version": 1, "runtime_seconds": 8, "kill_grace_seconds": 2,
@@ -151,6 +166,20 @@ secret_access_key = "disposable"
         barrier(case, shared)
         _case, proc = start("failure", "failure", shared)
         result(proc, False)
+
+        case, proc = start("sudo-normal", "normal", shared, through_sudo=True)
+        assert json.loads(result(proc, True)[0])["ok"]
+        subprocess.run([str(wrapper), "project-rustic-backup-wait", str(case),
+                        "/mnt/cocalc/" + shared, "qualification"], check=True, timeout=35)
+
+        case, proc = start("sudo-caller-death", "hang", shared, through_sudo=True)
+        identity = await_started(case, proc)
+        proc.kill()
+        proc.wait(timeout=5)
+        subprocess.run([str(wrapper), "project-rustic-backup-wait", str(case),
+                        "/mnt/cocalc/" + shared, "qualification"], check=True, timeout=35)
+        assert_gone(identity, immediate=True)
+        proc.communicate(timeout=5)
 
         case, proc = start("deadline", "hang", shared)
         identity = await_started(case, proc)
@@ -212,7 +241,8 @@ secret_access_key = "disposable"
         assert_gone(json.loads((case / "started").read_text()))
         barrier(case, shared)
         print(json.dumps({"ok": True, "cases": ["normal", "failure", "deadline",
-              "caller-death", "closed-fds", "worker-death", "same-repo", "host-full", "orphan", "oom"]}))
+              "sudo-normal", "sudo-caller-death", "caller-death", "closed-fds",
+              "worker-death", "same-repo", "host-full", "orphan", "oom"]}))
     finally:
         for proc in processes:
             if proc.poll() is None:
@@ -220,7 +250,7 @@ secret_access_key = "disposable"
                 proc.wait(timeout=5)
         # Leases/deadlines still apply if an assertion interrupted the test.
         time.sleep(12)
-        for path in [helper, path_helper, binary, policy_path]:
+        for path in [helper, path_helper, binary, wrapper, policy_path, *profiles]:
             path.unlink(missing_ok=True)
         shutil.rmtree(root)
 

@@ -4,6 +4,8 @@
  */
 
 import { executeCode } from "@cocalc/backend/execute-code";
+import exec, { parseOutput } from "@cocalc/backend/sandbox/exec";
+import { RusticJobCleanupError } from "@cocalc/file-server/btrfs/rustic-job-errors";
 import {
   createRusticProgressHandler,
   type RusticProgressUpdate,
@@ -12,6 +14,51 @@ import { getBtrfsMutationContext } from "@cocalc/file-server/btrfs/operation-cac
 import type { ExecuteCodeStreamEvent } from "@cocalc/util/types/execute-code";
 
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
+
+// Rollout gate only: resource limits come from the root-owned policy, never
+// this environment. Do not enable until that policy and helper are qualified.
+export function managedRusticSupervisionEnabled(): boolean {
+  const value = process.env.COCALC_MANAGED_RUSTIC_SUPERVISION;
+  if (value == null || value === "0") return false;
+  if (value === "1") return true;
+  throw new Error("COCALC_MANAGED_RUSTIC_SUPERVISION must be 0 or 1");
+}
+
+async function waitForRusticJob(
+  command: ProjectRusticCommand,
+  args: string[],
+): Promise<void> {
+  const barrier = command.startsWith("project-rustic-backup")
+    ? "project-rustic-backup-wait"
+    : "project-rustic-restore-wait";
+  try {
+    parseOutput(
+      await exec({
+        cmd: "/usr/bin/sudo",
+        prefixArgs: ["-n", STORAGE_WRAPPER, barrier, ...args],
+        timeout: 100_000,
+        maxSize: 64 * 1024,
+        killProcessGroup: true,
+      }),
+    );
+  } catch (error) {
+    throw new RusticJobCleanupError(error);
+  }
+}
+
+export async function projectRusticBackupWait({
+  src,
+  repoProfile,
+  host,
+}: {
+  src: string;
+  repoProfile: string;
+  host: string;
+}): Promise<void> {
+  if (managedRusticSupervisionEnabled()) {
+    await waitForRusticJob("project-rustic-backup", [src, repoProfile, host]);
+  }
+}
 
 function isBackgroundBtrfsMutation(): boolean {
   const priority = getBtrfsMutationContext().priority;
@@ -106,6 +153,30 @@ async function runProjectRustic({
   timeoutMs: number;
   onProgress?: (update: RusticProgressUpdate) => void;
 }): Promise<{ stdout: string; stderr: string }> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("Rustic timeout must be finite and positive");
+  }
+  if (managedRusticSupervisionEnabled()) {
+    try {
+      // Never fall back to an unsupervised job when the rollout gate is enabled.
+      // This executor rejects partial output and waits for its process to exit;
+      // the separate root barrier also covers sudo survivors and caller death.
+      return parseOutput(
+        await exec({
+          cmd: "/usr/bin/sudo",
+          prefixArgs: ["-n", STORAGE_WRAPPER, `${command}-supervised`, ...args],
+          timeout: timeoutMs,
+          maxSize: 8 * 1024 * 1024,
+          killProcessGroup: true,
+          onStderrLine: onProgress
+            ? createRusticProgressHandler({ onProgress })
+            : undefined,
+        }),
+      );
+    } finally {
+      await waitForRusticJob(command, args);
+    }
+  }
   const hooks = createRusticStreamHooks({ onProgress });
   const result = await executeCode({
     verbose: false,

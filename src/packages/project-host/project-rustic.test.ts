@@ -4,6 +4,8 @@
  */
 
 import { executeCode } from "@cocalc/backend/execute-code";
+import exec from "@cocalc/backend/sandbox/exec";
+import { RusticJobCleanupError } from "@cocalc/file-server/btrfs/rustic-job-errors";
 import { withBtrfsMutationContext } from "@cocalc/file-server/btrfs/operation-cache";
 
 import {
@@ -15,12 +17,107 @@ import {
 jest.mock("@cocalc/backend/execute-code", () => ({
   executeCode: jest.fn(),
 }));
+jest.mock("@cocalc/backend/sandbox/exec", () => ({
+  ...jest.requireActual("@cocalc/backend/sandbox/exec"),
+  __esModule: true,
+  default: jest.fn(),
+}));
 
 const mockedExecuteCode = jest.mocked(executeCode);
+const mockedExec = jest.mocked(exec);
 
 describe("project rustic wrapper", () => {
   beforeEach(() => {
     mockedExecuteCode.mockReset();
+    mockedExec.mockReset();
+    delete process.env.COCALC_MANAGED_RUSTIC_SUPERVISION;
+  });
+  afterEach(() => {
+    delete process.env.COCALC_MANAGED_RUSTIC_SUPERVISION;
+  });
+
+  const supervisedBackup = () =>
+    projectRusticBackup({
+      src: "/mnt/cocalc/staging/home",
+      repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+      host: "project-1",
+      timeoutMs: 30_000,
+    });
+  const output = (text: string, code = 0, truncated = false) => ({
+    stdout: Buffer.from(text),
+    stderr: Buffer.alloc(0),
+    code,
+    truncated,
+  });
+
+  it("waits for the root-owned barrier before returning successful output", async () => {
+    process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockedExec.mockResolvedValueOnce(
+      output('{"id":"test","time":"2026-09-05T00:00:00Z"}'),
+    );
+    mockedExec.mockImplementationOnce(async () => {
+      await barrier;
+      return output("");
+    });
+    let completed = false;
+    const pending = supervisedBackup().then(() => {
+      completed = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mockedExec).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        prefixArgs: expect.arrayContaining(["project-rustic-backup-wait"]),
+      }),
+    );
+    expect(completed).toBe(false);
+    release();
+    await pending;
+    expect(mockedExecuteCode).not.toHaveBeenCalled();
+  });
+
+  it("retains staging when the root-owned barrier cannot prove cleanup", async () => {
+    process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+    mockedExec.mockResolvedValueOnce(output('{"id":"test"}', 0));
+    mockedExec.mockResolvedValueOnce(output("", 1));
+    await expect(supervisedBackup()).rejects.toBeInstanceOf(
+      RusticJobCleanupError,
+    );
+  });
+
+  it.each([
+    output('{"id":"test"}', 1),
+    output('{"id":"test"}', 0, true),
+    { ...output('{"id":"test"}'), code: null },
+  ])(
+    "rejects incomplete execution evidence and still runs the barrier",
+    async (result) => {
+      process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+      mockedExec.mockResolvedValueOnce(result);
+      mockedExec.mockResolvedValueOnce(output(""));
+      await expect(supervisedBackup()).rejects.toThrow();
+      expect(mockedExec).toHaveBeenCalledTimes(2);
+      expect(mockedExecuteCode).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not bypass supervision after a spawn or unsupported-wrapper error", async () => {
+    process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+    mockedExec.mockRejectedValueOnce(new Error("unsupported-command"));
+    mockedExec.mockResolvedValueOnce(output(""));
+    await expect(supervisedBackup()).rejects.toThrow("unsupported-command");
+    expect(mockedExecuteCode).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid supervision configuration rather than disabling it", async () => {
+    process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "true";
+    await expect(supervisedBackup()).rejects.toThrow("must be 0 or 1");
+    expect(mockedExecuteCode).not.toHaveBeenCalled();
+    expect(mockedExec).not.toHaveBeenCalled();
   });
 
   it("backs up through the privileged runtime storage wrapper", async () => {

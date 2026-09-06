@@ -2718,10 +2718,13 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 bootstrap.RUNTIME_STORAGE_PATH_HELPER,
             )
             self.assertIn(
-                "project-rustic-backup|project-rustic-backup-maintenance)",
+                "project-rustic-backup|project-rustic-backup-maintenance|",
                 script,
             )
-            self.assertIn("project-rustic-restore)", script)
+            self.assertIn("project-rustic-restore|project-rustic-restore-supervised|project-rustic-restore-wait)", script)
+            self.assertIn("project-rustic-backup-maintenance-supervised|project-rustic-backup-wait)", script)
+            self.assertIn("rustic_command=(/usr/local/libexec/cocalc-rustic-job run)", script)
+            self.assertIn("rustic_command=(/usr/local/libexec/cocalc-rustic-job wait)", script)
             self.assertIn(
                 "rustic-project-backup",
                 bootstrap.RUNTIME_STORAGE_PATH_HELPER,
@@ -3039,7 +3042,7 @@ reserve_project_startup_io_capacity
             self.assertIn("attach_maintenance_worker", script)
             self.assertIn("btrfs|btrfs-maintenance)", script)
             self.assertIn(
-                "project-rustic-backup|project-rustic-backup-maintenance)",
+                "project-rustic-backup|project-rustic-backup-maintenance|",
                 script,
             )
             self.assertIn(
