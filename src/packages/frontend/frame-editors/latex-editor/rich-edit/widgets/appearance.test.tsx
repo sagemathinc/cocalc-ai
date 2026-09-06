@@ -4,6 +4,7 @@ import type { WidgetProps } from "../types";
 import { Author, DateWidget, Maketitle, Title } from "./document";
 import { Widget } from "./common";
 import { renderInline } from "./render-inline";
+import { TabularEnv } from "./tabular";
 
 jest.mock("@cocalc/frontend/components", () => ({
   Tooltip: ({ children }) => <>{children}</>,
@@ -19,6 +20,31 @@ const props: WidgetProps = {
   },
   onActivate: jest.fn(),
 };
+
+it("uses visible table rules only where the source specifies them", () => {
+  render(
+    <TabularEnv
+      {...props}
+      descriptor={{
+        ...props.descriptor,
+        type: "tabular-env",
+        payload: {
+          alignments: ["l", "r"],
+          rows: [
+            { kind: "border" },
+            { kind: "data", cells: ["A", "B"] },
+            { kind: "border" },
+            { kind: "data", cells: ["C", "D"] },
+          ],
+        },
+      }}
+    />,
+  );
+  const rows = screen.getAllByRole("row");
+  expect(rows[0].style.borderBottom).toBe(`1px solid ${UI_COLORS.secondary}`);
+  expect(rows[1].style.borderBottom).toBe(`1px solid ${UI_COLORS.secondary}`);
+  expect(rows[2].style.borderBottom).toBe("");
+});
 
 it.each([Title, Author, DateWidget])(
   "themes document preview text: %p",

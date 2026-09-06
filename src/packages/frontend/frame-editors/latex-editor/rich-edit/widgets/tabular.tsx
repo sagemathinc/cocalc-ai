@@ -42,7 +42,8 @@ const CELL_STYLE_BASE = {
 } as const;
 
 const BORDER_ROW_STYLE = {
-  borderBottom: `1px solid ${UI_COLORS.border}`,
+  // Table rules need contrast against editor themes, not just UI surfaces.
+  borderBottom: `1px solid ${UI_COLORS.secondary}`,
 } as const;
 
 const EMPTY_BORDER_CELL_STYLE = { padding: 0, lineHeight: "4px" } as const;
