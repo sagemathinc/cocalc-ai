@@ -15,6 +15,7 @@ import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   Alert,
   Button,
@@ -223,9 +224,10 @@ export function DocsPrivateNotesPanel({
     <Card
       size="small"
       style={{
-        background: "#fff",
-        border: `1px solid ${COLORS.GRAY_LL}`,
-        borderLeft: `4px solid ${starred ? COLORS.STAR : COLORS.GRAY_L}`,
+        background: UI_COLORS.surface,
+        color: UI_COLORS.text,
+        border: `1px solid ${UI_COLORS.border}`,
+        borderLeft: `4px solid ${starred ? COLORS.STAR : UI_COLORS.border}`,
         boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
       }}
       title={
@@ -289,7 +291,7 @@ export function DocsPrivateNotesPanel({
                 <div
                   key={note.note_id}
                   style={{
-                    border: `1px solid ${COLORS.GRAY_LL}`,
+                    border: `1px solid ${UI_COLORS.border}`,
                     borderRadius: 6,
                     padding: 10,
                   }}
@@ -356,8 +358,9 @@ export function DocsLearnedControl({
     <Card
       size="small"
       style={{
-        background: learned ? COLORS.BS_GREEN_LL : "#fff",
-        border: `1px solid ${learned ? COLORS.BS_GREEN : COLORS.GRAY_LL}`,
+        background: learned ? UI_COLORS.successBg : UI_COLORS.surface,
+        color: UI_COLORS.text,
+        border: `1px solid ${learned ? UI_COLORS.success : UI_COLORS.border}`,
         boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
       }}
     >
@@ -369,9 +372,15 @@ export function DocsLearnedControl({
         >
           <Space>
             {learned ? (
-              <CheckCircleFilled style={{ color: COLORS.BS_GREEN_D }} />
+              <CheckCircleFilled
+                aria-hidden
+                style={{ color: UI_COLORS.success }}
+              />
             ) : (
-              <CheckCircleOutlined style={{ color: COLORS.GRAY_M }} />
+              <CheckCircleOutlined
+                aria-hidden
+                style={{ color: UI_COLORS.secondary }}
+              />
             )}
             <Text strong>Done - I learned this page</Text>
           </Space>
