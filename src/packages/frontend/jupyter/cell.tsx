@@ -30,7 +30,6 @@ import { Position } from "./insert-cell/types";
 import { StudioCell } from "./studio/studio-cell";
 import type { StudioLayout } from "./studio/types";
 import { NBGraderMetadata } from "./nbgrader/cell-metadata";
-import { INPUT_PROMPT_COLOR } from "./prompt/base";
 import { withDisplayedCellRuntime } from "./run-cell-overlay";
 
 interface Props {
@@ -518,7 +517,7 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
 
     if (props.is_current || props.is_selected) {
       // style.color = COLORS.BS_RED;
-      style.color = INPUT_PROMPT_COLOR; // should be the same as the prompt; it's not an error.
+      style.color = UI_COLORS.link;
     }
 
     if (props.height) {

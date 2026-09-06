@@ -473,7 +473,6 @@ export function Kernel({
             })}
           >
             <Button
-              style={{ marginTop: compact ? 0 : "-2.5px" }}
               danger
               onClick={(e) => {
                 // don't let the click bubble to the surrounding kernel-info

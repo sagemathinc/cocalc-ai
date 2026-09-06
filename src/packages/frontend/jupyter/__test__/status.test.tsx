@@ -44,6 +44,36 @@ describe("Kernel", () => {
   });
 
   it.each([false, true])(
+    "does not offset the trust button above the header (compact=%s)",
+    (compact) => {
+      const state = {
+        trust: false,
+        kernel: "python3",
+        kernels: immutable.List(),
+        read_only: false,
+        backend_state: "running",
+        kernel_state: "idle",
+        runProgress: 0,
+      };
+      useRedux.mockImplementation(([, key]) => state[key]);
+      getProjectActions.mockReturnValue({ project_id: "project-1" });
+      render(
+        <IntlProvider locale="en" messages={{}}>
+          <Kernel
+            actions={{ name: "jupyter-test", project_id: "project-1" } as any}
+            compact={compact}
+            onLayoutChange={jest.fn()}
+          />
+        </IntlProvider>,
+      );
+      const button = screen.getByRole("button", { name: "Not Trusted" });
+      expect(button.style.marginTop).toBe("");
+      button.focus();
+      expect(button).toHaveFocus();
+    },
+  );
+
+  it.each([false, true])(
     "themes the header (compact=%s) and falls back to actions.project_id",
     (compact) => {
       const actions = {
