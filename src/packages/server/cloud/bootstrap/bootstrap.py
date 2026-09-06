@@ -4586,7 +4586,7 @@ def run_rustic(
             values["path"],
             O_PATH | os.O_DIRECTORY | os.O_CLOEXEC,
         )
-        if native is not None and command == "rustic-project-backup":
+        if native is not None and command.endswith("backup"):
             require_readonly_btrfs_source(datafd)
         profile_data = read_validated_rustic_profile(
             profile_rootfd, values["profile-path"]
@@ -8556,7 +8556,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     printf '%s\n' "$normalize_result"
     exit 0
     ;;
-  rootfs-rustic-backup)
+  rootfs-rustic-backup|rootfs-rustic-backup-supervised|rootfs-rustic-backup-wait)
     if [ "$#" -lt 3 ]; then
       echo "usage: cocalc-runtime-storage rootfs-rustic-backup <src> <repo-profile> <host> [rustic args...]" >&2
       exit 2
@@ -8584,8 +8584,15 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     source_root="$ALLOWED_PATH_ROOT"
     source_rel="$ALLOWED_PATH_REL"
     set_rustic_profile_parts "$repo_profile"
-    prepare_privileged_rustic_cache
-    exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+    if [ "$cmd" != "rootfs-rustic-backup-wait" ]; then
+      prepare_privileged_rustic_cache
+    fi
+    rustic_command=(/usr/local/libexec/cocalc-runtime-storage-path-helper)
+    case "$cmd" in
+      *-supervised) rustic_command=(/usr/local/libexec/cocalc-rustic-job run) ;;
+      *-wait) rustic_command=(/usr/local/libexec/cocalc-rustic-job wait) ;;
+    esac
+    exec "${rustic_command[@]}" \
       rustic-rootfs-backup \
       --root "$source_root" \
       --path "$source_rel" \
@@ -8594,7 +8601,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       --host "$host_name" \
       "${tag_args[@]}"
     ;;
-  rootfs-rustic-restore)
+  rootfs-rustic-restore|rootfs-rustic-restore-supervised|rootfs-rustic-restore-wait)
     if [ "$#" -lt 3 ]; then
       echo "usage: cocalc-runtime-storage rootfs-rustic-restore <repo-profile> <snapshot> <dest> [rustic args...]" >&2
       exit 2
@@ -8614,8 +8621,15 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     dest_root="$ALLOWED_PATH_ROOT"
     dest_rel="$ALLOWED_PATH_REL"
     set_rustic_profile_parts "$repo_profile"
-    prepare_privileged_rustic_cache
-    exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+    if [ "$cmd" != "rootfs-rustic-restore-wait" ]; then
+      prepare_privileged_rustic_cache
+    fi
+    rustic_command=(/usr/local/libexec/cocalc-runtime-storage-path-helper)
+    case "$cmd" in
+      *-supervised) rustic_command=(/usr/local/libexec/cocalc-rustic-job run) ;;
+      *-wait) rustic_command=(/usr/local/libexec/cocalc-rustic-job wait) ;;
+    esac
+    exec "${rustic_command[@]}" \
       rustic-rootfs-restore \
       --root "$dest_root" \
       --path "$dest_rel" \

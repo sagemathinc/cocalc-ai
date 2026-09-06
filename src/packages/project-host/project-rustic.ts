@@ -25,12 +25,10 @@ export function managedRusticSupervisionEnabled(): boolean {
 }
 
 async function waitForRusticJob(
-  command: ProjectRusticCommand,
+  command: ManagedRusticCommand,
   args: string[],
 ): Promise<void> {
-  const barrier = command.startsWith("project-rustic-backup")
-    ? "project-rustic-backup-wait"
-    : "project-rustic-restore-wait";
+  const barrier = `${command.replace(/-maintenance$/, "")}-wait`;
   try {
     parseOutput(
       await exec({
@@ -69,6 +67,11 @@ type ProjectRusticCommand =
   | "project-rustic-backup"
   | "project-rustic-backup-maintenance"
   | "project-rustic-restore";
+
+type ManagedRusticCommand =
+  | ProjectRusticCommand
+  | "rootfs-rustic-backup"
+  | "rootfs-rustic-restore";
 
 export class ProjectRusticUnsupportedError extends Error {
   constructor(
@@ -124,7 +127,7 @@ function toTimeoutSeconds(timeoutMs: number): number {
 }
 
 function isUnsupportedCommandError(
-  command: ProjectRusticCommand,
+  command: ManagedRusticCommand,
   stderr: string,
 ): boolean {
   if (
@@ -142,13 +145,15 @@ function isUnsupportedCommandError(
   );
 }
 
-async function runProjectRustic({
+// All managed callers share timeout units, strict execution evidence and the
+// independent root cleanup barrier. RootFS must not have a direct-sudo bypass.
+export async function runManagedRustic({
   command,
   args,
   timeoutMs,
   onProgress,
 }: {
-  command: ProjectRusticCommand;
+  command: ManagedRusticCommand;
   args: string[];
   timeoutMs: number;
   onProgress?: (update: RusticProgressUpdate) => void;
@@ -193,8 +198,14 @@ async function runProjectRustic({
   const stdout = `${result.stdout ?? ""}`;
   const stderr = `${result.stderr ?? ""}`;
   if (result.exit_code !== 0) {
-    if (isUnsupportedCommandError(command, stderr)) {
-      throw new ProjectRusticUnsupportedError(command, stderr);
+    if (
+      command.startsWith("project-") &&
+      isUnsupportedCommandError(command, stderr)
+    ) {
+      throw new ProjectRusticUnsupportedError(
+        command as ProjectRusticCommand,
+        stderr,
+      );
     }
     throw new Error(
       stderr || stdout || `${command} exited with code ${result.exit_code}`,
@@ -229,7 +240,7 @@ export async function projectRusticBackup({
     .filter((tag) => tag.length > 0)
     .flatMap((tag) => ["--tag", tag]);
   const parentArgs = parent ? ["--parent", parent] : [];
-  const { stdout } = await runProjectRustic({
+  const { stdout } = await runManagedRustic({
     command: isBackgroundBtrfsMutation()
       ? "project-rustic-backup-maintenance"
       : "project-rustic-backup",
@@ -258,7 +269,7 @@ export async function projectRusticRestore({
   timeoutMs: number;
   progress?: (update: RusticProgressUpdate) => void;
 }): Promise<void> {
-  await runProjectRustic({
+  await runManagedRustic({
     command: "project-rustic-restore",
     args: [repoProfile, snapshot, dest],
     timeoutMs,
