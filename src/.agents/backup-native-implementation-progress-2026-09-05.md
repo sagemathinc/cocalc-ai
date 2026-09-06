@@ -74,6 +74,15 @@ not a completion claim or deployment approval. Production remains unchanged.
   Local qualified development binary SHA-256:
   `ba614f0d1f2d96277fc8aeab66a542a5dca8a75500623f1ef78f34375bdade95`.
   See the native experiment README/report; this is not a published fleet artifact.
+- `27d2801632` closes the separate maintenance-budget gap: supervised services
+  and legacy maintenance scopes share `cocalcmaintenance.slice`. It retains the
+  existing aggregate CPU/memory/swap/task limits and applies the approved
+  device-specific maintenance I/O policy via systemd. Jobs verify actual parent
+  controls, reject observational/disabled policy, and require the old group to
+  drain before activation. No manual children are created in systemd's tree.
+  Disposable systemd/Btrfs CI `34005196142` passes all 18 cases, including a
+  legacy-wrapper scope under that same parent. Twenty helper tests and 92
+  bootstrap tests pass. This still does not enable any production host.
 
 ## Working Repositories
 
@@ -91,11 +100,11 @@ not a completion claim or deployment approval. Production remains unchanged.
 
 ## Still Required
 
-- Complete supervision across RootFS/fallback/copy paths, aggregate maintenance
-  I/O integration, production policy installation/capability admission, and
-  durable retry/backoff handling. The transient service does not automatically
-  inherit the old manual maintenance cgroup's absolute I/O limits. Do not enable
-  the rollout gate before that is addressed. Extend immutable-source admission
+- Complete supervision across RootFS/fallback/copy paths, production policy
+  installation/capability admission, and durable retry/backoff handling.
+  Aggregate maintenance I/O integration now passes disposable qualification;
+  activation must still drain old wrapper/maintenance work and qualify the
+  actual host policy and disk topology. Extend immutable-source admission
   beyond the now-checked project/sanitized migration snapshots to every other
   managed backup/copy path, not merely flag propagation.
 - Add one shared bounded inventory and exclusion manifest used by backup and

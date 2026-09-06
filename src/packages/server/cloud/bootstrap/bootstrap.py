@@ -7599,12 +7599,13 @@ case "$cmd" in
     maintenance_io_max="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/io.max" 2>/dev/null || true)"
     maintenance_pressure="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/io.pressure" 2>/dev/null || true)"
     maintenance_io_weight="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/io.weight" 2>/dev/null || true)"
-    maintenance_processes="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/cgroup.procs" 2>/dev/null || true)"
+    # A systemd slice is an inner node: its direct process list is always empty.
+    maintenance_processes="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/cgroup.procs" "${MAINTENANCE_CGROUP_DEFAULT}"/*/cgroup.procs 2>/dev/null || true)"
     maintenance_cpu_max="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/cpu.max" 2>/dev/null || true)"
     maintenance_memory_high="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/memory.high" 2>/dev/null || true)"
     maintenance_memory_max="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/memory.max" 2>/dev/null || true)"
     maintenance_pids_max="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/pids.max" 2>/dev/null || true)"
-    /usr/bin/python3 - "$policy_status" "$pool_io_max" "$pool_io_weight" "$pool_pressure" "$legacy_processes" "$maintenance_io_max" "$maintenance_io_weight" "$maintenance_pressure" "$maintenance_processes" "$maintenance_cpu_max" "$maintenance_memory_high" "$maintenance_memory_max" "$maintenance_pids_max" "$pool_scope" "$startup_runtime_active_count" "$pressure_protection_enabled" <<'PY'
+    /usr/bin/python3 - "$policy_status" "$pool_io_max" "$pool_io_weight" "$pool_pressure" "$legacy_processes" "$maintenance_io_max" "$maintenance_io_weight" "$maintenance_pressure" "$maintenance_processes" "$maintenance_cpu_max" "$maintenance_memory_high" "$maintenance_memory_max" "$maintenance_pids_max" "$pool_scope" "$startup_runtime_active_count" "$pressure_protection_enabled" "$MAINTENANCE_CGROUP_DEFAULT" <<'PY'
 import json
 import sys
 
@@ -7625,6 +7626,7 @@ import sys
     pool_scope,
     startup_runtime_active_count,
     pressure_protection_enabled,
+    maintenance_cgroup,
 ) = sys.argv[1:]
 result = json.loads(status_json)
 discovery_error = result.pop("discovery_error", None)
@@ -7668,10 +7670,10 @@ result.update({
     "startup_runtime_active_count": int(startup_runtime_active_count),
     "pressure_protection_enabled": pressure_protection_enabled == "true",
     "legacy_process_count": len(legacy.split()),
-    "maintenance_cgroup": "/sys/fs/cgroup/cocalc-maintenance",
+    "maintenance_cgroup": maintenance_cgroup,
     "maintenance_io_max": maintenance_io_max.strip(),
     "maintenance_io_weight": maintenance_io_weight.strip(),
-    "maintenance_process_count": len(maintenance_processes.split()),
+    "maintenance_process_count": len(set(maintenance_processes.split())),
     "maintenance_cpu_max": maintenance_cpu_max.strip(),
     "maintenance_memory_high": maintenance_memory_high.strip(),
     "maintenance_memory_max": maintenance_memory_max.strip(),
