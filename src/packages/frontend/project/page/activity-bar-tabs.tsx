@@ -51,6 +51,7 @@ import {
 import FileTabs from "./file-tabs";
 import { lite } from "@cocalc/frontend/lite";
 import SettingsButton from "@cocalc/frontend/account/settings-button";
+import { AppearanceControl } from "@cocalc/frontend/appearance/control";
 import { RemoteSshButton, SshButton } from "@cocalc/frontend/ssh";
 import SshUpgradeButton from "@cocalc/frontend/ssh/ssh-upgrade-button";
 import { workspaceStrongThemeChrome } from "../workspaces/strong-theme";
@@ -257,6 +258,11 @@ export default function ProjectTabs(props: PTProps) {
             <SshUpgradeButton />
             <SettingsButton />
           </>
+        )}
+        {lite && (
+          <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+            <AppearanceControl compact />
+          </div>
         )}
       </div>
     </div>
