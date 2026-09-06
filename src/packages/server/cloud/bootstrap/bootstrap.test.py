@@ -5002,6 +5002,7 @@ class BootstrapModesTest(unittest.TestCase):
             for name in (
                 "ensure_runtime_user",
                 "ensure_bootstrap_paths",
+                "configure_rsyslog_limits",
                 "install_privileged_wrappers",
                 "install_privileged_tool_binaries",
                 "write_helpers",
@@ -5053,6 +5054,7 @@ class BootstrapModesTest(unittest.TestCase):
                     "start:reconcile",
                     "ensure_runtime_user",
                     "ensure_bootstrap_paths",
+                    "configure_rsyslog_limits",
                     "install_privileged_wrappers",
                     "install_privileged_tool_binaries",
                     "write_helpers",
@@ -5232,6 +5234,7 @@ class BootstrapModesTest(unittest.TestCase):
 
             patch("ensure_runtime_user", lambda _cfg: None)
             patch("ensure_bootstrap_paths", lambda _cfg: None)
+            patch("BOOTSTRAP_LIFECYCLE_EXPORT_DIR", Path(tmpdir) / "lifecycle")
             patch("ensure_automatic_security_updates", lambda _cfg: None)
             patch("compute_image_size", lambda _cfg: 10)
             patch("configure_kernel_module_hardening", lambda _cfg: None)
@@ -5245,7 +5248,9 @@ class BootstrapModesTest(unittest.TestCase):
             patch("reconcile_project_io_policy", lambda _cfg: None)
             patch("reconcile_host_service_cgroup", lambda _cfg: None)
             patch("ensure_cocalc_mount", lambda _cfg: None)
+            patch("setup_shared_scratch", lambda _cfg: None)
             patch("ensure_btrfs_data", lambda _cfg: None)
+            patch("reconcile_bees_runtime_policy", lambda _cfg: None)
             patch("ensure_subuids", lambda _cfg: None)
             patch("configure_podman", lambda _cfg: events.append("configure_podman"))
             patch("verify_runtime_user_contract", lambda _cfg: None)
