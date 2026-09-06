@@ -3579,12 +3579,29 @@ def load_policy(path=POLICY):
         "max_jobs": (1, 16),
         "tasks_max": (16, 4096),
     }
-    if not isinstance(policy, dict) or type(policy.get("version")) is not int or policy["version"] != 1 or set(policy) != {"version", *bounds}:
+    if not isinstance(policy, dict) or type(policy.get("version")) is not int or policy["version"] != 1 or set(policy) - {"native"} != {"version", *bounds}:
         raise ValueError("invalid Rustic job policy schema")
     for key, (minimum, maximum) in bounds.items():
         value = policy[key]
         if type(value) is not int or not minimum <= value <= maximum:
             raise ValueError(f"invalid Rustic job policy: {key}")
+    if "native" in policy:
+        native = policy["native"]
+        if not isinstance(native, dict) or set(native) != {"binary_sha256", "admission"}:
+            raise ValueError("invalid native Rustic policy")
+        digest = native["binary_sha256"]
+        if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValueError("native Rustic requires an exact binary SHA-256")
+        limits = native["admission"]
+        required = {"max-entries", "max-apparent-bytes", "max-file-bytes", "max-chunk-references",
+                    "max-metadata-bytes", "max-path-depth", "preflight-timeout-seconds"}
+        if not isinstance(limits, dict) or set(limits) != required:
+            raise ValueError("native Rustic requires every admission budget")
+        for name, value in limits.items():
+            if type(value) is not int or not 1 <= value <= 2**63 - 1:
+                raise ValueError(f"invalid native Rustic budget: {name}")
+        if limits["preflight-timeout-seconds"] > policy["runtime_seconds"]:
+            raise ValueError("Rustic preflight exceeds the job deadline")
     return policy
 
 
@@ -3829,7 +3846,7 @@ def worker(argv, chain, api, policy):
                     return
 
         threading.Thread(target=watch, daemon=True).start()
-        api["run_rustic"](argv, inherited_fds=tuple(locks))
+        api["run_rustic"](argv, inherited_fds=tuple(locks), native=policy.get("native"))
     finally:
         stop.set()
         for fd in reversed(locks):
@@ -3943,12 +3960,16 @@ installed below /usr/local with root ownership.
 
 import ctypes
 import errno
+import hashlib
+import json
 import os
 import re
+import select
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 import urllib.parse
 
@@ -4301,6 +4322,59 @@ def select_privileged_rustic_binary(candidates=None):
     fail("trusted privileged Rustic binary is unavailable")
 
 
+def open_pinned_rustic(path, expected_digest, required_uid=0):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_mode & 0o022 or info.st_size > 256 * 1024**2:
+            fail("untrusted native Rustic binary")
+        digest = hashlib.sha256()
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            for chunk in iter(lambda: stream.read(1024**2), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_digest:
+            fail("native Rustic binary does not match the approved SHA-256")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def verify_native_rustic(binary, env, pass_fds):
+    proc = subprocess.Popen([binary, "version", "--json"], env=env, pass_fds=pass_fds,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 10
+    data = bytearray()
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([proc.stdout], [], [], remaining)[0]:
+                raise TimeoutError("native Rustic capability check timed out")
+            part = os.read(proc.stdout.fileno(), 4096)
+            if not part:
+                break
+            data.extend(part)
+            if len(data) > 65536:
+                fail("native Rustic capability output is too large")
+        if proc.wait(timeout=max(0.01, deadline - time.monotonic())) != 0:
+            fail("native Rustic capability check failed")
+        document = json.loads(data)
+        if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
+            fail("unsupported native Rustic capability schema")
+        capabilities = document.get("capabilities", {})
+        for name in ("strict_backup", "strict_restore", "sparse_required_restore", "hole_aware_backup"):
+            if capabilities.get(name) is not True:
+                fail(f"native Rustic capability is missing: {name}")
+        for name in ("backup_inventory", "backup_admission"):
+            if type(capabilities.get(name)) is not int or capabilities[name] != 1:
+                fail(f"unsupported native Rustic capability: {name}")
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        proc.stdout.close()
+
+
 def run_rustic(
     argv,
     allowed_roots=ALLOWED_ROOTS,
@@ -4308,12 +4382,14 @@ def run_rustic(
     profile_run_dir="/run/cocalc-rustic-profiles",
     profile_run_dir_uid=0,
     inherited_fds=(),
+    native=None,
 ):
     command, values = parse_rustic(argv)
     rootfd = open_root(values["root"], allowed_roots)
     profile_rootfd = open_root(values["profile-root"], allowed_roots)
     datafd = None
     profile_path = None
+    binaryfd = None
     try:
         datafd = openat2(
             rootfd,
@@ -4328,6 +4404,11 @@ def run_rustic(
         )
         profile_arg = profile_path[: -len(".toml")]
         rustic = select_privileged_rustic_binary(rustic_candidates)
+        if native is not None:
+            binaryfd = open_pinned_rustic(rustic, native["binary_sha256"])
+            # Execute the same inode that was hashed, even during a host upgrade.
+            rustic = f"/proc/self/fd/{binaryfd}"
+            inherited_fds = (*inherited_fds, binaryfd)
         base = [rustic, "-P", profile_arg]
         env = {
             "HOME": "/root",
@@ -4339,6 +4420,8 @@ def run_rustic(
             "SSL_CERT_DIR": "/etc/ssl/certs",
             "USER": "root",
         }
+        if native is not None:
+            verify_native_rustic(rustic, env, inherited_fds)
 
         def invoke(args, *, quiet=False):
             result = subprocess.run(
@@ -4354,6 +4437,10 @@ def run_rustic(
 
         if command.endswith("backup"):
             flags = ["backup"]
+            if native is not None:
+                flags.append("--strict")
+                for name, value in native["admission"].items():
+                    flags.extend([f"--{name}", str(value)])
             if command == "rustic-project-backup":
                 flags.append("-x")
             flags.extend(["--json", "--no-scan", "--host", values["host"]])
@@ -4384,6 +4471,8 @@ def run_rustic(
             return
 
         restore = ["restore"]
+        if native is not None:
+            restore.extend(["--strict", "--sparse", "by-content-required"])
         if values["delete"]:
             restore.append("--delete")
         restore.extend([values["snapshot"], f"/proc/self/fd/{datafd}"])
@@ -4391,6 +4480,8 @@ def run_rustic(
         if status != 0:
             raise subprocess.CalledProcessError(status, base)
     finally:
+        if binaryfd is not None:
+            os.close(binaryfd)
         if profile_path is not None:
             os.unlink(profile_path)
         if datafd is not None:

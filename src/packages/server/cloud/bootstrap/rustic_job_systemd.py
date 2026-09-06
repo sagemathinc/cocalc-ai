@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real cgroup/lease fault tests. Refuses anything except a marked CI runner."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -22,10 +23,16 @@ from pathlib import Path
 import signal
 import sys
 import time
+if "version" in sys.argv:
+    print(json.dumps({"schema_version": 1, "capabilities": {
+        "strict_backup": True, "strict_restore": True, "sparse_required_restore": True,
+        "hole_aware_backup": True, "backup_inventory": 1, "backup_admission": 1}}))
+    sys.exit(0)
 if "repoinfo" in sys.argv or "init" in sys.argv:
     sys.exit(0)
 mode = Path("mode").read_text()
 Path("started").write_text(json.dumps({"pid": os.getpid(), "worker": os.getppid()}))
+Path("invocation").write_text(json.dumps(sys.argv))
 if mode == "normal":
     print('{"ok": true}', flush=True)
     sys.exit(0)
@@ -154,11 +161,12 @@ secret_access_key = "disposable"
             bootstrap.install_privileged_wrappers(SimpleNamespace(ssh_user="runner", container_runtime_bundle=None))
         install(wrapper, captured[str(wrapper)], 0o755)
         # Numeric values are only adversarial test budgets, not fleet policy.
-        install(policy_path, json.dumps({
+        policy = {
             "version": 1, "runtime_seconds": 8, "kill_grace_seconds": 2,
             "memory_bytes": 128 * 1024**2, "cpu_quota_percent": 100,
             "io_weight": 10, "max_jobs": 1, "tasks_max": 64,
-        }), 0o600)
+        }
+        install(policy_path, json.dumps(policy), 0o600)
         shared = profile("shared")
         separate = profile("separate")
         case, proc = start("normal", "normal", shared)
@@ -240,9 +248,35 @@ secret_access_key = "disposable"
         result(proc, False)
         assert_gone(json.loads((case / "started").read_text()))
         barrier(case, shared)
+        policy["native"] = {
+            "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+            "admission": {"max-entries": 100, "max-apparent-bytes": 2**30,
+                "max-file-bytes": 2**29, "max-chunk-references": 16,
+                "max-metadata-bytes": 2**20, "max-path-depth": 20,
+                "preflight-timeout-seconds": 2},
+        }
+        policy_path.write_text(json.dumps(policy))
+        case, proc = start("native-backup", "normal", shared, through_sudo=True)
+        result(proc, True)
+        flags = json.loads((case / "invocation").read_text())
+        assert "--strict" in flags
+        for name, value in policy["native"]["admission"].items():
+            assert flags[flags.index("--" + name) + 1] == str(value)
+        barrier(case, shared)
+        subprocess.run([str(wrapper), "project-rustic-restore-supervised",
+                        "/mnt/cocalc/" + shared, "abc123", str(case)], check=True, timeout=30)
+        flags = json.loads((case / "invocation").read_text())
+        assert "--strict" in flags and flags[flags.index("--sparse") + 1] == "by-content-required"
+        policy["native"]["binary_sha256"] = "0" * 64
+        policy_path.write_text(json.dumps(policy))
+        case, proc = start("wrong-binary", "normal", shared, through_sudo=True)
+        result(proc, False)
+        assert not (case / "started").exists()
+        barrier(case, shared)
         print(json.dumps({"ok": True, "cases": ["normal", "failure", "deadline",
               "sudo-normal", "sudo-caller-death", "caller-death", "closed-fds",
-              "worker-death", "same-repo", "host-full", "orphan", "oom"]}))
+              "worker-death", "same-repo", "host-full", "orphan", "oom",
+              "native-backup", "native-restore", "wrong-binary"]}))
     finally:
         for proc in processes:
             if proc.poll() is None:

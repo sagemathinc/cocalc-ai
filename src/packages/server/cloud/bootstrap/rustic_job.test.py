@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit/OS-lock tests; real systemd/cgroup cancellation remains a canary gate."""
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,68 @@ class RusticJobTest(unittest.TestCase):
             "memory_bytes": 2 * 1024**3, "cpu_quota_percent": 100,
             "io_weight": 10, "max_jobs": 2, "tasks_max": 128,
         }
+
+    def test_native_policy_requires_digest_and_every_finite_budget(self):
+        limits = {key: 100 for key in ("max-entries", "max-apparent-bytes", "max-file-bytes", "max-chunk-references", "max-metadata-bytes", "max-path-depth", "preflight-timeout-seconds")}
+        policy = {**self.policy, "native": {"binary_sha256": "a" * 64, "admission": limits}}
+        with mock.patch.dict(self.api, {"trusted_regular": lambda _: json.dumps(policy)}):
+            self.assertEqual(self.api["load_policy"](), policy)
+            for key in limits:
+                for value in [None, True, 0, -1, 2**63]:
+                    invalid = copy.deepcopy(policy)
+                    invalid["native"]["admission"][key] = value
+                    with mock.patch.dict(self.api, {"trusted_regular": lambda _: json.dumps(invalid)}):
+                        with self.assertRaises(ValueError):
+                            self.api["load_policy"]()
+            del limits["max-chunk-references"]
+            with self.assertRaises(ValueError):
+                self.api["load_policy"]()
+
+    def test_pinned_binary_uses_verified_inode_across_replacement(self):
+        api = {"__name__": "path_test"}
+        exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, api)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rustic"
+            path.write_bytes(b"approved binary")
+            path.chmod(0o755)
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            fd = api["open_pinned_rustic"](str(path), digest, required_uid=os.getuid())
+            try:
+                replacement = Path(tmp) / "new"
+                replacement.write_bytes(b"different binary")
+                replacement.chmod(0o755)
+                replacement.replace(path)
+                self.assertEqual(Path(f"/proc/self/fd/{fd}").read_bytes(), b"approved binary")
+                with self.assertRaises(ValueError):
+                    api["open_pinned_rustic"](str(path), digest, required_uid=os.getuid())
+            finally:
+                os.close(fd)
+
+    def test_capability_check_rejects_old_or_ambiguous_binary_output(self):
+        api = {"__name__": "path_test"}
+        exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, api)
+        caps = {"strict_backup": True, "strict_restore": True,
+                "sparse_required_restore": True, "hole_aware_backup": True,
+                "backup_inventory": 1, "backup_admission": 1}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rustic"
+            documents = [
+                {"schema_version": 1, "capabilities": caps},
+                {"schema_version": True, "capabilities": caps},
+                {"schema_version": 1, "capabilities": {**caps, "backup_admission": True}},
+                {"schema_version": 1, "capabilities": {**caps, "sparse_required_restore": False}},
+            ]
+            for index, document in enumerate(documents):
+                path.write_text("#!/usr/bin/python3 -I\nprint(" + repr(json.dumps(document)) + ")\n")
+                path.chmod(0o755)
+                if index == 0:
+                    api["verify_native_rustic"](str(path), {}, ())
+                else:
+                    with self.assertRaises(ValueError):
+                        api["verify_native_rustic"](str(path), {}, ())
+            path.write_text("#!/usr/bin/python3 -I\nprint('x' * 65537)\n")
+            with self.assertRaises(ValueError):
+                api["verify_native_rustic"](str(path), {}, ())
 
     def test_policy_has_no_unlimited_or_environment_fallback(self):
         for key in self.policy:
