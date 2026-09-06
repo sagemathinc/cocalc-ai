@@ -39,13 +39,26 @@ export function isProjectArchiveBackupCurrent(
   const backupAt = dateMs(project.last_backup);
   if (!project.backup_repo_id || backupAt == null) return false;
   const changedAt = dateMs(project.last_changed);
+  if (project.last_changed != null && changedAt == null) return false;
   if (changedAt != null && backupAt < changedAt) return false;
-  const changedGeneration = Number(project.last_changed_generation);
-  const backupGeneration = Number(project.last_backup_generation);
+  // pg BIGINT values arrive as strings. Number() can round adjacent generations
+  // into equality and turn stale evidence into permission to delete the source.
+  const generation = (value: number | string | null | undefined) => {
+    if (value == null) return null;
+    if (typeof value === "number") {
+      return Number.isSafeInteger(value) && value >= 0
+        ? BigInt(value)
+        : undefined;
+    }
+    return /^(0|[1-9][0-9]{0,18})$/.test(value) ? BigInt(value) : undefined;
+  };
+  const changedGeneration = generation(project.last_changed_generation);
+  const backupGeneration = generation(project.last_backup_generation);
+  if (changedGeneration === undefined || backupGeneration === undefined)
+    return false;
   if (
-    Number.isFinite(changedGeneration) &&
-    changedGeneration > 0 &&
-    (!Number.isFinite(backupGeneration) || backupGeneration < changedGeneration)
+    changedGeneration != null &&
+    (backupGeneration == null || backupGeneration < changedGeneration)
   ) {
     return false;
   }
