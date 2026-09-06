@@ -3560,6 +3560,7 @@ SELF = "/usr/local/libexec/cocalc-rustic-job"
 PATH_HELPER = "/usr/local/libexec/cocalc-runtime-storage-path-helper"
 POLICY = "/etc/cocalc/rustic-job-policy.json"
 LOCKS = "/run/cocalc-rustic-jobs"
+RETRY_STATE = "/var/lib/cocalc-rustic-jobs"
 CACHE_LOCK = "/run/lock/cocalc-privileged-rustic-cache.lock"
 MAINTENANCE_SLICE = "cocalcmaintenance.slice"
 MAINTENANCE_ROOT = "/sys/fs/cgroup/" + MAINTENANCE_SLICE
@@ -3610,7 +3611,7 @@ def load_policy(path=POLICY):
         "max_jobs": (1, 16),
         "tasks_max": (16, 4096),
     }
-    if not isinstance(policy, dict) or type(policy.get("version")) is not int or policy["version"] != 1 or set(policy) - {"native"} != {"version", *bounds}:
+    if not isinstance(policy, dict) or type(policy.get("version")) is not int or policy["version"] != 1 or set(policy) - {"native", "retry"} != {"version", *bounds}:
         raise ValueError("invalid Rustic job policy schema")
     for key, (minimum, maximum) in bounds.items():
         value = policy[key]
@@ -3633,6 +3634,17 @@ def load_policy(path=POLICY):
                 raise ValueError(f"invalid native Rustic budget: {name}")
         if limits["preflight-timeout-seconds"] > policy["runtime_seconds"]:
             raise ValueError("Rustic preflight exceeds the job deadline")
+    if "retry" in policy:
+        retry = policy["retry"]
+        limits = {"base_seconds": (1, 86400), "max_seconds": (1, 30 * 86400),
+                  "review_after_failures": (1, 100)}
+        if not isinstance(retry, dict) or set(retry) != set(limits):
+            raise ValueError("invalid Rustic retry policy")
+        for name, (minimum, maximum) in limits.items():
+            if type(retry[name]) is not int or not minimum <= retry[name] <= maximum:
+                raise ValueError("invalid Rustic retry policy: " + name)
+        if retry["base_seconds"] > retry["max_seconds"]:
+            raise ValueError("Rustic retry base exceeds maximum")
     return policy
 
 
@@ -3873,6 +3885,109 @@ def record_unit(directory, name, unit):
             pass
 
 
+def retry_name(key, argv):
+    # A new staging path/tag must not reset failures. Recovery is independent
+    # of backup, but both still share the repository exclusion lock.
+    return key + (".backup.json" if argv[0].endswith("-backup") else ".restore.json")
+
+
+def read_retry(directory, name, required_uid=0):
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_mode & 0o077:
+            raise PermissionError("untrusted Rustic retry state")
+        data = os.read(fd, 4097)
+        if len(data) > 4096:
+            raise ValueError("Rustic retry state exceeds limit")
+        state = json.loads(data)
+        fields = {"version", "phase", "failures", "updated_at", "retry_at", "reason", "unit"}
+        if not isinstance(state, dict) or set(state) != fields or type(state["version"]) is not int or state["version"] != 1:
+            raise ValueError("invalid Rustic retry state")
+        if state["phase"] not in {"running", "failed", "complete"} or state["reason"] not in {
+                "started", "success", "job_failed", "job_interrupted", "operator_reset"}:
+            raise ValueError("invalid Rustic retry outcome")
+        for field in ("failures", "updated_at", "retry_at"):
+            if type(state[field]) is not int or not 0 <= state[field] <= 2**53 - 1:
+                raise ValueError("invalid Rustic retry counter")
+        unit = state["unit"]
+        if not isinstance(unit, str) or len(unit) != len("cocalc-rustic-" + "a" * 32 + ".service") or not unit.startswith("cocalc-rustic-") or not unit.endswith(".service") or any(c not in "0123456789abcdef" for c in unit[14:-8]):
+            raise ValueError("invalid Rustic retry unit")
+        return state
+    finally:
+        os.close(fd)
+
+
+def write_retry(directory, name, state):
+    temporary = ".retry-" + uuid.uuid4().hex
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            json.dump(state, stream, sort_keys=True, separators=(",", ":"))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.rename(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+        os.fsync(directory)
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+
+
+def failed_retry(state, retry, reason, now):
+    failures = min(state["failures"] + 1, 2**31 - 1)
+    delay = min(retry["max_seconds"], retry["base_seconds"] * 2 ** min(failures - 1, 32))
+    return {**state, "phase": "failed", "failures": failures, "reason": reason,
+            "updated_at": now, "retry_at": now + delay}
+
+
+def retry_admission(directory, name, retry):
+    state = read_retry(directory, name)
+    now = int(time.time())
+    if state is not None and state["phase"] == "running":
+        # This runs only with the launch lock held and predecessor proven gone.
+        # A crash/reboot without a committed success must count as a failure.
+        if unit_busy(state["unit"]):
+            raise BlockingIOError("Rustic retry predecessor remains active")
+        state = failed_retry(state, retry, "job_interrupted", now)
+        write_retry(directory, name, state)
+    if state is not None and state["phase"] == "failed":
+        if state["failures"] >= retry["review_after_failures"]:
+            raise RuntimeError("RUSTIC_OPERATOR_REVIEW_REQUIRED: " + state["reason"])
+        if now < state["retry_at"]:
+            raise BlockingIOError("RUSTIC_RETRY_DEFERRED: retry_at=" + str(state["retry_at"]))
+    return state
+
+
+def retry_control(argv, api, reset=False):
+    key = job_key(argv, api)
+    directory = open_lock_directory()
+    persistent = open_lock_directory(RETRY_STATE)
+    held = []
+    try:
+        held.append(take_lock(directory, key + ".launch.lock"))
+        held.append(take_lock(directory, key + ".job.lock"))
+        name = retry_name(key, argv)
+        state = read_retry(persistent, name)
+        if reset and state is not None:
+            if unit_busy(read_unit(directory, key + ".unit")) or unit_busy(state["unit"]):
+                raise BlockingIOError("cannot reset an active Rustic job")
+            state = {**state, "phase": "complete", "failures": 0, "retry_at": 0,
+                     "updated_at": int(time.time()), "reason": "operator_reset"}
+            write_retry(persistent, name, state)
+        print(json.dumps({"schema_version": 1, "key": key, "state": state}))
+    finally:
+        for fd in reversed(held):
+            os.close(fd)
+        os.close(persistent)
+        os.close(directory)
+
+
 def unit_busy(unit):
     if unit is None:
         return False
@@ -4047,6 +4162,10 @@ def launch(argv, api, policy):
     lock = None
     startup_slot = None
     proc = None
+    persistent = None
+    retry = policy.get("retry")
+    retry_state = None
+    name = retry_name(key, argv)
     try:
         lock = take_lock(directory, f"{key}.launch.lock")
         # Reject a surviving predecessor before asking systemd for another unit.
@@ -4054,6 +4173,9 @@ def launch(argv, api, policy):
         os.close(old)
         if unit_busy(read_unit(directory, f"{key}.unit")):
             raise BlockingIOError("Rustic predecessor unit is still stopping")
+        if retry is not None:
+            persistent = open_lock_directory(RETRY_STATE)
+            retry_state = retry_admission(persistent, name, retry)
         # Bound service creation too, not just workers after Python has started.
         # Unit records retain this reservation if the launcher is killed.
         startup_slot = take_slot(directory, policy["max_jobs"], unit, prefix="launch-slot")
@@ -4062,6 +4184,12 @@ def launch(argv, api, policy):
         if prepared.returncode:
             raise RuntimeError("maintenance admission failed: " + prepared.stderr[-4096:])
         record_unit(directory, f"{key}.unit", unit)
+        if retry is not None:
+            retry_state = {"version": 1, "phase": "running",
+                           "failures": (retry_state or {}).get("failures", 0),
+                           "updated_at": int(time.time()), "retry_at": 0,
+                           "reason": "started", "unit": unit}
+            write_retry(persistent, name, retry_state)
         proc = subprocess.Popen(service_command(unit, argv, chain, policy), env=ENV,
                                 stdin=subprocess.PIPE, close_fds=True)
         os.set_blocking(proc.stdin.fileno(), False)
@@ -4077,6 +4205,17 @@ def launch(argv, api, policy):
             time.sleep(0.5)
         if proc.returncode != 0:
             raise subprocess.CalledProcessError(proc.returncode, ["supervised-rustic-job"])
+        if unit_busy(unit):
+            raise RuntimeError("Rustic service reported success with an active process tree")
+        if retry is not None:
+            write_retry(persistent, name, {**retry_state, "phase": "complete", "failures": 0,
+                        "updated_at": int(time.time()), "retry_at": 0, "reason": "success"})
+    except BaseException:
+        if retry is not None and retry_state is not None and retry_state["unit"] == unit:
+            # If killed before this write, the durable running record is instead
+            # recovered as interrupted. Never copy credential-bearing stderr here.
+            write_retry(persistent, name, failed_retry(retry_state, retry, "job_failed", int(time.time())))
+        raise
     finally:
         try:
             if proc is not None:
@@ -4087,6 +4226,8 @@ def launch(argv, api, policy):
                                    env=ENV, check=True, timeout=policy["kill_grace_seconds"] + 15)
                     proc.wait(timeout=15)
         finally:
+            if persistent is not None:
+                os.close(persistent)
             if startup_slot is not None:
                 os.close(startup_slot)
             if lock is not None:
@@ -4112,8 +4253,10 @@ def main(argv):
         barrier(argv[1:], api, policy)
     elif len(argv) > 1 and argv[0] == "run":
         launch(argv[1:], api, policy)
+    elif len(argv) > 1 and argv[0] in {"retry-status", "retry-reset"}:
+        retry_control(argv[1:], api, reset=argv[0] == "retry-reset")
     else:
-        raise ValueError("expected run, worker or wait")
+        raise ValueError("expected run, worker, wait, retry-status or retry-reset")
 
 
 if __name__ == "__main__":
