@@ -32,6 +32,7 @@ if "repoinfo" in sys.argv or "init" in sys.argv:
     sys.exit(0)
 mode = Path("mode").read_text()
 Path("started").write_text(json.dumps({"pid": os.getpid(), "worker": os.getppid()}))
+Path("cgroup").write_text(Path("/proc/self/cgroup").read_text())
 Path("invocation").write_text(json.dumps(sys.argv))
 if mode == "normal":
     print('{"ok": true}', flush=True)
@@ -73,8 +74,14 @@ def main():
     binary = Path("/usr/local/libexec/cocalc-rustic")
     wrapper = Path("/usr/local/sbin/cocalc-runtime-storage")
     policy_path = Path("/etc/cocalc/rustic-job-policy.json")
+    io_helper = Path("/usr/local/libexec/cocalc-project-io-policy")
+    io_policy = Path("/etc/cocalc/project-io-policy.json")
+    slice_unit = Path("/etc/systemd/system/cocalcmaintenance.slice")
     root = Path("/mnt/cocalc/rustic-job-qualification")
-    for path in [helper, path_helper, binary, wrapper, policy_path, root]:
+    for path in [helper, path_helper, binary, wrapper, policy_path, io_helper, io_policy, slice_unit,
+                 Path("/etc/cocalc/project-io-policy.override.json"),
+                 Path("/sys/fs/cgroup/cocalcmaintenance.slice"),
+                 Path("/sys/fs/cgroup/cocalc-maintenance"), root]:
         assert not os.path.lexists(path), f"refusing to replace existing {path}"
     api = {"__name__": "test_job"}
     exec(bootstrap.RUSTIC_JOB_HELPER, api)
@@ -117,7 +124,7 @@ secret_access_key = "disposable"
             subprocess.run(["btrfs", "subvolume", "create", str(case)], check=True, capture_output=True)
             events = root / ("events-" + name)
             events.mkdir()
-            for filename in ["started", "descendant", "invocation"]:
+            for filename in ["started", "descendant", "invocation", "cgroup"]:
                 (case / filename).symlink_to(events / filename)
         else:
             case.mkdir()
@@ -165,6 +172,20 @@ secret_access_key = "disposable"
         install(helper, bootstrap.RUSTIC_JOB_HELPER, 0o755)
         install(path_helper, bootstrap.RUNTIME_STORAGE_PATH_HELPER, 0o755)
         install(binary, FAKE_RUSTIC, 0o755)
+        install(io_helper, bootstrap.PROJECT_IO_POLICY_HELPER, 0o755)
+        install(slice_unit, bootstrap.RUSTIC_MAINTENANCE_SLICE, 0o644)
+        subprocess.run(["systemctl", "daemon-reload"], check=True)
+        native_disk = root / "native.img"
+        with native_disk.open("xb") as file:
+            file.truncate(512 * 1024**2)
+        native_mount.mkdir()
+        subprocess.run(["mkfs.btrfs", "-q", str(native_disk)], check=True)
+        subprocess.run(["mount", "-o", "loop", str(native_disk), str(native_mount)], check=True)
+        native_mounted = True
+        limits = {"rbps": 100 * 1024**2, "wbps": 100 * 1024**2, "riops": 10000, "wiops": 10000}
+        io_config = {"version": 1, "mode": "enforce", "mountpoint": str(native_mount),
+                     "pool": limits, "leafClasses": {"standard": {**limits, "weight": 100}}}
+        install(io_policy, json.dumps(io_config), 0o644)
         captured = {}
         with mock.patch.object(bootstrap, "text_write_atomic", side_effect=lambda path, data, **_: captured.__setitem__(str(path), data)), \
              mock.patch.object(bootstrap.os, "chown"), mock.patch.object(bootstrap.os, "chmod"), \
@@ -180,8 +201,17 @@ secret_access_key = "disposable"
         install(policy_path, json.dumps(policy), 0o600)
         shared = profile("shared")
         separate = profile("separate")
+        # Observational/disabled I/O policy must not silently grant an uncapped
+        # service. Rejection happens before the fake repository binary executes.
+        io_policy.write_text(json.dumps({**io_config, "mode": "observe"}))
+        rejected, proc = start("no-io-enforcement", "normal", shared)
+        result(proc, False)
+        assert not (rejected / "started").exists()
+        io_policy.write_text(json.dumps(io_config))
         case, proc = start("normal", "normal", shared)
         assert json.loads(result(proc, True)[0])["ok"]
+        assert (case / "cgroup").read_text().startswith("0::/cocalcmaintenance.slice/cocalc-rustic-")
+        api["check_maintenance_cgroup"]()
         barrier(case, shared)
         _case, proc = start("failure", "failure", shared)
         result(proc, False)
@@ -259,13 +289,17 @@ secret_access_key = "disposable"
         result(proc, False)
         assert_gone(json.loads((case / "started").read_text()))
         barrier(case, shared)
-        native_disk = root / "native.img"
-        with native_disk.open("xb") as file:
-            file.truncate(512 * 1024**2)
-        native_mount.mkdir()
-        subprocess.run(["mkfs.btrfs", "-q", str(native_disk)], check=True)
-        subprocess.run(["mount", "-o", "loop", str(native_disk), str(native_mount)], check=True)
-        native_mounted = True
+        # Exercise the actual old maintenance wrapper too. It must join a
+        # systemd scope under the SAME aggregate parent, not a second budget.
+        legacy = root / "legacy-maintenance"
+        legacy.mkdir()
+        (legacy / "mode").write_text("normal")
+        completed = subprocess.run([str(wrapper), "project-rustic-backup-maintenance",
+                                   str(legacy), "/mnt/cocalc/" + shared, "qualification"],
+                                  check=True, capture_output=True, text=True, timeout=30)
+        assert json.loads(completed.stdout)["ok"]
+        assert (legacy / "cgroup").read_text().startswith("0::/cocalcmaintenance.slice/cocalc-maintenance-")
+        assert not Path("/sys/fs/cgroup/cocalc-maintenance").exists()
         policy["native"] = {
             "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
             "admission": {"max-entries": 100, "max-apparent-bytes": 2**30,
@@ -297,7 +331,8 @@ secret_access_key = "disposable"
         print(json.dumps({"ok": True, "cases": ["normal", "failure", "deadline",
               "sudo-normal", "sudo-caller-death", "caller-death", "closed-fds",
               "worker-death", "same-repo", "host-full", "orphan", "oom",
-              "mutable-native-source", "native-backup", "native-restore", "wrong-binary"]}))
+              "mutable-native-source", "native-backup", "native-restore", "wrong-binary",
+              "no-io-enforcement", "shared-maintenance-parent"]}))
     finally:
         for proc in processes:
             if proc.poll() is None:
@@ -305,10 +340,12 @@ secret_access_key = "disposable"
                 proc.wait(timeout=5)
         # Leases/deadlines still apply if an assertion interrupted the test.
         time.sleep(12)
+        subprocess.run(["systemctl", "stop", "cocalcmaintenance.slice"], check=True, timeout=15)
         if native_mounted:
             subprocess.run(["umount", str(native_mount)], check=True, timeout=15)
-        for path in [helper, path_helper, binary, wrapper, policy_path, *profiles]:
+        for path in [helper, path_helper, binary, wrapper, policy_path, io_helper, io_policy, slice_unit, *profiles]:
             path.unlink(missing_ok=True)
+        subprocess.run(["systemctl", "daemon-reload"], check=True)
         shutil.rmtree(root)
 
 
