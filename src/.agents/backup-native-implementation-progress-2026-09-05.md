@@ -83,6 +83,17 @@ not a completion claim or deployment approval. Production remains unchanged.
   Disposable systemd/Btrfs CI `34005196142` passes all 18 cases, including a
   legacy-wrapper scope under that same parent. Twenty helper tests and 92
   bootstrap tests pass. This still does not enable any production host.
+- `b7b8c7b2a5` routes the RootFS backup/restore callers through the shared gated
+  managed runner, adds root barriers and retains uncertain staging/mounts.
+  It fixes the old RootFS restore milliseconds-as-seconds timeout (30 minutes
+  had effectively become about 20 days). Native RootFS sources now require a
+  read-only Btrfs subvolume too. Mutable overlay publication deliberately fails
+  admission until its immutable materialization is implemented. The old
+  timestamp-only RootFS temp sweep is disabled under the supervision gate;
+  durable source-to-job reconciliation/GC fencing must replace it.
+  Project-host typecheck and 21 project/RootFS runner tests pass; 92 bootstrap
+  and 20 helper tests pass. Disposable CI `34005567806` passes 20 cases including
+  native RootFS flags and cleanup barriers.
 
 ## Working Repositories
 
@@ -107,6 +118,10 @@ not a completion claim or deployment approval. Production remains unchanged.
   actual host policy and disk topology. Extend immutable-source admission
   beyond the now-checked project/sanitized migration snapshots to every other
   managed backup/copy path, not merely flag propagation.
+  RootFS callers now use supervision, but still need immutable overlay
+  materialization, durable staging reconciliation and active-source GC fencing.
+  Qualify policy device coverage for cache/root and data volumes, not just the
+  presence of finite limits on whichever devices were configured.
 - Add one shared bounded inventory and exclusion manifest used by backup and
   every copy transport; account for chunk-reference and metadata expansion, not
   just compressed repository bytes or physical source allocation.
