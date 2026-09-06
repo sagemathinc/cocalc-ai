@@ -99,3 +99,34 @@ This qualifies the native binary on those fixtures, not CoCalc's production
 staging reservation, privileged service supervision or archive deletion logic.
 No rollout or policy exclusion was enabled. Keep this distinction when using
 these results for parameter or lifecycle decisions.
+
+The follow-up run `34002157054` also passed on both architectures, with CLI
+`737ba53` and pinned core `f45990d`, including admission and capability support.
+
+## Admission And Metadata Costs
+
+Run `python3 admission_probe.py CURRENT_RUSTIC /absolute/report.json`. It uses
+an isolated local repository, four Rayon threads, bounded output and process-
+group deadlines. It measures actual metadata and RSS, not only upload size.
+The current release build passed; full report is local
+`/tmp/cocalc-native-admission-report-2026-09-05.json`.
+
+- A 70 TiB all-hole file was inventoried in 0.32 seconds: 146,800,640 worst-case
+  content references, or 9,835,642,880 JSON-reference bytes before other metadata.
+  A 4,194,304-reference test budget rejected it in 0.32 seconds, before any
+  repository artifact was written. This is a test threshold, not a fleet limit.
+- 5,000 empty files with long names and 2 KiB xattrs required 16,285,000 source-
+  metadata bytes. Their tree serialized to 16,280,012 bytes and compressed to
+  only 50,684 bytes. Zero apparent file data does not mean negligible backup work.
+  Inventory took 0.40 seconds; backup took 0.67 seconds. A metadata budget one
+  byte too small, and a 4,999-entry budget, failed without repository writes.
+- The next backup reused all 5,000 files and added no data/tree blobs (0.56 s).
+  A separate 128 MiB dense fixture backed up in 1.07 seconds at 227 MiB peak RSS;
+  its unchanged backup reused both files with no new blobs in 0.33 seconds.
+
+These are bounded fixtures, not proof of maximum unique-index growth, extreme
+xattrs/depth, global concurrency or production throughput. A trial 4 GiB virtual
+address-space cap aborted the 1,000-file run despite modest resident usage;
+allocator/thread reservations are distinct from RSS. The probe uses a 16 GiB
+virtual cap. Production memory enforcement uses the separately qualified cgroup
+MemoryMax, not RLIMIT_AS. Do not infer a production RSS budget from either cap.
