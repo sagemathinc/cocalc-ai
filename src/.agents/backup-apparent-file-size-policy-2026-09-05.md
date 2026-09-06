@@ -7,6 +7,16 @@ This change records the implementation plan, not a deployment or permission to
 delete source data. Numeric limits and production rollout decisions still
 require separate approval.
 
+Implementation authorization update: the user has explicitly requested the
+frontend UI, deployment to `https://staging2.cocalc.dev`, and full workflow
+verification there. These are required completion gates, not optional follow-up
+work. Production remains outside this authorization. Staging-only test policy
+values must be recorded with the tested artifacts and must not change production
+defaults. Qualify actual CoCalc backup/restore, archive/dearchive, same-host and
+cross-host copies, account-specific acknowledgements, report recovery after host
+data deletion, and failure/rollback behavior; binary-only or isolated component
+tests do not satisfy this gate.
+
 ## Decided Architecture
 
 Invest in Rustic itself: first correct sparse restoration, then make backup

@@ -176,6 +176,34 @@ not a completion claim or deployment approval. Production remains unchanged.
   passed Btrfs snapshot/quota qualification on both architectures; packaging and
   provenance verification were still pending at this ledger update.
 
+### Protected Storage, UI, And Staging2 Follow-up
+
+- Native CLI qualification run `34009629890` is now complete and successful,
+  including both architectures and packaging/provenance verification.
+- CoCalc `6284aee2ce` adds bounded, source-bound R2 exclusion-report storage.
+  It verifies private staged input before uploading, reads back and verifies the
+  object before returning a receipt, and derives keys from project/backup/source/
+  policy/report identity. The distinct prefix is outside browsing-index cleanup.
+  R2 downloads and upload responses now support bounded/abortable processing;
+  retry sleeps respect cancellation. Seventy report/storage/transport tests and
+  backend build pass. This is a storage component, not yet root-producer or
+  owning-bay outcome integration. Its receipt never grants deletion authority.
+- CoCalc `5a2c955502` adds the shared bounded coverage-view type and frontend
+  warning component. Per-file consent, uncertain-identity rejection, quiet
+  disclosure, report download, pagination, safe raw-path display, and focus
+  restoration have nine focused tests. Frontend lint and frontend/util builds
+  pass. The component is deliberately not mounted in the recovery panel before
+  live status, acknowledgement and report APIs are connected. Keyboard browser,
+  narrow-width and zoom validation remain required.
+- The user explicitly expanded completion to include deployment and full
+  verification on `https://staging2.cocalc.dev`. Read-only CLI authentication and
+  host discovery succeed. Browser-approved fresh-auth elevation has expired;
+  renew it through the typed CLI flow when the deployment is ready, not with
+  bearer/API credentials. No deployment or policy activation has occurred.
+  The currently running bay-0 hosts are `staging2-shared-1`
+  (`8cd90870-e58f-4979-b87f-cf85f3622324`) and `staging2-copy-canary`
+  (`4a9c7c19-5c5f-45f9-a48b-5f04196666d4`). Revalidate their state before use.
+
 Next integration work is protected report persistence and explicit outcomes,
 then protected quota-enforced restore staging and early/final lifecycle gates.
 The complete goal remains unfinished; no size-exclusion policy or production
