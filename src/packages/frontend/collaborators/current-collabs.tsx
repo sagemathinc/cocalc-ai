@@ -12,7 +12,7 @@ import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
 import { Project } from "@cocalc/frontend/project/settings/types";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { FIX_BORDER } from "../project/page/common";
 import { User } from "../users";
 import { Avatar } from "../account/avatar/avatar";
@@ -246,8 +246,8 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
         key={user.account_id}
         style={{
           alignItems: "center",
-          background: "white",
-          border: `1px solid ${COLORS.GRAY_LL}`,
+          background: UI_COLORS.surface,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: 10,
           boxShadow: isFlyout ? undefined : "0 1px 2px rgba(14, 43, 89, 0.04)",
           display: "grid",
@@ -281,7 +281,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
             />
             <div
               style={{
-                color: COLORS.GRAY_M,
+                color: UI_COLORS.secondary,
                 fontSize: "12px",
                 marginTop: 2,
               }}
@@ -345,7 +345,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
         {isViewer && (
           <div
             style={{
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.secondary,
               fontSize: 11,
               marginTop: 3,
               maxWidth: isFlyout ? "100%" : 220,
@@ -405,8 +405,8 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
         <Card
           style={{
             ...style,
-            backgroundColor: COLORS.GRAY_LLL,
-            borderColor: COLORS.GRAY_LL,
+            backgroundColor: UI_COLORS.inset,
+            borderColor: UI_COLORS.border,
           }}
           styles={{ body: { padding: 10 } }}
         >
@@ -423,8 +423,8 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
       <div
         style={{
           alignItems: "center",
-          background: COLORS.ANTD_BG_BLUE_L,
-          border: `1px solid ${COLORS.BLUE_LLL}`,
+          background: UI_COLORS.infoBg,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: 10,
           display: "flex",
           gap: 12,
@@ -434,13 +434,10 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
         }}
       >
         <div style={{ alignItems: "center", display: "flex", gap: 10 }}>
-          <Icon
-            name="user"
-            style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 18 }}
-          />
+          <Icon name="user" style={{ color: UI_COLORS.link, fontSize: 18 }} />
           <div>
             <div style={{ fontWeight: 600 }}>Full project access</div>
-            <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+            <div style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
               Collaborators can edit files and use runtimes. Viewers can only
               read allowed files.
             </div>
