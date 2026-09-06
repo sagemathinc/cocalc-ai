@@ -32,7 +32,7 @@ payload, so depth is stable across edits — adding a deeper sublist
 doesn't churn outer items' marker keys.
 */
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { WidgetProps } from "../types";
 import { Widget } from "./common";
@@ -40,7 +40,7 @@ import { Widget } from "./common";
 const ENV_LABEL_STYLE = {
   fontFamily: "sans-serif",
   fontSize: "0.75em",
-  color: COLORS.GRAY,
+  color: UI_COLORS.secondary,
   fontStyle: "italic",
   letterSpacing: "0.02em",
 } as const;
@@ -48,7 +48,7 @@ const ENV_LABEL_STYLE = {
 const MARKER_STYLE = {
   fontFamily: "sans-serif",
   fontWeight: 600,
-  color: COLORS.GRAY_D,
+  color: UI_COLORS.text,
   marginRight: 4,
 } as const;
 
@@ -163,7 +163,7 @@ export function ListItem(props: WidgetProps) {
           style={{
             fontWeight: 700,
             marginRight: 4,
-            color: COLORS.GRAY_D,
+            color: UI_COLORS.text,
           }}
         >
           {label}

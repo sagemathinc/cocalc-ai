@@ -19,13 +19,13 @@ the editor when the user meant to edit the link, and (b) needing to
 intercept browser-level mouse-button behavior on the widget DOM.
 */
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { WidgetProps } from "../types";
 import { EmptyPlaceholder, Widget } from "./common";
 
 const LINK_STYLE = {
-  color: COLORS.BS_BLUE_TEXT,
+  color: UI_COLORS.link,
   textDecoration: "underline",
 } as const;
 

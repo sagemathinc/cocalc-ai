@@ -20,7 +20,7 @@ raw source text. The hover tooltip on the widget still shows the full
 original source for inspection.
 */
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { TabularAlign, TabularRow } from "../parser";
 import { WidgetProps } from "../types";
@@ -38,17 +38,17 @@ const TABLE_STYLE = {
 const CELL_STYLE_BASE = {
   padding: "4px 10px",
   verticalAlign: "top",
-  color: COLORS.GRAY_DD,
+  color: UI_COLORS.text,
 } as const;
 
 const BORDER_ROW_STYLE = {
-  borderBottom: `1px solid ${COLORS.GRAY_M}`,
+  borderBottom: `1px solid ${UI_COLORS.border}`,
 } as const;
 
 const EMPTY_BORDER_CELL_STYLE = { padding: 0, lineHeight: "4px" } as const;
 
 const EMPTY_TABULAR_STYLE = {
-  color: COLORS.GRAY_M,
+  color: UI_COLORS.secondary,
   fontStyle: "italic",
 } as const;
 

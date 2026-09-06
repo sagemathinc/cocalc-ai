@@ -23,7 +23,7 @@ It does NOT try to interpret the macro. We have no idea what
 `\foo{x}` should look like.
 */
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { WidgetProps } from "../types";
 import { Widget } from "./common";
@@ -32,24 +32,24 @@ const CHIP_STYLE = {
   display: "inline-block",
   padding: "0 6px",
   borderRadius: 3,
-  background: COLORS.GRAY_LL,
-  color: COLORS.GRAY_D,
+  background: UI_COLORS.inset,
+  color: UI_COLORS.text,
   fontSize: "0.85em",
   fontFamily: "sans-serif",
-  border: `1px solid ${COLORS.GRAY_L}`,
+  border: `1px solid ${UI_COLORS.border}`,
   verticalAlign: "baseline",
 } as const;
 
 const NAME_STYLE = {
   fontFamily: "monospace",
   fontWeight: 600,
-  color: COLORS.BS_BLUE_TEXT,
+  color: UI_COLORS.link,
   marginRight: 4,
 } as const;
 
 const CONTENT_STYLE = {
   fontStyle: "italic",
-  color: COLORS.GRAY,
+  color: UI_COLORS.secondary,
   // Keep the chip compact — long content gets truncated with
   // ellipsis. The full source is visible on hover via the Widget
   // wrapper's Tooltip.
