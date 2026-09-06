@@ -14,33 +14,20 @@ import {
 import type { VerifiedBackupExclusionInventory } from "./backup-exclusion-report";
 import { getR2ObjectToFile, putR2ObjectFromFile } from "./r2";
 import type { R2ObjectStoreAuth } from "./r2";
+import type {
+  BackupExclusionBinding,
+  BackupExclusionReadLimits,
+} from "@cocalc/util/types/backup-evidence";
+export type {
+  BackupExclusionBinding,
+  BackupExclusionReadLimits,
+} from "@cocalc/util/types/backup-evidence";
 
 // Separate from the disposable browsing indexes: index retention must never
 // remove evidence needed to explain a partial backup after host-data deletion.
 const PREFIX = "project-backup-exclusions/v1";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
-
-export interface BackupExclusionBinding {
-  schema_version: 1;
-  project_id: string;
-  backup_id: string;
-  source: {
-    subvolume_uuid: string;
-    snapshot_uuid: string;
-    captured_at: string;
-    generation: string;
-  };
-  policy_sha256: string;
-  report: { sha256: string; header_sha256: string; bytes: number };
-}
-
-export interface BackupExclusionReadLimits {
-  max_bytes: number;
-  max_record_bytes: number;
-  max_entries: number;
-  max_path_depth: number;
-}
 
 export interface StoredBackupExclusionReport {
   binding: BackupExclusionBinding;

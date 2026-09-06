@@ -204,8 +204,41 @@ not a completion claim or deployment approval. Production remains unchanged.
   (`8cd90870-e58f-4979-b87f-cf85f3622324`) and `staging2-copy-canary`
   (`4a9c7c19-5c5f-45f9-a48b-5f04196666d4`). Revalidate their state before use.
 
-Next integration work is protected report persistence and explicit outcomes,
-then protected quota-enforced restore staging and early/final lifecycle gates.
+### Protected Producer And Owning-Bay Outcomes
+
+- CoCalc `5d3984fb22` adds opt-in root producer evidence. The helper reads the
+  anchored read-only Btrfs snapshot UUID, parent UUID and exact u64 generation,
+  captures bounded inventory with the same selection flags as backup, and
+  publishes root-owned reports only after successful backup and a final source
+  identity check. Repository initialization precedes inventory because inventory
+  needs the repository chunker configuration. Thirteen producer regressions,
+  25 supervision tests and 92 bootstrap tests pass locally. The new identity
+  ioctl still needs real Btrfs qualification through the producer, not only the
+  mocked ioctl tests. No root policy has been enabled.
+- The host receiver now validates and anchors root-owned reports, uploads and
+  reads back full bounded evidence, then awaits a distinct host-authenticated
+  `recordProjectBackupOutcome` RPC. The owning bay stores immutable bounded
+  receipts with the authoritative storage bucket ID, checks current placement
+  under a project-row lock, and never substitutes a local write after remote
+  failure. Repeated identical receipts are safe; conflicting receipts fail.
+  Snapshot observation time/generation do not advance live-source freshness.
+- Manual backups and rolling managed backups are wired to this receipt path.
+  A partial backup is recorded but throws before legacy success/freshness or
+  destructive callers can consume it. Unhandled producer evidence also fails
+  in the generic subvolume path. The explicit caller evidence gate requires
+  supervision; with gates disabled, older helpers retain their behavior.
+  This is not yet a complete partial-backup user experience or lifecycle gate.
+- Current focused checks: 122 backend evidence/store/report/transport/gate
+  tests, 127 server outcome/routing tests, 22 project runner tests, and 16
+  subvolume backup tests pass. Server and project-host package builds are part
+  of the changeset verification. No Staging2 or production deployment occurred.
+
+Next integration work is report retention/release and bucket-retention fencing,
+durable failed-attempt status, paginated report access and account-specific UI
+acknowledgements, then protected quota-enforced restore staging and early/final
+lifecycle gates. Listing/indexing and all destructive consumers must resolve
+the new outcomes before exclusions are enabled. Migration/RootFS/copy paths
+still need their corresponding evidence and immutable staging integration.
 The complete goal remains unfinished; no size-exclusion policy or production
 activation has been enabled.
 

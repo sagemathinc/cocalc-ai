@@ -404,6 +404,16 @@ export class SubvolumeRustic {
             ).stdout,
           );
       const { time, id, summary } = backupResult;
+      if (
+        Object.prototype.hasOwnProperty.call(
+          backupResult,
+          "cocalc_backup_evidence",
+        )
+      ) {
+        throw new Error(
+          "Protected backup evidence requires its durable host consumer; completeness was not recorded",
+        );
+      }
       const backupTime = time instanceof Date ? time : new Date(time);
       return {
         time: backupTime,
@@ -593,15 +603,17 @@ export class SubvolumeRustic {
       tags,
       progress,
       existingSnapshotNames: _existingSnapshotNames,
+      runner,
     }: {
       timeout?: number;
       limit?: number;
       tags?: string[];
       progress?: (update: RusticProgressUpdate) => void;
       existingSnapshotNames?: string[];
+      runner?: RusticBackupRunner;
     } = {},
   ) => {
-    return await this.backup({ limit, timeout, tags, progress });
+    return await this.backup({ limit, timeout, tags, progress, runner });
   };
 
   readdir = async (): Promise<string[]> => {

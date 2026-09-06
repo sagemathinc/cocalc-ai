@@ -1,13 +1,30 @@
 import {
   assertLegacyRusticOperationAllowed,
   managedRusticSupervisionEnabled,
+  managedRusticEvidenceEnabled,
 } from "./managed-rustic";
 
 describe("managed Rustic rollout admission", () => {
   const original = process.env.COCALC_MANAGED_RUSTIC_SUPERVISION;
+  const originalEvidence = process.env.COCALC_MANAGED_RUSTIC_EVIDENCE;
   afterEach(() => {
     if (original == null) delete process.env.COCALC_MANAGED_RUSTIC_SUPERVISION;
     else process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = original;
+    if (originalEvidence == null)
+      delete process.env.COCALC_MANAGED_RUSTIC_EVIDENCE;
+    else process.env.COCALC_MANAGED_RUSTIC_EVIDENCE = originalEvidence;
+  });
+
+  it("requires both caller gates and rejects ambiguous evidence configuration", () => {
+    delete process.env.COCALC_MANAGED_RUSTIC_EVIDENCE;
+    expect(managedRusticEvidenceEnabled()).toBe(false);
+    process.env.COCALC_MANAGED_RUSTIC_EVIDENCE = "1";
+    delete process.env.COCALC_MANAGED_RUSTIC_SUPERVISION;
+    expect(managedRusticEvidenceEnabled).toThrow("requires supervision");
+    process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+    expect(managedRusticEvidenceEnabled()).toBe(true);
+    process.env.COCALC_MANAGED_RUSTIC_EVIDENCE = "yes";
+    expect(managedRusticEvidenceEnabled).toThrow("must be 0 or 1");
   });
 
   it.each([undefined, "0"])(

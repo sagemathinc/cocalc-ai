@@ -236,6 +236,16 @@ import {
 } from "./backup-egress";
 import { parseCreatedBackupSnapshot } from "./backup-created";
 import type { BackupSnapshotRef } from "./backup-created";
+import {
+  managedRusticEvidenceEnabled,
+  managedRusticSupervisionEnabled,
+} from "@cocalc/backend/sandbox/managed-rustic";
+import {
+  acceptBackupProducerEvidence,
+  validateBackupOutcomeReceipt,
+} from "@cocalc/backend/backup-producer-evidence";
+import { backupReportHeaderSha256 } from "@cocalc/backend/backup-exclusion-report";
+import type { RusticBackupRunner } from "@cocalc/file-server/btrfs/subvolume-rustic";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import {
   BtrfsMutationDeferredError,
@@ -1897,6 +1907,75 @@ async function reportBackupSuccess(
     args: [{ project_id, time, generation }],
     timeout: 30000,
   });
+}
+
+function managedProjectBackupRunner(
+  project_id: string,
+  repoProfile: string,
+  parent?: string,
+): RusticBackupRunner {
+  return async ({ src, host, timeout, tags, progress }) =>
+    await projectRusticBackup({
+      src,
+      repoProfile,
+      host,
+      timeoutMs: timeout,
+      tags,
+      parent,
+      progress,
+      evidence: {
+        project_id,
+        required: managedRusticEvidenceEnabled(),
+        accept: async (producer) => {
+          const config = await getBackupIndexStoreConfig(project_id);
+          const client = getMasterConatClient();
+          const host_id = getLocalHostId();
+          if (
+            !config ||
+            config.kind !== "r2-object-store" ||
+            !client ||
+            !host_id
+          )
+            throw new Error(
+              "Durable backup evidence storage and owning-bay connection are required",
+            );
+          await acceptBackupProducerEvidence({
+            evidence: producer,
+            auth: {
+              endpoint: config.endpoint,
+              bucket: config.bucket,
+              accessKey: config.access_key_id,
+              secretKey: config.secret_access_key,
+            },
+            timeout_ms: Math.min(timeout, 120000),
+            record: async (stored) => {
+              const receipt = validateBackupOutcomeReceipt(
+                {
+                  producer,
+                  bucket: config.bucket,
+                  object_key: stored.object_key,
+                  excluded_apparent_bytes:
+                    stored.inventory.excluded_apparent_bytes,
+                  sample: stored.inventory.sample,
+                },
+                project_id,
+              );
+              const result = await callHub({
+                client,
+                host_id,
+                name: "hosts.recordProjectBackupOutcome",
+                args: [{ project_id, receipt }],
+                timeout: 30000,
+              });
+              if (result?.receipt_sha256 !== backupReportHeaderSha256(receipt))
+                throw new Error(
+                  "Owning bay did not confirm the backup evidence receipt",
+                );
+            },
+          });
+        },
+      },
+    });
 }
 
 async function getLatestKnownBackupId(
@@ -4119,16 +4198,11 @@ async function createBackup({
                 tags,
                 parent,
                 progress,
-                runner: async ({ src, host, timeout, tags, progress }) =>
-                  await projectRusticBackup({
-                    src,
-                    repoProfile: vol.fs.rusticRepo,
-                    host,
-                    timeoutMs: timeout,
-                    tags,
-                    parent,
-                    progress,
-                  }),
+                runner: managedProjectBackupRunner(
+                  project_id,
+                  vol.fs.rusticRepo,
+                  parent,
+                ),
               });
             } catch (err) {
               if (!(err instanceof ProjectRusticUnsupportedError)) {
@@ -4183,6 +4257,7 @@ async function createBackup({
               time: backupResult.time,
               id: backupResult.id,
               summary: backupResult.summary,
+              source: backupResult.source,
               generation,
             };
           } catch (err) {
@@ -4539,12 +4614,20 @@ async function updateBackupsUnlocked({
       : undefined;
   const createdBackupIds = new Set<string>();
   let newestSource: BackupSnapshotRef["source"];
+  managedRusticEvidenceEnabled();
   await withBackupConfigRefreshOnMissingBucket({
     project_id,
     op: "updateBackups",
     run: async () => {
       const refreshed = await getVolumeForBackup(project_id);
       await refreshed.rustic.update(counts, {
+        runner: managedRusticSupervisionEnabled()
+          ? managedProjectBackupRunner(
+              project_id,
+              refreshed.fs.rusticRepo,
+              await getLatestKnownBackupId(project_id),
+            )
+          : undefined,
         limit,
         tags:
           legacyInitialBackupOverride == null
