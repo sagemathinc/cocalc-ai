@@ -19,7 +19,7 @@ import { AdminRole } from "./admin-role";
 import { Ban } from "./ban";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { AdminMembership } from "./admin-membership";
 import { AdminBilling } from "./billing";
 import { ManagedEgressHistoryPanel } from "@cocalc/frontend/purchases/managed-egress-history";
@@ -105,7 +105,7 @@ export function UserResult({
       style={{ margin: "15px 0" }}
       styles={{
         body: { padding: showActiveContent ? undefined : 0 },
-        header: { background: COLORS.GRAY_LLL },
+        header: { background: UI_COLORS.inset, color: UI_COLORS.text },
         title: {
           overflow: "visible",
           padding: "0",
@@ -132,13 +132,13 @@ export function UserResult({
             />
             <Space
               wrap
-              style={{ color: COLORS.GRAY_M, flex: "1 1 360px", minWidth: 0 }}
+              style={{ color: UI_COLORS.text, flex: "1 1 360px", minWidth: 0 }}
             >
               {userName}{" "}
               {email_address ? (
                 <div onClick={(e) => e.stopPropagation()}>
                   <CopyToClipBoard
-                    style={{ color: COLORS.GRAY_M }}
+                    style={{ color: UI_COLORS.secondary }}
                     value={email_address}
                   />
                 </div>
@@ -159,7 +159,7 @@ export function UserResult({
             <div
               style={{
                 alignItems: "center",
-                color: COLORS.GRAY_M,
+                color: UI_COLORS.secondary,
                 display: "flex",
                 flex: "0 1 auto",
                 flexWrap: "wrap",
@@ -196,7 +196,7 @@ export function UserResult({
               </Space>
               <CopyToClipBoard
                 copyTip={"Copied account_id!"}
-                style={{ color: COLORS.GRAY_M }}
+                style={{ color: UI_COLORS.secondary }}
                 value={account_id}
               />
             </div>
