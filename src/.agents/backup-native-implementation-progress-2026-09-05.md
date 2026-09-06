@@ -233,7 +233,20 @@ not a completion claim or deployment approval. Production remains unchanged.
   subvolume backup tests pass. Server and project-host package builds are part
   of the changeset verification. No Staging2 or production deployment occurred.
 
-Next integration work is report retention/release and bucket-retention fencing,
+- Local root report spooling now requires explicit byte/count limits and reserves
+  each producer's maximum future report length under a bounded lock. Interrupted
+  reservations remain charged rather than being blindly age-deleted. The real
+  multi-process test on local Btrfs exposed a stale directory enumeration race;
+  reopening the scan directory after acquiring the lock prevents over-admission.
+  Reports are hash-sealed by root, then released via a filename/digest-only
+  privileged command after remote verification and durable owning-bay acceptance.
+  Release failure retains bounded evidence without retrying the completed backup.
+  All 18 producer, 26 supervision-policy and 26 project runner tests pass, as
+  does the project-host typecheck. Bootstrap regression tests also pass.
+  Abandoned reservations still require reconciliation; central spool health and
+  evidence-bucket retention fences remain outstanding. This is not deployment.
+
+Next integration work is abandoned-report reconciliation and bucket-retention fencing,
 durable failed-attempt status, paginated report access and account-specific UI
 acknowledgements, then protected quota-enforced restore staging and early/final
 lifecycle gates. Listing/indexing and all destructive consumers must resolve

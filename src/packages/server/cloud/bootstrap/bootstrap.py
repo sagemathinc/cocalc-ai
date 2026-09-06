@@ -3636,13 +3636,15 @@ def load_policy(path=POLICY):
             raise ValueError("Rustic preflight exceeds the job deadline")
         if "evidence" in native:
             evidence = native["evidence"]
-            if not isinstance(evidence, dict) or set(evidence) != {"policy_version", "exclude_larger_than_bytes", "max_report_bytes"}:
+            if not isinstance(evidence, dict) or set(evidence) != {"policy_version", "exclude_larger_than_bytes", "max_report_bytes", "max_spool_bytes", "max_reports"}:
                 raise ValueError("invalid native backup evidence policy")
             for name, value in evidence.items():
                 if type(value) is not int or not 1 <= value <= 2**63 - 1:
                     raise ValueError("invalid native backup evidence budget: " + name)
             if evidence["exclude_larger_than_bytes"] > limits["max-file-bytes"]:
                 raise ValueError("exclusion threshold exceeds retained-file admission")
+            if evidence["max_report_bytes"] > evidence["max_spool_bytes"] or evidence["max_reports"] > 100000:
+                raise ValueError("invalid backup report spool budgets")
     if "retry" in policy:
         retry = policy["retry"]
         limits = {"base_seconds": (1, 86400), "max_seconds": (1, 30 * 86400),
@@ -4319,6 +4321,7 @@ import struct
 import uuid
 import pwd
 import datetime
+import contextlib
 
 
 ALLOWED_ROOTS = {
@@ -4835,6 +4838,106 @@ def backup_report_directory(path, *, required_uid=0, reader_gid=None):
     return reader_gid
 
 
+REPORT_NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.ndjson")
+REPORT_SEAL = "user.cocalc_backup_report_sha256"
+
+
+@contextlib.contextmanager
+def locked_report_spool(path, required_uid=0):
+    directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    lock = None
+    try:
+        info = os.fstat(directory)
+        if info.st_uid != required_uid or info.st_mode & 0o027:
+            fail("untrusted backup report spool")
+        lock = os.open(".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=directory)
+        info = os.fstat(lock)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_nlink != 1 or info.st_mode & 0o077:
+            fail("untrusted backup report spool lock")
+        # No long-running work is allowed inside this critical section. Never
+        # wait indefinitely behind a failed operator process holding the lock.
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    fail("backup report spool lock timed out")
+                time.sleep(0.05)
+        yield directory
+    finally:
+        if lock is not None:
+            os.close(lock)
+        os.close(directory)
+
+
+def reserve_backup_report(path, evidence, required_uid=0):
+    with locked_report_spool(path, required_uid) as directory:
+        count = 0
+        size = 0
+        # Btrfs may bound readdir to entries present when the directory was
+        # opened. Reopen AFTER locking, or concurrent admissions can miss files
+        # created while this process waited for the lock.
+        scanfd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC, dir_fd=directory)
+        try:
+            with os.scandir(scanfd) as entries:
+                for entry in entries:
+                    if entry.name == ".lock":
+                        continue
+                    count += 1
+                    if count >= evidence["max_reports"]:
+                        fail("backup report spool count exhausted; durable release or operator reconciliation required")
+                    info = entry.stat(follow_symlinks=False)
+                    if not REPORT_NAME.fullmatch(entry.name) or not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_nlink != 1:
+                        fail("unexpected backup report spool entry")
+                    size += info.st_size
+                    if size > evidence["max_spool_bytes"]:
+                        fail("backup report spool byte budget exhausted")
+        finally:
+            os.close(scanfd)
+        reservation = evidence["max_report_bytes"]
+        if reservation > evidence["max_spool_bytes"] - size:
+            fail("backup report spool byte budget exhausted")
+        name = str(uuid.uuid4()) + ".ndjson"
+        fd = os.open(name, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+        try:
+            # Logical length reserves the full future report against other
+            # producers without allocating/writing that much physical storage.
+            # A killed producer retains its reservation and cannot fill the disk
+            # through an unlimited series of tiny orphan files.
+            os.ftruncate(fd, reservation)
+            os.fsync(fd)
+            os.fsync(directory)
+            return os.path.join(path, name), fd
+        except BaseException:
+            os.close(fd)
+            os.unlink(name, dir_fd=directory)
+            raise
+
+
+def release_backup_report(argv, path="/var/lib/cocalc-rustic-reports", required_uid=0):
+    if len(argv) != 3 or argv[0] != "rustic-report-release" or not REPORT_NAME.fullmatch(argv[1]) or not re.fullmatch("[0-9a-f]{64}", argv[2]):
+        fail("invalid backup report release")
+    with locked_report_spool(path, required_uid) as directory:
+        try:
+            fd = os.open(argv[1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+        except FileNotFoundError:
+            return
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o440:
+                fail("backup report is not sealed for release")
+            # The root producer seals its own hash before publication. Checking
+            # it avoids an unbudgeted full-file hash in this privileged command.
+            if os.getxattr(fd, REPORT_SEAL) != argv[2].encode("ascii"):
+                fail("backup report release digest mismatch")
+            os.unlink(argv[1], dir_fd=directory)
+            os.fsync(directory)
+        finally:
+            os.close(fd)
+
+
 def run_rustic(
     argv,
     allowed_roots=ALLOWED_ROOTS,
@@ -4918,12 +5021,11 @@ def run_rustic(
                         raise subprocess.CalledProcessError(1, base)
                 captured_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
                 reader_gid = backup_report_directory(report_run_dir, required_uid=report_run_dir_uid, reader_gid=report_reader_gid)
-                report_path = os.path.join(report_run_dir, str(uuid.uuid4()) + ".ndjson")
                 admission = [arg for name, value in native["admission"].items() for arg in [f"--{name}", str(value)]]
                 inventory_args = ["backup-inventory", "-x", "--exclusion-report", "--exclude-larger-than", str(evidence["exclude_larger_than_bytes"]),
                                   "--max-report-bytes", str(evidence["max_report_bytes"]), *admission,
                                   "--glob", "!.snapshots", "--glob", "!.snapshots/**", "."]
-                fd = os.open(report_path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+                report_path, fd = reserve_backup_report(report_run_dir, evidence, report_run_dir_uid)
                 report_created = True
                 with os.fdopen(fd, "w+b") as stream:
                     status, _, report = bounded_rustic_capture(base, inventory_args, cwd=f"/proc/self/fd/{datafd}", env=env,
@@ -4931,6 +5033,7 @@ def run_rustic(
                     if status != 0:
                         raise subprocess.CalledProcessError(status, base)
                     stream.flush()
+                    stream.truncate(report["bytes"])
                     header, inventory = read_backup_inventory_envelope(stream)
                     report["header_sha256"] = hashlib.sha256(canonical_backup_json(header)).hexdigest()
                     os.fsync(stream.fileno())
@@ -4992,8 +5095,14 @@ def run_rustic(
                 result = json.loads(backup_output)
                 if type(result) is not dict or type(result.get("id")) is not str or not re.fullmatch("[0-9a-f]{64}", result["id"]):
                     fail("invalid native backup result")
-                os.chown(report_path, report_run_dir_uid, reader_gid)
-                os.chmod(report_path, 0o440)
+                report_fd = os.open(report_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                try:
+                    os.setxattr(report_fd, REPORT_SEAL, proof["report"]["sha256"].encode("ascii"))
+                    os.fchown(report_fd, report_run_dir_uid, reader_gid)
+                    os.fchmod(report_fd, 0o440)
+                    os.fsync(report_fd)
+                finally:
+                    os.close(report_fd)
                 directory_fd = os.open(report_run_dir, os.O_RDONLY | os.O_DIRECTORY)
                 try:
                     os.fsync(directory_fd)
@@ -5280,6 +5389,8 @@ def parse_uint(value, name, maximum=(2**53 - 1)):
 
 
 def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
+    if argv and argv[0] == "rustic-report-release":
+        return release_backup_report(argv)
     if argv and argv[0] in RUSTIC_COMMANDS:
         return run_rustic(argv, allowed_roots, rustic_candidates)
     if argv and argv[0] in ANCHORED_COMMANDS:
@@ -8981,6 +9092,10 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       --profile-path "$RUSTIC_PROFILE_REL" \
       --snapshot "$snapshot" \
       "${delete_args[@]}"
+    ;;
+  rustic-report-release)
+    if [ "$#" -ne 2 ]; then deny "rustic-report-release-bad-args" "expected report name and digest"; fi
+    exec /usr/local/libexec/cocalc-runtime-storage-path-helper rustic-report-release "$@"
     ;;
   project-rustic-backup|project-rustic-backup-maintenance|project-rustic-backup-supervised|project-rustic-backup-maintenance-supervised|project-rustic-backup-wait)
     if [ "$#" -lt 3 ]; then

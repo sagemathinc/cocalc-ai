@@ -40,6 +40,31 @@ class RusticJobTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.api["load_policy"]()
 
+    def test_evidence_policy_requires_bounded_report_spool(self):
+        limits = {key: 100 for key in ("max-entries", "max-apparent-bytes", "max-file-bytes", "max-chunk-references", "max-metadata-bytes", "max-path-depth", "preflight-timeout-seconds")}
+        evidence = {"policy_version": 1, "exclude_larger_than_bytes": 4,
+                    "max_report_bytes": 32768, "max_spool_bytes": 131072, "max_reports": 4}
+        policy = {**self.policy, "native": {"binary_sha256": "a" * 64, "admission": limits, "evidence": evidence}}
+        with mock.patch.dict(self.api, {"trusted_regular": lambda _: json.dumps(policy)}):
+            self.assertEqual(self.api["load_policy"](), policy)
+        invalid_policies = []
+        for name in evidence:
+            for value in [None, True, 0, -1, 2**63]:
+                invalid = copy.deepcopy(policy)
+                invalid["native"]["evidence"][name] = value
+                invalid_policies.append(invalid)
+            invalid = copy.deepcopy(policy)
+            del invalid["native"]["evidence"][name]
+            invalid_policies.append(invalid)
+        for name, value in [("max_spool_bytes", 32767), ("max_reports", 100001), ("exclude_larger_than_bytes", 101)]:
+            invalid = copy.deepcopy(policy)
+            invalid["native"]["evidence"][name] = value
+            invalid_policies.append(invalid)
+        for invalid in invalid_policies:
+            with mock.patch.dict(self.api, {"trusted_regular": lambda _: json.dumps(invalid)}):
+                with self.assertRaises(ValueError):
+                    self.api["load_policy"]()
+
     def test_pinned_binary_uses_verified_inode_across_replacement(self):
         api = {"__name__": "path_test"}
         exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, api)

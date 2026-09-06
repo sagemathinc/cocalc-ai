@@ -5,6 +5,7 @@ import copy
 import hashlib
 import io
 import json
+import multiprocessing
 import os
 from pathlib import Path
 import struct
@@ -27,7 +28,7 @@ class RusticEvidenceTest(unittest.TestCase):
             "binary_sha256": "a" * 64,
             "admission": {name: 100 for name in ("max-entries", "max-apparent-bytes", "max-file-bytes",
                 "max-chunk-references", "max-metadata-bytes", "max-path-depth", "preflight-timeout-seconds")},
-            "evidence": {"policy_version": 1, "exclude_larger_than_bytes": 4, "max_report_bytes": 32768},
+            "evidence": {"policy_version": 1, "exclude_larger_than_bytes": 4, "max_report_bytes": 32768, "max_spool_bytes": 131072, "max_reports": 4},
         }
 
     def report(self, count=1):
@@ -85,6 +86,90 @@ class RusticEvidenceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.api["bounded_rustic_capture"](["/usr/bin/python3", "-I", "-c"], [script],
                 cwd="/tmp", env={}, pass_fds=(), maximum=10, sink=io.BytesIO())
+
+    def test_spool_reserves_future_bytes_and_bounds_report_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o750)
+            limits = {"max_report_bytes": 8, "max_spool_bytes": 16, "max_reports": 2}
+            first, fd = self.api["reserve_backup_report"](tmp, limits, os.getuid())
+            os.close(fd)
+            second, fd = self.api["reserve_backup_report"](tmp, limits, os.getuid())
+            os.close(fd)
+            self.assertEqual(Path(first).stat().st_size, 8)
+            self.assertEqual(Path(second).stat().st_size, 8)
+            with self.assertRaisesRegex(ValueError, "count exhausted"):
+                self.api["reserve_backup_report"](tmp, limits, os.getuid())
+            with self.assertRaisesRegex(ValueError, "byte budget exhausted"):
+                self.api["reserve_backup_report"](tmp, {**limits, "max_reports": 3}, os.getuid())
+
+    def test_concurrent_spool_reservations_cannot_over_admit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o750)
+            ctx = multiprocessing.get_context("fork")
+            queue = ctx.Queue()
+            def worker():
+                try:
+                    _, fd = self.api["reserve_backup_report"](tmp, {"max_report_bytes": 8, "max_spool_bytes": 16, "max_reports": 2}, os.getuid())
+                    os.close(fd)
+                    queue.put(True)
+                except ValueError:
+                    queue.put(False)
+            workers = [ctx.Process(target=worker) for _ in range(8)]
+            try:
+                for process in workers: process.start()
+                for process in workers:
+                    process.join(timeout=15)
+                    self.assertEqual(process.exitcode, 0)
+                self.assertEqual(sum(queue.get(timeout=1) for _ in workers), 2, sorted(os.listdir(tmp)))
+            finally:
+                for process in workers:
+                    if process.is_alive(): process.kill()
+                    process.join()
+                queue.close()
+                queue.join_thread()
+
+    def test_failed_reservation_is_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o750)
+            with mock.patch("os.ftruncate", side_effect=OSError("disk failure")):
+                with self.assertRaises(OSError):
+                    self.api["reserve_backup_report"](tmp, {"max_report_bytes": 8, "max_spool_bytes": 16, "max_reports": 2}, os.getuid())
+            self.assertEqual(sorted(os.listdir(tmp)), [".lock"])
+
+    def test_release_requires_root_seal_and_never_releases_active_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o750)
+            path, fd = self.api["reserve_backup_report"](tmp, {"max_report_bytes": 8, "max_spool_bytes": 16, "max_reports": 2}, os.getuid())
+            os.close(fd)
+            args = ["rustic-report-release", Path(path).name, "a" * 64]
+            release = lambda: self.api["release_backup_report"](args, tmp, os.getuid())
+            os.setxattr(path, self.api["REPORT_SEAL"], b"a" * 64)
+            with self.assertRaisesRegex(ValueError, "not sealed"):
+                release()
+            Path(path).chmod(0o440)
+            with mock.patch("os.getxattr", return_value=b"b" * 64):
+                with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                    release()
+            self.assertTrue(Path(path).exists())
+            release()
+            self.assertFalse(Path(path).exists())
+            release()  # A retry after a lost response is harmless.
+
+    def test_spool_and_release_refuse_symlinks_and_arbitrary_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spool = root / "reports"
+            spool.mkdir(mode=0o750)
+            target = root / "keep"
+            target.write_text("keep")
+            name = str(uuid.uuid4()) + ".ndjson"
+            (spool / name).symlink_to(target)
+            with self.assertRaises(ValueError):
+                self.api["reserve_backup_report"](str(spool), {"max_report_bytes": 8, "max_spool_bytes": 16, "max_reports": 2}, os.getuid())
+            for candidate in [name, "../keep", str(target), "other", ".lock"]:
+                with self.assertRaises((ValueError, OSError)):
+                    self.api["release_backup_report"](["rustic-report-release", candidate, "a" * 64], str(spool), os.getuid())
+            self.assertEqual(target.read_text(), "keep")
 
     def exercise(self, *, count=1, changed=False, inventory_status=0, backup_status=0, oversized_output=False, repo_statuses=None):
         with tempfile.TemporaryDirectory() as tmp:
@@ -149,7 +234,7 @@ secret_access_key="secret"
                     else: run()
             if failure:
                 self.assertEqual(output.getvalue(), "")
-                self.assertEqual(list(reports.iterdir()), [])
+                self.assertEqual([p for p in reports.iterdir() if p.name != ".lock"], [])
                 self.assertEqual(len(calls), 1 if inventory_status else 2)
                 self.assertEqual(identity_reads, 2 if changed else 1)
                 return
@@ -160,6 +245,7 @@ secret_access_key="secret"
             self.assertEqual(proof["source"]["generation"], "9007199254740993")
             report_path = Path(proof["report_path"])
             self.assertEqual(report_path.stat().st_mode & 0o777, 0o440)
+            self.assertEqual(os.getxattr(report_path, self.api["REPORT_SEAL"]), proof["report"]["sha256"].encode())
             self.assertEqual(proof["report"]["sha256"], hashlib.sha256(report_path.read_bytes()).hexdigest())
             self.assertEqual(proof["policy_sha256"], hashlib.sha256(self.api["canonical_backup_json"](self.native)).hexdigest())
             self.assertEqual(calls[0][0], "backup-inventory")

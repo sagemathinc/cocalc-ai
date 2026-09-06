@@ -15,10 +15,38 @@ import { getBtrfsMutationContext } from "@cocalc/file-server/btrfs/operation-cac
 import type { ExecuteCodeStreamEvent } from "@cocalc/util/types/execute-code";
 import { parseBackupProducerEvidence } from "@cocalc/backend/backup-producer-evidence";
 import type { BackupProducerEvidence } from "@cocalc/backend/backup-producer-evidence";
+import getLogger from "@cocalc/backend/logger";
 
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
+const logger = getLogger("project-host:project-rustic");
 
 export { managedRusticSupervisionEnabled };
+
+export async function releaseProjectBackupReport(
+  proof: BackupProducerEvidence,
+): Promise<void> {
+  const match =
+    /^\/var\/lib\/cocalc-rustic-reports\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.ndjson)$/.exec(
+      proof.report_path,
+    );
+  if (!match || !/^[0-9a-f]{64}$/.test(proof.binding.report.sha256))
+    throw new Error("Invalid backup report release identity");
+  parseOutput(
+    await exec({
+      cmd: "/usr/bin/sudo",
+      prefixArgs: [
+        "-n",
+        STORAGE_WRAPPER,
+        "rustic-report-release",
+        match[1],
+        proof.binding.report.sha256,
+      ],
+      timeout: 15000,
+      maxSize: 64 * 1024,
+      killProcessGroup: true,
+    }),
+  );
+}
 
 async function waitForRusticJob(
   command: ManagedRusticCommand,
@@ -289,6 +317,18 @@ export async function projectRusticBackup({
       parsed.id,
     );
     await evidence.accept(proof);
+    // Only release local evidence after durable upload AND owning-bay receipt.
+    // A cleanup failure must not trigger an expensive duplicate backup: the
+    // root spool remains bounded and retains the report for reconciliation.
+    try {
+      await releaseProjectBackupReport(proof);
+    } catch (error) {
+      logger.warn("durable backup recorded but local report release failed", {
+        project_id: proof.binding.project_id,
+        backup_id: proof.binding.backup_id,
+        error: String(error),
+      });
+    }
     if (proof.outcome !== "complete")
       throw new PartialProjectBackupError(parsed.id, proof.excluded_files);
   }
