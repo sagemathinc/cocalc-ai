@@ -3,6 +3,7 @@
 import json
 import hashlib
 import os
+import pwd
 from pathlib import Path
 import shutil
 import signal
@@ -27,7 +28,7 @@ if "version" in sys.argv:
     print(json.dumps({"schema_version": 1, "capabilities": {
         "strict_backup": True, "strict_restore": True, "sparse_required_restore": True,
         "hole_aware_backup": True, "backup_inventory": 1, "backup_admission": 1,
-        "strict_local_metadata": 1}}))
+        "strict_local_metadata": 1, "backup_exclusion_inventory": 1}}))
     sys.exit(0)
 if "repoinfo" in sys.argv or "init" in sys.argv:
     sys.exit(0)
@@ -35,6 +36,24 @@ mode = Path("mode").read_text()
 Path("started").write_text(json.dumps({"pid": os.getpid(), "worker": os.getppid()}))
 Path("cgroup").write_text(Path("/proc/self/cgroup").read_text())
 Path("invocation").write_text(json.dumps(sys.argv))
+if mode == "evidence":
+    if "backup-inventory" in sys.argv:
+        header = {"schema_version": 1, "type": "header",
+            "exclude_larger_than_bytes": "4", "max_report_bytes": "8192",
+            "sources": [{"encoding": "unix-bytes-hex", "value": "2e"}],
+            "save_options": {}}
+        print(json.dumps(header))
+        print(json.dumps({"schema_version": 1, "type": "excluded", "reason": "apparent_size",
+            "path": {"encoding": "unix-bytes-hex", "value": "737061727365"}, "apparent_bytes": "8",
+            "file_version": {"inode": "123", "mtime_ns": "1", "ctime_ns": "2", "mode": 33188, "uid": 1000, "gid": 1000}}))
+        print(json.dumps({"schema_version": 1, "type": "complete", "inventory": {
+            "excluded_files": "1", "excluded_apparent_bytes": "8", "inspected_entries": "1",
+            "inspected_node_metadata_bytes": "100", "inspected_max_path_depth": "1",
+            "retained": {name: "0" for name in ["entries", "files", "apparent_bytes",
+                "chunk_references_bound", "content_reference_bytes_bound", "node_metadata_bytes", "max_path_depth"]}}}))
+    else:
+        print(json.dumps({"id": "b" * 64, "time": "2026-09-05T00:00:00Z", "summary": {}}))
+    sys.exit(0)
 if mode == "normal":
     print('{"ok": true}', flush=True)
     sys.exit(0)
@@ -79,12 +98,20 @@ def main():
     io_policy = Path("/etc/cocalc/project-io-policy.json")
     slice_unit = Path("/etc/systemd/system/cocalcmaintenance.slice")
     retry_root = Path("/var/lib/cocalc-rustic-jobs")
+    report_root = Path("/var/lib/cocalc-rustic-reports")
     root = Path("/mnt/cocalc/rustic-job-qualification")
     for path in [helper, path_helper, binary, wrapper, policy_path, io_helper, io_policy, slice_unit,
                  Path("/etc/cocalc/project-io-policy.override.json"),
                  Path("/sys/fs/cgroup/cocalcmaintenance.slice"),
-                 Path("/sys/fs/cgroup/cocalc-maintenance"), retry_root, root]:
+                 Path("/sys/fs/cgroup/cocalc-maintenance"), retry_root, report_root, root]:
         assert not os.path.lexists(path), f"refusing to replace existing {path}"
+    try:
+        pwd.getpwnam("cocalc-host")
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("refusing to alter an existing cocalc-host account")
+    created_host_user = False
     api = {"__name__": "test_job"}
     exec(bootstrap.RUSTIC_JOB_HELPER, api)
     profiles = []
@@ -120,7 +147,7 @@ secret_access_key = "disposable"
                 "--profile-root", "/mnt/cocalc", "--profile-path", profile_name,
                 "--host", "qualification"]
 
-    def start(name, mode, profile_name, through_sudo=False, immutable=False):
+    def start(name, mode, profile_name, through_sudo=False, immutable=False, captured=False):
         case = (native_mount if immutable else root) / name
         if immutable:
             subprocess.run(["btrfs", "subvolume", "create", str(case)], check=True, capture_output=True)
@@ -131,7 +158,12 @@ secret_access_key = "disposable"
         else:
             case.mkdir()
         (case / "mode").write_text(mode)
-        if immutable:
+        if captured:
+            assert immutable
+            source = case.with_name("source-" + case.name)
+            case.rename(source)
+            subprocess.run(["btrfs", "subvolume", "snapshot", "-r", str(source), str(case)], check=True, capture_output=True)
+        elif immutable:
             subprocess.run(["btrfs", "property", "set", "-ts", str(case), "ro", "true"], check=True)
         command = [str(helper), "run", *args(case, profile_name)]
         if through_sudo:
@@ -171,6 +203,8 @@ secret_access_key = "disposable"
 
     try:
         root.mkdir(parents=True)
+        subprocess.run(["useradd", "--system", "--no-create-home", "--user-group", "cocalc-host"], check=True)
+        created_host_user = True
         install(helper, bootstrap.RUSTIC_JOB_HELPER, 0o755)
         install(path_helper, bootstrap.RUNTIME_STORAGE_PATH_HELPER, 0o755)
         install(binary, FAKE_RUSTIC, 0o755)
@@ -340,6 +374,46 @@ secret_access_key = "disposable"
                        check=True, timeout=30)
         flags = json.loads((case / "invocation").read_text())
         assert "--strict" in flags and "--delete" in flags and flags[flags.index("--sparse") + 1] == "by-content-required"
+        # Real Btrfs identity and root permissions, with a deterministic fixture
+        # process. This does not replace real Rustic content/quota qualification.
+        policy["native"]["evidence"] = {"policy_version": 1, "exclude_larger_than_bytes": 4,
+            "max_report_bytes": 8192, "max_spool_bytes": 16384, "max_reports": 2}
+        policy_path.write_text(json.dumps(policy))
+        case, proc = start("evidence-not-snapshot", "evidence", shared, through_sudo=True, immutable=True)
+        result(proc, False)
+        assert not (case / "started").exists()
+        case, proc = start("protected-evidence", "evidence", shared, through_sudo=True, immutable=True, captured=True)
+        proof = json.loads(result(proc, True)[0])["cocalc_backup_evidence"]
+        path_api = {"__name__": "path_qualification"}
+        exec(bootstrap.RUNTIME_STORAGE_PATH_HELPER, path_api)
+        fd = os.open(case, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            expected_source = path_api["btrfs_backup_identity"](fd)
+        finally:
+            os.close(fd)
+        for key, value in expected_source.items():
+            assert proof["source"][key] == value
+        source = case.with_name("source-" + case.name)
+        shown = subprocess.check_output(["btrfs", "subvolume", "show", str(source)], text=True)
+        assert proof["source"]["subvolume_uuid"] in shown
+        shown = subprocess.check_output(["btrfs", "subvolume", "show", str(case)], text=True)
+        assert proof["source"]["snapshot_uuid"] in shown
+        assert proof["outcome"] == "partial_policy_exclusions" and proof["excluded_files"] == "1"
+        report = Path(proof["report_path"])
+        assert report.parent == report_root
+        assert report.stat().st_uid == 0 and report.stat().st_gid == pwd.getpwnam("cocalc-host").pw_gid
+        assert report.stat().st_mode & 0o777 == 0o440
+        assert len(report.read_bytes()) == proof["report"]["bytes"] < 8192
+        digest = hashlib.sha256(report.read_bytes()).hexdigest()
+        assert proof["report"]["sha256"] == digest
+        assert os.getxattr(report, path_api["REPORT_SEAL"]) == digest.encode("ascii")
+        bad_release = subprocess.run([str(wrapper), "rustic-report-release", report.name, "0" * 64], capture_output=True, timeout=15)
+        assert bad_release.returncode != 0 and report.exists()
+        for _ in range(2):
+            subprocess.run([str(wrapper), "rustic-report-release", report.name, digest], check=True, timeout=15)
+        assert not report.exists()
+        assert list(report_root.iterdir()) == [report_root / ".lock"]
+        policy["native"].pop("evidence")
         policy["native"]["binary_sha256"] = "0" * 64
         policy_path.write_text(json.dumps(policy))
         case, proc = start("wrong-binary", "normal", shared, through_sudo=True, immutable=True)
@@ -392,7 +466,8 @@ secret_access_key = "disposable"
               "mutable-native-source", "native-backup", "native-restore", "wrong-binary",
               "no-io-enforcement", "shared-maintenance-parent",
               "rootfs-native-backup", "rootfs-native-restore", "persistent-retry-backoff",
-              "persistent-retry-review", "operator-retry-reset", "interrupted-retry-recovery"]}))
+              "persistent-retry-review", "operator-retry-reset", "interrupted-retry-recovery",
+              "evidence-requires-snapshot", "protected-evidence-identity", "sealed-report-release"]}))
     finally:
         for proc in processes:
             if proc.poll() is None:
@@ -409,6 +484,10 @@ secret_access_key = "disposable"
         shutil.rmtree(root)
         if retry_root.exists():
             shutil.rmtree(retry_root)
+        if report_root.exists():
+            shutil.rmtree(report_root)
+        if created_host_user:
+            subprocess.run(["userdel", "cocalc-host"], check=True)
 
 
 if __name__ == "__main__":
