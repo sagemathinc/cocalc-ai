@@ -12,6 +12,16 @@ export function managedRusticSupervisionEnabled(): boolean {
   throw new Error("COCALC_MANAGED_RUSTIC_SUPERVISION must be 0 or 1");
 }
 
+export function managedRusticEvidenceEnabled(): boolean {
+  const value = process.env.COCALC_MANAGED_RUSTIC_EVIDENCE;
+  if (value == null || value === "0") return false;
+  if (value !== "1")
+    throw new Error("COCALC_MANAGED_RUSTIC_EVIDENCE must be 0 or 1");
+  if (!managedRusticSupervisionEnabled())
+    throw new Error("Managed backup evidence requires supervision");
+  return true;
+}
+
 export function assertLegacyRusticOperationAllowed(command: string): void {
   if (
     (command === "backup" || command === "restore") &&

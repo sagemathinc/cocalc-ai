@@ -295,6 +295,36 @@ describe("SubvolumeRustic.backup", () => {
     },
   );
 
+  it.each([false, true])(
+    "does not turn unhandled producer evidence into freshness (%s)",
+    async (useRunner) => {
+      const rustic = new SubvolumeRustic({
+        name: "project-1",
+        path: "/mnt/test/project-1",
+        filesystem: { opts: { mount: "/mnt/test" } },
+        fs: { rusticRepo: "/repo", rustic: jest.fn() },
+      } as any);
+      const result = {
+        id: "snapshot",
+        time: "2026-09-05T00:00:00.000Z",
+        summary: {},
+        cocalc_backup_evidence: { outcome: "partial_policy_exclusions" },
+      };
+      backupFsRusticMock.mockResolvedValue({
+        stdout: Buffer.from(JSON.stringify(result)),
+        stderr: Buffer.alloc(0),
+        code: 0,
+        truncated: false,
+      });
+      await expect(
+        rustic.backup(useRunner ? { runner: async () => result } : {}),
+      ).rejects.toThrow("durable host consumer");
+      expect(
+        btrfsMock.mock.calls.filter(([opts]) => opts.args[1] === "delete"),
+      ).toHaveLength(1);
+    },
+  );
+
   it("passes an explicit parent snapshot to rustic backup", async () => {
     const rustic = new SubvolumeRustic({
       name: "project-1",
@@ -314,6 +344,25 @@ describe("SubvolumeRustic.backup", () => {
       expect.arrayContaining(["--parent", "snap-parent"]),
       expect.any(Object),
     );
+  });
+
+  it("forwards the managed runner through the rolling-snapshot create API", async () => {
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+    const runner = jest.fn(async () => ({
+      id: "managed",
+      time: new Date("2026-09-05T00:00:00.000Z"),
+      summary: {},
+    }));
+    await expect(rustic.create("hourly", { runner })).resolves.toMatchObject({
+      id: "managed",
+    });
+    expect(runner).toHaveBeenCalledTimes(1);
+    expect(backupFsRusticMock).not.toHaveBeenCalled();
   });
 
   it("serializes snapshot mutations but allows concurrent rustic transfers", async () => {

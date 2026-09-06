@@ -1507,6 +1507,21 @@ async function getProjectBackupIndexBucket({
   return await loadBucketById(repo.bucket_id);
 }
 
+export async function getHostBackupEvidenceStore({
+  host_id,
+  project_id,
+}: {
+  host_id?: string;
+  project_id: string;
+}): Promise<{ id: string; name: string }> {
+  if (!host_id || !isValidUUID(host_id) || !isValidUUID(project_id))
+    throw new Error("Invalid backup evidence owner");
+  await assertHostProjectAccess(host_id, project_id);
+  const bucket = await getProjectBackupIndexBucket({ project_id });
+  if (!bucket) throw new Error("Backup evidence storage bucket is unavailable");
+  return { id: bucket.id, name: bucket.name };
+}
+
 async function deleteProjectBackupIndexObject(
   row: ProjectBackupIndexRow,
 ): Promise<void> {

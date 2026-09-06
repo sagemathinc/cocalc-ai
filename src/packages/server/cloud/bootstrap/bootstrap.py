@@ -4938,6 +4938,10 @@ def run_rustic(
                          "policy_sha256": hashlib.sha256(canonical_backup_json(native)).hexdigest(),
                          "policy_version": evidence["policy_version"], "exclude_larger_than_bytes": str(evidence["exclude_larger_than_bytes"]),
                          "binary_sha256": native["binary_sha256"], "report": report,
+                         "read_limits": {"max_bytes": evidence["max_report_bytes"],
+                                         "max_record_bytes": min(65536, evidence["max_report_bytes"]),
+                                         "max_entries": native["admission"]["max-entries"],
+                                         "max_path_depth": native["admission"]["max-path-depth"]},
                          "report_path": report_path, "excluded_files": inventory["excluded_files"],
                          "outcome": "complete" if inventory["excluded_files"] == "0" else "partial_policy_exclusions"}
             flags = ["backup"]

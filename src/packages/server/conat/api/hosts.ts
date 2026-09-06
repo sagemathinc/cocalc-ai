@@ -1890,6 +1890,38 @@ export async function recordProjectBackup({
   });
 }
 
+export async function recordProjectBackupOutcome(
+  opts: Parameters<
+    import("@cocalc/conat/hub/api/hosts").Hosts["recordProjectBackupOutcome"]
+  >[0],
+): Promise<{ receipt_sha256: string }> {
+  if (!opts.host_id || !opts.project_id)
+    throw new Error("Backup outcome requires host and project identity");
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .recordProjectBackupOutcome(opts);
+  }
+  return await recordProjectBackupOutcomeLocal(opts);
+}
+
+export async function recordProjectBackupOutcomeLocal(
+  opts: Parameters<
+    import("@cocalc/conat/hub/api/hosts").Hosts["recordProjectBackupOutcome"]
+  >[0],
+): Promise<{ receipt_sha256: string }> {
+  const { recordBackupOutcome } =
+    await import("@cocalc/server/project-backup/outcomes");
+  const { getHostBackupEvidenceStore } =
+    await import("@cocalc/server/project-backup");
+  const bucket = await getHostBackupEvidenceStore({
+    host_id: opts.host_id,
+    project_id: opts.project_id,
+  });
+  return await recordBackupOutcome({ ...opts, bucket });
+}
+
 export async function recordProjectBackupLocal({
   host_id,
   project_id,

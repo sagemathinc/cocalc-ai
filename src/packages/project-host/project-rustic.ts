@@ -13,6 +13,8 @@ import {
 } from "@cocalc/file-server/btrfs/rustic-progress";
 import { getBtrfsMutationContext } from "@cocalc/file-server/btrfs/operation-cache";
 import type { ExecuteCodeStreamEvent } from "@cocalc/util/types/execute-code";
+import { parseBackupProducerEvidence } from "@cocalc/backend/backup-producer-evidence";
+import type { BackupProducerEvidence } from "@cocalc/backend/backup-producer-evidence";
 
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
@@ -74,6 +76,18 @@ export class ProjectRusticUnsupportedError extends Error {
   ) {
     super(message);
     this.name = "ProjectRusticUnsupportedError";
+  }
+}
+
+export class PartialProjectBackupError extends Error {
+  constructor(
+    public readonly backup_id: string,
+    public readonly excluded_files: string,
+  ) {
+    super(
+      `Backup saved with ${excluded_files} oversized files excluded. This is not a complete backup and cannot be used to move or archive the project.`,
+    );
+    this.name = "PartialProjectBackupError";
   }
 }
 
@@ -216,6 +230,7 @@ export async function projectRusticBackup({
   tags,
   parent,
   progress,
+  evidence,
 }: {
   src: string;
   repoProfile: string;
@@ -224,11 +239,23 @@ export async function projectRusticBackup({
   tags?: string[];
   parent?: string;
   progress?: (update: RusticProgressUpdate) => void;
+  evidence?: {
+    project_id: string;
+    required?: boolean;
+    accept: (evidence: BackupProducerEvidence) => Promise<void>;
+  };
 }): Promise<{
   time: Date;
   id: string;
   summary: { [key: string]: string | number };
 }> {
+  if (
+    evidence &&
+    evidence.required !== false &&
+    !managedRusticSupervisionEnabled()
+  ) {
+    throw new Error("Backup evidence requires supervised native execution");
+  }
   const tagArgs = (tags ?? [])
     .map((tag) => tag.trim())
     .filter((tag) => tag.length > 0)
@@ -243,6 +270,28 @@ export async function projectRusticBackup({
     onProgress: progress,
   });
   const parsed = JSON.parse(stdout);
+  if (
+    (evidence && evidence.required !== false) ||
+    Object.prototype.hasOwnProperty.call(parsed, "cocalc_backup_evidence")
+  ) {
+    // A mixed-version consumer must never discard new evidence and publish the
+    // old unconditional success/freshness signal. Without the durable consumer,
+    // leave this operation failed even if a remote snapshot was created.
+    if (!evidence)
+      throw new Error(
+        "Backup evidence consumer is not configured; backup completeness was not recorded",
+      );
+    if (!managedRusticSupervisionEnabled())
+      throw new Error("Backup evidence requires supervised native execution");
+    const proof = parseBackupProducerEvidence(
+      parsed.cocalc_backup_evidence,
+      evidence.project_id,
+      parsed.id,
+    );
+    await evidence.accept(proof);
+    if (proof.outcome !== "complete")
+      throw new PartialProjectBackupError(parsed.id, proof.excluded_files);
+  }
   return {
     time: new Date(parsed.time),
     id: parsed.id,

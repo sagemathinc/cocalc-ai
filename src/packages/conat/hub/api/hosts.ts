@@ -1795,6 +1795,7 @@ export const hosts = {
   recordServiceAdmissionDenial: authFirstRequireHost,
   recordServiceAdmissionNearLimit: authFirstRequireHost,
   recordProjectBackup: authFirstRequireHost,
+  recordProjectBackupOutcome: authFirstRequireHost,
   recordProjectBackupIndex: authFirstRequireHost,
   getProjectBackupIndexes: authFirstRequireHost,
   syncProjectBackupIndexes: authFirstRequireHost,
@@ -2145,6 +2146,11 @@ export interface Hosts {
     time: Date;
     generation?: number | null;
   }) => Promise<void>;
+  recordProjectBackupOutcome: (opts: {
+    host_id?: string;
+    project_id: string;
+    receipt: import("@cocalc/util/types/backup-evidence").BackupOutcomeReceipt;
+  }) => Promise<{ receipt_sha256: string }>;
   recordProjectBackupIndex: (opts: {
     host_id?: string;
     project_id: string;

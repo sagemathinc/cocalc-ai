@@ -10,6 +10,7 @@ import { withBtrfsMutationContext } from "@cocalc/file-server/btrfs/operation-ca
 
 import {
   ProjectRusticUnsupportedError,
+  PartialProjectBackupError,
   projectRusticBackup,
   projectRusticRestore,
   runManagedRustic,
@@ -49,6 +50,144 @@ describe("project rustic wrapper", () => {
     stderr: Buffer.alloc(0),
     code,
     truncated,
+  });
+
+  const projectId = "00000000-0000-4000-8000-000000000001";
+  const produced = (partial = false) => ({
+    id: "b".repeat(64),
+    time: "2026-09-05T00:00:00.000Z",
+    cocalc_backup_evidence: {
+      schema_version: 1,
+      source: {
+        subvolume_uuid: projectId,
+        snapshot_uuid: "00000000-0000-4000-8000-000000000002",
+        generation: "2",
+        captured_at: "2026-09-05T00:00:00.000Z",
+      },
+      policy_version: 1,
+      policy_sha256: "a".repeat(64),
+      binary_sha256: "c".repeat(64),
+      exclude_larger_than_bytes: "100",
+      excluded_files: partial ? "1" : "0",
+      outcome: partial ? "partial_policy_exclusions" : "complete",
+      report_path: `/var/lib/cocalc-rustic-reports/${projectId}.ndjson`,
+      report: {
+        bytes: 1000,
+        sha256: "d".repeat(64),
+        header_sha256: "e".repeat(64),
+      },
+      read_limits: {
+        max_bytes: 2000,
+        max_record_bytes: 2000,
+        max_entries: 100,
+        max_path_depth: 10,
+      },
+    },
+  });
+  const evidenceBackup = (accept: (evidence: any) => Promise<void>) =>
+    projectRusticBackup({
+      src: "/mnt/cocalc/staging/home",
+      repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+      host: "project-1",
+      timeoutMs: 30000,
+      evidence: { project_id: projectId, accept },
+    });
+
+  it("does not silently discard protected evidence without its consumer", async () => {
+    process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+    mockedExec.mockResolvedValueOnce(output(JSON.stringify(produced())));
+    mockedExec.mockResolvedValueOnce(output(""));
+    await expect(supervisedBackup()).rejects.toThrow(
+      "consumer is not configured",
+    );
+  });
+
+  it("requires evidence when the evidence consumer is enabled", async () => {
+    process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+    mockedExec.mockResolvedValueOnce(
+      output(
+        JSON.stringify({ id: "b".repeat(64), time: "2026-09-05T00:00:00Z" }),
+      ),
+    );
+    mockedExec.mockResolvedValueOnce(output(""));
+    const accept = jest.fn();
+    await expect(evidenceBackup(accept)).rejects.toThrow("Invalid protected");
+    expect(accept).not.toHaveBeenCalled();
+  });
+
+  it("waits for evidence acceptance before returning backup success", async () => {
+    process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+    mockedExec.mockResolvedValueOnce(output(JSON.stringify(produced())));
+    mockedExec.mockResolvedValueOnce(output(""));
+    let release!: () => void;
+    let completed = false;
+    const accept = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const pending = evidenceBackup(accept).then(() => {
+      completed = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(accept).toHaveBeenCalledTimes(1);
+    expect(completed).toBe(false);
+    release();
+    await pending;
+    expect(completed).toBe(true);
+  });
+
+  it("does not publish success when durable evidence acceptance fails", async () => {
+    process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+    mockedExec.mockResolvedValueOnce(output(JSON.stringify(produced())));
+    mockedExec.mockResolvedValueOnce(output(""));
+    await expect(
+      evidenceBackup(async () => {
+        throw new Error("record failed");
+      }),
+    ).rejects.toThrow("record failed");
+  });
+
+  it("records partial evidence but refuses legacy complete-backup return", async () => {
+    process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+    mockedExec.mockResolvedValueOnce(output(JSON.stringify(produced(true))));
+    mockedExec.mockResolvedValueOnce(output(""));
+    const accept = jest.fn(async () => {});
+    await expect(evidenceBackup(accept)).rejects.toBeInstanceOf(
+      PartialProjectBackupError,
+    );
+    expect(accept).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "partial_policy_exclusions" }),
+    );
+  });
+
+  it("refuses evidence-required backup before starting an unsupervised helper", async () => {
+    await expect(evidenceBackup(jest.fn())).rejects.toThrow(
+      "requires supervised",
+    );
+    expect(mockedExec).not.toHaveBeenCalled();
+    expect(mockedExecuteCode).not.toHaveBeenCalled();
+  });
+
+  it("permits a dormant evidence consumer with an old helper and gate disabled", async () => {
+    mockedExecuteCode.mockResolvedValue({
+      type: "blocking",
+      exit_code: 0,
+      stdout: JSON.stringify({ id: "legacy", time: "2026-09-05T00:00:00Z" }),
+      stderr: "",
+    } as any);
+    const accept = jest.fn();
+    await expect(
+      projectRusticBackup({
+        src: "/mnt/cocalc/staging/home",
+        repoProfile: "/profile",
+        host: "project-1",
+        timeoutMs: 30000,
+        evidence: { project_id: projectId, required: false, accept },
+      }),
+    ).resolves.toMatchObject({ id: "legacy" });
+    expect(accept).not.toHaveBeenCalled();
   });
 
   it("waits for the root-owned barrier before returning successful output", async () => {

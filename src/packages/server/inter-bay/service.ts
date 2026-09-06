@@ -419,6 +419,7 @@ import {
   markProjectChanged as markProjectChangedLocal,
   recordProjectBackupIndexLocal,
   recordProjectBackupLocal,
+  recordProjectBackupOutcomeLocal,
   resolveHostConnectionLocal,
   removeHostAccess,
   setHostOwnerSpendLimits,
@@ -2721,6 +2722,8 @@ async function startHostConnectionService(): Promise<void> {
         time,
         generation,
       }),
+    recordProjectBackupOutcome: async (opts) =>
+      await recordProjectBackupOutcomeLocal(opts),
     markProjectChanged: async ({
       host_id,
       project_id,
