@@ -21,6 +21,10 @@ axe can miss contrast problems, and root overflow checks miss inner scrolling.
 A narrow desktop viewport is not a substitute for real iOS Safari, touch, or
 software-keyboard testing. Use `--routes`, `--widths`, and `--output` to isolate
 follow-up captures after a completed static rebuild.
+For editor captures, supply `--ready-selector` with a visible editor-specific
+selector (for example `.CodeMirror` for a code editor). The runner waits up to
+45 seconds for it and rejects blank/connecting captures. Still inspect every
+screenshot: a loaded shell does not establish that the target editor loaded.
 
 ## Fixed-color Review Queue
 

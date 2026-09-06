@@ -16,6 +16,7 @@ const { values } = parseArgs({
     },
     routes: { type: "string" },
     widths: { type: "string", default: "1440,390" },
+    "ready-selector": { type: "string" },
   },
 });
 if (new URL(values.cdp).hostname !== "127.0.0.1")
@@ -59,7 +60,17 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
 let original;
 async function capture(name) {
-  await page.waitForTimeout(1000);
+  if (values["ready-selector"]) {
+    await page.locator(values["ready-selector"]).first().waitFor({
+      state: "visible",
+      timeout: 45000,
+    });
+  }
+  await page.waitForTimeout(4000);
+  const bodyText = await page.locator("body").innerText();
+  if (bodyText.trim().length < 160 || /^Connecting\.\.\.$/m.test(bodyText)) {
+    throw Error("Page is blank or still connecting; not appearance evidence");
+  }
   const row = {
     name,
     url: page.url(),

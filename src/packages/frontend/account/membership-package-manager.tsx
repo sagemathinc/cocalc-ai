@@ -103,6 +103,7 @@ import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import type { CrmMutationResult } from "@cocalc/util/crm";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import type { LineItem } from "@cocalc/util/stripe/types";
 
@@ -272,31 +273,31 @@ function getProvisionPoolTheme(
   const membershipClass = `${pool.membership_class ?? ""}`.toLowerCase();
   if (name.includes("instructor") || membershipClass.includes("instructor")) {
     return {
-      accent: COLORS.BS_BLUE_TEXT,
-      background: COLORS.ANTD_BG_BLUE_L,
+      accent: UI_COLORS.info,
+      background: UI_COLORS.infoBg,
       description: "Higher-trust teaching access with manager review.",
       icon: "graduation-cap",
     };
   }
   if (name.includes("research") || membershipClass.includes("research")) {
     return {
-      accent: COLORS.BRWN,
-      background: COLORS.YELL_LLL,
+      accent: UI_COLORS.warning,
+      background: UI_COLORS.warningBg,
       description: "Research access can coexist with teaching access.",
       icon: "atom",
     };
   }
   if (name.includes("student") || membershipClass.includes("student")) {
     return {
-      accent: COLORS.ANTD_GREEN_D,
-      background: COLORS.BS_GREEN_LL,
+      accent: UI_COLORS.success,
+      background: UI_COLORS.successBg,
       description: "Baseline campus access for verified-domain users.",
       icon: "users",
     };
   }
   return {
-    accent: COLORS.BLUE_D,
-    background: index % 2 === 0 ? COLORS.BLUE_LLLL : COLORS.GRAY_LLL,
+    accent: UI_COLORS.info,
+    background: index % 2 === 0 ? UI_COLORS.infoBg : UI_COLORS.inset,
     description: "Custom seat pool for this site license.",
     icon: "users",
   };
@@ -2726,9 +2727,9 @@ function SiteLicenseDashboard({
           <Card
             key={overview.site_license.id}
             style={{
-              border: `1px solid ${COLORS.GRAY_LL}`,
+              border: `1px solid ${UI_COLORS.border}`,
               borderRadius: 18,
-              boxShadow: `0 14px 32px ${COLORS.GRAY_LL}`,
+              boxShadow: `0 14px 32px ${UI_COLORS.shadow}`,
               overflow: "hidden",
             }}
             styles={{ body: { padding: 0 } }}
@@ -2822,7 +2823,7 @@ function SiteLicenseDashboard({
               </Space>
             </div>
 
-            <div style={{ background: COLORS.YELL_LLL, padding: 22 }}>
+            <div style={{ background: UI_COLORS.warningBg, padding: 22 }}>
               <Space
                 orientation="vertical"
                 size="large"
@@ -2854,8 +2855,8 @@ function SiteLicenseDashboard({
                             key={request.id}
                             style={{
                               alignItems: "flex-start",
-                              background: "white",
-                              border: `1px solid ${COLORS.GRAY_LL}`,
+                              background: UI_COLORS.surface,
+                              border: `1px solid ${UI_COLORS.border}`,
                               borderRadius: 12,
                               display: "flex",
                               gap: 16,
@@ -2959,7 +2960,7 @@ function SiteLicenseDashboard({
                           size="small"
                           key={pool.id}
                           style={{
-                            border: `1px solid ${COLORS.GRAY_LL}`,
+                            border: `1px solid ${UI_COLORS.border}`,
                             borderRadius: 14,
                           }}
                           styles={{ body: { padding: 14 } }}
@@ -3006,8 +3007,8 @@ function SiteLicenseDashboard({
                                 showInfo={false}
                                 strokeColor={
                                   utilizationPercent >= 90
-                                    ? COLORS.BG_WARNING
-                                    : COLORS.BS_GREEN
+                                    ? UI_COLORS.warning
+                                    : UI_COLORS.success
                                 }
                               />
                             </div>
@@ -4606,8 +4607,8 @@ function ProvisionSiteLicenseModal({
         ) : null}
         <Card
           style={{
-            background: `linear-gradient(135deg, ${COLORS.BLUE_LLLL}, ${COLORS.BS_GREEN_LL})`,
-            border: `1px solid ${COLORS.GRAY_LL}`,
+            background: `linear-gradient(135deg, ${UI_COLORS.infoBg}, ${UI_COLORS.successBg})`,
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 16,
           }}
           styles={{ body: { padding: 18 } }}
@@ -4836,9 +4837,9 @@ function ProvisionSiteLicenseModal({
               <Card
                 key={index}
                 style={{
-                  border: `1px solid ${COLORS.GRAY_LL}`,
+                  border: `1px solid ${UI_COLORS.border}`,
                   borderRadius: 18,
-                  boxShadow: `0 10px 24px ${COLORS.GRAY_LL}`,
+                  boxShadow: `0 10px 24px ${UI_COLORS.shadow}`,
                   maxWidth: 300,
                   overflow: "hidden",
                   width: "100%",
@@ -4848,7 +4849,7 @@ function ProvisionSiteLicenseModal({
                 <div
                   style={{
                     background: theme.background,
-                    borderBottom: `1px solid ${COLORS.GRAY_LL}`,
+                    borderBottom: `1px solid ${UI_COLORS.border}`,
                     padding: 14,
                   }}
                 >
@@ -4863,7 +4864,7 @@ function ProvisionSiteLicenseModal({
                       <div
                         style={{
                           alignItems: "center",
-                          background: "white",
+                          background: UI_COLORS.surface,
                           borderRadius: 14,
                           color: theme.accent,
                           display: "flex",
@@ -4917,8 +4918,8 @@ function ProvisionSiteLicenseModal({
                   >
                     <div
                       style={{
-                        background: COLORS.GRAY_LLL,
-                        border: `1px solid ${COLORS.GRAY_LL}`,
+                        background: UI_COLORS.inset,
+                        border: `1px solid ${UI_COLORS.border}`,
                         borderRadius: 12,
                         padding: 10,
                       }}
