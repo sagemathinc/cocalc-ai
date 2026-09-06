@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
 Panel for a particular tool.
 
@@ -149,7 +150,7 @@ export default function ToolPanel<Params>({
                 <Preview {...params} />
               </div>
               {!showEditParams && (
-                <div style={{ color: "#666" }}>
+                <div style={{ color: UI_COLORS.secondary }}>
                   ({id == selected ? "click" : "double click"} to customize)
                 </div>
               )}
@@ -159,8 +160,11 @@ export default function ToolPanel<Params>({
           <div
             style={{
               border:
-                id == selected ? `2px solid ${SELECTED}` : "1px solid #d9d9d9",
-              background: id == selected ? "#e6f4ff" : "#fff",
+                id == selected
+                  ? `2px solid ${SELECTED}`
+                  : `1px solid ${UI_COLORS.border}`,
+              background:
+                id == selected ? UI_COLORS.selected : UI_COLORS.surface,
               borderRadius: "8px",
               padding: "4px",
               boxShadow:
@@ -200,7 +204,13 @@ export default function ToolPanel<Params>({
     >
       {AlternateTop == null && (
         <>
-          <div style={{ textAlign: "center", color: "#666", fontSize: "14px" }}>
+          <div
+            style={{
+              textAlign: "center",
+              color: UI_COLORS.secondary,
+              fontSize: "14px",
+            }}
+          >
             {TOOLS[tool].tip}
           </div>
           <Tooltip title={TOOLS[tool].tip} mouseEnterDelay={0.7}>
@@ -213,7 +223,7 @@ export default function ToolPanel<Params>({
               }}
             >
               <Icon
-                style={{ color: SELECTED, fontSize: "20px" }}
+                style={{ color: UI_COLORS.link, fontSize: "20px" }}
                 name={TOOLS[tool].icon}
               />
             </Button>
@@ -273,7 +283,11 @@ function EditParams({ params, set, Preview, editableParams, style, onClose }) {
     >
       <CloseX
         on_close={onClose}
-        style={{ color: "#666", fontSize: "12px", marginTop: "-5px" }}
+        style={{
+          color: UI_COLORS.secondary,
+          fontSize: "12px",
+          marginTop: "-5px",
+        }}
       />
       <div
         style={{
@@ -296,7 +310,7 @@ function EditParams({ params, set, Preview, editableParams, style, onClose }) {
           />
           <div
             style={{
-              color: "#666",
+              color: UI_COLORS.secondary,
               marginLeft: "5px",
               fontSize: "9pt",
               paddingTop: "6px",
@@ -319,7 +333,7 @@ function EditParams({ params, set, Preview, editableParams, style, onClose }) {
           <Tooltip title="Opacity: 1 is solid; less than 1 is transparent">
             <div
               style={{
-                color: "#666",
+                color: UI_COLORS.secondary,
                 marginLeft: "5px",
                 fontSize: "9pt",
                 paddingTop: "6px",

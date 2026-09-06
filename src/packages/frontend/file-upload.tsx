@@ -112,7 +112,7 @@ function Header({ close_preview }: { close_preview?: Function }) {
       placement="bottom"
       tip="Drag and drop files from your computer into the box below to upload them into your project."
     >
-      <h4 style={{ color: "#666", marginLeft: "10px" }}>
+      <h4 style={{ color: UI_COLORS.secondary, marginLeft: "10px" }}>
         Drag and drop files from your computer
         {close_preview && (
           <Button

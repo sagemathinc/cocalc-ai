@@ -6,7 +6,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { fromJS } from "immutable";
 
-import { SnapToggleButton } from "./panel";
+import { PANEL_STYLE, SnapToggleButton } from "./panel";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const set_frame_tree = jest.fn();
 const useFrameContext = jest.fn();
@@ -28,6 +29,10 @@ function mountWith(snapToAlignment?: boolean) {
 }
 
 describe("SnapToggleButton accessibility", () => {
+  it("pairs floating tool surfaces with themed foregrounds", () => {
+    expect(PANEL_STYLE.background).toBe(UI_COLORS.elevated);
+    expect(PANEL_STYLE.color).toBe(UI_COLORS.text);
+  });
   it("exposes an accessible name that does not depend on the tooltip", () => {
     mountWith();
     // The icon is aria-hidden, so without an explicit label this control would

@@ -86,7 +86,7 @@ export const NavTab: React.FC<Props> = React.memo((props: Props) => {
   const is_active = active_top_tab === name;
 
   const outer_style: CSS = {
-    background: "transparent",
+    backgroundColor: "transparent",
     color: UI_COLORS.text,
     padding: 0,
     fontSize: "14px",
