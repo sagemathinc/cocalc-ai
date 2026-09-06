@@ -20,7 +20,7 @@ jest.mock("./install", () => ({
   rustic: "/mock/rustic",
 }));
 
-import rustic from "./rustic";
+import rustic, { getSnapshot } from "./rustic";
 
 function ok(stdout = "", stderr = ""): ExecOutput {
   return {
@@ -48,6 +48,42 @@ describe("rustic TOML fast path", () => {
   beforeEach(() => {
     execMock.mockReset();
   });
+
+  test.each([
+    { code: 1, truncated: false },
+    { code: 0, truncated: true },
+    { code: null, truncated: false },
+  ])("snapshot metadata rejects incomplete execution: %j", async (state) => {
+    const id = "a".repeat(64);
+    execMock.mockResolvedValueOnce({
+      ...ok(snapshotsJson({ id, hostname: "project-1" })),
+      ...state,
+    });
+    await expect(
+      getSnapshot({ id, repo: "/tmp/incomplete-snapshot.toml" }),
+    ).rejects.toThrow();
+    expect(execMock).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([
+    { code: 1, truncated: true },
+    { code: null, truncated: false },
+  ])(
+    "interrupted backup does not retry repository initialization: %j",
+    async (state) => {
+      execMock.mockResolvedValueOnce({
+        ...fail("No repository config file found"),
+        ...state,
+      });
+      const result = await rustic(["backup", "--json", "a.txt"], {
+        repo: "/tmp/interrupted-init.toml",
+        host: "project-1",
+        safeAbsPath: async (path: string) => `/sandbox/${path}`,
+      });
+      expect(result).toMatchObject(state);
+      expect(execMock).toHaveBeenCalledTimes(1);
+    },
+  );
 
   test("snapshots skip repoinfo preflight for TOML repos", async () => {
     execMock.mockResolvedValueOnce(ok("[]"));
