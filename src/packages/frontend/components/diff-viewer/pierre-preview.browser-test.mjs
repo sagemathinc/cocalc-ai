@@ -43,13 +43,13 @@ const built = await build({
         builder.onResolve(
           {
             filter:
-              /^@cocalc\/frontend\/(keyboard\/boundary|chat\/git-commit\/review-editors)$/,
+              /^@cocalc\/frontend\/(app-framework|chat\/git-commit\/review-editors)$/,
           },
           ({ path }) => ({ path, namespace: "stub" }),
         );
         builder.onLoad({ filter: /.*/, namespace: "stub" }, ({ path }) => ({
-          contents: path.endsWith("boundary")
-            ? "export function KeyboardBoundary({children}) {return children}"
+          contents: path.endsWith("app-framework")
+            ? "export const redux = {getActions: () => undefined}"
             : "export function MarkdownHistoryInput({value,onChange}) {return <textarea aria-label='Temporary comment' value={value} onChange={e=>onChange(e.target.value)}/>}",
           loader: "tsx",
           resolveDir: frontend,
@@ -90,6 +90,17 @@ try {
   const diff = page.locator("diffs-container pre[data-diff]").first();
   await expect(diff).toHaveAttribute("data-diff-type", "single");
   await expect(diff).toHaveAttribute("data-overflow", "wrap");
+  // Verify the rendered GitHub palette, not just the options passed to React.
+  for (const [colorScheme, background] of [
+    ["light", "rgb(255, 255, 255)"],
+    ["dark", "rgb(36, 41, 46)"],
+  ]) {
+    await page.emulateMedia({ colorScheme });
+    await expect
+      .poll(() => diff.evaluate((e) => getComputedStyle(e).backgroundColor))
+      .toBe(background);
+  }
+  await page.emulateMedia({ colorScheme: "light" });
   await expect
     .poll(() => viewport.evaluate((e) => getComputedStyle(e).overflowY))
     .toBe("auto");
@@ -99,6 +110,48 @@ try {
   await expect
     .poll(() => viewport.evaluate((e) => e.scrollTop))
     .toBeGreaterThan(500);
+  const pinnedHeader = async (name) => {
+    await expect
+      .poll(async () => {
+        const header = await page
+          .getByText(name, { exact: true })
+          .last()
+          .boundingBox();
+        const frame = await viewport.boundingBox();
+        return header != null && header.y >= frame.y && header.y < frame.y + 60;
+      })
+      .toBe(true);
+  };
+  await pinnedHeader("first.ts");
+  await page.evaluate(() => {
+    window.previewEscapedKeys = [];
+    window.addEventListener("keydown", (event) =>
+      window.previewEscapedKeys.push(event.key),
+    );
+  });
+  const region = page.getByRole("region", { name: "Diff preview" });
+  await region.focus();
+  await page.keyboard.press("Home");
+  await expect.poll(() => viewport.evaluate((e) => e.scrollTop)).toBe(0);
+  await page.keyboard.press("Space");
+  await expect
+    .poll(() => viewport.evaluate((e) => e.scrollTop))
+    .toBeGreaterThan(200);
+  await page.keyboard.press("Shift+Space");
+  await expect.poll(() => viewport.evaluate((e) => e.scrollTop)).toBe(0);
+  await page.keyboard.press("PageDown");
+  await expect
+    .poll(() => viewport.evaluate((e) => e.scrollTop))
+    .toBeGreaterThan(200);
+  await page.keyboard.press("PageUp");
+  await expect.poll(() => viewport.evaluate((e) => e.scrollTop)).toBe(0);
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(() => viewport.evaluate((e) => e.scrollTop)).toBe(40);
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(() => viewport.evaluate((e) => e.scrollTop)).toBe(0);
+  await page.keyboard.press("j");
+  await page.keyboard.press("y");
+  assert.deepEqual(await page.evaluate(() => window.previewEscapedKeys), []);
   await page.getByRole("checkbox", { name: "Side by side" }).check();
   await expect(diff).toHaveAttribute("data-diff-type", "split");
   await page.getByRole("combobox", { name: "Preview file" }).selectOption("1");
@@ -118,6 +171,7 @@ try {
     .getByText("// second.ts line 190 context", { exact: true })
     .first();
   await expect(line).toBeVisible();
+  await pinnedHeader("second.ts");
   await expect
     .poll(async () => {
       const target = await line.boundingBox(),
@@ -133,11 +187,16 @@ try {
   await page
     .getByRole("textbox", { name: "Temporary comment" })
     .fill("Keep this draft across layout changes");
+  await page.keyboard.press("End");
+  await page.keyboard.press("Space");
+  await expect(
+    page.getByRole("textbox", { name: "Temporary comment" }),
+  ).toHaveValue("Keep this draft across layout changes ");
   await page.getByRole("checkbox", { name: "Side by side" }).uncheck();
   await expect(diff).toHaveAttribute("data-diff-type", "single");
   await expect(
     page.getByRole("textbox", { name: "Temporary comment" }),
-  ).toHaveValue("Keep this draft across layout changes");
+  ).toHaveValue("Keep this draft across layout changes ");
   await page.getByRole("checkbox", { name: "Wrap long lines" }).uncheck();
   await expect(diff).toHaveAttribute("data-overflow", "scroll");
   await page.getByRole("checkbox", { name: "Wrap long lines" }).check();
@@ -162,8 +221,14 @@ try {
     );
   }
   assert.deepEqual(errors, []);
+  await region.focus();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Preview with Pierre" }),
+  ).toBeFocused();
   console.log(
-    "PASS: wheel scrolling, file selection, line jump, live split/wrap updates, annotation draft across layout changes, and 1200/600/320px containment (real Pierre).",
+    "PASS: GitHub light/dark colors, sticky filenames, scoped scroll shortcuts, editable spaces, background shortcut isolation, Escape/focus, wheel scrolling, file selection, line jump, live split/wrap updates, annotation draft across layout changes, and 1200/600/320px containment (real Pierre).",
   );
 } finally {
   await browser?.close();

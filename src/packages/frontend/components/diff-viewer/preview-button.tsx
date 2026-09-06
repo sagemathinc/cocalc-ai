@@ -54,7 +54,14 @@ export function DiffPreviewButton({
         destroyOnHidden
       >
         {source != null && (
-          <KeyboardBoundary boundary="diff-preview">
+          <KeyboardBoundary
+            boundary="diff-preview"
+            onKeyDown={(event) => {
+              // Do not let the underlying Git drawer navigate or mark a commit
+              // reviewed while this independent preview is open.
+              if (event.key !== "Escape") event.stopPropagation();
+            }}
+          >
             <PreviewErrorBoundary>
               <Suspense fallback={<Spin aria-label="Loading diff preview" />}>
                 <PierrePreview source={source} fontSize={fontSize} />

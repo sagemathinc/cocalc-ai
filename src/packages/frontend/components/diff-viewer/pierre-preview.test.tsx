@@ -5,6 +5,9 @@ import userEvent from "@testing-library/user-event";
 import PierrePreview from "./pierre-preview";
 
 const mockScrollTo = jest.fn();
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  redux: { getActions: () => undefined },
+}));
 jest.mock(
   "@pierre/diffs/react",
   () => {
@@ -14,6 +17,7 @@ jest.mock(
         React.useImperativeHandle(ref, () => ({ scrollTo: mockScrollTo }));
         return (
           <div
+            ref={props.containerRef}
             data-testid="pierre-view"
             data-expanded={props.options.expandUnchanged}
             data-overflow={props.options.overflow}
@@ -51,6 +55,41 @@ jest.mock("@cocalc/frontend/chat/git-commit/review-editors", () => ({
 const source = { kind: "patch" as const, patch: "", label: "Fixture" };
 
 beforeEach(() => mockScrollTo.mockClear());
+
+it("scrolls the focused diff without consuming spaces in controls or drafts", async () => {
+  const user = userEvent.setup();
+  render(<PierrePreview source={source} fontSize={14} />);
+  const viewport = screen.getByRole("region", { name: "Diff preview" });
+  Object.defineProperties(viewport, {
+    clientHeight: { value: 500 },
+    scrollHeight: { value: 3000 },
+  });
+  expect(document.activeElement).toBe(viewport);
+  await user.keyboard(" ");
+  expect(viewport.scrollTop).toBe(450);
+  await user.keyboard("{Shift>} {/Shift}");
+  expect(viewport.scrollTop).toBe(0);
+  await user.keyboard("{PageDown}{ArrowDown}");
+  expect(viewport.scrollTop).toBe(490);
+  await user.keyboard("{Home}");
+  expect(viewport.scrollTop).toBe(0);
+  const split = screen.getByRole("checkbox", { name: "Side by side" });
+  split.focus();
+  await user.keyboard(" ");
+  expect((split as HTMLInputElement).checked).toBe(true);
+  expect(viewport.scrollTop).toBe(0);
+  const input = screen.getByRole("spinbutton", { name: "Preview line" });
+  fireEvent.change(input, { target: { value: "10" } });
+  await user.click(screen.getByRole("button", { name: "Go to line" }));
+  await user.click(
+    screen.getByRole("button", { name: "Add temporary comment" }),
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Temporary comment" }),
+    "some words",
+  );
+  expect(viewport.scrollTop).toBe(0);
+});
 
 it("navigates immediately on keyboard file selection and updates layout options", async () => {
   const user = userEvent.setup();

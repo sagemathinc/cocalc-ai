@@ -81,6 +81,32 @@ a substitute. The original renderer remains available for comparison.
 
 Only after these gates pass, replace rendering and delete obsolete code.
 
+### Manual evaluation and integration decision
+
+The maintainer's initial hands-on evaluation found Pierre's diffs attractive,
+fast enough for the tested reviews, and the side-by-side view particularly useful.
+This supports proceeding with integration, not discarding CoCalc's review UI.
+It is user acceptance evidence, not a large-file benchmark or full feature-parity
+result.
+
+Preserve the existing review shell and replace its rendering boundary. Track
+parity explicitly: sticky current-file names, keyboard scrolling, commit
+navigation (`j`/`k`), marking reviewed (`y`), diff search (`/` and find shortcut),
+context expansion, font-size shortcuts, help, scroll restoration, saved review
+anchors, and Slate comments including image paste and local undo. These are
+existing product features, not optional polish to rediscover after migration.
+The same command should target whichever renderer is active, not both.
+
+The preview now enables Pierre's sticky headers and reuses CoCalc's scrolling
+commands: Space/Shift+Space, Page Down/Up, arrow keys, and Home. The viewport is
+keyboard focusable; comments and controls retain native key handling. Other
+preview keys cannot invoke the underlying drawer's commit/review shortcuts;
+Escape still closes the modal and restores trigger focus. Commit/review/search
+commands belong in the integrated review shell, not this frozen-input modal.
+Use Pierre's `github-light` / `github-dark` themes, following the browser color
+preference. The browser regression checks actual rendered background colors in
+both modes, not merely the React options.
+
 ## Phase 1: repository, history target, and working copy
 
 Separate these identities:
@@ -226,7 +252,9 @@ item objects. Draft body edits remain React-only and do not change that version.
 A standalone Chromium regression now exercises the actual React/Ant Design/Pierre
 integration: wheel scrolling, file selection, line jumping, split/unified and
 wrap updates, annotation draft preservation across a layout change, and width
-containment at 1200, 600, and 320 pixels. Only application services and the rich
+containment at 1200, 600, and 320 pixels. It also verifies sticky filenames across
+files, focused keyboard scrolling, editable spaces, background shortcut isolation,
+and Escape/focus restoration using the real keyboard boundary. Only application services and the rich
 editor are stubbed, so it does not validate real Slate behavior. Run it with:
 
 ```sh

@@ -4,7 +4,7 @@
  */
 
 import { Alert, Button } from "antd";
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type {
   CodeViewItem,
   CodeViewLineSelection,
@@ -14,6 +14,14 @@ import { CodeView } from "@pierre/diffs/react";
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import { COLORS } from "@cocalc/util/theme";
 import { MarkdownHistoryInput } from "@cocalc/frontend/chat/git-commit/review-editors";
+import {
+  matchGitDrawerScrollCommand,
+  runGitDrawerScrollCommand,
+} from "@cocalc/frontend/chat/git-commit/drawer-scroll";
+import {
+  getEventPath,
+  isEditableOrKeyboardInteractiveTarget,
+} from "@cocalc/frontend/keyboard/boundary";
 import { containsPreviewLine, parsePreviewSource } from "./pierre-model";
 import type { DiffPreviewSource } from "./preview-types";
 
@@ -34,6 +42,19 @@ export default function PierrePreview({
 }) {
   const scope = useId();
   const viewer = useRef<CodeViewHandle<string>>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = viewport.current;
+    if (!node) return;
+    node.tabIndex = 0;
+    node.setAttribute("role", "region");
+    node.setAttribute("aria-label", "Diff preview");
+    node.setAttribute(
+      "aria-keyshortcuts",
+      "Space Shift+Space PageDown PageUp ArrowDown ArrowUp Home",
+    );
+    node.focus({ preventScroll: true });
+  }, []);
   const [fileIndex, setFileIndex] = useState(0);
   const [line, setLine] = useState("1");
   const [side, setSide] = useState<SelectionSide>("additions");
@@ -83,6 +104,7 @@ export default function PierrePreview({
       diffStyle: split ? ("split" as const) : ("unified" as const),
       lineDiffType: "word" as const,
       enableLineSelection: true,
+      stickyHeaders: true,
       // A collapsed context jump only reaches its separator in Pierre 1.3.6.
       expandUnchanged: source.kind === "documents",
       theme: { light: "github-light", dark: "github-dark" },
@@ -148,6 +170,25 @@ export default function PierrePreview({
     );
   return (
     <div
+      onKeyDown={(event) => {
+        const native = event.nativeEvent;
+        if (event.defaultPrevented || native.isComposing) return;
+        const path = getEventPath(native);
+        const node = viewport.current;
+        if (
+          !node ||
+          !path.includes(node) ||
+          path.some(isEditableOrKeyboardInteractiveTarget)
+        )
+          return;
+        const command = matchGitDrawerScrollCommand(native);
+        if (!command) return;
+        // Contain scrolling even at the first/last line, rather than scrolling
+        // the modal or invoking the Git drawer underneath it.
+        event.preventDefault();
+        event.stopPropagation();
+        runGitDrawerScrollCommand(node, command);
+      }}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -255,8 +296,13 @@ export default function PierrePreview({
         {message ||
           `${parsed.files.length} files; parsed in ${parsed.ms.toFixed(1)} ms. Select a line number to attach a comment.`}
       </div>
+      <div>
+        Diff scrolling: Space / Shift+Space, Page Down / Page Up, arrow keys,
+        and Home. Comments and controls keep their normal keys.
+      </div>
       <CodeView<string>
         className="cocalc-pierre-preview-viewport"
+        containerRef={viewport}
         ref={viewer}
         items={items}
         options={options}
