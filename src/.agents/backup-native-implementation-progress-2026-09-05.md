@@ -125,13 +125,69 @@ not a completion claim or deployment approval. Production remains unchanged.
 
 ## Working Repositories
 
+### Exclusion Protocol and Freshness Follow-up
+
+- Core `8d0a0b150d518b60119445fbf13e71db0599208b` adds the shared
+  metadata-only selection inventory with streamed size exclusions. Omitted paths
+  still consume traversal/metadata budgets; arithmetic, callback and incomplete
+  scan errors fail. CLI `b44b0664fc7a5fc79eff3c09d9d551b076a450e4` pins it
+  and emits bounded NDJSON with raw OS-path bytes, decimal counters and a
+  completion footer. Core tests and strict Clippy pass; CLI tests pass. Native
+  qualification run `34008321429` passes both amd64/arm64 Btrfs quota tests and
+  positive/negative build-attestation verification. This is a candidate, not a
+  fleet deployment.
+- CoCalc `7ded0da903` corrects backup freshness: manual and rolling backups
+  report a conservative source time/generation captured BEFORE snapshotting,
+  never the live generation after upload. Owning-bay writes are fenced to the
+  reporting host and newer capture time, without mixing old/new generations.
+  Invalid timestamps or unsafe numeric generations are rejected. File-server,
+  project-host and server builds pass; focused tests cover ordering and invalid
+  evidence. Existing persisted legacy freshness claims are NOT retroactively
+  repaired by this code; native lifecycle admission must require newly bound
+  source/backup evidence before destructive finalization.
+- CoCalc `8d63fac978` also rejects known stale manual archives BEFORE stopping
+  projects or deleting data. Both archive modes compare PostgreSQL BIGINT
+  generation strings without Number rounding and reject malformed evidence.
+  Server build and 29 focused eligibility/archive tests pass. This preflight
+  does not replace final host-side write/placement/quota fences.
+- CoCalc `d944286cfc` adds the shared streaming report validator. It requires
+  protected expected report/header hashes, consistent bounded counts and record
+  order, and root-relative lossless Linux paths. Samples and acknowledgement
+  keys are bounded; unknown/overridden ctime cannot suppress warnings. All 35
+  unit cases plus an actual native-CLI backup/restore/report interoperability
+  test pass. This validator is not yet connected to durable report publication,
+  UI acknowledgements or copy/lifecycle admission; inventory is not backup or
+  restore-capacity authority.
+- Core `916dcb3c7e1886383198bf32d46962d949a9f9e6` fixes another strictness
+  gap: local xattr read errors previously became empty metadata before the
+  archiver could see them. Strict backup traversal and all inventories now
+  propagate those errors; non-strict behavior and explicit no-xattrs scope
+  remain unchanged. The existing 190 unit/62 integration cases pass, plus a
+  new repository regression proves strict metadata traversal without admission
+  cannot publish an incomplete snapshot. Strict Clippy passes. CLI `8e4623b`
+  pins this core and passes its full local test suite and strict Clippy; the
+  native-report interoperability test also passes against that binary.
+  CoCalc `2b5ee2eafd` requires `strict_local_metadata=1` for native jobs and
+  parses/hash-checks owned report bytes. All 92 bootstrap and 25 helper tests,
+  36 backend report tests (including real CLI), and backend build pass.
+  Supervision run `34009631508` exposed an outdated systemd fake binary that
+  lacked the new capability. `f3d8c290d8` updates that fixture without weakening
+  admission; follow-up run `34009749455` passes. Native run `34009629890` has
+  passed Btrfs snapshot/quota qualification on both architectures; packaging and
+  provenance verification were still pending at this ledger update.
+
+Next integration work is protected report persistence and explicit outcomes,
+then protected quota-enforced restore staging and early/final lifecycle gates.
+The complete goal remains unfinished; no size-exclusion policy or production
+activation has been enabled.
+
 - CLI: `/home/user/upstream/cocalc-rustic`, branch `cocalc/sparse-backups`.
   Fork base `d58099c`, upstream CLI `143d073` merged in `0ef705a`; `737ba53`
   adds admission/capability commands. Both are pushed to the fork topic branch.
   Existing fork hardlink changes are already represented upstream.
-- Core commits `33fdd63`, `5b6146b`, and `f45990d` were pushed to
-  `sagemathinc/rustic_core:cocalc/sparse-backups`. CLI dependencies now pin
-  `f45990db6609ee89b7a8b78e717d5833baa31543`; lockfile resolution succeeded.
+- Core commits `33fdd63`, `5b6146b`, `f45990d`, `8d0a0b1` and `916dcb3`
+  were pushed to `sagemathinc/rustic_core:cocalc/sparse-backups`. CLI dependencies
+  now pin `916dcb3c7e1886383198bf32d46962d949a9f9e6`; lockfile resolution succeeded.
   CLI unit config snapshots gained only strict/admission fields.
 - Rust 1.94.0 is installed at `/home/user/.cargo/bin`, without modifying shell
   PATH or the older system toolchain. Use the explicit cargo path.
