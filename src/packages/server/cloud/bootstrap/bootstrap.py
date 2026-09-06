@@ -4279,6 +4279,344 @@ def ensure_cocalc_mount(cfg: BootstrapConfig) -> None:
         run_best_effort(cfg, ["mount", "/mnt/cocalc"], "mount /mnt/cocalc")
 
 
+RUSTIC_JOB_HELPER = r'''#!/usr/bin/python3 -I
+"""Root-owned Rustic job supervision. No project-owned Python/code is imported.
+
+Installation alone does not enable this helper. Callers must supply a root-owned
+policy and route job execution and cleanup barriers through it together.
+"""
+import errno
+import fcntl
+import hashlib
+import json
+import os
+import runpy
+import select
+import signal
+import stat
+import subprocess
+import sys
+import threading
+import time
+import uuid
+
+SELF = "/usr/local/libexec/cocalc-rustic-job"
+PATH_HELPER = "/usr/local/libexec/cocalc-runtime-storage-path-helper"
+POLICY = "/etc/cocalc/rustic-job-policy.json"
+LOCKS = "/run/cocalc-rustic-jobs"
+CACHE_LOCK = "/run/lock/cocalc-privileged-rustic-cache.lock"
+COMMANDS = {
+    "rustic-project-backup", "rustic-project-restore",
+    "rustic-rootfs-backup", "rustic-rootfs-restore",
+}
+ENV = {"HOME": "/root", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}
+
+
+def require_root():
+    if os.geteuid() != 0:
+        raise PermissionError("Rustic job helper requires root")
+
+
+def trusted_regular(path, maximum=65536, required_uid=0):
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_mode & 0o022:
+            raise PermissionError("untrusted root-owned job configuration")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            content = stream.read(maximum + 1)
+        if len(content) > maximum:
+            raise ValueError("job configuration exceeds size limit")
+        return content
+    finally:
+        os.close(fd)
+
+
+def load_policy(path=POLICY):
+    policy = json.loads(trusted_regular(path))
+    bounds = {
+        "runtime_seconds": (1, 86400),
+        "kill_grace_seconds": (1, 60),
+        "memory_bytes": (64 * 1024**2, 64 * 1024**3),
+        "cpu_quota_percent": (1, 6400),
+        "io_weight": (1, 10000),
+        "max_jobs": (1, 16),
+        "tasks_max": (16, 4096),
+    }
+    if not isinstance(policy, dict) or type(policy.get("version")) is not int or policy["version"] != 1 or set(policy) != {"version", *bounds}:
+        raise ValueError("invalid Rustic job policy schema")
+    for key, (minimum, maximum) in bounds.items():
+        value = policy[key]
+        if type(value) is not int or not minimum <= value <= maximum:
+            raise ValueError(f"invalid Rustic job policy: {key}")
+    return policy
+
+
+def path_api():
+    # The path helper is independently root-owned. -I ignores PYTHONPATH and cwd.
+    trusted_regular(PATH_HELPER, maximum=1024**2)
+    return runpy.run_path(PATH_HELPER, run_name="cocalc_rustic_path_api")
+
+
+def job_key(argv, api):
+    if not argv or argv[0] not in COMMANDS or sum(len(arg) for arg in argv) > 16384:
+        raise ValueError("invalid Rustic job arguments")
+    _command, values = api["parse_rustic"](argv)
+    identity = [values["profile-root"], values["profile-path"]]
+    return hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
+
+
+def process_identity(pid):
+    try:
+        with open(f"/proc/{pid}/stat", encoding="ascii") as stream:
+            fields = stream.read(8192).rsplit(")", 1)[1].split()
+        if fields[0] in {"Z", "X"}:
+            return None
+        return int(fields[1]), int(fields[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def caller_chain():
+    result = []
+    pid = os.getpid()
+    while pid > 1:
+        identity = process_identity(pid)
+        if identity is None or len(result) >= 64:
+            raise RuntimeError("cannot establish caller process identity")
+        parent, start = identity
+        result.append([pid, start])
+        if parent >= pid and any(item[0] == parent for item in result):
+            raise RuntimeError("invalid caller ancestry")
+        pid = parent
+    return result
+
+
+def callers_alive(chain):
+    if not isinstance(chain, list) or not 1 <= len(chain) <= 64:
+        return False
+    for item in chain:
+        if (not isinstance(item, list) or len(item) != 2
+                or any(type(value) is not int or value <= 0 for value in item)):
+            return False
+        identity = process_identity(item[0])
+        if identity is None or identity[1] != item[1]:
+            return False
+    return True
+
+
+def open_lock_directory(path=LOCKS, required_uid=0):
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        pass
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    info = os.fstat(fd)
+    if info.st_uid != required_uid or info.st_mode & 0o077:
+        os.close(fd)
+        raise PermissionError("untrusted Rustic job lock directory")
+    return fd
+
+
+def take_lock(directory, name, shared=False, required_uid=0):
+    fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=directory)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_mode & 0o022:
+            raise PermissionError("untrusted Rustic job lock")
+        fcntl.flock(fd, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def take_slot(directory, count):
+    for slot in range(count):
+        try:
+            return take_lock(directory, f"slot-{slot}.lock")
+        except BlockingIOError:
+            continue
+    raise BlockingIOError(errno.EAGAIN, "Rustic host job budget is occupied")
+
+
+def service_command(unit, argv, chain, policy):
+    return [
+        "/usr/bin/systemd-run", "--system", "--no-ask-password", "--quiet",
+        "--pipe", "--wait", "--collect", "--expand-environment=no",
+        f"--unit={unit}", "--service-type=exec",
+        "--property=KillMode=control-group", "--property=SendSIGKILL=yes",
+        "--property=OOMPolicy=kill", "--property=MemorySwapMax=0",
+        f"--property=RuntimeMaxSec={policy['runtime_seconds']}",
+        f"--property=TimeoutStopSec={policy['kill_grace_seconds']}",
+        f"--property=MemoryMax={policy['memory_bytes']}",
+        f"--property=CPUQuota={policy['cpu_quota_percent']}%",
+        f"--property=IOWeight={policy['io_weight']}",
+        f"--property=TasksMax={policy['tasks_max']}",
+        "/usr/bin/python3", "-I", SELF, "worker",
+        json.dumps(chain, separators=(",", ":")), *argv,
+    ]
+
+
+def check_cgroup(policy):
+    with open("/proc/self/cgroup", encoding="ascii") as stream:
+        lines = stream.read(65536).splitlines()
+    groups = [line[3:] for line in lines if line.startswith("0::/")]
+    if len(groups) != 1 or ".." in groups[0].split("/"):
+        raise RuntimeError("Rustic supervision requires cgroup v2")
+    group = groups[0]
+    if not group.rsplit("/", 1)[1].startswith("cocalc-rustic-") or not group.endswith(".service"):
+        raise RuntimeError("Rustic worker is not in its job service")
+    root = "/sys/fs/cgroup" + group
+    with open(root + "/memory.max", encoding="ascii") as stream:
+        memory = stream.read(128).strip()
+    if not memory.isdecimal() or int(memory) > policy["memory_bytes"]:
+        raise RuntimeError("Rustic memory controller is not enforcing its budget")
+    with open(root + "/cpu.max", encoding="ascii") as stream:
+        quota, period = stream.read(128).split()
+    if not quota.isdecimal() or not period.isdecimal() or int(period) == 0 or int(quota) * 100 > policy["cpu_quota_percent"] * int(period):
+        raise RuntimeError("Rustic CPU controller is not enforcing its budget")
+    with open(root + "/io.weight", encoding="ascii") as stream:
+        weight = stream.read(1024).splitlines()
+    if f"default {policy['io_weight']}" not in weight:
+        raise RuntimeError("Rustic I/O controller is not enforcing its weight")
+
+
+def lease_valid(chain, timeout=5):
+    if not callers_alive(chain):
+        return False
+    readable, _, _ = select.select([0], [], [], timeout)
+    return bool(readable) and os.read(0, 64) != b"" and callers_alive(chain)
+
+
+def worker(argv, chain, api, policy):
+    check_cgroup(policy)
+    if not lease_valid(chain):
+        raise RuntimeError("Rustic caller lease expired before job start")
+    directory = open_lock_directory()
+    locks = []
+    stop = threading.Event()
+    try:
+        key = job_key(argv, api)
+        locks.append(take_lock(directory, f"{key}.job.lock"))
+        locks.append(take_slot(directory, policy["max_jobs"]))
+        cache_dir = os.open("/run/lock", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            locks.append(take_lock(cache_dir, os.path.basename(CACHE_LOCK), shared=True))
+        finally:
+            os.close(cache_dir)
+
+        def watch():
+            while not stop.is_set():
+                try:
+                    alive = lease_valid(chain)
+                except Exception:
+                    alive = False
+                if not alive:
+                    # systemd terminates the entire cgroup. Rustic inherits the
+                    # locks, so caller death cannot unlock an active repository.
+                    if not stop.is_set():
+                        os._exit(124)
+                    return
+
+        threading.Thread(target=watch, daemon=True).start()
+        api["run_rustic"](argv, inherited_fds=tuple(locks))
+    finally:
+        stop.set()
+        for fd in reversed(locks):
+            os.close(fd)
+        os.close(directory)
+
+
+def barrier(argv, api, policy):
+    key = job_key(argv, api)
+    deadline = time.monotonic() + policy["kill_grace_seconds"] + 30
+    directory = open_lock_directory()
+    try:
+        while True:
+            held = []
+            try:
+                held.append(take_lock(directory, f"{key}.launch.lock"))
+                held.append(take_lock(directory, f"{key}.job.lock"))
+                return
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Rustic job still owns its source; cleanup is unsafe")
+            finally:
+                for fd in reversed(held):
+                    os.close(fd)
+            time.sleep(0.2)
+    finally:
+        os.close(directory)
+
+
+def launch(argv, api, policy):
+    key = job_key(argv, api)
+    chain = caller_chain()
+    unit = f"cocalc-rustic-{uuid.uuid4().hex}.service"
+    directory = open_lock_directory()
+    lock = None
+    proc = None
+    try:
+        lock = take_lock(directory, f"{key}.launch.lock")
+        # Reject a surviving predecessor before asking systemd for another unit.
+        old = take_lock(directory, f"{key}.job.lock")
+        os.close(old)
+        proc = subprocess.Popen(service_command(unit, argv, chain, policy), env=ENV,
+                                stdin=subprocess.PIPE, close_fds=True)
+        os.set_blocking(proc.stdin.fileno(), False)
+        deadline = time.monotonic() + policy["runtime_seconds"] + policy["kill_grace_seconds"] + 30
+        while proc.poll() is None:
+            if not callers_alive(chain) or time.monotonic() >= deadline:
+                raise TimeoutError("Rustic caller exited or job deadline expired")
+            try:
+                os.write(proc.stdin.fileno(), b".")
+            except BrokenPipeError:
+                # The worker may have completed before systemd-run reports exit.
+                pass
+            time.sleep(0.5)
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, ["supervised-rustic-job"])
+    finally:
+        try:
+            if proc is not None:
+                proc.stdin.close()
+                if proc.poll() is None:
+                    # This launch owns this unique unit, never a predecessor's unit.
+                    subprocess.run(["/usr/bin/systemctl", "--no-ask-password", "stop", unit],
+                                   env=ENV, check=True, timeout=policy["kill_grace_seconds"] + 15)
+                    proc.wait(timeout=15)
+        finally:
+            if lock is not None:
+                os.close(lock)
+            os.close(directory)
+
+
+def main(argv):
+    require_root()
+    policy = load_policy()
+    api = path_api()
+    if len(argv) > 2 and argv[0] == "worker":
+        if len(argv[1]) > 8192:
+            raise ValueError("caller identity is too large")
+        worker(argv[2:], json.loads(argv[1]), api, policy)
+    elif len(argv) > 1 and argv[0] == "wait":
+        barrier(argv[1:], api, policy)
+    elif len(argv) > 1 and argv[0] == "run":
+        launch(argv[1:], api, policy)
+    else:
+        raise ValueError("expected run, worker or wait")
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except (KeyboardInterrupt, Exception) as error:
+        print(f"Rustic job failed: {error}", file=sys.stderr)
+        sys.exit(1)
+'''
+
+
 RUNTIME_STORAGE_PATH_HELPER = r'''#!/usr/bin/python3
 """Root-owned, openat2-anchored path mutations for cocalc-runtime-storage.
 
@@ -4675,6 +5013,7 @@ def run_rustic(
     profile_run_dir="/run/cocalc-rustic-profiles",
     profile_run_dir_uid=0,
     allow_loopback_rest=ALLOW_LOOPBACK_RUSTIC_REST,
+    inherited_fds=(),
 ):
     command, values = parse_rustic(argv)
     rootfd = open_root(values["root"], allowed_roots)
@@ -4714,7 +5053,7 @@ def run_rustic(
                 [*base, *args],
                 cwd=f"/proc/self/fd/{datafd}",
                 env=env,
-                pass_fds=(datafd,),
+                pass_fds=(datafd, *inherited_fds),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL if quiet else None,
                 stderr=subprocess.DEVNULL if quiet else None,
@@ -9311,6 +9650,7 @@ esac
     )
     wrappers = {
         "/usr/local/libexec/cocalc-runtime-storage-path-helper": storage_path_helper,
+        "/usr/local/libexec/cocalc-rustic-job": RUSTIC_JOB_HELPER,
         "/usr/local/libexec/cocalc-project-io-policy": PROJECT_IO_POLICY_HELPER,
         "/usr/local/sbin/cocalc-runtime-storage": storage_wrapper,
         "/usr/local/sbin/cocalc-mount-data": mount_wrapper,

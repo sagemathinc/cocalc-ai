@@ -15,9 +15,12 @@ not a completion claim or deployment approval. Production remains unchanged.
   `33fdd63` implements mixed/existing sparse restore, required sparse mode,
   native hole-aware chunking, existing-file hole-aware verification, and hardlink
   replacement. `5b6146b` adds strict backup/restore completion semantics.
-- Native tests: 180 core unit tests and 59 integration tests passed before the
-  strict additions; two new strict fault tests and four restore tests passed.
-  Strict Clippy passes. Re-run the entire suite after subsequent edits.
+- Core `f45990d` adds metadata-only admission (unsorted source traversal) and
+  inclusive optional limits for file/aggregate logical bytes, entries, path
+  depth, node metadata, elapsed time and worst-case content references. These
+  reject the job, never silently filter files. Streams/partial scans fail closed.
+- Native tests: 185 core unit tests and 62 integration tests pass, including
+  rejection before any pack or snapshot write. Strict Clippy passes.
 - The isolated Btrfs benchmark passed 1 TiB all-hole and 100 GiB sparse backup,
   unchanged/small-edit reuse, fresh restore, existing-content repair, and data
   integrity checking. See `experiments/native-sparse/README.md` for measurements
@@ -25,17 +28,33 @@ not a completion claim or deployment approval. Production remains unchanged.
 - The optimized, strict-mode benchmark also passes. Bounded compatibility tests
   pass for old 0.11.1 backups with the new reader and new backups with old Rustic
   and independent Restic 0.18.0, including hashes, symlinks and hardlinks.
+- CLI `0ef705a` passed Linux/Btrfs qualification on native amd64 and arm64 in
+  GitHub Actions run `34001212323`. It proves a 4 GiB qgroup rejects dense 5 GiB
+  allocation, then restores a 10 GiB sparse fixture in 12 KiB. Mixed 16 MiB
+  files restore in 1 MiB, with correct bytes/hardlinks. Actual read-only snapshot
+  backups reuse unchanged files; an mtime-reset edit reprocesses only that file.
+- CLI `737ba53` exposes `backup-inventory`, backup admission flags and profile-
+  independent `version --json` capabilities. All ordinary CLI tests and strict
+  Clippy pass locally. Its follow-up qualification run `34002157054` is pending.
+- A root-owned transient-service supervision helper is implemented and installed
+  by the bootstrap template, but not yet called by the storage wrapper. It
+  requires an explicit root-owned policy, checks cgroup controls, watches a
+  caller pipe lease and PID/start-time identities, and holds repository/host-slot/
+  cache locks inherited by Rustic. The `wait` barrier is intended for snapshot
+  cleanup. Eight new unit/OS-lock tests and all 92 existing bootstrap tests pass.
+  Real systemd timeout/worker-death/descendant tests and caller wiring remain
+  mandatory; installation alone is not a production containment claim.
 
 ## Working Repositories
 
 - CLI: `/home/user/upstream/cocalc-rustic`, branch `cocalc/sparse-backups`.
-  Fork base `d58099c`, upstream CLI `143d073` merged with `--no-commit`.
-  Merge still needs final validation/commit. Existing fork hardlink changes are
-  already represented upstream; preserve custom distribution configuration.
-- Core commits `33fdd63` and `5b6146b` were pushed to
+  Fork base `d58099c`, upstream CLI `143d073` merged in `0ef705a`; `737ba53`
+  adds admission/capability commands. Both are pushed to the fork topic branch.
+  Existing fork hardlink changes are already represented upstream.
+- Core commits `33fdd63`, `5b6146b`, and `f45990d` were pushed to
   `sagemathinc/rustic_core:cocalc/sparse-backups`. CLI dependencies now pin
-  `5b6146b67c277e83b66b5595325e539dcf86db19`; lockfile resolution succeeded.
-  CLI unit config snapshots gained only the intended `strict = false` field.
+  `f45990db6609ee89b7a8b78e717d5833baa31543`; lockfile resolution succeeded.
+  CLI unit config snapshots gained only strict/admission fields.
 - Rust 1.94.0 is installed at `/home/user/.cargo/bin`, without modifying shell
   PATH or the older system toolchain. Use the explicit cargo path.
 - Existing original upstream checkouts are not the development worktrees.
@@ -48,8 +67,8 @@ not a completion claim or deployment approval. Production remains unchanged.
   every copy transport; account for chunk-reference and metadata expansion, not
   just compressed repository bytes or physical source allocation.
 - Finish fork pinning, reproducible builds/provenance, independent-reader/old-
-  snapshot tests, adversarial measurements, and quota-enforced Btrfs snapshot
-  round trips. Verify that strict flags reach the CLI, not only the core API.
+  snapshot recurring tests and adversarial measurements. Native quota/snapshot
+  round trips pass, but CoCalc's actual end-to-end lifecycle still needs them.
 - Integrate explicit sparse-required/strict capability admission in every restore
   path, protected quota-enforced staging, and safe sparse publication.
 - Carry complete/partial/failed evidence through status, scheduling, lifecycle,
