@@ -7,6 +7,7 @@ export type BackupSnapshotRef = {
   id: string;
   time?: Date;
   summary?: Record<string, string | number>;
+  source?: { captured_at: Date; generation: number | null };
 };
 
 export function parseCreatedBackupSnapshot(
@@ -19,10 +20,28 @@ export function parseCreatedBackupSnapshot(
     return undefined;
   }
 
+  const source = parseBackupSource(record.source);
   return {
     id: record.id,
     time: parseBackupDate(record.time),
     summary: parseBackupSummary(record.summary),
+    ...(source ? { source } : {}),
+  };
+}
+
+function parseBackupSource(value: unknown): BackupSnapshotRef["source"] {
+  if (!value || typeof value !== "object") return undefined;
+  const { captured_at, generation } = value as Record<string, unknown>;
+  const capturedAt = parseBackupDate(captured_at);
+  if (!capturedAt) return undefined;
+  return {
+    captured_at: capturedAt,
+    generation:
+      typeof generation === "number" &&
+      Number.isSafeInteger(generation) &&
+      generation >= 0
+        ? generation
+        : null,
   };
 }
 

@@ -39,6 +39,7 @@ import {
 } from "./rustic-progress";
 import { btrfs, sudo } from "./util";
 import { RusticJobCleanupError } from "./rustic-job-errors";
+import { getGeneration } from "./subvolume-snapshots";
 import {
   invalidateBtrfsQgroupShowRaw,
   invalidateBtrfsSubvolumeShow,
@@ -68,6 +69,7 @@ interface Snapshot {
   id: string;
   time: Date;
   summary: { [key: string]: string | number };
+  source?: { captured_at: Date; generation: number | null };
 }
 
 function flattenSnapshotGroups(groups: any): any[] {
@@ -250,6 +252,18 @@ export class SubvolumeRustic {
       glob,
     ]);
     const tempSnapshot = makeTempRusticSnapshotName();
+    // This is a conservative lower bound on the state included in the snapshot.
+    // Never sample the live generation AFTER backup: concurrent edits would be
+    // reported as protected even though Rustic never saw them. This freshness
+    // hint does not replace the final lifecycle source/placement fence.
+    const captured_at = new Date();
+    const observedGeneration = await getGeneration(this.subvolume.path, {
+      cache: false,
+    }).catch(() => null);
+    const generation =
+      Number.isSafeInteger(observedGeneration) && observedGeneration! >= 0
+        ? observedGeneration
+        : null;
     const { snapshotPath } = await this.createTempBackupSnapshot(tempSnapshot);
     let cleanupSafe = true;
     try {
@@ -300,6 +314,7 @@ export class SubvolumeRustic {
         time: backupTime,
         id,
         summary,
+        source: { captured_at, generation },
       };
     } catch (error) {
       if (error instanceof RusticJobCleanupError) cleanupSafe = false;

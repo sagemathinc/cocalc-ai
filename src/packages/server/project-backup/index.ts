@@ -1445,13 +1445,10 @@ export async function recordProjectBackup({
   }
   await assertHostProjectAccess(host_id, project_id);
 
-  let recordedAt = time ? new Date(time) : new Date();
-  if (Number.isNaN(recordedAt.getTime())) {
-    recordedAt = new Date();
-  }
   await markProjectBackedUp({
+    host_id,
     project_id,
-    backed_up_at: recordedAt,
+    backed_up_at: time,
     generation,
   });
 }

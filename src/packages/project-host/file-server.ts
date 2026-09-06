@@ -77,7 +77,6 @@ import {
   getSubvolumeIdentity,
   isBtrfsSubvolume,
 } from "@cocalc/file-server/btrfs/subvolume";
-import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
@@ -223,10 +222,8 @@ import {
   checkManagedBackupAllowedBestEffort,
   recordManagedBackupEgressBestEffort,
 } from "./backup-egress";
-import {
-  newestBackupTimeForIds,
-  parseCreatedBackupSnapshot,
-} from "./backup-created";
+import { parseCreatedBackupSnapshot } from "./backup-created";
+import type { BackupSnapshotRef } from "./backup-created";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import {
   BtrfsMutationDeferredError,
@@ -4070,10 +4067,13 @@ async function createBackup({
     legacyProjectInitialBackupEgressExempt.delete(project_id);
   }
   try {
-    const generation = await getGeneration(projectMountpoint(project_id)).catch(
-      () => null,
-    );
-    await reportBackupSuccess(project_id, result.time, generation);
+    if (result.source) {
+      await reportBackupSuccess(
+        project_id,
+        result.source.captured_at,
+        result.source.generation,
+      );
+    }
   } catch (err) {
     logger.warn("backup success report failed", { project_id, err });
   }
@@ -4331,8 +4331,8 @@ async function updateBackups({
       ? LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE
       : undefined;
   const createdBackupIds = new Set<string>();
-  let newestCreatedBackupTime: Date | undefined;
-  const vol = await withBackupConfigRefreshOnMissingBucket({
+  let newestSource: BackupSnapshotRef["source"];
+  await withBackupConfigRefreshOnMissingBucket({
     project_id,
     op: "updateBackups",
     run: async () => {
@@ -4359,10 +4359,11 @@ async function updateBackups({
           if (!backup?.id) return;
           createdBackupIds.add(backup.id);
           if (
-            backup.time &&
-            (!newestCreatedBackupTime || backup.time > newestCreatedBackupTime)
+            backup.source &&
+            (!newestSource ||
+              backup.source.captured_at > newestSource.captured_at)
           ) {
-            newestCreatedBackupTime = backup.time;
+            newestSource = backup.source;
           }
           if (backup.summary) {
             await recordManagedBackupEgressBestEffort({
@@ -4382,26 +4383,16 @@ async function updateBackups({
       return refreshed;
     },
   });
-  let reportTime = newestCreatedBackupTime;
-  try {
-    const backups = await vol.rustic.snapshots();
-    reportTime = newestBackupTimeForIds({
-      backups,
-      backupIds: createdBackupIds,
-      fallback: reportTime,
-    });
-  } catch (err) {
-    logger.warn("backup snapshot refresh failed", { project_id, err });
-  }
   if (createdBackupIds.size > 0 && legacyInitialBackupOverride != null) {
     legacyProjectInitialBackupEgressExempt.delete(project_id);
   }
-  if (createdBackupIds.size > 0 && reportTime) {
+  if (createdBackupIds.size > 0 && newestSource) {
     try {
-      const generation = await getGeneration(
-        projectMountpoint(project_id),
-      ).catch(() => null);
-      await reportBackupSuccess(project_id, reportTime, generation);
+      await reportBackupSuccess(
+        project_id,
+        newestSource.captured_at,
+        newestSource.generation,
+      );
     } catch (err) {
       logger.warn("scheduled backup success report failed", {
         project_id,

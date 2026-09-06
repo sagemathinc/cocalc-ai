@@ -23,6 +23,33 @@ describe("parseCreatedBackupSnapshot", () => {
     expect(parseCreatedBackupSnapshot({ time: new Date() })).toBeUndefined();
     expect(parseCreatedBackupSnapshot({ id: "" })).toBeUndefined();
   });
+
+  it("retains the captured source rather than substituting the later backup time", () => {
+    const source = {
+      captured_at: new Date("2026-05-22T10:00:00Z"),
+      generation: 19,
+    };
+    expect(
+      parseCreatedBackupSnapshot({
+        id: "backup-1",
+        time: "2026-05-22T12:00:00Z",
+        source,
+      })?.source,
+    ).toEqual(source);
+    expect(
+      parseCreatedBackupSnapshot({
+        id: "backup-1",
+        time: "2026-05-22T12:00:00Z",
+        source: { captured_at: "invalid", generation: 19 },
+      })?.source,
+    ).toBeUndefined();
+    expect(
+      parseCreatedBackupSnapshot({
+        id: "backup-1",
+        source: { ...source, generation: 2 ** 53 },
+      })?.source?.generation,
+    ).toBeNull();
+  });
 });
 
 describe("newestBackupTimeForIds", () => {
