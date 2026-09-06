@@ -322,6 +322,22 @@ secret_access_key = "disposable"
                         "/mnt/cocalc/" + shared, "abc123", str(case)], check=True, timeout=30)
         flags = json.loads((case / "invocation").read_text())
         assert "--strict" in flags and flags[flags.index("--sparse") + 1] == "by-content-required"
+        subprocess.run([str(wrapper), "rootfs-rustic-backup-supervised",
+                        str(case), "/mnt/cocalc/" + shared, "rootfs-qualification"],
+                       check=True, timeout=30)
+        subprocess.run([str(wrapper), "rootfs-rustic-backup-wait",
+                        str(case), "/mnt/cocalc/" + shared, "rootfs-qualification"],
+                       check=True, timeout=30)
+        flags = json.loads((case / "invocation").read_text())
+        assert "--strict" in flags and "--max-chunk-references" in flags
+        subprocess.run([str(wrapper), "rootfs-rustic-restore-supervised",
+                        "/mnt/cocalc/" + shared, "abc123", str(case), "--delete"],
+                       check=True, timeout=30)
+        subprocess.run([str(wrapper), "rootfs-rustic-restore-wait",
+                        "/mnt/cocalc/" + shared, "abc123", str(case), "--delete"],
+                       check=True, timeout=30)
+        flags = json.loads((case / "invocation").read_text())
+        assert "--strict" in flags and "--delete" in flags and flags[flags.index("--sparse") + 1] == "by-content-required"
         policy["native"]["binary_sha256"] = "0" * 64
         policy_path.write_text(json.dumps(policy))
         case, proc = start("wrong-binary", "normal", shared, through_sudo=True, immutable=True)
@@ -332,7 +348,8 @@ secret_access_key = "disposable"
               "sudo-normal", "sudo-caller-death", "caller-death", "closed-fds",
               "worker-death", "same-repo", "host-full", "orphan", "oom",
               "mutable-native-source", "native-backup", "native-restore", "wrong-binary",
-              "no-io-enforcement", "shared-maintenance-parent"]}))
+              "no-io-enforcement", "shared-maintenance-parent",
+              "rootfs-native-backup", "rootfs-native-restore"]}))
     finally:
         for proc in processes:
             if proc.poll() is None:

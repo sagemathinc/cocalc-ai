@@ -12,6 +12,7 @@ import {
   ProjectRusticUnsupportedError,
   projectRusticBackup,
   projectRusticRestore,
+  runManagedRustic,
 } from "./project-rustic";
 
 jest.mock("@cocalc/backend/execute-code", () => ({
@@ -118,6 +119,59 @@ describe("project rustic wrapper", () => {
     await expect(supervisedBackup()).rejects.toThrow("must be 0 or 1");
     expect(mockedExecuteCode).not.toHaveBeenCalled();
     expect(mockedExec).not.toHaveBeenCalled();
+  });
+
+  it.each(["rootfs-rustic-backup", "rootfs-rustic-restore"] as const)(
+    "supervises %s with its own barrier and no direct-sudo fallback",
+    async (command) => {
+      process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+      mockedExec.mockResolvedValueOnce(output("result"));
+      mockedExec.mockResolvedValueOnce(output(""));
+      const args = ["source", "profile", "destination"];
+      await expect(
+        runManagedRustic({ command, args, timeoutMs: 30_000 }),
+      ).resolves.toMatchObject({ stdout: "result", stderr: "" });
+      expect(mockedExec).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          prefixArgs: [
+            "-n",
+            "/usr/local/sbin/cocalc-runtime-storage",
+            `${command}-supervised`,
+            ...args,
+          ],
+        }),
+      );
+      expect(mockedExec).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          prefixArgs: [
+            "-n",
+            "/usr/local/sbin/cocalc-runtime-storage",
+            `${command}-wait`,
+            ...args,
+          ],
+        }),
+      );
+      expect(mockedExecuteCode).not.toHaveBeenCalled();
+    },
+  );
+
+  it("uses seconds only at the legacy RootFS execution boundary", async () => {
+    mockedExecuteCode.mockResolvedValue({
+      type: "blocking",
+      stdout: "",
+      stderr: "",
+      exit_code: 0,
+    } as any);
+    await runManagedRustic({
+      command: "rootfs-rustic-restore",
+      args: [],
+      timeoutMs: 30 * 60 * 1000,
+    });
+    expect(mockedExecuteCode).toHaveBeenCalledWith(
+      expect.objectContaining({ timeout: 1800 }),
+    );
   });
 
   it("backs up through the privileged runtime storage wrapper", async () => {

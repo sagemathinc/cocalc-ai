@@ -227,6 +227,7 @@ import {
   projectRusticBackup,
   projectRusticBackupWait,
   projectRusticRestore,
+  runManagedRustic,
 } from "./project-rustic";
 import { RusticJobCleanupError } from "@cocalc/file-server/btrfs/rustic-job-errors";
 import { isMissingRusticRepositoryError } from "./backup-index-errors";
@@ -953,58 +954,17 @@ async function backupRootfsTreeToRustic({
     repo_toml: upload.repo_toml,
   });
   const progress = createLroRusticReporter(lro, "upload");
-  const progressHandler = progress
-    ? createRusticProgressHandler({ onProgress: progress })
-    : undefined;
-  let stderrBuffer = "";
-  const pushProgressChunk = (chunk?: string) => {
-    if (!progressHandler || !chunk) return;
-    stderrBuffer += chunk.replace(/\r/g, "\n");
-    const parts = stderrBuffer.split("\n");
-    stderrBuffer = parts.pop() ?? "";
-    for (const part of parts) {
-      const line = part.trim();
-      if (line) {
-        progressHandler(line);
-      }
-    }
-  };
-  const flushProgressChunk = () => {
-    if (!progressHandler) return;
-    const line = stderrBuffer.trim();
-    stderrBuffer = "";
-    if (line) {
-      progressHandler(line);
-    }
-  };
   const tagArgs = ["--tag", "rootfs-release"];
   const profileArg = repoProfile.endsWith(".toml")
     ? repoProfile.slice(0, -5)
     : repoProfile;
   const runBackup = async () =>
-    (await executeCode({
-      verbose: false,
-      err_on_exit: true,
-      timeout: 6 * 60 * 60,
-      command: "sudo",
-      args: [
-        "-n",
-        STORAGE_WRAPPER,
-        "rootfs-rustic-backup",
-        sourcePath,
-        profileArg,
-        backupHost,
-        ...tagArgs,
-      ],
-      env: progress ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
-      streamCB: (event) => {
-        if (event.type === "stderr" && typeof event.data === "string") {
-          pushProgressChunk(event.data);
-        } else if (event.type === "done") {
-          flushProgressChunk();
-        }
-      },
-    })) as { stdout: string };
+    await runManagedRustic({
+      timeoutMs: 6 * 60 * 60 * 1000,
+      command: "rootfs-rustic-backup",
+      args: [sourcePath, profileArg, backupHost, ...tagArgs],
+      onProgress: progress,
+    });
   const { stdout } = timings
     ? await timings.measure(timingPhase, runBackup)
     : await runBackup();
@@ -3469,6 +3429,7 @@ async function publishRootfsImage({
   let workdirPath: string | undefined;
   let stagedRootfsPath: string | undefined;
   let publishSucceeded = false;
+  let cleanupSafe = true;
   try {
     const currentImagePath = join(rootfsPath, "current-image.txt");
     const sourceImage = `${await readFile(currentImagePath, "utf8")}`.trim();
@@ -3697,14 +3658,31 @@ async function publishRootfsImage({
       upload_result: uploadResult,
       phase_timings_ms: timings.phase_timings_ms,
     };
+  } catch (err) {
+    if (err instanceof RusticJobCleanupError) {
+      cleanupSafe = false;
+      logger.warn(
+        "retaining RootFS publish staging until job termination is verified",
+        {
+          project_id,
+          mergedPath,
+          stagedRootfsPath,
+          source_snapshot: staged.path,
+          err: `${err}`,
+        },
+      );
+    }
+    throw err;
   } finally {
-    if (mergedPath) {
+    if (cleanupSafe && mergedPath) {
       await unmountOverlayForPublish(mergedPath);
     }
-    await removeDirectoryTree(workdirPath).catch(() => {});
-    await removeDirectoryTree(mergedPath).catch(() => {});
-    await deleteSubvolumeTree(stagedRootfsPath).catch(() => {});
-    await deleteSubvolumeTree(staged.path).catch(() => {});
+    if (cleanupSafe) {
+      await removeDirectoryTree(workdirPath).catch(() => {});
+      await removeDirectoryTree(mergedPath).catch(() => {});
+      await deleteSubvolumeTree(stagedRootfsPath).catch(() => {});
+      await deleteSubvolumeTree(staged.path).catch(() => {});
+    }
     if (createdSnapshot && publishSucceeded) {
       await deleteSnapshot({
         project_id,
