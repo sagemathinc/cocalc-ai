@@ -1,5 +1,27 @@
 # Native Appearance Audits
 
+## Isolated Remote Chrome
+
+When the user explicitly supplies a dedicated, signed-in Chrome profile through
+a loopback-only SSH DevTools tunnel, run:
+
+```sh
+node src/scripts/appearance/audit-cdp.mjs --cdp http://127.0.0.1:9222
+```
+
+This uses a separate tab in that isolated profile, captures 11 signed-in routes
+in both themes at 1440 and 390 CSS pixels, runs axe, and restores the original
+appearance preference. Do not use a normal personal browsing profile or expose
+DevTools publicly. Theme changes are account-wide while the audit runs. No
+billing, infrastructure, or customer mutations are part of this runner.
+
+Evidence defaults to `src/.local/dark-mode/cdp-audit`. It is private and must not
+be committed. Capture success is not visual acceptance: rows remain unreviewed,
+axe can miss contrast problems, and root overflow checks miss inner scrolling.
+A narrow desktop viewport is not a substitute for real iOS Safari, touch, or
+software-keyboard testing. Use `--routes`, `--widths`, and `--output` to isolate
+follow-up captures after a completed static rebuild.
+
 ## Fixed-color Review Queue
 
 Run `node src/scripts/appearance/inventory-fixed-colors.mjs` from the repo

@@ -4,7 +4,7 @@
  */
 
 import type { CSSProperties } from "react";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   SLATE_CODE_BLOCK_PALETTES,
   type SlateCodeBlockPalette,
@@ -76,7 +76,7 @@ export function slateCodeBlockThemeVars(
   const borderMix = palette.mode === "dark" ? 0.24 : 0.12;
   const inlineCodeMix = palette.mode === "dark" ? 0.2 : 0.07;
   const codeVars: SlateCodeBlockThemeVars = {
-    "--cocalc-slate-link": COLORS.ANTD_LINK_BLUE,
+    "--cocalc-slate-link": UI_COLORS.link,
     "--cocalc-slate-inline-code-bg": mix(
       palette.background,
       palette.foreground,
@@ -108,7 +108,7 @@ export function slateCodeBlockThemeVars(
   const neutralLinkChipBorderMix = palette.mode === "dark" ? 0.2 : 0.12;
   const linkColor =
     theme === "" || theme === "default"
-      ? COLORS.ANTD_LINK_BLUE
+      ? UI_COLORS.link
       : palette.keyword || palette.definition;
   return {
     ...codeVars,

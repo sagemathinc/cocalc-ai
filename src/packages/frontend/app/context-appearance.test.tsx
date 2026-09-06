@@ -65,3 +65,10 @@ it.each(["light", "dark"] as const)(
     );
   },
 );
+
+it("uses readable selected tabs in dark mode without overriding light tabs", () => {
+  const tabs = getBaseAntdTheme("dark").components!.Tabs!;
+  expect(tabs.itemSelectedColor).toBe(appearancePalette("dark").link);
+  expect(tabs.inkBarColor).toBe(appearancePalette("dark").link);
+  expect(getBaseAntdTheme("light").components?.Tabs).toBeUndefined();
+});

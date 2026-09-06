@@ -4,6 +4,7 @@
  */
 
 import type { CSSProperties } from "react";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Text } from "slate";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { isSafeHtmlUrl } from "@cocalc/frontend/components/sanitize-html";
@@ -11,7 +12,7 @@ import { dict } from "@cocalc/util/misc";
 import { register, SlateElement } from "../register";
 
 export const LINK_STYLE: CSSProperties = {
-  backgroundColor: "var(--cocalc-slate-link-chip-bg, white)",
+  backgroundColor: `var(--cocalc-slate-link-chip-bg, ${UI_COLORS.surface})`,
   border: "1px solid var(--cocalc-slate-link-chip-border, transparent)",
   padding: "1px",
   margin: "-1px", // so the position isn't changed; important when background is white so doesn't look weird.

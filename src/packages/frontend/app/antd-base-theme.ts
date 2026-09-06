@@ -37,6 +37,12 @@ export function getBaseAntdTheme(
               colorPrimaryHover: palette.linkHover,
               itemActiveBg: palette.surface,
             },
+            Tabs: {
+              itemSelectedColor: palette.link,
+              itemHoverColor: palette.linkHover,
+              itemActiveColor: palette.link,
+              inkBarColor: palette.link,
+            },
           }
         : {}),
       Button: {

@@ -36,7 +36,8 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { TAGS, Tag, to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { deep_copy, keys } from "@cocalc/util/misc";
-import { COLORS, DNS } from "@cocalc/util/theme";
+import { DNS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { site_settings_conf } from "@cocalc/util/schema";
 import { RenderRow } from "./render-row";
 import { Data, IsClearing, IsReadonly, IsSet, State } from "./types";
@@ -735,7 +736,7 @@ export default function SiteSettings({
           Refresh Propagation Status
         </Button>
         {scope?.seed_version != null && (
-          <span style={{ marginLeft: "8px", color: COLORS.GRAY_M }}>
+          <span style={{ marginLeft: "8px", color: UI_COLORS.secondary }}>
             Seed version <code>{scope.seed_version}</code>
             {scope.updated_at ? (
               <>
@@ -874,7 +875,7 @@ export default function SiteSettings({
         >
           Sync Site Settings to Bays
         </Button>
-        <span style={{ marginLeft: "8px", color: COLORS.GRAY_M }}>
+        <span style={{ marginLeft: "8px", color: UI_COLORS.secondary }}>
           Push all configured site settings from this admin bay to every
           registered bay. New saves sync automatically.
         </span>
@@ -937,7 +938,7 @@ export default function SiteSettings({
         >
           Send Verification Test
         </Button>
-        <span style={{ marginLeft: "8px", color: COLORS.GRAY_M }}>
+        <span style={{ marginLeft: "8px", color: UI_COLORS.secondary }}>
           Sends to <code>{email || "your account"}</code>. Verification uses the
           critical email route.
         </span>
@@ -1051,7 +1052,7 @@ export default function SiteSettings({
             >
               Apply Cloudflare tunnel settings now
             </Button>
-            <span style={{ marginLeft: "12px", color: COLORS.GRAY }}>
+            <span style={{ marginLeft: "12px", color: UI_COLORS.secondary }}>
               {cloudflareSettingsModified
                 ? "Save Cloudflare settings before applying them to the running server."
                 : "Creates or updates the tunnel and restarts cloudflared without a hub restart."}
@@ -1268,9 +1269,11 @@ export default function SiteSettings({
                     height: "22px",
                     borderRadius: "50%",
                     background: groupStatus.get(groupName)
-                      ? "#d6f5d6"
-                      : "#ffe2e2",
-                    color: groupStatus.get(groupName) ? "#1f7a1f" : "#a00",
+                      ? UI_COLORS.successBg
+                      : UI_COLORS.dangerBg,
+                    color: groupStatus.get(groupName)
+                      ? UI_COLORS.success
+                      : UI_COLORS.danger,
                     fontWeight: 700,
                     fontSize: "12px",
                   }}
@@ -1284,7 +1287,7 @@ export default function SiteSettings({
                 </span>
               )}
               {groupMissingCounts.get(groupName) != null && (
-                <span style={{ color: "#a00", fontSize: "85%" }}>
+                <span style={{ color: UI_COLORS.danger, fontSize: "85%" }}>
                   {groupMissingCounts.get(groupName)} missing
                 </span>
               )}
@@ -1300,7 +1303,7 @@ export default function SiteSettings({
                   <summary
                     style={{
                       margin: "10px 0 4px 0",
-                      color: "#666",
+                      color: UI_COLORS.secondary,
                       cursor: "pointer",
                       display: "flex",
                       alignItems: "center",
@@ -1313,9 +1316,9 @@ export default function SiteSettings({
                         style={{
                           fontSize: "12px",
                           fontWeight: 600,
-                          color: "#a8071a",
-                          background: "#fff1f0",
-                          border: "1px solid #ffccc7",
+                          color: UI_COLORS.danger,
+                          background: UI_COLORS.dangerBg,
+                          border: `1px solid ${UI_COLORS.danger}`,
                           borderRadius: "10px",
                           padding: "1px 8px",
                         }}
