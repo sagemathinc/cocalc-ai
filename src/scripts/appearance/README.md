@@ -1,5 +1,34 @@
 # Native Appearance Audits
 
+## Fixed-color Review Queue
+
+Run `node src/scripts/appearance/inventory-fixed-colors.mjs` from the repo
+root (or add `--json` for exact member-reference lines). The syntax-tree scan
+finds named, aliased, mixed, and namespace imports of `@cocalc/util/theme`
+across packages. The initial snapshot is in
+`src/.agents/fixed-color-inventory-2026-09-06.md`.
+
+Treat every entry as unreviewed until its usages and callers are inspected.
+Work through admin/billing, project navigation, then editor surfaces in scoped
+batches. Map neutral and status colors by semantic role, not by similarly
+named constants; always pair text and backgrounds. Preserve intentional
+branding and authored document colors. Canvas, terminal, chart, and color-mixing
+APIs may require resolved concrete palettes instead of CSS variables.
+
+For each batch, record migrated usages or the reason for retaining fixed colors,
+run focused tests and lint, and review light/dark screenshots including loading,
+empty, selected, disabled, and expanded states. Audit static `Modal.*` calls,
+raw inline colors, stylesheets, and third-party widgets separately: changing
+`COLORS` imports alone cannot cover those. Static Ant Design modals need a
+context-aware hook with its holder inside the themed tree.
+
+Stripe Elements supports the `night` appearance theme. Embedded Checkout is a
+different integration using Stripe branding settings; do not invert its iframe,
+change account-wide branding per viewer, or recreate payment sessions on theme
+changes. No real payment is needed for appearance verification.
+
+## Browser Checks
+
 Run from `src` after rebuilding the static frontend with `pnpm static`:
 
 ```sh

@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useEffect, useRef, useState } from "react";
 import {
   cancelPaymentIntent,
@@ -419,7 +420,7 @@ function PaymentDetails({ paymentIntent, account_id, onFinished }) {
                 style={{
                   margin: "auto",
                   maxWidth: "800px",
-                  background: "white",
+                  background: UI_COLORS.surface,
                   padding: "30px 0",
                 }}
               >

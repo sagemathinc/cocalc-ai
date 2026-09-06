@@ -1,6 +1,7 @@
 import { Alert, Button, Divider, Modal, Space } from "antd";
 import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import {
   Elements,
   AddressElement,
@@ -60,6 +61,7 @@ export function StripeAddressElement({
   onFinished?;
   showCancel?: boolean;
 }) {
+  const { resolved } = useAppearance();
   const [error, setError] = useState<string>("");
   const [customer, setCustomer] = useState<any | null>(null);
   const stripeEnabled = !!useTypedRedux("customize", "stripe_enabled");
@@ -99,7 +101,7 @@ export function StripeAddressElement({
     <Elements
       options={{
         appearance: {
-          theme: "stripe",
+          theme: resolved === "dark" ? "night" : "stripe",
         },
         loader: "never",
       }}

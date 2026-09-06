@@ -46,7 +46,8 @@ import { debounce } from "lodash";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { moneyToStripe, stripeToMoney } from "@cocalc/util/money";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import {
   useEmailVerificationRequired,
   VerifyEmailRequiredPanel,
@@ -522,6 +523,7 @@ function FinishStripePaymentInner({
   style?;
   onFinished?;
 }) {
+  const { resolved } = useAppearance();
   const [error, setError] = useState<string>("");
   const [customerSession, setCustomerSession] =
     useState<CustomerSessionSecret | null>(null);
@@ -558,7 +560,7 @@ function FinishStripePaymentInner({
         ...customerSession,
         clientSecret: paymentIntent.client_secret,
         appearance: {
-          theme: "stripe",
+          theme: resolved === "dark" ? "night" : "stripe",
         },
         loader: "never",
       }}
@@ -702,7 +704,7 @@ function CheckoutNote({ children }: { children: ReactNode }) {
   return (
     <div
       style={{
-        color: COLORS.GRAY_M,
+        color: UI_COLORS.secondary,
         fontSize: "10pt",
         margin: "0 auto 12px",
         maxWidth: "620px",
@@ -743,8 +745,8 @@ function PaymentProgress({
       size="small"
       style={{
         ...style,
-        background: COLORS.ANTD_BG_BLUE_L,
-        borderColor: COLORS.GRAY_LL,
+        background: UI_COLORS.infoBg,
+        borderColor: UI_COLORS.border,
         margin: "12px auto",
         maxWidth: "640px",
         textAlign: "left",
@@ -752,7 +754,7 @@ function PaymentProgress({
     >
       <div style={{ fontWeight: 600, marginBottom: "6px" }}>{title}</div>
       <Progress percent={percent} showInfo={false} status="active" />
-      <div style={{ color: COLORS.GRAY_M, marginTop: "6px" }}>
+      <div style={{ color: UI_COLORS.secondary, marginTop: "6px" }}>
         {description}
       </div>
     </Card>
@@ -842,11 +844,15 @@ export function ConfirmButton({
 export function BigSpin({ style, tip = "Loading" }: { style?; tip?: string }) {
   return (
     <div style={{ ...style, textAlign: "center" }}>
-      <Spin description={tip} size="large">
+      <Spin
+        description={tip}
+        size="large"
+        styles={{ section: { color: UI_COLORS.link } }}
+      >
         <div
           style={{
             padding: 50,
-            background: "rgba(0, 0, 0, 0.05)",
+            background: UI_COLORS.inset,
             borderRadius: 4,
           }}
         />
@@ -1032,6 +1038,7 @@ function CollectPaymentMethodInner({
   style?;
   onFinished?;
 }) {
+  const { resolved } = useAppearance();
   const [error, setError] = useState<string>("");
   const [secret, setSecret] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -1111,7 +1118,7 @@ function CollectPaymentMethodInner({
         options={{
           ...secret,
           appearance: {
-            theme: "stripe",
+            theme: resolved === "dark" ? "night" : "stripe",
           },
           loader: "never",
         }}

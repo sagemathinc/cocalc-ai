@@ -145,6 +145,7 @@ export default function SiteSettings({
   scope?: SiteSettingsScope;
 }) {
   const { inc: change } = useCounter();
+  const [modal, modalContextHolder] = Modal.useModal();
   const cloudflareStatus = useTypedRedux(
     "customize",
     "launchpad_cloudflare_tunnel_status",
@@ -500,7 +501,7 @@ export default function SiteSettings({
 
     setState("save");
 
-    Modal.confirm({
+    modal.confirm({
       title: "Confirm changing the following settings?",
       icon: <Icon name="warning" />,
       width: 700,
@@ -1406,6 +1407,7 @@ export default function SiteSettings({
 
   return (
     <div>
+      {modalContextHolder}
       {state == "save" && (
         <Loading
           delay={1000}
