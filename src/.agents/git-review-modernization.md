@@ -42,9 +42,45 @@ from the Git browser and TimeTravel. Opening freezes the input so an incoming
 update cannot move temporary comments to a different revision. Its comments
 are explicitly temporary and never enter the existing review store.
 
-The initial dependency is pinned to 1.3.6: the 1.4 releases are younger than the
-repository's three-day dependency age requirement on the evaluation date.
-Evaluate newer versions normally after they meet that requirement.
+The preview is pinned to **1.4.1**. It initially used 1.3.6 because the 1.4
+releases were younger than the repository's three-day dependency age rule.
+The maintainer approved an exception after review on 2026-09-06, scoped to
+`@pierre/diffs@1.4.1` only. Future versions remain subject to the age rule.
+
+Dependency review for that exception:
+
+- Compared the published 1.3.6 and 1.4.1 artifacts and upstream
+  [release changes](https://github.com/pierrecomputer/pierre/compare/diffs-v1.3.6...diffs-v1.4.1),
+  focusing on patch parsing, React CodeView integration, virtualization, cache
+  identity, and worker initialization. This is a scoped dependency review,
+  not a comprehensive security audit of the upstream editor.
+- The published 1.4.1 manifest has an empty `scripts` object, no bundled
+  dependencies, and no root `binding.gyp` implicit install hook. Its runtime
+  dependencies are identical to 1.3.6; retain their existing lockfile versions.
+  Inspection of that existing 51-package runtime graph found no
+  preinstall/install/postinstall hooks. The unchanged `regex-utilities@2.3.0`
+  has a development `prepare: npm test`, not a registry-tarball install hook.
+  Use `--ignore-scripts` during the upgrade; do not add build permissions.
+- Verified the downloaded tarball's SHA-512 against registry metadata; its
+  integrity is pinned in `packages/pnpm-lock.yaml`.
+- Relevant changes include collision-safe cache keys, large-diff stack-overflow
+  avoidance, bounded worker initialization, and virtualized layout fixes.
+  Prefer the 1.4.1 fixes over the initial 1.4.0 release.
+- The larger built-in editor API redesign is not used by the preview. Keep
+  CoCalc's Slate editor in React annotations; do not adopt Pierre editing or
+  edit-state persistence implicitly. Validate annotation slots, selection,
+  scrolling, file/mode changes, and themes against the actual new package.
+- The parser now attempts more recovery in permissive mode. Continue passing
+  `throwOnError: true` for patches so truncated/malformed review data is not
+  silently repaired. Keep old/new line-anchor regression tests.
+
+Upgrade validation passed: frozen workspace install with scripts disabled,
+frontend typecheck/lint, six preview Jest tests, three real-package parser
+tests, the standalone Chromium checks below, dependency consistency, and the
+development frontend bundle. The adapter required only the explicit second
+`CodeViewHandle<string, undefined>` type argument for unused caret metadata.
+The browser harness still substitutes a textarea for Slate, so this upgrade
+does not close the full Slate/image-paste acceptance gate.
 
 The initial preview exercises CodeView, word highlighting, unified/split views,
 old/new line navigation, and React annotations containing CoCalc's Markdown

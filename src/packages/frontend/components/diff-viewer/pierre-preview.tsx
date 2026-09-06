@@ -41,7 +41,7 @@ export default function PierrePreview({
   fontSize: number;
 }) {
   const scope = useId();
-  const viewer = useRef<CodeViewHandle<string>>(null);
+  const viewer = useRef<CodeViewHandle<string, undefined>>(null);
   const viewport = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const node = viewport.current;
