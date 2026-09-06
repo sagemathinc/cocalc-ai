@@ -55,15 +55,19 @@ function normalizeDate(value?: Date | string | null): Date {
     return new Date();
   }
   const date = value instanceof Date ? value : new Date(value);
-  return Number.isFinite(date.getTime()) ? date : new Date();
+  if (!Number.isFinite(date.getTime()))
+    throw new Error("invalid project change time");
+  return date;
 }
 
 function normalizeGeneration(value?: number | null): number | null {
   if (value == null) {
     return null;
   }
-  const generation = Math.floor(Number(value));
-  return Number.isFinite(generation) && generation >= 0 ? generation : null;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error("invalid project generation");
+  }
+  return value;
 }
 
 export async function markProjectChanged({
@@ -101,10 +105,12 @@ export async function markProjectChanged({
 }
 
 export async function markProjectBackedUp({
+  host_id,
   project_id,
   backed_up_at,
   generation,
 }: {
+  host_id: string;
   project_id: string;
   backed_up_at?: Date | string | null;
   generation?: number | null;
@@ -116,12 +122,12 @@ export async function markProjectBackedUp({
     `
       UPDATE projects
          SET last_backup = $2::TIMESTAMP,
-             last_backup_generation = CASE
-               WHEN $3::BIGINT IS NULL THEN last_backup_generation
-               ELSE GREATEST(COALESCE(last_backup_generation, 0), $3::BIGINT)
-             END
+             last_backup_generation = $3::BIGINT
        WHERE project_id = $1
+         AND host_id = $4
+         AND deleted IS NOT true
+         AND (last_backup IS NULL OR last_backup < $2::TIMESTAMP)
     `,
-    [project_id, backedUpAt, normalizedGeneration],
+    [project_id, backedUpAt, normalizedGeneration, host_id],
   );
 }

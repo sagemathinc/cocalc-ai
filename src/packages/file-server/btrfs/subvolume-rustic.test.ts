@@ -8,6 +8,11 @@ let readdirMock: jest.Mock;
 jest.mock("node:fs/promises", () => ({
   readdir: (...args: any[]) => readdirMock(...args),
 }));
+let getGenerationMock: jest.Mock;
+
+jest.mock("./subvolume-snapshots", () => ({
+  getGeneration: (...args: any[]) => getGenerationMock(...args),
+}));
 
 jest.mock("./util", () => ({
   btrfs: (...args: any[]) => btrfsMock(...args),
@@ -94,6 +99,7 @@ describe("SubvolumeRustic.backup", () => {
 
   beforeEach(() => {
     clearBtrfsOperationCachesForTest();
+    getGenerationMock = jest.fn(async () => 17);
     btrfsMock = jest.fn(async ({ args }) =>
       args?.[0] === "subvolume" && args?.[1] === "show"
         ? { stdout: "Generation: 42\n" }
@@ -120,6 +126,50 @@ describe("SubvolumeRustic.backup", () => {
       rustic: backupFsRusticMock,
     }));
   });
+
+  it("captures source freshness before snapshot and never samples live edits after backup", async () => {
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo" },
+    } as any);
+    const start = Date.now();
+    const runner = jest.fn(async () => {
+      getGenerationMock.mockResolvedValue(999);
+      return { id: "new", time: new Date(), summary: {} };
+    });
+    const result = await rustic.backup({ runner });
+    expect(result.source?.generation).toBe(17);
+    expect(result.source!.captured_at.getTime()).toBeGreaterThanOrEqual(start);
+    expect(result.source!.captured_at.getTime()).toBeLessThanOrEqual(
+      result.time.getTime(),
+    );
+    expect(getGenerationMock).toHaveBeenCalledTimes(1);
+    expect(getGenerationMock).toHaveBeenCalledWith("/mnt/test/project-1", {
+      cache: false,
+    });
+    expect(getGenerationMock.mock.invocationCallOrder[0]).toBeLessThan(
+      btrfsMock.mock.invocationCallOrder[0],
+    );
+    expect(btrfsMock.mock.invocationCallOrder[0]).toBeLessThan(
+      runner.mock.invocationCallOrder[0],
+    );
+  });
+
+  it.each([null, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "does not invent source generation from %s",
+    async (generation) => {
+      getGenerationMock.mockResolvedValue(generation);
+      const rustic = new SubvolumeRustic({
+        name: "project-1",
+        path: "/mnt/test/project-1",
+        filesystem: { opts: { mount: "/mnt/test" } },
+        fs: { rusticRepo: "/repo" },
+      } as any);
+      expect((await rustic.backup()).source?.generation).toBeNull();
+    },
+  );
 
   it("uses a larger output budget when listing rustic snapshots", async () => {
     rusticHostMock.mockResolvedValue({
