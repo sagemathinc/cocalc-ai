@@ -117,6 +117,38 @@ it("does not call unknown or legacy evidence complete", async () => {
   expect(page).not.toHaveBeenCalled();
 });
 
+it("does not require report storage for unknown evidence, but never hides saved evidence", async () => {
+  const limits = jest.fn(() => {
+    throw new Error("report storage not configured");
+  });
+  const lazy = new ProjectBackupCoverage(access, limits);
+  access.mockResolvedValueOnce(null);
+  await expect(lazy.page({ project_id })).resolves.toBeNull();
+  expect(limits).not.toHaveBeenCalled();
+  expect(lazy.status).toEqual({
+    reports: 0,
+    cleanup_failures: 0,
+    reserved_bytes: 0,
+  });
+  await expect(lazy.page({ project_id })).rejects.toThrow("not configured");
+  await expect(
+    lazy.reportChunk({ project_id, backup_id, offset: 0 }),
+  ).rejects.toThrow("not configured");
+  expect(limits).toHaveBeenCalledTimes(2);
+});
+
+it("does not reopen a lazy cache after shutdown", async () => {
+  const limits = jest.fn();
+  const lazy = new ProjectBackupCoverage(access, limits);
+  await lazy.close();
+  await expect(lazy.page({ project_id })).rejects.toThrow("closed");
+  await expect(
+    lazy.reportChunk({ project_id, backup_id, offset: 0 }),
+  ).rejects.toThrow("closed");
+  expect(access).not.toHaveBeenCalled();
+  expect(limits).not.toHaveBeenCalled();
+});
+
 it("requires snapshot-pinned pagination and rejects malformed identity before access", async () => {
   await expect(browser.page({ project_id, cursor: "cursor" })).rejects.toThrow(
     "exact snapshot",

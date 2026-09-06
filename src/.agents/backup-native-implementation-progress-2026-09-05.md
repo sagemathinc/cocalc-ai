@@ -405,6 +405,51 @@ activation has been enabled.
 
 ### Remaining Activation Work
 
+### September 6 Staging2 Deployment and Native Canary
+
+- Hub, static, and project-host artifacts at `54e64076a7bc` were deployed to
+  Staging2 only. Hub release: `20260906T193403Z-54e64076-20260906-backup-recovery-54e64076`;
+  static: `20260906T193617Z-54e64076-20260906-backup-recovery-54e64076`;
+  project-host: `20260906T193727Z-54e64076-20260906-backup-recovery-54e64076`.
+  The host rollout used canary `4a9c7c19-5c5f-45f9-a48b-5f04196666d4`, then
+  shared host `8cd90870-e58f-4979-b87f-cf85f3622324`, concurrency one.
+  Deployment history confirms success. Hub smoke and 1,405 static asset checks
+  passed; a project command also succeeded after the host rollout.
+- GitHub run `sagemathinc/rustic/34009629890` produced the x64 and ARM candidates.
+  Both attestations were verified against exact source `8e4623b815c45689cf31c7770660f900959f7768`
+  and the pinned qualification workflow. The x64 binary SHA-256 is
+  `54c898c667ac01f8f8002fd95af729068d579aeae9cd279dd73cb6edebf22e5f`.
+  It is installed only in a private qualification directory, not as a host tool.
+- A separate disposable 8 GiB loopback Btrfs filesystem on the Staging2 canary
+  passed sparse restore, actual 4 GiB quota enforcement, immutable snapshot
+  backup, unchanged incremental reuse, and same-size/mtime-reset change detection.
+  The 10 GiB sparse file restored with 12 KiB allocated, mixed 16 MiB file with
+  1 MiB allocated; hard links and symlinks survived. Repository read-data check
+  and byte comparison over the union of source/destination extents passed.
+- The original fixture used classic quotas. It was explicitly repeated using
+  CoCalc's SIMPLE quota mode after updating the fixture, with the same successful
+  allocation results and EDQUOT for a 5 GiB dense allocation. Valid simple-mode
+  evidence is `/var/tmp/cocalc-rustic-qualified-34009629890/simple-v2-result.json`
+  on the canary (unit `cocalc-sparse-simple-v2-34009629890`). The earlier
+  `simple-result.json` is NOT simple-mode evidence: a stalled SFTP transfer left
+  the old fixture there. Legacy SCP plus SHA-256 verification corrected this.
+  Disposable mounts/images were removed. Live project filesystem quota modes
+  and production were not changed.
+- The fixture now defaults to simple quotas and records the mode in its report.
+  This binary qualification does not replace CoCalc lifecycle/copy qualification.
+  Native/evidence/exclusion gates remain disabled; root-helper installation,
+  protected quota staging and final operation fences remain activation work.
+- Recovery browsing now defers cache configuration until verified evidence
+  actually needs reading. Legacy projects return unknown coverage without
+  inventing a cache error; saved evidence still fails visibly if the cache is
+  unconfigured. Seven focused tests and project-host typecheck passed. This
+  follow-up has not yet been deployed.
+- Live browser verification is not complete. First-party browser spawn was
+  denied under agent auth; an existing signed-in Staging2 browser ID was requested.
+  Do not bypass that boundary or count component tests as live UI verification.
+
+### Outstanding Activation Requirements
+
 - Complete supervision across RootFS/fallback/copy paths, production policy
   installation/capability admission, and central retry/reporting integration.
   The root helper now supports durable per-repository/per-operation retries;

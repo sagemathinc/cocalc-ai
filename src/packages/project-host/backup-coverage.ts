@@ -22,7 +22,8 @@ export interface BackupCoverageRequest {
 
 /** Owning-bay access must be resolved on EVERY request, including cache hits. */
 export class ProjectBackupCoverage {
-  private cache: BackupExclusionCache;
+  private cache?: BackupExclusionCache;
+  private closed = false;
   constructor(
     private access: (opts: {
       project_id: string;
@@ -31,9 +32,21 @@ export class ProjectBackupCoverage {
       receipt: BackupOutcomeReceipt;
       report_download?: SignedR2ObjectDownload;
     } | null>,
-    limits: BackupExclusionCacheLimits,
+    private limits:
+      | BackupExclusionCacheLimits
+      | (() => BackupExclusionCacheLimits),
   ) {
-    this.cache = new BackupExclusionCache(limits);
+    if (typeof limits !== "function")
+      this.cache = new BackupExclusionCache(limits);
+  }
+
+  private getCache(): BackupExclusionCache {
+    if (this.closed) throw new Error("Backup report cache is closed");
+    // Legacy projects can have no protected evidence. Do not require report
+    // storage admission until a verified report actually needs to be read.
+    return (this.cache ??= new BackupExclusionCache(
+      typeof this.limits === "function" ? this.limits() : this.limits,
+    ));
   }
 
   async page({
@@ -43,6 +56,7 @@ export class ProjectBackupCoverage {
     acknowledgement_keys,
     path_acknowledgement_keys,
   }: BackupCoverageRequest): Promise<BackupCoveragePage | null> {
+    if (this.closed) throw new Error("Backup report cache is closed");
     if (
       typeof project_id !== "string" ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
@@ -71,7 +85,7 @@ export class ProjectBackupCoverage {
       throw new Error("Backup coverage snapshot mismatch");
     if (!outcome.report_download)
       throw new Error("Backup report access is unavailable");
-    const page = await this.cache.page(
+    const page = await this.getCache().page(
       {
         binding: producer.binding,
         download: outcome.report_download,
@@ -95,8 +109,9 @@ export class ProjectBackupCoverage {
     };
   }
 
-  close() {
-    return this.cache.close();
+  async close() {
+    this.closed = true;
+    await this.cache?.close();
   }
 
   async reportChunk({
@@ -108,6 +123,7 @@ export class ProjectBackupCoverage {
     backup_id: string;
     offset: number;
   }): Promise<BackupCoverageReportChunk> {
+    if (this.closed) throw new Error("Backup report cache is closed");
     if (
       !/^[0-9a-f]{64}$/.test(backup_id) ||
       !Number.isSafeInteger(offset) ||
@@ -120,7 +136,7 @@ export class ProjectBackupCoverage {
     const receipt = validateBackupOutcomeReceipt(outcome.receipt, project_id);
     if (receipt.producer.binding.backup_id !== backup_id)
       throw new Error("Backup report snapshot mismatch");
-    const chunk = await this.cache.reportChunk(
+    const chunk = await this.getCache().reportChunk(
       {
         binding: receipt.producer.binding,
         download: outcome.report_download,
@@ -132,6 +148,12 @@ export class ProjectBackupCoverage {
     return { backup_id, ...chunk };
   }
   get status() {
-    return this.cache.status;
+    return (
+      this.cache?.status ?? {
+        reports: 0,
+        cleanup_failures: 0,
+        reserved_bytes: 0,
+      }
+    );
   }
 }

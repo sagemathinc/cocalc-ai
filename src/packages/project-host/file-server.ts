@@ -4847,13 +4847,6 @@ let backupCoverage: ProjectBackupCoverage | undefined;
 
 function getBackupCoverageBrowser() {
   if (!backupCoverage) {
-    // Activation requires explicit, capacity-qualified host limits. Do not
-    // silently create an unbounded download/index cache on older deployments.
-    const settings = process.env.COCALC_BACKUP_REPORT_CACHE_LIMITS;
-    if (!settings)
-      throw new Error(
-        "Backup coverage browsing is not configured on this host",
-      );
     backupCoverage = new ProjectBackupCoverage(
       async ({ project_id, backup_id }) => {
         const client = getMasterConatClient();
@@ -4868,7 +4861,16 @@ function getBackupCoverageBrowser() {
           timeout: 30000,
         });
       },
-      JSON.parse(settings),
+      () => {
+        // Unknown legacy coverage needs no cache. Actual report reads still
+        // require explicit, capacity-qualified limits; never assume defaults.
+        const settings = process.env.COCALC_BACKUP_REPORT_CACHE_LIMITS;
+        if (!settings)
+          throw new Error(
+            "Backup coverage browsing is not configured on this host",
+          );
+        return JSON.parse(settings);
+      },
     );
   }
   return backupCoverage;
