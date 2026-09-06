@@ -205,10 +205,14 @@ try {
       );
     })
     .toBe(true);
-  await page.getByRole("spinbutton", { name: "Preview line" }).fill("190");
-  await page.getByRole("spinbutton", { name: "Preview line" }).press("Enter");
+  await expect(page.getByRole("button", { name: "Go to line" })).toHaveCount(0);
+  // Select a real rendered gutter rather than using a prototype-only jump UI.
+  await page
+    .locator('diffs-container [data-column-number="10"]')
+    .last()
+    .click();
   const line = page
-    .getByText("// second.ts line 190 context", { exact: true })
+    .getByText("// second.ts line 10 context", { exact: true })
     .first();
   await expect(line).toBeVisible();
   await pinnedHeader("second.ts");
@@ -268,7 +272,7 @@ try {
     page.getByRole("button", { name: "Preview with Pierre" }),
   ).toBeFocused();
   console.log(
-    "PASS: GitHub light/dark colors, custom sticky filenames, keyboard clipboard copy/selection suppression, header font metrics, scoped scroll shortcuts, editable spaces, background shortcut isolation, Escape/focus, wheel scrolling, file selection, line jump, live split/wrap updates, annotation draft across layout changes, and 1200/600/320px containment (real Pierre).",
+    "PASS: GitHub light/dark colors, custom sticky filenames, keyboard clipboard copy/selection suppression, header font metrics, scoped scroll shortcuts, editable spaces, background shortcut isolation, Escape/focus, wheel scrolling, file/gutter selection, live split/wrap updates, annotation draft across layout changes, and 1200/600/320px containment (real Pierre).",
   );
 } finally {
   await browser?.close();

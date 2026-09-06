@@ -22,7 +22,7 @@ import {
   getEventPath,
   isEditableOrKeyboardInteractiveTarget,
 } from "@cocalc/frontend/keyboard/boundary";
-import { containsPreviewLine, parsePreviewSource } from "./pierre-model";
+import { parsePreviewSource } from "./pierre-model";
 import type { DiffPreviewSource } from "./preview-types";
 import { ReviewFileHeader, reviewFileHeaderHeight } from "./review-file-header";
 
@@ -57,8 +57,6 @@ export default function PierrePreview({
     node.focus({ preventScroll: true });
   }, []);
   const [fileIndex, setFileIndex] = useState(0);
-  const [line, setLine] = useState("1");
-  const [side, setSide] = useState<SelectionSide>("additions");
   const [split, setSplit] = useState(false);
   const [wrap, setWrap] = useState(true);
   const [message, setMessage] = useState("");
@@ -115,26 +113,6 @@ export default function PierrePreview({
     [split, wrap, source.kind, fontSize],
   );
 
-  const goToLine = () => {
-    const file = parsed.files[fileIndex];
-    const n = Number(line);
-    if (!file || !containsPreviewLine(file, n, side)) {
-      setMessage(
-        "That line is not present in the supplied version or patch. This prototype does not fetch historical file contents.",
-      );
-      return;
-    }
-    setMessage("");
-    viewer.current?.scrollTo({
-      type: "line",
-      id: String(fileIndex),
-      lineNumber: n,
-      side,
-      align: "center",
-      behavior: "instant",
-    });
-    setSelection({ id: String(fileIndex), range: { start: n, end: n, side } });
-  };
   const addComment = () => {
     if (!selection) return;
     const selectedSide = selection.range.side ?? "additions";
@@ -248,32 +226,6 @@ export default function PierrePreview({
             ))}
           </select>
         </label>
-        <label>
-          Side{" "}
-          <select
-            aria-label="Preview side"
-            value={side}
-            onChange={(event) => setSide(event.target.value as SelectionSide)}
-          >
-            <option value="additions">New</option>
-            <option value="deletions">Old</option>
-          </select>
-        </label>
-        <label>
-          Line{" "}
-          <input
-            aria-label="Preview line"
-            type="number"
-            min={1}
-            value={line}
-            onChange={(event) => setLine(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") goToLine();
-            }}
-            style={{ width: 80 }}
-          />
-        </label>
-        <Button onClick={goToLine}>Go to line</Button>
         <label>
           <input
             type="checkbox"

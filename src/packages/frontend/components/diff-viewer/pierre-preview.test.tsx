@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PierrePreview from "./pierre-preview";
 
@@ -24,6 +24,16 @@ jest.mock(
             data-layout={props.options.diffStyle}
             style={props.style}
           >
+            <button
+              onClick={() =>
+                props.onSelectedLinesChange({
+                  id: "0",
+                  range: { start: 10, end: 10, side: "deletions" },
+                })
+              }
+            >
+              Select old line 10
+            </button>
             {props.items.flatMap((item: any) =>
               item.annotations.map((annotation: any) => (
                 <div key={annotation.metadata}>
@@ -78,9 +88,7 @@ it("scrolls the focused diff without consuming spaces in controls or drafts", as
   await user.keyboard(" ");
   expect((split as HTMLInputElement).checked).toBe(true);
   expect(viewport.scrollTop).toBe(0);
-  const input = screen.getByRole("spinbutton", { name: "Preview line" });
-  fireEvent.change(input, { target: { value: "10" } });
-  await user.click(screen.getByRole("button", { name: "Go to line" }));
+  await user.click(screen.getByRole("button", { name: "Select old line 10" }));
   await user.click(
     screen.getByRole("button", { name: "Add temporary comment" }),
   );
@@ -133,24 +141,18 @@ it("expands full-document context so line navigation can reveal unchanged lines"
   );
 });
 
-it("allows keyboard navigation to an old-side line and adding a comment", async () => {
+it("adds a comment to the renderer's old-side selection without line-jump controls", async () => {
   const user = userEvent.setup();
   render(<PierrePreview source={source} fontSize={14} />);
-  const input = screen.getByRole("spinbutton", { name: "Preview line" });
-  fireEvent.change(input, { target: { value: "10" } });
-  await user.selectOptions(
-    screen.getByRole("combobox", { name: "Preview side" }),
-    "deletions",
-  );
-  input.focus();
-  await user.keyboard("{Enter}");
-  expect(document.activeElement).toBe(input);
-  expect(mockScrollTo).toHaveBeenCalledWith(
-    expect.objectContaining({ lineNumber: 10, side: "deletions" }),
-  );
+  expect(screen.queryByRole("combobox", { name: "Preview side" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Go to line" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Select old line 10" }));
   const add = screen.getByRole("button", { name: "Add temporary comment" });
   add.focus();
   await user.keyboard("{Enter}");
+  expect(mockScrollTo).toHaveBeenCalledWith(
+    expect.objectContaining({ lineNumber: 10, side: "deletions" }),
+  );
   expect(screen.getByText("Temporary comment (old line 10)")).toBeTruthy();
   await user.type(
     screen.getByRole("textbox", { name: "Temporary comment" }),
@@ -166,12 +168,8 @@ it("allows keyboard navigation to an old-side line and adding a comment", async 
   ).toBe("Keep **this** draft");
 });
 
-it("reports missing historical context instead of scrolling somewhere else", async () => {
+it("requires an actual line selection before adding a comment", () => {
   render(<PierrePreview source={source} fontSize={14} />);
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Go to line" }));
-  expect(screen.getByRole("status").textContent).toContain("not present");
   expect(mockScrollTo).not.toHaveBeenCalled();
   expect(
     (

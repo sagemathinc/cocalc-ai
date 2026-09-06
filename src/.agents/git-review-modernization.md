@@ -146,6 +146,39 @@ both modes, not merely the React options.
 
 ## Implementation readiness
 
+### Changed-files navigation with Trees
+
+Adopt `@pierre/trees` as a read-only changed-files navigator alongside the
+Pierre diff renderer, not as a repository file manager. Review the exact
+published version, license, runtime dependencies, and install hooks before
+installing with scripts disabled. The Diffs 1.4.1 age exception does not extend
+to Trees. Consult the pinned package rather than assuming beta APIs match main.
+
+- Build the tree only from the selected review's loaded changed-file metadata.
+  Do not walk the filesystem or load the whole repository. Keep a stable mapping
+  from canonical tree paths to review file identities, including old/new rename
+  paths, deletions, and unusual filenames; fail explicitly on collisions.
+- Use a collapsible, resizable desktop sidebar and a compact alternative for
+  narrow drawers. Retain flat navigation as a fallback/preference. Preserve the
+  readable sticky diff header and copy/historical-open actions.
+- Selecting a file navigates the existing diff adapter. Scrolling updates the
+  active-file indicator without stealing focus or causing navigation loops.
+  Preserve directory expansion across layout changes, scoped by review target.
+- Include filename filtering and accessible Git status labels, then comment
+  counts and reviewed-file indicators where backed by actual review state.
+  No rename, move, drag/drop mutation, checkout, or writable context menus.
+- Explicitly update the Trees model when the review changes; hook initialization
+  options are not reactive. Test empty reviews, switching commits/targets,
+  stale asynchronous updates, keyboard traversal/activation, search, focus
+  restoration, long paths, 320px reflow, and large changed-file sets.
+- Integrate in delivery change-set 2, with renderer-neutral file-selection
+  callbacks so the navigator also works with the legacy rollback renderer.
+
+Maintainer decision: omit visible diff line-jump controls (including the
+prototype's Side/Old/New selector). Keep numeric old/new navigation internally
+for search hits, comments, semantic restoration, and deep links. Historical
+source viewers are separate from the diff toolbar.
+
 ### Implementation progress (2026-09-06)
 
 Foundation implemented without changing the default renderer or V2 persistence:
