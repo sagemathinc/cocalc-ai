@@ -169,10 +169,10 @@ async function download(path: string, options: ReturnType<typeof capture>) {
   return await verifyFile(path, options);
 }
 
-function nextWithAbort(
-  iterator: AsyncIterator<Uint8Array>,
+export function withBackupEvidenceAbort<T>(
   signal: AbortSignal,
-): Promise<IteratorResult<Uint8Array>> {
+  operation: () => T | PromiseLike<T>,
+): Promise<T> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
@@ -180,7 +180,7 @@ function nextWithAbort(
     Promise.resolve()
       .then(() => {
         signal.throwIfAborted();
-        return iterator.next();
+        return operation();
       })
       .then(
         (result) => {
@@ -193,6 +193,13 @@ function nextWithAbort(
         },
       );
   });
+}
+
+function nextWithAbort(
+  iterator: AsyncIterator<Uint8Array>,
+  signal: AbortSignal,
+): Promise<IteratorResult<Uint8Array>> {
+  return withBackupEvidenceAbort(signal, () => iterator.next());
 }
 
 /**
@@ -295,8 +302,13 @@ export async function readBackupExclusionReport<T>(
     options,
     async (report, path, signal) => {
       const stream = createReadStream(path, { signal });
+      // A cancelled consumer may never attach an iterator/error listener.
+      // Iterators still observe errors; prevent an unhandled event in that gap.
+      stream.on("error", () => {});
       try {
-        return await consume(report, stream);
+        return await withBackupEvidenceAbort(signal, () =>
+          consume(report, stream),
+        );
       } finally {
         stream.destroy();
       }
@@ -306,7 +318,8 @@ export async function readBackupExclusionReport<T>(
 
 // Internal storage/index integration. The path is a private temporary file, not
 // a caller-selected filesystem path and not a public download URL. Consumers
-// must complete all reads within this callback; cleanup owns its lifetime.
+// must enforce cancellation within this callback. Await their cleanup before
+// releasing the underlying report, rather than racing nested resource scopes.
 export async function withVerifiedBackupExclusionFile<T>(
   options: StoreOptions,
   consume: (

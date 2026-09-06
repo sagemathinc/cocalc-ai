@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   backupExclusionObjectKey,
+  withBackupEvidenceAbort,
   withVerifiedBackupExclusionFile,
 } from "./backup-exclusion-store";
 import type { BackupExclusionStoreOptions } from "./backup-exclusion-store";
@@ -182,50 +183,52 @@ export async function withBackupExclusionIndex<T>(
       signal.throwIfAborted();
     };
     active = true;
-    return await consume({
-      bytes,
-      inventory: structuredClone(inventory),
-      page(cursor) {
-        usable();
-        let after = 0;
-        if (cursor != null) {
-          if (typeof cursor !== "string" || cursor.length > 100) invalid();
-          const match = /^([0-9a-f]{64}):([1-9][0-9]{0,15})$/.exec(cursor);
-          if (!match || match[1] !== identity) invalid();
-          after = Number(match[2]);
-          if (!Number.isSafeInteger(after) || after >= ordinal) invalid();
-        }
-        const rows = select.all(after, PAGE_SIZE + 1);
-        const more = rows.length > PAGE_SIZE;
-        if (more) rows.pop();
-        return {
-          files: rows.map((row) => ({
-            path_hex: Buffer.from(row.path as Uint8Array).toString("hex"),
-            apparent_bytes: row.apparent_bytes as string,
-            acknowledgement_key: row.acknowledgement_key as string | null,
-          })),
-          next_cursor: more
-            ? `${identity}:${rows[rows.length - 1].ordinal}`
-            : null,
-          excluded_files: inventory.excluded_files,
-        };
-      },
-      has(entry) {
-        usable();
-        if (
-          !entry ||
-          typeof entry.path_hex !== "string" ||
-          !/^(?:[0-9a-f]{2}){1,4096}$/.test(entry.path_hex)
-        )
-          invalid();
-        const row = find.get(Buffer.from(entry.path_hex, "hex"));
-        return (
-          row != null &&
-          row.apparent_bytes === entry.apparent_bytes &&
-          row.acknowledgement_key === entry.acknowledgement_key
-        );
-      },
-    });
+    return await withBackupEvidenceAbort(signal, () =>
+      consume({
+        bytes,
+        inventory: structuredClone(inventory),
+        page(cursor) {
+          usable();
+          let after = 0;
+          if (cursor != null) {
+            if (typeof cursor !== "string" || cursor.length > 100) invalid();
+            const match = /^([0-9a-f]{64}):([1-9][0-9]{0,15})$/.exec(cursor);
+            if (!match || match[1] !== identity) invalid();
+            after = Number(match[2]);
+            if (!Number.isSafeInteger(after) || after >= ordinal) invalid();
+          }
+          const rows = select.all(after, PAGE_SIZE + 1);
+          const more = rows.length > PAGE_SIZE;
+          if (more) rows.pop();
+          return {
+            files: rows.map((row) => ({
+              path_hex: Buffer.from(row.path as Uint8Array).toString("hex"),
+              apparent_bytes: row.apparent_bytes as string,
+              acknowledgement_key: row.acknowledgement_key as string | null,
+            })),
+            next_cursor: more
+              ? `${identity}:${rows[rows.length - 1].ordinal}`
+              : null,
+            excluded_files: inventory.excluded_files,
+          };
+        },
+        has(entry) {
+          usable();
+          if (
+            !entry ||
+            typeof entry.path_hex !== "string" ||
+            !/^(?:[0-9a-f]{2}){1,4096}$/.test(entry.path_hex)
+          )
+            invalid();
+          const row = find.get(Buffer.from(entry.path_hex, "hex"));
+          return (
+            row != null &&
+            row.apparent_bytes === entry.apparent_bytes &&
+            row.acknowledgement_key === entry.acknowledgement_key
+          );
+        },
+      }),
+    );
   } finally {
     active = false;
     try {

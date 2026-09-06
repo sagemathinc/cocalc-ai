@@ -236,7 +236,32 @@ it("removes the index on consumer failure and rejects cancelled leases", async (
         throw new Error("consumer failed");
       },
     ),
+  ).rejects.toThrow("cancelled");
+});
+
+it("cleans up on consumer failure without cancellation", async () => {
+  await expect(
+    withBackupExclusionIndex(await fixture(), async () => {
+      throw new Error("consumer failed");
+    }),
   ).rejects.toThrow("consumer failed");
+});
+
+it("cancellation cleans up even when a consumer never settles", async () => {
+  const options = await fixture();
+  const controller = new AbortController();
+  let held!: BackupExclusionIndex;
+  await expect(
+    withBackupExclusionIndex(
+      { ...options, signal: controller.signal },
+      async (index) => {
+        held = index;
+        setTimeout(() => controller.abort(new Error("lease cancelled")), 5);
+        return await new Promise(() => {});
+      },
+    ),
+  ).rejects.toThrow("lease cancelled");
+  expect(() => held.page()).toThrow("lease has ended");
 });
 
 it.each([0, -1, Infinity, 1.5, Number.MAX_SAFE_INTEGER])(

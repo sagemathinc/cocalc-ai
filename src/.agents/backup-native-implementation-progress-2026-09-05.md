@@ -268,6 +268,22 @@ not a completion claim or deployment approval. Production remains unchanged.
   This is the protected metadata API; scoped historical object access, browsing
   leases and per-account acknowledgement integration remain to be connected.
 
+- Disposable systemd/Btrfs qualification now covers the actual sudo wrapper's
+  protected evidence production, snapshot UUID/parent identity, spool permissions
+  and sealed release. The first run (`34034266626`) caught a real identity-reader
+  bug: GET_SUBVOL_INFO exposes root-item read-only bit 0, not the GETFLAGS/SETFLAGS
+  read-only bit 1. CoCalc `1349c4fd16` corrects the check and its misleading mock.
+  Follow-up run `34034412517` passes all 27 cases. Native backup work is still
+  represented by a deterministic fixture in this supervision suite; full CoCalc
+  native backup/restore workflows remain a distinct Staging2 requirement.
+- Report/index consumer leases now enforce cancellation even when the consumer
+  never reads or settles. Index handles are invalidated and closed before cleanup
+  completes, and nested report/index scopes await each other's cleanup. All 120
+  focused backend evidence/index/store tests and the backend typecheck pass.
+- Staging2 read-only auth validation still succeeds for the saved cookie profile,
+  but its fresh-auth elevation has expired. No deployment was attempted; renew
+  via the typed browser-approved elevation flow when ready to mutate Staging2.
+
 Next integration work is abandoned-report reconciliation and bucket-retention fencing,
 durable failed-attempt status, paginated report access and account-specific UI
 acknowledgements, then protected quota-enforced restore staging and early/final

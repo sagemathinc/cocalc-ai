@@ -187,6 +187,21 @@ it("reconstructs a bounded paging index from durable evidence without the produc
   );
 });
 
+it("cleans up a cancelled download consumer that never starts reading or settles", async () => {
+  const { binding } = fixture();
+  await storeBackupExclusionReport({ ...options(binding), chunks: chunks() });
+  const controller = new AbortController();
+  await expect(
+    readBackupExclusionReport(
+      { ...options(binding), signal: controller.signal },
+      async () => {
+        setTimeout(() => controller.abort(new Error("read cancelled")), 5);
+        return await new Promise(() => {});
+      },
+    ),
+  ).rejects.toThrow("read cancelled");
+});
+
 it("stores and independently reads a bound, lossless report with private bounded staging", async () => {
   const receipt = await storeBackupExclusionReport({
     ...options(),
