@@ -4,8 +4,19 @@
  */
 
 // Bounded personal warning preferences, NOT backup eligibility or permission
-// for data loss. Keys include the exact raw path, file version and policy hash.
+// for data loss. Version keys include metadata/policy; path keys do not.
 export const MAX_BACKUP_ACKNOWLEDGEMENTS = 10000;
+
+export type BackupAcknowledgementScope = "version" | "path";
+
+export function validateBackupAcknowledgementScope(
+  value: unknown,
+): BackupAcknowledgementScope {
+  if (value === undefined) return "version";
+  if (value !== "version" && value !== "path")
+    throw new Error("Invalid backup warning acknowledgement scope");
+  return value;
+}
 
 export function validateBackupAcknowledgementKeys(value: unknown): string[] {
   if (
@@ -20,6 +31,11 @@ export function validateBackupAcknowledgementKeys(value: unknown): string[] {
 export interface BackupAcknowledgementRequest {
   account_id: string;
   project_id: string;
-  // Omitted: read. Present: explicitly acknowledge this ONE file-version key.
+  // Defaults to version for existing callers. Reads return only this scope.
+  scope?: BackupAcknowledgementScope;
+  // Omitted: read. Present: acknowledge this identity within the chosen scope.
+  // Path keys identify exact raw root-relative paths, not globs or subtrees.
   key?: string;
+  // Remove a single preference (requires key), so persistent choices are reversible.
+  remove?: boolean;
 }

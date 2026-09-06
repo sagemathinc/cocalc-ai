@@ -6,6 +6,16 @@ not a completion claim or deployment approval. Production remains unchanged.
 
 ## Implemented And Locally Tested
 
+- Personal warning model revision (2026-09-06): the home-bay acknowledgement
+  table and RPC now distinguish `version` (legacy default) from persistent exact
+  `path` scope, with bounded storage, per-scope reads, revocation and account
+  rehome preservation. Path identities exclude file metadata and policy; a
+  shared backend helper hashes validated raw relative paths. Existing rows are
+  preserved by migration. Disposable PostgreSQL 18 checks passed for legacy
+  migration, repeated initialization, scope constraints and isolated removal.
+  The second UI choice and host report/count matching for path scope are NOT
+  wired yet; the existing UI continues to use version acknowledgements only.
+  This is not a backup exclusion list and changes no lifecycle authorization.
 - CoCalc `2f5dc89302`: sandbox execution escalates using actual exit state,
   supports opted-in process groups, and rejects truncated/unknown-status output.
   Backend build and 19 focused tests passed. This does not yet provide full

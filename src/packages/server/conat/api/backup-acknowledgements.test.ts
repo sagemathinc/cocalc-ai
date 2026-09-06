@@ -60,6 +60,15 @@ it("routes to the account home bay without a local fallback", async () => {
   );
   expect(backupAcknowledgementsLocal).not.toHaveBeenCalled();
 });
+it("routes path scope and revocation to the account home bay unchanged", async () => {
+  jest
+    .mocked(resolveAccountHomeBay)
+    .mockResolvedValue({ home_bay_id: "bay-2" } as any);
+  const request = { ...opts, scope: "path" as const, remove: true };
+  await backupWarningAcknowledgements(request);
+  expect(remote).toHaveBeenCalledWith(request);
+  expect(backupAcknowledgementsLocal).not.toHaveBeenCalled();
+});
 it("denies unauthenticated and noncollaborator requests before storage", async () => {
   await expect(
     backupWarningAcknowledgements({ ...opts, account_id: undefined }),

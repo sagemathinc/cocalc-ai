@@ -45,14 +45,60 @@ it("locks the home account before bounded insertion and scopes reads by account 
     account_id,
     project_id,
     key,
+    "version",
   ]);
   expect(calls.find(([sql]) => sql.includes("SELECT key FROM"))![1]).toEqual([
     account_id,
     project_id,
     10001,
+    "version",
   ]);
   expect(query).toHaveBeenCalledWith("COMMIT");
   expect(release).toHaveBeenCalled();
+});
+it("keeps path preferences separate from version preferences and allows revocation at capacity", async () => {
+  await backupAcknowledgementsLocal({
+    account_id,
+    project_id,
+    key,
+    scope: "path",
+  });
+  expect(
+    query.mock.calls.find(([sql]) => sql.includes("INSERT INTO"))![1],
+  ).toEqual([account_id, project_id, key, "path"]);
+  expect(
+    query.mock.calls.find(([sql]) => sql.includes("SELECT key FROM"))![1],
+  ).toEqual([account_id, project_id, 10001, "path"]);
+  jest.clearAllMocks();
+  count = "10000";
+  await backupAcknowledgementsLocal({
+    account_id,
+    project_id,
+    key,
+    scope: "path",
+    remove: true,
+  });
+  expect(
+    query.mock.calls.find(([sql]) => sql.includes("DELETE FROM"))![1],
+  ).toEqual([account_id, project_id, key, "path"]);
+  expect(
+    query.mock.calls.some(
+      ([sql]) => sql.includes("INSERT INTO") || sql.includes("COUNT(*)"),
+    ),
+  ).toBe(false);
+});
+it("rejects invalid scopes and unkeyed removals before database access", async () => {
+  await expect(
+    backupAcknowledgementsLocal({
+      account_id,
+      project_id,
+      scope: "all" as any,
+    }),
+  ).rejects.toThrow("scope");
+  await expect(
+    backupAcknowledgementsLocal({ account_id, project_id, remove: true }),
+  ).rejects.toThrow("key");
+  expect(connect).not.toHaveBeenCalled();
 });
 it("rejects a new key at capacity but permits idempotent acknowledgement", async () => {
   count = "10000";

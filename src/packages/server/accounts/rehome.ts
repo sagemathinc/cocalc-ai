@@ -48,6 +48,7 @@ import { ensureBackupAcknowledgementsSchema } from "@cocalc/server/project-backu
 import {
   MAX_BACKUP_ACKNOWLEDGEMENTS,
   validateBackupAcknowledgementKeys,
+  validateBackupAcknowledgementScope,
 } from "@cocalc/util/backup-acknowledgements";
 
 const log = getLogger("server:accounts:rehome");
@@ -321,7 +322,7 @@ async function replacePortableRows({
       : rows;
   const primaryKey =
     table === "account_backup_warning_acknowledgements"
-      ? ["account_id", "project_id", "key"]
+      ? ["account_id", "project_id", "scope", "key"]
       : table === "account_project_index"
         ? ["account_id", "project_id"]
         : table === "account_collaborator_index"
@@ -1253,11 +1254,15 @@ export async function copyAccountRehomeState({
   )
     throw new Error("Invalid portable backup warning preferences");
   validateBackupAcknowledgementKeys(backupWarnings.map((row) => row.key));
+  const scopedBackupWarnings = backupWarnings.map((row) => ({
+    ...row,
+    scope: validateBackupAcknowledgementScope(row.scope),
+  }));
   await ensureBackupAcknowledgementsSchema();
   await replacePortableRows({
     table: "account_backup_warning_acknowledgements",
     account_id: accountId,
-    rows: backupWarnings,
+    rows: scopedBackupWarnings,
   });
   if (account_persist_files != null) {
     await restoreAccountPersistState({

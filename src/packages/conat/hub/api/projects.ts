@@ -9,6 +9,7 @@ import {
   type ProjectTheme,
 } from "@cocalc/util/db-schema/projects";
 import type { AccountFeedProjectRow } from "@cocalc/conat/hub/api/account-feed";
+import type { BackupAcknowledgementRequest } from "@cocalc/util/backup-acknowledgements";
 import type {
   MembershipPackageDetails,
   ProjectDefaultOverrides,
@@ -1295,10 +1296,9 @@ export interface CreatedProjectBootstrap {
 }
 
 export interface Projects {
-  backupWarningAcknowledgements: (opts: {
-    project_id: string;
-    key?: string;
-  }) => Promise<string[]>;
+  backupWarningAcknowledgements: (
+    opts: Omit<BackupAcknowledgementRequest, "account_id">,
+  ) => Promise<string[]>;
   // request to have conat permissions to project subjects.
   createProject: (opts: CreateProjectOptions) => Promise<string>;
   createProjectWithBootstrap: (

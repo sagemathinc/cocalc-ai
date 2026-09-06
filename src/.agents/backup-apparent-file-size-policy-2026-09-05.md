@@ -398,12 +398,18 @@ these backup outcomes: `complete` does not mean the restore fits its quota.
   the prominent warning to collapse once that user acknowledges all current
   exclusions. Keep a quiet backup-status indicator and the report accessible.
   Do not make a large banner permanently non-dismissable.
-- Store acknowledgements per account/project/file version and policy version,
-  using bounded host-derived metadata identity, not content hashing of huge files.
-  A new backup ID alone must not reset an unchanged file's acknowledgement.
-  New, replaced, modified, or newly excluded files require a new acknowledgement;
-  uncertainty must not silently hide a new warning. One collaborator's choice
-  must not silence other collaborators. Bound acknowledgement storage and requests.
+- Offer two personal choices: "Acknowledge this version" and "Don't warn again
+  for this path". Store an explicit `version` or `path` scope per account/project
+  in `account_backup_warning_acknowledgements`; existing rows default to `version`.
+  Version keys use bounded host-derived metadata and policy identity, not content
+  hashing. A new backup ID alone does not invalidate them; changed or unreliable
+  file-version metadata does. Path keys instead hash the exact raw root-relative
+  path with a domain separator, independent of size, content, timestamps, inode,
+  and policy. This deliberately covers replacement files at the same path, but
+  not renamed paths, glob matches, or descendants. Explain this in the UI.
+  Both scopes are reversible and bounded together per account. Neither choice
+  silences another collaborator. Retain the quiet indicator and full report.
+  General project-wide backup exclusion lists are deferred, not part of this PR.
 - Acknowledgement changes presentation only. It neither marks the backup complete
   nor permits a lossy move/archive, opts into a partial copy, or replaces notice
   for automatic archival. An incomplete scan still reports unknown coverage.

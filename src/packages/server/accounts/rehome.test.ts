@@ -1139,4 +1139,38 @@ describe("account rehome", () => {
     ).rejects.toThrow("Invalid portable backup warning preferences");
     expect(queryMock).not.toHaveBeenCalled();
   });
+
+  it("preserves path scope and upgrades legacy version preferences during rehome", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("information_schema.columns"))
+        return {
+          rows: ["account_id", "project_id", "scope", "key", "created"].map(
+            (column_name) => ({ column_name }),
+          ),
+        };
+      return { rows: [], rowCount: 0 };
+    });
+    const { copyAccountRehomeState } = await import("./rehome");
+    const row = {
+      account_id: TARGET_ACCOUNT_ID,
+      project_id: "11111111-1111-4111-8111-111111111111",
+      key: "a".repeat(64),
+      created: "2026-09-06T00:00:00Z",
+    };
+    await copyAccountRehomeState({
+      target_account_id: TARGET_ACCOUNT_ID,
+      source_bay_id: "bay-2",
+      dest_bay_id: "bay-1",
+      account_backup_warning_acknowledgements: [row, { ...row, scope: "path" }],
+    });
+    const inserts = queryMock.mock.calls.filter(([sql]) =>
+      sql.includes('INSERT INTO "account_backup_warning_acknowledgements"'),
+    );
+    expect(inserts).toHaveLength(2);
+    expect(inserts[0][1]).toEqual([{ ...row, scope: "version" }]);
+    expect(inserts[1][1]).toEqual([{ ...row, scope: "path" }]);
+    expect(inserts[1][0]).toContain(
+      'ON CONFLICT ("account_id", "project_id", "scope", "key")',
+    );
+  });
 });
