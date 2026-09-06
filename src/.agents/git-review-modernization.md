@@ -1,7 +1,8 @@
 # Git review modernization
 
-Status: design and experimental Pierre preview, September 6, 2026. No renderer
-migration or definition service has been approved by the prototype results yet.
+Status: proceed with Pierre integration, following maintainer acceptance of the
+experiment on September 6, 2026. Production replacement remains gated on product
+parity and data-safety checks below. Definition lookup remains future work.
 
 ## Objective
 
@@ -106,6 +107,213 @@ commands belong in the integrated review shell, not this frozen-input modal.
 Use Pierre's `github-light` / `github-dark` themes, following the browser color
 preference. The browser regression checks actual rendered background colors in
 both modes, not merely the React options.
+
+## Implementation readiness
+
+The renderer choice is settled sufficiently to start. Do not spend another
+iteration comparing libraries. The phases below describe capabilities; the
+delivery order at the end of this section describes independently reviewable
+changes. Implement the new renderer inside the existing review shell, not by
+turning the experimental modal into a second complete Git browser.
+
+### Remaining targeted investigations
+
+| Investigation                           | Evidence required before the affected feature replaces existing behavior                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Real Slate annotation lifecycle         | Use the actual editor, upload service, and review store. Paste rich content and an image; edit, undo, scroll the editor offscreen/back, change layout/font size, switch files/commits, and reopen. Check focus, selection, upload completion, draft persistence, and undo separately. Test two simultaneous drafts. The standalone stub cannot satisfy this gate.                          |
+| Custom sticky header                    | Render the existing copy-path/open controls through `renderCustomHeader`. Verify click and keyboard activation while pinned, text selection without accidental copy, long/renamed paths, narrow widths, font changes, and header-height accounting in Pierre's virtualizer. Decide fixed measured layout versus dynamic measurement from this test, not CSS guesswork.                     |
+| Anchors, search, and source copying     | Map real parsed patch rows to old/new source coordinates. Test saved legacy comments, context lines with unequal old/new numbers, changed hunk context, renamed/deleted files, search hits beyond the rendered window, and copying across a virtualization boundary. Native clipboard selection must be tested in Chromium and a maintainer browser; a DOM text assertion is insufficient. |
+| Read-only Git discovery and comparisons | Build a temporary-repository fixture with two worktrees, detached HEAD, divergent branches, merge commits, and deleted worktree paths. Prove branch browsing and revision reads do not change either checkout, index, or dirty files. Verify ambiguous hashes and containment do not silently select a worktree.                                                                           |
+| Arbitrary-revision TimeTravel           | Open an unchanged file at an off-branch commit, an old renamed path, and a deleted file at its parent. None may require creating a current file or finding the commit in the current slider. Include a rich document, not just text, and duplicate commit timestamps.                                                                                                                      |
+| Activity input provenance               | Trace producers of `LineDiffResult` to distinguish complete documents, sparse hunks, and incomplete events. Save fixtures including multiple chunks, missing final newline, and streamed updates. Establish a lossless adapter or extend the producer before replacing activity rendering.                                                                                                 |
+
+These are bounded integration checks, not requests to implement semantic code
+navigation, a language server, or an unbounded indexing service. Read-only Git
+model/service work can proceed while Slate/header investigations are underway.
+
+### Contracts to establish first
+
+Use a renderer-neutral model rather than exposing Pierre types to the review
+store, project APIs, or agent prompts. Settle exact TypeScript names in the first
+implementation commit; the required distinctions are:
+
+- `RepositoryContext`: project ID, canonical common Git directory, and a
+  usable repository locator. A worktree path is not repository identity. Treat
+  relocation as locator re-resolution, not proof that two repositories match.
+- `ReviewTarget`: a pinned commit with selected parent, pinned base/head tree
+  comparison, or a selected worktree's index/worktree state. Keep the user-chosen
+  branch label separate from the resolved object IDs. Live working state carries
+  a generation/fingerprint and must never masquerade as immutable history.
+- `DiffFile`: stable identity within the target; old and new paths and sources;
+  change kind including rename, delete, mode-only, binary, and submodule; hunks
+  with explicit numeric old/new positions; and completeness/truncation state.
+  The existing `GitShowFile {path, lines}` is insufficient for all these cases.
+- `DiffLocation`: target identity, file identity, side, source line/column and
+  optional range. Context lines retain both old and new positions. Never persist
+  a Pierre item index, DOM node, current pixel offset, or synthesized display row
+  as the sole review anchor.
+- `DiffViewAdapter`: navigate to file/location, capture/restore a semantic
+  scroll anchor, update selected ranges/search highlights, and render headers
+  and annotations. Emit locations and user intents; the shell owns clipboard,
+  file opening, persistence, shortcuts, and agent submission.
+- `capabilities`: distinguish available historical content, additional context,
+  working-copy opening, comments, and mutations. Missing capabilities explain
+  themselves in the UI; they must not silently fall back to another source.
+
+Pierre item IDs derive from stable file identity, not the array index. Item
+versions change when the payload/anchors change; typing into a draft must not
+reparse the patch or recreate all file items. Keep editor state above the
+virtualizer. If the Slate test shows that remounting loses undo/uploads, preserve
+the active editor instance outside recyclable rows, or retain its session through
+the existing editor API. Persisting only the Markdown string is not a fix for
+editor-session loss.
+
+### Preserve reviews before extending them
+
+`chat/git-review-store.ts` currently stores account-scoped V2 commit records and
+local drafts, with `file_path`, `side` (`old`, `new`, `context`), line, hunk hash,
+snippet, revision, and submission identifiers. Keys accept abbreviated hashes;
+there is no comparison identity or selected merge parent. Therefore:
+
+1. The renderer-only migration keeps V2 storage, exports, submission IDs, and
+   local drafts unchanged. Add adapter fixtures proving old records still
+   display and save without losing fields. A renderer switch cannot itself mark
+   a review dirty, reviewed, submitted, or resolved.
+2. Resolve new abbreviated commit inputs to full object IDs before persistence.
+   Resolve legacy abbreviations only against the explicitly selected repository;
+   ambiguity is an error. Do not overwrite conflicting full/short-key records or
+   delete old records on read. Define a conflict-preserving migration and export
+   test before enabling canonical-key writes for existing records. Account for
+   the repository's object format rather than assuming every full ID is 40 chars.
+3. New comparison reviews need a versioned namespace keyed by account,
+   repository context, pinned endpoints, comparison mode, and selected parent
+   where applicable. Preserve current commit-review sharing across worktrees.
+   A reviewed commit does not imply a reviewed branch range or merge resolution.
+   Do not automatically copy V2's reviewed flag into new comparison scopes.
+4. Legacy `context` anchors require both line maps plus snippet/hunk evidence.
+   If the side or merge-parent provenance cannot be established, show the
+   original comment in an unmatched/legacy section. No nearest-line guessing.
+5. Target changes first flush/retain drafts under the old target, then load the
+   new one. Test close/reopen, reload, offline/reconnect, and concurrent windows
+   using the existing store's conflict behavior. Do not introduce last-write-wins
+   loss while adding comparison records.
+
+Live index/worktree reviews stay separate from commit reviews. Refresh explicitly
+reanchors against a new generation; ambiguous comments remain visible and
+unmatched. Do not mark newly changed content reviewed because a previous working
+diff was reviewed.
+
+### Navigation and action defaults
+
+- Offer a working-copy selector, history ref selector, and comparison selector
+  as separate controls. Browsing a ref never checks it out. Default history to
+  the selected checkout's HEAD when no explicit origin/target was supplied.
+- For an explicit agent commit link, prefer its validated origin context. For
+  a bare hash in a known repository, resolve the commit independently of the
+  currently listed history; then apply the containment heuristic in Phase 1.
+  Do not scan the user's filesystem to guess an unrelated repository.
+- History includes merge commits. Default the selected history view to
+  first-parent with an explicit all-ancestors option. Reviewing an unmerged
+  branch contribution uses its chosen base's merge-base and the pinned head;
+  an explicit two-tree comparison remains a separate mode. If no unique base
+  can be established, ask the user to choose instead of assuming `main`.
+- An already merged branch can have an empty merge-base diff. Offer the merge
+  commit versus its first parent, another selected parent, or saved original
+  endpoints. Squash/rebase history cannot reliably reconstruct original PR
+  boundaries without saved metadata. Explain this rather than inventing them.
+- Preserve the readable sticky header. Clicking its path copies the absolute
+  project-filesystem path when a working-copy locator is known; provide a
+  repository-relative copy action too. The current implementation actually
+  copies `file.path`, generally repository-relative. Do not label a historical
+  deleted path as an existing current file. Include revision/context explicitly
+  in a separate copy-review-reference action useful for agent prompts.
+- In a historical review the primary opening action is "View at this revision".
+  Offer "Edit in this worktree" separately when a working copy is selected.
+  Working changes may use "Open". Deletions use the old source; renames expose
+  both paths. Unsupported binary/submodule entries show metadata, not fake text.
+- Before a write-oriented agent request, resolve and verify the selected
+  worktree again. Reuse an existing thread only when its effective project and
+  working directory match; otherwise offer a new correctly rooted thread or
+  cancel. Do not change a running thread's directory or infer it from prompt
+  text. Read-only feedback may describe history, but it must not promise an
+  editable historical checkout.
+- Persist view preferences separately from review data: unified/split, wrap,
+  and font size. Preserve per-target location using semantic anchors. A changed
+  ref offers Refresh; it must not silently replace a review while typing.
+
+### Git access and asynchronous state
+
+Start with a typed Git-read facade over the existing
+`webapp_client.project_client.exec` path used by `runGitCommand`. Share it with
+TimeTravel instead of adding more unrelated shell-command builders. Keep argv
+separate from user input, use literal path handling and appropriate separators,
+and make external diff/text-conversion behavior explicit. Before any new project
+API, read `scalable-architecture.md`; use the existing authorized project-host
+route, not a new hub-mediated file-data path.
+
+The facade needs operations for repository/worktree discovery, ref resolution,
+paged history, comparisons, changed-file metadata, and immutable blob reads.
+Use machine-readable/NUL-delimited output for paths; include fixtures for spaces,
+Unicode, tabs/newlines, leading dashes, and pathspec-like names. Treat symlinks,
+submodules, inaccessible paths, missing objects, shallow clones, and removed
+worktrees explicitly. No automatic fetch, checkout, stash, worktree creation, or
+dependency installation as a side effect of viewing a review.
+
+Cache discovery briefly (initial target: 30 seconds) and coalesce identical
+requests. Immutable contents use a byte-bounded LRU keyed by project/repository,
+object ID, and source identity. Bound concurrent reads and history pages; retain
+the current output limits initially. Ref/worktree Refresh invalidates mutable
+metadata, not already pinned review contents. Reject truncated command output
+as incomplete rather than parsing it as a complete repository/diff.
+
+Every asynchronous result carries a target/request generation. Switching refs,
+files, projects, or closing the viewer invalidates stale results, including
+errors. Unsupported operation, missing object, unavailable project, empty diff,
+and transport failure are distinct UI states. Never replace a failed revision
+read with the current file or reset a branch selector to HEAD after a timeout.
+
+Search indexes the loaded normalized diff, not rendered DOM. Retain filename
+matches and map line matches to source coordinates before navigating/highlighting
+through the adapter. Missing context can be fetched only from the exact source;
+label the search scope and truncation. Side-by-side source copying uses the chosen
+side/range, excluding gutters and patch markers but preserving real operators.
+Keep explicit Copy patch separate; do not silently hijack normal partial-text
+selection with a whole-file or whole-hunk copy.
+
+### Delivery order and release gates
+
+| Change-set                         | Boundary and evidence                                                                                                                                                                                                                                                                                |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Fixtures and contracts          | Extract renderer-neutral models/command interfaces and capture legacy review/search/scroll behavior. Add disposable Git repositories and the real-editor/header lifecycle checks. No default renderer change.                                                                                        |
+| 2. Git renderer integration        | Put Pierre behind a renderer toggle inside the existing shell. Reuse the custom header, command dispatcher, durable comments, review actions, search, and semantic scroll state. Do not run two active keyboard handlers or render two full diffs. Pass legacy-record and real Slate/copy checks.    |
+| 3. Read-only worktree/ref browsing | Add the Git facade and independent selectors, pinned commit resolution, stale-result protection, and immutable file opening in TimeTravel. Test the same commit across worktrees, no-worktree history, and no checkout/index changes. Keep cross-worktree write actions disabled until change-set 5. |
+| 4. Range and merge review          | Add explicit base/head/parent UI and versioned comparison records with non-destructive legacy handling. Test divergent, merged, squash/rebase, root-commit, empty, and force-moved-ref cases.                                                                                                        |
+| 5. Agent context                   | Carry validated project/repository/worktree/target through links, feedback, and new turns; reject mismatched existing-thread mutation routing. Test busy threads and a worktree disappearing or changing branch between selection and submission.                                                    |
+| 6. Other diff surfaces             | Reuse the adapter for TimeTravel text comparisons, preserving rich historical viewers and restore semantics. Then add the proven sparse-hunk activity adapter with bounded streaming updates. Do not change inline Slate activity Markdown rendering.                                                |
+| 7. Default and cleanup             | After maintainer testing, make Pierre default while retaining a rollback selector for an agreed release window. Remove legacy rendering and the experimental modal only after the compatibility matrix passes; retain reusable review logic and non-diff viewers.                                    |
+
+For every change-set run package-local types/tests and frontend lint where
+applicable. For each interactive milestone run the real-renderer browser suite
+plus the full-app cases it cannot cover. Resolve dev browser targeting through
+the supported CLI/auth flow early, or arrange a maintainer-driven checklist;
+do not call stubbed editor tests full-app validation. Record fixture versions,
+browser/viewport, cold/warm measurements, and observed regressions. The positive
+manual performance result permits integration work now; it does not justify
+unbounded loads or a worker pool per component. Share a bounded worker pool and
+verify packaging/CSP behavior before adopting it by default.
+
+Acceptance matrix: Git commit and working changes; branch/range/merge review;
+TimeTravel Git, patchflow, snapshot and backup text diffs plus rich-document
+regression checks; sparse and streaming activity diffs; existing and new reviews;
+copy/open/agent actions; focus/keyboard/narrow layout; old and new source sides.
+At each milestone verify the exact target remains correct after changing refs,
+switching worktrees, reopening, and receiving late network results. No plan or
+test can promise zero bugs; these are the gates for confident staged delivery.
+
+Excluded from this implementation: semantic definition lookup/LSP, automatic
+checkout/stash/merge/branch creation, filesystem-wide repo discovery, and GitHub
+PR API synchronization. Reserve the contracts for future definition previews as
+described below, but do not make them prerequisites for this release.
 
 ## Phase 1: repository, history target, and working copy
 
