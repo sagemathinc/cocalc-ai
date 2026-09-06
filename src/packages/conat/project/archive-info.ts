@@ -4,6 +4,7 @@
  */
 
 import { projectSubject } from "@cocalc/conat/names";
+import type { BackupAttemptStatus } from "@cocalc/util/types/backup-attempt";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type {
   BackupFindPreview,
@@ -30,6 +31,7 @@ export interface BackupFileEntry {
 }
 
 interface Api {
+  getBackupAttempt: () => Promise<BackupAttemptStatus | null>;
   getBackupCoverageReportChunk: (opts: {
     backup_id: string;
     offset: number;
@@ -66,6 +68,20 @@ interface Api {
     path: string;
     max_bytes?: number;
   }) => Promise<FileTextPreview>;
+}
+
+export async function getBackupAttempt({
+  client,
+  project_id,
+}: {
+  client?: ConatClient;
+  project_id: string;
+}) {
+  return await requireExplicitConatClient(client)
+    .call<Api>(getSubject({ project_id }), {
+      timeout: BACKUP_SEARCH_TIMEOUT_MS,
+    })
+    .getBackupAttempt();
 }
 
 export async function getBackupCoverageReportChunk({

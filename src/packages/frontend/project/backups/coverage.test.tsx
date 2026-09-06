@@ -7,13 +7,14 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { getBackupCoverage } from "../archive-info";
+import { getBackupCoverage, getBackupAttempt } from "../archive-info";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import BackupCoverage from "./coverage";
 
 jest.mock("../archive-info", () => ({
   getBackupCoverage: jest.fn(),
   getBackupCoverageReportChunk: jest.fn(),
+  getBackupAttempt: jest.fn(),
 }));
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -53,7 +54,38 @@ beforeEach(() => {
   jest.resetAllMocks();
   ack.mockResolvedValue([]);
   get.mockResolvedValue(page());
+  jest.mocked(getBackupAttempt).mockResolvedValue(null);
 });
+
+it.each(["failed", "unconfirmed"] as const)(
+  "does not conceal a newer %s attempt behind an older complete report",
+  async (outcome) => {
+    jest.mocked(getBackupAttempt).mockResolvedValue({
+      project_id: "project-a",
+      attempt_id: "attempt",
+      started_at: "2026-09-06T00:00:00.000Z",
+      finished_at: null,
+      backup_id: null,
+      outcome,
+    });
+    get.mockResolvedValue({
+      ...page(),
+      outcome: "complete",
+      excluded_files: "0",
+      files: [],
+    } as never);
+    render(<BackupCoverage project_id="project-a" />);
+    if (outcome === "failed")
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "latest backup attempt failed",
+      );
+    else
+      expect(
+        await screen.findByText(/Completion of the latest backup attempt/),
+      ).toBeInTheDocument();
+    expect(await screen.findByText(/complete/i)).toBeInTheDocument();
+  },
+);
 
 it("loads authoritative preferences and confirms acknowledgement before collapsing", async () => {
   render(<BackupCoverage project_id="project-a" />);

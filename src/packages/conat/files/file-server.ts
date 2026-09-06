@@ -29,6 +29,7 @@ path, which can corrupt large chat logs if interrupted mid-write.
 */
 
 import { ConatError, type Client } from "@cocalc/conat/core/client";
+import type { BackupAttemptStatus } from "@cocalc/util/types/backup-attempt";
 import { type SnapshotCounts } from "@cocalc/util/consts/snapshots";
 import type { ProjectBackupIndexStoreConfig } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -420,6 +421,9 @@ export interface Fileserver {
     }[]
   >;
 
+  getBackupAttempt: (opts: {
+    project_id: string;
+  }) => Promise<BackupAttemptStatus | null>;
   getBackupCoverageReportChunk: (opts: {
     project_id: string;
     backup_id: string;

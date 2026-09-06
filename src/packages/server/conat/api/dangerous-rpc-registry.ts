@@ -617,6 +617,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "Host-authenticated immutable backup evidence recording, fenced to project placement and owning bay; does not authorize deletion or advance live-source freshness.",
   },
+  "hosts.recordProjectBackupAttempt": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "Host-authenticated bounded backup attempt telemetry, fenced to project ownership/placement. Cannot authorize deletion or advance source freshness.",
+  },
   "hosts.recordProjectBackupOutcomeLocal": {
     decision: "fresh-auth-not-required",
     reason:

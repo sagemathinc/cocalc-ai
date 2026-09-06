@@ -3,6 +3,7 @@
 // without having to run that project.
 
 import { createHash, randomUUID } from "node:crypto";
+import { withBackupAttempt } from "./backup-attempt";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { ProjectBackupCoverage } from "./backup-coverage";
@@ -1917,66 +1918,94 @@ function managedProjectBackupRunner(
   parent?: string,
 ): RusticBackupRunner {
   return async ({ src, host, timeout, tags, progress }) =>
-    await projectRusticBackup({
-      src,
-      repoProfile,
-      host,
-      timeoutMs: timeout,
-      tags,
-      parent,
-      progress,
-      evidence: {
-        project_id,
-        required: managedRusticEvidenceEnabled(),
-        accept: async (producer) => {
-          const config = await getBackupIndexStoreConfig(project_id);
-          const client = getMasterConatClient();
-          const host_id = getLocalHostId();
-          if (
-            !config ||
-            config.kind !== "r2-object-store" ||
-            !client ||
-            !host_id
-          )
-            throw new Error(
-              "Durable backup evidence storage and owning-bay connection are required",
-            );
-          await acceptBackupProducerEvidence({
-            evidence: producer,
-            auth: {
-              endpoint: config.endpoint,
-              bucket: config.bucket,
-              accessKey: config.access_key_id,
-              secretKey: config.secret_access_key,
-            },
-            timeout_ms: Math.min(timeout, 120000),
-            record: async (stored) => {
-              const receipt = validateBackupOutcomeReceipt(
-                {
-                  producer,
-                  bucket: config.bucket,
-                  object_key: stored.object_key,
-                  excluded_apparent_bytes:
-                    stored.inventory.excluded_apparent_bytes,
-                  sample: stored.inventory.sample,
-                },
-                project_id,
-              );
-              const result = await callHub({
-                client,
-                host_id,
-                name: "hosts.recordProjectBackupOutcome",
-                args: [{ project_id, receipt }],
-                timeout: 30000,
-              });
-              if (result?.receipt_sha256 !== backupReportHeaderSha256(receipt))
-                throw new Error(
-                  "Owning bay did not confirm the backup evidence receipt",
-                );
-            },
-          });
-        },
+    await withBackupAttempt({
+      enabled: managedRusticEvidenceEnabled(),
+      project_id,
+      record: async (update) => {
+        const client = getMasterConatClient();
+        const host_id = getLocalHostId();
+        if (!client || !host_id)
+          throw new Error(
+            "Owning-bay connection required for backup attempt reporting",
+          );
+        await callHub({
+          client,
+          host_id,
+          name: "hosts.recordProjectBackupAttempt",
+          args: [update],
+          timeout: 30000,
+        });
       },
+      reportingFailed: (error) =>
+        logger.warn(
+          "backup attempt failure could not be recorded; status remains unconfirmed",
+          { project_id, error },
+        ),
+      run: async (confirm) =>
+        await projectRusticBackup({
+          src,
+          repoProfile,
+          host,
+          timeoutMs: timeout,
+          tags,
+          parent,
+          progress,
+          evidence: {
+            project_id,
+            required: managedRusticEvidenceEnabled(),
+            accept: async (producer) => {
+              const config = await getBackupIndexStoreConfig(project_id);
+              const client = getMasterConatClient();
+              const host_id = getLocalHostId();
+              if (
+                !config ||
+                config.kind !== "r2-object-store" ||
+                !client ||
+                !host_id
+              )
+                throw new Error(
+                  "Durable backup evidence storage and owning-bay connection are required",
+                );
+              await acceptBackupProducerEvidence({
+                evidence: producer,
+                auth: {
+                  endpoint: config.endpoint,
+                  bucket: config.bucket,
+                  accessKey: config.access_key_id,
+                  secretKey: config.secret_access_key,
+                },
+                timeout_ms: Math.min(timeout, 120000),
+                record: async (stored) => {
+                  const receipt = validateBackupOutcomeReceipt(
+                    {
+                      producer,
+                      bucket: config.bucket,
+                      object_key: stored.object_key,
+                      excluded_apparent_bytes:
+                        stored.inventory.excluded_apparent_bytes,
+                      sample: stored.inventory.sample,
+                    },
+                    project_id,
+                  );
+                  const result = await callHub({
+                    client,
+                    host_id,
+                    name: "hosts.recordProjectBackupOutcome",
+                    args: [{ project_id, receipt }],
+                    timeout: 30000,
+                  });
+                  if (
+                    result?.receipt_sha256 !== backupReportHeaderSha256(receipt)
+                  )
+                    throw new Error(
+                      "Owning bay did not confirm the backup evidence receipt",
+                    );
+                  await confirm(receipt.producer.binding.backup_id);
+                },
+              });
+            },
+          },
+        }),
     });
 }
 
@@ -4829,6 +4858,20 @@ async function getBackupCoverage(opts: BackupCoverageRequest) {
   return await getBackupCoverageBrowser().page(opts);
 }
 
+async function getBackupAttempt({ project_id }: { project_id: string }) {
+  const client = getMasterConatClient();
+  const host_id = getLocalHostId();
+  if (!client || !host_id)
+    throw new Error("Owning-bay connection required for backup attempt status");
+  return await callHub({
+    client,
+    host_id,
+    name: "hosts.getProjectBackupAttempt",
+    args: [{ project_id }],
+    timeout: 30000,
+  });
+}
+
 async function getBackupCoverageReportChunk(opts: {
   project_id: string;
   backup_id: string;
@@ -5470,6 +5513,7 @@ export async function initFileServer({
     // Do not coalesce authorization: the bounded content cache shares only
     // immutable report work, after each request checks current ownership.
     getBackupCoverage,
+    getBackupAttempt,
     getBackupCoverageReportChunk,
     getBackupFiles: reuseInFlight(getBackupFiles),
     findBackupFiles: reuseInFlight(findBackupFiles),

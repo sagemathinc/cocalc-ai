@@ -4,6 +4,10 @@
  */
 
 import {
+  recordBackupAttempt,
+  getHostBackupAttempt,
+} from "@cocalc/server/project-backup/attempts";
+import {
   createInterBayAuthTokenHandlers,
   createInterBayAccountProjectFeedHandlers,
   createInterBayAccountNotificationFeedHandlers,
@@ -2820,6 +2824,8 @@ async function startHostConnectionService(): Promise<void> {
       }),
     recordProjectBackupOutcome: async (opts) =>
       await recordProjectBackupOutcomeLocal(opts),
+    recordProjectBackupAttempt: recordBackupAttempt,
+    getProjectBackupAttempt: getHostBackupAttempt,
     getProjectBackupOutcome: async (opts) =>
       await getProjectBackupOutcomeLocal(opts),
     markProjectChanged: async ({

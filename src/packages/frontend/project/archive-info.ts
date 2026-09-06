@@ -10,6 +10,7 @@ import {
   getBackupFiles as getProjectBackupFiles,
   getBackups as getProjectBackups,
   getBackupCoverage as getProjectBackupCoverage,
+  getBackupAttempt as getProjectBackupAttempt,
   getBackupCoverageReportChunk as getProjectBackupCoverageReportChunk,
   getSnapshotFileText as getProjectSnapshotFileText,
 } from "@cocalc/conat/project/archive-info";
@@ -35,6 +36,19 @@ async function getClient({
       caller,
     }))
   );
+}
+
+export async function getBackupAttempt({
+  client,
+  project_id,
+}: {
+  client?: ConatClient;
+  project_id: string;
+}) {
+  return await getProjectBackupAttempt({
+    project_id,
+    client: await getClient({ client, project_id, caller: "getBackupAttempt" }),
+  });
 }
 
 export async function getBackupCoverage({

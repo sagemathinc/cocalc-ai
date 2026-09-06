@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { BackupAttemptUpdate } from "@cocalc/util/types/backup-attempt";
 import { delay } from "awaiting";
 import type {
   Host,
@@ -1908,6 +1909,43 @@ export async function recordProjectBackup({
     time,
     generation,
   });
+}
+
+export async function recordProjectBackupAttempt(
+  opts: BackupAttemptUpdate,
+): Promise<void> {
+  if (!opts.host_id || !opts.project_id)
+    throw new Error("Backup attempt requires host and project identity");
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (!ownership)
+    throw new Error("Backup attempt project ownership is unknown");
+  if (ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .recordProjectBackupAttempt(opts);
+  }
+  const { recordBackupAttempt } =
+    await import("@cocalc/server/project-backup/attempts");
+  await recordBackupAttempt(opts);
+}
+
+export async function getProjectBackupAttempt(opts: {
+  host_id?: string;
+  project_id: string;
+}) {
+  if (!opts.host_id || !opts.project_id)
+    throw new Error("Backup attempt requires host and project identity");
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (!ownership)
+    throw new Error("Backup attempt project ownership is unknown");
+  if (ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .getProjectBackupAttempt(opts);
+  }
+  const { getHostBackupAttempt } =
+    await import("@cocalc/server/project-backup/attempts");
+  return await getHostBackupAttempt(opts);
 }
 
 export async function recordProjectBackupOutcome(

@@ -2600,6 +2600,8 @@ export type HostConnectionMethod =
   | "get-seed-project-backup-shards"
   | "record-project-backup"
   | "record-project-backup-outcome"
+  | "record-project-backup-attempt"
+  | "get-project-backup-attempt"
   | "get-project-backup-outcome"
   | "mark-project-changed"
   | "record-project-backup-index"
@@ -3545,6 +3547,8 @@ export interface InterBayHostConnectionApi {
   recordProjectBackupOutcome: (
     opts: Parameters<Hosts["recordProjectBackupOutcome"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackupOutcome"]>>>;
+  recordProjectBackupAttempt: Hosts["recordProjectBackupAttempt"];
+  getProjectBackupAttempt: Hosts["getProjectBackupAttempt"];
   getProjectBackupOutcome: (
     opts: Parameters<Hosts["getProjectBackupOutcome"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectBackupOutcome"]>>>;
@@ -3734,6 +3738,11 @@ const HOST_CONNECTION_METHOD_SPECS = [
     name: "recordProjectBackupOutcome",
     method: "record-project-backup-outcome",
   },
+  {
+    name: "recordProjectBackupAttempt",
+    method: "record-project-backup-attempt",
+  },
+  { name: "getProjectBackupAttempt", method: "get-project-backup-attempt" },
   {
     name: "getProjectBackupOutcome",
     method: "get-project-backup-outcome",

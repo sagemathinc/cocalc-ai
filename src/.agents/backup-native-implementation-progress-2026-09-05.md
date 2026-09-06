@@ -341,6 +341,36 @@ activation has been enabled.
   off in account preferences; chat settings separately opt into turn-completion
   notices. Actual user preferences, workers and delivery have not been verified.
 
+### September 6 Additional Integration Checkpoint
+
+- `d87af82ca9` registers the acknowledgement method in the actual Conat runtime
+  client/auth map. Tests now exercise generated clients, not only mocked calls.
+- `f3e972c56e` rejects known partial backup coverage before move guard acquisition,
+  project stop, placement changes, or manual archive job creation. The owning-bay
+  query fences expected placement and verifies the protected receipt. All 51
+  focused lifecycle/preflight tests and server typecheck pass. This remains an
+  early rejection guard, not final source-deletion or restore-capacity authority.
+- Native managed-project backup attempts now persist one bounded latest-attempt
+  row per project on its owning bay, before starting work. Worker death leaves an
+  explicitly unconfirmed attempt; failure reporting cannot overwrite a newer
+  attempt or previously accepted partial receipt. Completed status is derived
+  from protected receipt metadata, never from a caller's success flag. This is
+  observational telemetry, not replacement for the root-owned retry journal or
+  central retry enforcement. Failures before entering the managed runner still
+  require scheduler/LRO integration.
+- Direct project archive-info requests return this bounded status under the
+  authenticated subject. Recovery UI displays failed/unconfirmed attempts beside
+  historical coverage, including when that historical report was complete.
+  Unit tests cover worker failure, reporting failure, absent evidence, host and
+  owning-bay routing, real RPC registration, and UI separation. Server, host, and
+  frontend typechecks pass; frontend lint passes. Actual Staging2 browser and
+  workflow qualification remain required.
+- Project-rehome preflight explicitly identifies protected outcome and latest
+  attempt history as not yet portable. Personal warning acknowledgements belong
+  to account-home state and must not be moved with project ownership.
+
+### Remaining Activation Work
+
 - Complete supervision across RootFS/fallback/copy paths, production policy
   installation/capability admission, and central retry/reporting integration.
   The root helper now supports durable per-repository/per-operation retries;

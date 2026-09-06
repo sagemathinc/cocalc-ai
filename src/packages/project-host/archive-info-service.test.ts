@@ -127,6 +127,28 @@ describe("project archive info service", () => {
     ).rejects.toThrow("invalid project archive subject");
   });
 
+  it("registers attempt reads scoped to the authenticated project subject", async () => {
+    const getBackupAttempt = jest.fn().mockResolvedValue(null);
+    fileServerClientMock.mockReturnValue({ getBackupAttempt });
+    const service = jest.fn();
+    const { initProjectArchiveInfoService } =
+      await import("./archive-info-service");
+    await initProjectArchiveInfoService({ service } as any);
+    const impl = service.mock.calls[0][1];
+    await impl.getBackupAttempt.call(
+      {
+        subject: "project.11111111-1111-4111-8111-111111111111.archive-info.-",
+      },
+      { project_id: "forged" },
+    );
+    expect(getBackupAttempt).toHaveBeenCalledWith({
+      project_id: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(() => impl.getBackupAttempt.call({ subject: "invalid" })).toThrow(
+      "invalid project archive subject",
+    );
+  });
+
   it("derives coverage authorization from the subject, never request project_id", async () => {
     const getBackupCoverage = jest.fn().mockResolvedValue(null);
     fileServerClientMock.mockReturnValue({ getBackupCoverage });

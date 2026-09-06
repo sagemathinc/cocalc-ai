@@ -8,6 +8,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   getBackupCoverage,
   getBackupCoverageReportChunk,
+  getBackupAttempt,
 } from "../archive-info";
 import { validateBackupAcknowledgementKeys } from "@cocalc/util/backup-acknowledgements";
 import type {
@@ -16,6 +17,7 @@ import type {
 } from "@cocalc/util/types/backup-coverage";
 import BackupCoveragePanel from "./coverage-panel";
 import { downloadCoverageReport } from "./coverage-download";
+import type { BackupAttemptStatus } from "@cocalc/util/types/backup-attempt";
 
 // Remount on project change so late requests cannot mix identities or preferences.
 export default function BackupCoverage({ project_id }: { project_id: string }) {
@@ -25,6 +27,7 @@ function CoverageController({ project_id }: { project_id: string }) {
   const [coverage, setCoverage] = useState<BackupCoverageView | null>();
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [attempt, setAttempt] = useState<BackupAttemptStatus | null>();
   const request = useRef(0);
   const mounted = useRef(false);
   const cancellation = useRef<AbortController | null>(null);
@@ -33,7 +36,13 @@ function CoverageController({ project_id }: { project_id: string }) {
     const id = ++request.current;
     setLoading(true);
     setError(false);
+    setAttempt(undefined);
     try {
+      const latestAttempt = await getBackupAttempt({ project_id });
+      if (!mounted.current || request.current !== id) return;
+      if (latestAttempt && latestAttempt.project_id !== project_id)
+        throw new Error("Invalid backup attempt response");
+      setAttempt(latestAttempt);
       const keys = validateBackupAcknowledgementKeys(
         await webapp_client.conat_client.hub.projects.backupWarningAcknowledgements(
           { project_id },
@@ -124,6 +133,20 @@ function CoverageController({ project_id }: { project_id: string }) {
   }
   return (
     <div style={{ minWidth: 0 }}>
+      {attempt?.outcome === "failed" && (
+        <p role="alert">
+          The latest backup attempt failed. Older backups are retained, but a
+          previous coverage report does not confirm that current files are
+          backed up.
+        </p>
+      )}
+      {attempt?.outcome === "unconfirmed" && (
+        <p role="status">
+          Completion of the latest backup attempt has not been confirmed. It may
+          still be running or may have been interrupted. A previous coverage
+          report is not confirmation of this attempt's success.
+        </p>
+      )}
       {error && (
         <p role="alert">
           Backup coverage could not be verified. Existing backups are retained;

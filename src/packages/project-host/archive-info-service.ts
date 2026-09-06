@@ -225,6 +225,14 @@ export async function initProjectArchiveInfoService(client: Client) {
     subject: PROJECT_ARCHIVE_INFO_SUBJECT,
   });
   return await client.service(PROJECT_ARCHIVE_INFO_SUBJECT, {
+    getBackupAttempt(this: { subject?: string }) {
+      return fileServerClient(
+        client,
+        BACKUP_SEARCH_TIMEOUT_MS,
+      ).getBackupAttempt({
+        project_id: extractProjectId(this?.subject),
+      });
+    },
     getBackupCoverageReportChunk(
       this: { subject?: string },
       opts: { backup_id: string; offset: number },

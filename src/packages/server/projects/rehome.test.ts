@@ -662,6 +662,7 @@ describe("project rehome", () => {
       candidates: [PROJECT_ID],
       side_table_preflight: {
         ignored_tables: expect.arrayContaining([
+          "account_backup_warning_acknowledgements",
           "cursors",
           "patches",
           "syncstrings",
@@ -669,6 +670,8 @@ describe("project rehome", () => {
         non_portable_tables: expect.arrayContaining([
           expect.objectContaining({ table: "project_secrets" }),
           expect.objectContaining({ table: "project_backup_indexes" }),
+          expect.objectContaining({ table: "project_backup_outcomes" }),
+          expect.objectContaining({ table: "project_backup_latest_attempts" }),
           expect.objectContaining({ table: "external_credentials" }),
         ]),
       },

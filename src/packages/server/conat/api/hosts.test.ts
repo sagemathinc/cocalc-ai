@@ -1,5 +1,12 @@
 export {};
 
+const mockRecordBackupAttemptRemote = jest.fn();
+const mockGetBackupAttemptRemote = jest.fn();
+jest.mock("@cocalc/server/project-backup/attempts", () => ({
+  recordBackupAttempt: jest.fn(),
+  getHostBackupAttempt: jest.fn(),
+}));
+
 import { EventEmitter } from "node:events";
 import os from "node:os";
 
@@ -473,6 +480,10 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         hostConnectionRecordProjectBackupMock(...args),
       recordProjectBackupOutcome: (...args: any[]) =>
         hostConnectionRecordProjectBackupOutcomeMock(...args),
+      recordProjectBackupAttempt: (...args: any[]) =>
+        mockRecordBackupAttemptRemote(...args),
+      getProjectBackupAttempt: (...args: any[]) =>
+        mockGetBackupAttemptRemote(...args),
       getProjectBackupOutcome: (...args: any[]) =>
         hostConnectionGetProjectBackupOutcomeMock(...args),
       recordProjectBackupIndex: (...args: any[]) =>
@@ -6294,6 +6305,41 @@ describe("hosts.resolveHostConnection", () => {
       time,
     });
     expect(recordProjectBackupLocalInternalMock).not.toHaveBeenCalled();
+  });
+
+  it("routes backup attempt reads/writes to the owning bay without fallback", async () => {
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 2,
+    }));
+    mockRecordBackupAttemptRemote.mockReset().mockResolvedValue(undefined);
+    mockGetBackupAttemptRemote.mockReset().mockResolvedValue(null);
+    const { recordProjectBackupAttempt, getProjectBackupAttempt } =
+      await import("./hosts");
+    const local = await import("@cocalc/server/project-backup/attempts");
+    const opts = {
+      host_id: REMOTE_HOST_ID,
+      project_id: REMOTE_PROJECT_ID,
+      attempt_id: "00000000-0000-4000-8000-000000000003",
+      action: "start" as const,
+    };
+    await recordProjectBackupAttempt(opts);
+    await expect(getProjectBackupAttempt(opts)).resolves.toBeNull();
+    expect(mockRecordBackupAttemptRemote).toHaveBeenCalledWith(opts);
+    expect(mockGetBackupAttemptRemote).toHaveBeenCalledWith(opts);
+    mockRecordBackupAttemptRemote.mockRejectedValue(
+      new Error("remote unavailable"),
+    );
+    await expect(recordProjectBackupAttempt(opts)).rejects.toThrow(
+      "remote unavailable",
+    );
+    expect(local.recordBackupAttempt).not.toHaveBeenCalled();
+    expect(local.getHostBackupAttempt).not.toHaveBeenCalled();
+    resolveProjectBayMock.mockResolvedValue(undefined);
+    await expect(getProjectBackupAttempt(opts)).rejects.toThrow(
+      "ownership is unknown",
+    );
+    expect(local.getHostBackupAttempt).not.toHaveBeenCalled();
   });
 
   it("routes protected backup receipts to the owning bay without recording locally", async () => {

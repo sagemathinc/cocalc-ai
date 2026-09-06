@@ -5,11 +5,37 @@
 
 import {
   createInterBayHostControlClient,
+  createInterBayHostConnectionClient,
   createInterBayProjectControlClient,
 } from "./api";
 import { DataEncoding, encode } from "@cocalc/conat/core/codec";
 
 describe("inter-bay typed service transport", () => {
+  it.each([
+    ["recordProjectBackupAttempt", "record-project-backup-attempt"],
+    ["getProjectBackupAttempt", "get-project-backup-attempt"],
+  ] as const)(
+    "registers %s on the actual destination-bay transport",
+    async (name, method) => {
+      const fastRpcRequest = jest.fn(async () => ({
+        raw: encode({ encoding: DataEncoding.MsgPack, mesg: null }),
+      }));
+      const client = createInterBayHostConnectionClient({
+        client: { fastRpcRequest } as any,
+        dest_bay: "bay-1",
+        timeout: 10_000,
+      });
+      await (client[name] as Function)({
+        host_id: "host",
+        project_id: "project",
+      });
+      expect(fastRpcRequest).toHaveBeenCalledWith(
+        `bay.bay-1.rpc.host-connection.${method}`,
+        { raw: expect.any(Uint8Array) },
+        { timeout: 10_000 },
+      );
+    },
+  );
   it("uses fast-rpc for short project-control calls", async () => {
     const fastRpcRequest = jest.fn(async () => ({
       raw: encode({ encoding: DataEncoding.MsgPack, mesg: null }),

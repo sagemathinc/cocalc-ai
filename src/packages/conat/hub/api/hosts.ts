@@ -3,6 +3,10 @@ import {
   authFirstRequireHost,
   authFirstRequireHostWithAccountTarget,
 } from "./util";
+import type {
+  BackupAttemptUpdate,
+  BackupAttemptStatus,
+} from "@cocalc/util/types/backup-attempt";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import type {
   HostManagedComponentRolloutResponse,
@@ -1804,6 +1808,8 @@ export const hosts = {
   recordServiceAdmissionNearLimit: authFirstRequireHostWithAccountTarget,
   recordProjectBackup: authFirstRequireHost,
   recordProjectBackupOutcome: authFirstRequireHost,
+  recordProjectBackupAttempt: authFirstRequireHost,
+  getProjectBackupAttempt: authFirstRequireHost,
   getProjectBackupOutcome: authFirstRequireHost,
   recordProjectBackupIndex: authFirstRequireHost,
   getProjectBackupIndexes: authFirstRequireHost,
@@ -2155,6 +2161,11 @@ export interface Hosts {
     time: Date;
     generation?: number | null;
   }) => Promise<void>;
+  recordProjectBackupAttempt: (opts: BackupAttemptUpdate) => Promise<void>;
+  getProjectBackupAttempt: (opts: {
+    host_id?: string;
+    project_id: string;
+  }) => Promise<BackupAttemptStatus | null>;
   recordProjectBackupOutcome: (opts: {
     host_id?: string;
     project_id: string;

@@ -11,6 +11,7 @@ export type ProjectRehomeSqlSideTableDecisionStatus =
   | "data-plane-excluded"
   | "legacy-unused"
   | "audit-local"
+  | "account-owned"
   | "operation-local";
 
 export interface ProjectRehomeSqlSideTableDecision {
@@ -134,6 +135,24 @@ export const PROJECT_REHOME_SQL_SIDE_TABLE_DECISIONS = {
     status: "not-portable",
     reason:
       "Backup indexes reference host/bucket/object state and must be reconciled with backup storage before destination rehome can trust them.",
+  },
+  project_backup_outcomes: {
+    table: "project_backup_outcomes",
+    status: "not-portable",
+    reason:
+      "Protected backup receipts bind historical bucket/object identities and source snapshots. Cross-bay rehome must preserve and validate that evidence with destination bucket access before it can rely on native backup coverage.",
+  },
+  project_backup_latest_attempts: {
+    table: "project_backup_latest_attempts",
+    status: "not-portable",
+    reason:
+      "Latest backup attempt status must move with protected backup history; dropping a failed or unconfirmed attempt would hide it behind an older successful receipt.",
+  },
+  account_backup_warning_acknowledgements: {
+    table: "account_backup_warning_acknowledgements",
+    status: "account-owned",
+    reason:
+      "Personal warning preferences stay on each account's home bay and are explicitly portable with account rehome, not project rehome. They never authorize backup exclusions or source deletion.",
   },
   project_backup_repo_assignments: {
     table: "project_backup_repo_assignments",
@@ -280,6 +299,7 @@ const IGNORED_REHOME_STATUSES =
     "seed-global-cleanup",
     "legacy-unused",
     "audit-local",
+    "account-owned",
   ]);
 
 export function getProjectRehomeSqlSideTablePreflight(): ProjectRehomeSqlSideTablePreflight {
