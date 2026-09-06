@@ -5,6 +5,9 @@ import userEvent from "@testing-library/user-event";
 import PierrePreview from "./pierre-preview";
 
 const mockScrollTo = jest.fn();
+jest.mock("./highlighting-provider", () => ({
+  DiffHighlightingProvider: ({ children }: any) => children,
+}));
 jest.mock("./changed-files-tree", () => ({
   __esModule: true,
   default: () => null,

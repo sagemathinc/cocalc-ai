@@ -27,6 +27,7 @@ import type { DiffPreviewSource } from "./preview-types";
 import { ReviewFileHeader, reviewFileHeaderHeight } from "./review-file-header";
 import { ChangedFilesLayout } from "./changed-files-layout";
 import type { ChangedFileEntry } from "./changed-files-model";
+import { DiffHighlightingProvider } from "./highlighting-provider";
 
 type PreviewComment = {
   id: string;
@@ -36,7 +37,18 @@ type PreviewComment = {
   body: string;
 };
 
-export default function PierrePreview({
+export default function PierrePreview(props: {
+  source: DiffPreviewSource;
+  fontSize: number;
+}) {
+  return (
+    <DiffHighlightingProvider>
+      <PierrePreviewContent {...props} />
+    </DiffHighlightingProvider>
+  );
+}
+
+function PierrePreviewContent({
   source,
   fontSize,
 }: {

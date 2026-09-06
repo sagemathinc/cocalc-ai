@@ -48,6 +48,25 @@ try {
   await select.selectOption(String(paths.length - 1));
   await expect(target).toBeVisible();
   expect(new URL(page.url()).searchParams.get("git-hash")).toBe(commit);
+  await page.getByRole("button", { name: "Preview with Pierre" }).click();
+  await expect.poll(() => page.workers().length).toBe(2);
+  for (const worker of page.workers()) {
+    expect(await worker.evaluate(() => self.name)).toBe(
+      "cocalc-diff-highlighter",
+    );
+    expect(new URL(worker.url()).origin).toBe(url.origin);
+  }
+  await expect(
+    page.locator("diffs-container [data-line] span[style]").first(),
+  ).toBeVisible({ timeout: 10000 });
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Background diff highlighting is unavailable" }),
+  ).toHaveCount(0);
+  await page.getByRole("region", { name: "Diff preview" }).focus();
+  await page.keyboard.press("Escape");
+  await expect.poll(() => page.workers().length).toBe(0);
   expect(errors).toEqual([]);
   console.log(
     "Passed: main drawer Trees selection, active highlight, collapse/reopen preserving filter, compact navigation, unchanged review target.",

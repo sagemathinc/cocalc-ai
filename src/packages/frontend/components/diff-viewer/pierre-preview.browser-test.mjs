@@ -29,13 +29,25 @@ const built = await build({
       import { createRoot } from 'react-dom/client';
       import { DiffPreviewButton } from './components/diff-viewer/preview-button';
       import ChangedFilesTree from './components/diff-viewer/changed-files-tree';
+      import { DiffHighlightingProvider } from './components/diff-viewer/highlighting-provider';
+      import { useWorkerPool } from '@pierre/diffs/react';
+      function PoolProbe() {
+        const pool = useWorkerPool();
+        const [stats, setStats] = React.useState(() => pool.getStats());
+        React.useEffect(() => pool.subscribeToStatChanges(setStats), [pool]);
+        return <output aria-label="Worker pool status">{stats.managerState}</output>;
+      }
       function Harness() {
         const [fontSize, setFontSize] = React.useState(14);
         const [files, setFiles] = React.useState([{id:'a',path:'src/a.ts',status:'added'}, {id:'b',path:'src/b.ts',status:'modified',commentCount:2}]);
         const [selected, setSelected] = React.useState('');
+        const [consumers, setConsumers] = React.useState(2);
+        window.setPoolConsumers = setConsumers;
+        if (location.pathname === '/pool') return <>{Array.from({length:consumers},(_,i)=><DiffHighlightingProvider key={i}><PoolProbe/></DiffHighlightingProvider>)}</>;
         window.treeSetFiles = setFiles;
         if (location.pathname === '/tree') return <><ChangedFilesTree files={files} activeId={selected} onSelect={setSelected}/><output aria-label="Selected file">{selected}</output></>;
         window.previewSetFontSize = setFontSize;
+        if (location.pathname === '/copy') return <DiffPreviewButton fontSize={14} getSource={() => (${JSON.stringify({ kind: "documents", path: "operators.ts", before: "+before;\n-before;\n", after: "+after;\n-after;\n", label: "Literal operators" })})} />;
         return <DiffPreviewButton fontSize={fontSize} getSource={() => ({kind:'patch',label:'Browser fixture',patch:${JSON.stringify(patch)}})} />;
       }
       createRoot(document.getElementById('root')).render(<Harness />);`,
@@ -51,6 +63,10 @@ const built = await build({
     {
       name: "application-service-stubs",
       setup(builder) {
+        builder.onResolve({ filter: /\.\/highlighting-worker$/ }, () => ({
+          path: "highlighting-worker",
+          namespace: "stub",
+        }));
         builder.onResolve(
           {
             filter:
@@ -59,9 +75,12 @@ const built = await build({
           ({ path }) => ({ path, namespace: "stub" }),
         );
         builder.onLoad({ filter: /.*/, namespace: "stub" }, ({ path }) => ({
-          contents: path.endsWith("app-framework")
-            ? "export const redux = {getActions: () => undefined}"
-            : "export function MarkdownHistoryInput({value,onChange}) {return <textarea aria-label='Temporary comment' value={value} onChange={e=>onChange(e.target.value)}/>}",
+          contents:
+            path === "highlighting-worker"
+              ? "export function createHighlightingWorker() { return new Worker('/highlight-worker.js', {type:'module'}); }"
+              : path.endsWith("app-framework")
+                ? "export const redux = {getActions: () => undefined}"
+                : "export function MarkdownHistoryInput({value,onChange}) {return <textarea aria-label='Temporary comment' value={value} onChange={e=>onChange(e.target.value)}/>}",
           loader: "tsx",
           resolveDir: frontend,
         }));
@@ -69,21 +88,32 @@ const built = await build({
     },
   ],
 });
+const workerBuilt = await build({
+  absWorkingDir: frontend,
+  entryPoints: ["node_modules/@pierre/diffs/dist/worker/worker.js"],
+  bundle: true,
+  write: false,
+  format: "esm",
+  define: { "process.env.NODE_ENV": '"development"' },
+});
 const server = createServer((req, res) => {
   res.setHeader(
     "Content-Type",
-    req.url === "/app.js"
+    req.url === "/app.js" || req.url === "/highlight-worker.js"
       ? "application/javascript"
       : req.url === "/app.css"
         ? "text/css"
         : "text/html",
   );
   res.end(
-    req.url === "/app.js"
-      ? built.outputFiles.find((file) => file.path.endsWith(".js")).contents
-      : req.url === "/app.css"
-        ? built.outputFiles.find((file) => file.path.endsWith(".css")).contents
-        : '<!doctype html><html><head><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>',
+    req.url === "/highlight-worker.js"
+      ? workerBuilt.outputFiles[0].contents
+      : req.url === "/app.js"
+        ? built.outputFiles.find((file) => file.path.endsWith(".js")).contents
+        : req.url === "/app.css"
+          ? built.outputFiles.find((file) => file.path.endsWith(".css"))
+              .contents
+          : '<!doctype html><html><head><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>',
   );
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -101,6 +131,21 @@ try {
   const errors = [];
   page.setDefaultTimeout(10000);
   page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${server.address().port}/pool`);
+  await expect(page.getByLabel("Worker pool status").first()).toHaveText(
+    "initialized",
+  );
+  await expect.poll(() => page.workers().length).toBe(2);
+  await page.evaluate(() => window.setPoolConsumers(1));
+  await expect(page.getByLabel("Worker pool status")).toHaveCount(1);
+  expect(page.workers().length).toBe(2);
+  await page.evaluate(() => window.setPoolConsumers(0));
+  await expect.poll(() => page.workers().length).toBe(0);
+  await page.evaluate(() => window.setPoolConsumers(2));
+  await expect(page.getByLabel("Worker pool status").first()).toHaveText(
+    "initialized",
+  );
+  await expect.poll(() => page.workers().length).toBe(2);
   await page.goto(`http://127.0.0.1:${server.address().port}/tree`);
   const b = page.getByRole("treeitem", { name: /b.ts/ });
   await expect(b).toBeVisible();
@@ -152,8 +197,39 @@ try {
     .fill("file-09999.ts");
   await page.getByRole("treeitem", { name: /file-09999.ts/ }).click();
   await expect(page.getByLabel("Selected file")).toHaveText("9999");
+  await page.goto(`http://127.0.0.1:${server.address().port}/copy`);
+  await page.getByRole("button", { name: "Preview with Pierre" }).click();
+  await page.getByRole("checkbox", { name: "Side by side" }).check();
+  for (const [side, expected] of [
+    ["deletions", "+before;\n-before;"],
+    ["additions", "+after;\n-after;"],
+  ]) {
+    const content = page.locator(
+      `diffs-container code[data-${side}] [data-content]`,
+    );
+    await expect(content).toBeVisible();
+    await page.getByRole("region", { name: "Diff preview" }).focus();
+    await content.evaluate((node) => {
+      const lines = node.querySelectorAll("[data-line]");
+      const first = lines[0],
+        last = lines[lines.length - 1];
+      const range = document.createRange();
+      range.setStart(first, 0);
+      range.setEnd(last, last.childNodes.length);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    await page.keyboard.press("Control+c");
+    assert.equal(
+      (await page.evaluate(() => navigator.clipboard.readText())).trimEnd(),
+      expected,
+      `${side}: native copying preserves literal operators without diff markers or gutters`,
+    );
+  }
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.getByRole("button", { name: "Preview with Pierre" }).click();
+  await expect.poll(() => page.workers().length).toBe(2);
   await page.getByRole("combobox", { name: "Preview file" }).waitFor();
   const viewport = page.locator(".cocalc-pierre-preview-viewport");
   const treeNavigation = page.getByRole("complementary", {
@@ -343,9 +419,31 @@ try {
   await region.focus();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect.poll(() => page.workers().length).toBe(0);
   await expect(
     page.getByRole("button", { name: "Preview with Pierre" }),
   ).toBeFocused();
+  await page.route("**/highlight-worker.js", (route) => route.abort());
+  await page.getByRole("button", { name: "Preview with Pierre" }).click();
+  await expect(
+    page
+      .getByRole("status")
+      .filter({ hasText: "Background diff highlighting is unavailable" }),
+  ).toBeVisible({ timeout: 10000 });
+  await expect(
+    page.getByRole("button", {
+      name: "Copy repository-relative path: first.ts",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect.poll(() => page.workers().length).toBe(0);
+  await region.focus();
+  await expect(
+    page.getByText("const value = 2;", { exact: true }).first(),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  assert.deepEqual(errors, []);
   console.log(
     "PASS: GitHub light/dark colors, custom sticky filenames, keyboard clipboard copy/selection suppression, header font metrics, scoped scroll shortcuts, editable spaces, background shortcut isolation, Escape/focus, wheel scrolling, file/gutter selection, live split/wrap updates, annotation draft across layout changes, and 1200/600/320px containment (real Pierre).",
   );

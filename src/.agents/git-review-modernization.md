@@ -181,6 +181,33 @@ source viewers are separate from the diff toolbar.
 
 ### Implementation progress (2026-09-06)
 
+Shared highlighting pool wired into the preview:
+
+- `DiffHighlightingProvider` uses Pierre's shared singleton lifecycle, capped
+  at two workers with a five-second initialization deadline and 16 entries per
+  file/diff AST cache. Cache limits are entry counts, not byte limits; retained
+  memory still requires measurement against the large review fixtures.
+- Rspack bundles a literal worker entry URL and its dependencies. No runtime
+  third-party CDN code is fetched. Uses the GitHub themes and JavaScript regex
+  highlighter, with 1,000-character token/word-diff limits for pathological lines.
+- The adapter observes the pending initialization promise explicitly: in 1.4.1
+  the constructor starts an inner promise without returning it on that first
+  call. Without a subsequent observer, blocked worker downloads can produce an
+  unhandled rejection. Worker failure remains visible as a fallback status; only
+  the redundant browser uncaught worker-error event is suppressed, not the
+  pool's failure/cleanup listener.
+- Real Chromium tests verify two concurrent providers share two initialized
+  workers, removing one consumer retains them, removing the last terminates
+  them, reopening starts a fresh bounded pool, and blocked worker downloads
+  leave readable diff text without page errors. The standalone harness bundles
+  the same upstream worker using esbuild; the Rspack build passes, but its live
+  worker smoke check is pending because the supplied CDP port stopped responding.
+- Native Ctrl+C tests cover multi-line old/new split-view source copying,
+  retaining literal leading plus/minus operators without gutters/patch markers.
+  Cross-virtual-window selection and partial-token ranges remain separate gates.
+  Nineteen focused preview/provider/model tests pass, with frontend types/lint
+  and the development bundle. The default Git renderer is still unchanged.
+
 Trees navigation implemented in the main drawer and Pierre preview:
 
 - Pinned `@pierre/trees@1.0.0-beta.6` (published July 25; no age exception).
