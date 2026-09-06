@@ -2,6 +2,15 @@ import { CSSProperties } from "react";
 import { Element } from "../types";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown-public";
 import { DEFAULT_FONT_SIZE, DEFAULT_FONT_FAMILY } from "../tools/defaults";
+import { lightAppearance } from "@cocalc/util/appearance-palette";
+
+// Whiteboard text is authored on paper or colored notes, not app surfaces.
+const PAPER_APPEARANCE = Object.fromEntries(
+  Object.entries(lightAppearance).map(([name, value]) => [
+    `--cocalc-ui-${name}`,
+    value,
+  ]),
+);
 
 interface Props {
   element: Element;
@@ -39,8 +48,12 @@ export function getStyle(
     // for historical reasons, mainly -- see packages/frontend/editors/editor-button-bar.ts too
     fontFamily = "sans-serif";
   }
+  const color = element.data?.color ?? defaults?.color ?? lightAppearance.text;
   return {
-    color: element.data?.color ?? defaults?.color,
+    ...PAPER_APPEARANCE,
+    "--cocalc-ui-text": color,
+    colorScheme: "light" as const,
+    color,
     fontSize: element.data?.fontSize ?? defaults?.fontSize ?? DEFAULT_FONT_SIZE,
     fontFamily,
     background: element.data?.background ?? defaults?.background,
