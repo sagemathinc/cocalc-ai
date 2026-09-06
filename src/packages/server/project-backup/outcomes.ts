@@ -37,6 +37,59 @@ export async function ensureBackupOutcomeSchema(): Promise<void> {
   await schema;
 }
 
+/** Read historical evidence only for the project's current authenticated host.
+ * Project ownership/placement and receipt selection share one SQL snapshot.
+ * The recorded bucket is deliberately not replaced by today's assignment: a
+ * project can change repository/bucket after this backup was captured.
+ */
+export async function getHostBackupOutcome({
+  host_id,
+  project_id,
+  backup_id,
+}: {
+  host_id?: string;
+  project_id: string;
+  backup_id?: string;
+}): Promise<{ receipt: BackupOutcomeReceipt; bucket_id: string } | null> {
+  if (
+    !host_id ||
+    !isValidUUID(host_id) ||
+    !isValidUUID(project_id) ||
+    (backup_id !== undefined &&
+      (typeof backup_id !== "string" || !/^[0-9a-f]{64}$/.test(backup_id)))
+  )
+    throw new Error("Invalid backup outcome read identity");
+  await ensureBackupOutcomeSchema();
+  const { rows } = await getPool().query(
+    `SELECT p.project_id, o.backup_id, o.receipt, o.receipt_sha256, o.bucket_id
+     FROM projects p
+     LEFT JOIN LATERAL (
+       SELECT backup_id, receipt, receipt_sha256, bucket_id
+       FROM project_backup_outcomes
+       WHERE project_id=p.project_id ${backup_id === undefined ? "" : "AND backup_id=$4"}
+       ORDER BY captured_at DESC, created DESC, backup_id DESC LIMIT 1
+     ) o ON true
+     WHERE p.project_id=$1::UUID AND p.deleted IS NOT true
+       AND COALESCE(p.owning_bay_id, $2)=$2 AND p.host_id=$3::UUID`,
+    backup_id === undefined
+      ? [project_id, getConfiguredBayId(), host_id]
+      : [project_id, getConfiguredBayId(), host_id, backup_id],
+  );
+  if (rows.length !== 1)
+    throw new Error("Backup outcome host placement or owning bay changed");
+  const row = rows[0];
+  if (row.backup_id == null) return null;
+  const receipt = validateBackupOutcomeReceipt(row.receipt, project_id);
+  if (
+    !isValidUUID(row.bucket_id) ||
+    receipt.producer.binding.backup_id !== row.backup_id ||
+    (backup_id !== undefined && row.backup_id !== backup_id) ||
+    backupReportHeaderSha256(receipt) !== row.receipt_sha256
+  )
+    throw new Error("Recorded backup outcome failed integrity validation");
+  return { receipt, bucket_id: row.bucket_id };
+}
+
 // The caller is the host-authenticated owning-bay endpoint. These records survive
 // project-host loss and browsing-index GC; they never advance source freshness.
 // A captured snapshot's generation is NOT a later live-source generation.

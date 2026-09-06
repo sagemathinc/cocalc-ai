@@ -10,7 +10,10 @@ jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-test",
 }));
 
-import { recordBackupOutcome as recordBackupOutcomeInternal } from "./outcomes";
+import {
+  getHostBackupOutcome,
+  recordBackupOutcome as recordBackupOutcomeInternal,
+} from "./outcomes";
 import { backupExclusionObjectKey } from "@cocalc/backend/backup-exclusion-store";
 import { backupReportHeaderSha256 } from "@cocalc/backend/backup-exclusion-report";
 import type { BackupOutcomeReceipt } from "@cocalc/util/types/backup-evidence";
@@ -177,4 +180,82 @@ it("propagates commit failure instead of confirming success", async () => {
   ).rejects.toThrow("commit failed");
   expect(query).toHaveBeenLastCalledWith("ROLLBACK");
   expect(release).toHaveBeenCalledTimes(1);
+});
+
+describe("reading protected outcome history", () => {
+  const read = (backup_id?: string) =>
+    getHostBackupOutcome({ host_id: host, project_id: project, backup_id });
+  function row() {
+    return {
+      project_id: project,
+      backup_id: "b".repeat(64),
+      receipt: receipt(),
+      receipt_sha256: backupReportHeaderSha256(receipt()),
+      bucket_id: bucket.id,
+    };
+  }
+
+  it("selects bounded latest or exact history under the same placement/ownership predicate", async () => {
+    schemaQuery.mockResolvedValue({ rows: [row()] } as never);
+    expect(await read()).toEqual({ receipt: receipt(), bucket_id: bucket.id });
+    const [sql, params] = schemaQuery.mock.calls.at(-1)! as unknown as [
+      string,
+      unknown[],
+    ];
+    expect(sql).toContain("p.host_id=$3::UUID");
+    expect(sql).toContain("p.deleted IS NOT true");
+    expect(sql).toContain("COALESCE(p.owning_bay_id, $2)=$2");
+    expect(sql).toContain("LIMIT 1");
+    expect(sql).not.toContain("AND backup_id=$4");
+    expect(params).toEqual([project, "bay-test", host]);
+    expect(await read("b".repeat(64))).toEqual({
+      receipt: receipt(),
+      bucket_id: bucket.id,
+    });
+    expect(schemaQuery).toHaveBeenLastCalledWith(
+      expect.stringContaining("AND backup_id=$4"),
+      [project, "bay-test", host, "b".repeat(64)],
+    );
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it("denies a removed/deleted/wrong-bay assignment rather than returning unknown coverage", async () => {
+    schemaQuery.mockResolvedValue({ rows: [] });
+    await expect(read()).rejects.toThrow("placement or owning bay changed");
+  });
+
+  it("returns null, not complete, when this authorized project has no recorded evidence", async () => {
+    schemaQuery.mockResolvedValue({
+      rows: [{ project_id: project, backup_id: null }],
+    } as never);
+    await expect(read()).resolves.toBeNull();
+  });
+
+  it.each(["receipt", "digest", "bucket", "backup"])(
+    "rejects corrupt %s metadata",
+    async (field) => {
+      const value = row();
+      if (field === "receipt") value.receipt.producer.binding.project_id = host;
+      if (field === "digest") value.receipt_sha256 = "f".repeat(64);
+      if (field === "bucket") value.bucket_id = "arbitrary";
+      if (field === "backup") value.backup_id = "a".repeat(64);
+      schemaQuery.mockResolvedValue({ rows: [value] } as never);
+      await expect(read()).rejects.toThrow();
+    },
+  );
+
+  it.each(["latest", "abc", "../file", "b".repeat(65)])(
+    "refuses an invalid snapshot selector before database access (%s)",
+    async (id) => {
+      await expect(read(id)).rejects.toThrow("read identity");
+      expect(schemaQuery).not.toHaveBeenCalled();
+    },
+  );
+
+  it("requires authenticated host identity before reading", async () => {
+    await expect(getHostBackupOutcome({ project_id: project })).rejects.toThrow(
+      "read identity",
+    );
+    expect(schemaQuery).not.toHaveBeenCalled();
+  });
 });

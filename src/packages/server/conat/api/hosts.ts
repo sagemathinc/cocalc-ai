@@ -1942,6 +1942,32 @@ export async function recordProjectBackupOutcomeLocal(
   return await recordBackupOutcome({ ...opts, bucket });
 }
 
+export async function getProjectBackupOutcome(
+  opts: Parameters<
+    import("@cocalc/conat/hub/api/hosts").Hosts["getProjectBackupOutcome"]
+  >[0],
+) {
+  if (!opts.host_id || !opts.project_id)
+    throw new Error("Backup outcome requires host and project identity");
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .getProjectBackupOutcome(opts);
+  }
+  return await getProjectBackupOutcomeLocal(opts);
+}
+
+export async function getProjectBackupOutcomeLocal(
+  opts: Parameters<
+    import("@cocalc/conat/hub/api/hosts").Hosts["getProjectBackupOutcome"]
+  >[0],
+) {
+  const { getHostBackupOutcome } =
+    await import("@cocalc/server/project-backup/outcomes");
+  return await getHostBackupOutcome(opts);
+}
+
 export async function recordProjectBackupLocal({
   host_id,
   project_id,
