@@ -5483,7 +5483,7 @@ def verify_native_rustic(binary, env, pass_fds):
         for name in ("strict_backup", "strict_restore", "sparse_required_restore", "hole_aware_backup"):
             if capabilities.get(name) is not True:
                 fail(f"native Rustic capability is missing: {name}")
-        for name in ("backup_inventory", "backup_admission"):
+        for name in ("backup_inventory", "backup_admission", "strict_local_metadata"):
             if type(capabilities.get(name)) is not int or capabilities[name] != 1:
                 fail(f"unsupported native Rustic capability: {name}")
     finally:
