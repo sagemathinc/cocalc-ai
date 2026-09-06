@@ -4509,15 +4509,15 @@ def unit_busy(unit):
     return False
 
 
-def take_slot(directory, count, unit=None):
+def take_slot(directory, count, unit=None, prefix="slot"):
     for slot in range(count):
         try:
-            fd = take_lock(directory, f"slot-{slot}.lock")
+            fd = take_lock(directory, f"{prefix}-{slot}.lock")
         except BlockingIOError:
             continue
         try:
             if unit is not None:
-                name = f"slot-{slot}.unit"
+                name = f"{prefix}-{slot}.unit"
                 if unit_busy(read_unit(directory, name)):
                     os.close(fd)
                     continue
@@ -4650,6 +4650,7 @@ def launch(argv, api, policy):
     unit = f"cocalc-rustic-{uuid.uuid4().hex}.service"
     directory = open_lock_directory()
     lock = None
+    startup_slot = None
     proc = None
     try:
         lock = take_lock(directory, f"{key}.launch.lock")
@@ -4658,6 +4659,9 @@ def launch(argv, api, policy):
         os.close(old)
         if unit_busy(read_unit(directory, f"{key}.unit")):
             raise BlockingIOError("Rustic predecessor unit is still stopping")
+        # Bound service creation too, not just workers after Python has started.
+        # Unit records retain this reservation if the launcher is killed.
+        startup_slot = take_slot(directory, policy["max_jobs"], unit, prefix="launch-slot")
         record_unit(directory, f"{key}.unit", unit)
         proc = subprocess.Popen(service_command(unit, argv, chain, policy), env=ENV,
                                 stdin=subprocess.PIPE, close_fds=True)
@@ -4684,6 +4688,8 @@ def launch(argv, api, policy):
                                    env=ENV, check=True, timeout=policy["kill_grace_seconds"] + 15)
                     proc.wait(timeout=15)
         finally:
+            if startup_slot is not None:
+                os.close(startup_slot)
             if lock is not None:
                 os.close(lock)
             os.close(directory)
