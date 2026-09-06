@@ -1119,6 +1119,7 @@ export interface BackupProjectToExternalRepositoryResponse {
 }
 
 export const projects = {
+  backupWarningAcknowledgements: authFirstRequireAccount,
   createProject: authFirstRequireAccount,
   createProjectWithBootstrap: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
