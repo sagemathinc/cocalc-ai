@@ -146,6 +146,38 @@ both modes, not merely the React options.
 
 ## Implementation readiness
 
+### Implementation progress (2026-09-06)
+
+Foundation implemented without changing the default renderer or V2 persistence:
+
+- `components/diff-viewer/review-model.ts` defines repository, pinned/working
+  target, historical source, numeric side/location, file/hunk, capabilities,
+  semantic scroll, adapter, and request-generation contracts. New target keys
+  deliberately do not replace V2 commit-review keys.
+- `git/read-service.ts` and `project-read-service.ts` provide the existing
+  project-host exec transport with a four-command concurrency bound, 30-second
+  coalesced discovery, byte-bounded immutable blob cache, explicit parent and
+  tree/merge-base comparisons, paged first-parent/all-ancestor history, and
+  NUL-delimited path metadata. Reads reject truncation, ambiguous refs,
+  unsupported historical binary/symlink content, and unavailable exact paths.
+  No checkout, fetch, dependency installation, or new hub API is introduced.
+- `chat/git-commit/legacy-locations.ts` bridges V2 comment/search positions
+  without rewriting records. Context comments preserve both source coordinates;
+  missing/ambiguous provenance is returned as unmatched with the original
+  comment. Source-range extraction preserves literal leading operators and
+  rejects absent patch context. Native clipboard integration remains untested.
+- Disposable real-Git fixtures cover divergent worktrees, detached/prunable
+  paths, root/merge parents, refs moving after pinning, odd filenames, deleted
+  and renamed sources, SHA-256, cache expiry/eviction, bounded concurrency, and
+  unchanged checkout/index/dirty state after reads. Foundation plus existing
+  drawer/store regression suites: 100 tests passed; frontend types/lint passed.
+
+Still pending: real Slate/header lifecycle checks and native clipboard tests;
+production renderer toggle and adapter wiring; worktree/ref/comparison controls;
+arbitrary-revision TimeTravel wiring; comparison persistence and canonical-key
+migration; validated agent routing; activity adaptation; release acceptance and
+default/cleanup. The service is not yet wired into the existing drawer.
+
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the
 delivery order at the end of this section describes independently reviewable
