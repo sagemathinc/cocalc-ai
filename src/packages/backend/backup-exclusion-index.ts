@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { cleanupBackupEvidence } from "./backup-exclusion-cleanup";
 import { validateBackupAcknowledgementKeys } from "@cocalc/util/backup-acknowledgements";
+import { backupPathAcknowledgementKey } from "./backup-path-acknowledgement";
 import {
   backupExclusionObjectKey,
   withBackupEvidenceAbort,
@@ -33,7 +34,7 @@ const PAGE_SIZE = 50;
 const SQLITE_PAGE_BYTES = 4096;
 
 export interface BackupExclusionPage {
-  files: BackupExclusionSample[];
+  files: (BackupExclusionSample & { path_acknowledgement_key: string })[];
   next_cursor: string | null;
   excluded_files: string;
 }
@@ -44,7 +45,7 @@ export interface BackupExclusionIndex {
   // Read-only access. Cursor is a position, NOT project/account authorization.
   page(cursor?: string | null): BackupExclusionPage;
   has(entry: BackupExclusionSample): boolean;
-  countAcknowledged(keys: string[]): string;
+  countAcknowledged(keys: string[], pathKeys?: string[]): string;
   reportChunk(offset: number): {
     data_base64: string;
     next_offset: number | null;
@@ -147,12 +148,13 @@ export async function withBackupExclusionIndex<T>(
         ordinal INTEGER PRIMARY KEY,
         path BLOB NOT NULL UNIQUE,
         apparent_bytes TEXT NOT NULL,
-        acknowledgement_key TEXT
+        acknowledgement_key TEXT,
+        path_acknowledgement_key TEXT NOT NULL
       );
       BEGIN;
     `);
     const insert = db.prepare(
-      "INSERT INTO excluded (ordinal, path, apparent_bytes, acknowledgement_key) VALUES (?, ?, ?, ?)",
+      "INSERT INTO excluded (ordinal, path, apparent_bytes, acknowledgement_key, path_acknowledgement_key) VALUES (?, ?, ?, ?, ?)",
     );
     let ordinal = 0;
     const chunks = createReadStream(path, { signal });
@@ -171,6 +173,7 @@ export async function withBackupExclusionIndex<T>(
             Buffer.from(entry.path_hex, "hex"),
             entry.apparent_bytes,
             entry.acknowledgement_key,
+            backupPathAcknowledgementKey(entry.path_hex),
           );
         },
       });
@@ -182,18 +185,18 @@ export async function withBackupExclusionIndex<T>(
     signal.throwIfAborted();
     // Build before publishing the handle, under the same physical page bound.
     db.exec(
-      "CREATE INDEX acknowledgement_idx ON excluded (acknowledgement_key); COMMIT; PRAGMA query_only=ON;",
+      "CREATE INDEX acknowledgement_idx ON excluded (acknowledgement_key); CREATE INDEX path_acknowledgement_idx ON excluded (path_acknowledgement_key); COMMIT; PRAGMA query_only=ON;",
     );
     const bytes = (await stat(indexPath)).size;
     if (bytes > max_index_bytes) invalid();
     const select = db.prepare(
-      "SELECT ordinal, path, apparent_bytes, acknowledgement_key FROM excluded WHERE ordinal > ? ORDER BY ordinal LIMIT ?",
+      "SELECT ordinal, path, apparent_bytes, acknowledgement_key, path_acknowledgement_key FROM excluded WHERE ordinal > ? ORDER BY ordinal LIMIT ?",
     );
     const find = db.prepare(
       "SELECT apparent_bytes, acknowledgement_key FROM excluded WHERE path = ?",
     );
     const acknowledged = db.prepare(
-      "SELECT COUNT(*) AS count FROM excluded WHERE acknowledgement_key IN (SELECT value FROM json_each(?))",
+      "SELECT COUNT(*) AS count FROM excluded WHERE acknowledgement_key IN (SELECT value FROM json_each(?)) OR path_acknowledgement_key IN (SELECT value FROM json_each(?))",
     );
     const usable = () => {
       if (!active) throw new Error("Backup exclusion index lease has ended");
@@ -226,12 +229,16 @@ export async function withBackupExclusionIndex<T>(
             sha256: binding.report.sha256,
           };
         },
-        countAcknowledged(keys) {
+        countAcknowledged(keys, pathKeys = []) {
           usable();
           const captured = validateBackupAcknowledgementKeys(keys);
-          // Only a verified non-null identity can match. Duplicate/stale keys
-          // cannot inflate this count or quiet newly changed file versions.
-          return String(acknowledged.get(JSON.stringify(captured))!.count);
+          const paths = validateBackupAcknowledgementKeys(pathKeys);
+          // OR counts the union, not both matches. Path consent deliberately
+          // survives file changes; neither scope changes the report itself.
+          return String(
+            acknowledged.get(JSON.stringify(captured), JSON.stringify(paths))!
+              .count,
+          );
         },
         page(cursor) {
           usable();
@@ -251,6 +258,7 @@ export async function withBackupExclusionIndex<T>(
               path_hex: Buffer.from(row.path as Uint8Array).toString("hex"),
               apparent_bytes: row.apparent_bytes as string,
               acknowledgement_key: row.acknowledgement_key as string | null,
+              path_acknowledgement_key: row.path_acknowledgement_key as string,
             })),
             next_cursor: more
               ? `${identity}:${rows[rows.length - 1].ordinal}`

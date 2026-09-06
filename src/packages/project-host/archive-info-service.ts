@@ -250,6 +250,7 @@ export async function initProjectArchiveInfoService(client: Client) {
       backup_id?: string;
       cursor?: string | null;
       acknowledgement_keys?: string[];
+      path_acknowledgement_keys?: string[];
     }) {
       return handleProjectGetBackupCoverageRequest.call(this, opts, client);
     },
@@ -288,6 +289,7 @@ export async function handleProjectGetBackupCoverageRequest(
     backup_id?: string;
     cursor?: string | null;
     acknowledgement_keys?: string[];
+    path_acknowledgement_keys?: string[];
   },
   client?: Client,
 ) {
@@ -299,5 +301,6 @@ export async function handleProjectGetBackupCoverageRequest(
     backup_id: opts?.backup_id,
     cursor: opts?.cursor,
     acknowledgement_keys: opts?.acknowledgement_keys,
+    path_acknowledgement_keys: opts?.path_acknowledgement_keys,
   });
 }

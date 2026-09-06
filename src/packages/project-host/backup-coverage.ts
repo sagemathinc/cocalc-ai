@@ -17,6 +17,7 @@ export interface BackupCoverageRequest {
   backup_id?: string;
   cursor?: string | null;
   acknowledgement_keys?: string[];
+  path_acknowledgement_keys?: string[];
 }
 
 /** Owning-bay access must be resolved on EVERY request, including cache hits. */
@@ -40,6 +41,7 @@ export class ProjectBackupCoverage {
     backup_id,
     cursor,
     acknowledgement_keys,
+    path_acknowledgement_keys,
   }: BackupCoverageRequest): Promise<BackupCoveragePage | null> {
     if (
       typeof project_id !== "string" ||
@@ -58,6 +60,9 @@ export class ProjectBackupCoverage {
     if (cursor != null && !backup_id)
       throw new Error("Backup cursor requires an exact snapshot");
     const keys = validateBackupAcknowledgementKeys(acknowledgement_keys ?? []);
+    const pathKeys = validateBackupAcknowledgementKeys(
+      path_acknowledgement_keys ?? [],
+    );
     const outcome = await this.access({ project_id, backup_id });
     if (!outcome) return null; // Unknown/legacy evidence is NOT complete coverage.
     const receipt = validateBackupOutcomeReceipt(outcome.receipt, project_id);
@@ -75,6 +80,7 @@ export class ProjectBackupCoverage {
       },
       cursor,
       keys,
+      pathKeys,
     );
     if (page.excluded_files !== producer.excluded_files)
       throw new Error("Backup report count does not match protected evidence");

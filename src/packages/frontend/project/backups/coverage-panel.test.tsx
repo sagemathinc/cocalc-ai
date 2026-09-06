@@ -54,7 +54,7 @@ it("shows explicit per-file consent without claiming completeness or granting om
     screen.getByRole("button", { name: "Hide backup details" }),
   ).toHaveAttribute("aria-expanded", "true");
   const checkbox = screen.getByRole("checkbox", {
-    name: "I understand this file is not backed up: geo.dat",
+    name: "Acknowledge this version; I understand this file is not backed up: geo.dat",
   });
   expect(checkbox).not.toBeChecked();
   checkbox.focus();

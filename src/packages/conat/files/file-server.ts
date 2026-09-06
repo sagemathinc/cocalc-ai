@@ -438,6 +438,7 @@ export interface Fileserver {
     backup_id?: string;
     cursor?: string | null;
     acknowledgement_keys?: string[];
+    path_acknowledgement_keys?: string[];
   }) => Promise<
     import("@cocalc/util/types/backup-coverage").BackupCoveragePage | null
   >;

@@ -60,6 +60,7 @@ export async function getBackupCoverage({
   backup_id?: string;
   cursor?: string | null;
   acknowledgement_keys?: string[];
+  path_acknowledgement_keys?: string[];
 }) {
   return await getProjectBackupCoverage({
     ...opts,

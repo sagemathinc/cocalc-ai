@@ -10,6 +10,8 @@ export interface BackupExcludedFileView {
   apparent_bytes: string;
   acknowledgement_key: string | null;
   acknowledged: boolean;
+  path_acknowledgement_key?: string;
+  path_acknowledged?: boolean;
 }
 
 /** A bounded, account-specific view, not lifecycle/deletion authority. */
@@ -42,6 +44,7 @@ export interface BackupCoveragePage {
     path_hex: string;
     apparent_bytes: string;
     acknowledgement_key: string | null;
+    path_acknowledgement_key?: string;
   }>;
   next_cursor: string | null;
 }

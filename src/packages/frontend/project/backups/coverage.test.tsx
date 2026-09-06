@@ -96,6 +96,7 @@ it("loads authoritative preferences and confirms acknowledgement before collapsi
     expect.objectContaining({
       project_id: "project-a",
       acknowledgement_keys: [],
+      path_acknowledgement_keys: [],
     }),
   );
   let approve!: () => void;
@@ -120,6 +121,67 @@ it("loads authoritative preferences and confirms acknowledgement before collapsi
   expect(screen.getByRole("status")).toHaveTextContent(
     "these files are still not backed up",
   );
+});
+
+it("persists exact-path consent separately and revokes it without removing version consent", async () => {
+  const pathKey = "d".repeat(64);
+  let saved = false;
+  ack.mockImplementation(async ({ scope, key: writeKey, remove }) => {
+    if (scope !== "path") return [];
+    if (writeKey) saved = !remove;
+    return saved ? [pathKey] : [];
+  });
+  get.mockImplementation(async (opts) => ({
+    ...page(),
+    acknowledged_files: opts.path_acknowledgement_keys?.includes(pathKey)
+      ? "1"
+      : "0",
+    files: [
+      {
+        ...page().files[0],
+        acknowledgement_key: null,
+        path_acknowledgement_key: pathKey,
+      },
+    ],
+  }));
+  render(<BackupCoverage project_id="project-a" />);
+  const choice = await screen.findByRole("checkbox", {
+    name: /Don't warn again for this path/,
+  });
+  choice.focus();
+  expect(choice).toHaveFocus();
+  fireEvent.click(choice);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Show backup details" }),
+    ).toHaveFocus(),
+  );
+  expect(ack).toHaveBeenCalledWith({
+    project_id: "project-a",
+    scope: "path",
+    key: pathKey,
+    remove: false,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Show backup details" }));
+  const checked = screen.getByRole("checkbox", {
+    name: /Don't warn again for this path/,
+  });
+  expect(checked).toBeChecked();
+  fireEvent.click(checked);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("checkbox", { name: /Don't warn again for this path/ }),
+    ).not.toBeChecked(),
+  );
+  expect(ack).toHaveBeenCalledWith({
+    project_id: "project-a",
+    scope: "path",
+    key: pathKey,
+    remove: true,
+  });
+  expect(
+    ack.mock.calls.some(([opts]) => opts.scope !== "path" && opts.remove),
+  ).toBe(false);
 });
 
 it("keeps failed acknowledgements visible", async () => {
@@ -176,6 +238,7 @@ it("pins subsequent pages to the selected backup", async () => {
       backup_id,
       cursor: "cursor",
       acknowledgement_keys: [],
+      path_acknowledgement_keys: [],
     }),
   );
 });

@@ -78,6 +78,7 @@ export class BackupExclusionCache {
     options: BackupExclusionStoreOptions,
     cursor?: string | null,
     acknowledgementKeys?: string[],
+    pathAcknowledgementKeys?: string[],
   ) {
     // Reject syntactically invalid/cross-report cursors before downloading.
     backupExclusionObjectKey(options.binding);
@@ -91,7 +92,10 @@ export class BackupExclusionCache {
     const index = await this.index(options);
     return {
       ...index.page(cursor),
-      acknowledged_files: index.countAcknowledged(acknowledgementKeys ?? []),
+      acknowledged_files: index.countAcknowledged(
+        acknowledgementKeys ?? [],
+        pathAcknowledgementKeys ?? [],
+      ),
     };
   }
 

@@ -13,8 +13,13 @@ not a completion claim or deployment approval. Production remains unchanged.
   shared backend helper hashes validated raw relative paths. Existing rows are
   preserved by migration. Disposable PostgreSQL 18 checks passed for legacy
   migration, repeated initialization, scope constraints and isolated removal.
-  The second UI choice and host report/count matching for path scope are NOT
-  wired yet; the existing UI continues to use version acknowledgements only.
+  The second UI choice and host report/count matching for path scope are now
+  wired. The verified bounded SQLite index computes the union of version and
+  exact-path matches, never double-counting overlapping consent. The UI reads
+  both home-bay scopes, supports path consent and revocation, and retains report
+  visibility. Focus restoration on collapse, changed-policy/version persistence,
+  scope separation, and routing are covered by focused tests. Host/frontend
+  typechecks and frontend lint pass. Live browser qualification remains pending.
   This is not a backup exclusion list and changes no lifecycle authorization.
 - CoCalc `2f5dc89302`: sandbox execution escalates using actual exit state,
   supports opted-in process groups, and rejects truncated/unknown-status output.

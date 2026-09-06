@@ -48,11 +48,17 @@ function CoverageController({ project_id }: { project_id: string }) {
           { project_id },
         ),
       );
+      const pathKeys = validateBackupAcknowledgementKeys(
+        await webapp_client.conat_client.hub.projects.backupWarningAcknowledgements(
+          { project_id, scope: "path" },
+        ),
+      );
       const page = await getBackupCoverage({
         project_id,
         backup_id,
         cursor,
         acknowledgement_keys: keys,
+        path_acknowledgement_keys: pathKeys,
       });
       if (!mounted.current || request.current !== id) return;
       if (page == null) {
@@ -60,6 +66,7 @@ function CoverageController({ project_id }: { project_id: string }) {
         return;
       }
       const acknowledged = new Set(keys);
+      const pathAcknowledged = new Set(pathKeys);
       if (
         page.project_id !== project_id ||
         (backup_id && page.backup_id !== backup_id) ||
@@ -77,6 +84,9 @@ function CoverageController({ project_id }: { project_id: string }) {
           acknowledged:
             file.acknowledgement_key != null &&
             acknowledged.has(file.acknowledgement_key),
+          path_acknowledged:
+            file.path_acknowledgement_key != null &&
+            pathAcknowledged.has(file.path_acknowledgement_key),
         })),
         report_available: true,
       });
@@ -131,6 +141,22 @@ function CoverageController({ project_id }: { project_id: string }) {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
   }
+  async function acknowledgePath(
+    file: BackupExcludedFileView,
+    remove: boolean,
+  ) {
+    if (!coverage || !file.path_acknowledgement_key)
+      throw new Error("Path identity unavailable");
+    await webapp_client.conat_client.hub.projects.backupWarningAcknowledgements(
+      {
+        project_id,
+        scope: "path",
+        key: file.path_acknowledgement_key,
+        remove,
+      },
+    );
+    await refresh(coverage.backup_id!);
+  }
   return (
     <div style={{ minWidth: 0 }}>
       {attempt?.outcome === "failed" && (
@@ -164,6 +190,7 @@ function CoverageController({ project_id }: { project_id: string }) {
         <BackupCoveragePanel
           coverage={coverage}
           acknowledge={acknowledge}
+          acknowledgePath={acknowledgePath}
           downloadReport={download}
           nextPage={(cursor) => refresh(coverage.backup_id!, cursor)}
         />

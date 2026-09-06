@@ -16,6 +16,10 @@ export interface BackupCoveragePanelProps {
   // The controller saves in the authenticated account's home bay, then supplies
   // a fresh account-specific view. Local checked state is never evidence.
   acknowledge: (file: BackupExcludedFileView) => Promise<void>;
+  acknowledgePath?: (
+    file: BackupExcludedFileView,
+    remove: boolean,
+  ) => Promise<void>;
   downloadReport: () => Promise<void>;
   nextPage: (cursor: string) => Promise<void>;
 }
@@ -59,6 +63,7 @@ export function excludedPathLabel(hex: string): string {
 export default function BackupCoveragePanel({
   coverage,
   acknowledge,
+  acknowledgePath,
   downloadReport,
   nextPage,
 }: BackupCoveragePanelProps) {
@@ -161,6 +166,13 @@ export default function BackupCoveragePanel({
           {coverage.unacknowledged_files} file warning(s) still need your
           acknowledgement.
         </p>
+        <p>
+          A version acknowledgement expires when the file changes. "Don't warn
+          again for this path" also covers future changes and replacement files
+          at that exact path, but not renamed paths or other files. You can
+          uncheck it here to restore warnings. Neither choice excludes anything
+          from backups.
+        </p>
         <ul style={{ paddingInlineStart: 20, marginBottom: 8 }}>
           {coverage.files.map((file) => (
             <li key={file.path_hex} style={{ marginBottom: 12, minWidth: 0 }}>
@@ -186,15 +198,35 @@ export default function BackupCoveragePanel({
                   }
                 />
                 <span>
-                  I understand this file is not backed up:{" "}
-                  {excludedPathLabel(file.path_hex)}
+                  Acknowledge this version; I understand this file is not backed
+                  up: {excludedPathLabel(file.path_hex)}
                 </span>
               </label>
               {file.acknowledgement_key == null && (
                 <div>
                   File identity could not be verified. This warning cannot be
-                  acknowledged yet.
+                  acknowledged yet by version.
                 </div>
+              )}
+              {acknowledgePath && file.path_acknowledgement_key && (
+                <label
+                  style={{ display: "flex", alignItems: "baseline", gap: 8 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={file.path_acknowledged ?? false}
+                    disabled={busy != null}
+                    onChange={() =>
+                      void perform(file.path_hex, () =>
+                        acknowledgePath(file, file.path_acknowledged ?? false),
+                      )
+                    }
+                  />
+                  <span>
+                    Don't warn again for this path:{" "}
+                    {excludedPathLabel(file.path_hex)}
+                  </span>
+                </label>
               )}
               <details style={{ color: COLORS.GRAY_M }}>
                 <summary>Exact path bytes</summary>

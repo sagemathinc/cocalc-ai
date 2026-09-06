@@ -12,7 +12,7 @@ let dir: string;
 let paths: string[];
 let spy: jest.SpyInstance;
 
-async function fixture(count = 123, duplicate = false) {
+async function fixture(count = 123, duplicate = false, version = 1) {
   const header = {
     schema_version: 1,
     type: "header",
@@ -37,7 +37,7 @@ async function fixture(count = 123, duplicate = false) {
       apparent_bytes: "1099511627776",
       file_version: {
         inode: String(i + 1),
-        mtime_ns: "1",
+        mtime_ns: String(version),
         ctime_ns: "2",
         uid: 1000,
         gid: 1000,
@@ -113,6 +113,29 @@ beforeEach(async () => {
   }) as typeof original);
 });
 
+it("keeps exact-path consent across version and policy changes without weakening version consent", async () => {
+  let previous!: {
+    acknowledgement_key: string | null;
+    path_acknowledgement_key: string;
+  };
+  await withBackupExclusionIndex(await fixture(1), async (index) => {
+    previous = index.page().files[0];
+  });
+  const changed = await fixture(1, false, 2);
+  changed.binding.policy_sha256 = "e".repeat(64);
+  await withBackupExclusionIndex(changed, async (index) => {
+    const next = index.page().files[0];
+    expect(next.acknowledgement_key).not.toBe(previous.acknowledgement_key);
+    expect(next.path_acknowledgement_key).toBe(
+      previous.path_acknowledgement_key,
+    );
+    expect(index.countAcknowledged([previous.acknowledgement_key!])).toBe("0");
+    expect(
+      index.countAcknowledged([], [previous.path_acknowledgement_key]),
+    ).toBe("1");
+  });
+});
+
 afterEach(async () => {
   spy.mockRestore();
   for (const path of paths)
@@ -168,6 +191,17 @@ it("indexes once, pages all raw paths and fences handles after the lease", async
       ]),
     ).toBe("1");
     expect(index.countAcknowledged([])).toBe("0");
+    const pathKey = first.files[0].path_acknowledgement_key;
+    expect(pathKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(index.countAcknowledged([], [pathKey, pathKey])).toBe("1");
+    expect(
+      index.countAcknowledged([first.files[0].acknowledgement_key!], [pathKey]),
+    ).toBe("1");
+    expect(index.countAcknowledged([pathKey])).toBe("0");
+    expect(
+      index.countAcknowledged([], [first.files[0].acknowledgement_key!]),
+    ).toBe("0");
+    expect(() => index.countAcknowledged([], ["bad"])).toThrow();
     expect(() => index.countAcknowledged([null as any])).toThrow();
     expect(index.has({ ...first.files[0], apparent_bytes: "5" })).toBe(false);
     expect(

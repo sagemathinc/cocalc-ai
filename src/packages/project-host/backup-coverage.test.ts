@@ -94,6 +94,7 @@ it("uses protected evidence and returns only bounded public fields", async () =>
     }),
     undefined,
     [],
+    [],
   );
   expect(JSON.stringify(result)).not.toContain("authorization");
   expect(JSON.stringify(result)).not.toContain("report_path");
