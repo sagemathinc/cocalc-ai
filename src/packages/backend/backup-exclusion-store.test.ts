@@ -3,6 +3,7 @@ import { readFile, writeFile, stat } from "node:fs/promises";
 import filesystem from "node:fs/promises";
 import { dirname } from "node:path";
 import { backupReportHeaderSha256 } from "./backup-exclusion-report";
+import { readIndexedBackupExclusionReport } from "./backup-exclusion-index";
 import {
   backupExclusionObjectKey,
   readBackupExclusionReport,
@@ -165,6 +166,25 @@ afterEach(async () => {
     await expect(stat(dir)).rejects.toMatchObject({ code: "ENOENT" });
   for (const path of temporaryPaths)
     await expect(stat(dirname(path))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("reconstructs a bounded paging index from durable evidence without the producer file", async () => {
+  const { binding } = fixture();
+  await storeBackupExclusionReport({ ...options(binding), chunks: chunks() });
+  const uploads = put.mock.calls.length;
+  const reads = get.mock.calls.length;
+  await readIndexedBackupExclusionReport(
+    { ...options(binding), max_index_bytes: 65536 },
+    async (index) => {
+      const first = index.page();
+      expect(first.files[0].path_hex).toBe("ff0a2a");
+      expect(first.next_cursor).toBeNull();
+      expect(index.has(first.files[0])).toBe(true);
+      expect(index.page()).toEqual(first);
+      expect(get).toHaveBeenCalledTimes(reads + 1);
+      expect(put).toHaveBeenCalledTimes(uploads);
+    },
+  );
 });
 
 it("stores and independently reads a bound, lossless report with private bounded staging", async () => {

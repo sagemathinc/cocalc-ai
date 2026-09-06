@@ -246,6 +246,18 @@ not a completion claim or deployment approval. Production remains unchanged.
   Abandoned reservations still require reconciliation; central spool health and
   evidence-bucket retention fences remain outstanding. This is not deployment.
 
+- A bounded private SQLite report index now supports 50-entry keyset pages,
+  exact raw-byte path lookups, source-bound cursors and a read-only lease.
+  Full report hash/footer validation precedes exposing any indexed rows; failed
+  validation, duplicate paths, index-size overflow and consumer failure remove
+  temporary state. SQLite page-count and cache-size limits bound index expansion
+  independently of report size. The durable object reader can rebuild this
+  disposable index after producer-file loss, then serve repeated pages without
+  rescanning/downloading the report. All 117 focused backend evidence/index/store
+  tests and the backend typecheck pass. This is the paging engine, not yet the
+  authorized project-host API or its aggregate bounded session cache; those and
+  account acknowledgements must be connected before mounting the existing UI.
+
 Next integration work is abandoned-report reconciliation and bucket-retention fencing,
 durable failed-attempt status, paginated report access and account-specific UI
 acknowledgements, then protected quota-enforced restore staging and early/final

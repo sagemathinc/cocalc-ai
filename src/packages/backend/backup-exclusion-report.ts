@@ -104,8 +104,9 @@ function relativePathHex(value: unknown, maxDepth: bigint): string {
  * Verify a protected Rustic v1 report without accumulating its full path list.
  * Expected digests MUST come from trusted backup metadata, not the downloaded
  * report itself. This validates inventory, not backup success, source freshness,
- * selection authorization, or restore capacity. No callbacks expose a prefix as
- * complete evidence; callers receive a result only after EOF and hash checks.
+ * selection authorization, or restore capacity. A staging sink may build a
+ * private index, but MUST discard it on failure and never expose provisional
+ * entries. Only the resolved result, after EOF and hash checks, is verified.
  */
 export async function verifyBackupExclusionReport({
   chunks,
@@ -117,6 +118,7 @@ export async function verifyBackupExclusionReport({
   max_entries,
   max_path_depth,
   sample_limit = 20,
+  stage_entry,
 }: {
   chunks: AsyncIterable<Uint8Array>;
   sha256: string;
@@ -127,6 +129,8 @@ export async function verifyBackupExclusionReport({
   max_entries: number;
   max_path_depth: number;
   sample_limit?: number;
+  // Internal private-index construction only, never a UI/publication callback.
+  stage_entry?: (entry: BackupExclusionSample) => void;
 }): Promise<VerifiedBackupExclusionInventory> {
   for (const digest of [sha256, header_sha256, policy_sha256]) {
     if (!digestPattern.test(digest)) invalid();
@@ -211,7 +215,7 @@ export async function verifyBackupExclusionReport({
       )
         invalid();
     }
-    if (sample.length < sample_limit) {
+    if (sample.length < sample_limit || stage_entry) {
       const reliable =
         [null, undefined, "yes"].includes(
           object(header.save_options)["set-ctime"],
@@ -233,11 +237,13 @@ export async function verifyBackupExclusionReport({
             )
             .digest("hex")
         : null;
-      sample.push({
+      const entry = {
         path_hex,
         apparent_bytes: size.toString(),
         acknowledgement_key,
-      });
+      };
+      if (sample.length < sample_limit) sample.push({ ...entry });
+      stage_entry?.(entry);
     }
   };
 

@@ -100,13 +100,15 @@ export function backupExclusionObjectKey(
   return `${PREFIX}/${copy.project_id}/${copy.backup_id}/${backupReportHeaderSha256(copy)}.ndjson`;
 }
 
-interface StoreOptions {
+export interface BackupExclusionStoreOptions {
   auth: R2ObjectStoreAuth;
   binding: BackupExclusionBinding;
   limits: BackupExclusionReadLimits;
   timeout_ms: number;
   signal?: AbortSignal;
 }
+
+type StoreOptions = BackupExclusionStoreOptions;
 
 function capture(options: StoreOptions) {
   const binding = copyBinding(options.binding);
@@ -289,24 +291,44 @@ export async function readBackupExclusionReport<T>(
     chunks: AsyncIterable<Uint8Array>,
   ) => Promise<T>,
 ): Promise<T> {
+  return await withVerifiedBackupExclusionFile(
+    options,
+    async (report, path, signal) => {
+      const stream = createReadStream(path, { signal });
+      try {
+        return await consume(report, stream);
+      } finally {
+        stream.destroy();
+      }
+    },
+  );
+}
+
+// Internal storage/index integration. The path is a private temporary file, not
+// a caller-selected filesystem path and not a public download URL. Consumers
+// must complete all reads within this callback; cleanup owns its lifetime.
+export async function withVerifiedBackupExclusionFile<T>(
+  options: StoreOptions,
+  consume: (
+    report: StoredBackupExclusionReport,
+    path: string,
+    signal: AbortSignal,
+  ) => Promise<T>,
+): Promise<T> {
   const captured = capture(options);
   const dir = await mkdtemp(join(tmpdir(), "cocalc-exclusion-read-"));
   try {
     const path = join(dir, "report.ndjson");
     const inventory = await download(path, captured);
-    const stream = createReadStream(path, { signal: captured.signal });
-    try {
-      return await consume(
-        {
-          binding: captured.binding,
-          object_key: captured.object_key,
-          inventory,
-        },
-        stream,
-      );
-    } finally {
-      stream.destroy();
-    }
+    return await consume(
+      {
+        binding: captured.binding,
+        object_key: captured.object_key,
+        inventory,
+      },
+      path,
+      captured.signal,
+    );
   } finally {
     await rm(dir, { force: true, recursive: true });
   }
