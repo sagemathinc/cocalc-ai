@@ -466,6 +466,7 @@ export const DiffFileSection = memo(function DiffFileSection({
   visibleLineLimit,
   editorHistoryScope,
   onOpenFile,
+  onViewFile,
   onShowMoreLines,
   activeDraftAnchorId,
   activeDraftBody,
@@ -497,6 +498,7 @@ export const DiffFileSection = memo(function DiffFileSection({
   visibleLineLimit: number;
   editorHistoryScope: string;
   onOpenFile: (filePath: string) => Promise<void>;
+  onViewFile?: (filePath: string) => void;
   onShowMoreLines: (sectionId: string) => void;
   activeDraftAnchorId?: string;
   activeDraftBody: string;
@@ -554,8 +556,16 @@ export const DiffFileSection = memo(function DiffFileSection({
         </Typography.Text>
       ),
       actions: (
-        <Button size="small" onClick={() => void onOpenFile(file.path)}>
-          Open
+        <Button
+          size="small"
+          disabled={!isHeadSelected && !onViewFile}
+          onClick={() =>
+            isHeadSelected
+              ? void onOpenFile(file.path)
+              : onViewFile?.(file.path)
+          }
+        >
+          {isHeadSelected ? "Open" : "View at this revision"}
         </Button>
       ),
       duration: 5,
@@ -634,8 +644,16 @@ export const DiffFileSection = memo(function DiffFileSection({
               ? ` · showing ${visibleLines.length.toLocaleString()} / ${file.lines.length.toLocaleString()} diff lines`
               : ""}
           </Typography.Text>
-          <Button size="small" onClick={() => void onOpenFile(file.path)}>
-            Open
+          <Button
+            size="small"
+            disabled={!isHeadSelected && !onViewFile}
+            onClick={() =>
+              isHeadSelected
+                ? void onOpenFile(file.path)
+                : onViewFile?.(file.path)
+            }
+          >
+            {isHeadSelected ? "Open" : "View at this revision"}
           </Button>
         </Space>
       </div>

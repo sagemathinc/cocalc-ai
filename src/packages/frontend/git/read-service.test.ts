@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GitReadService, GIT_READ_LIMIT } from "./read-service";
 import type { GitReadExecutor } from "./read-service";
+import { loadGitHistoricalFile } from "./historical-file";
 import {
   parseHistory,
   parseRawDiff,
@@ -123,6 +124,55 @@ describe("read-only Git fixtures", () => {
   });
 
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  test("historical opening pins unchanged/off-branch files and deleted/renamed sources without a checkout", async () => {
+    const index = readFileSync(join(main, ".git/index"));
+    const status = git(main, ["status", "--porcelain=v1"]);
+    const request = {
+      projectId: "project",
+      cwd: detached,
+      commit: featureTip.slice(0, 10),
+    };
+    const unchanged = await loadGitHistoricalFile(service, {
+      ...request,
+      path: "unchanged.md",
+    });
+    expect(unchanged.contents).toBe("# historical rich document\n");
+    expect(unchanged.source.commit).toBe(featureTip);
+    const deleted = await loadGitHistoricalFile(service, {
+      ...request,
+      path: "-dash.ts",
+    });
+    expect(deleted.source.commit).toBe(root);
+    expect(deleted.contents).toBe("original -dash.ts\n");
+    const renamed = await loadGitHistoricalFile(service, {
+      ...request,
+      path: "renamed name.ts",
+    });
+    expect(renamed.source.path).toBe("renamed name.ts");
+    expect(renamed.source.commit).toBe(featureTip);
+    // An exact old-side descriptor does not redirect to the new name/revision.
+    const old = await loadGitHistoricalFile(service, {
+      source: {
+        kind: "git",
+        repository,
+        commit: root,
+        path: "space name.ts",
+      },
+    });
+    expect(old.source.path).toBe("space name.ts");
+    await expect(
+      loadGitHistoricalFile(service, {
+        source: { ...old.source, blob: "0".repeat(40) },
+      }),
+    ).rejects.toMatchObject({ kind: "incomplete" });
+    await expect(
+      loadGitHistoricalFile(service, { ...request, path: "missing.ts" }),
+    ).rejects.toMatchObject({ kind: "missing" });
+    expect(readFileSync(join(main, ".git/index"))).toEqual(index);
+    expect(git(main, ["status", "--porcelain=v1"])).toBe(status);
+    expect(git(detached, ["rev-parse", "HEAD"]).trim()).toBe(root);
+  });
 
   test("shared identity, distinct worktrees, detached and removed metadata", async () => {
     const first = await service.discover("project", main);

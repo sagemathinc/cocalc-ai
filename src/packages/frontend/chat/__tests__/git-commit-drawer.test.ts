@@ -1727,61 +1727,70 @@ describe("git commit drawer merge commit formatting", () => {
     );
   });
 
-  it("copies sticky diff file paths instead of opening immediately", async () => {
-    const openFile = jest.fn(async () => {});
-    render(
-      React.createElement(GitDiffFilesPanel, {
-        files: [{ path: "src/example.ts", lines: stableDiffLines }],
-        drawerScrollParent: null,
-        virtuosoRef: { current: null },
-        fontSize: 14,
-        editorTheme: null,
-        reviewEditorScope: "scope:test",
-        inlineCommentsByFile: new Map(),
-        showResolvedComments: false,
-        isHeadSelected: false,
-        visibleDiffLinesByFile: {},
-        onOpenFile: openFile,
-        onShowMoreLines: () => {},
-        activeDraftBody: "",
-        activeEditingBody: "",
-        pendingKey: "",
-        onOpenDraft: () => {},
-        onDraftBodyChange: () => {},
-        onCancelDraft: () => {},
-        onOpenEdit: () => {},
-        onEditingBodyChange: () => {},
-        onCancelEdit: () => {},
-        onCreateComment: noopAsync,
-        onUpdateComment: noopAsync,
-        onResolveComment: noopAsync,
-        onReopenComment: noopAsync,
-        diffFindMatchCounts: new Map(),
-        diffFindMatchedLineIndexes: new Map(),
-      }),
-    );
-
-    await act(async () => {
-      fireEvent.click(
-        screen.getByRole("button", {
-          name: "src/example.ts",
+  it.each([true, false])(
+    "copies sticky paths and opens the correct source (working state: %s)",
+    async (isHeadSelected) => {
+      const openFile = jest.fn(async () => {});
+      const viewFile = jest.fn();
+      render(
+        React.createElement(GitDiffFilesPanel, {
+          files: [{ path: "src/example.ts", lines: stableDiffLines }],
+          drawerScrollParent: null,
+          virtuosoRef: { current: null },
+          fontSize: 14,
+          editorTheme: null,
+          reviewEditorScope: "scope:test",
+          inlineCommentsByFile: new Map(),
+          showResolvedComments: false,
+          isHeadSelected,
+          visibleDiffLinesByFile: {},
+          onOpenFile: openFile,
+          onViewFile: viewFile,
+          onShowMoreLines: () => {},
+          activeDraftBody: "",
+          activeEditingBody: "",
+          pendingKey: "",
+          onOpenDraft: () => {},
+          onDraftBodyChange: () => {},
+          onCancelDraft: () => {},
+          onOpenEdit: () => {},
+          onEditingBodyChange: () => {},
+          onCancelEdit: () => {},
+          onCreateComment: noopAsync,
+          onUpdateComment: noopAsync,
+          onResolveComment: noopAsync,
+          onReopenComment: noopAsync,
+          diffFindMatchCounts: new Map(),
+          diffFindMatchedLineIndexes: new Map(),
         }),
       );
-    });
 
-    expect(mockCopyTextToClipboard).toHaveBeenCalledWith({
-      text: "src/example.ts",
-    });
-    expect(openFile).not.toHaveBeenCalled();
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", {
+            name: "src/example.ts",
+          }),
+        );
+      });
 
-    const notification = mockNotificationSuccess.mock.calls.at(-1)?.[0];
-    expect(notification?.title).toBe("Copied file path");
+      expect(mockCopyTextToClipboard).toHaveBeenCalledWith({
+        text: "src/example.ts",
+      });
+      expect(openFile).not.toHaveBeenCalled();
+      expect(viewFile).not.toHaveBeenCalled();
 
-    await act(async () => {
-      notification.actions.props.onClick();
-    });
-    expect(openFile).toHaveBeenCalledWith("src/example.ts");
-  });
+      const notification = mockNotificationSuccess.mock.calls.at(-1)?.[0];
+      expect(notification?.title).toBe("Copied file path");
+
+      await act(async () => {
+        notification.actions.props.onClick();
+      });
+      expect(isHeadSelected ? openFile : viewFile).toHaveBeenCalledWith(
+        "src/example.ts",
+      );
+      expect(isHeadSelected ? viewFile : openFile).not.toHaveBeenCalled();
+    },
+  );
 
   it("builds stable file section ids for changed-file navigation", () => {
     expect(buildGitReviewFileSectionId("src/example.ts", 0)).toMatch(

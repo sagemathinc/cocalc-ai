@@ -212,9 +212,33 @@ Chat review URL navigation implemented:
   unrelated parameters. Run `git/review-route.browser-test.mjs` with an explicit
   chat URL and commit; it uses CDP and creates/closes only its own test tab.
 
+Exact historical file opening implemented in the existing Git drawer:
+
+- `git/historical-file.ts` resolves abbreviated requests through the Git facade,
+  pins the commit, resolves NUL-delimited changed-file paths, and reads the exact
+  blob. Deletions explicitly show the parent revision; explicit old/new GitSource
+  descriptors retain their side. Unchanged files do not need a file-log entry.
+  Missing/unsupported objects and ambiguous path matches fail without a live-file
+  fallback. Expected blob IDs are checked when supplied.
+- `time-travel-editor/git-revision-modal.tsx` uses TimeTravel's read-only rich
+  viewers directly, without initializing a sync document or opening/creating a
+  working file. Original source text has a validated source-line jump. Linked
+  resources are explicitly labeled as potentially live/external; the historical
+  document itself is immutable. Stale successes/errors cannot replace a new
+  target, and closing/changing the owning review dismisses the modal.
+- Historical sticky-header and copy-notification actions now say "View at this
+  revision". Working changes retain "Open". A separate historical working-copy
+  edit action remains unavailable until selected-worktree validation is wired.
+- Real-Git fixtures cover off-branch unchanged Markdown, deleted and renamed
+  paths, explicit old sides, missing files, expected-blob mismatch, and unchanged
+  checkout/index/dirty state. Focused suites: 90 tests passed. Signed-in Chrome
+  verifies actual historical Markdown, original CodeMirror source/read-only
+  behavior, line-50 navigation, Escape/focus restoration, and unchanged review
+  URL. Run `git/historical-file.browser-test.mjs <chat-url> <commit> <md-path>`.
+
 Still pending: remaining Slate lifecycle checks and native diff clipboard tests;
 production renderer toggle and adapter wiring; worktree/ref/comparison controls;
-arbitrary-revision TimeTravel wiring; comparison persistence and canonical-key
+historical source integration in the new renderer; comparison persistence and canonical-key
 migration; validated agent routing; activity adaptation; release acceptance and
 default/cleanup. The service is not yet wired into the existing drawer.
 

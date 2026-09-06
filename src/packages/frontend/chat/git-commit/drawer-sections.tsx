@@ -1201,6 +1201,7 @@ type GitDiffFilesPanelProps = {
   isHeadSelected: boolean;
   visibleDiffLinesByFile: Record<string, number>;
   onOpenFile: (filePath: string) => Promise<void>;
+  onViewFile?: (filePath: string) => void;
   onShowMoreLines: (sectionId: string) => void;
   activeDraftAnchorId?: string;
   activeDraftBody: string;
@@ -1234,6 +1235,7 @@ export const GitDiffFilesPanel = memo(function GitDiffFilesPanel({
   isHeadSelected,
   visibleDiffLinesByFile,
   onOpenFile,
+  onViewFile,
   onShowMoreLines,
   activeDraftAnchorId,
   activeDraftBody,
@@ -1277,6 +1279,7 @@ export const GitDiffFilesPanel = memo(function GitDiffFilesPanel({
               visibleDiffLinesByFile[sectionId],
             )}
             onOpenFile={onOpenFile}
+            onViewFile={onViewFile}
             onShowMoreLines={onShowMoreLines}
             activeDraftAnchorId={activeDraftAnchorId}
             activeDraftBody={activeDraftBody}

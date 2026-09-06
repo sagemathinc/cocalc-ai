@@ -148,6 +148,8 @@ import {
 import "./git-commit-drawer.css";
 import type { ReactNode } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
+import { GitRevisionModal } from "@cocalc/frontend/frame-editors/time-travel-editor/git-revision-modal";
+import type { GitHistoricalFileRequest } from "@cocalc/frontend/git/historical-file";
 
 export { buildGitLogArgs, buildGitShowArgs, parseGitLogOutput };
 export {
@@ -463,6 +465,10 @@ export function GitCommitDrawer({
     DEFAULT_CONTEXT_LINES,
   );
   const [loading, setLoading] = useState(false);
+  const [historicalFile, setHistoricalFile] = useState<{
+    scope: string;
+    request: GitHistoricalFileRequest;
+  }>();
   const [error, setError] = useState<string>("");
   const [data, setData] = useState<GitShowParsed | undefined>(undefined);
   const [loadedCommit, setLoadedCommit] = useState<string | undefined>(
@@ -641,6 +647,9 @@ export function GitCommitDrawer({
     const raw = `${projectId ?? "no-project"}|${sourcePath ?? ""}|${cwd}|${commitKey}`;
     return hashGitCommitValue(raw);
   }, [projectId, sourcePath, cwd, commit]);
+  useEffect(() => {
+    setHistoricalFile(undefined);
+  }, [open, scrollStorageId]);
 
   useEffect(() => {
     if (open && !drawerViewWasOpenRef.current) {
@@ -3199,6 +3208,20 @@ export function GitCommitDrawer({
                   isHeadSelected={isHeadSelected}
                   visibleDiffLinesByFile={visibleDiffLinesByFile}
                   onOpenFile={openFile}
+                  onViewFile={
+                    projectId && commit && !isHeadSelected
+                      ? (path) =>
+                          setHistoricalFile({
+                            scope: scrollStorageId,
+                            request: {
+                              projectId,
+                              cwd: repoRoot || currentData.repoRoot || cwd,
+                              commit,
+                              path,
+                            },
+                          })
+                      : undefined
+                  }
                   onShowMoreLines={showMoreDiffLines}
                   activeDraftAnchorId={activeDraftAnchorId}
                   activeDraftBody={activeInlineDraftBody}
@@ -3243,6 +3266,15 @@ export function GitCommitDrawer({
           </div>
         ) : null}
       </div>
+      <GitRevisionModal
+        request={
+          open && historicalFile?.scope === scrollStorageId
+            ? historicalFile.request
+            : undefined
+        }
+        onClose={() => setHistoricalFile(undefined)}
+        fontSize={effectiveFontSize}
+      />
     </Drawer>
   );
 }
