@@ -9,11 +9,14 @@ import { validateBackupOutcomeReceipt } from "@cocalc/backend/backup-producer-ev
 import type { SignedR2ObjectDownload } from "@cocalc/backend/r2";
 import type { BackupOutcomeReceipt } from "@cocalc/util/types/backup-evidence";
 import type { BackupCoveragePage } from "@cocalc/util/types/backup-coverage";
+import type { BackupCoverageReportChunk } from "@cocalc/util/types/backup-coverage";
+import { validateBackupAcknowledgementKeys } from "@cocalc/util/backup-acknowledgements";
 
 export interface BackupCoverageRequest {
   project_id: string;
   backup_id?: string;
   cursor?: string | null;
+  acknowledgement_keys?: string[];
 }
 
 /** Owning-bay access must be resolved on EVERY request, including cache hits. */
@@ -36,6 +39,7 @@ export class ProjectBackupCoverage {
     project_id,
     backup_id,
     cursor,
+    acknowledgement_keys,
   }: BackupCoverageRequest): Promise<BackupCoveragePage | null> {
     if (
       typeof project_id !== "string" ||
@@ -53,6 +57,7 @@ export class ProjectBackupCoverage {
     // backup arrives while a user browses. Never silently switch to the latest.
     if (cursor != null && !backup_id)
       throw new Error("Backup cursor requires an exact snapshot");
+    const keys = validateBackupAcknowledgementKeys(acknowledgement_keys ?? []);
     const outcome = await this.access({ project_id, backup_id });
     if (!outcome) return null; // Unknown/legacy evidence is NOT complete coverage.
     const receipt = validateBackupOutcomeReceipt(outcome.receipt, project_id);
@@ -69,6 +74,7 @@ export class ProjectBackupCoverage {
         timeout_ms: 120000,
       },
       cursor,
+      keys,
     );
     if (page.excluded_files !== producer.excluded_files)
       throw new Error("Backup report count does not match protected evidence");
@@ -85,6 +91,39 @@ export class ProjectBackupCoverage {
 
   close() {
     return this.cache.close();
+  }
+
+  async reportChunk({
+    project_id,
+    backup_id,
+    offset,
+  }: {
+    project_id: string;
+    backup_id: string;
+    offset: number;
+  }): Promise<BackupCoverageReportChunk> {
+    if (
+      !/^[0-9a-f]{64}$/.test(backup_id) ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0
+    )
+      throw new Error("Invalid backup report download request");
+    const outcome = await this.access({ project_id, backup_id });
+    if (!outcome?.report_download)
+      throw new Error("Backup report is unavailable");
+    const receipt = validateBackupOutcomeReceipt(outcome.receipt, project_id);
+    if (receipt.producer.binding.backup_id !== backup_id)
+      throw new Error("Backup report snapshot mismatch");
+    const chunk = await this.cache.reportChunk(
+      {
+        binding: receipt.producer.binding,
+        download: outcome.report_download,
+        limits: receipt.producer.read_limits,
+        timeout_ms: 120000,
+      },
+      offset,
+    );
+    return { backup_id, ...chunk };
   }
   get status() {
     return this.cache.status;

@@ -3,12 +3,13 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { createReadStream } from "node:fs";
+import { createReadStream, openSync, closeSync, readSync } from "node:fs";
 import { mkdtemp, open, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { cleanupBackupEvidence } from "./backup-exclusion-cleanup";
+import { validateBackupAcknowledgementKeys } from "@cocalc/util/backup-acknowledgements";
 import {
   backupExclusionObjectKey,
   withBackupEvidenceAbort,
@@ -43,6 +44,13 @@ export interface BackupExclusionIndex {
   // Read-only access. Cursor is a position, NOT project/account authorization.
   page(cursor?: string | null): BackupExclusionPage;
   has(entry: BackupExclusionSample): boolean;
+  countAcknowledged(keys: string[]): string;
+  reportChunk(offset: number): {
+    data_base64: string;
+    next_offset: number | null;
+    bytes: number;
+    sha256: string;
+  };
 }
 
 // Authorization and a protected owning-bay binding are required before entry.
@@ -119,6 +127,7 @@ export async function withBackupExclusionIndex<T>(
   const identity = backupReportHeaderSha256(binding);
   const dir = await mkdtemp(join(tmpdir(), "cocalc-exclusion-index-"));
   let db: DatabaseSync | undefined;
+  let reportFd: number | undefined;
   let active = false;
   try {
     const indexPath = join(dir, "index.sqlite");
@@ -169,8 +178,12 @@ export async function withBackupExclusionIndex<T>(
       chunks.destroy();
     }
     if (inventory.bytes !== binding.report.bytes) invalid();
+    reportFd = openSync(path, "r");
     signal.throwIfAborted();
-    db.exec("COMMIT; PRAGMA query_only=ON;");
+    // Build before publishing the handle, under the same physical page bound.
+    db.exec(
+      "CREATE INDEX acknowledgement_idx ON excluded (acknowledgement_key); COMMIT; PRAGMA query_only=ON;",
+    );
     const bytes = (await stat(indexPath)).size;
     if (bytes > max_index_bytes) invalid();
     const select = db.prepare(
@@ -178,6 +191,9 @@ export async function withBackupExclusionIndex<T>(
     );
     const find = db.prepare(
       "SELECT apparent_bytes, acknowledgement_key FROM excluded WHERE path = ?",
+    );
+    const acknowledged = db.prepare(
+      "SELECT COUNT(*) AS count FROM excluded WHERE acknowledgement_key IN (SELECT value FROM json_each(?))",
     );
     const usable = () => {
       if (!active) throw new Error("Backup exclusion index lease has ended");
@@ -188,6 +204,35 @@ export async function withBackupExclusionIndex<T>(
       consume({
         bytes,
         inventory: structuredClone(inventory),
+        reportChunk(offset) {
+          usable();
+          if (
+            !Number.isSafeInteger(offset) ||
+            offset < 0 ||
+            offset >= binding.report.bytes
+          )
+            invalid();
+          const buffer = Buffer.alloc(
+            Math.min(65536, binding.report.bytes - offset),
+          );
+          const size = readSync(reportFd!, buffer, 0, buffer.length, offset);
+          if (size !== buffer.length)
+            throw new Error("Verified backup report became unreadable");
+          const next = offset + size;
+          return {
+            data_base64: buffer.toString("base64"),
+            next_offset: next === binding.report.bytes ? null : next,
+            bytes: binding.report.bytes,
+            sha256: binding.report.sha256,
+          };
+        },
+        countAcknowledged(keys) {
+          usable();
+          const captured = validateBackupAcknowledgementKeys(keys);
+          // Only a verified non-null identity can match. Duplicate/stale keys
+          // cannot inflate this count or quiet newly changed file versions.
+          return String(acknowledged.get(JSON.stringify(captured))!.count);
+        },
         page(cursor) {
           usable();
           let after = 0;
@@ -233,7 +278,13 @@ export async function withBackupExclusionIndex<T>(
   } finally {
     active = false;
     try {
-      await cleanupBackupEvidence(() => db?.close());
+      await cleanupBackupEvidence(() => {
+        try {
+          db?.close();
+        } finally {
+          if (reportFd !== undefined) closeSync(reportFd);
+        }
+      });
     } finally {
       await cleanupBackupEvidence(() =>
         rm(dir, { recursive: true, force: true }),

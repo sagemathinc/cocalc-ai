@@ -74,7 +74,11 @@ export class BackupExclusionCache {
     };
   }
 
-  async page(options: BackupExclusionStoreOptions, cursor?: string | null) {
+  async page(
+    options: BackupExclusionStoreOptions,
+    cursor?: string | null,
+    acknowledgementKeys?: string[],
+  ) {
     // Reject syntactically invalid/cross-report cursors before downloading.
     backupExclusionObjectKey(options.binding);
     if (
@@ -84,7 +88,11 @@ export class BackupExclusionCache {
         !cursor.startsWith(backupReportHeaderSha256(options.binding) + ":"))
     )
       throw new Error("Invalid backup report cursor");
-    return (await this.index(options)).page(cursor);
+    const index = await this.index(options);
+    return {
+      ...index.page(cursor),
+      acknowledged_files: index.countAcknowledged(acknowledgementKeys ?? []),
+    };
   }
 
   async has(
@@ -92,6 +100,16 @@ export class BackupExclusionCache {
     entry: BackupExclusionSample,
   ) {
     return (await this.index(options)).has(entry);
+  }
+
+  async reportChunk(options: BackupExclusionStoreOptions, offset: number) {
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      offset >= options.binding.report.bytes
+    )
+      throw new Error("Invalid backup report offset");
+    return (await this.index(options)).reportChunk(offset);
   }
 
   private async index(options: BackupExclusionStoreOptions) {

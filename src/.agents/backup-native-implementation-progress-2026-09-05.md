@@ -307,6 +307,40 @@ activation has been enabled.
 
 ## Still Required
 
+### September 6 UI Integration Checkpoint
+
+- `0efc5be17e` connects protected historical outcome reads and exact signed GET
+  capabilities to a bounded project-host report cache and direct project archive
+  service. Every request rechecks owning-bay placement before cache reuse. Cache
+  slots include pending work, reject capacity overflow, expire on fixed leases,
+  and remain charged after uncertain cleanup. Crash-leftover disk containment
+  remains an activation requirement; this is not solved by process-local counts.
+- The recovery settings panel is now mounted and wired to report pages, bounded
+  chunk downloads with final browser SHA-256 verification, and durable personal
+  acknowledgements. Account-home routing, collaborator authorization, rehome
+  write fences and portable acknowledgement state are implemented. Only current
+  verified file-version keys count; stale, duplicate or unknown keys cannot
+  suppress new warnings. Acknowledgements never authorize omissions.
+- Provisional UI safety bounds: at most 10,000 personal acknowledgement keys per
+  account, one key per explicit mutation, 50 report entries per page, 64 KiB per
+  download response, and 64 MiB accumulated browser download. Host browsing has
+  no implicit activation default: `COCALC_BACKUP_REPORT_CACHE_LIMITS` must supply
+  qualified report/count/index/lease bounds. These are not production backup
+  eligibility parameters, and browser downloads above their limit fail explicitly.
+- Focused checks passed: 23 frontend controller/panel/download cases, 53 backend
+  report/cache/index cases, 8 project-host coverage/routing cases, and 13 server
+  acknowledgement/home-bay/rehome cases. Frontend lint and frontend/server/host
+  typechecks pass. Browser keyboard/reflow and live Staging2 workflow validation
+  still remain; unit tests are not substitutes for those checks.
+- Staging2 browser-approved fresh auth was obtained on September 6 and verified
+  through `2026-09-06T21:58:31.281Z`. Both canary and shared hosts are running.
+  No Staging2 deployment or native/exclusion gate activation has occurred yet.
+- Side question: Alpha's read-only settings inspection confirms email enabled,
+  SendGrid configured (secret redacted), `help_email=help@cocalc.com`, and the
+  notification email lane inheriting the main backend. AI activity email defaults
+  off in account preferences; chat settings separately opt into turn-completion
+  notices. Actual user preferences, workers and delivery have not been verified.
+
 - Complete supervision across RootFS/fallback/copy paths, production policy
   installation/capability admission, and central retry/reporting integration.
   The root helper now supports durable per-repository/per-operation retries;
@@ -332,7 +366,8 @@ activation has been enabled.
   copies, and backup freshness before enabling exclusions.
 - Add early move/archive admission and final source/version/quota fences, so a
   known rejection never stops the project or changes placement first.
-- Add per-user/version warning acknowledgements and authorized exclusion reports.
+- Qualify the now-wired per-user/version warnings and report downloads live;
+  integrate failed-attempt status and crash-safe report cache activation.
 - Add default-false explicit copy exclusions across local/tar/Rustic, queues,
   RPCs, CLI and UI, preserving existing destinations at excluded paths.
 - Derive and test numeric candidates from worst-case references, tree/index

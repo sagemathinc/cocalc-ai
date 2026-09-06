@@ -145,6 +145,9 @@ describe("account rehome", () => {
     };
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (
+        sql.includes(
+          "CREATE TABLE IF NOT EXISTS account_backup_warning_acknowledgements",
+        ) ||
         sql.includes("CREATE TABLE IF NOT EXISTS account_rehome_operations") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_rehome_operations") ||
         sql.includes("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS") ||
@@ -171,6 +174,9 @@ describe("account rehome", () => {
         return { rows: [], rowCount: 1 };
       }
       if (
+        sql.includes(
+          'DELETE FROM "account_backup_warning_acknowledgements" WHERE account_id=$1',
+        ) ||
         sql.includes('DELETE FROM "account_project_index" WHERE account_id=$1')
       ) {
         return { rows: [], rowCount: 0 };
@@ -398,6 +404,9 @@ describe("account rehome", () => {
     ]);
     queryMock = jest.fn(async (sql: string, params?: any[]) => {
       if (
+        sql.includes(
+          "CREATE TABLE IF NOT EXISTS account_backup_warning_acknowledgements",
+        ) ||
         sql.includes("CREATE TABLE IF NOT EXISTS account_rehome_operations") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_rehome_operations") ||
         sql.includes("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS") ||
@@ -421,6 +430,21 @@ describe("account rehome", () => {
       }
       if (sql.includes('FROM "account_notification_index"')) {
         return { rows: [{ rows: [] }] };
+      }
+      if (sql.includes('FROM "account_backup_warning_acknowledgements"')) {
+        return {
+          rows: [
+            {
+              rows: [
+                {
+                  account_id: TARGET_ACCOUNT_ID,
+                  project_id: "11111111-1111-4111-8111-111111111111",
+                  key: "a".repeat(64),
+                },
+              ],
+            },
+          ],
+        };
       }
       if (sql.includes('FROM "remember_me"')) {
         return { rows: [{ rows: [] }] };
@@ -717,6 +741,13 @@ describe("account rehome", () => {
         target_account_id: TARGET_ACCOUNT_ID,
         source_bay_id: "bay-1",
         dest_bay_id: "bay-2",
+        account_backup_warning_acknowledgements: [
+          {
+            account_id: TARGET_ACCOUNT_ID,
+            project_id: "11111111-1111-4111-8111-111111111111",
+            key: "a".repeat(64),
+          },
+        ],
         membership_grants: [
           expect.objectContaining({
             id: "grant-1",
@@ -1087,5 +1118,25 @@ describe("account rehome", () => {
         }),
       ],
     });
+  });
+
+  it("rejects cross-account backup warning rows before changing destination state", async () => {
+    queryMock = jest.fn(async () => ({ rows: [], rowCount: 0 }));
+    const { copyAccountRehomeState } = await import("./rehome");
+    await expect(
+      copyAccountRehomeState({
+        target_account_id: TARGET_ACCOUNT_ID,
+        source_bay_id: "bay-2",
+        dest_bay_id: "bay-1",
+        account_backup_warning_acknowledgements: [
+          {
+            account_id: "11111111-1111-4111-8111-111111111111",
+            project_id: "11111111-1111-4111-8111-111111111111",
+            key: "a".repeat(64),
+          },
+        ],
+      }),
+    ).rejects.toThrow("Invalid portable backup warning preferences");
+    expect(queryMock).not.toHaveBeenCalled();
   });
 });

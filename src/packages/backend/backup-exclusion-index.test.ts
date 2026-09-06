@@ -133,6 +133,13 @@ it("indexes once, pages all raw paths and fences handles after the lease", async
     // Once built, pages do not read or rescan the source report.
     await rm(options.path);
     const first = index.page();
+    // The verified file descriptor survives unlinking the private staging path.
+    expect(index.reportChunk(0).bytes).toBeGreaterThan(0);
+    expect(
+      Buffer.from(index.reportChunk(0).data_base64, "base64").toString(),
+    ).toContain('"type":"header"');
+    expect(() => index.reportChunk(-1)).toThrow();
+    expect(() => index.reportChunk(Number.MAX_SAFE_INTEGER)).toThrow();
     expect(first.files).toHaveLength(50);
     expect(first.files[0].path_hex).toBe("ff0a30");
     expect(first.files[0].apparent_bytes).toBe("1099511627776");
@@ -150,6 +157,18 @@ it("indexes once, pages all raw paths and fences handles after the lease", async
       ).size,
     ).toBe(123);
     expect(index.has(first.files[0])).toBe(true);
+    expect(index.countAcknowledged([first.files[0].acknowledgement_key!])).toBe(
+      "1",
+    );
+    expect(
+      index.countAcknowledged([
+        first.files[0].acknowledgement_key!,
+        first.files[0].acknowledgement_key!,
+        "f".repeat(64),
+      ]),
+    ).toBe("1");
+    expect(index.countAcknowledged([])).toBe("0");
+    expect(() => index.countAcknowledged([null as any])).toThrow();
     expect(index.has({ ...first.files[0], apparent_bytes: "5" })).toBe(false);
     expect(
       index.has({ ...first.files[0], acknowledgement_key: "f".repeat(64) }),
@@ -160,6 +179,8 @@ it("indexes once, pages all raw paths and fences handles after the lease", async
     expect(index.page().excluded_files).toBe("123");
   });
   expect(() => held.page()).toThrow("lease has ended");
+  expect(() => held.countAcknowledged([])).toThrow("lease has ended");
+  expect(() => held.reportChunk(0)).toThrow("lease has ended");
 });
 
 it.each([0, 1, 50, 100])(

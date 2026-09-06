@@ -75,6 +75,7 @@ beforeEach(() => {
     files: outcome().receipt.sample,
     excluded_files: "1",
     next_cursor: null,
+    acknowledged_files: "0",
   });
 });
 
@@ -92,6 +93,7 @@ it("uses protected evidence and returns only bounded public fields", async () =>
       download: outcome().report_download,
     }),
     undefined,
+    [],
   );
   expect(JSON.stringify(result)).not.toContain("authorization");
   expect(JSON.stringify(result)).not.toContain("report_path");

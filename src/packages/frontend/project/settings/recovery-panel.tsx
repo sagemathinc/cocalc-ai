@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 import { useProjectMapField } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo, type IconName } from "@cocalc/frontend/components";
 import CreateBackup from "@cocalc/frontend/project/backups/create";
+import BackupCoverage from "@cocalc/frontend/project/backups/coverage";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import CreateSnapshot from "@cocalc/frontend/project/snapshots/create";
 import RestoreSnapshot from "@cocalc/frontend/project/snapshots/restore";
@@ -144,6 +145,7 @@ export function RecoveryPanel({
         description="Create a separate project copy without changing the current project."
         actions={<CloneProject project_id={project_id} />}
       />
+      {runtime.backups && <BackupCoverage project_id={project_id} />}
       {showDatastore && (
         <Datastore
           project_id={project_id}

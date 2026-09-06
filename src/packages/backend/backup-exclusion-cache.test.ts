@@ -57,6 +57,13 @@ beforeEach(() => {
       return await withBackupEvidenceAbort(opts.signal!, () =>
         consume({
           page: () => page,
+          countAcknowledged: () => "0",
+          reportChunk: () => ({
+            data_base64: "eA==",
+            next_offset: null,
+            bytes: 1,
+            sha256: "a".repeat(64),
+          }),
           has: () => false,
           bytes: 4096,
           inventory: {} as any,
@@ -75,8 +82,8 @@ afterEach(async () => {
 it("coalesces pending and ready pages without rereading the object", async () => {
   const first = cache.page(options());
   const second = cache.page(options());
-  expect(await first).toEqual(page);
-  expect(await second).toEqual(page);
+  expect(await first).toEqual({ ...page, acknowledged_files: "0" });
+  expect(await second).toEqual({ ...page, acknowledged_files: "0" });
   await cache.page(options());
   expect(read).toHaveBeenCalledTimes(1);
   expect(cache.status.reserved_bytes).toBe(98304);

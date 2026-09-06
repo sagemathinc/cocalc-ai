@@ -44,6 +44,11 @@ import {
   restoreAccountPersistState,
 } from "@cocalc/server/accounts/persist-portability";
 import { isValidUUID } from "@cocalc/util/misc";
+import { ensureBackupAcknowledgementsSchema } from "@cocalc/server/project-backup/acknowledgements";
+import {
+  MAX_BACKUP_ACKNOWLEDGEMENTS,
+  validateBackupAcknowledgementKeys,
+} from "@cocalc/util/backup-acknowledgements";
 
 const log = getLogger("server:accounts:rehome");
 const ACCOUNT_REHOME_OPERATIONS_TABLE = "account_rehome_operations";
@@ -55,6 +60,7 @@ const PORTABLE_STATE_TABLES = [
   "account_project_index",
   "account_collaborator_index",
   "account_notification_index",
+  "account_backup_warning_acknowledgements",
   "remember_me",
   "account_auth_sessions",
   "account_auth_challenges",
@@ -314,22 +320,24 @@ async function replacePortableRows({
       ? rows.map(({ revision: _sourceRevision, ...row }) => row)
       : rows;
   const primaryKey =
-    table === "account_project_index"
-      ? ["account_id", "project_id"]
-      : table === "account_collaborator_index"
-        ? ["account_id", "collaborator_account_id"]
-        : table === "account_notification_index"
-          ? ["account_id", "notification_id"]
-          : table === "remember_me"
-            ? ["hash"]
-            : table === "account_auth_sessions" ||
-                table === "account_impersonation_sessions"
-              ? ["session_hash"]
-              : table === "api_keys"
-                ? ["key_id"]
-                : table === "account_entitlement_overrides"
-                  ? ["account_id"]
-                  : ["id"];
+    table === "account_backup_warning_acknowledgements"
+      ? ["account_id", "project_id", "key"]
+      : table === "account_project_index"
+        ? ["account_id", "project_id"]
+        : table === "account_collaborator_index"
+          ? ["account_id", "collaborator_account_id"]
+          : table === "account_notification_index"
+            ? ["account_id", "notification_id"]
+            : table === "remember_me"
+              ? ["hash"]
+              : table === "account_auth_sessions" ||
+                  table === "account_impersonation_sessions"
+                ? ["session_hash"]
+                : table === "api_keys"
+                  ? ["key_id"]
+                  : table === "account_entitlement_overrides"
+                    ? ["account_id"]
+                    : ["id"];
   if (table === "api_keys") {
     await getPool().query(
       `
@@ -525,6 +533,7 @@ async function clearOwnedMembershipSideEffects(
 }
 
 async function clearPortableState(account_id: string): Promise<void> {
+  await ensureBackupAcknowledgementsSchema();
   for (const table of PORTABLE_STATE_TABLES) {
     await clearPortableRows({ table, account_id });
   }
@@ -731,6 +740,11 @@ async function loadPortableRows(
 async function loadPortableState(
   account_id: string,
 ): Promise<AccountRehomeStateCopyRequest> {
+  await ensureBackupAcknowledgementsSchema();
+  const account_backup_warning_acknowledgements = await loadPortableRows(
+    "account_backup_warning_acknowledgements",
+    account_id,
+  );
   const [
     account_project_index,
     account_collaborator_index,
@@ -770,6 +784,7 @@ async function loadPortableState(
     target_account_id: account_id,
     source_bay_id: getConfiguredBayId(),
     dest_bay_id: "",
+    account_backup_warning_acknowledgements,
     account_project_index,
     account_collaborator_index,
     account_notification_index,
@@ -1195,6 +1210,7 @@ export async function acceptAccountRehome({
 }
 
 export async function copyAccountRehomeState({
+  account_backup_warning_acknowledgements,
   target_account_id,
   source_bay_id,
   dest_bay_id,
@@ -1227,6 +1243,22 @@ export async function copyAccountRehomeState({
       `account rehome state copy for ${accountId} reached ${localBayId}, not destination bay ${destBayId}`,
     );
   }
+  const backupWarnings = account_backup_warning_acknowledgements ?? [];
+  if (
+    !Array.isArray(backupWarnings) ||
+    backupWarnings.length > MAX_BACKUP_ACKNOWLEDGEMENTS ||
+    backupWarnings.some(
+      (row) => row.account_id !== accountId || !isValidUUID(row.project_id),
+    )
+  )
+    throw new Error("Invalid portable backup warning preferences");
+  validateBackupAcknowledgementKeys(backupWarnings.map((row) => row.key));
+  await ensureBackupAcknowledgementsSchema();
+  await replacePortableRows({
+    table: "account_backup_warning_acknowledgements",
+    account_id: accountId,
+    rows: backupWarnings,
+  });
   if (account_persist_files != null) {
     await restoreAccountPersistState({
       account_id: accountId,

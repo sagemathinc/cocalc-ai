@@ -1294,6 +1294,10 @@ export interface CreatedProjectBootstrap {
 }
 
 export interface Projects {
+  backupWarningAcknowledgements: (opts: {
+    project_id: string;
+    key?: string;
+  }) => Promise<string[]>;
   // request to have conat permissions to project subjects.
   createProject: (opts: CreateProjectOptions) => Promise<string>;
   createProjectWithBootstrap: (

@@ -37,10 +37,19 @@ export interface BackupCoveragePage {
   policy_sha256: string;
   exclude_larger_than_bytes: string;
   excluded_files: string;
+  acknowledged_files: string;
   files: Array<{
     path_hex: string;
     apparent_bytes: string;
     acknowledgement_key: string | null;
   }>;
   next_cursor: string | null;
+}
+
+export interface BackupCoverageReportChunk {
+  backup_id: string;
+  data_base64: string;
+  next_offset: number | null;
+  bytes: number;
+  sha256: string;
 }

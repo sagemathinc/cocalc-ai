@@ -420,11 +420,20 @@ export interface Fileserver {
     }[]
   >;
 
+  getBackupCoverageReportChunk: (opts: {
+    project_id: string;
+    backup_id: string;
+    offset: number;
+  }) => Promise<
+    import("@cocalc/util/types/backup-coverage").BackupCoverageReportChunk
+  >;
+
   // Return list of files in the given backup for the given directory path
   getBackupCoverage: (opts: {
     project_id: string;
     backup_id?: string;
     cursor?: string | null;
+    acknowledgement_keys?: string[];
   }) => Promise<
     import("@cocalc/util/types/backup-coverage").BackupCoveragePage | null
   >;

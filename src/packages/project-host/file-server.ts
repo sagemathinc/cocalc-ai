@@ -4796,7 +4796,7 @@ export async function runScheduledBackupMaintenance({
 
 let backupCoverage: ProjectBackupCoverage | undefined;
 
-async function getBackupCoverage(opts: BackupCoverageRequest) {
+function getBackupCoverageBrowser() {
   if (!backupCoverage) {
     // Activation requires explicit, capacity-qualified host limits. Do not
     // silently create an unbounded download/index cache on older deployments.
@@ -4822,7 +4822,19 @@ async function getBackupCoverage(opts: BackupCoverageRequest) {
       JSON.parse(settings),
     );
   }
-  return await backupCoverage.page(opts);
+  return backupCoverage;
+}
+
+async function getBackupCoverage(opts: BackupCoverageRequest) {
+  return await getBackupCoverageBrowser().page(opts);
+}
+
+async function getBackupCoverageReportChunk(opts: {
+  project_id: string;
+  backup_id: string;
+  offset: number;
+}) {
+  return await getBackupCoverageBrowser().reportChunk(opts);
 }
 
 export async function getBackups({
@@ -5458,6 +5470,7 @@ export async function initFileServer({
     // Do not coalesce authorization: the bounded content cache shares only
     // immutable report work, after each request checks current ownership.
     getBackupCoverage,
+    getBackupCoverageReportChunk,
     getBackupFiles: reuseInFlight(getBackupFiles),
     findBackupFiles: reuseInFlight(findBackupFiles),
     getBackupFileText: reuseInFlight(getBackupFileText),
