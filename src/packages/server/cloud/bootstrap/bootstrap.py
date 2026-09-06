@@ -3515,6 +3515,26 @@ def ensure_cocalc_mount(cfg: BootstrapConfig) -> None:
         run_best_effort(cfg, ["mount", "/mnt/cocalc"], "mount /mnt/cocalc")
 
 
+# Preserve the existing aggregate maintenance ceilings when moving to systemd.
+# Installing the slice does not start it or enable managed Rustic supervision.
+RUSTIC_MAINTENANCE_SLICE = """[Unit]
+Description=CoCalc aggregate maintenance resource budget
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
+CPUQuota=200%
+CPUWeight=10
+IOWeight=10
+MemoryHigh=4294967296
+MemoryMax=8589934592
+MemorySwapMax=0
+TasksMax=256
+"""
+
+
 RUSTIC_JOB_HELPER = r'''#!/usr/bin/python3 -I
 """Root-owned Rustic job supervision. No project-owned Python/code is imported.
 
@@ -3541,6 +3561,17 @@ PATH_HELPER = "/usr/local/libexec/cocalc-runtime-storage-path-helper"
 POLICY = "/etc/cocalc/rustic-job-policy.json"
 LOCKS = "/run/cocalc-rustic-jobs"
 CACHE_LOCK = "/run/lock/cocalc-privileged-rustic-cache.lock"
+MAINTENANCE_SLICE = "cocalcmaintenance.slice"
+MAINTENANCE_ROOT = "/sys/fs/cgroup/" + MAINTENANCE_SLICE
+LEGACY_MAINTENANCE_ROOT = "/sys/fs/cgroup/cocalc-maintenance"
+IO_HELPER = "/usr/local/libexec/cocalc-project-io-policy"
+IO_POLICY = "/etc/cocalc/project-io-policy.json"
+IO_OVERRIDE = "/etc/cocalc/project-io-policy.override.json"
+IO_CAPACITY = "/etc/cocalc/project-io-capacity.json"
+IO_PROPERTIES = {
+    "rbps": "IOReadBandwidthMax", "wbps": "IOWriteBandwidthMax",
+    "riops": "IOReadIOPSMax", "wiops": "IOWriteIOPSMax",
+}
 COMMANDS = {
     "rustic-project-backup", "rustic-project-restore",
     "rustic-rootfs-backup", "rustic-rootfs-restore",
@@ -3609,6 +3640,130 @@ def path_api():
     # The path helper is independently root-owned. -I ignores PYTHONPATH and cwd.
     trusted_regular(PATH_HELPER, maximum=1024**2)
     return runpy.run_path(PATH_HELPER, run_name="cocalc_rustic_path_api")
+
+
+def maintenance_rows():
+    trusted_regular(IO_HELPER, maximum=1024**2)
+    trusted_regular(IO_POLICY)
+    for path in (IO_OVERRIDE, IO_CAPACITY):
+        try:
+            trusted_regular(path)
+        except FileNotFoundError:
+            pass
+    def run(args):
+        result = subprocess.run([IO_HELPER, *args], env=ENV, check=True,
+                                capture_output=True, text=True, timeout=10)
+        if len(result.stdout) > 65536:
+            raise ValueError("maintenance device inventory exceeds limit")
+        return result.stdout
+    fields = run(["fields", IO_POLICY, IO_OVERRIDE, "standard"])
+    if fields.split("\t", 1)[0] != "enforce":
+        raise ValueError("supervised Rustic requires enforced maintenance I/O policy")
+    return parse_maintenance_rows(run([
+        "limits", IO_POLICY, IO_OVERRIDE, IO_CAPACITY, "maintenance", "standard",
+    ]))
+
+
+def parse_maintenance_rows(text):
+    result = {}
+    for line in text.splitlines():
+        fields = line.split("\t")
+        if len(fields) < 5:
+            raise ValueError("invalid maintenance device limits")
+        device, *limits = fields[:5]
+        numbers = device.split(":")
+        if len(numbers) != 2 or any(not part.isdecimal() or int(part) > 2**32 - 1 for part in numbers):
+            raise ValueError("invalid maintenance block device")
+        if device in result or any(not value.isdecimal() or not 1 <= int(value) <= 2**63 - 1 for value in limits):
+            raise ValueError("invalid or unlimited maintenance I/O budget")
+        result[device] = dict(zip(IO_PROPERTIES, map(int, limits)))
+        if len(result) > 64:
+            raise ValueError("too many maintenance block devices")
+    if not result:
+        raise ValueError("no maintenance block devices")
+    return result
+
+
+def cgroup_text(root, name):
+    with open(root + "/" + name, encoding="ascii") as stream:
+        return stream.read(65536).strip()
+
+
+def check_maintenance_cgroup(rows=None):
+    if rows is None:
+        rows = maintenance_rows()
+    for name, maximum in [("memory.max", 8 * 1024**3), ("pids.max", 256), ("memory.swap.max", 0)]:
+        value = cgroup_text(MAINTENANCE_ROOT, name)
+        if not value.isdecimal() or int(value) > maximum:
+            raise RuntimeError("aggregate maintenance budget is not enforced: " + name)
+    quota, period = cgroup_text(MAINTENANCE_ROOT, "cpu.max").split()
+    if not quota.isdecimal() or not period.isdecimal() or int(period) == 0 or int(quota) > 2 * int(period):
+        raise RuntimeError("aggregate maintenance CPU budget is not enforced")
+    actual = {}
+    for line in cgroup_text(MAINTENANCE_ROOT, "io.max").splitlines():
+        device, *fields = line.split()
+        actual[device] = dict(field.split("=", 1) for field in fields)
+    for device, limits in rows.items():
+        for metric, maximum in limits.items():
+            value = actual.get(device, {}).get(metric, "")
+            if not value.isdecimal() or not 1 <= int(value) <= maximum:
+                raise RuntimeError("aggregate maintenance I/O budget is not enforced: " + device + " " + metric)
+
+
+def maintenance_io_command(rows):
+    command = ["/usr/bin/busctl", "--system", "--timeout=10", "call",
+               "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+               "org.freedesktop.systemd1.Manager", "SetUnitProperties",
+               "sba(sv)", MAINTENANCE_SLICE, "true", str(len(IO_PROPERTIES))]
+    for metric, prop in IO_PROPERTIES.items():
+        # Replace each entire array, so removed/replaced disks leave no stale caps.
+        command.extend([prop, "a(st)", str(len(rows))])
+        for device, limits in rows.items():
+            command.extend(["/dev/block/" + device, str(limits[metric])])
+    return command
+
+
+def prepare_maintenance():
+    # Caller holds the wrapper's project-cgroup lock, also used by legacy attach.
+    # Never migrate a running backup or accidentally grant two aggregate budgets.
+    try:
+        events = dict(line.split() for line in cgroup_text(LEGACY_MAINTENANCE_ROOT, "cgroup.events").splitlines())
+        if events.get("populated") != "0":
+            raise BlockingIOError("legacy maintenance must drain before supervised jobs can start")
+    except FileNotFoundError:
+        pass
+    rows = maintenance_rows()
+    subprocess.run(["/usr/bin/systemctl", "--no-ask-password", "start", MAINTENANCE_SLICE],
+                   env=ENV, check=True, capture_output=True, timeout=10)
+    subprocess.run(maintenance_io_command(rows), env=ENV, check=True, capture_output=True, timeout=15)
+    check_maintenance_cgroup(rows)
+
+
+def attach_maintenance_parent():
+    # Attach only our invoking root wrapper, not a caller-supplied PID. systemd
+    # owns scopes and the slice; do not create manual children inside its tree.
+    check_maintenance_cgroup()
+    pid = os.getppid()
+    identity = process_identity(pid)
+    if identity is None or pid <= 1:
+        raise RuntimeError("maintenance wrapper exited before attachment")
+    scope = "cocalc-maintenance-" + uuid.uuid4().hex + ".scope"
+    subprocess.run([
+        "/usr/bin/busctl", "--system", "--timeout=10", "call",
+        "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager", "StartTransientUnit", "ssa(sv)a(sa(sv))",
+        scope, "fail", "2", "PIDs", "au", "1", str(pid), "Slice", "s", MAINTENANCE_SLICE, "0",
+    ], env=ENV, check=True, capture_output=True, timeout=15)
+    deadline = time.monotonic() + 5
+    while True:
+        if process_identity(pid) != identity:
+            raise RuntimeError("maintenance wrapper identity changed")
+        with open(f"/proc/{pid}/cgroup", encoding="ascii") as stream:
+            if "0::/" + MAINTENANCE_SLICE + "/" + scope in stream.read(65536).splitlines():
+                return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("maintenance wrapper was not attached to its scope")
+        time.sleep(.05)
 
 
 def job_key(argv, api):
@@ -3770,6 +3925,7 @@ def service_command(unit, argv, chain, policy):
         "/usr/bin/systemd-run", "--system", "--no-ask-password", "--quiet",
         "--pipe", "--wait", "--collect", "--expand-environment=no",
         f"--unit={unit}", "--service-type=exec",
+        f"--slice={MAINTENANCE_SLICE}",
         "--property=KillMode=control-group", "--property=SendSIGKILL=yes",
         "--property=OOMPolicy=kill", "--property=MemorySwapMax=0",
         f"--property=RuntimeMaxSec={policy['runtime_seconds']}",
@@ -3790,6 +3946,9 @@ def check_cgroup(policy):
     if len(groups) != 1 or ".." in groups[0].split("/"):
         raise RuntimeError("Rustic supervision requires cgroup v2")
     group = groups[0]
+    if group.rsplit("/", 1)[0] != "/" + MAINTENANCE_SLICE:
+        raise RuntimeError("Rustic worker is outside the aggregate maintenance budget")
+    check_maintenance_cgroup()
     if not group.rsplit("/", 1)[1].startswith("cocalc-rustic-") or not group.endswith(".service"):
         raise RuntimeError("Rustic worker is not in its job service")
     root = "/sys/fs/cgroup" + group
@@ -3898,6 +4057,10 @@ def launch(argv, api, policy):
         # Bound service creation too, not just workers after Python has started.
         # Unit records retain this reservation if the launcher is killed.
         startup_slot = take_slot(directory, policy["max_jobs"], unit, prefix="launch-slot")
+        prepared = subprocess.run(["/usr/local/sbin/cocalc-runtime-storage", "prepare-rustic-maintenance"],
+                                  env=ENV, capture_output=True, text=True, timeout=45)
+        if prepared.returncode:
+            raise RuntimeError("maintenance admission failed: " + prepared.stderr[-4096:])
         record_unit(directory, f"{key}.unit", unit)
         proc = subprocess.Popen(service_command(unit, argv, chain, policy), env=ENV,
                                 stdin=subprocess.PIPE, close_fds=True)
@@ -3934,6 +4097,12 @@ def launch(argv, api, policy):
 def main(argv):
     require_root()
     policy = load_policy()
+    if argv == ["prepare-maintenance"]:
+        prepare_maintenance()
+        return
+    if argv == ["attach-maintenance"]:
+        attach_maintenance_parent()
+        return
     api = path_api()
     if len(argv) > 2 and argv[0] == "worker":
         if len(argv[1]) > 8192:
@@ -4988,6 +5157,12 @@ BEES_CGROUP_MEMORY_HIGH_MIN="$((1 * 1024 * 1024 * 1024))"
 BEES_CGROUP_MEMORY_MAX_MIN="$((2 * 1024 * 1024 * 1024))"
 BEES_CGROUP_PIDS_MAX="64"
 MAINTENANCE_CGROUP_DEFAULT="/sys/fs/cgroup/cocalc-maintenance"
+RUSTIC_MAINTENANCE_CGROUP="/sys/fs/cgroup/cocalcmaintenance.slice"
+# Keep the new hierarchy after activation even if somebody removes its policy:
+# new work must fail closed, not obtain another budget in the old hierarchy.
+if [ -e /etc/cocalc/rustic-job-policy.json ] || [ -L /etc/cocalc/rustic-job-policy.json ] || [ -d "$RUSTIC_MAINTENANCE_CGROUP" ]; then
+  MAINTENANCE_CGROUP_DEFAULT="$RUSTIC_MAINTENANCE_CGROUP"
+fi
 MAINTENANCE_CGROUP_CPU_MAX="200000 100000"
 MAINTENANCE_CGROUP_CPU_WEIGHT="10"
 MAINTENANCE_CGROUP_IO_WEIGHT="10"
@@ -5572,6 +5747,10 @@ reconcile_project_pool_io_reservation() {
 
 configure_maintenance_cgroup() {
   local fields mode
+  if [ "$MAINTENANCE_CGROUP_DEFAULT" = "$RUSTIC_MAINTENANCE_CGROUP" ]; then
+    /usr/local/libexec/cocalc-rustic-job prepare-maintenance
+    return
+  fi
   enable_cgroup_controllers /sys/fs/cgroup
   mkdir -p "$MAINTENANCE_CGROUP_DEFAULT"
   [ -w "${MAINTENANCE_CGROUP_DEFAULT}/cpu.max" ] &&
@@ -6923,9 +7102,16 @@ attach_maintenance_worker() {
   local actual
   acquire_project_cgroup_lock
   configure_maintenance_cgroup
-  printf '%s\n' "$$" > "${MAINTENANCE_CGROUP_DEFAULT}/cgroup.procs"
+  if [ "$MAINTENANCE_CGROUP_DEFAULT" = "$RUSTIC_MAINTENANCE_CGROUP" ]; then
+    /usr/local/libexec/cocalc-rustic-job attach-maintenance
+  else
+    printf '%s\n' "$$" > "${MAINTENANCE_CGROUP_DEFAULT}/cgroup.procs"
+  fi
   actual="$(awk -F: '$1 == "0" {print $3}' "/proc/$$/cgroup" 2>/dev/null || true)"
-  if [ "$actual" != "${MAINTENANCE_CGROUP_DEFAULT#/sys/fs/cgroup}" ]; then
+  if [ "$MAINTENANCE_CGROUP_DEFAULT" = "$RUSTIC_MAINTENANCE_CGROUP" ]; then
+    [[ "$actual" =~ ^/cocalcmaintenance[.]slice/cocalc-maintenance-[0-9a-f]{32}[.]scope$ ]] ||
+      deny "maintenance-worker-scope-mismatch" "${actual:-missing}"
+  elif [ "$actual" != "${MAINTENANCE_CGROUP_DEFAULT#/sys/fs/cgroup}" ]; then
     deny "maintenance-worker-cgroup-mismatch" "${actual:-missing}"
   fi
   release_project_lock
@@ -7365,6 +7551,14 @@ case "$cmd" in
       release_project_io_reservation_lock
       verify_io_max "$(project_cgroup "$1")" "$io_class" "$io_class"
     fi
+    ;;
+  prepare-rustic-maintenance)
+    [ "$#" -eq 0 ] || deny "rustic-maintenance-arguments-invalid" "$#"
+    [ "$MAINTENANCE_CGROUP_DEFAULT" = "$RUSTIC_MAINTENANCE_CGROUP" ] ||
+      deny "rustic-maintenance-policy-missing" "supervision disabled"
+    acquire_project_cgroup_lock
+    configure_maintenance_cgroup
+    release_project_lock
     ;;
   verify-project-io-policy)
     if [ "$#" -ne 0 ]; then
@@ -8980,6 +9174,11 @@ esac
         text_write_atomic(p, content, default_mode=0o755)
         os.chown(p, 0, 0)
         p.chmod(0o755)
+
+    maintenance_slice = Path("/etc/systemd/system/cocalcmaintenance.slice")
+    text_write_atomic(maintenance_slice, RUSTIC_MAINTENANCE_SLICE, default_mode=0o644)
+    os.chown(maintenance_slice, 0, 0)
+    maintenance_slice.chmod(0o644)
 
     write_project_io_configuration(cfg)
 

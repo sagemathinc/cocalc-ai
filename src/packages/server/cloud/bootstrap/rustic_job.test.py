@@ -149,12 +149,57 @@ class RusticJobTest(unittest.TestCase):
         args = ["rustic-project-backup", "--tag", "$HOME ${X} spaces"]
         command = self.api["service_command"]("cocalc-rustic-test.service", args, [[10, 20]], self.policy)
         for arg in ["--pipe", "--wait", "--collect", "--expand-environment=no",
+                    "--slice=cocalcmaintenance.slice",
                     "--property=KillMode=control-group", "--property=OOMPolicy=kill",
                     "--property=MemoryMax=2147483648", "--property=RuntimeMaxSec=1800",
                     "--property=TimeoutStopSec=10", "--property=MemorySwapMax=0"]:
             self.assertIn(arg, command)
         self.assertEqual(command[-len(args):], args)
         self.assertEqual(command[command.index("/usr/bin/python3") + 1], "-I")
+
+    def test_maintenance_device_limits_reject_unbounded_or_ambiguous_rows(self):
+        parse = self.api["parse_maintenance_rows"]
+        self.assertEqual(parse("7:0\t100\t200\t30\t40\textra\n"), {
+            "7:0": {"rbps": 100, "wbps": 200, "riops": 30, "wiops": 40},
+        })
+        for text in ["", "7:0\tmax\t1\t1\t1", "7:0\t0\t1\t1\t1",
+                     "7:0\t1\t1\t1", "../7:0\t1\t1\t1\t1",
+                     "7:0\t1\t1\t1\t1\n7:0\t1\t1\t1\t1",
+                     "7:0\t9223372036854775808\t1\t1\t1"]:
+            with self.assertRaises(ValueError, msg=text):
+                parse(text)
+
+    def test_aggregate_controller_verification_fails_closed(self):
+        values = {"memory.max": str(8 * 1024**3), "pids.max": "256",
+                  "memory.swap.max": "0", "cpu.max": "200000 100000",
+                  "io.max": "7:0 rbps=100 wbps=100 riops=10 wiops=10"}
+        rows = {"7:0": {"rbps": 100, "wbps": 100, "riops": 10, "wiops": 10}}
+        with mock.patch.dict(self.api, {"cgroup_text": lambda _, name: values[name]}):
+            self.api["check_maintenance_cgroup"](rows)
+            for name, invalid in [("memory.max", "max"), ("pids.max", "257"),
+                                  ("cpu.max", "max 100000"), ("cpu.max", "300000 100000"),
+                                  ("memory.swap.max", "1"), ("io.max", ""),
+                                  ("io.max", "7:0 rbps=101 wbps=100 riops=10 wiops=10")]:
+                original = values[name]
+                values[name] = invalid
+                with self.assertRaises(RuntimeError, msg=name):
+                    self.api["check_maintenance_cgroup"](rows)
+                values[name] = original
+
+    def test_busy_legacy_group_blocks_activation_before_any_systemd_change(self):
+        with mock.patch.dict(self.api, {"cgroup_text": lambda *_: "populated 1\nfrozen 0"}), \
+             mock.patch("subprocess.run") as run:
+            with self.assertRaises(BlockingIOError):
+                self.api["prepare_maintenance"]()
+            run.assert_not_called()
+
+    def test_systemd_io_properties_share_one_parent_not_one_budget_per_job(self):
+        rows = self.api["parse_maintenance_rows"]("7:0\t100\t200\t30\t40\n7:1\t11\t12\t13\t14")
+        command = self.api["maintenance_io_command"](rows)
+        self.assertIn("cocalcmaintenance.slice", command)
+        self.assertEqual(command.count("a(st)"), 4)
+        self.assertEqual(command.count("/dev/block/7:0"), 4)
+        self.assertEqual(command.count("/dev/block/7:1"), 4)
 
     def test_caller_identity_detects_exit_pid_reuse_and_unknown_processes(self):
         chain = self.api["caller_chain"]()
