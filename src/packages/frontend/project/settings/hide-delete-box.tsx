@@ -16,7 +16,7 @@ import { Icon, SettingBox, type IconName } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectsActions } from "@cocalc/frontend/todo-types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { HardDeleteProjectModal } from "@cocalc/frontend/projects/hard-delete-project-modal";
 import { publicShareCountFromProject } from "@cocalc/frontend/projects/public-share-labels";
 import RemoveMyself from "@cocalc/frontend/projects/remove-myself";
@@ -154,7 +154,7 @@ export function HideDeleteBox(props: Readonly<Props>) {
                   Prevent permanent deletion of this {projectLabelLower}.
                   Turning protection off requires fresh authentication.
                   {protectionError ? (
-                    <div style={{ color: COLORS.ANTD_RED, marginTop: 4 }}>
+                    <div style={{ color: UI_COLORS.danger, marginTop: 4 }}>
                       {protectionError}
                     </div>
                   ) : undefined}
@@ -357,7 +357,7 @@ function DangerActionRow({
   return (
     <div
       style={{
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: 8,
         padding: 12,
         display: "grid",
@@ -369,7 +369,7 @@ function DangerActionRow({
       <div style={{ minWidth: 0 }}>
         <div
           style={{
-            color: COLORS.GRAY_M,
+            color: UI_COLORS.text,
             display: "flex",
             gap: 8,
             alignItems: "center",
@@ -379,7 +379,7 @@ function DangerActionRow({
         >
           <Icon name={icon} /> {title}
         </div>
-        <div style={{ color: COLORS.GRAY_M }}>{description}</div>
+        <div style={{ color: UI_COLORS.secondary }}>{description}</div>
       </div>
       <div>{action}</div>
     </div>
