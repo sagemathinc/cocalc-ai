@@ -26,7 +26,8 @@ import time
 if "version" in sys.argv:
     print(json.dumps({"schema_version": 1, "capabilities": {
         "strict_backup": True, "strict_restore": True, "sparse_required_restore": True,
-        "hole_aware_backup": True, "backup_inventory": 1, "backup_admission": 1}}))
+        "hole_aware_backup": True, "backup_inventory": 1, "backup_admission": 1,
+        "strict_local_metadata": 1}}))
     sys.exit(0)
 if "repoinfo" in sys.argv or "init" in sys.argv:
     sys.exit(0)
