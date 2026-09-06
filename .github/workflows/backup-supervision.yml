@@ -23,6 +23,7 @@ jobs:
         run: |
           python3 bootstrap.test.py
           python3 rustic_job.test.py
+          python3 rustic_evidence.test.py
       - name: Qualify full process-tree supervision on a disposable runner
         working-directory: src/packages/server/cloud/bootstrap
         run: |
