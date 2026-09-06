@@ -3619,7 +3619,7 @@ def load_policy(path=POLICY):
             raise ValueError(f"invalid Rustic job policy: {key}")
     if "native" in policy:
         native = policy["native"]
-        if not isinstance(native, dict) or set(native) != {"binary_sha256", "admission"}:
+        if not isinstance(native, dict) or set(native) - {"evidence"} != {"binary_sha256", "admission"}:
             raise ValueError("invalid native Rustic policy")
         digest = native["binary_sha256"]
         if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
@@ -3634,6 +3634,15 @@ def load_policy(path=POLICY):
                 raise ValueError(f"invalid native Rustic budget: {name}")
         if limits["preflight-timeout-seconds"] > policy["runtime_seconds"]:
             raise ValueError("Rustic preflight exceeds the job deadline")
+        if "evidence" in native:
+            evidence = native["evidence"]
+            if not isinstance(evidence, dict) or set(evidence) != {"policy_version", "exclude_larger_than_bytes", "max_report_bytes"}:
+                raise ValueError("invalid native backup evidence policy")
+            for name, value in evidence.items():
+                if type(value) is not int or not 1 <= value <= 2**63 - 1:
+                    raise ValueError("invalid native backup evidence budget: " + name)
+            if evidence["exclude_larger_than_bytes"] > limits["max-file-bytes"]:
+                raise ValueError("exclusion threshold exceeds retained-file admission")
     if "retry" in policy:
         retry = policy["retry"]
         limits = {"base_seconds": (1, 86400), "max_seconds": (1, 30 * 86400),
@@ -4306,6 +4315,10 @@ import tempfile
 import time
 import tomllib
 import urllib.parse
+import struct
+import uuid
+import pwd
+import datetime
 
 
 ALLOWED_ROOTS = {
@@ -4674,7 +4687,7 @@ def open_pinned_rustic(path, expected_digest, required_uid=0):
         raise
 
 
-def verify_native_rustic(binary, env, pass_fds):
+def verify_native_rustic(binary, env, pass_fds, require_evidence=False):
     proc = subprocess.Popen([binary, "version", "--json"], env=env, pass_fds=pass_fds,
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     deadline = time.monotonic() + 10
@@ -4702,6 +4715,8 @@ def verify_native_rustic(binary, env, pass_fds):
         for name in ("backup_inventory", "backup_admission", "strict_local_metadata"):
             if type(capabilities.get(name)) is not int or capabilities[name] != 1:
                 fail(f"unsupported native Rustic capability: {name}")
+        if require_evidence and (type(capabilities.get("backup_exclusion_inventory")) is not int or capabilities["backup_exclusion_inventory"] != 1):
+            fail("native Rustic exclusion evidence capability is missing")
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -4722,6 +4737,104 @@ def require_readonly_btrfs_source(datafd):
         os.close(fd)
 
 
+def btrfs_backup_identity(datafd):
+    # Linux btrfs_ioctl_get_subvol_info_args (504 bytes on amd64/arm64).
+    # Obtain the identity through the already-open source, not a re-resolved path.
+    fd = os.open(f"/proc/self/fd/{datafd}", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        info = bytearray(504)
+        fcntl.ioctl(fd, 0x81f8943c, info, True)
+        generation, flags = struct.unpack_from("=QQ", info, 280)
+        snapshot_uuid = uuid.UUID(bytes=bytes(info[296:312]))
+        parent_uuid = uuid.UUID(bytes=bytes(info[312:328]))
+        if not flags & 2 or snapshot_uuid.int == 0:
+            fail("backup evidence requires an identified read-only Btrfs source")
+        return {"snapshot_uuid": str(snapshot_uuid),
+                "subvolume_uuid": str(parent_uuid) if parent_uuid.int else None,
+                "generation": str(generation)}
+    finally:
+        os.close(fd)
+
+
+def canonical_backup_json(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def bounded_rustic_capture(base, args, *, cwd, env, pass_fds, maximum, sink=None):
+    proc = subprocess.Popen([*base, *args], cwd=cwd, env=env, pass_fds=pass_fds,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+    digest = hashlib.sha256()
+    data = bytearray()
+    size = 0
+    try:
+        while True:
+            part = proc.stdout.read(65536)
+            if not part:
+                break
+            if len(part) > maximum - size:
+                fail("native Rustic output exceeds its byte budget")
+            size += len(part)
+            digest.update(part)
+            if sink is None:
+                data.extend(part)
+            else:
+                sink.write(part)
+        return proc.wait(), bytes(data), {"bytes": size, "sha256": digest.hexdigest()}
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        proc.stdout.close()
+
+
+def read_backup_inventory_envelope(stream):
+    # Full per-path validation is performed by the host report verifier before
+    # remote publication. Here require a complete, bounded producer envelope.
+    stream.seek(0)
+    first = None
+    last = None
+    count = 0
+    while True:
+        line = stream.readline(65537)
+        if not line:
+            break
+        if len(line) > 65536 or not line.endswith(b"\n"):
+            fail("invalid native backup inventory record")
+        row = json.loads(line)
+        if type(row) is not dict or type(row.get("schema_version")) is not int or row["schema_version"] != 1:
+            fail("invalid native backup inventory schema")
+        if first is None:
+            if row.get("type") != "header":
+                fail("missing native backup inventory header")
+            first = row
+        elif row.get("type") == "excluded" and last is None:
+            count += 1
+        elif row.get("type") == "complete" and last is None:
+            last = row
+        else:
+            fail("invalid native backup inventory order")
+    if first is None or last is None:
+        fail("incomplete native backup inventory")
+    reported = last.get("inventory", {}).get("excluded_files")
+    if type(reported) is not str or reported != str(count):
+        fail("inconsistent native backup inventory count")
+    return first, last["inventory"]
+
+
+def backup_report_directory(path, *, required_uid=0, reader_gid=None):
+    if reader_gid is None:
+        reader_gid = pwd.getpwnam("cocalc-host").pw_gid
+    try:
+        os.mkdir(path, 0o750)
+        os.chown(path, required_uid, reader_gid)
+    except FileExistsError:
+        pass
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != required_uid or info.st_gid != reader_gid or info.st_mode & 0o027:
+        fail("untrusted backup report directory")
+    return reader_gid
+
+
 def run_rustic(
     argv,
     allowed_roots=ALLOWED_ROOTS,
@@ -4730,6 +4843,9 @@ def run_rustic(
     profile_run_dir_uid=0,
     inherited_fds=(),
     native=None,
+    report_run_dir="/var/lib/cocalc-rustic-reports",
+    report_run_dir_uid=0,
+    report_reader_gid=None,
 ):
     command, values = parse_rustic(argv)
     rootfd = open_root(values["root"], allowed_roots)
@@ -4737,6 +4853,9 @@ def run_rustic(
     datafd = None
     profile_path = None
     binaryfd = None
+    report_path = None
+    report_created = False
+    report_published = False
     try:
         datafd = openat2(
             rootfd,
@@ -4769,8 +4888,9 @@ def run_rustic(
             "SSL_CERT_DIR": "/etc/ssl/certs",
             "USER": "root",
         }
+        evidence = native.get("evidence") if native is not None and command == "rustic-project-backup" else None
         if native is not None:
-            verify_native_rustic(rustic, env, inherited_fds)
+            verify_native_rustic(rustic, env, inherited_fds, require_evidence=evidence is not None)
 
         def invoke(args, *, quiet=False):
             result = subprocess.run(
@@ -4785,11 +4905,48 @@ def run_rustic(
             return result.returncode
 
         if command.endswith("backup"):
+            proof = None
+            if evidence is not None:
+                source = btrfs_backup_identity(datafd)
+                if source["subvolume_uuid"] is None:
+                    fail("project backup evidence requires an actual snapshot parent")
+                # Inventory uses the repository's chunker configuration. A new
+                # project must initialize its repository before inventory, not
+                # only after the first backup command fails.
+                if invoke(["repoinfo"], quiet=True) != 0:
+                    if invoke(["--no-progress", "init"], quiet=True) != 0 and invoke(["repoinfo"], quiet=True) != 0:
+                        raise subprocess.CalledProcessError(1, base)
+                captured_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                reader_gid = backup_report_directory(report_run_dir, required_uid=report_run_dir_uid, reader_gid=report_reader_gid)
+                report_path = os.path.join(report_run_dir, str(uuid.uuid4()) + ".ndjson")
+                admission = [arg for name, value in native["admission"].items() for arg in [f"--{name}", str(value)]]
+                inventory_args = ["backup-inventory", "-x", "--exclusion-report", "--exclude-larger-than", str(evidence["exclude_larger_than_bytes"]),
+                                  "--max-report-bytes", str(evidence["max_report_bytes"]), *admission,
+                                  "--glob", "!.snapshots", "--glob", "!.snapshots/**", "."]
+                fd = os.open(report_path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+                report_created = True
+                with os.fdopen(fd, "w+b") as stream:
+                    status, _, report = bounded_rustic_capture(base, inventory_args, cwd=f"/proc/self/fd/{datafd}", env=env,
+                                                              pass_fds=(datafd, *inherited_fds), maximum=evidence["max_report_bytes"], sink=stream)
+                    if status != 0:
+                        raise subprocess.CalledProcessError(status, base)
+                    stream.flush()
+                    header, inventory = read_backup_inventory_envelope(stream)
+                    report["header_sha256"] = hashlib.sha256(canonical_backup_json(header)).hexdigest()
+                    os.fsync(stream.fileno())
+                proof = {"schema_version": 1, "source": {**source, "captured_at": captured_at},
+                         "policy_sha256": hashlib.sha256(canonical_backup_json(native)).hexdigest(),
+                         "policy_version": evidence["policy_version"], "exclude_larger_than_bytes": str(evidence["exclude_larger_than_bytes"]),
+                         "binary_sha256": native["binary_sha256"], "report": report,
+                         "report_path": report_path, "excluded_files": inventory["excluded_files"],
+                         "outcome": "complete" if inventory["excluded_files"] == "0" else "partial_policy_exclusions"}
             flags = ["backup"]
             if native is not None:
                 flags.append("--strict")
                 for name, value in native["admission"].items():
                     flags.extend([f"--{name}", str(value)])
+            if evidence is not None:
+                flags.extend(["--exclude-larger-than", str(evidence["exclude_larger_than_bytes"])])
             if command == "rustic-project-backup":
                 flags.append("-x")
             flags.extend(["--json", "--no-scan", "--host", values["host"]])
@@ -4802,21 +4959,45 @@ def run_rustic(
                     ["--glob", "!.snapshots", "--glob", "!.snapshots/**"]
                 )
             flags.append(".")
+            backup_output = None
+            def invoke_backup():
+                nonlocal backup_output
+                if proof is None:
+                    return invoke(flags)
+                status, backup_output, _ = bounded_rustic_capture(base, flags, cwd=f"/proc/self/fd/{datafd}", env=env,
+                                                                 pass_fds=(datafd, *inherited_fds), maximum=1048576)
+                return status
             if command == "rustic-rootfs-backup":
                 if invoke(["repoinfo"], quiet=True) != 0:
                     if invoke(["--no-progress", "init"], quiet=True) != 0:
                         if invoke(["repoinfo"], quiet=True) != 0:
                             raise subprocess.CalledProcessError(1, base)
-                status = invoke(flags)
+                status = invoke_backup()
             else:
-                status = invoke(flags)
+                status = invoke_backup()
                 if status != 0 and invoke(["repoinfo"], quiet=True) != 0:
                     if invoke(["--no-progress", "init"], quiet=True) == 0 or invoke(
                         ["repoinfo"], quiet=True
                     ) == 0:
-                        status = invoke(flags)
+                        status = invoke_backup()
             if status != 0:
                 raise subprocess.CalledProcessError(status, base)
+            if proof is not None:
+                if btrfs_backup_identity(datafd) != source:
+                    fail("backup source identity changed during capture")
+                result = json.loads(backup_output)
+                if type(result) is not dict or type(result.get("id")) is not str or not re.fullmatch("[0-9a-f]{64}", result["id"]):
+                    fail("invalid native backup result")
+                os.chown(report_path, report_run_dir_uid, reader_gid)
+                os.chmod(report_path, 0o440)
+                directory_fd = os.open(report_run_dir, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+                result["cocalc_backup_evidence"] = proof
+                print(json.dumps(result, separators=(",", ":")), flush=True)
+                report_published = True
             return
 
         restore = ["restore"]
@@ -4829,6 +5010,8 @@ def run_rustic(
         if status != 0:
             raise subprocess.CalledProcessError(status, base)
     finally:
+        if report_created and not report_published:
+            os.unlink(report_path)
         if binaryfd is not None:
             os.close(binaryfd)
         if profile_path is not None:
