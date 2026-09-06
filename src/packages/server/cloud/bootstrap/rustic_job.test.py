@@ -115,6 +115,85 @@ class RusticJobTest(unittest.TestCase):
                 with mock.patch.dict(self.api, {"trusted_regular": lambda _: json.dumps(policy)}):
                     with self.assertRaises(ValueError, msg=f"{key}={value}"):
                         self.api["load_policy"]()
+
+    def test_retry_policy_requires_finite_consistent_operator_limits(self):
+        retry = {"base_seconds": 60, "max_seconds": 3600, "review_after_failures": 3}
+        policy = {**self.policy, "retry": retry}
+        with mock.patch.dict(self.api, {"trusted_regular": lambda _: json.dumps(policy)}):
+            self.assertEqual(self.api["load_policy"]()["retry"], retry)
+            for key in retry:
+                original = retry[key]
+                for value in [None, True, 0, -1, 10**20]:
+                    retry[key] = value
+                    with self.assertRaises(ValueError):
+                        self.api["load_policy"]()
+                retry[key] = original
+            retry["max_seconds"] = 1
+            with self.assertRaises(ValueError):
+                self.api["load_policy"]()
+
+    def test_retry_survives_reload_and_requires_review_after_repeated_failures(self):
+        retry = {"base_seconds": 60, "max_seconds": 100, "review_after_failures": 3}
+        unit = "cocalc-rustic-" + "a" * 32 + ".service"
+        state = {"version": 1, "phase": "running", "failures": 0,
+                 "updated_at": 1000, "retry_at": 0, "reason": "started", "unit": unit}
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = self.api["open_lock_directory"](tmp, required_uid=os.getuid())
+            try:
+                read = self.api["read_retry"]
+                with mock.patch.dict(self.api, {"read_retry": lambda d, n: read(d, n, required_uid=os.getuid()),
+                                              "unit_busy": lambda _: False}), \
+                     mock.patch("time.time", return_value=1000):
+                    self.api["write_retry"](directory, "project.backup.json", state)
+                    with self.assertRaisesRegex(BlockingIOError, "RUSTIC_RETRY_DEFERRED"):
+                        self.api["retry_admission"](directory, "project.backup.json", retry)
+                    state = read(directory, "project.backup.json", required_uid=os.getuid())
+                    self.assertEqual((state["failures"], state["retry_at"], state["reason"]), (1, 1060, "job_interrupted"))
+                    # A fresh helper imports only persisted state, not memory.
+                    fresh = {"__name__": "fresh_retry_test"}
+                    exec(bootstrap.RUSTIC_JOB_HELPER, fresh)
+                    self.assertEqual(fresh["read_retry"](directory, "project.backup.json", required_uid=os.getuid()), state)
+                    with self.assertRaises(BlockingIOError):
+                        self.api["retry_admission"](directory, "project.backup.json", retry)
+                    self.assertEqual(read(directory, "project.backup.json", required_uid=os.getuid())["failures"], 1)
+                    with mock.patch("time.time", return_value=1060):
+                        self.assertEqual(self.api["retry_admission"](directory, "project.backup.json", retry), state)
+                    state = self.api["failed_retry"](state, retry, "job_failed", 1060)
+                    self.assertEqual(state["retry_at"], 1160)
+                    state = self.api["failed_retry"](state, retry, "job_failed", 1160)
+                    self.api["write_retry"](directory, "project.backup.json", state)
+                    with mock.patch("time.time", return_value=10**6):
+                        with self.assertRaisesRegex(RuntimeError, "RUSTIC_OPERATOR_REVIEW_REQUIRED"):
+                            self.api["retry_admission"](directory, "project.backup.json", retry)
+                    self.assertIsNone(self.api["retry_admission"](directory, "project.restore.json", retry))
+            finally:
+                os.close(directory)
+
+    def test_retry_state_rejects_partial_untrusted_and_oversized_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = self.api["open_lock_directory"](tmp, required_uid=os.getuid())
+            path = Path(tmp) / "state.json"
+            try:
+                for value in ["{", "{}", "x" * 4097]:
+                    path.write_text(value)
+                    path.chmod(0o600)
+                    with self.assertRaises(ValueError):
+                        self.api["read_retry"](directory, path.name, required_uid=os.getuid())
+                path.chmod(0o644)
+                with self.assertRaises(PermissionError):
+                    self.api["read_retry"](directory, path.name, required_uid=os.getuid())
+                path.unlink()
+                path.symlink_to("missing")
+                with self.assertRaises(OSError):
+                    self.api["read_retry"](directory, path.name, required_uid=os.getuid())
+            finally:
+                os.close(directory)
+
+    def test_retry_identity_ignores_staging_paths_but_separates_recovery(self):
+        key = "a" * 64
+        name = self.api["retry_name"]
+        self.assertEqual(name(key, ["rustic-project-backup", "stage1"]), name(key, ["rustic-project-backup", "stage2"]))
+        self.assertNotEqual(name(key, ["rustic-project-backup"]), name(key, ["rustic-project-restore"]))
         with mock.patch.dict(self.api, {"trusted_regular": lambda _: json.dumps(self.policy)}):
             self.assertEqual(self.api["load_policy"](), self.policy)
         for invalid in [{}, [], {**self.policy, "command": "arbitrary"}]:

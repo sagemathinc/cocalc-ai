@@ -77,11 +77,12 @@ def main():
     io_helper = Path("/usr/local/libexec/cocalc-project-io-policy")
     io_policy = Path("/etc/cocalc/project-io-policy.json")
     slice_unit = Path("/etc/systemd/system/cocalcmaintenance.slice")
+    retry_root = Path("/var/lib/cocalc-rustic-jobs")
     root = Path("/mnt/cocalc/rustic-job-qualification")
     for path in [helper, path_helper, binary, wrapper, policy_path, io_helper, io_policy, slice_unit,
                  Path("/etc/cocalc/project-io-policy.override.json"),
                  Path("/sys/fs/cgroup/cocalcmaintenance.slice"),
-                 Path("/sys/fs/cgroup/cocalc-maintenance"), root]:
+                 Path("/sys/fs/cgroup/cocalc-maintenance"), retry_root, root]:
         assert not os.path.lexists(path), f"refusing to replace existing {path}"
     api = {"__name__": "test_job"}
     exec(bootstrap.RUSTIC_JOB_HELPER, api)
@@ -344,12 +345,53 @@ secret_access_key = "disposable"
         result(proc, False)
         assert not (case / "started").exists()
         barrier(case, shared)
+        # Each command below starts a fresh helper process. Retry state must
+        # survive those restarts and cannot be bypassed by a new staging path.
+        policy.pop("native")
+        policy["retry"] = {"base_seconds": 5, "max_seconds": 5, "review_after_failures": 2}
+        policy_path.write_text(json.dumps(policy))
+        retry_profile = profile("retry")
+        case, proc = start("retry-failure-one", "failure", retry_profile)
+        result(proc, False)
+        blocked, proc = start("retry-too-soon", "normal", retry_profile)
+        assert "RUSTIC_RETRY_DEFERRED" in result(proc, False)[1]
+        assert not (blocked / "started").exists()
+        time.sleep(6)
+        case, proc = start("retry-failure-two", "failure", retry_profile)
+        result(proc, False)
+        blocked, proc = start("retry-review", "normal", retry_profile)
+        assert "RUSTIC_OPERATOR_REVIEW_REQUIRED" in result(proc, False)[1]
+        assert not (blocked / "started").exists()
+        status = json.loads(subprocess.check_output([str(helper), "retry-status", *args(case, retry_profile)], text=True))
+        assert status["state"]["failures"] == 2
+        assert status["state"]["reason"] == "job_failed"
+        reset = json.loads(subprocess.check_output([str(helper), "retry-reset", *args(case, retry_profile)], text=True))
+        assert reset["state"]["reason"] == "operator_reset"
+        case, proc = start("retry-after-reset", "normal", retry_profile)
+        result(proc, True)
+        status = json.loads(subprocess.check_output([str(helper), "retry-status", *args(case, retry_profile)], text=True))
+        assert status["state"]["phase"] == "complete" and status["state"]["failures"] == 0
+        case, proc = start("retry-launcher-death", "hang", retry_profile)
+        identity = await_started(case, proc)
+        reset = subprocess.run([str(helper), "retry-reset", *args(case, retry_profile)], capture_output=True, timeout=10)
+        assert reset.returncode != 0
+        proc.kill()
+        proc.wait(timeout=5)
+        barrier(case, retry_profile)
+        assert_gone(identity, immediate=True)
+        proc.communicate(timeout=5)
+        blocked, proc = start("retry-after-crash", "normal", retry_profile)
+        assert "RUSTIC_RETRY_DEFERRED" in result(proc, False)[1]
+        assert not (blocked / "started").exists()
+        status = json.loads(subprocess.check_output([str(helper), "retry-status", *args(case, retry_profile)], text=True))
+        assert status["state"]["reason"] == "job_interrupted" and status["state"]["failures"] == 1
         print(json.dumps({"ok": True, "cases": ["normal", "failure", "deadline",
               "sudo-normal", "sudo-caller-death", "caller-death", "closed-fds",
               "worker-death", "same-repo", "host-full", "orphan", "oom",
               "mutable-native-source", "native-backup", "native-restore", "wrong-binary",
               "no-io-enforcement", "shared-maintenance-parent",
-              "rootfs-native-backup", "rootfs-native-restore"]}))
+              "rootfs-native-backup", "rootfs-native-restore", "persistent-retry-backoff",
+              "persistent-retry-review", "operator-retry-reset", "interrupted-retry-recovery"]}))
     finally:
         for proc in processes:
             if proc.poll() is None:
@@ -364,6 +406,8 @@ secret_access_key = "disposable"
             path.unlink(missing_ok=True)
         subprocess.run(["systemctl", "daemon-reload"], check=True)
         shutil.rmtree(root)
+        if retry_root.exists():
+            shutil.rmtree(retry_root)
 
 
 if __name__ == "__main__":
