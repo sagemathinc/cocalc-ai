@@ -242,7 +242,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
         ? { fontWeight: "bold" }
         : item.isDir
           ? undefined
-          : { color: COLORS.FILE_EXT }
+          : { color: UI_COLORS.secondary }
       : undefined;
 
     return (
@@ -262,8 +262,8 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
               style={{
                 color: !item.mask
                   ? dimFileExtensions
-                    ? COLORS.GRAY_M
-                    : COLORS.FILE_EXT
+                    ? UI_COLORS.secondary
+                    : "inherit"
                   : undefined,
               }}
             >

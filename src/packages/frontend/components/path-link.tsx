@@ -9,13 +9,13 @@ import {
   separate_file_extension,
   trunc_middle,
 } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { handleFileEntryClick } from "../project/history/utils";
 import { Tip } from "./tip";
 
 import React from "react";
 
-const DIMMED_STYLE = { color: COLORS.FILE_DIMMED } as const;
+const DIMMED_STYLE = { color: UI_COLORS.secondary } as const;
 
 interface Props {
   path: string;
@@ -65,7 +65,7 @@ export const PathLink: React.FC<Props> = ({
             onOpen?.();
             handleFileEntryClick(e, path, project_id);
           }}
-          style={{ color: COLORS.GRAY_D, fontWeight: "bold", ...style }}
+          style={{ color: UI_COLORS.text, fontWeight: "bold", ...style }}
         >
           {s}
         </a>
