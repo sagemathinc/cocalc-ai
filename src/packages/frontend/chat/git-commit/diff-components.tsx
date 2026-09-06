@@ -579,6 +579,7 @@ export const DiffFileSection = memo(function DiffFileSection({
       style={{ marginBottom: 18 }}
     >
       <div
+        data-review-file-id={String(index)}
         style={{
           position: "sticky",
           top: -16,

@@ -22,6 +22,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { DiffPreviewButton } from "@cocalc/frontend/components/diff-viewer/preview-button";
+import { ChangedFilesLayout } from "@cocalc/frontend/components/diff-viewer/changed-files-layout";
 import { matchFontSizeShortcut } from "@cocalc/frontend/editors/markdown-input/font-size-shortcut";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -520,6 +521,10 @@ export function GitCommitDrawer({
     readGitReviewFetchCountPreference,
   );
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [activeNavigationFile, setActiveNavigationFile] = useState<{
+    scope: string;
+    id: string;
+  }>();
   const [diffFindQuery, setDiffFindQuery] = useState("");
   const [activeDiffFindMatchIndex, setActiveDiffFindMatchIndex] =
     useState<number>(-1);
@@ -1859,6 +1864,15 @@ export function GitCommitDrawer({
         : commentAnchorKey(activeInlineDraft),
     [activeInlineDraft],
   );
+  const navigationFiles = useMemo(
+    () =>
+      (currentData?.files ?? []).map((file, index) => ({
+        id: String(index),
+        path: file.path,
+        commentCount: inlineCommentsByFile.get(file.path)?.length ?? 0,
+      })),
+    [currentData, inlineCommentsByFile],
+  );
 
   const openInlineDraft = useCallback(
     (anchor: CommentAnchor) => {
@@ -2595,6 +2609,20 @@ export function GitCommitDrawer({
   const handleDrawerScroll = () => {
     const node = scrollRef.current;
     if (!node) return;
+    const top = node.getBoundingClientRect().top;
+    for (const header of node.querySelectorAll<HTMLElement>(
+      "[data-review-file-id]",
+    )) {
+      if (header.getBoundingClientRect().bottom > top) {
+        const id = header.dataset.reviewFileId!;
+        setActiveNavigationFile((current) =>
+          current?.scope === scrollStorageId && current.id === id
+            ? current
+            : { scope: scrollStorageId, id },
+        );
+        break;
+      }
+    }
     if (restoringScrollRef.current) return;
     persistDrawerScrollPosition(scrollStorageId, node.scrollTop);
   };
@@ -3196,52 +3224,63 @@ export function GitCommitDrawer({
                   inlineCommentsByFile={inlineCommentsByFile}
                   onOpenFileDiff={scrollToDiffFile}
                 />
-                <GitDiffFilesPanel
-                  files={currentData.files}
-                  drawerScrollParent={drawerScrollParent}
-                  virtuosoRef={virtuosoRef}
-                  fontSize={effectiveFontSize}
-                  editorTheme={editorTheme}
-                  reviewEditorScope={reviewEditorScope}
-                  inlineCommentsByFile={inlineCommentsByFile}
-                  showResolvedComments={showResolvedComments}
-                  isHeadSelected={isHeadSelected}
-                  visibleDiffLinesByFile={visibleDiffLinesByFile}
-                  onOpenFile={openFile}
-                  onViewFile={
-                    projectId && commit && !isHeadSelected
-                      ? (path) =>
-                          setHistoricalFile({
-                            scope: scrollStorageId,
-                            request: {
-                              projectId,
-                              cwd: repoRoot || currentData.repoRoot || cwd,
-                              commit,
-                              path,
-                            },
-                          })
+                <ChangedFilesLayout
+                  key={reviewEditorScope}
+                  files={navigationFiles}
+                  activeId={
+                    activeNavigationFile?.scope === scrollStorageId
+                      ? activeNavigationFile.id
                       : undefined
                   }
-                  onShowMoreLines={showMoreDiffLines}
-                  activeDraftAnchorId={activeDraftAnchorId}
-                  activeDraftBody={activeInlineDraftBody}
-                  activeEditingId={activeInlineEditId}
-                  activeEditingBody={activeInlineEditBody}
-                  pendingKey={inlineCommentPendingKey}
-                  onOpenDraft={openInlineDraft}
-                  onDraftBodyChange={setActiveInlineDraftBody}
-                  onCancelDraft={cancelInlineDraft}
-                  onOpenEdit={openInlineEdit}
-                  onEditingBodyChange={setActiveInlineEditBody}
-                  onCancelEdit={cancelInlineEdit}
-                  onCreateComment={submitInlineDraft}
-                  onUpdateComment={submitInlineEdit}
-                  onResolveComment={handleResolveInlineComment}
-                  onReopenComment={handleReopenInlineComment}
-                  diffFindMatchCounts={diffFindMeta.counts}
-                  diffFindMatchedLineIndexes={diffFindMeta.matchedLineIndexes}
-                  activeDiffFindMatch={activeDiffFindMatch}
-                />
+                  onSelect={(id) => scrollToDiffFile(Number(id), "auto")}
+                >
+                  <GitDiffFilesPanel
+                    files={currentData.files}
+                    drawerScrollParent={drawerScrollParent}
+                    virtuosoRef={virtuosoRef}
+                    fontSize={effectiveFontSize}
+                    editorTheme={editorTheme}
+                    reviewEditorScope={reviewEditorScope}
+                    inlineCommentsByFile={inlineCommentsByFile}
+                    showResolvedComments={showResolvedComments}
+                    isHeadSelected={isHeadSelected}
+                    visibleDiffLinesByFile={visibleDiffLinesByFile}
+                    onOpenFile={openFile}
+                    onViewFile={
+                      projectId && commit && !isHeadSelected
+                        ? (path) =>
+                            setHistoricalFile({
+                              scope: scrollStorageId,
+                              request: {
+                                projectId,
+                                cwd: repoRoot || currentData.repoRoot || cwd,
+                                commit,
+                                path,
+                              },
+                            })
+                        : undefined
+                    }
+                    onShowMoreLines={showMoreDiffLines}
+                    activeDraftAnchorId={activeDraftAnchorId}
+                    activeDraftBody={activeInlineDraftBody}
+                    activeEditingId={activeInlineEditId}
+                    activeEditingBody={activeInlineEditBody}
+                    pendingKey={inlineCommentPendingKey}
+                    onOpenDraft={openInlineDraft}
+                    onDraftBodyChange={setActiveInlineDraftBody}
+                    onCancelDraft={cancelInlineDraft}
+                    onOpenEdit={openInlineEdit}
+                    onEditingBodyChange={setActiveInlineEditBody}
+                    onCancelEdit={cancelInlineEdit}
+                    onCreateComment={submitInlineDraft}
+                    onUpdateComment={submitInlineEdit}
+                    onResolveComment={handleResolveInlineComment}
+                    onReopenComment={handleReopenInlineComment}
+                    diffFindMatchCounts={diffFindMeta.counts}
+                    diffFindMatchedLineIndexes={diffFindMeta.matchedLineIndexes}
+                    activeDiffFindMatch={activeDiffFindMatch}
+                  />
+                </ChangedFilesLayout>
               </>
             )}
             {currentData.linesTruncated ? (

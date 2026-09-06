@@ -1151,40 +1151,30 @@ export function GitChangedFilesPanel({
         boxShadow: CARD_SHADOW,
       }}
     >
-      <Typography.Text strong style={{ display: "block", marginBottom: 10 }}>
+      <label style={{ display: "block" }}>
         Changed files
-      </Typography.Text>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-        }}
-      >
-        {files.map((file, idx) => {
-          const sectionId = buildGitReviewFileSectionId(file.path, idx);
-          const fileComments =
-            inlineCommentsByFile.get(file.path) ?? EMPTY_GIT_REVIEW_COMMENTS;
-          return (
-            <Button
-              key={`file-index-${sectionId}`}
-              size="small"
-              style={{
-                alignSelf: "flex-start",
-                fontFamily: "monospace",
-                maxWidth: "100%",
-                overflow: "hidden",
-                textAlign: "left",
-                textOverflow: "ellipsis",
-              }}
-              onClick={() => onOpenFileDiff(idx)}
-            >
-              {file.path}
-              {fileComments.length > 0 ? ` (${fileComments.length})` : ""}
-            </Button>
-          );
-        })}
-      </div>
+        <select
+          aria-label="Changed files"
+          value=""
+          onChange={(event) => onOpenFileDiff(Number(event.target.value))}
+          style={{ width: "100%", minWidth: 0 }}
+        >
+          <option value="" disabled>
+            Choose a file ({files.length})
+          </option>
+          {files.map((file, idx) => {
+            const sectionId = buildGitReviewFileSectionId(file.path, idx);
+            const fileComments =
+              inlineCommentsByFile.get(file.path) ?? EMPTY_GIT_REVIEW_COMMENTS;
+            return (
+              <option key={`file-index-${sectionId}`} value={idx}>
+                {file.path}
+                {fileComments.length > 0 ? ` (${fileComments.length})` : ""}
+              </option>
+            );
+          })}
+        </select>
+      </label>
     </div>
   );
 }

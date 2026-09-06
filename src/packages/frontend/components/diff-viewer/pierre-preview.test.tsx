@@ -5,6 +5,10 @@ import userEvent from "@testing-library/user-event";
 import PierrePreview from "./pierre-preview";
 
 const mockScrollTo = jest.fn();
+jest.mock("./changed-files-tree", () => ({
+  __esModule: true,
+  default: () => null,
+}));
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: { getActions: () => undefined },
 }));

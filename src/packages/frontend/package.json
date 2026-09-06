@@ -65,6 +65,7 @@
     "@microlink/react-json-view": "^1.23.3",
     "@orama/orama": "3.0.0-rc-3",
     "@pierre/diffs": "1.4.1",
+    "@pierre/trees": "1.0.0-beta.6",
     "@playwright/test": "^1.57.0",
     "@rc-component/tabs": "1.7.0",
     "@simplewebauthn/browser": "^13.3.0",

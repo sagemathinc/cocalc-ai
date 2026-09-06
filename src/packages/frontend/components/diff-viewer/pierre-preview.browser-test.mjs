@@ -28,8 +28,13 @@ const built = await build({
     contents: `import React from 'react';
       import { createRoot } from 'react-dom/client';
       import { DiffPreviewButton } from './components/diff-viewer/preview-button';
+      import ChangedFilesTree from './components/diff-viewer/changed-files-tree';
       function Harness() {
         const [fontSize, setFontSize] = React.useState(14);
+        const [files, setFiles] = React.useState([{id:'a',path:'src/a.ts',status:'added'}, {id:'b',path:'src/b.ts',status:'modified',commentCount:2}]);
+        const [selected, setSelected] = React.useState('');
+        window.treeSetFiles = setFiles;
+        if (location.pathname === '/tree') return <><ChangedFilesTree files={files} activeId={selected} onSelect={setSelected}/><output aria-label="Selected file">{selected}</output></>;
         window.previewSetFontSize = setFontSize;
         return <DiffPreviewButton fontSize={fontSize} getSource={() => ({kind:'patch',label:'Browser fixture',patch:${JSON.stringify(patch)}})} />;
       }
@@ -37,6 +42,7 @@ const built = await build({
     loader: "tsx",
   },
   bundle: true,
+  outfile: "preview.js",
   write: false,
   format: "esm",
   jsx: "automatic",
@@ -66,12 +72,18 @@ const built = await build({
 const server = createServer((req, res) => {
   res.setHeader(
     "Content-Type",
-    req.url === "/app.js" ? "application/javascript" : "text/html",
+    req.url === "/app.js"
+      ? "application/javascript"
+      : req.url === "/app.css"
+        ? "text/css"
+        : "text/html",
   );
   res.end(
     req.url === "/app.js"
-      ? built.outputFiles[0].contents
-      : '<!doctype html><html><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>',
+      ? built.outputFiles.find((file) => file.path.endsWith(".js")).contents
+      : req.url === "/app.css"
+        ? built.outputFiles.find((file) => file.path.endsWith(".css")).contents
+        : '<!doctype html><html><head><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>',
   );
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -89,10 +101,72 @@ try {
   const errors = [];
   page.setDefaultTimeout(10000);
   page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${server.address().port}/tree`);
+  const b = page.getByRole("treeitem", { name: /b.ts/ });
+  await expect(b).toBeVisible();
+  await b.click();
+  await expect(page.getByLabel("Selected file")).toHaveText("b");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Enter");
+  await expect(page.getByLabel("Selected file")).toHaveText("a");
+  await page
+    .getByRole("searchbox", { name: "Filter changed files" })
+    .fill("b.ts");
+  await expect(page.getByRole("treeitem", { name: /a.ts/ })).toHaveCount(0);
+  await page.evaluate(() =>
+    window.treeSetFiles([
+      { id: "c", path: "other/c.ts", status: "deleted", commentCount: 3 },
+    ]),
+  );
+  await page.getByRole("searchbox", { name: "Filter changed files" }).fill("");
+  await expect(page.getByRole("treeitem", { name: /b.ts/ })).toHaveCount(0);
+  const c = page.getByRole("treeitem", { name: /c.ts/ });
+  await expect(c).toBeVisible();
+  await c.click();
+  await expect(page.getByLabel("Selected file")).toHaveText("c");
+  await page.evaluate(() =>
+    window.treeSetFiles([
+      { id: "c", path: "other/c.ts", status: "deleted", commentCount: 7 },
+    ]),
+  );
+  await expect(
+    page.getByText("deleted; 7 comments", { exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => window.treeSetFiles([]));
+  await expect(page.getByRole("treeitem")).toHaveCount(0);
+  await page.evaluate(() =>
+    window.treeSetFiles(
+      Array.from({ length: 10000 }, (_, i) => ({
+        id: String(i),
+        path: "src/file-" + String(i).padStart(5, "0") + ".ts",
+      })),
+    ),
+  );
+  await expect(page.getByRole("treeitem").first()).toBeVisible();
+  assert.ok(
+    (await page.getByRole("treeitem").count()) < 200,
+    "large tree remains virtualized",
+  );
+  await page
+    .getByRole("searchbox", { name: "Filter changed files" })
+    .fill("file-09999.ts");
+  await page.getByRole("treeitem", { name: /file-09999.ts/ }).click();
+  await expect(page.getByLabel("Selected file")).toHaveText("9999");
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.getByRole("button", { name: "Preview with Pierre" }).click();
   await page.getByRole("combobox", { name: "Preview file" }).waitFor();
   const viewport = page.locator(".cocalc-pierre-preview-viewport");
+  const treeNavigation = page.getByRole("complementary", {
+    name: "Changed-file navigation",
+  });
+  await expect(
+    treeNavigation.getByRole("treeitem", { name: /second.ts/ }),
+  ).toBeVisible();
+  await treeNavigation.getByRole("treeitem", { name: /second.ts/ }).click();
+  await expect(
+    page.getByRole("combobox", { name: "Preview file" }),
+  ).toHaveValue("1");
+  await page.getByRole("combobox", { name: "Preview file" }).selectOption("0");
   const diff = page.locator("diffs-container pre[data-diff]").first();
   await expect(diff).toHaveAttribute("data-diff-type", "single");
   await expect(diff).toHaveAttribute("data-overflow", "wrap");
@@ -246,6 +320,7 @@ try {
   await page.getByRole("checkbox", { name: "Wrap long lines" }).check();
   for (const width of [1200, 600, 320]) {
     await page.setViewportSize({ width, height: 900 });
+    if (width < 800) await expect(treeNavigation).toBeHidden();
     await page
       .getByRole("combobox", { name: "Preview file" })
       .selectOption("0");

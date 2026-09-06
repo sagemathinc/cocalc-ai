@@ -25,6 +25,8 @@ import {
 import { parsePreviewSource } from "./pierre-model";
 import type { DiffPreviewSource } from "./preview-types";
 import { ReviewFileHeader, reviewFileHeaderHeight } from "./review-file-header";
+import { ChangedFilesLayout } from "./changed-files-layout";
+import type { ChangedFileEntry } from "./changed-files-model";
 
 type PreviewComment = {
   id: string;
@@ -98,6 +100,37 @@ export default function PierrePreview({
       }),
     [parsed.files, comments],
   );
+  const navigationFiles = useMemo<ChangedFileEntry[]>(
+    () =>
+      parsed.files.map((file, index) => ({
+        id: String(index),
+        path: file.name,
+        oldPath: file.prevName,
+        status:
+          file.type === "new"
+            ? "added"
+            : file.type === "deleted"
+              ? "deleted"
+              : file.type?.startsWith("rename")
+                ? "renamed"
+                : "modified",
+        commentCount: comments.filter(
+          (comment) => comment.fileId === String(index),
+        ).length,
+      })),
+    [parsed.files, comments],
+  );
+  const selectFile = (id: string) => {
+    setFileIndex(Number(id));
+    setSelection(null);
+    setMessage("");
+    viewer.current?.scrollTo({
+      type: "item",
+      id,
+      align: "start",
+      behavior: "instant",
+    });
+  };
   const options = useMemo(
     () => ({
       diffStyle: split ? ("split" as const) : ("unified" as const),
@@ -206,16 +239,7 @@ export default function PierrePreview({
             aria-label="Preview file"
             value={fileIndex}
             onChange={(event) => {
-              const id = event.target.value;
-              setFileIndex(Number(id));
-              setSelection(null);
-              setMessage("");
-              viewer.current?.scrollTo({
-                type: "item",
-                id,
-                align: "start",
-                behavior: "instant",
-              });
+              selectFile(event.target.value);
             }}
             style={{ width: "min(32rem, 65vw)", minWidth: 0, maxWidth: "100%" }}
           >
@@ -254,89 +278,116 @@ export default function PierrePreview({
         Diff scrolling: Space / Shift+Space, Page Down / Page Up, arrow keys,
         and Home. Comments and controls keep their normal keys.
       </div>
-      <CodeView<string>
-        className="cocalc-pierre-preview-viewport"
-        containerRef={viewport}
-        ref={viewer}
-        items={items}
-        options={options}
-        selectedLines={selection}
-        onSelectedLinesChange={setSelection}
-        renderCustomHeader={(item) => {
-          if (item.type !== "diff") return null;
-          const copy = async () => {
-            try {
-              await navigator.clipboard.writeText(item.fileDiff.name);
-              setMessage(
-                `Copied repository-relative path: ${item.fileDiff.name}`,
-              );
-            } catch {
-              setMessage(
-                "Unable to copy path; select the filename and copy manually.",
-              );
+      <ChangedFilesLayout
+        files={navigationFiles}
+        activeId={String(fileIndex)}
+        onSelect={selectFile}
+      >
+        <CodeView<string>
+          className="cocalc-pierre-preview-viewport"
+          containerRef={viewport}
+          ref={viewer}
+          items={items}
+          options={options}
+          selectedLines={selection}
+          onSelectedLinesChange={setSelection}
+          onScroll={() => {
+            const node = viewport.current;
+            if (!node) return;
+            const top = node.getBoundingClientRect().top;
+            let active: HTMLElement | undefined;
+            for (const header of node.querySelectorAll<HTMLElement>(
+              "[data-review-file-id]",
+            )) {
+              if (header.getBoundingClientRect().bottom > top) {
+                active = header;
+                break;
+              }
             }
-          };
-          return (
-            <ReviewFileHeader
-              path={item.fileDiff.name}
-              oldPath={item.fileDiff.prevName}
-              fontSize={fontSize}
-              description="Frozen preview; file opening requires a resolved revision/worktree"
-              onCopyPath={() => void copy()}
-            />
-          );
-        }}
-        style={{
-          height: "60vh",
-          minHeight: 200,
-          // Pierre virtualizes against this element's own scroll viewport.
-          overflow: "auto",
-          minWidth: 0,
-          width: "100%",
-          maxWidth: "100%",
-          boxSizing: "border-box",
-          border: `1px solid ${COLORS.GRAY_L}`,
-          fontSize,
-        }}
-        renderAnnotation={(annotation) => {
-          const comment = comments.find(
-            (entry) => entry.id === annotation.metadata,
-          );
-          if (!comment) return null;
-          return (
-            <div
-              style={{ padding: 12, background: COLORS.GRAY_LLL, minWidth: 0 }}
-            >
-              <div>
-                Temporary comment (
-                {comment.side === "additions" ? "new" : "old"} line{" "}
-                {comment.line})
+            if (active) setFileIndex(Number(active.dataset.reviewFileId));
+          }}
+          renderCustomHeader={(item) => {
+            if (item.type !== "diff") return null;
+            const copy = async () => {
+              try {
+                await navigator.clipboard.writeText(item.fileDiff.name);
+                setMessage(
+                  `Copied repository-relative path: ${item.fileDiff.name}`,
+                );
+              } catch {
+                setMessage(
+                  "Unable to copy path; select the filename and copy manually.",
+                );
+              }
+            };
+            return (
+              <div data-review-file-id={item.id}>
+                <ReviewFileHeader
+                  path={item.fileDiff.name}
+                  oldPath={item.fileDiff.prevName}
+                  fontSize={fontSize}
+                  description="Frozen preview; file opening requires a resolved revision/worktree"
+                  onCopyPath={() => void copy()}
+                />
               </div>
-              <MarkdownHistoryInput
-                historyId={`${scope}:${comment.id}`}
-                cacheId={`${scope}:${comment.id}`}
-                value={comment.body}
-                onChange={(body) =>
-                  setComments((previous) =>
-                    previous.map((entry) =>
-                      entry.id === comment.id ? { ...entry, body } : entry,
-                    ),
-                  )
-                }
-                fontSize={fontSize}
-                autoGrow
-                autoGrowMaxHeight={220}
-                hideHelp
-                minimal
-                compact
-                enableMentions={false}
-                enableUpload={true}
-                placeholder="Temporary rich-text comment..."
-              />
-            </div>
-          );
-        }}
-      />
+            );
+          }}
+          style={{
+            height: "60vh",
+            minHeight: 200,
+            // Pierre virtualizes against this element's own scroll viewport.
+            overflow: "auto",
+            minWidth: 0,
+            width: "100%",
+            maxWidth: "100%",
+            boxSizing: "border-box",
+            border: `1px solid ${COLORS.GRAY_L}`,
+            fontSize,
+          }}
+          renderAnnotation={(annotation) => {
+            const comment = comments.find(
+              (entry) => entry.id === annotation.metadata,
+            );
+            if (!comment) return null;
+            return (
+              <div
+                style={{
+                  padding: 12,
+                  background: COLORS.GRAY_LLL,
+                  minWidth: 0,
+                }}
+              >
+                <div>
+                  Temporary comment (
+                  {comment.side === "additions" ? "new" : "old"} line{" "}
+                  {comment.line})
+                </div>
+                <MarkdownHistoryInput
+                  historyId={`${scope}:${comment.id}`}
+                  cacheId={`${scope}:${comment.id}`}
+                  value={comment.body}
+                  onChange={(body) =>
+                    setComments((previous) =>
+                      previous.map((entry) =>
+                        entry.id === comment.id ? { ...entry, body } : entry,
+                      ),
+                    )
+                  }
+                  fontSize={fontSize}
+                  autoGrow
+                  autoGrowMaxHeight={220}
+                  hideHelp
+                  minimal
+                  compact
+                  enableMentions={false}
+                  enableUpload={true}
+                  placeholder="Temporary rich-text comment..."
+                />
+              </div>
+            );
+          }}
+        />
+      </ChangedFilesLayout>
     </div>
   );
 }

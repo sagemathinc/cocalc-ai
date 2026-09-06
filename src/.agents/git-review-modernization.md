@@ -181,6 +181,45 @@ source viewers are separate from the diff toolbar.
 
 ### Implementation progress (2026-09-06)
 
+Trees navigation implemented in the main drawer and Pierre preview:
+
+- Pinned `@pierre/trees@1.0.0-beta.6` (published July 25; no age exception).
+  Reviewed the published path normalization, React lifecycle, selection/search,
+  reset, decoration, and disabled mutation APIs. The Apache-2.0 package and its
+  three direct runtime dependencies have no preinstall/install/postinstall or
+  root binding.gyp hooks. Preact's development prepare script is not a registry
+  install hook. Installation and frozen-lock validation used `--ignore-scripts`.
+  Verified the Trees tarball SHA-512 against registry metadata. Preserved all
+  unrelated lockfile entries; only the four-package closure was added.
+- The lazy sidebar accepts renderer-neutral file IDs, paths, optional change
+  status, and comment counts. It never queries Git or the filesystem. Filtering,
+  keyboard activation, active-file indication, collapse, and keyboard-operable
+  width adjustment coexist with the existing sticky copy/open headers. Below
+  800px of available component width it yields to the compact file selector;
+  layout changes do not remount the diff or comment editors.
+- The old unbounded changed-files button list is now a compact selector. Both
+  that selector and Trees navigate the same legacy Virtuoso list. Scrolling
+  updates tree selection without dispatching another navigation or stealing
+  focus. The Pierre preview uses the same sidebar around CodeView.
+- Replacing paths explicitly resets the model and ends the prior search session
+  before applying the new filter. Otherwise clearing a filter could restore old
+  expansion state and hide new folders. Comment-count-only updates refresh row
+  decorations without resetting paths. Duplicate/colliding file-directory paths
+  show an explanation and retain the independent flat selector.
+- Real Chromium covers keyboard activation, filtered target replacement, live
+  comment counts, empty reviews, search/select among 10,000 virtualized files,
+  and preview reflow at 1200/600/320px. Signed-in lite1b smoke tests cover the main
+  drawer's tree selection/active highlight, hide/show preserving filter, compact
+  navigation, unchanged target URL, and historical rich/source opening. Run
+  `git/changed-files.browser-test.mjs <chat-url> <commit>` for the main drawer.
+  Focused suites: 86 tests; frontend typecheck/lint, version consistency, and
+  development bundle passed.
+- Remaining Trees work: persist target-scoped expansion/preferences across
+  closing/reopening, derive legacy status/rename metadata from the new Git
+  facade, and revalidate against the production Pierre adapter. Existing review
+  store schema and default diff renderer are unchanged. No reviewed-file badge
+  is invented from commit-level review state.
+
 Foundation implemented without changing the default renderer or V2 persistence:
 
 - `components/diff-viewer/review-model.ts` defines repository, pinned/working

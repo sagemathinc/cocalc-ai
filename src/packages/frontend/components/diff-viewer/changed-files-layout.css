@@ -1,0 +1,42 @@
+.cocalc-changed-files-layout {
+  container-type: inline-size;
+  min-width: 0;
+  width: 100%;
+}
+.cocalc-changed-files-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.cocalc-changed-files-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cocalc-changed-files-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+.cocalc-changed-files-columns > aside {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  min-width: 0;
+}
+.cocalc-changed-files-content {
+  min-width: 0;
+}
+@container (min-width: 800px) {
+  .cocalc-changed-files-columns[data-tree-visible="true"] {
+    grid-template-columns: var(--review-tree-width) minmax(0, 1fr);
+  }
+}
+@container (max-width: 799px) {
+  .cocalc-changed-files-columns > aside,
+  .cocalc-changed-files-controls {
+    display: none;
+  }
+}

@@ -884,6 +884,9 @@ importers:
       '@pierre/diffs':
         specifier: 1.4.1
         version: 1.4.1(@shikijs/themes@4.4.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      "@pierre/trees":
+        specifier: 1.0.0-beta.6
+        version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.4.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(shiki@4.4.3)
       '@playwright/test':
         specifier: ^1.57.0
         version: 1.57.0
@@ -12477,6 +12480,44 @@ packages:
 
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
+
+  "@pierre/trees@1.0.0-beta.6":
+    resolution:
+      integrity: sha512-zxeuSFM9TveM7b5XofweJALCtm/tGYV9HZzdbf7Uf+kBxIlUyz24/EHaGRjB0dsmmfDQl2ETz7AWwJ15lhSnpw==
+    peerDependencies:
+      react: ^18.3.1 || ^19.0.0
+      react-dom: ^18.3.1 || ^19.0.0
+
+  "@pierre/theming@1.0.0":
+    resolution:
+      integrity: sha512-WsdrnhKfjeyXGDikZmN9pkpeZ5S/cl6EE72feiSc0tlynT1tMYqXqouhuv/foK+PY9OEnebOAVRQn3+rAstR8g==
+    peerDependencies:
+      "@pierre/theme": ^1.1.0
+      "@shikijs/themes": ^3.0.0 || ^4.0.0
+      react: ^18.3.1 || ^19.0.0
+      react-dom: ^18.3.1 || ^19.0.0
+      shiki: ^3.0.0 || ^4.0.0
+    peerDependenciesMeta:
+      "@pierre/theme":
+        optional: true
+      "@shikijs/themes":
+        optional: true
+      react:
+        optional: true
+      react-dom:
+        optional: true
+      shiki:
+        optional: true
+
+  preact@11.0.0-beta.0:
+    resolution:
+      integrity: sha512-IcODoASASYwJ9kxz7+MJeiJhvLriwSb4y4mHIyxdgaRZp6kPUud7xytrk/6GZw8U3y6EFJaRb5wi9SrEK+8+lg==
+
+  preact-render-to-string@6.6.5:
+    resolution:
+      integrity: sha512-O6MHzYNIKYaiSX3bOw0gGZfEbOmlIDtDfWwN1JJdc/T3ihzRT6tGGSEWE088dWrEDGa1u7101q+6fzQnO9XCPA==
+    peerDependencies:
+      preact: ">=10 || >= 11.0.0-0"
 
 snapshots:
 
@@ -24607,3 +24648,29 @@ snapshots:
   zod@4.3.6: {}
 
   zwitch@2.0.4: {}
+
+  "@pierre/trees@1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.4.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(shiki@4.4.3)":
+    dependencies:
+      "@pierre/theming": 1.0.0(@pierre/theme@2.0.0)(@shikijs/themes@4.4.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(shiki@4.4.3)
+      preact: 11.0.0-beta.0
+      preact-render-to-string: 6.6.5(preact@11.0.0-beta.0)
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
+    transitivePeerDependencies:
+      - "@pierre/theme"
+      - "@shikijs/themes"
+      - shiki
+
+  "@pierre/theming@1.0.0(@pierre/theme@2.0.0)(@shikijs/themes@4.4.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(shiki@4.4.3)":
+    optionalDependencies:
+      "@pierre/theme": 2.0.0
+      "@shikijs/themes": 4.4.3
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
+      shiki: 4.4.3
+
+  preact@11.0.0-beta.0: {}
+
+  preact-render-to-string@6.6.5(preact@11.0.0-beta.0):
+    dependencies:
+      preact: 11.0.0-beta.0
