@@ -41,6 +41,9 @@ sequenceDiagram
 
 ## Browser API Status
 
+The namespace entries below describe the rich execution API; their availability
+depends on the policy described in [Discover The Current Surface](#discover-the-current-surface).
+
 | Area                     | Status          | Notes                                                         |
 | ------------------------ | --------------- | ------------------------------------------------------------- |
 | Session discovery        | Implemented     | Browser heartbeat + `browser session list/use/clear`.         |
@@ -59,16 +62,20 @@ sequenceDiagram
 
 ## Capability Shape (Launchpad vs Lite)
 
-| Capability                | Launchpad | Lite       |
-| ------------------------- | --------- | ---------- |
-| browser sessions          | yes       | yes        |
-| exec-api/exec LRO         | yes       | yes        |
-| fs + safe search commands | yes       | yes        |
-| bash execution            | yes       | yes        |
-| timetravel.patchflow      | yes       | yes        |
-| timetravel.snapshots      | yes       | usually no |
-| timetravel.backups        | yes       | usually no |
-| timetravel.git            | yes       | optional   |
+| Capability                | Launchpad | Lite |
+| ------------------------- | --------- | ---- |
+| browser sessions          | yes       | yes  |
+| exec-api/exec LRO         | yes       | yes  |
+| fs + safe search commands | yes       | yes  |
+| bash execution            | yes       | yes  |
+| timetravel.patchflow      | yes       | yes  |
+| timetravel.snapshots      | yes       | yes  |
+| timetravel.backups        | yes       | no   |
+| timetravel.git            | yes       | yes  |
+
+Provider entries describe advertised support; they do not guarantee that
+history exists for a particular file or project. Access to the rich execution
+namespaces also depends on browser-session and caller policy, as described below.
 
 Rule: keep one API surface and expose runtime capability checks so scripts can branch cleanly.
 
@@ -104,22 +111,29 @@ Notes:
 
 ## Discover The Current Surface
 
-The terminal and session-scoped extension APIs are implemented; they are not
-pending roadmap items. `api.extensions` currently exposes `list`,
-`installHelloWorld`, and `uninstall`. This is a small session extension surface,
-not a general package marketplace.
+Read `cocalc browser exec-api` for the selected browser session before writing
+a script, and follow its returned declaration for method names and argument
+shapes. The rich terminal, extension, notebook, filesystem, Bash and timetravel
+namespaces described here require raw execution to be permitted by the session
+and caller policy. Otherwise, `browser exec` exposes the constrained QuickJS
+action API: calls are synchronous from the script's point of view, and
+top-level `await` is unsupported. Receiving a rich declaration does not itself
+grant execution permission.
 
-Read `cocalc browser exec-api` from the running instance before writing a script.
-The declaration describes that instance's supported methods and argument shapes.
-For example, the browser notebook surface provides `listCells`, `runCells`, and
+The rich terminal and session-scoped extension APIs are implemented.
+`api.extensions` currently exposes `list`, `installHelloWorld`, and `uninstall`.
+This is a small session extension surface, not a general package marketplace.
+
+The rich browser notebook surface provides `listCells`, `runCells`, and
 `setCells`. For broader live notebook operations, including insertion, movement
 and deletion, inspect `cocalc project jupyter -h` and
 `cocalc project jupyter exec-api` instead.
 
 Choose the backend document API when the operation does not need a browser.
 Use browser exec for visible tabs, splits, selection and other session context.
-Check `api.timetravel.providers()` before choosing a history source; provider
-availability depends on the project and deployment.
+When the rich API is available, inspect `api.timetravel.providers()` before
+choosing a history source, then check whether that provider has history for
+the target file or project.
 
 The earlier phased roadmap mixed implemented capabilities with proposals.
 Future work must be checked against current source before being described as
@@ -127,9 +141,9 @@ available. See [browser debugging](browser-debugging.md) for session targeting
 and [the CoCalc skill](../src/packages/cli/skills/cocalc/SKILL.md) for the backend
 and browser decision order.
 
-## Terminal API
+## Terminal API (Rich Execution)
 
-The implemented terminal API supports workflows such as:
+When raw execution is permitted, the rich terminal API supports workflows such as:
 
 - Open file + split frame + terminal next to it.
 - Spawn/attach to terminal session by stable session path.
@@ -137,7 +151,7 @@ The implemented terminal API supports workflows such as:
 - Resize and destroy sessions.
 - Enumerate terminal frames currently visible/open in browser editors.
 
-Supported terminal API shape:
+Rich terminal API shape; check the selected session's returned declaration:
 
 ```ts
 api.terminal.listOpen(): Promise<TerminalFrameInfo[]>;
