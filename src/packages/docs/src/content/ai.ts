@@ -422,6 +422,27 @@ send your answer in the conversation.
 In **CoCalc Lite**, requests are available within the project. Cross-device
 inbox and email delivery are unavailable.
 
+## Refresh the models available to your ChatGPT account
+
+When a thread uses your **ChatGPT Plan**, CoCalc can check which models that
+account currently supports.
+
+1. Click **Codex** in the thread controls to open **Codex settings**.
+2. Under **Model and session**, click **Refresh models** and wait for the
+   check to finish.
+3. If **Model unavailable for this ChatGPT account** appears, choose an
+   enabled model. CoCalc keeps the previous selection visible instead of
+   silently replacing it.
+4. Recheck **Reasoning level** and **Speed**, then click **Save** before
+   starting the next turn.
+
+Refreshing checks availability; it does not grant access to additional
+models. A model list can contain cached or built-in choices when a live
+check has not succeeded.
+
+**Refresh models** is specific to ChatGPT-funded threads. API-key and
+membership funding do not use this account-model refresh control.
+
 ## Why this matters in CoCalc
 
 CoCalc is both a collaborative workspace and an agent sandbox. Humans can review
