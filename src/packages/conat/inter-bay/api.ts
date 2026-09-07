@@ -617,6 +617,7 @@ export interface IssueProjectHostAuthTokenRequest {
   project_id?: string;
   public_directory_share_id?: string;
   ttl_seconds?: number;
+  browser_session_exp_s?: number;
 }
 
 export interface IssueProjectHostAuthTokenResponse {

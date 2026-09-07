@@ -95,6 +95,7 @@ let listCloudOrphanInstancesMock: jest.Mock;
 let logCloudVmEventMock: jest.Mock;
 let getBrowserAuthSessionHashMock: jest.Mock;
 let requireFreshAuthForSessionHashMock: jest.Mock;
+let getCurrentAuthSessionForSessionHashMock: jest.Mock;
 let getImpersonationSessionBySessionHashMock: jest.Mock;
 let hasActiveSecondFactorMock: jest.Mock;
 let hasPaymentMethodMock: jest.Mock;
@@ -216,6 +217,8 @@ jest.mock("@cocalc/server/conat/socketio/browser-auth-sessions", () => ({
 
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
   __esModule: true,
+  getCurrentAuthSessionForSessionHash: (...args: any[]) =>
+    getCurrentAuthSessionForSessionHashMock(...args),
   requireFreshAuthForSessionHash: (...args: any[]) =>
     requireFreshAuthForSessionHashMock(...args),
 }));
@@ -6313,6 +6316,7 @@ describe("hosts.issueProjectHostAuthToken", () => {
       token: "remote-issued-token",
       expires_at: 777777,
     }));
+    getCurrentAuthSessionForSessionHashMock = jest.fn();
     projectReferenceGetMock = jest.fn(async () => ({
       project_id: PROJECT_UUID,
       title: "Remote project",
@@ -6348,6 +6352,33 @@ describe("hosts.issueProjectHostAuthToken", () => {
       expect.objectContaining({
         account_id: ACCOUNT_UUID,
         host_id: HOST_UUID,
+      }),
+    );
+  });
+
+  it("signs testing browser tokens with the authenticated session expiration", async () => {
+    const expiresAtMs = Date.now() + 3_600_000;
+    getCurrentAuthSessionForSessionHashMock = jest.fn(async () => ({
+      account_id: ACCOUNT_UUID,
+      expire: new Date(expiresAtMs),
+      metadata: { testing_account: true },
+    }));
+    const { issueProjectHostAuthToken } = await import("./hosts");
+
+    await issueProjectHostAuthToken({
+      account_id: ACCOUNT_UUID,
+      session_hash: "authenticated-testing-session",
+      host_id: HOST_UUID,
+      project_id: PROJECT_UUID,
+    });
+
+    expect(getCurrentAuthSessionForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_UUID,
+      session_hash: "authenticated-testing-session",
+    });
+    expect(issueProjectHostAuthTokenJwtMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        browser_session_exp_s: Math.floor(expiresAtMs / 1000),
       }),
     );
   });

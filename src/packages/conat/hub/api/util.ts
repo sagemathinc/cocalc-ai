@@ -108,6 +108,24 @@ export const authFirstRequireAccount = declareHubApiPrincipalPolicy(
   },
 );
 
+// Use for methods that derive security policy from the authenticated browser
+// session itself. Unlike the general account transform, callers may not
+// nominate a different session hash.
+export const authFirstRequireAccountWithBoundSession =
+  declareHubApiPrincipalPolicy("account", async (context) => {
+    if (!context.account_id || context.auth_actor === "agent") {
+      throw Error("user must be signed in");
+    }
+    const args = bindAccount(context);
+    const opts = firstArg(args);
+    if (context.auth_session_hash) {
+      opts.session_hash = context.auth_session_hash;
+    } else {
+      delete opts.session_hash;
+    }
+    return args;
+  });
+
 export const authFirstRequireProject = declareHubApiPrincipalPolicy(
   "project",
   async (context) => {

@@ -1,5 +1,6 @@
 import {
   authFirstRequireAccount,
+  authFirstRequireAccountWithBoundSession,
   authFirstRequireHost,
   authFirstRequireHostWithAccountTarget,
 } from "./util";
@@ -1829,7 +1830,7 @@ export const hosts = {
   getManagedRootfsReleaseArtifact: authFirstRequireHost,
   recordManagedRootfsReleaseReplica: authFirstRequireHost,
   listManagedRootfsReleaseLifecycle: authFirstRequireHost,
-  issueProjectHostAuthToken: authFirstRequireAccount,
+  issueProjectHostAuthToken: authFirstRequireAccountWithBoundSession,
 };
 
 export interface HostConnectorUpgradeRequest {

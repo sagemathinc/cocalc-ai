@@ -210,6 +210,26 @@ describe("hub API argument transforms", () => {
     expect(args[0].session_hash).toBe("explicit-session-hash");
   });
 
+  it("binds project-host token policy to the authenticated session", async () => {
+    const args = await transformArgs({
+      name: "hosts.issueProjectHostAuthToken",
+      args: [
+        {
+          host_id: "host-1",
+          project_id: "project-1",
+          session_hash: "attacker-selected-session",
+        },
+      ],
+      account_id: "acct-1",
+      auth_session_hash: "authenticated-session",
+    });
+
+    expect(args[0]).toMatchObject({
+      account_id: "acct-1",
+      session_hash: "authenticated-session",
+    });
+  });
+
   it("forces browser sign-in cookie issuance to the authenticated account", async () => {
     const args = await transformArgs({
       name: "system.issueBrowserSignInCookie",
