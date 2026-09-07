@@ -1653,6 +1653,14 @@ export class Actions extends BaseActions<LatexEditorState> {
     this.synctex_tex_to_pdf(line, ch, path);
   }
 
+  set_frame_type(id: string, type: string): void {
+    super.set_frame_type(id, type);
+    if (type === "time_travel" && this.knitr) {
+      // Use the source .rnw/.rtex path for time travel frames.
+      this.set_frame_tree({ id, path: this.filename_knitr });
+    }
+  }
+
   time_travel(opts: { path?: string; frame?: boolean }): void {
     // knitr case: point to editor file, not the generated tex
     // https://github.com/sagemathinc/cocalc/issues/3336
