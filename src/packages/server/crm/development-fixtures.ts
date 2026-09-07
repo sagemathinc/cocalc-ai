@@ -168,11 +168,11 @@ export function assertFixtureEnvironment(
   seed: string,
 ) {
   if (
-    environment === "production" ||
+    environment !== "development" ||
     confirmation !== "seed-local-customer-fixtures"
   )
     throw Error(
-      "requires non-production environment and --confirm seed-local-customer-fixtures",
+      "requires NODE_ENV=development and --confirm seed-local-customer-fixtures",
     );
   if (bay !== seed)
     throw Error("run against the seed bay, not an attached bay");

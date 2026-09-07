@@ -17,11 +17,12 @@ describe("local customer fixtures", () => {
         "count",
       );
   });
-  it("requires explicit confirmation on a non-production seed bay", () => {
+  it("requires explicit confirmation in development on the seed bay", () => {
     const confirm = "seed-local-customer-fixtures";
-    expect(() =>
-      assertFixtureEnvironment("production", confirm, "seed", "seed"),
-    ).toThrow("non-production");
+    for (const environment of [undefined, "test", "staging", "production"])
+      expect(() =>
+        assertFixtureEnvironment(environment, confirm, "seed", "seed"),
+      ).toThrow("NODE_ENV=development");
     expect(() =>
       assertFixtureEnvironment("development", undefined, "seed", "seed"),
     ).toThrow("confirm");
