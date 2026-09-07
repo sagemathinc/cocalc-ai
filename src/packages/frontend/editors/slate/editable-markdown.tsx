@@ -2874,6 +2874,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           </div>
         )}
         <Editable
+          aria-label={placeholder || "Rich text editor"}
           placeholder={placeholder}
           autoFocus={autoFocus}
           className={[

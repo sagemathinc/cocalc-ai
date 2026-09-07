@@ -5,7 +5,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { Drawer } from "antd";
 
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }) => <span>{name}</span>,
@@ -17,6 +19,37 @@ import { ThreadAnchorButton } from "../thread-anchor-button";
 import { ThreadResolveButton } from "../thread-resolve-button";
 
 describe("ThreadAnchorButton", () => {
+  it("names and keyboard-activates resolve in the mobile tools drawer", async () => {
+    const user = userEvent.setup();
+    const resolveChatMarker = jest.fn();
+    const actions = {
+      getThreadMetadata: () => ({ anchor: { id: "marker-1" } }),
+      frameTreeActions: {
+        resolveChatMarker,
+        getAnchorState: () => "available",
+      },
+    } as any;
+    render(
+      <Drawer open title="Chat tools">
+        <ThreadResolveButton actions={actions} threadKey="thread-1" />
+      </Drawer>,
+    );
+    const drawer = await screen.findByRole("dialog", { name: "Chat tools" });
+    const resolve = within(drawer).getByRole("button", {
+      name: "Resolve this discussion",
+    });
+    resolve.focus();
+    await user.keyboard("{Enter}");
+    const confirm = await screen.findByRole("button", {
+      name: "Resolve",
+      exact: true,
+    });
+    expect(resolveChatMarker).not.toHaveBeenCalled();
+    confirm.focus();
+    await user.keyboard("{Enter}");
+    expect(resolveChatMarker).toHaveBeenCalledWith("marker-1", true);
+  });
+
   it("makes the compact thread label jump to its anchor", () => {
     const jumpToAnchor = jest.fn();
     const actions = {

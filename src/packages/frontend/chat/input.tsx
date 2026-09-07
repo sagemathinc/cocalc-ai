@@ -21,6 +21,7 @@ import type { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import { shouldIgnoreSentEcho, type SentEchoGuard } from "./send-echo-guard";
 import { SubmitMentionsRef } from "./types";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { useNarrowChatViewport } from "./use-chat-viewport";
 
 interface Props {
   on_send: (value: string) => void;
@@ -103,6 +104,7 @@ export default function ChatInput({
   enableMentions = true,
   toolbarRightContent,
 }: Props) {
+  const narrow = useNarrowChatViewport();
   const intl = useIntl();
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>(propsInput ?? "");
@@ -360,7 +362,7 @@ export default function ChatInput({
       unboundedAutoGrow={unboundedAutoGrow}
       clampAutoGrowToHost={clampAutoGrowToHost}
       placeholder={getPlaceholder()}
-      fontSize={fontSize}
+      fontSize={narrow ? Math.max(16, fontSize ?? 13) : fontSize}
       hideHelp={true}
       style={style}
       editBarStyle={editBarStyle}

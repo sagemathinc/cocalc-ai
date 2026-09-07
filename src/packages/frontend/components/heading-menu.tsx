@@ -28,6 +28,7 @@ export default function HeadingMenu({ onClick, style, markdown }: Props) {
 
   return (
     <DropdownMenu
+      ariaLabel="Heading"
       button={true}
       title={<Icon name={"header"} />}
       key={"heading"}

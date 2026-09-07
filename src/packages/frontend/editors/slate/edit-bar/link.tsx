@@ -7,6 +7,7 @@ export default function LinkButton({ editor }) {
   return (
     <Tooltip title="Create a link from the selected text, or insert a new link.">
       <Button
+        aria-label="Insert link"
         size="small"
         onClick={() => {
           formatAction(editor, "link", []);

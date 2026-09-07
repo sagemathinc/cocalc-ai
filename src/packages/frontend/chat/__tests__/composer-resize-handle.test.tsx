@@ -297,6 +297,7 @@ describe("ChatRoomComposer resize handle", () => {
     const onSend = jest.fn();
     const onSendImmediately = jest.fn();
     renderComposer({
+      mobile: true,
       hasActiveAcpTurn: true,
       hasInput: true,
       input: "guidance",
@@ -318,5 +319,41 @@ describe("ChatRoomComposer resize handle", () => {
 
     fireEvent.click(queue);
     expect(onSend).toHaveBeenCalledWith("guidance");
+  });
+
+  it("keeps phone input readable and expands without browser fullscreen", async () => {
+    const requestFullscreen = jest.fn();
+    const original = HTMLElement.prototype.requestFullscreen;
+    HTMLElement.prototype.requestFullscreen = requestFullscreen;
+    try {
+      renderComposer({
+        mobile: true,
+        hasInput: true,
+        input: "draft",
+        fontSize: 13,
+      });
+      expect(lastChatInputProps.fontSize).toBe(16);
+      expect(lastChatInputProps.autoFocus).toBe(false);
+      expect(screen.getByTestId("chat-composer").style.flexDirection).toBe(
+        "column",
+      );
+      expect(
+        screen.getByTestId("chat-composer-actions").style.flexDirection,
+      ).toBe("row");
+      expect(
+        screen.getByTestId("chat-composer-input").parentElement?.style.width,
+      ).toBe("100%");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Zen", exact: true }),
+      );
+      expect(requestFullscreen).not.toHaveBeenCalled();
+      expect(screen.getByTestId("chat-composer").style.position).toBe("fixed");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Exit Zen", exact: true }),
+      );
+      expect(screen.getByTestId("chat-composer").style.position).toBe("");
+    } finally {
+      HTMLElement.prototype.requestFullscreen = original;
+    }
   });
 });

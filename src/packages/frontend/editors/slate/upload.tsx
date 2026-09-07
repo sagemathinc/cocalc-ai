@@ -44,6 +44,15 @@ export default function useUpload(
   const pathRef = useRef<string>(path);
   pathRef.current = path;
 
+  useEffect(() => {
+    const openFilePicker = () => dropzoneRef.current?.hiddenFileInput?.click();
+    editor.openFilePicker = openFilePicker;
+    return () => {
+      if (editor.openFilePicker === openFilePicker)
+        delete editor.openFilePicker;
+    };
+  }, [editor]);
+
   // We setup the slate "plugin" change to insertData here exactly once when
   // the component is mounted, because otherwise we would have to save
   // the dropzoneRef as an attribute on editor, which would make it not JSON-able.

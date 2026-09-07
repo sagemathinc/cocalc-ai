@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { Alert, Button, Input, Modal } from "antd";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { useNarrowChatViewport } from "./use-chat-viewport";
 import type {
   CodexGoalAck,
   CodexGoalCommand,
@@ -21,6 +22,7 @@ export function CodexGoalControl({
     change: Omit<CodexGoalCommand, "id" | "sessionId">,
   ) => Promise<void>;
 }) {
+  const narrow = useNarrowChatViewport();
   const [open, setOpen] = useState(false);
   const id = useId();
   const [objective, setObjective] = useState("");
@@ -184,6 +186,7 @@ export function CodexGoalControl({
           </label>
           <Input.TextArea
             id={`${id}-objective`}
+            style={{ fontSize: narrow ? 16 : undefined }}
             value={objective}
             onChange={(e) => setObjective(e.target.value)}
             autoSize={{ minRows: 3, maxRows: 10 }}
@@ -194,6 +197,7 @@ export function CodexGoalControl({
             <label htmlFor={`${id}-budget`}>Token budget (optional)</label>
             <Input
               id={`${id}-budget`}
+              style={{ fontSize: narrow ? 16 : undefined }}
               inputMode="numeric"
               value={budget}
               onChange={(e) => setBudget(e.target.value)}
