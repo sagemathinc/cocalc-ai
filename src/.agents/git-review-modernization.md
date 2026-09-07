@@ -16,7 +16,7 @@ not a current checklist. The objective is not complete. Current release work:
 | Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Live renderer roundtrip and drawer close/reopen preserve the source position within a few wrapped lines (details below). Native partial-text selection across virtual windows remains a browser acceptance case. |
 | Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
 | TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Both rename sides and deleted-file viewing passed in Classic/Pierre. |
-| Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live agent dispatch and originating-context links still need end-to-end confirmation. |
+| Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live UI submission created a separate thread with the selected worktree in both persisted thread config and Codex activity config. Execution stopped at the connected account's usage limit; actual command execution and originating-context links still need end-to-end confirmation. |
 | Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor acceptance remains; investigate intermittent native-copy failure if reproduced. Measured main-thread heap excludes worker heaps. |
 | Default and cleanup | Classic is still the default and rollback path. Do not delete it or the experiment until the compatibility gates pass and maintainer testing supports the switch. |
 
@@ -49,6 +49,22 @@ rollback-window decision proceed. The current lack of a signed-in test session
 would not be evidence that these checks pass.
 
 ### Restored live-session checks
+
+Agent dispatch follow-up: `REVIEW_AGENT=1 worktree-live.browser-test.mjs` uses
+the chat thread's Git button (a direct review URL intentionally has no agent
+binding), selects the disposable worktree, checks explicit consent, saves a real
+Slate inline comment and submits it. The comment requests only `pwd`, with no
+file changes. This created thread `9bf15c21-40b7-40cd-bab6-6ae12bc87cae` in
+`x.chat`; persisted thread config and activity config both specify
+`/tmp/cocalc-review-worktrees-xMX9YF/first`. Codex session
+`01a07d5d-9554-77e1-b394-65517b18ee81` returned a terminal usage-limit error before
+executing a command. Do not count this as successful execution. The small audit
+thread and submitted comment remain. Ten focused routing/dispatch tests pass.
+The harness preserves worktrees if completion is uncertain, and distinguishes
+terminal errors from successful summaries. Further live execution needs an
+account with available usage; unrelated acceptance can continue meanwhile.
+After verifying the terminal quota error, the disposable worktree, temporary
+ref (with expected-tip protection), and empty fixture directory were removed.
 
 Working-copy opening follow-up: `worktree-live.browser-test.mjs` now populates
 one text file in its disposable detached worktree and adds a working change.

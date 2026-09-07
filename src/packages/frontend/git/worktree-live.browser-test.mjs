@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { checkWorktreeAgent } from "./worktree-agent-live.mjs";
 const require = createRequire(import.meta.url);
 const { chromium, expect } = require("@playwright/test");
 const [chat, repository] = process.argv.slice(2);
@@ -40,6 +41,8 @@ const registered = new Set();
 const testRef = `refs/heads/${root.split("/").at(-1)}`;
 let refTip;
 let page;
+let agentMayBeRunning = false;
+let previousRenderer;
 try {
   const commit = remote(
     "git -c user.name=CoCalcReviewSmoke -c user.email=review-smoke@example.invalid commit-tree HEAD^{tree} -p HEAD^ -m 'Disposable worktree review acceptance'",
@@ -64,15 +67,16 @@ try {
     process.env.CDP_URL ?? "http://localhost:9222",
   );
   const errors = [];
-  async function open(working = false) {
+  async function open(working = false, explicitWorktree = false) {
     await page?.close();
     page = await browser.contexts()[0].newPage();
+    await page.bringToFront();
     page.on("pageerror", (error) => errors.push(error.message));
     const target = new URL(url);
     for (const key of [...target.searchParams.keys()])
       if (key.startsWith("git-")) target.searchParams.delete(key);
     target.searchParams.set("git-hash", working ? "HEAD" : commit);
-    if (working) {
+    if (working || explicitWorktree) {
       target.searchParams.set("git-cwd", first);
       target.searchParams.set("git-tip", commit);
     }
@@ -115,7 +119,7 @@ try {
     .selectOption({ label: file });
   const renderer = () =>
     page.getByRole("combobox", { name: "Diff renderer", exact: true });
-  const previousRenderer = await renderer().inputValue();
+  previousRenderer = await renderer().inputValue();
   try {
     for (const mode of ["legacy", "pierre"]) {
       await renderer().selectOption(mode);
@@ -136,6 +140,45 @@ try {
     }
   } finally {
     await renderer().selectOption(previousRenderer);
+  }
+  if (process.env.REVIEW_AGENT === "1") {
+    await open(false, true);
+    const run = await checkWorktreeAgent({
+      page,
+      project,
+      chatPath: decodeURIComponent(url.pathname.split("/files")[1]),
+      worktree: first,
+      expect,
+      onDispatch: () => {
+        agentMayBeRunning = true;
+      },
+    });
+    let activity;
+    await expect
+      .poll(
+        () => {
+          activity = run.activity();
+          return activity.events?.some(
+            (event) => event.type === "summary" || event.type === "error",
+          );
+        },
+        { timeout: 180000, intervals: [3000] },
+      )
+      .toBe(true);
+    agentMayBeRunning = false;
+    const error = activity.events.find((event) => event.type === "error");
+    assert(!error, `Agent terminated without acceptance: ${error?.error}`);
+    assert.equal(
+      activity.events.find((e) => e.event?.type === "config")?.event
+        .workingDirectory,
+      first,
+    );
+    assert(
+      activity.events
+        .find((e) => e.type === "summary")
+        ?.finalResponse.includes(first),
+    );
+    console.log("Completed worktree agent activity", JSON.stringify(activity));
   }
   add(second);
   await open();
@@ -180,15 +223,29 @@ try {
     .toBe(parent);
   assert.deepEqual(errors, []);
   console.log(
-    "Passed: unique detached worktree auto-selection and exact working-file opening in both renderers; ambiguous/absent notices; moved ref stays pinned across reload until explicit refresh. No agent turn submitted.",
+    `Passed: unique detached worktree auto-selection and exact working-file opening in both renderers; ambiguous/absent notices; moved ref stays pinned across reload until explicit refresh. Agent check: ${process.env.REVIEW_AGENT === "1" ? "completed" : "not requested"}.`,
   );
 } finally {
+  if (page && previousRenderer) {
+    const renderer = page.getByRole("combobox", {
+      name: "Diff renderer",
+      exact: true,
+    });
+    if (await renderer.isVisible())
+      await renderer.selectOption(previousRenderer);
+  }
   await page?.close();
-  for (const path of registered)
-    remote(`git worktree remove --force ${quote(path)}`);
-  if (refTip) remote(`git update-ref -d ${quote(testRef)} ${refTip}`);
-  remote(`rmdir ${quote(root)}`);
-  assert.equal(remote("git worktree list --porcelain"), before);
+  if (agentMayBeRunning) {
+    console.error(
+      `Agent completion unverified; preserve fixture ${root} and ${testRef} until the submitted turn is terminal.`,
+    );
+  } else {
+    for (const path of registered)
+      remote(`git worktree remove --force ${quote(path)}`);
+    if (refTip) remote(`git update-ref -d ${quote(testRef)} ${refTip}`);
+    remote(`rmdir ${quote(root)}`);
+    assert.equal(remote("git worktree list --porcelain"), before);
+  }
 }
 // Disconnect without closing the maintainer's browser.
 process.exit(0);
