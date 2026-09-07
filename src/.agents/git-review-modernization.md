@@ -740,6 +740,14 @@ editor-session loss.
 
 ### Preserve reviews before extending them
 
+Import recovery hardening (2026-09-07): V2 imports retain browser drafts until
+the account DKV flush completes, then recheck draft timestamps so edits made
+during the write survive. Failed writes no longer discard recovery drafts.
+Duplicate commit keys in one archive choose the newest timestamp independent of
+input order, with unique imported counts. Focused tests cover failed flush,
+in-flight edits, and both duplicate orders. This does not reconcile separate
+short/full legacy keys or replace the required conflict-preserving migration.
+
 Object-format prerequisites (2026-09-07): legacy commit input, chat links, Git
 log/show parsing, review URLs, and V2 records/drafts now retain up to 64-character
 object IDs, rather than rejecting or truncating SHA-256 identities. Repository

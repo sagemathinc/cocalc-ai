@@ -13,6 +13,7 @@ import {
 } from "../git-review-store";
 
 const stores = new Map<string, Map<string, any>>();
+const flushMock = jest.fn(async () => undefined);
 
 function getStore(accountId: string, name: string): Map<string, any> {
   const key = `${accountId}:${name}`;
@@ -54,7 +55,7 @@ const dkvMock = jest.fn(async ({ account_id, name }: any) => {
       }
     },
     save: async () => undefined,
-    flush: async () => undefined,
+    flush: flushMock,
   };
 });
 
@@ -80,6 +81,7 @@ describe("git review import/export", () => {
     stores.clear();
     akvMock.mockClear();
     dkvMock.mockClear();
+    flushMock.mockReset().mockResolvedValue(undefined);
     localStorage.clear();
   });
 
@@ -459,6 +461,99 @@ describe("git review import/export", () => {
       reviewed: false,
       revision: draftBeforeImport?.revision,
     });
+  });
+
+  it("retains recovery drafts when an import cannot flush", async () => {
+    saveReviewDraft(
+      "bbb2222",
+      { reviewed: false, note: "recover me", comments: {} },
+      "failed-import",
+    );
+    const before = loadReviewDraft("bbb2222", "failed-import")!;
+    flushMock.mockRejectedValueOnce(Error("offline"));
+    await expect(
+      importReviewBundle({
+        accountId: "failed-import",
+        payload: [
+          {
+            version: 2,
+            account_id: "source",
+            commit_sha: "bbb2222",
+            reviewed: true,
+            note: "imported",
+            comments: {},
+            created_at: 1,
+            updated_at: before.updated_at + 1,
+            revision: 2,
+          },
+        ],
+      }),
+    ).rejects.toThrow("offline");
+    expect(loadReviewDraft("bbb2222", "failed-import")).toEqual(before);
+  });
+
+  it.each([
+    [10, 20],
+    [20, 10],
+  ])("imports only the newest duplicate in order %j", async (first, second) => {
+    const result = await importReviewBundle({
+      accountId: "duplicates",
+      payload: [first, second].map((updated_at) => ({
+        version: 2,
+        account_id: "source",
+        commit_sha: "bbb2222",
+        reviewed: false,
+        note: String(updated_at),
+        comments: {},
+        created_at: 1,
+        updated_at,
+        revision: 1,
+      })),
+    });
+    expect(result).toEqual({ imported: 1, skipped: 1, total: 2 });
+    expect(
+      getStore("duplicates", "cocalc-git-review-v2").get("commit:bbb2222").note,
+    ).toBe("20");
+  });
+
+  it("retains drafts edited while import is flushing", async () => {
+    saveReviewDraft(
+      "bbb2222",
+      { reviewed: false, note: "before", comments: {} },
+      "inflight-import",
+    );
+    const updated_at = loadReviewDraft(
+      "bbb2222",
+      "inflight-import",
+    )!.updated_at;
+    flushMock.mockImplementationOnce(async () => {
+      const now = jest.spyOn(Date, "now").mockReturnValue(updated_at + 10);
+      saveReviewDraft(
+        "bbb2222",
+        { reviewed: false, note: "during flush", comments: {} },
+        "inflight-import",
+      );
+      now.mockRestore();
+    });
+    await importReviewBundle({
+      accountId: "inflight-import",
+      payload: [
+        {
+          version: 2,
+          account_id: "source",
+          commit_sha: "bbb2222",
+          reviewed: true,
+          note: "imported",
+          comments: {},
+          created_at: 1,
+          updated_at,
+          revision: 2,
+        },
+      ],
+    });
+    expect(loadReviewDraft("bbb2222", "inflight-import")?.note).toBe(
+      "during flush",
+    );
   });
 
   it("does not merge one account's local draft into another account's review", async () => {

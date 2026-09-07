@@ -673,7 +673,7 @@ export async function importReviewBundle({
       skipped += 1;
       continue;
     }
-    const existing = sanitizeReviewRecord(existingAll[key], {
+    const existing = sanitizeReviewRecord(pending[key] ?? existingAll[key], {
       accountId: normalizedAccountId,
       commitSha: record.commit_sha,
     });
@@ -687,17 +687,22 @@ export async function importReviewBundle({
       commit_sha: record.commit_sha,
       revision: Math.max(record.revision ?? 1, existing?.revision ?? 1),
     };
+    if (pending[key]) skipped += 1;
+    else imported += 1;
     pending[key] = nextRecord;
-    clearReviewDraftThroughUpdatedAt(
-      record.commit_sha,
-      nextRecord.updated_at,
-      normalizedAccountId,
-    );
-    imported += 1;
   }
   if (imported > 0) {
     kv.setMany(pending);
     await kv.flush();
+    // Keep recovery drafts until the remote write is acknowledged. Recheck
+    // their timestamps here so edits made while flushing also survive.
+    for (const record of Object.values(pending)) {
+      clearReviewDraftThroughUpdatedAt(
+        record.commit_sha,
+        record.updated_at,
+        normalizedAccountId,
+      );
+    }
   }
   return {
     imported,
