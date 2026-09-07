@@ -17,7 +17,6 @@ import {
   commentAnchorKey,
   DiffBlock,
   diffLineNumberColumnWidth,
-  GitDiffFilesPanel,
   getGitDiffFindVisibleLineLimitUpdate,
   getNextRenderedDiffLineLimit,
   getRenderedDiffLineLimit,
@@ -1422,81 +1421,6 @@ describe("git commit drawer merge commit formatting", () => {
     }
   });
 
-  it("does not re-commit drawer diff blocks on unrelated parent state changes", () => {
-    const renders: number[] = [];
-    const originalType = (DiffBlock as any).type;
-    (DiffBlock as any).type = function WrappedDiffBlock(props: any) {
-      renders.push(Date.now());
-      return originalType(props);
-    };
-
-    const files = [{ path: "src/example.ts", lines: stableDiffLines }];
-    const inlineCommentsByFile = new Map<string, any[]>();
-    const visibleDiffLinesByFile: Record<string, number> = {};
-    const diffFindMatchCounts = new Map<number, number>();
-    const diffFindMatchedLineIndexes = new Map<number, Set<number>>();
-    const virtuosoRef = { current: null };
-    const openFile = async () => {};
-    const showMoreLines = () => {};
-    const noop = () => {};
-
-    try {
-      function Harness() {
-        const [value, setValue] = useState(0);
-        return React.createElement(
-          React.Fragment,
-          null,
-          React.createElement(
-            "button",
-            { onClick: () => setValue((v) => v + 1) },
-            "bump panel",
-          ),
-          React.createElement("span", null, value),
-          React.createElement(GitDiffFilesPanel, {
-            files,
-            drawerScrollParent: null,
-            virtuosoRef,
-            fontSize: 14,
-            editorTheme: null,
-            reviewEditorScope: "scope:test",
-            inlineCommentsByFile,
-            showResolvedComments: false,
-            isHeadSelected: false,
-            visibleDiffLinesByFile,
-            onOpenFile: openFile,
-            onShowMoreLines: showMoreLines,
-            activeDraftBody: "",
-            activeEditingBody: "",
-            pendingKey: "",
-            onOpenDraft: noop,
-            onDraftBodyChange: noop,
-            onCancelDraft: noop,
-            onOpenEdit: noop,
-            onEditingBodyChange: noop,
-            onCancelEdit: noop,
-            onCreateComment: noopAsync,
-            onUpdateComment: noopAsync,
-            onResolveComment: noopAsync,
-            onReopenComment: noopAsync,
-            diffFindMatchCounts,
-            diffFindMatchedLineIndexes,
-          }),
-        );
-      }
-
-      const rendered = render(React.createElement(Harness));
-      expect(renders).toHaveLength(1);
-
-      act(() => {
-        rendered.getByText("bump panel").click();
-      });
-
-      expect(renders).toHaveLength(1);
-    } finally {
-      (DiffBlock as any).type = originalType;
-    }
-  });
-
   it("keeps diff-line hover from re-rendering the whole diff block", () => {
     const renders: number[] = [];
     const originalType = (DiffBlock as any).type;
@@ -1704,110 +1628,6 @@ describe("git commit drawer merge commit formatting", () => {
     expect(getNextRenderedDiffLineLimit(1000)).toBe(2500);
     expect(getNextRenderedDiffLineLimit(1420)).toBe(2920);
   });
-
-  it("adds a footer spacer below the virtualized diff list", () => {
-    const rendered = render(
-      React.createElement(GitDiffFilesPanel, {
-        files: [{ path: "src/example.ts", lines: stableDiffLines }],
-        drawerScrollParent: null,
-        virtuosoRef: { current: null },
-        fontSize: 14,
-        editorTheme: null,
-        reviewEditorScope: "scope:test",
-        inlineCommentsByFile: new Map(),
-        showResolvedComments: false,
-        isHeadSelected: false,
-        visibleDiffLinesByFile: {},
-        onOpenFile: noopAsync,
-        onShowMoreLines: () => {},
-        activeDraftBody: "",
-        activeEditingBody: "",
-        pendingKey: "",
-        onOpenDraft: () => {},
-        onDraftBodyChange: () => {},
-        onCancelDraft: () => {},
-        onOpenEdit: () => {},
-        onEditingBodyChange: () => {},
-        onCancelEdit: () => {},
-        onCreateComment: noopAsync,
-        onUpdateComment: noopAsync,
-        onResolveComment: noopAsync,
-        onReopenComment: noopAsync,
-        diffFindMatchCounts: new Map(),
-        diffFindMatchedLineIndexes: new Map(),
-      }),
-    );
-
-    const spacer = rendered.getByTestId("git-diff-list-footer-spacer");
-    expect((spacer as HTMLDivElement).style.height).toBe(
-      `${GIT_DIFF_LIST_FOOTER_SPACER_HEIGHT}px`,
-    );
-  });
-
-  it.each([true, false])(
-    "copies sticky paths and opens the correct source (working state: %s)",
-    async (isHeadSelected) => {
-      const openFile = jest.fn(async () => {});
-      const viewFile = jest.fn();
-      render(
-        React.createElement(GitDiffFilesPanel, {
-          files: [{ path: "src/example.ts", lines: stableDiffLines }],
-          drawerScrollParent: null,
-          virtuosoRef: { current: null },
-          fontSize: 14,
-          editorTheme: null,
-          reviewEditorScope: "scope:test",
-          inlineCommentsByFile: new Map(),
-          showResolvedComments: false,
-          isHeadSelected,
-          visibleDiffLinesByFile: {},
-          onOpenFile: openFile,
-          onViewFile: viewFile,
-          onShowMoreLines: () => {},
-          activeDraftBody: "",
-          activeEditingBody: "",
-          pendingKey: "",
-          onOpenDraft: () => {},
-          onDraftBodyChange: () => {},
-          onCancelDraft: () => {},
-          onOpenEdit: () => {},
-          onEditingBodyChange: () => {},
-          onCancelEdit: () => {},
-          onCreateComment: noopAsync,
-          onUpdateComment: noopAsync,
-          onResolveComment: noopAsync,
-          onReopenComment: noopAsync,
-          diffFindMatchCounts: new Map(),
-          diffFindMatchedLineIndexes: new Map(),
-        }),
-      );
-
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole("button", {
-            name: "src/example.ts",
-          }),
-        );
-      });
-
-      expect(mockCopyTextToClipboard).toHaveBeenCalledWith({
-        text: "src/example.ts",
-      });
-      expect(openFile).not.toHaveBeenCalled();
-      expect(viewFile).not.toHaveBeenCalled();
-
-      const notification = mockNotificationSuccess.mock.calls.at(-1)?.[0];
-      expect(notification?.title).toBe("Copied file path");
-
-      await act(async () => {
-        notification.actions.props.onClick();
-      });
-      expect(isHeadSelected ? openFile : viewFile).toHaveBeenCalledWith(
-        "src/example.ts",
-      );
-      expect(isHeadSelected ? viewFile : openFile).not.toHaveBeenCalled();
-    },
-  );
 
   it("builds stable file section ids for changed-file navigation", () => {
     expect(buildGitReviewFileSectionId("src/example.ts", 0)).toMatch(

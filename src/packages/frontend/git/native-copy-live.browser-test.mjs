@@ -32,10 +32,9 @@ try {
     name: "Diff renderer",
     exact: true,
   });
-  await expect(renderer).toBeVisible({ timeout: 60000 });
-  await renderer.selectOption("pierre");
   const viewport = page.getByRole("region", { name: "Git diff", exact: true });
-  await expect(viewport).toBeVisible();
+  await expect(viewport).toBeVisible({ timeout: 60000 });
+  await expect(renderer).toHaveCount(0);
   for (const top of [0, 1800, 4000, 0]) {
     const warning = page.getByRole("button", {
       name: "Dismiss stale frontend build warning",

@@ -60,6 +60,17 @@ Missing live test evidence does not establish that these checks pass.
 
 ### Restored live-session checks
 
+The Git drawer now loads Pierre directly with no renderer selector. Removed
+the Classic virtualized panel and renderer-switch scroll implementation; Pierre
+retains its own semantic restoration and working-patch generation scopes.
+Obsolete Classic panel tests were removed rather than retaining a test-only
+renderer. The remaining drawer/Pierre tests (77), header keyboard tests (4),
+frontend TypeScript build, lint and development build passed. Live native
+partial-text copy passed in four virtual windows, and simultaneous real Slate
+note/inline focus, scrolling and Light/Dark checks passed on the sole-renderer
+build. Further cleanup still includes the unused Classic diff block and its
+test exports, older browser harnesses that switch renderers, and the preview.
+
 TimeTravel text comparisons now use Pierre exclusively. Removed the Classic
 component, its CodeMirror diff helper/tests, and the renderer selector. Rich
 historical viewers and restore actions are unchanged. The focused test,

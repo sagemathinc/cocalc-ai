@@ -98,7 +98,15 @@ try {
   url.searchParams.set("git-hash", commit);
   await send("Page.navigate", { url: url.href });
   await send("Page.bringToFront");
-  await until(`!!document.querySelector('select[aria-label="Diff renderer"]')`);
+  await until(
+    `!!document.querySelector('[role="region"][aria-label="Git diff"]')`,
+  );
+  assert.equal(
+    await evaluate(
+      `!!document.querySelector('select[aria-label="Diff renderer"]')`,
+    ),
+    false,
+  );
   appearance = await evaluate(
     `document.querySelector('select[aria-label="Appearance"]').value`,
   );
@@ -250,7 +258,6 @@ try {
       "PASS: explicit live worktree browsing pins the selected HEAD without checkout or working-copy changes.",
     );
   } else {
-    await select("Diff renderer", "pierre");
     await until(
       `!!document.querySelector('diffs-container')?.shadowRoot?.querySelector('[data-gutter] [data-line-number-content]')`,
     );

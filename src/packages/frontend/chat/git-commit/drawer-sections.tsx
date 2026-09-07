@@ -29,15 +29,7 @@ import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import {
-  memo,
-  type ComponentProps,
-  type ReactNode,
-  type RefObject,
-} from "react";
-import { Virtuoso } from "react-virtuoso";
-import { DiffFileSection } from "./diff-components";
-import { getRenderedDiffLineLimit } from "./diff-find";
+import { type ComponentProps, type ReactNode, type RefObject } from "react";
 import { buildGitReviewFileSectionId } from "./ids";
 import { ReviewNoteEditor } from "./review-editors";
 import { RecoveredNotes } from "./recovered-notes";
@@ -1225,126 +1217,6 @@ export type GitDiffFilesPanelProps = {
   diffFindMatchedLineIndexes: Map<number, Set<number>>;
   activeDiffFindMatch?: GitDiffFindMatch;
 };
-
-export const GitDiffFilesPanel = memo(function GitDiffFilesPanel({
-  files,
-  drawerScrollParent,
-  virtuosoRef,
-  fontSize,
-  editorTheme,
-  reviewEditorScope,
-  inlineCommentsByFile,
-  showResolvedComments,
-  isHeadSelected,
-  visibleDiffLinesByFile,
-  onOpenFile,
-  onViewFile,
-  onShowMoreLines,
-  activeDraftAnchorId,
-  activeDraftBody,
-  activeEditingId,
-  activeEditingBody,
-  pendingKey,
-  onOpenDraft,
-  onDraftBodyChange,
-  onCancelDraft,
-  onOpenEdit,
-  onEditingBodyChange,
-  onCancelEdit,
-  onCreateComment,
-  onUpdateComment,
-  onResolveComment,
-  onReopenComment,
-  diffFindMatchCounts,
-  diffFindMatchedLineIndexes,
-  activeDiffFindMatch,
-}: GitDiffFilesPanelProps) {
-  return (
-    <DiffVirtualizedList
-      files={files}
-      drawerScrollParent={drawerScrollParent}
-      virtuosoRef={virtuosoRef}
-      itemContent={(idx, file) => {
-        const sectionId = buildGitReviewFileSectionId(file.path, idx);
-        const fileComments =
-          inlineCommentsByFile.get(file.path) ?? EMPTY_GIT_REVIEW_COMMENTS;
-        return (
-          <DiffFileSection
-            file={file}
-            index={idx}
-            fontSize={fontSize}
-            editorTheme={editorTheme}
-            editorHistoryScope={reviewEditorScope}
-            fileComments={fileComments}
-            showResolvedComments={showResolvedComments}
-            isHeadSelected={isHeadSelected}
-            visibleLineLimit={getRenderedDiffLineLimit(
-              visibleDiffLinesByFile[sectionId],
-            )}
-            onOpenFile={onOpenFile}
-            onViewFile={onViewFile}
-            onShowMoreLines={onShowMoreLines}
-            activeDraftAnchorId={activeDraftAnchorId}
-            activeDraftBody={activeDraftBody}
-            activeEditingId={activeEditingId}
-            activeEditingBody={activeEditingBody}
-            pendingKey={pendingKey}
-            onOpenDraft={onOpenDraft}
-            onDraftBodyChange={onDraftBodyChange}
-            onCancelDraft={onCancelDraft}
-            onOpenEdit={onOpenEdit}
-            onEditingBodyChange={onEditingBodyChange}
-            onCancelEdit={onCancelEdit}
-            onCreateComment={onCreateComment}
-            onUpdateComment={onUpdateComment}
-            onResolveComment={onResolveComment}
-            onReopenComment={onReopenComment}
-            matchedFindCount={diffFindMatchCounts.get(idx) ?? 0}
-            matchedLineIndexes={diffFindMatchedLineIndexes.get(idx)}
-            activeFindMatchKind={
-              activeDiffFindMatch?.fileIndex === idx
-                ? activeDiffFindMatch.kind
-                : undefined
-            }
-            activeFindLineIndex={
-              activeDiffFindMatch?.fileIndex === idx
-                ? activeDiffFindMatch.lineIndex
-                : undefined
-            }
-          />
-        );
-      }}
-    />
-  );
-});
-
-function DiffVirtualizedList({
-  files,
-  drawerScrollParent,
-  virtuosoRef,
-  itemContent,
-}: {
-  files: GitShowFile[];
-  drawerScrollParent: HTMLElement | null;
-  virtuosoRef: RefObject<any>;
-  itemContent: (idx: number, file: GitShowFile) => ReactNode;
-}) {
-  return (
-    <Virtuoso
-      ref={virtuosoRef}
-      customScrollParent={drawerScrollParent ?? undefined}
-      data={files}
-      components={{
-        Footer: GitDiffListFooterSpacer,
-      }}
-      computeItemKey={(idx, file) =>
-        buildGitReviewFileSectionId(file.path, idx)
-      }
-      increaseViewportBy={1200}
-      itemContent={itemContent}
-    />
-  );
-}
 
 export function GitDiffListFooterSpacer() {
   return (
