@@ -31,6 +31,8 @@ const built = await build({
       import DocumentDiff from './components/diff-viewer/document-diff';
       import { ActivityDiff } from './chat/activity-diff';
       import ChangedFilesTree from './components/diff-viewer/changed-files-tree';
+      import { capturePierreScrollAnchor } from './components/diff-viewer/scroll-anchor';
+      window.captureTestAnchor = (viewport) => capturePierreScrollAnchor(viewport, 'browser-anchor', 44);
       import { DiffHighlightingProvider } from './components/diff-viewer/highlighting-provider';
       import { useWorkerPool } from '@pierre/diffs/react';
       import { getBrowserAppearanceStore } from '@cocalc/util/appearance-browser';
@@ -189,6 +191,18 @@ try {
     await expect
       .poll(() => documentRegion.evaluate((element) => element.scrollTop))
       .toBeGreaterThan(100);
+    const captured = await documentRegion.evaluate((node) => {
+      for (const host of node.querySelectorAll("diffs-container")) {
+        const marker = document.createElement("span");
+        marker.dataset.reviewFileId = "history.ts";
+        marker.hidden = true;
+        host.append(marker);
+      }
+      return window.captureTestAnchor(node);
+    });
+    expect(captured?.location.fileId).toBe("history.ts");
+    expect(captured?.location.line).toBeGreaterThan(1);
+    expect(Number.isFinite(captured?.offset)).toBe(true);
     await page.keyboard.press("Home");
     await page.evaluate(() =>
       window.changeDocumentRevision("changed historical version"),

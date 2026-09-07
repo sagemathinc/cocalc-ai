@@ -607,7 +607,19 @@ filtering, cleanup, and invalid/unavailable storage. The real Chromium tree test
 collapses by keyboard, reloads, and expands by keyboard; it passes with
 `TREE_ONLY=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`.
 That mode skips the preceding activity/document/pool scenarios, not the tree or
-subsequent preview checks. Semantic diff scroll restoration remains pending.
+subsequent preview checks.
+
+Semantic Pierre scroll restoration (2026-09-07): commit and comparison review
+views now persist a visible file/side/line anchor and within-line offset under an
+account/repository/target scope. Capture inspects mounted code rows inside
+Pierre's shadow roots, not comment cards or placeholder heights. Restore uses
+the public line-scroll API and refuses missing files/lines instead of guessing
+another revision. Writes are debounced and flushed on teardown; active search
+navigation takes precedence. Focused tests verify old-side capture, invalid
+storage, restoration, and missing-line rejection. The full Chromium suite also
+verifies capture from real scrolled Pierre output. A live drawer close/reopen
+matrix across split/wrap/font changes remains an acceptance check; Classic's
+existing pixel-based restoration has not yet been replaced by the shared anchor.
 
 Equal-document rendering fix (2026-09-07): the full browser suite exposed a
 genuine empty viewport when changing a comparison to identical contents. DOM

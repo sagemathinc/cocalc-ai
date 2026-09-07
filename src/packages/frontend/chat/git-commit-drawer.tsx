@@ -3618,6 +3618,13 @@ export function GitCommitDrawer({
                 >
                   <ReviewDiffPanel
                     navigationRef={pierreNavigationRef}
+                    scrollScope={JSON.stringify([
+                      accountId,
+                      projectId,
+                      originDiscovery?.repository.commonDirectory ?? originCwd,
+                      cwd,
+                      reviewStateCommit ?? currentReviewCommit,
+                    ])}
                     onActiveFile={(index) =>
                       setActiveNavigationFile({
                         scope: scrollStorageId,

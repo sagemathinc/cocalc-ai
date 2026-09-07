@@ -23,6 +23,7 @@ export type ReviewDiffPanelProps = GitDiffFilesPanelProps & {
   activeDraft?: import("./types").CommentAnchor;
   firstParentProvenance?: boolean;
   commentingDisabled?: boolean;
+  scrollScope?: string;
 };
 
 export function ReviewDiffPanel(props: ReviewDiffPanelProps) {

@@ -35,6 +35,12 @@ import {
   legacySourceRange,
 } from "./legacy-locations";
 import type { ReviewDiffPanelProps } from "./review-diff-panel";
+import {
+  capturePierreScrollAnchor,
+  readScrollAnchor,
+  writeScrollAnchor,
+} from "@cocalc/frontend/components/diff-viewer/scroll-anchor";
+import type { DiffScrollAnchor } from "@cocalc/frontend/components/diff-viewer/review-model";
 
 export default function PierreReviewPanel(props: ReviewDiffPanelProps) {
   return (
@@ -55,6 +61,24 @@ function ReviewContent(props: ReviewDiffPanelProps) {
   const { resolved } = useAppearance();
   const viewer = useRef<CodeViewHandle<string, undefined>>(null);
   const viewport = useRef<HTMLDivElement>(null);
+  const savedAnchor = useMemo(
+    () => (props.scrollScope ? readScrollAnchor(props.scrollScope) : undefined),
+    [props.scrollScope],
+  );
+  const restoredScope = useRef<string | undefined>(undefined);
+  const pendingAnchor = useRef<DiffScrollAnchor | undefined>(undefined);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  useEffect(
+    () => () => {
+      clearTimeout(saveTimer.current);
+      if (pendingAnchor.current) writeScrollAnchor(pendingAnchor.current);
+      pendingAnchor.current = undefined;
+      restoredScope.current = undefined;
+    },
+    [props.scrollScope],
+  );
   const { split, wrap } = useDiffViewPreferences();
   const [message, setMessage] = useState("");
   const [selection, setSelection] = useState<CodeViewLineSelection | null>(
@@ -93,6 +117,32 @@ function ReviewContent(props: ReviewDiffPanelProps) {
     }
   }, [files, props.linesTruncated]);
   const itemVersion = useRef(0);
+  useEffect(() => {
+    const scope = props.scrollScope;
+    if (!scope || !parsed.files.length || restoredScope.current === scope)
+      return;
+    restoredScope.current = scope;
+    if (!savedAnchor || props.activeDiffFindMatch) return;
+    const { fileId, side, line } = savedAnchor.location;
+    const file = locations.find((file) => file.fileId === fileId);
+    if (!file) return;
+    if (!legacyAnchorForLocation(file, side, line)) return;
+    viewer.current?.scrollTo({
+      type: "line",
+      id: fileId,
+      lineNumber: line,
+      side: side === "old" ? "deletions" : "additions",
+      align: "start",
+      offset: savedAnchor.offset,
+      behavior: "instant",
+    });
+  }, [
+    props.scrollScope,
+    props.activeDiffFindMatch,
+    parsed.files,
+    locations,
+    savedAnchor,
+  ]);
   const items = useMemo<CodeViewItem<string>[]>(() => {
     const version = ++itemVersion.current;
     return parsed.files.map((fileDiff, index) => {
@@ -313,6 +363,24 @@ function ReviewContent(props: ReviewDiffPanelProps) {
         onScroll={() => {
           const node = viewport.current;
           if (!node) return;
+          if (
+            props.scrollScope &&
+            restoredScope.current === props.scrollScope
+          ) {
+            const anchor = capturePierreScrollAnchor(
+              node,
+              props.scrollScope,
+              reviewFileHeaderHeight(props.fontSize),
+            );
+            if (anchor) {
+              pendingAnchor.current = anchor;
+              clearTimeout(saveTimer.current);
+              saveTimer.current = setTimeout(
+                () => writeScrollAnchor(anchor),
+                150,
+              );
+            }
+          }
           const top = node.getBoundingClientRect().top;
           const header = Array.from(
             node.querySelectorAll<HTMLElement>("[data-review-file-id]"),

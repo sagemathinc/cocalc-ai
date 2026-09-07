@@ -486,6 +486,7 @@ export function TargetReviewPane({
           files={data.files}
           fontSize={fontSize}
           reviewEditorScope={JSON.stringify([accountId, scope])}
+          scrollScope={JSON.stringify([accountId, scope])}
           firstParentProvenance={false}
           inlineCommentsByFile={comments}
           showResolvedComments={true}

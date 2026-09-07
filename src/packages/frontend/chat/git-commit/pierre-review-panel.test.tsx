@@ -3,6 +3,44 @@ import userEvent from "@testing-library/user-event";
 import PierreReviewPanel from "./pierre-review-panel";
 import type { ReviewDiffPanelProps } from "./review-diff-panel";
 import { buildDiffLineMetas, makeCommentAnchor } from "./diff-lines";
+import { writeScrollAnchor } from "@cocalc/frontend/components/diff-viewer/scroll-anchor";
+
+test("restores a semantic old-side anchor, but refuses a line missing from the patch", () => {
+  localStorage.clear();
+  mockScrollTo.mockClear();
+  writeScrollAnchor({
+    location: {
+      targetId: "restore",
+      fileId: JSON.stringify(["a.ts", "a.ts"]),
+      side: "old",
+      line: 1,
+    },
+    offset: -3,
+  });
+  const view = render(<PierreReviewPanel {...props()} scrollScope="restore" />);
+  expect(mockScrollTo).toHaveBeenCalledWith({
+    type: "line",
+    id: JSON.stringify(["a.ts", "a.ts"]),
+    lineNumber: 1,
+    side: "deletions",
+    align: "start",
+    offset: -3,
+    behavior: "instant",
+  });
+  view.unmount();
+  mockScrollTo.mockClear();
+  writeScrollAnchor({
+    location: {
+      targetId: "missing",
+      fileId: JSON.stringify(["a.ts", "a.ts"]),
+      side: "old",
+      line: 100,
+    },
+    offset: 0,
+  });
+  render(<PierreReviewPanel {...props()} scrollScope="missing" />);
+  expect(mockScrollTo).not.toHaveBeenCalled();
+});
 
 let mockTheme = "light";
 let mockRecycle = false;
