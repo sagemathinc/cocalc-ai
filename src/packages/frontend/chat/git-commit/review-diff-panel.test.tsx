@@ -3,6 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { ReviewDiffPanel } from "./review-diff-panel";
 import type { ReviewDiffPanelProps } from "./review-diff-panel";
 import { captureClassicScrollAnchor } from "./renderer-scroll";
+import { useWorkingScrollGeneration } from "./working-scroll-generation";
+jest.mock("./working-scroll-generation", () => ({
+  useWorkingScrollGeneration: jest.fn(),
+}));
 import {
   readScrollAnchor,
   writeScrollAnchor,
@@ -11,6 +15,7 @@ import {
 beforeEach(() => {
   localStorage.clear();
   jest.clearAllMocks();
+  jest.mocked(useWorkingScrollGeneration).mockReturnValue(undefined);
 });
 
 jest.mock("./drawer-sections", () => ({
@@ -91,12 +96,10 @@ test("Classic flushes the last captured position on close under its target scope
 
 test("does not persist unversioned working-change coordinates", () => {
   const viewport = document.createElement("div");
-  jest
-    .mocked(captureClassicScrollAnchor)
-    .mockReturnValue({
-      location: { targetId: "working", fileId: "file", side: "new", line: 12 },
-      offset: 0,
-    });
+  jest.mocked(captureClassicScrollAnchor).mockReturnValue({
+    location: { targetId: "working", fileId: "file", side: "new", line: 12 },
+    offset: 0,
+  });
   const view = render(
     <ReviewDiffPanel
       {...({
@@ -110,6 +113,45 @@ test("does not persist unversioned working-change coordinates", () => {
   fireEvent.scroll(viewport);
   view.unmount();
   expect(readScrollAnchor("working")).toBeUndefined();
+});
+
+test("working patch generations have distinct persistence scopes", () => {
+  jest.mocked(useWorkingScrollGeneration).mockReturnValue("generation-one");
+  const scope = JSON.stringify([
+    "working",
+    "loaded-working-patch",
+    "generation-one",
+  ]);
+  const viewport = document.createElement("div");
+  const anchor = {
+    location: {
+      targetId: scope,
+      fileId: "file",
+      side: "new" as const,
+      line: 12,
+    },
+    offset: 0,
+  };
+  jest.mocked(captureClassicScrollAnchor).mockReturnValue(anchor);
+  const view = render(
+    <ReviewDiffPanel
+      {...({
+        files: [],
+        drawerScrollParent: viewport,
+        scrollScope: "working",
+        isHeadSelected: true,
+      } as unknown as ReviewDiffPanelProps)}
+    />,
+  );
+  fireEvent.scroll(viewport);
+  expect(captureClassicScrollAnchor).toHaveBeenCalledWith(viewport, scope, []);
+  view.unmount();
+  expect(readScrollAnchor(scope)).toEqual(anchor);
+  expect(
+    readScrollAnchor(
+      JSON.stringify(["working", "loaded-working-patch", "generation-two"]),
+    ),
+  ).toBeUndefined();
 });
 
 test("Classic claims valid semantic restoration instead of competing with drawer pixels", () => {

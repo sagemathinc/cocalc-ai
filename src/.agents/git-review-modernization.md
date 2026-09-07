@@ -697,9 +697,20 @@ outer drawer; queued pixel restoration checks that claim rather than racing
 the child renderer. Old pixel state remains a fallback when no valid semantic
 anchor exists. Tests cover close-time persistence, scope isolation, restoration
 ownership and active-search precedence. Neither renderer reuses persisted
-coordinates for uncommitted working changes: those need a generation identity
-before durable semantic restoration is safe. Immediate renderer handoff is
-still supported. Full live close/reopen and layout-change testing is pending.
+unversioned coordinates for uncommitted working changes. Immediate renderer
+handoff is still supported. Full live close/reopen and layout-change testing is
+pending.
+
+Working scroll identity (2026-09-07): the drawer now derives a SHA-256 view-state
+generation from the exact loaded paths and patch lines, including their order
+and coordinate headers. Both renderers use a separate scope containing this
+generation. An unchanged patch can restore after reopening; changed content
+cannot inherit the old coordinates. Hashing follows the existing 20,000-line /
+4 MiB bounds, declines truncated input, and discards stale async results. If
+Web Crypto is unavailable, reading still works without working-scroll
+persistence. This identity does not authorize mutations or certify an atomic
+filesystem snapshot. Tests cover exact-input stability, changed paths/lines,
+byte/line bounds, stale results, and integration with distinct storage scopes.
 
 Equal-document rendering fix (2026-09-07): the full browser suite exposed a
 genuine empty viewport when changing a comparison to identical contents. DOM

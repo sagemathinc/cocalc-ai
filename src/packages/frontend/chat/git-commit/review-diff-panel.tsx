@@ -21,6 +21,7 @@ import {
 } from "./renderer-scroll";
 import { buildGitReviewFileSectionId } from "./ids";
 import { getRenderedDiffLineLimit } from "./diff-find";
+import { useWorkingScrollGeneration } from "./working-scroll-generation";
 
 const PierreReviewPanel = lazy(() => import("./pierre-review-panel"));
 
@@ -40,9 +41,30 @@ export type ReviewDiffPanelProps = GitDiffFilesPanelProps & {
   scrollScope?: string;
   initialScrollAnchor?: DiffScrollAnchor;
   onClaimScrollRestoration?: () => void;
+  workingScrollGeneration?: string;
 };
 
 export function ReviewDiffPanel(props: ReviewDiffPanelProps) {
+  const generation = useWorkingScrollGeneration(
+    props.files,
+    props.linesTruncated,
+    props.isHeadSelected && !!props.scrollScope,
+  );
+  const scope = props.isHeadSelected
+    ? generation && props.scrollScope
+      ? JSON.stringify([props.scrollScope, "loaded-working-patch", generation])
+      : undefined
+    : props.scrollScope;
+  return (
+    <ReviewDiffContent
+      {...props}
+      scrollScope={scope}
+      workingScrollGeneration={generation}
+    />
+  );
+}
+
+function ReviewDiffContent(props: ReviewDiffPanelProps) {
   const [renderer, setRenderer] = useState("legacy");
   const [handoff, setHandoff] = useState<{
     scope?: string;
@@ -50,10 +72,11 @@ export function ReviewDiffPanel(props: ReviewDiffPanelProps) {
   }>();
   const savedAnchor = useMemo(
     () =>
-      props.scrollScope && !props.isHeadSelected
+      props.scrollScope &&
+      (!props.isHeadSelected || props.workingScrollGeneration)
         ? readScrollAnchor(props.scrollScope)
         : undefined,
-    [props.scrollScope, props.isHeadSelected],
+    [props.scrollScope, props.isHeadSelected, props.workingScrollGeneration],
   );
   const anchor =
     handoff && handoff.scope === props.scrollScope
@@ -144,7 +167,12 @@ export function ReviewDiffPanel(props: ReviewDiffPanelProps) {
   useEffect(() => {
     const scope = props.scrollScope;
     const viewport = props.drawerScrollParent;
-    if (renderer !== "legacy" || !scope || !viewport || props.isHeadSelected)
+    if (
+      renderer !== "legacy" ||
+      !scope ||
+      !viewport ||
+      (props.isHeadSelected && !props.workingScrollGeneration)
+    )
       return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let latest: DiffScrollAnchor | undefined;
@@ -171,6 +199,7 @@ export function ReviewDiffPanel(props: ReviewDiffPanelProps) {
     props.scrollScope,
     props.drawerScrollParent,
     props.isHeadSelected,
+    props.workingScrollGeneration,
     locations,
   ]);
   const switchRenderer = (next: string) => {
