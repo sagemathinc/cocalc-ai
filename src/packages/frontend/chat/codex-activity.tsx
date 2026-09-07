@@ -1115,6 +1115,28 @@ function createEventEntry({
   rows: ActivityEntry[];
   terminals: Map<string, ActivityEntry & { kind: "terminal" }>;
 }): ActivityEntry | undefined {
+  if (event?.type === "goal") {
+    const goal = event.snapshot?.goal;
+    return {
+      kind: "status",
+      id: `goal-${seq}`,
+      seq,
+      time,
+      label: event.ack
+        ? "Goal change"
+        : `Goal ${event.phase === "start" ? "at turn start" : event.phase === "end" ? "at turn end" : "updated"}`,
+      detail:
+        event.ack?.error ??
+        (event.ack
+          ? event.ack.state === "applying"
+            ? "Applying"
+            : "Applied"
+          : goal
+            ? `${goal.objective}\n${goal.status.replaceAll("_", " ")} · ${goal.tokensUsed.toLocaleString()} tokens used`
+            : "No goal"),
+      level: event.ack?.error ? "error" : "info",
+    };
+  }
   if (event?.type === "config") {
     return {
       kind: "config",

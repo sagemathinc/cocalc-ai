@@ -778,6 +778,122 @@ describe("CodexAppServerAgent", () => {
     );
   });
 
+  it.each([false, true])(
+    "streams native goal continuations without extra turn/start requests (already completed: %s)",
+    async (fast) => {
+      const calls: string[] = [];
+      const payloads: any[] = [];
+      let goalReads = 0;
+      setCodexProjectSpawner({
+        spawnCodexExec: async () => {
+          throw Error("unexpected exec");
+        },
+        spawnCodexAppServer: async () => ({
+          proc: new FakeCodexAppServerProc((fake, message) => {
+            calls.push(message.method);
+            if (message.method === "thread/resume") {
+              fake.sendResponse(message.id, {
+                thread: { id: "thr-native-goal" },
+              });
+            } else if (message.method === "turn/start") {
+              fake.sendResponse(message.id, { turn: { id: "turn-one" } });
+              setImmediate(() => {
+                fake.sendNotification("thread/tokenUsage/updated", {
+                  turnId: "turn-one",
+                  tokenUsage: {
+                    last: {
+                      inputTokens: 10,
+                      outputTokens: 20,
+                      totalTokens: 30,
+                    },
+                  },
+                });
+                fake.sendNotification("turn/completed", {
+                  threadId: "thr-native-goal",
+                  turn: { id: "turn-one", status: "completed" },
+                });
+              });
+            } else if (message.method === "thread/goal/get") {
+              goalReads++;
+              const continueGoal = () => {
+                fake.sendNotification("turn/started", {
+                  threadId: "thr-native-goal",
+                  turn: { id: "turn-two", status: "inProgress" },
+                });
+                fake.sendNotification("item/completed", {
+                  turnId: "turn-two",
+                  item: {
+                    id: "reply-two",
+                    type: "agentMessage",
+                    text: "Goal finished",
+                  },
+                });
+                fake.sendNotification("thread/tokenUsage/updated", {
+                  turnId: "turn-two",
+                  tokenUsage: {
+                    last: { inputTokens: 5, outputTokens: 15, totalTokens: 20 },
+                  },
+                });
+                fake.sendNotification("turn/completed", {
+                  threadId: "thr-native-goal",
+                  turn: { id: "turn-two", status: "completed" },
+                });
+              };
+              if (fast && goalReads === 2) continueGoal();
+              fake.sendResponse(message.id, {
+                goal: {
+                  objective: "Finish native goal",
+                  status: goalReads < (fast ? 2 : 3) ? "active" : "complete",
+                  tokensUsed: 100,
+                },
+              });
+              if (!fast && goalReads === 2) setImmediate(continueGoal);
+            } else if (typeof message.id === "number")
+              fake.sendResponse(message.id, {});
+          }) as any,
+          cmd: "fake-codex",
+          args: ["app-server"],
+          cwd: "/tmp/project",
+        }),
+      });
+      const agent = new CodexAppServerAgent();
+      await agent.evaluate({
+        project_id: "00000000-0000-4000-8000-000000000000",
+        account_id: "00000000-0000-4000-8000-000000000001",
+        session_id: "thr-native-goal",
+        prompt: "continue",
+        stream: async (payload) => {
+          if (payload) payloads.push(payload);
+        },
+        config: { workingDirectory: "/tmp/project" } as any,
+        chat: {
+          project_id: "00000000-0000-4000-8000-000000000000",
+          path: "/tmp/project/test.chat",
+          message_date: "2026-09-07T00:00:00.000Z",
+          sender_id: "codex",
+          thread_id: "chat-thread",
+          message_id: "reply",
+        },
+      });
+      expect(calls.filter((method) => method === "turn/start")).toHaveLength(1);
+      expect(payloads).toContainEqual(
+        expect.objectContaining({
+          type: "summary",
+          finalResponse: "Goal finished",
+          usage: expect.objectContaining({
+            total_tokens: 50,
+            input_tokens: 15,
+            output_tokens: 35,
+          }),
+        }),
+      );
+      expect(
+        payloads.filter((p) => p.event?.type === "goal").at(-1).event.snapshot
+          .goal.status,
+      ).toBe("complete");
+    },
+  );
+
   it.each(["chat", "automation"] as const)(
     "preserves all persisted Codex goals across successive %s turns",
     async (kind) => {
@@ -858,7 +974,10 @@ describe("CodexAppServerAgent", () => {
         ).toHaveLength(2);
         expect(appServerCalls).toContain("thread/resume");
         expect(
-          appServerCalls.filter((method) => method.startsWith("thread/goal/")),
+          appServerCalls.filter(
+            (method) =>
+              method === "thread/goal/set" || method === "thread/goal/clear",
+          ),
         ).toEqual([]);
       } finally {
         rmSync(rootHostPath, { recursive: true, force: true });

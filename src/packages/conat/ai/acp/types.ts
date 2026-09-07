@@ -1,5 +1,6 @@
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
+import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
 
 export interface AcpAutomationConfig {
   enabled?: boolean;
@@ -384,6 +385,7 @@ export type AcpStreamUsage = {
 };
 
 export type AcpStreamEvent =
+  | CodexGoalEvent
   | {
       type: "config";
       model: string;

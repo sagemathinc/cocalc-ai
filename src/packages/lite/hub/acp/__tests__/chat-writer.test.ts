@@ -3282,6 +3282,110 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
+  it("persists goal snapshots and acknowledgements without consuming a newer edit", async () => {
+    const { syncdb, getSaves } = makeFakeSyncDB();
+    const key = {
+      event: "chat-thread-config",
+      sender_id: threadConfigSenderId("thread-0"),
+      date: CHAT_THREAD_META_ROW_DATE,
+      thread_id: "thread-0",
+    };
+    syncdb.set({ ...key, acp_goal_request: { id: "one", action: "clear" } });
+    const log: any[] = [];
+    const writer = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async (_key: string, value: any) => {
+            log.push(value);
+          },
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    expect(writer.readPendingGoal()?.id).toBe("one");
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "goal",
+        phase: "command",
+        ack: { id: "one", state: "applying" },
+      },
+    });
+    expect(writer.readPendingGoal()).toBeUndefined();
+    syncdb.set({
+      ...key,
+      acp_goal_request: { id: "two", action: "set", objective: "New goal" },
+    });
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "goal",
+        phase: "command",
+        ack: { id: "one", state: "applied" },
+      },
+    });
+    expect(writer.readPendingGoal()?.id).toBe("two");
+    const snapshot = { sessionId: "session", observedAt: 10, goal: null };
+    await writer.handle({
+      type: "event",
+      event: { type: "goal", phase: "end", snapshot },
+    });
+    expect(syncdb.get_one(key)?.acp_goal).toEqual(snapshot);
+    expect(getSaves()).toBeGreaterThanOrEqual(3);
+    await flush(writer);
+    await (writer as any).persistLog();
+    expect(
+      log
+        .flat()
+        .some((entry) => entry.event?.snapshot?.sessionId === "session"),
+    ).toBe(true);
+    writer.dispose(true);
+    await expect(
+      writer.handle({
+        type: "event",
+        event: {
+          type: "goal",
+          phase: "command",
+          ack: { id: "two", state: "applying" },
+        },
+      }),
+    ).rejects.toThrow("Chat closed");
+  });
+
+  it("does not mirror automation goals onto the interactive thread", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const writer = new ChatStreamWriter({
+      metadata: { ...baseMetadata, automation_id: "automation" },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () => ({ set: async () => {} }) as any,
+    });
+    await writer.waitUntilReady();
+    await writer.handle({
+      type: "event",
+      event: {
+        type: "goal",
+        phase: "end",
+        snapshot: {
+          sessionId: "automation-session",
+          observedAt: 10,
+          goal: null,
+        },
+      },
+    });
+    expect(
+      syncdb
+        .get({ event: "chat-thread-config" })
+        .some((row) => row.acp_goal !== undefined),
+    ).toBe(false);
+    expect(writer.readPendingGoal()).toBeUndefined();
+    writer.dispose(true);
+  });
+
   it("persists session id into thread-config without mutating root rows", async () => {
     const rootIso = new Date(100).toISOString();
     const turnIso = new Date(200).toISOString();

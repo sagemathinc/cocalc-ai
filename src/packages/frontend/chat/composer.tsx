@@ -24,6 +24,7 @@ import type { SubmitMentionsFn } from "./types";
 import { INPUT_HEIGHT } from "./utils";
 import type { ThreadMeta } from "./threads";
 import { ThreadBadge } from "./thread-badge";
+import { CodexGoalControl } from "./codex-goal";
 import type { ChatInputControl } from "./input";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import {
@@ -110,6 +111,11 @@ export function ChatRoomComposer({
   const threadIcon = selectedThread?.threadIcon;
   const threadImage = selectedThread?.threadImage;
   const hasCustomAppearance = selectedThread?.hasCustomAppearance ?? false;
+  const threadMetadata = selectedThread
+    ? actions?.getThreadMetadata?.(selectedThread.key)
+    : undefined;
+  const showGoal =
+    threadMetadata?.agent_kind === "acp" || threadMetadata?.acp_config != null;
   const themeLineColor = threadColor ?? threadAccentColor;
   const contextThread = useMemo(
     () => selectedThread ?? undefined,
@@ -446,31 +452,66 @@ export function ChatRoomComposer({
             </div>
           </Tooltip>
         )}
-        {hasCustomAppearance && threadLabel && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              color: "#666",
-              fontSize: "12px",
-              marginBottom: 6,
-              borderLeft: themeLineColor
-                ? `3px solid ${themeLineColor}`
-                : undefined,
-              paddingLeft: themeLineColor ? 8 : 0,
-            }}
-          >
-            <ThreadBadge
-              icon={threadIcon}
-              color={threadColor}
-              accentColor={threadAccentColor}
-              image={threadImage}
-              size={18}
-            />
-            <span>{stripHtml(threadLabel)}</span>
-          </div>
-        )}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 6,
+            minWidth: 0,
+            flexWrap: "wrap",
+          }}
+        >
+          {showGoal && selectedThread && (
+            <div style={{ flex: "1 1 180px", minWidth: 0 }}>
+              <CodexGoalControl
+                key={selectedThread.key}
+                snapshot={threadMetadata?.acp_goal}
+                request={threadMetadata?.acp_goal_request}
+                ack={threadMetadata?.acp_goal_ack}
+                onChange={(change) =>
+                  actions.setCodexGoal(selectedThread.key, change)
+                }
+              />
+            </div>
+          )}
+          {hasCustomAppearance && threadLabel && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                marginLeft: "auto",
+                minWidth: 0,
+                maxWidth: "100%",
+                gap: "8px",
+                color: "#666",
+                fontSize: "12px",
+                borderLeft: themeLineColor
+                  ? `3px solid ${themeLineColor}`
+                  : undefined,
+                paddingLeft: themeLineColor ? 8 : 0,
+              }}
+            >
+              <ThreadBadge
+                icon={threadIcon}
+                color={threadColor}
+                accentColor={threadAccentColor}
+                image={threadImage}
+                size={18}
+              />
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={stripHtml(threadLabel)}
+              >
+                {stripHtml(threadLabel)}
+              </span>
+            </div>
+          )}
+        </div>
         {showCodexPaymentSourceBanner && (
           <Alert
             action={
