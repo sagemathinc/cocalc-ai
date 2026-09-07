@@ -114,6 +114,26 @@ and reproducible builds.
 Keep figures, bibliography files, generated data, and scripts in the same
 project so collaborators and agents can inspect the complete paper workflow.
 
+## Edit a formula with Agent
+
+In the LaTeX editor's **Rich Text** mode, rendered formulas have an agent
+editing shortcut. Use it to request a change to one formula while keeping the
+surrounding document in view.
+
+1. Switch the editor to **Rich Text** and find the rendered formula.
+2. Hold **Shift** and click the formula, or focus it and press **Shift+Enter**.
+3. In **Edit formula with Agent**, check the formula preview and describe the
+   change. For example: "Replace the finite sum with an integral, keeping the
+   same variable names."
+4. Choose **Edit with Agent** to send the request to the agent chat.
+5. Review the changed source and rebuild the document to check its PDF output.
+
+The request includes the formula's current source and location. If the formula
+belongs to an included file, that file is identified as the edit target. The
+agent is instructed to edit the live document, preserve the existing formula
+delimiters and style, and verify its work. The shortcut requires an editable
+formula; read-only source does not open the edit request.
+
 ## Troubleshooting
 
 If the PDF does not build, start with the first meaningful LaTeX error rather
