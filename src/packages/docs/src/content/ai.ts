@@ -396,6 +396,32 @@ or budget alone does not resume it.
 Choose **Clear goal** in the dialog to remove the goal. Use **Stop** as well if
 you need to interrupt work already running.
 
+## Answer questions from Codex
+
+When Codex needs your input, an orange badge can mark the conversation in the
+chat list. Open that conversation to see its pending requests above the messages.
+
+1. Read the request's status. A blocking question pauses the current turn.
+   For an asynchronous question, Codex may continue working while it waits;
+   your response is added to the conversation as a user message.
+2. Answer every question. Choose a suggested answer, or use the text field
+   when one is offered.
+3. Choose **Send response** and check the status. **Response submitted** means
+   your response is saved and is waiting for Codex to accept it. Follow the
+   conversation to see what happens next.
+
+Choose **Decline** to tell Codex you will not answer the question.
+**Acknowledge** suppresses a pending email notification, while **Snooze 5 minutes**
+delays it when email delivery is enabled. Both leave the question open; a
+paused turn still needs a response.
+
+If a disconnected request offers **Continue with this answer**, use it to
+submit the saved response again. If the request card is no longer available,
+send your answer in the conversation.
+
+In **CoCalc Lite**, requests are available within the project. Cross-device
+inbox and email delivery are unavailable.
+
 ## Why this matters in CoCalc
 
 CoCalc is both a collaborative workspace and an agent sandbox. Humans can review
