@@ -82,6 +82,53 @@ describe("git review import/export", () => {
     localStorage.clear();
   });
 
+  it("round-trips SHA-256 reviews and literal filename whitespace without losing submission metadata", async () => {
+    const commit = "a".repeat(64);
+    const comment = {
+      id: "literal-path",
+      file_path: " directory/file.md ",
+      side: "old" as const,
+      line: 2,
+      body_md: "![image](/blobs/example.png)",
+      status: "submitted" as const,
+      submission_turn_id: "turn-1",
+      submitted_at: 12,
+      created_at: 10,
+      updated_at: 12,
+      local_revision: 3,
+    };
+    saveReviewDraft(
+      commit,
+      { reviewed: false, note: "draft", comments: { [comment.id]: comment } },
+      "acct-sha256",
+    );
+    expect(
+      loadReviewDraft(commit, "acct-sha256")?.comments[comment.id],
+    ).toEqual(comment);
+    await saveReviewRecord({
+      version: 2,
+      account_id: "acct-sha256",
+      commit_sha: commit,
+      reviewed: true,
+      note: "review",
+      comments: { [comment.id]: comment },
+      created_at: 10,
+      updated_at: 12,
+      revision: 3,
+    });
+    const bundle = await exportReviewBundle({ accountId: "acct-sha256" });
+    expect(bundle.records[0].commit_sha).toBe(commit);
+    expect(bundle.records[0].comments[comment.id]).toEqual(comment);
+    await importReviewBundle({ accountId: "acct-copy", payload: bundle });
+    expect(
+      (await loadReviewRecord({ accountId: "acct-copy", commitSha: commit }))
+        ?.comments[comment.id],
+    ).toEqual(comment);
+    expect(
+      getStore("acct-copy", "cocalc-git-review-v2").has(`commit:${commit}`),
+    ).toBe(true);
+  });
+
   it("exports persisted git review records from the account review store", async () => {
     const store = getStore("acct-1", "cocalc-git-review-v2");
     store.set("commit:bbb2222", {

@@ -5,7 +5,7 @@ const REVIEW_STORE_V2 = "cocalc-git-review-v2";
 const REVIEW_STORE_V1 = "cocalc-commit-review-v1";
 const REVIEW_DRAFT_STORAGE_PREFIX = "cocalc:git-review:draft:v2:";
 const LEGACY_REVIEW_DRAFT_STORAGE_PREFIX = "cocalc:git-review:draft:v2:commit:";
-const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
+const COMMIT_HASH_RE = /^[0-9a-f]{7,64}$/i;
 const REVIEW_EXPORT_KIND = "cocalc-git-review-export-v1";
 
 type LegacyCommitReviewRecord = {
@@ -127,7 +127,7 @@ function emptyRecord({
 function sanitizeComment(input: unknown): GitReviewCommentV2 | undefined {
   const raw: any = input;
   const id = `${raw?.id ?? ""}`.trim();
-  const filePath = `${raw?.file_path ?? ""}`.trim();
+  const filePath = `${raw?.file_path ?? ""}`;
   const body = `${raw?.body_md ?? ""}`;
   if (!id || !filePath) return undefined;
   const sideRaw = `${raw?.side ?? ""}`.trim().toLowerCase();

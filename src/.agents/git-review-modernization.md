@@ -672,6 +672,15 @@ editor-session loss.
 
 ### Preserve reviews before extending them
 
+Object-format prerequisites (2026-09-07): legacy commit input, chat links, Git
+log/show parsing, review URLs, and V2 records/drafts now retain up to 64-character
+object IDs, rather than rejecting or truncating SHA-256 identities. Repository
+resolution must still establish whether an input is a full or abbreviated ID.
+V2 comment sanitization now preserves literal leading/trailing filename whitespace.
+Round-trip tests cover SHA-256 export/import, drafts, image Markdown and submission
+metadata; this does not migrate short-key records or enable canonical-only writes.
+The conflict-preserving alias migration below remains required.
+
 `chat/git-review-store.ts` currently stores account-scoped V2 commit records and
 local drafts, with `file_path`, `side` (`old`, `new`, `context`), line, hunk hash,
 snippet, revision, and submission identifiers. Keys accept abbreviated hashes;
