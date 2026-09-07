@@ -14,12 +14,14 @@ import { getProject } from "@cocalc/server/projects/control";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 import { isWorkspaceProjectRuntime } from "@cocalc/server/launchpad/project-runtime";
+import { startWorkspaceProjectReconciliation } from "./workspace-reconcile";
 
 const logger = getLogger("server:conat:project:load-balancer");
 
 const DEFAULT_PID_LIMIT = 4096;
 
 let server;
+let stopReconciliation: (() => void) | undefined;
 export async function init() {
   logger.debug("init");
   await loadConatConfiguration();
@@ -29,11 +31,15 @@ export async function init() {
     getConfig,
     allowMove: !isWorkspaceProjectRuntime(),
   });
+  stopReconciliation?.();
+  stopReconciliation = startWorkspaceProjectReconciliation();
   logger.debug("running");
 }
 
 export function close() {
   logger.debug("close");
+  stopReconciliation?.();
+  stopReconciliation = undefined;
   server?.close();
 }
 
