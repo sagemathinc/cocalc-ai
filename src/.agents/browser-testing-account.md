@@ -51,5 +51,39 @@ alone cannot mint browser cookies; the existing hub agent API allowlist is uncha
 - An old server without explicit testing-session confirmation fails closed.
   Ordinary agent spawn and account/session discovery restrictions are unchanged.
 
-Implementation is not live qualification. Provisioning, fresh login and actual
-Chromium UI verification are still required on the selected deployment.
+## Staging2 Qualification (2026-09-07 UTC)
+
+Deployed hub artifact
+`20260907T005912Z-3baa8537-20260907-testing-browser-3baa8537-dirty`
+(implementation commit `3baa8537fa`). Hub smoke checks and host routing passed.
+The testing designation is installed in the systemd hub drop-in
+`/etc/systemd/system/cocalc-bay-hub@.service.d/browser-testing.conf`.
+
+- Designated account: `298d8ab1-b132-4f64-8edf-b1edd6a47e1c`
+  (`testing@example.com`), non-admin despite its Admin membership tier.
+- Shared canary: `1793a413-42c9-49cf-8a2e-0abd641e8b28`.
+- Fresh operator authorization successfully spawned Chromium twice without any
+  manual testing-account login. Returned testing profile:
+  `browser-test-staging2.cocalc.dev-298d8ab1-b132-4f64-8edf-b1edd6a47e1c`.
+- Typed browser files and sandboxed UI actions authenticated as the testing
+  account. Opened the canary file listing, clicked Recovery, then Open Backups;
+  verified the Backups view and captured native full-page screenshots.
+- `admin health` with that testing profile failed with `must be an admin`.
+  Browser exec policy also reported `raw_exec_admin=false`.
+
+The installed `/opt/cocalc/bin2/cocalc-cli.js` is read-only and predates the spawn
+flag. This qualification used the built
+`src/packages/cli/dist/bin/cocalc.js` for spawning and native screenshots;
+ordinary typed commands worked with the installed CLI. Runtime CLI publication
+is separate from the hub deployment; until upgraded, use the built CLI for the
+new spawn command rather than trying to overwrite the installed binary.
+
+For UI assertions, target `#cocalc-webapp-container` or a visible descendant,
+not `body`: the app uses positioned children and `body` has zero height on this
+page. Native screenshots should use `--fullpage --timeout 10s`. The default
+body-element screenshot waits for a visible box and times out. The installed
+CLI's DOM screenshot fallback also failed under QuickJS; native full-page
+capture is the verified path. These are not reasons to grant admin to the test
+account or enable raw exec.
+
+This qualifies the autonomous browser setup, not the full sparse-backup plan.
