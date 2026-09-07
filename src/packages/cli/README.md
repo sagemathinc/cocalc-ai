@@ -224,6 +224,41 @@ project codex execution run in the same project-host containerized path as the U
 emits raw ACP stream messages as JSONL on stdout.
 `--verbose` also enables codex progress streaming automatically.
 
+## Run And Continue Codex From The CLI
+
+Use the project Codex command for a turn against a project-hosted runtime. Start
+with the matching authenticated CLI profile and check the effective authentication/payment source:
+
+```bash
+cocalc project codex auth status --project "$COCALC_PROJECT_ID"
+cocalc --json project codex exec --project "$COCALC_PROJECT_ID" \
+  --session-mode read-only --stdin <<'PROMPT'
+Inspect README.md and summarize the project. Do not change files.
+PROMPT
+```
+
+JSON output wraps the command result under `data`: read `data.final_response`,
+`data.usage`, and `data.thread_id`. For a new turn, `data.session_id` echoes the
+optional input and can be null; keep `data.thread_id` as the Codex session
+identifier. After that turn finishes, pass it
+explicitly when continuing:
+
+```bash
+cocalc project codex exec --project "$COCALC_PROJECT_ID" \
+  --session-id "$codex_thread_id" --session-mode read-only \
+  "Explain the main entry points in that same project."
+```
+
+Set `codex_thread_id` to the previous result's `data.thread_id`. There is no implicit
+resume-last command. This RPC command does not create a `.chat` transcript.
+
+Human mode prints the final response; `--stream` adds progress on stderr.
+`--jsonl` emits raw stream messages on stdout. Combining `--json` with `--stream`
+also streams JSONL, so omit `--stream` when saving one final JSON result.
+An incomplete stream reports an error; inspect session state before retrying
+work that may already have changed files. See `project codex exec --help` for
+model, reasoning, working-directory and session-mode options.
+
 ## Codex Runtime Environment (Agent Integration)
 
 When CoCalc runs Codex turns with CLI/browser integration enabled, turns may
