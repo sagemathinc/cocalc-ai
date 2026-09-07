@@ -1,4 +1,8 @@
-import { lazy, Suspense, useId, useState } from "react";
+import { lazy, Suspense, useId } from "react";
+import {
+  useDiffViewPreferences,
+  setDiffViewPreference,
+} from "./view-preferences";
 import type { ReactNode, CSSProperties } from "react";
 import type { ChangedFilesTreeProps } from "./changed-files-tree";
 import "./changed-files-layout.css";
@@ -10,8 +14,7 @@ export function ChangedFilesLayout({
   children,
   ...tree
 }: ChangedFilesTreeProps & { children: ReactNode }) {
-  const [shown, setShown] = useState(true);
-  const [width, setWidth] = useState(260);
+  const { treeVisible: shown, treeWidth: width } = useDiffViewPreferences();
   const id = useId();
   return (
     <div
@@ -23,7 +26,7 @@ export function ChangedFilesLayout({
           type="button"
           aria-expanded={shown}
           aria-controls={id}
-          onClick={() => setShown(!shown)}
+          onClick={() => setDiffViewPreference("treeVisible", !shown)}
         >
           {shown ? "Hide file tree" : "Show file tree"}
         </button>
@@ -36,7 +39,9 @@ export function ChangedFilesLayout({
               max={400}
               step={20}
               value={width}
-              onChange={(event) => setWidth(Number(event.target.value))}
+              onChange={(event) =>
+                setDiffViewPreference("treeWidth", Number(event.target.value))
+              }
             />
           </label>
         )}

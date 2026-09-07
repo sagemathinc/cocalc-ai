@@ -29,6 +29,10 @@ import { ReviewFileHeader, reviewFileHeaderHeight } from "./review-file-header";
 import { ChangedFilesLayout } from "./changed-files-layout";
 import type { ChangedFileEntry } from "./changed-files-model";
 import { DiffHighlightingProvider } from "./highlighting-provider";
+import {
+  useDiffViewPreferences,
+  setDiffViewPreference,
+} from "./view-preferences";
 
 type PreviewComment = {
   id: string;
@@ -73,8 +77,7 @@ function PierrePreviewContent({
     node.focus({ preventScroll: true });
   }, []);
   const [fileIndex, setFileIndex] = useState(0);
-  const [split, setSplit] = useState(false);
-  const [wrap, setWrap] = useState(true);
+  const { split, wrap } = useDiffViewPreferences();
   const [message, setMessage] = useState("");
   const [selection, setSelection] = useState<CodeViewLineSelection | null>(
     null,
@@ -269,7 +272,9 @@ function PierrePreviewContent({
           <input
             type="checkbox"
             checked={split}
-            onChange={(event) => setSplit(event.target.checked)}
+            onChange={(event) =>
+              setDiffViewPreference("split", event.target.checked)
+            }
           />{" "}
           Side by side
         </label>
@@ -277,7 +282,9 @@ function PierrePreviewContent({
           <input
             type="checkbox"
             checked={wrap}
-            onChange={(event) => setWrap(event.target.checked)}
+            onChange={(event) =>
+              setDiffViewPreference("wrap", event.target.checked)
+            }
           />{" "}
           Wrap long lines
         </label>

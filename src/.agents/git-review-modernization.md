@@ -475,6 +475,17 @@ Import is disabled while editing, and archives over 10 MB are rejected before
 parsing. Keyboard/search and archive-transfer tests cover these controls. Full
 all-match highlighting and comparison URL routing remain pending.
 
+View preference persistence (2026-09-07): shared device-local preferences now
+retain split/unified mode, wrapping, file-tree visibility, and tree width across
+the commit viewer, comparison viewer, and preview. Same-tab and cross-tab updates
+use a subscribed store, without recreating editor instances. Malformed values
+fall back independently; unavailable/quota-limited storage retains usable
+in-memory controls. Existing drawer font-size persistence remains separate.
+Focused tests cover keyboard changes, reopening, cross-tab updates, retained
+children, and storage failures. The real Pierre browser suite verifies split
+mode survives reload before running its unified-layout checks. Per-target tree
+expansion and semantic scroll restoration remain pending.
+
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the
 delivery order at the end of this section describes independently reviewable

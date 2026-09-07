@@ -124,6 +124,7 @@ function props(): ReviewDiffPanelProps {
   };
 }
 beforeEach(() => {
+  localStorage.clear();
   mockTheme = "light";
   mockRecycle = false;
   mockScrollTo.mockClear();

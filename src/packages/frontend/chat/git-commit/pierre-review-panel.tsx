@@ -12,6 +12,10 @@ import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { copyTextToClipboard } from "@cocalc/frontend/components/copy-button";
 import { DiffHighlightingProvider } from "@cocalc/frontend/components/diff-viewer/highlighting-provider";
+import {
+  useDiffViewPreferences,
+  setDiffViewPreference,
+} from "@cocalc/frontend/components/diff-viewer/view-preferences";
 import { parseReviewPatchFiles } from "@cocalc/frontend/components/diff-viewer/pierre-model";
 import {
   ReviewFileHeader,
@@ -47,8 +51,7 @@ function ReviewContent(props: ReviewDiffPanelProps) {
   const { resolved } = useAppearance();
   const viewer = useRef<CodeViewHandle<string, undefined>>(null);
   const viewport = useRef<HTMLDivElement>(null);
-  const [split, setSplit] = useState(false);
-  const [wrap, setWrap] = useState(true);
+  const { split, wrap } = useDiffViewPreferences();
   const [message, setMessage] = useState("");
   const [selection, setSelection] = useState<CodeViewLineSelection | null>(
     null,
@@ -217,7 +220,9 @@ function ReviewContent(props: ReviewDiffPanelProps) {
           <input
             type="checkbox"
             checked={split}
-            onChange={(event) => setSplit(event.target.checked)}
+            onChange={(event) =>
+              setDiffViewPreference("split", event.target.checked)
+            }
           />{" "}
           Side by side
         </label>
@@ -225,7 +230,9 @@ function ReviewContent(props: ReviewDiffPanelProps) {
           <input
             type="checkbox"
             checked={wrap}
-            onChange={(event) => setWrap(event.target.checked)}
+            onChange={(event) =>
+              setDiffViewPreference("wrap", event.target.checked)
+            }
           />{" "}
           Wrap long lines
         </label>

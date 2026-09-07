@@ -261,6 +261,9 @@ try {
   ).toHaveValue("1");
   await page.getByRole("combobox", { name: "Preview file" }).selectOption("0");
   const diff = page.locator("diffs-container pre[data-diff]").first();
+  // The earlier scenario chose split view; reopening must retain that choice.
+  await expect(diff).toHaveAttribute("data-diff-type", "split");
+  await page.getByRole("checkbox", { name: "Side by side" }).uncheck();
   await expect(diff).toHaveAttribute("data-diff-type", "single");
   await expect(diff).toHaveAttribute("data-overflow", "wrap");
   // Verify the rendered GitHub palette, not just the options passed to React.

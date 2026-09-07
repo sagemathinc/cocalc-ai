@@ -71,7 +71,10 @@ jest.mock("@cocalc/frontend/chat/git-commit/review-editors", () => ({
 
 const source = { kind: "patch" as const, patch: "", label: "Fixture" };
 
-beforeEach(() => mockScrollTo.mockClear());
+beforeEach(() => {
+  mockScrollTo.mockClear();
+  localStorage.clear();
+});
 
 it("scrolls the focused diff without consuming spaces in controls or drafts", async () => {
   const user = userEvent.setup();
