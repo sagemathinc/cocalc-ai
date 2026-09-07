@@ -74,6 +74,34 @@ inspection alone. An equivalent before/after production build is still needed
 for the requested initial/lazy bundle-size *delta*; these absolute measurements
 must not be presented as that delta.
 
+### Production baseline comparison (2026-09-07)
+
+Built the unchanged `origin/main` baseline `a447e89fab` in the detached worktree
+`/home/user/scratch/cocalc-git-review-bundle-baseline` and compared its production
+`chunk-stats.json` with the `979a8358e2` production build above. Both used
+`pnpm analyze`, the same static build configuration and host. Fresh workspace
+bootstrap required building `apps/document-build` and `cdn` before retrying
+analysis; no baseline source changes were made. The baseline contains no
+Pierre modules.
+
+| JavaScript output | Baseline gzip bytes | Current gzip bytes | Delta |
+| --- | ---: | ---: | ---: |
+| load | 84,524 | 88,927 | +4,403 |
+| app | 981,993 | 983,638 | +1,645 |
+| embed | 1,009,903 | 1,011,330 | +1,427 |
+| All initial chunks, unique assets | 3,547,705 | 3,555,221 | +7,516 |
+| All noninitial chunks, unique assets | 10,679,087 | 13,019,132 | +2,340,045 |
+| All emitted JS, unique assets | 14,226,792 | 16,574,353 | +2,347,561 |
+
+The total raw-JS delta is +12,018,402 bytes; Brotli is +2,108,747 bytes.
+Sum `assets` with `.js` suffix by unique filename, using the `initial` flag
+for the split above. Initial totals include distinct application entrypoints,
+not one page load. Noninitial totals include all emitted optional modules and
+worker dependencies, not one review's network transfer. In particular, zero
+eager Pierre modules does not mean zero initial-byte growth: runtime chunk
+maps and integration code also change. These measured deltas close the static
+packaging comparison; full-app network and editor acceptance remain separate.
+
 ## Objective
 
 Make reading and discussing agent-produced code reliable across branches,
