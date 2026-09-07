@@ -63,6 +63,7 @@ export function ThreadResolveButton({
           placement="top"
         >
           <Button
+            aria-label="Resolve this discussion"
             size="small"
             type="text"
             style={{ color: COLORS.ANTD_GREEN }}
