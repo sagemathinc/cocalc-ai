@@ -42,7 +42,6 @@ const testRef = `refs/heads/${root.split("/").at(-1)}`;
 let refTip;
 let page;
 let agentMayBeRunning = false;
-let previousRenderer;
 try {
   const commit = remote(
     "git -c user.name=CoCalcReviewSmoke -c user.email=review-smoke@example.invalid commit-tree HEAD^{tree} -p HEAD^ -m 'Disposable worktree review acceptance'",
@@ -70,6 +69,7 @@ try {
   async function open(working = false, explicitWorktree = false) {
     await page?.close();
     page = await browser.contexts()[0].newPage();
+    await page.setViewportSize({ width: 1600, height: 1000 });
     await page.bringToFront();
     page.on("pageerror", (error) => errors.push(error.message));
     const target = new URL(url);
@@ -84,6 +84,10 @@ try {
     await expect(
       page.getByRole("combobox", { name: "Review working copy", exact: true }),
     ).toBeVisible({ timeout: 60000 });
+    const warning = page.getByRole("button", {
+      name: "Dismiss stale frontend build warning",
+    });
+    if (await warning.isVisible()) await warning.click();
   }
   add(first);
   await open();
@@ -117,30 +121,20 @@ try {
   await page
     .getByRole("combobox", { name: "Changed files", exact: true })
     .selectOption({ label: file });
-  const renderer = () =>
-    page.getByRole("combobox", { name: "Diff renderer", exact: true });
-  previousRenderer = await renderer().inputValue();
-  try {
-    for (const mode of ["legacy", "pierre"]) {
-      await renderer().selectOption(mode);
-      await page
-        .getByRole("combobox", { name: "Changed files", exact: true })
-        .selectOption({ label: file });
-      const header =
-        mode === "legacy"
-          ? page.locator('[data-git-diff-section="true"]').filter({
-              has: page.getByRole("button", { name: file, exact: true }),
-            })
-          : page.locator(`[data-review-file-header=${JSON.stringify(file)}]`);
-      await header.getByRole("button", { name: "Open", exact: true }).click();
-      await expect
-        .poll(() => decodeURIComponent(new URL(page.url()).pathname))
-        .toBe(`/projects/${project}/files${first}/${file}`);
-      await open(true);
-    }
-  } finally {
-    await renderer().selectOption(previousRenderer);
-  }
+  await expect(
+    page.getByRole("region", { name: "Git diff", exact: true }),
+  ).toBeVisible({ timeout: 60000 });
+  await expect(
+    page.getByRole("combobox", { name: "Diff renderer", exact: true }),
+  ).toHaveCount(0);
+  const header = page.locator(
+    `[data-review-file-header=${JSON.stringify(file)}]`,
+  );
+  await header.getByRole("button", { name: "Open", exact: true }).click();
+  await expect
+    .poll(() => decodeURIComponent(new URL(page.url()).pathname))
+    .toBe(`/projects/${project}/files${first}/${file}`);
+  await open(true);
   if (process.env.REVIEW_AGENT === "1") {
     await open(false, true);
     const run = await checkWorktreeAgent({
@@ -223,17 +217,9 @@ try {
     .toBe(parent);
   assert.deepEqual(errors, []);
   console.log(
-    `Passed: unique detached worktree auto-selection and exact working-file opening in both renderers; ambiguous/absent notices; moved ref stays pinned across reload until explicit refresh. Agent check: ${process.env.REVIEW_AGENT === "1" ? "completed" : "not requested"}.`,
+    `Passed: unique detached worktree auto-selection and exact working-file opening in Pierre; ambiguous/absent notices; moved ref stays pinned across reload until explicit refresh. Agent check: ${process.env.REVIEW_AGENT === "1" ? "completed" : "not requested"}.`,
   );
 } finally {
-  if (page && previousRenderer) {
-    const renderer = page.getByRole("combobox", {
-      name: "Diff renderer",
-      exact: true,
-    });
-    if (await renderer.isVisible())
-      await renderer.selectOption(previousRenderer);
-  }
   await page?.close();
   if (agentMayBeRunning) {
     console.error(

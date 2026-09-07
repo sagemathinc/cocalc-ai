@@ -50,19 +50,23 @@ const browser = await chromium.connectOverCDP(
 );
 const page = await browser.contexts()[0].newPage();
 const errors = [];
-let previousRenderer;
-const mode = process.env.REVIEW_RENDERER ?? "legacy";
 page.on("pageerror", (error) => errors.push(error.message));
 try {
+  await page.setViewportSize({ width: 1600, height: 1000 });
   await page.bringToFront();
   await page.goto(url.href, { waitUntil: "domcontentloaded" });
   const renderer = page.getByRole("combobox", {
     name: "Diff renderer",
     exact: true,
   });
-  await expect(renderer).toBeVisible({ timeout: 60000 });
-  previousRenderer = await renderer.inputValue();
-  await renderer.selectOption(mode);
+  await expect(
+    page.getByRole("region", { name: "Git diff", exact: true }),
+  ).toBeVisible({ timeout: 60000 });
+  await expect(renderer).toHaveCount(0);
+  const warning = page.getByRole("button", {
+    name: "Dismiss stale frontend build warning",
+  });
+  if (await warning.isVisible()) await warning.click();
   await page.locator(".ant-drawer-body").evaluate((body) => {
     for (const e of body.querySelectorAll("div"))
       if (getComputedStyle(e).overflowY === "auto") e.scrollTop = 0;
@@ -70,18 +74,15 @@ try {
   await page
     .getByRole("combobox", { name: "Changed files", exact: true })
     .selectOption({ label: path });
-  const section =
-    mode === "pierre"
-      ? page.locator(`[data-review-file-header=${JSON.stringify(path)}]`)
-      : page.locator('[data-git-diff-section="true"]').filter({
-          has: page.getByRole("button", { name: path, exact: true }),
-        });
-  if (process.env.REVIEW_SIDE === "old" && mode === "pierre")
+  const section = page.locator(
+    `[data-review-file-header=${JSON.stringify(path)}]`,
+  );
+  if (process.env.REVIEW_SIDE === "old")
     await section
       .getByRole("button", { name: `More file actions: ${path}` })
       .click();
   const open =
-    process.env.REVIEW_SIDE === "old" && mode === "pierre"
+    process.env.REVIEW_SIDE === "old"
       ? page.getByRole("menuitem", {
           name: "View before this change",
           exact: true,
@@ -94,6 +95,7 @@ try {
           exact: true,
         });
   await expect(open).toBeVisible({ timeout: 60000 });
+  await open.scrollIntoViewIfNeeded();
   await expect(open).toBeInViewport();
   if (process.env.REVIEW_ACTIVATE === "pointer") await open.click();
   else await open.press("Enter");
@@ -122,7 +124,7 @@ try {
   expect(await source.evaluate((e) => e.CodeMirror.getValue())).toBe(contents);
   await page.keyboard.press("Escape");
   await expect(modal).toHaveCount(0);
-  if (process.env.REVIEW_SIDE === "old" && mode === "pierre")
+  if (process.env.REVIEW_SIDE === "old")
     await expect(
       section.getByRole("button", { name: `More file actions: ${path}` }),
     ).toBeFocused();
@@ -130,7 +132,7 @@ try {
   expect(new URL(page.url()).searchParams.get("git-hash")).toBe(commit);
   expect(errors).toEqual([]);
   console.log(
-    `Passed (${mode}, ${process.env.REVIEW_ACTIVATE ?? "keyboard"}, ${process.env.REVIEW_SIDE ?? "default"} side): rich historical Markdown, exact revision/path${expectedContents === undefined ? "" : "/contents"}, read-only source, line jump, keyboard close/focus, unchanged review URL.`,
+    `Passed (Pierre, ${process.env.REVIEW_ACTIVATE ?? "keyboard"}, ${process.env.REVIEW_SIDE ?? "default"} side): rich historical Markdown, exact revision/path${expectedContents === undefined ? "" : "/contents"}, read-only source, line jump, keyboard close/focus, unchanged review URL.`,
   );
 } catch (error) {
   console.error(
@@ -143,11 +145,6 @@ try {
   console.error(error);
   process.exitCode = 1;
 } finally {
-  if (previousRenderer)
-    await page
-      .getByRole("combobox", { name: "Diff renderer", exact: true })
-      .selectOption(previousRenderer)
-      .catch(() => {});
   await page.close();
   process.exit(process.exitCode ?? 0);
 }

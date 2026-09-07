@@ -28,7 +28,7 @@ not a current checklist. The objective is not complete. Current release work:
 | TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Both rename sides and deleted-file viewing passed in Classic/Pierre. |
 | Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live UI submission created a separate thread with the selected worktree in both persisted thread config and Codex activity config. Execution stopped at the connected account's usage limit; actual command execution and originating-context links still need end-to-end confirmation. |
 | Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor and strict native-copy checks passed. Measured main-thread heap excludes worker heaps. |
-| Default and cleanup | Classic remains in the current code only while parity is verified. The approved final state is Pierre only: delete Classic rendering, its selector and the experimental preview once checks pass. No rollback window. |
+| Default and cleanup | Git review, TimeTravel text comparison, and activity diffs now use Pierre only. Classic renderers, selectors and the experimental preview are deleted. Old activity entries without trustworthy source retain an explicit raw-data disclosure, not a second renderer. Final integration audit remains. |
 
 Browser access: local signed-in Chromium now exposes CDP on port 9222
 (Chrome 149.0.7827.196), replacing the laptop forward. Earlier live checks
@@ -59,6 +59,22 @@ Only after these checks should the approved complete replacement proceed.
 Missing live test evidence does not establish that these checks pass.
 
 ### Restored live-session checks
+
+Selector-free browser acceptance passed for semantic drawer close/reopen,
+both renamed-file sides and a deleted file, and the disposable-worktree matrix.
+The scroll harness now intersects candidate rows with the actual browser
+viewport, not just the nested scroll region: the same source line returned at
+426.75px versus 426.35px before closing. Historical tests compare source contents
+with remote `git show`, prove read-only behavior, and verify keyboard dismissal
+and focus restoration. They explicitly scroll the target into view rather than
+treating off-screen DOM visibility as keyboard usability.
+
+The worktree matrix passed unique detached selection and exact working-file
+opening in Pierre, ambiguous/absent cases, and moved-ref pinning across reload
+until explicit refresh. Temporary worktrees/ref were cleaned up and the original
+worktree listing restored. This run did not request the separate agent check.
+The affected browser scripts no longer switch to Classic; frontend lint and
+diff whitespace validation passed.
 
 Activity diffs now render Pierre directly with no renderer selector. Removed
 the Classic activity row renderer and its Prism dependency from the activity
