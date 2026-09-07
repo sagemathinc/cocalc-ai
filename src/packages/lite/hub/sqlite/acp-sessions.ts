@@ -432,7 +432,7 @@ export function upsertAcpSessionFromRequest({
     model: modelFromRequest(request),
     agent_kind: request.request_kind === "command" ? "command" : "codex",
     run_kind: runKindFromRequest(request),
-    title: chat?.automation_title,
+    title: chat?.thread_title || chat?.automation_title,
     prompt_snippet: promptSnippet(request),
     queued_at: state === "queued" ? Date.now() : undefined,
     started_at,
@@ -469,7 +469,7 @@ export function upsertAcpSessionFromJob(
     model: modelFromRequest(request),
     agent_kind: request.request_kind === "command" ? "command" : "codex",
     run_kind: runKindFromRequest(request),
-    title: chat?.automation_title,
+    title: chat?.thread_title || chat?.automation_title,
     prompt_snippet: promptSnippet(request),
     queued_at: row.created_at,
     started_at: row.started_at ?? (state === "running" ? row.updated_at : null),
@@ -544,7 +544,7 @@ export function listAcpSessions({
     .prepare(
       `SELECT * FROM ${TABLE}
        ${where}
-       ORDER BY updated_at DESC
+       ORDER BY terminal ASC, updated_at DESC
        LIMIT ?`,
     )
     .all(max) as AcpSessionRow[];

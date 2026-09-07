@@ -13,7 +13,7 @@ import { Button, Card, Space, Table, Tag, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useEffect, useMemo, useState } from "react";
 
-import { redux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import {
   buildProjectFilesTarget,
@@ -41,6 +41,7 @@ const UNCERTAIN_STATES = new Set<AiSessionState>([
 type CodexSessionGroup = {
   key: string;
   latest: AiSessionRecord;
+  status: AiSessionRecord;
   turns: AiSessionRecord[];
   interruptTarget?: AiSessionRecord;
 };
@@ -213,6 +214,12 @@ function groupSessions(sessions: AiSessionRecord[]): CodexSessionGroup[] {
       return {
         key,
         latest,
+        status:
+          sorted.find(
+            (turn) => !turn.terminal && ACTIVE_STATES.has(turn.state),
+          ) ??
+          sorted.find(isMoneyRiskSession) ??
+          latest,
         turns: sorted,
         interruptTarget: sorted.find(isMoneyRiskSession),
       };
@@ -231,6 +238,7 @@ function hasMoneyRiskSession(
 }
 
 export default function CodexSessionsPanel() {
+  const projectMap = useTypedRedux("projects", "project_map");
   const [sessions, setSessions] = useState<AiSessionRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -363,7 +371,7 @@ export default function CodexSessionsPanel() {
       title: "State",
       key: "state",
       render: (_, group) => {
-        const metadata = sessionMetadata(group.latest);
+        const metadata = sessionMetadata(group.status);
         const subagents = Number(metadata.active_descendant_agents ?? 0);
         const maxSubagents = Number(metadata.max_concurrent_subagents ?? 0);
         const subagentLimitExceeded =
@@ -372,9 +380,15 @@ export default function CodexSessionsPanel() {
         const commands = Number(metadata.background_terminal_processes ?? 0);
         return (
           <Space vertical size={2}>
-            <Tag color={stateColor(group.latest.state)}>
-              {group.latest.state}
+            <Tag color={stateColor(group.status.state)}>
+              {group.status.state}
             </Tag>
+            {UNCERTAIN_STATES.has(group.status.state) ? (
+              <Text type="secondary">
+                Running state unconfirmed. Last heartbeat:{" "}
+                {formatTime(group.status.last_heartbeat_at)}
+              </Text>
+            ) : null}
             {subagents > 0 || commands > 0 ? (
               <Text type="warning" style={{ fontSize: 12 }}>
                 {subagents > 0 ? `${subagents} active descendant threads` : ""}
@@ -392,6 +406,14 @@ export default function CodexSessionsPanel() {
         );
       },
       width: 230,
+    },
+    {
+      title: "Project",
+      key: "project",
+      render: (_, group) =>
+        projectMap?.getIn([group.latest.project_id, "title"]) ||
+        group.latest.project_id,
+      width: 180,
     },
     {
       title: "Session",
@@ -510,10 +532,11 @@ export default function CodexSessionsPanel() {
       style={{ marginTop: 24 }}
     >
       <Paragraph type="secondary">
-        This shows one row per Codex session, using the latest turn for the
-        state, model, and payment source. Sessions remain visible here until the
-        backend has written terminal states for their turns, so a failed
-        interrupt or stale heartbeat stays visible as possible AI resource use.
+        This shows one row per Codex session. Active or unconfirmed turns take
+        precedence over completed turns in the status column. Sessions remain
+        visible here until the backend has written terminal states for their
+        turns, so a failed interrupt or stale heartbeat stays visible as
+        possible AI resource use.
       </Paragraph>
       {error ? (
         <Paragraph type="danger" style={{ marginBottom: 12 }}>

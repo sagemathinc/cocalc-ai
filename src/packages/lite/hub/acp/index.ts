@@ -2467,7 +2467,7 @@ export class ChatStreamWriter {
       model: undefined,
       agent_kind: "codex",
       run_kind: this.metadata.automation_id ? "automation" : "interactive",
-      title: this.metadata.automation_title,
+      title: this.metadata.thread_title || this.metadata.automation_title,
       prompt_snippet: this.metadata.user_message_content,
       metadata: {
         automation_id: this.metadata.automation_id,
@@ -2978,7 +2978,7 @@ export class ChatStreamWriter {
             run_kind: this.metadata.automation_id
               ? "automation"
               : "interactive",
-            title: this.metadata.automation_title,
+            title: this.metadata.thread_title || this.metadata.automation_title,
             prompt_snippet: this.metadata.user_message_content,
             last_heartbeat_at: Date.now(),
             metadata: {

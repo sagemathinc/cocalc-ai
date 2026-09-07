@@ -45,6 +45,7 @@ function makeRequest({
       project_id: "00000000-1000-4000-8000-000000000000",
       path: "home/user/test.chat",
       thread_id: "thread-1",
+      thread_title: "Investigate parser",
       parent_message_id: userMessageId,
       message_id: assistantMessageId,
       message_date: assistantDate,
@@ -88,6 +89,7 @@ describe("acp session registry", () => {
     expect(row.project_id).toBe(request.project_id);
     expect(row.path).toBe(request.chat.path);
     expect(row.thread_id).toBe(request.chat.thread_id);
+    expect(row.title).toBe("Investigate parser");
     expect(row.message_id).toBe(request.chat.message_id);
     expect(row.parent_message_id).toBe(request.chat.parent_message_id);
     expect(row.model).toBe("gpt-5.1-codex");

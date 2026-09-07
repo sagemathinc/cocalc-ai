@@ -430,7 +430,7 @@ export async function listAiSessionsForAccount({
              last_heartbeat_at, finished_at, error, metadata AS metadata_json
       FROM ${TABLE}
       WHERE ${conditions.join(" AND ")}
-      ORDER BY updated_at DESC
+      ORDER BY terminal ASC, updated_at DESC
       LIMIT $${params.length}
     `,
     params,
