@@ -17,6 +17,29 @@ files, run commands, work with notebooks, and make changes.
 3. Start a Codex thread.
 4. Ask a concrete task, including relevant files and constraints.
 
+## Fork a chat to explore another approach
+
+Use a fork when you want a new conversation that starts from an existing
+Codex session's context.
+
+1. Open the source chat's thread menu and choose **Fork chat…**.
+2. Enter the **New chat name** and click **Fork**.
+3. Continue in the new chat with the alternative task or approach.
+
+CoCalc creates a new chat linked to the original. For a Codex chat with an
+existing session, it forks the agent session and carries its context and
+configuration into the new one. The visible new chat starts empty: earlier
+messages are not copied into it. A link points back to the source discussion.
+Without an existing Codex session ID, configuration and linkage can be copied,
+but there is no model-session context to fork.
+
+The fork is a conversation/session fork within the same project. It does
+not create a separate copy of project files or a Git worktree. Changes made
+from either chat therefore concern the shared project environment. Use
+separate directories or an explicitly prepared repository checkout when
+your experiment requires separate file state, and verify the new thread's
+working directory before asking it to edit files.
+
 For terminal-native agents such as Claude Code or opencode, install and run them
 inside a normal project terminal. CoCalc provides the durable Linux environment;
 those tools provide their own agent interface.
