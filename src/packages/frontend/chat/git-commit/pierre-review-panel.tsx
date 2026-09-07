@@ -192,6 +192,7 @@ function ReviewContent(props: ReviewDiffPanelProps) {
   }, [parsed.files, locations, annotations]);
   useEffect(() => {
     navigationRef.current = {
+      handlesSearch: true,
       navigateToFile(index) {
         const file = locations[index];
         if (file)

@@ -1138,7 +1138,7 @@ export function GitCommitDetailsPanel({
 type GitChangedFilesPanelProps = {
   files: GitShowFile[];
   inlineCommentsByFile: Map<string, GitReviewCommentV2[]>;
-  onOpenFileDiff: (index: number) => void;
+  onOpenFileDiff: (index: number, behavior: "auto") => void;
 };
 
 export function GitChangedFilesPanel({
@@ -1163,7 +1163,9 @@ export function GitChangedFilesPanel({
         <select
           aria-label="Changed files"
           value=""
-          onChange={(event) => onOpenFileDiff(Number(event.target.value))}
+          onChange={(event) =>
+            onOpenFileDiff(Number(event.target.value), "auto")
+          }
           style={{ width: "100%", minWidth: 0 }}
         >
           <option value="" disabled>

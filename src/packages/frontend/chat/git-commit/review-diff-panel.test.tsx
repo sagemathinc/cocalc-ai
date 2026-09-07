@@ -36,7 +36,7 @@ jest.mock("./pierre-review-panel", () => ({
   ),
 }));
 
-test.each([false, true])(
+test.each([false, true, "navigation"])(
   "waits for virtualizer completion and respects cancellation=%s",
   (cancel) => {
     jest.useFakeTimers();
@@ -54,12 +54,14 @@ test.each([false, true])(
     writeScrollAnchor(anchor);
     const viewport = document.createElement("div");
     const scrollIntoView = jest.fn();
+    const scrollToIndex = jest.fn();
     const props = {
       files,
       scrollScope: "restore",
       drawerScrollParent: viewport,
       visibleDiffLinesByFile: {},
-      virtuosoRef: { current: { scrollIntoView } },
+      virtuosoRef: { current: { scrollIntoView, scrollToIndex } },
+      navigationRef: { current: null },
     } as unknown as ReviewDiffPanelProps;
     const view = render(<ReviewDiffPanel {...props} />);
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
@@ -72,7 +74,14 @@ test.each([false, true])(
     );
     act(() => jest.advanceTimersByTime(50));
     expect(viewport.scrollTop).toBe(0);
-    if (cancel) fireEvent.wheel(viewport);
+    if (cancel === "navigation") {
+      props.navigationRef.current!.navigateToFile(1, "smooth");
+      expect(scrollToIndex).toHaveBeenCalledWith({
+        index: 1,
+        align: "start",
+        behavior: "smooth",
+      });
+    } else if (cancel) fireEvent.wheel(viewport);
     act(() => {
       scrollIntoView.mock.calls[0][0].done();
       jest.advanceTimersByTime(50);

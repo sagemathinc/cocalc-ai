@@ -34,7 +34,8 @@ import { useWorkingScrollGeneration } from "./working-scroll-generation";
 const PierreReviewPanel = lazy(() => import("./pierre-review-panel"));
 
 export interface ReviewDiffNavigation {
-  navigateToFile(index: number): void;
+  handlesSearch?: boolean;
+  navigateToFile(index: number, behavior?: "auto" | "smooth"): void;
   viewport(): HTMLElement | null;
 }
 
@@ -102,6 +103,32 @@ function ReviewDiffContent(props: ReviewDiffPanelProps) {
   const showMoreLines = useEffectEvent((sectionId: string) =>
     props.onShowMoreLines(sectionId),
   );
+  useEffect(() => {
+    if (renderer !== "legacy" || !props.navigationRef) return;
+    const navigation: ReviewDiffNavigation = {
+      viewport: () => props.drawerScrollParent,
+      navigateToFile: (index, behavior = "auto") => {
+        pending.current = false;
+        props.onClaimScrollRestoration?.();
+        props.virtuosoRef.current?.scrollToIndex({
+          index,
+          align: "start",
+          behavior,
+        });
+      },
+    };
+    props.navigationRef.current = navigation;
+    return () => {
+      if (props.navigationRef.current === navigation)
+        props.navigationRef.current = null;
+    };
+  }, [
+    renderer,
+    props.navigationRef,
+    props.drawerScrollParent,
+    props.virtuosoRef,
+    props.onClaimScrollRestoration,
+  ]);
   useEffect(() => {
     if (renderer !== "legacy") return;
     if (anchor !== handledAnchor.current) {

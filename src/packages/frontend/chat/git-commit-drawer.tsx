@@ -2282,7 +2282,7 @@ export function GitCommitDrawer({
   const scrollToDiffFile = useCallback(
     (index: number, behavior: "auto" | "smooth" = "smooth") => {
       if (pierreNavigationRef.current) {
-        pierreNavigationRef.current.navigateToFile(index);
+        pierreNavigationRef.current.navigateToFile(index, behavior);
         return;
       }
       virtuosoRef.current?.scrollToIndex({
@@ -2314,7 +2314,7 @@ export function GitCommitDrawer({
     if (!open || !currentData || !activeDiffFindMatch) return;
     // The Pierre adapter navigates in source coordinates, including search hits
     // beyond its virtual window. Do not overwrite that with a file-top jump.
-    if (pierreNavigationRef.current) return;
+    if (pierreNavigationRef.current?.handlesSearch) return;
     const file = currentData.files[activeDiffFindMatch.fileIndex];
     if (!file) return;
     if (activeDiffFindVisibleLineLimitUpdate) {
@@ -2356,7 +2356,7 @@ export function GitCommitDrawer({
           })
         : buildGitReviewFileSectionId(file.path, activeDiffFindMatch.fileIndex);
     const scrollTargetIntoView = () => {
-      if (pierreNavigationRef.current) return;
+      if (pierreNavigationRef.current?.handlesSearch) return;
       const element = document.getElementById(targetId);
       if (element) {
         const node = scrollRef.current;

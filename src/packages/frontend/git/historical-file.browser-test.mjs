@@ -54,6 +54,7 @@ let previousRenderer;
 const mode = process.env.REVIEW_RENDERER ?? "legacy";
 page.on("pageerror", (error) => errors.push(error.message));
 try {
+  await page.bringToFront();
   await page.goto(url.href, { waitUntil: "domcontentloaded" });
   const renderer = page.getByRole("combobox", {
     name: "Diff renderer",
@@ -93,7 +94,7 @@ try {
           exact: true,
         });
   await expect(open).toBeVisible({ timeout: 60000 });
-  await page.bringToFront();
+  await expect(open).toBeInViewport();
   if (process.env.REVIEW_ACTIVATE === "pointer") await open.click();
   else await open.press("Enter");
   const modal = page.getByRole("dialog", { name: "TimeTravel: Git revision" });

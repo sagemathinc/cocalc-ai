@@ -15,7 +15,7 @@ not a current checklist. The objective is not complete. Current release work:
 | Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Conflicting aliases now offer an explicit active-record choice without changing either record; changed alternatives reopen the conflict. Existing keys remain intact rather than being physically rewritten. Live multi-window acceptance is pending. |
 | Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Live renderer roundtrip and drawer close/reopen preserve the source position within a few wrapped lines (details below). Native partial-text selection across virtual windows remains a browser acceptance case. |
 | Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
-| TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Both rename sides passed in Classic/Pierre; deleted-file viewing passed in Pierre. Classic deletion navigation remains pending. |
+| TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Both rename sides and deleted-file viewing passed in Classic/Pierre. |
 | Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live agent dispatch and originating-context links still need end-to-end confirmation. |
 | Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor acceptance remains; investigate intermittent native-copy failure if reproduced. Measured main-thread heap excludes worker heaps. |
 | Default and cleanup | Classic is still the default and rollback path. Do not delete it or the experiment until the compatibility gates pass and maintainer testing supports the switch. |
@@ -70,8 +70,16 @@ passed in Classic and Pierre against commit
 read-only source, native keyboard activation, Escape and focus return, and
 unchanged review routing. Pierre also passed deleted-file viewing with exact
 parent contents from `202bc869cf2774a6964ab8f687718383ab3ef7ae`. The Classic deletion fixture at
-`50a46a2af102d80c97c2560117370a29831e7957` remains pending: its header was recycled
-between finding it and activating it. That navigation case is not a pass.
+`50a46a2af102d80c97c2560117370a29831e7957` subsequently passed after correcting
+file-dropdown navigation: it requested a smooth scroll to an estimated offset,
+then list measurement increased the scrollable height from about 42,000 to
+107,000 pixels while the scroll stayed at that obsolete offset. File selection
+now requests an immediate jump, as Trees and search already do. Explicit Classic
+navigation also cancels pending semantic/drawer restoration; a focused test
+checks that a late completion cannot override the new destination. The live
+historical test now activates its page before layout and verifies the trigger
+is actually in the viewport, not merely mounted in overscan. No fixture files
+were changed or restored by these historical-viewing checks.
 
 Semantic scroll follow-up: `git/review-scroll-live.browser-test.mjs` switches
 Pierre -> Classic -> Pierre and closes/reopens the actual drawer, checking the
