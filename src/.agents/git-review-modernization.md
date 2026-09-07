@@ -15,7 +15,7 @@ not a current checklist. The objective is not complete. Current release work:
 | Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Conflicting aliases now offer an explicit active-record choice without changing either record; changed alternatives reopen the conflict. Existing keys remain intact rather than being physically rewritten. Live multi-window acceptance is pending. |
 | Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Verify actual drawer close/reopen and renderer switching. Native partial-text selection across virtual windows remains a browser acceptance case. |
 | Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
-| TimeTravel | Shared document rendering and arbitrary Git revision viewing are implemented. Verify Git, patchflow, snapshot and backup text comparisons plus rich-viewer/restore behavior end to end; the standalone document fixture is not source-specific acceptance. |
+| TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Renamed/deleted Git file viewing remains a separate acceptance case. |
 | Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live agent dispatch and originating-context links still need end-to-end confirmation. |
 | Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor acceptance remains; investigate intermittent native-copy failure if reproduced. Measured main-thread heap excludes worker heaps. |
 | Default and cleanup | Classic is still the default and rollback path. Do not delete it or the experiment until the compatibility gates pass and maintainer testing supports the switch. |
@@ -231,6 +231,19 @@ live version verification, historical Gamma preservation, and guarded cleanup
 back to Gamma. The repository/file remain as reusable acceptance fixtures.
 Frontend lint passed. This verifies the external Git restore branch, but does
 not yet establish snapshot/backup restoration end to end.
+
+Live archive restore follow-up: captured the isolated fixture at Beta with one
+project snapshot and one successful backup (operation
+`d30dc57a-4ac1-460f-9623-5fdbdd912f1b`), then changed only the live fixture back
+to Gamma. `REVIEW_RESTORE_LATEST=1` lets the guarded test select that sole Beta
+archive instead of requiring a second archive just for navigation.
+`REVIEW_HISTORY_SOURCE=Snapshots` and `Backups` both passed rich Markdown
+selection, keyboard Restore, new live version checks and preservation of the
+prior Gamma history. Each run returned the fixture to Gamma with a guarded
+live API write. No whole-project restore or retention change was performed;
+the created archives remain subject to existing retention. Frontend lint passed.
+This completes the four source-specific comparison/Markdown-restore checks;
+it does not stand in for renamed/deleted file or agent-dispatch acceptance.
 
 ### Single-file stress evidence (2026-09-07)
 

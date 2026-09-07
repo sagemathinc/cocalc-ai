@@ -8,6 +8,8 @@ const { chromium, expect } = require("@playwright/test");
 const [target] = process.argv.slice(2);
 const source = process.env.REVIEW_HISTORY_SOURCE ?? "TimeTravel";
 assert(["TimeTravel", "Git", "Snapshots", "Backups"].includes(source));
+// Archive fixtures need only a Beta capture; live content remains Gamma.
+const restoreLatest = process.env.REVIEW_RESTORE_LATEST === "1";
 const url = new URL(target);
 const match = decodeURIComponent(url.pathname).match(
   /^\/projects\/([^/]+)\/files\/(home\/user\/scratch\/(?:git-review-repo-[a-z0-9-]+\/)?)\.(git-review-timetravel-[a-z0-9-]+\.md)\.time-travel$/,
@@ -64,10 +66,12 @@ try {
     exact: true,
   });
   if (await latest.isEnabled()) await latest.click();
-  await expect(body.getByTestId("timetravel-markdown-content")).toContainText(
-    "Gamma version.",
-  );
-  await scope.getByTitle("Step to previous version", { exact: true }).click();
+  if (!restoreLatest) {
+    await expect(body.getByTestId("timetravel-markdown-content")).toContainText(
+      "Gamma version.",
+    );
+    await scope.getByTitle("Step to previous version", { exact: true }).click();
+  }
   await expect(body.getByTestId("timetravel-markdown-content")).toContainText(
     "Beta version.",
   );
