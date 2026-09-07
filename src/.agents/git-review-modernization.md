@@ -156,6 +156,18 @@ normal Git garbage collection. No review or agent turn is submitted. Because
 these worktrees deliberately have no checked-out files, this proves discovery,
 selection and pinning, not working-copy file opening or agent execution.
 
+TimeTravel selection-safety follow-up: document and diff loads are now keyed to
+the exact source, version pair, document path/extension and actions instance.
+The previous implementation retained the old document during loading and let
+late requests overwrite newer results. The shared loader immediately hides a
+different selection's content and ignores cancelled results. This also removes
+the old document from Restore while a replacement is pending. Load errors are
+shown without reusing old content. Deferred-response hook tests cover stale
+snapshot responses arriving after a backup selection, failed/missing results,
+and immediate invalidation. All 22 TimeTravel tests passed. This is targeted
+race-regression coverage, not a substitute for the source-specific live restore
+acceptance still listed above.
+
 ### Single-file stress evidence (2026-09-07)
 
 Run `STRESS=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`
