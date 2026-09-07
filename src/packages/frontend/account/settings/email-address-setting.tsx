@@ -11,7 +11,6 @@ import { ErrorDisplay, LabeledRow, Saving } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { withTimeout } from "@cocalc/util/async-utils";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import {
   isFreshAuthRequiredError,
@@ -66,9 +65,9 @@ export const EmailAddressSetting = ({
     setState("saving");
     setMessage("");
     try {
-      const result = await withTimeout(
-        webapp_client.account_client.change_email(email_address, password),
-        30_000,
+      const result = await webapp_client.account_client.change_email(
+        email_address,
+        password,
       );
       const changedEmail = result.email_address ?? email_address;
       set_email_address(changedEmail);
@@ -93,11 +92,7 @@ export const EmailAddressSetting = ({
         throw error;
       }
       setState("edit");
-      setError(
-        error instanceof Error && error.message === "timeout"
-          ? "The request timed out. Your email may have changed. Reload account settings to check before retrying."
-          : `Error -- ${error}`,
-      );
+      setError(`Error -- ${error}`);
       return;
     }
     setState("view");

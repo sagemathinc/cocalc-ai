@@ -93,7 +93,7 @@ describe("EmailAddressSetting", () => {
     expect(screen.getByRole("textbox")).toHaveFocus();
   });
 
-  it.each(["success", "timeout"])(
+  it.each(["success", "failure"])(
     "locks the form during saving and recovers on %s",
     async (outcome) => {
       jest.useFakeTimers();
@@ -105,9 +105,11 @@ describe("EmailAddressSetting", () => {
           email_address: string;
           already_verified: boolean;
         }) => void;
+        let failSave!: (error: Error) => void;
         changeEmail.mockReturnValueOnce(
-          new Promise((resolve) => {
+          new Promise((resolve, reject) => {
             finishSave = resolve;
+            failSave = reject;
           }),
         );
         render(
@@ -131,6 +133,15 @@ describe("EmailAddressSetting", () => {
         expect(screen.getByRole("textbox")).toBeDisabled();
         expect(password).toBeDisabled();
         fireEvent.click(cancel);
+        // A slow request is still pending, not cancelled or safe to retry.
+        await act(async () => {
+          jest.advanceTimersByTime(60_000);
+        });
+        expect(cancel).toBeDisabled();
+        expect(screen.getByRole("button", { name: "Change" })).toBeDisabled();
+        expect(screen.getByRole("textbox")).toBeDisabled();
+        expect(password).toBeDisabled();
+        fireEvent.click(screen.getByRole("button", { name: "Change" }));
         expect(changeEmail).toHaveBeenCalledTimes(1);
         if (outcome === "success") {
           await act(async () => {
@@ -147,20 +158,14 @@ describe("EmailAddressSetting", () => {
           ).not.toBeInTheDocument();
         } else {
           await act(async () => {
-            jest.advanceTimersByTime(30_000);
+            failSave(new Error("password is incorrect"));
           });
-          expect(screen.getByText(/The request timed out/)).toBeInTheDocument();
+          expect(screen.getByText(/password is incorrect/)).toBeInTheDocument();
           expect(cancel).toBeEnabled();
           expect(screen.getByRole("textbox")).toBeEnabled();
+          expect(password).toBeEnabled();
           expect(screen.getByRole("button", { name: "Change" })).toBeEnabled();
           fireEvent.click(cancel);
-          // A response arriving after timeout must not overwrite the restored view.
-          await act(async () => {
-            finishSave({
-              email_address: "new@example.com",
-              already_verified: true,
-            });
-          });
           expect(
             screen.getByText("user@example.com", { exact: true }),
           ).toBeInTheDocument();
