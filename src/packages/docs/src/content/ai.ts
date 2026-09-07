@@ -374,6 +374,26 @@ identify the running shell.
 CoCalc is both a collaborative workspace and an agent sandbox. Humans can review
 what Codex changes, keep terminals and notebooks running, use TimeTravel, and
 share the same project state with collaborators.
+
+## Open and reuse a generated image
+
+When the Codex runtime provides image generation, its result can appear as a
+**Generated image** entry in the turn's activity. These controls describe a
+returned image; they do not mean every model or account has image generation.
+
+1. Find the **Generated image** entry for the request.
+2. Read any displayed status and revised prompt to identify the result.
+3. If **Open image** is available, use it to open the stored image in another
+   browser tab.
+4. Choose **Copy** beside that link to copy an image reference for reuse in
+   Markdown. Paste it into your intended document or conversation and check the
+   result there.
+
+When an uploaded image link is unavailable but the runtime reports a saved
+path, the activity entry shows that path instead. Use the path to locate the saved
+file when accessible. A failed, declined, or cancelled status is not a
+completed image. If no usable image link or file is available, continue the
+conversation with the agent rather than assuming the output was saved.
 `;
 
 export const AI_CREDENTIALS_BODY = String.raw`
