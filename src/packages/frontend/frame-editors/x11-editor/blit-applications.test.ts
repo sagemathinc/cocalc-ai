@@ -5,13 +5,77 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  mkdtempSync,
+  mkdirSync,
+  symlinkSync,
+  lstatSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir, hostname } from "node:os";
+import { join } from "node:path";
+import {
   BLIT_APPLICATIONS,
   INSTALL_CHROMIUM_APPLICATION_COMMAND,
   INSTALL_IDLE_APPLICATION_COMMAND,
   INSTALL_BLIT_APPLICATION_COMMAND,
   LAUNCH_BLIT_APPLICATION_COMMAND,
+  CLEAR_STALE_CHROMIUM_LOCK_COMMAND,
   parseBlitApplicationAvailability,
 } from "./blit-applications";
+
+describe("Chromium singleton recovery", () => {
+  let home: string;
+  let profile: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "chromium profile "));
+    profile = join(home, ".config", "chromium");
+    mkdirSync(profile, { recursive: true });
+    writeFileSync(join(profile, "Preferences"), "keep me");
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+  function run(lockHost: string, pid: number, liveSocket = false) {
+    symlinkSync(`${lockHost}-${pid}`, join(profile, "SingletonLock"));
+    symlinkSync(join(home, "socket"), join(profile, "SingletonSocket"));
+    symlinkSync("cookie", join(profile, "SingletonCookie"));
+    if (liveSocket) writeFileSync(join(home, "socket"), "socket placeholder");
+    const result = spawnSync(
+      "bash",
+      ["-c", `set -euo pipefail\n${CLEAR_STALE_CHROMIUM_LOCK_COMMAND}`],
+      {
+        env: {
+          ...process.env,
+          HOME: home,
+          XDG_CONFIG_HOME: join(home, ".config"),
+          COCALC_PROJECT_ID: "test-project",
+        },
+        encoding: "utf8",
+      },
+    );
+    expect(result.status).toBe(0);
+    expect(readFileSync(join(profile, "Preferences"), "utf8")).toBe("keep me");
+    return lstatSync(join(profile, "SingletonLock"), { throwIfNoEntry: false });
+  }
+  it("clears a dead local owner's singleton links", () => {
+    expect(run(hostname(), 2147483647)).toBeUndefined();
+    expect(
+      lstatSync(join(profile, "SingletonCookie"), { throwIfNoEntry: false }),
+    ).toBeUndefined();
+  });
+  it("recognizes the previous hostname of this project after restart", () => {
+    expect(run("project-test-project", 2147483647)).toBeUndefined();
+  });
+  it("does not unlock a live process", () => {
+    expect(run(hostname(), process.pid)).toBeDefined();
+  });
+  it("does not unlock a profile from an unrelated host", () => {
+    expect(run("another-host", 2147483647)).toBeDefined();
+  });
+  it("does not unlock when the socket target still exists", () => {
+    expect(run(hostname(), 2147483647, true)).toBeDefined();
+  });
+});
 
 describe("Blit application catalog", () => {
   it("has unique safe application and package identifiers", () => {

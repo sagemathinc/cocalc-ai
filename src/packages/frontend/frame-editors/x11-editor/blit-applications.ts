@@ -268,7 +268,33 @@ sudo -n rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb`;
 
 const BASH_ARGUMENTS_FROM_SECOND = "$" + "{@:2}";
 
+// Chromium deliberately stores its singleton socket in /tmp. After a project
+// restart the profile survives but that socket and its owning process do not.
+export const CLEAR_STALE_CHROMIUM_LOCK_COMMAND = `
+profile="\${XDG_CONFIG_HOME:-$HOME/.config}/chromium"
+lock="$profile/SingletonLock"
+target="$(readlink "$lock" 2>/dev/null || true)"
+if [[ "$target" =~ ^(.+)-([0-9]+)$ ]]; then
+  lock_host="\${BASH_REMATCH[1]}"
+  lock_pid="\${BASH_REMATCH[2]}"
+  project_host="project-\${COCALC_PROJECT_ID:-unknown}"
+  if { [ "$lock_host" = "$(hostname)" ] || [ "$lock_host" = "$project_host" ]; } &&
+     [ ! -e "/proc/$lock_pid" ] &&
+     ! kill -0 "$lock_pid" 2>/dev/null &&
+     [ ! -e "$profile/SingletonSocket" ] &&
+     [ "$(readlink "$lock" 2>/dev/null || true)" = "$target" ]; then
+    # Unlink only Chromium's singleton symlinks, never their targets or profile data.
+    for name in SingletonSocket SingletonCookie SingletonLock; do
+      [ ! -L "$profile/$name" ] || rm -- "$profile/$name"
+    done
+  fi
+fi
+`;
+
 export const LAUNCH_BLIT_APPLICATION_COMMAND = String.raw`set -euo pipefail
+if [ "$1" = "chromium" ]; then
+${CLEAR_STALE_CHROMIUM_LOCK_COMMAND}
+fi
 exec blit \
   --on "socket:$HOME/.local/state/cocalc/blit/runtime/server.sock" \
   terminal start --tag "$1" -- "${BASH_ARGUMENTS_FROM_SECOND}"`;
