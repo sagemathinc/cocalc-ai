@@ -26,3 +26,16 @@ it("names formatting controls and exposes the active mark to keyboard users", as
     screen.getByRole("button", { name: "Create executable code block" }),
   ).toBeTruthy();
 });
+
+it("opens the existing upload picker from the Insert menu", async () => {
+  const user = userEvent.setup();
+  const openFilePicker = jest.fn();
+  render(<MarksBar editor={{ openFilePicker } as any} marks={{}} />);
+  const insert = screen.getByRole("button", { name: "Insert", exact: true });
+  insert.focus();
+  await user.keyboard("{Enter}");
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Upload files..." }),
+  );
+  expect(openFilePicker).toHaveBeenCalledTimes(1);
+});
