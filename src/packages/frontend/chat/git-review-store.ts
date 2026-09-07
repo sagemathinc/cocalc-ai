@@ -207,6 +207,8 @@ export type GitReviewRecordV2 = {
   commit_sha: string;
   reviewed: boolean;
   note: string;
+  // Private recovery snapshots, never inline comments or agent feedback.
+  note_versions?: string[];
   comments: Record<string, GitReviewCommentV2>;
   last_submitted_at?: number;
   last_submission_turn_id?: string;
@@ -372,6 +374,7 @@ function sanitizeReviewRecord(
     commit_sha: normalizedCommit,
     reviewed: Boolean(raw?.reviewed),
     note: `${raw?.note ?? ""}`,
+    note_versions: sanitizeNoteVersions(raw?.note_versions),
     comments: sanitizeComments(raw?.comments),
     last_submitted_at: Number.isFinite(lastSubmittedAt)
       ? lastSubmittedAt
@@ -384,6 +387,14 @@ function sanitizeReviewRecord(
     updated_at: Number.isFinite(updatedAt) ? updatedAt : now,
     revision: Number.isFinite(revision) ? Math.max(1, revision) : 1,
   };
+}
+
+function sanitizeNoteVersions(input: unknown): string[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const versions = [
+    ...new Set(input.filter((x): x is string => typeof x === "string")),
+  ];
+  return versions.length ? versions : undefined;
 }
 
 function getReviewStore(accountId: string) {
@@ -569,8 +580,18 @@ export function mergeRecordWithDraft(
   const normalizedRecord = {
     ...record,
     comments: sanitizeComments(record.comments),
+    note_versions: sanitizeNoteVersions(record.note_versions),
   };
   if (!draft) return normalizedRecord;
+  // Legacy drafts have no common ancestor. Keep both versions rather than
+  // treating a timestamp as proof that the other note can be discarded.
+  if (draft.note !== normalizedRecord.note) {
+    normalizedRecord.note_versions = sanitizeNoteVersions([
+      ...(normalizedRecord.note_versions ?? []),
+      normalizedRecord.note,
+      draft.note,
+    ]);
+  }
   const draftComments = sanitizeComments(draft.comments);
   const comments = mergeRecoveredComments(
     normalizedRecord.comments,
@@ -753,6 +774,7 @@ export async function saveReviewRecord(
     account_id: accountId,
     commit_sha: commitSha,
     note: `${record.note ?? ""}`,
+    note_versions: sanitizeNoteVersions(record.note_versions),
     reviewed: Boolean(record.reviewed),
     comments: sanitizeComments(record.comments),
     updated_at: now,

@@ -51,6 +51,19 @@ would not be evidence that these checks pass.
 
 ### Restored live-session checks
 
+Private-note recovery follow-up: regression tests reproduced timestamp selection
+dropping the other note from the recovered record. Recovery now retains distinct
+private `note_versions`, including empty notes, without changing the existing
+active-note selection policy. Versions survive resave, export and import; repeat
+recovery deduplicates them. A collapsed, keyboard-accessible "Recovered private
+note versions" section exposes the alternatives as read-only Markdown for manual
+reconciliation in the existing note editor. They are not inline comments and
+are not sent to agents. Both timestamp orders, image Markdown, empty notes,
+persistence and keyboard/read-only behavior pass in 39 focused tests; frontend
+typecheck, lint and development build pass (Rspack 3.28 s). Live two-window note reconciliation remains to be
+checked when the signed-in Chrome forward returns. This is preservation, not
+an automatic three-way text merge or a claim to infer author intent.
+
 Disconnect storage follow-up: focused tests inject failure before a conditional
 write and after storage commits but before its acknowledgement arrives. Both
 retain the exact local draft, including image Markdown. An old-sequence retry

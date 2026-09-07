@@ -3557,6 +3557,7 @@ export function GitCommitDrawer({
             isHeadSelected={isHeadSelected}
             reviewNoteEditing={reviewNoteEditing}
             reviewNote={reviewNote}
+            reviewNoteVersions={reviewRecord?.note_versions}
             reviewNoteDraft={reviewNoteDraft}
             reviewNoteHistoryId={reviewNoteHistoryId}
             fontSize={effectiveFontSize}

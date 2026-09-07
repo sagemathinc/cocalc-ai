@@ -40,6 +40,7 @@ import { DiffFileSection } from "./diff-components";
 import { getRenderedDiffLineLimit } from "./diff-find";
 import { buildGitReviewFileSectionId } from "./ids";
 import { ReviewNoteEditor } from "./review-editors";
+import { RecoveredNotes } from "./recovered-notes";
 import type {
   CommentAnchor,
   GitDiffFindMatch,
@@ -728,6 +729,7 @@ type GitReviewPanelProps = {
   isHeadSelected: boolean;
   reviewNoteEditing: boolean;
   reviewNote: string;
+  reviewNoteVersions?: string[];
   reviewNoteDraft: string;
   reviewNoteHistoryId: string;
   fontSize: number;
@@ -759,6 +761,7 @@ export function GitReviewPanel({
   isHeadSelected,
   reviewNoteEditing,
   reviewNote,
+  reviewNoteVersions,
   reviewNoteDraft,
   reviewNoteHistoryId,
   fontSize,
@@ -917,6 +920,7 @@ export function GitReviewPanel({
         This note and the Reviewed checkbox are private state only. They are not
         sent to the agent.
       </Typography.Text>
+      <RecoveredNotes versions={reviewNoteVersions} current={reviewNote} />
       <div
         style={{
           marginTop: 8,

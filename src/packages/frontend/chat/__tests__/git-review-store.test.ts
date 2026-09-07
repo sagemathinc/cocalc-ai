@@ -274,6 +274,54 @@ describe("git review import/export", () => {
   });
 
   it.each([50, 150])(
+    "retains both private notes across recovery, resave and export for draft timestamp %s",
+    async (updated_at) => {
+      const options = { accountId: "note-recovery", commitSha: "f".repeat(40) };
+      const record = {
+        version: 2 as const,
+        account_id: options.accountId,
+        commit_sha: options.commitSha,
+        reviewed: false,
+        note: "Remote private note",
+        comments: {},
+        created_at: 1,
+        updated_at: 100,
+        revision: 1,
+      };
+      const draft = {
+        reviewed: false,
+        note: "Local private note ![image](/blobs/note.png)",
+        comments: {},
+        updated_at,
+        revision: 2,
+      };
+      const recovered = mergeRecordWithDraft(record, draft)!;
+      expect(recovered.note_versions).toEqual([record.note, draft.note]);
+      expect(recovered.note).toBe(updated_at < 100 ? record.note : draft.note);
+      expect(mergeRecordWithDraft(recovered, draft)!.note_versions).toEqual(
+        recovered.note_versions,
+      );
+      await saveReviewRecord(recovered);
+      expect((await loadReviewRecord(options))!.note_versions).toEqual(
+        recovered.note_versions,
+      );
+      const bundle = await exportReviewBundle({ accountId: options.accountId });
+      expect(bundle.records[0].note_versions).toEqual(recovered.note_versions);
+      await importReviewBundle({ accountId: "note-import", payload: bundle });
+      expect(
+        (await loadReviewRecord({ ...options, accountId: "note-import" }))!
+          .note_versions,
+      ).toEqual(recovered.note_versions);
+      expect(recovered.comments).toEqual({});
+      const cleared = mergeRecordWithDraft(recovered, { ...draft, note: "" })!;
+      expect(cleared.note_versions).toEqual([record.note, draft.note, ""]);
+      expect(
+        mergeRecordWithDraft(cleared, { ...draft, note: "" })!.note_versions,
+      ).toEqual(cleared.note_versions);
+    },
+  );
+
+  it.each([50, 150])(
     "retains both same-ID bodies from a draft timestamp %s",
     async (updated_at) => {
       const options = {
