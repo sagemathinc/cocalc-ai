@@ -33,6 +33,8 @@ import {
   deleteAllReviewRecords,
   exportReviewBundle,
   importReviewBundle,
+  chooseReviewAlias,
+  GitReviewAliasConflict,
   loadReviewRecord,
   loadReviewRecords,
   loadReviewDraft,
@@ -43,6 +45,7 @@ import {
   saveReviewRecord,
   type GitReviewRecordV2,
 } from "./git-review-store";
+import { ReviewAliasChoice } from "./git-commit/review-alias-choice";
 import { buildAgentCommitPrompt } from "./git-commit-prompt";
 import {
   buildGitLogArgs,
@@ -602,6 +605,8 @@ export function GitCommitDrawer({
   const [reviewSaving, setReviewSaving] = useState(false);
   const [reviewTransferBusy, setReviewTransferBusy] = useState(false);
   const [reviewError, setReviewError] = useState("");
+  const [reviewAliasConflict, setReviewAliasConflict] =
+    useState<GitReviewAliasConflict>();
   const [reviewed, setReviewed] = useState(false);
   const [reviewNote, setReviewNote] = useState("");
   const [reviewNoteDraft, setReviewNoteDraft] = useState("");
@@ -1545,6 +1550,7 @@ export function GitCommitDrawer({
       setReviewDirty(false);
       setReviewRecord(undefined);
       setReviewStorageResolved(false);
+      setReviewAliasConflict(undefined);
       setReviewStateCommit(normalizedNext);
       if (normalizedNext) {
         setReviewedByCommit((prev) =>
@@ -1601,6 +1607,7 @@ export function GitCommitDrawer({
         setReviewError("");
       } catch (err) {
         if (reviewLoadTokenRef.current !== token) return;
+        if (err instanceof GitReviewAliasConflict) setReviewAliasConflict(err);
         const fallback = resolveGitReviewLoadFailure({
           draft: loadReviewDraft(normalizedCommit, accountId),
           error: err,
@@ -1924,6 +1931,10 @@ export function GitCommitDrawer({
       } catch (err) {
         if (activeReviewCommitRef.current === normalizedCommit) {
           setReviewError(`${err ?? "Unable to save review state."}`);
+          if (err instanceof GitReviewAliasConflict) {
+            setReviewAliasConflict(err);
+            setReviewStorageResolved(false);
+          }
         }
       } finally {
         if (activeReviewCommitRef.current === normalizedCommit) {
@@ -3437,6 +3448,33 @@ export function GitCommitDrawer({
             style={{ marginBottom: 10 }}
           />
         ) : null}
+        {reviewAliasConflict && accountId && projectId && (
+          <ReviewAliasChoice
+            key={JSON.stringify([
+              accountId,
+              cwd,
+              reviewAliasConflict.inspection.full,
+              reviewReloadCounter,
+            ])}
+            conflict={reviewAliasConflict}
+            onReload={() => setReviewReloadCounter((value) => value + 1)}
+            onChoose={async (selected) => {
+              await chooseReviewAlias({
+                accountId,
+                conflict: reviewAliasConflict,
+                selected,
+                resolveCommit: async (input) => {
+                  const { repository } = await projectGitReader.discover(
+                    projectId,
+                    cwd,
+                  );
+                  return projectGitReader.resolveCommit(repository, input);
+                },
+              });
+              setReviewReloadCounter((value) => value + 1);
+            }}
+          />
+        )}
         {nonRepoError ? (
           <GitRepoBootstrapPanel
             cwd={cwd}

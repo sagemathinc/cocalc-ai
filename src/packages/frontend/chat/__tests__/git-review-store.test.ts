@@ -10,6 +10,8 @@ import {
   exportReviewBundle,
   importReviewBundle,
   resolveReviewStorageCommit,
+  chooseReviewAlias,
+  GitReviewAliasConflict,
 } from "../git-review-store";
 
 const stores = new Map<string, Map<string, any>>();
@@ -83,6 +85,88 @@ describe("git review import/export", () => {
     dkvMock.mockClear();
     flushMock.mockReset().mockResolvedValue(undefined);
     localStorage.clear();
+  });
+
+  async function conflictingAliases() {
+    const full = "e".repeat(40);
+    const accountId = "alias-choice";
+    for (const commit_sha of [full, full.slice(0, 7)]) {
+      await saveReviewRecord({
+        version: 2,
+        account_id: accountId,
+        commit_sha,
+        reviewed: false,
+        note: commit_sha,
+        comments: {},
+        created_at: 1,
+        updated_at: 1,
+        revision: 1,
+      });
+    }
+    const options = {
+      accountId,
+      commitSha: full,
+      resolveCommit: async () => full,
+    };
+    let conflict: GitReviewAliasConflict | undefined;
+    try {
+      await resolveReviewStorageCommit(options);
+    } catch (err) {
+      if (err instanceof GitReviewAliasConflict) conflict = err;
+      else throw err;
+    }
+    expect(conflict).toBeInstanceOf(GitReviewAliasConflict);
+    return { options, conflict: conflict!, full };
+  }
+
+  it("explicitly chooses an alias without changing records and reopens conflicts on other edits", async () => {
+    const { options, conflict, full } = await conflictingAliases();
+    const before = (await exportReviewBundle(options)).records;
+    const selected = full.slice(0, 7);
+    await chooseReviewAlias({ ...options, conflict, selected });
+    expect(await resolveReviewStorageCommit(options)).toBe(selected);
+    expect((await exportReviewBundle(options)).records).toEqual(before);
+    const record = (await loadReviewRecord(options))!;
+    await saveReviewRecord(
+      { ...record, note: "continued" },
+      { resolveCommit: options.resolveCommit },
+    );
+    expect(await resolveReviewStorageCommit(options)).toBe(selected);
+    const store = getStore(options.accountId, "cocalc-git-review-v2");
+    store.set(`commit:${full}`, {
+      ...store.get(`commit:${full}`),
+      note: "other writer",
+    });
+    await expect(resolveReviewStorageCommit(options)).rejects.toBeInstanceOf(
+      GitReviewAliasConflict,
+    );
+  });
+
+  it("rejects stale choices and clears choice metadata when reviews are deleted", async () => {
+    const { options, conflict, full } = await conflictingAliases();
+    saveReviewDraft(
+      full,
+      { note: "new draft", reviewed: false },
+      options.accountId,
+    );
+    await expect(
+      chooseReviewAlias({ ...options, conflict, selected: full }),
+    ).rejects.toThrow("changed while choosing");
+    expect(
+      getStore(options.accountId, "cocalc-git-review-alias-choices-v1").size,
+    ).toBe(0);
+    let updated: GitReviewAliasConflict | undefined;
+    try {
+      await resolveReviewStorageCommit(options);
+    } catch (err) {
+      updated = err as GitReviewAliasConflict;
+    }
+    await chooseReviewAlias({ ...options, conflict: updated!, selected: full });
+    expect(loadReviewDraft(full, options.accountId)?.note).toBe("new draft");
+    await deleteAllReviewRecords(options);
+    expect(
+      getStore(options.accountId, "cocalc-git-review-alias-choices-v1").size,
+    ).toBe(0);
   });
 
   it("resolves new abbreviated reviews to full IDs before saving", async () => {

@@ -12,7 +12,7 @@ not a current checklist. The objective is not complete. Current release work:
 | Requirement | Current evidence and remaining work |
 | --- | --- |
 | Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Validate the live drawer on unique/ambiguous/no-worktree commits and moved refs; do not infer that from helper tests. |
-| Review preservation | V2 adapters, account-scoped alias discovery, comparison revisions, export/import and recovery-draft tests exist. Short/full alias conflicts still stop loading; explicit conflict-preserving reconciliation is not implemented. Existing aliases intentionally remain under their original keys. |
+| Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Conflicting aliases now offer an explicit active-record choice without changing either record; changed alternatives reopen the conflict. Existing keys remain intact rather than being physically rewritten. Live multi-window acceptance is pending. |
 | Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Verify actual drawer close/reopen and renderer switching. Native partial-text selection across virtual windows remains a browser acceptance case. |
 | Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
 | TimeTravel | Shared document rendering and arbitrary Git revision viewing are implemented. Verify Git, patchflow, snapshot and backup text comparisons plus rich-viewer/restore behavior end to end; the standalone document fixture is not source-specific acceptance. |
@@ -811,7 +811,7 @@ resolution must still establish whether an input is a full or abbreviated ID.
 V2 comment sanitization now preserves literal leading/trailing filename whitespace.
 Round-trip tests cover SHA-256 export/import, drafts, image Markdown and submission
 metadata; this does not migrate short-key records or enable canonical-only writes.
-The conflict-preserving alias migration below remains required.
+The conflict-preserving ownership policy below governs existing aliases.
 
 Alias-aware storage bridge (2026-09-07): the drawer now resolves review input
 through the selected repository before loading or saving. New records use full
@@ -822,8 +822,22 @@ fail explicitly and remain exportable without overwriting or deleting either
 record. Draft edits follow the loaded storage key, not the displayed input, and
 cannot create a competing key while resolution is pending. Tests cover new
 canonical writes, legacy alias edits, ambiguous prefixes, and conflict-preserving
-exports. Explicit reconciliation/migration of multiple legacy keys is still
-pending; this bridge intentionally does not choose a winner or rewrite them.
+exports. The explicit ownership chooser described below now handles multiple
+keys; reading alone still never chooses a winner or rewrites them.
+
+Explicit alias reconciliation (2026-09-07): conflicts discovered during load or
+save show all candidate records for inspection and require an active-record
+choice. The store re-resolves Git identities and checks the observed snapshots
+before recording that choice in a separate account-scoped namespace. No review,
+comment ID, submission metadata, draft, or reviewed flag is merged, overwritten,
+or deleted. Existing keys remain the owners of their contents; new reviews still
+use full IDs. The selected record can evolve normally, but any new/removed alias
+or changed alternative invalidates the choice and exposes the conflict again.
+Exports retain both V2 records; imports do not silently import a winner. Deleting
+all reviews also clears choice metadata. Tests cover stale choices, active and
+alternative edits, export preservation, draft retention, cleanup, and keyboard
+selection/reload. This is non-destructive logical reconciliation, not a physical
+canonical-key rewrite. Full live conflict recovery remains an acceptance case.
 
 `chat/git-review-store.ts` currently stores account-scoped V2 commit records and
 local drafts, with `file_path`, `side` (`old`, `new`, `context`), line, hunk hash,

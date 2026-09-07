@@ -7,8 +7,29 @@ const REVIEW_DRAFT_STORAGE_PREFIX = "cocalc:git-review:draft:v2:";
 const LEGACY_REVIEW_DRAFT_STORAGE_PREFIX = "cocalc:git-review:draft:v2:commit:";
 const COMMIT_HASH_RE = /^[0-9a-f]{7,64}$/i;
 const REVIEW_EXPORT_KIND = "cocalc-git-review-export-v1";
+const REVIEW_ALIAS_CHOICES = "cocalc-git-review-alias-choices-v1";
 
 export type ResolveReviewCommit = (input: string) => Promise<string>;
+
+type AliasInspection = {
+  full: string;
+  snapshots: Record<string, string>;
+  records: GitReviewRecordV2[];
+};
+type AliasChoice = { selected: string; snapshots: Record<string, string> };
+export class GitReviewAliasConflict extends Error {
+  constructor(public readonly inspection: AliasInspection) {
+    super(
+      `Conflicting review keys for ${inspection.full}: ${Object.keys(inspection.snapshots).join(", ")}. No records were changed. Choose the active review; other records will be retained.`,
+    );
+  }
+}
+function aliasChoiceStore(accountId: string) {
+  return webapp_client.conat_client.conat().sync.akv<AliasChoice>({
+    account_id: accountId,
+    name: REVIEW_ALIAS_CHOICES,
+  });
+}
 
 // Retain an existing legacy key until explicit reconciliation. New reviews use
 // the full repository-resolved ID; never create a competing canonical record.
@@ -21,6 +42,70 @@ export async function resolveReviewStorageCommit({
   commitSha: string;
   resolveCommit: ResolveReviewCommit;
 }): Promise<string> {
+  const inspection = await inspectReviewAliases({
+    accountId,
+    commitSha,
+    resolveCommit,
+  });
+  const keys = Object.keys(inspection.snapshots);
+  if (keys.length <= 1) return keys[0] ?? inspection.full;
+  const choice = await aliasChoiceStore(accountId).get(inspection.full);
+  if (
+    choice?.snapshots &&
+    keys.includes(choice.selected) &&
+    JSON.stringify(Object.keys(choice.snapshots).sort()) ===
+      JSON.stringify(keys.sort()) &&
+    keys.every(
+      (key) =>
+        key === choice.selected ||
+        choice.snapshots[key] === inspection.snapshots[key],
+    )
+  )
+    return choice.selected;
+  throw new GitReviewAliasConflict(inspection);
+}
+
+export async function chooseReviewAlias({
+  accountId,
+  conflict,
+  selected,
+  resolveCommit,
+}: {
+  accountId: string;
+  conflict: GitReviewAliasConflict;
+  selected: string;
+  resolveCommit: ResolveReviewCommit;
+}): Promise<void> {
+  const current = await inspectReviewAliases({
+    accountId,
+    commitSha: conflict.inspection.full,
+    resolveCommit,
+  });
+  if (
+    !Object.hasOwn(current.snapshots, selected) ||
+    JSON.stringify(current.snapshots) !==
+      JSON.stringify(conflict.inspection.snapshots)
+  )
+    throw Error(
+      "Review records changed while choosing. Reload the review and compare them again.",
+    );
+  // This only chooses a storage owner. It never merges, overwrites, or deletes
+  // any review or draft. Changes to another alias reopen the conflict.
+  await aliasChoiceStore(accountId).set(current.full, {
+    selected,
+    snapshots: current.snapshots,
+  });
+}
+
+async function inspectReviewAliases({
+  accountId,
+  commitSha,
+  resolveCommit,
+}: {
+  accountId: string;
+  commitSha: string;
+  resolveCommit: ResolveReviewCommit;
+}): Promise<AliasInspection> {
   const full = (await resolveCommit(commitSha)).toLowerCase();
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(full))
     throw Error("Git did not resolve the review to a full object ID.");
@@ -44,23 +129,40 @@ export async function resolveReviewStorageCommit({
   } catch {
     // Server records still work when browser storage is disabled.
   }
-  const matches: string[] = [];
-  for (const candidate of candidates) {
+  const snapshots: Record<string, string> = {};
+  const records: GitReviewRecordV2[] = [];
+  for (const candidate of [...candidates].sort()) {
     const id = normalizeCommitSha(candidate);
     if (!id || !full.startsWith(id)) continue;
     // A prefix is not proof: Git must reject ambiguous abbreviations in this
     // repository instead of associating another commit's review by string match.
     if ((await resolveCommit(id)).toLowerCase() !== full)
       throw Error("Legacy review abbreviation resolved to a different commit.");
-    const hasRecord =
-      (await v2.get(`commit:${id}`)) != null || (await v1.get(id)) != null;
-    if (hasRecord || loadReviewDraft(id, accountId)) matches.push(id);
+    const raw = await v2.get(`commit:${id}`);
+    const legacy = await v1.get(id);
+    const draft = loadReviewDraft(id, accountId);
+    if (raw != null || legacy != null || draft) {
+      snapshots[id] = JSON.stringify([
+        raw ?? null,
+        legacy ?? null,
+        draft ?? null,
+      ]);
+      const record = sanitizeReviewRecord(raw, {
+        accountId,
+        commitSha: id,
+      }) ?? {
+        ...emptyRecord({
+          accountId,
+          commitSha: id,
+          now: legacy?.updated_at ?? draft?.updated_at ?? 0,
+        }),
+        note: `${legacy?.note ?? ""}`,
+        reviewed: Boolean(legacy?.reviewed),
+      };
+      records.push(mergeRecordWithDraft(record, draft) ?? record);
+    }
   }
-  if (matches.length > 1)
-    throw Error(
-      `Conflicting review keys for ${full}: ${matches.join(", ")}. No records were changed. Export reviews before reconciling these records.`,
-    );
-  return matches[0] ?? full;
+  return { full, snapshots, records };
 }
 
 type LegacyCommitReviewRecord = {
@@ -748,6 +850,16 @@ export async function deleteAllReviewRecords({
   const reviewKeys = Object.keys(kv.getAll()).filter((key) =>
     key.startsWith("commit:"),
   );
+  const choices = await getSharedAccountDkv<AliasChoice>({
+    account_id: normalizedAccountId,
+    name: REVIEW_ALIAS_CHOICES,
+  });
+  choices.setMany(
+    Object.fromEntries(
+      Object.keys(choices.getAll()).map((key) => [key, undefined]),
+    ),
+  );
+  await choices.flush();
   if (reviewKeys.length === 0) {
     clearAllReviewDrafts(normalizedAccountId, { includeLegacy: true });
     return { deleted: 0 };
