@@ -10,6 +10,21 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
 import { CodexAttentionCard, codexFreshAuthUrl } from "../codex-attention-card";
 
+const mockMarkdownInput = jest.fn();
+jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
+  __esModule: true,
+  default: (props: any) => {
+    mockMarkdownInput(props);
+    return (
+      <textarea
+        aria-label={props.placeholder}
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+      />
+    );
+  },
+}));
+
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: { attentionAcp: jest.fn() },
@@ -178,6 +193,55 @@ describe("Codex question attention", () => {
         expect.objectContaining({
           action: "respond",
           answers: { region: ["US"] },
+        }),
+      ),
+    );
+    view.unmount();
+  });
+
+  it("submits Markdown and image links through the shared upload-enabled editor", async () => {
+    const user = userEvent.setup();
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockImplementation(async (request: any) => ({
+        ok: true,
+        ...(request.action === "respond"
+          ? { record: { ...questionRecord, state: "answered" as const } }
+          : { records: [] }),
+      }));
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          questions: [{ ...questionRecord.questions[0], isOther: true }],
+        }}
+      />,
+    );
+    const input = screen.getByRole("textbox", {
+      name: "Custom answer for Region",
+    });
+    await user.click(input);
+    expect(input).toHaveFocus();
+    fireEvent.change(input, {
+      target: { value: "**EU**\n![map](.chat-images/map.png)" },
+    });
+    expect(mockMarkdownInput).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        project_id: questionRecord.project_id,
+        path: questionRecord.path,
+        enableUpload: true,
+        saveDebounceMs: 0,
+      }),
+    );
+    await user.tab();
+    const send = screen.getByRole("button", { name: "Send response" });
+    expect(send).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(webapp_client.conat_client.attentionAcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "respond",
+          answers: { region: ["**EU**\n![map](.chat-images/map.png)"] },
         }),
       ),
     );
