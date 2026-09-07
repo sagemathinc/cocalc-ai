@@ -60,6 +60,23 @@ Missing live test evidence does not establish that these checks pass.
 
 ### Restored live-session checks
 
+Combined frontend Git/review/diff/TimeTravel regression run passed 259 tests
+in 44 suites after the Pierre-only cleanup. Originating-context browser
+acceptance uses an explicitly synthetic scratch chat, whose current thread cwd
+is `/home/user`, referencing the existing terminated acceptance turn's archived
+config. A temporarily restored detached worktree at that archived path allowed
+the test to verify actual Git browsing without running an agent. Two fresh-tab
+keyboard-link runs selected the archived directory and displayed Pierre rather
+than using current settings. The worktree was removed afterward; the synthetic
+`scratch/git-turn-context-acceptance-c39e95e2.chat` fixture remains.
+
+The first probe lost its drawer after observing the expected directory, before
+the diff became visible. Two reruns passed without a production change, so this
+is not explained or claimed fixed; cold fixture/navigation lifecycle remains
+an audit item. Inspection also found parent and drawer entry points trimming
+literal directory overrides. Both now preserve the path, with an explicit
+drawer-origin regression; the focused context suite passes 20 tests.
+
 The real-agent retry created thread `2638a887-a81f-4db3-92b5-2a3e86bd69a6`
 with directory `/tmp/cocalc-review-worktrees-tAjlSl/first`, then terminated at
 the connected account's OpenAI usage limit (reset September 13, 2:51 PM).

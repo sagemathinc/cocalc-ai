@@ -2347,8 +2347,8 @@ export function ChatPanel({
       setGitBrowserHistory(undefined);
       setGitBrowserComparison(undefined);
       setGitBrowserCwd(
-        typeof cwdOverride === "string" && cwdOverride.trim()
-          ? cwdOverride.trim()
+        typeof cwdOverride === "string" && cwdOverride.length > 0
+          ? cwdOverride
           : undefined,
       );
       setGitBrowserThreadKey(normalizedThreadKey);
@@ -2358,7 +2358,7 @@ export function ChatPanel({
       updateGitBrowserRoute(
         {
           commit: commitHash?.trim() || "HEAD",
-          cwd: cwdOverride?.trim() || undefined,
+          cwd: cwdOverride || undefined,
         },
         true,
       );

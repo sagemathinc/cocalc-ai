@@ -1,3 +1,12 @@
+import { containingPath } from "@cocalc/util/misc";
+
+export function gitReviewOrigin(
+  sourcePath?: string,
+  directory?: string,
+): string {
+  return directory || containingPath(sourcePath ?? ".") || ".";
+}
+
 // Resolve a historical turn before falling back to the thread's current hint.
 export function recordedTurnDirectory(events: unknown): string | undefined {
   const rows = (events as any)?.toJS?.() ?? events;

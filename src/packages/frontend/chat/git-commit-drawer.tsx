@@ -26,7 +26,7 @@ import { ChangedFilesLayout } from "@cocalc/frontend/components/diff-viewer/chan
 import { matchFontSizeShortcut } from "@cocalc/frontend/editors/markdown-input/font-size-shortcut";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { containingPath } from "@cocalc/util/misc";
+import { gitReviewOrigin } from "./git-turn-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   deleteAllReviewRecords,
@@ -669,11 +669,10 @@ export function GitCommitDrawer({
   const [inlineCommentPendingKey, setInlineCommentPendingKey] = useState("");
   const inlineCommentPendingKeyRef = useRef(inlineCommentPendingKey);
 
-  const originCwd = useMemo(() => {
-    const override = `${cwdOverride ?? ""}`.trim();
-    if (override) return override;
-    return containingPath(sourcePath ?? ".") || ".";
-  }, [sourcePath, cwdOverride]);
+  const originCwd = useMemo(
+    () => gitReviewOrigin(sourcePath, cwdOverride),
+    [sourcePath, cwdOverride],
+  );
   const repositoryScope = `${projectId ?? ""}\0${originCwd}`;
   const [repositoryDiscovery, setRepositoryDiscovery] = useState<{
     scope: string;

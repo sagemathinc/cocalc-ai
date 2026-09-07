@@ -1,8 +1,17 @@
 import { fromJS } from "immutable";
 import {
+  gitReviewOrigin,
   recordedTurnDirectory,
   resolveGitTurnDirectory,
 } from "./git-turn-context";
+
+test("drawer discovery preserves literal directory overrides", () => {
+  expect(gitReviewOrigin("/home/user/chat.chat", "/worktree ")).toBe(
+    "/worktree ",
+  );
+  expect(gitReviewOrigin("/home/user/chat.chat", " ")).toBe(" ");
+  expect(gitReviewOrigin("/home/user/chat.chat", "")).toBe("/home/user");
+});
 
 const events = [
   {
