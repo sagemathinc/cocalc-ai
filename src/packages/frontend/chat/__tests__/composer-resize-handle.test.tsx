@@ -179,6 +179,33 @@ describe("ChatRoomComposer resize handle", () => {
     expect(screen.getByRole("button", { name: "Set goal" })).not.toBeNull();
   });
 
+  it("keeps the thread title clear of its accent line", () => {
+    renderComposer({
+      selectedThread: {
+        key: "thread-accent",
+        label: "hi",
+        displayLabel: "hi",
+        newestTime: 0,
+        messageCount: 1,
+        hasCustomName: true,
+        hasCustomAppearance: true,
+        readCount: 1,
+        unreadCount: 0,
+        isAI: false,
+        isAutomation: false,
+        isPinned: false,
+        isArchived: false,
+        threadColor: "#1677ff",
+      },
+      onEditThreadAppearance: jest.fn(),
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Edit Thread Appearance: hi" }).style
+        .paddingLeft,
+    ).toBe("12px");
+  });
+
   it("shows a proactive Codex setup banner for unconfigured AI chats", () => {
     const onOpenCodexPaymentConfig = jest.fn();
     renderComposer({

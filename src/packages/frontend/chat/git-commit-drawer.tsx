@@ -25,7 +25,7 @@ import { matchFontSizeShortcut } from "@cocalc/frontend/editors/markdown-input/f
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { containingPath } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   deleteAllReviewRecords,
   exportReviewBundle,
@@ -1083,7 +1083,7 @@ export function GitCommitDrawer({
             width: "100%",
             borderRadius: 6,
             padding: "2px 6px",
-            background: highlightNeedsReview ? "#fffbe6" : undefined,
+            background: highlightNeedsReview ? UI_COLORS.warningBg : undefined,
             pointerEvents: "none",
           }}
         >
@@ -1096,7 +1096,7 @@ export function GitCommitDrawer({
             style={{
               fontFamily: "monospace",
               whiteSpace: "nowrap",
-              color: fallback ? COLORS.GRAY_D : undefined,
+              color: fallback ? UI_COLORS.secondary : undefined,
             }}
           >
             {entry.hash.slice(0, 10)}
@@ -1108,7 +1108,7 @@ export function GitCommitDrawer({
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              color: fallback ? COLORS.GRAY_D : undefined,
+              color: fallback ? UI_COLORS.secondary : undefined,
             }}
             title={entry.subject || (fallback ? "selected commit" : "")}
           >
@@ -1123,7 +1123,7 @@ export function GitCommitDrawer({
           {entry.hash === HEAD_REF ? HEAD_REF : entry.hash.slice(0, 10)}
         </span>
         {entry.subject ? (
-          <span style={{ color: fallback ? COLORS.GRAY_D : undefined }}>
+          <span style={{ color: fallback ? UI_COLORS.secondary : undefined }}>
             {" "}
             {entry.subject}
           </span>
@@ -2976,7 +2976,14 @@ export function GitCommitDrawer({
       open={open}
       onClose={handleDrawerClose}
       destroyOnHidden
-      styles={{ body: { padding: 0, overflow: "hidden" } }}
+      styles={{
+        body: {
+          padding: 0,
+          overflow: "hidden",
+          background: UI_COLORS.page,
+          color: UI_COLORS.text,
+        },
+      }}
     >
       <DeleteAllReviewsModal
         open={reviewDeleteAllOpen}
@@ -3011,6 +3018,8 @@ export function GitCommitDrawer({
           height: "100%",
           overflowY: "auto",
           padding: "16px 16px 20px 16px",
+          background: UI_COLORS.page,
+          color: UI_COLORS.text,
         }}
       >
         {gitLogError ? (

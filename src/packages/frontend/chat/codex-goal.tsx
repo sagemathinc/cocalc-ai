@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { Alert, Button, Input, Modal } from "antd";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import type {
   CodexGoalAck,
@@ -86,7 +86,7 @@ export function CodexGoalControl({
             background: "none",
             border: 0,
             padding: 0,
-            color: COLORS.GRAY_D,
+            color: UI_COLORS.text,
             cursor: "pointer",
             minWidth: 0,
             display: "flex",
@@ -105,7 +105,7 @@ export function CodexGoalControl({
             {label ? `Goal: ${label}` : "Set goal"}
           </span>
           {status && (
-            <span style={{ flexShrink: 0, color: COLORS.GRAY_M }}>
+            <span style={{ flexShrink: 0, color: UI_COLORS.secondary }}>
               ({status})
             </span>
           )}
@@ -206,7 +206,7 @@ export function CodexGoalControl({
               </p>
             )}
           </details>
-          <p style={{ color: COLORS.GRAY_M, marginTop: 12 }}>
+          <p style={{ color: UI_COLORS.secondary, marginTop: 12 }}>
             Changes apply to the running turn, or when the next turn starts.
             Pause prevents automatic continuation; Stop also interrupts the
             current turn. Viewing this goal does not start Codex.
