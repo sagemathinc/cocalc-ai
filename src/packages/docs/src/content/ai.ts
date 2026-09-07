@@ -509,7 +509,7 @@ can choose how its future turns are funded.
    OpenAI API key**, and **Account OpenAI API key** appear when configured.
    **CoCalc Membership** is available only when the site and account provide
    an included allowance.
-3. Check the payment label in the chat controls before submitting work.
+3. Check **Payment source** in **Codex settings** before submitting work.
 
 **Automatic** prefers your ChatGPT plan, then the project API key, account API
 key, and membership allowance. You can continue an established session using
