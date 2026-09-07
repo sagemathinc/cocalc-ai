@@ -46,22 +46,17 @@ try {
     name: "Text diff renderer",
     exact: true,
   });
-  await expect(renderer).toBeVisible({ timeout: 60000 });
-  await renderer.selectOption("pierre");
+  await expect(renderer).toHaveCount(0);
   await expect(body.locator("diffs-container [data-line]").first()).toBeVisible(
     { timeout: 60000 },
   );
   await expect(
     scope.getByRole("button", { name: "Restore This Version", exact: true }),
   ).toHaveCount(0);
-  await renderer.selectOption("classic");
-  await expect(body.locator(".CodeMirror").first()).toBeVisible({
-    timeout: 15000,
-  });
-  await expect(body.locator("diffs-container")).toHaveCount(0);
+  await expect(body.locator(".CodeMirror")).toHaveCount(0);
   expect(errors).toEqual([]);
   console.log(
-    `Passed: live ${source} TimeTravel comparison in Pierre and Classic; restore absent in comparison mode; no page errors. No file mutation.`,
+    `Passed: live ${source} TimeTravel comparison uses Pierre only; no Classic selector or CodeMirror diff; restore absent in comparison mode; no page errors. No file mutation.`,
   );
 } catch (error) {
   console.error(error);

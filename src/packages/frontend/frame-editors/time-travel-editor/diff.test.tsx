@@ -1,10 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { Diff } from "./diff";
 
-jest.mock("./classic-diff", () => ({
-  ClassicDiff: () => <div>Classic text</div>,
-}));
 jest.mock("@cocalc/frontend/components/diff-viewer/document-diff", () => ({
   __esModule: true,
   default: (props: any) => (
@@ -12,8 +8,7 @@ jest.mock("@cocalc/frontend/components/diff-viewer/document-diff", () => ({
   ),
 }));
 
-test("switches inline with keyboard and follows selected history without changing documents", async () => {
-  const user = userEvent.setup();
+test("uses Pierre directly and follows selected history without changing documents", async () => {
   const props = {
     v0: "before",
     v1: "after",
@@ -23,12 +18,10 @@ test("switches inline with keyboard and follows selected history without changin
     editor_settings: {} as any,
   };
   const { rerender } = render(<Diff {...props} />);
-  expect(screen.getByText("Classic text")).toBeVisible();
-  const renderer = screen.getByRole("combobox", { name: "Text diff renderer" });
-  renderer.focus();
-  await user.selectOptions(renderer, "pierre");
+  expect(
+    screen.queryByRole("combobox", { name: "Text diff renderer" }),
+  ).toBeNull();
   const output = await screen.findByLabelText("Historical documents");
-  expect(renderer).toHaveFocus();
   expect(JSON.parse(output.textContent!)).toMatchObject({
     before: "before",
     after: "after",
@@ -41,9 +34,4 @@ test("switches inline with keyboard and follows selected history without changin
     after: "new version",
     path: "history.json",
   });
-  await user.selectOptions(renderer, "classic");
-  expect(screen.getByText("Classic text")).toBeVisible();
-  expect(
-    screen.queryByLabelText("Historical documents"),
-  ).not.toBeInTheDocument();
 });

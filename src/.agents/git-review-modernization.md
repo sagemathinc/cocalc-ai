@@ -22,12 +22,12 @@ not a current checklist. The objective is not complete. Current release work:
 | Requirement | Current evidence and remaining work |
 | --- | --- |
 | Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Live detached-worktree unique/ambiguous/absent cases, moved-ref pinning, and exact working-copy file opening in both renderers passed (details below). Actual agent dispatch remains a separate acceptance case. |
-| Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Live independent/same-ID comment recovery and draft-alias choice checks passed. Conflicting aliases offer an explicit active-record choice without changing either record; changed alternatives reopen the conflict. Existing keys remain intact rather than being physically rewritten. Network reconnect and note-field conflict cases remain separate from the completed reload checks. |
-| Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Live renderer roundtrip and drawer close/reopen preserve the source position within a few wrapped lines (details below). Native partial-text selection across virtual windows remains a browser acceptance case. |
-| Rich comments | Active editors live outside recyclable rows. Real delayed HTTP upload, image rendering, undo/redo, theme changes, and two-window inline recovery passed. Multiple-editor/focus and network reconnect remain separate acceptance cases. |
+| Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Live independent/same-ID comment recovery, draft-alias choice, actual WebSocket disconnect/reconnect, and conflicting private-note reconciliation checks passed. Existing keys and recovered note alternatives remain intact. Details and test boundaries are recorded below. |
+| Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Live drawer close/reopen preserves the source position within a few wrapped lines. Native mouse selection and exact clipboard copying across virtual windows passed after stabilizing Pierre options; retain those checks through Classic removal. |
+| Rich comments | Active editors live outside recyclable rows. Real delayed HTTP upload, image rendering, undo/redo, theme changes, two-window inline recovery, simultaneous note/inline editor focus, and network reconnect passed. |
 | TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Both rename sides and deleted-file viewing passed in Classic/Pierre. |
 | Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live UI submission created a separate thread with the selected worktree in both persisted thread config and Codex activity config. Execution stopped at the connected account's usage limit; actual command execution and originating-context links still need end-to-end confirmation. |
-| Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor acceptance remains; investigate intermittent native-copy failure if reproduced. Measured main-thread heap excludes worker heaps. |
+| Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor and strict native-copy checks passed. Measured main-thread heap excludes worker heaps. |
 | Default and cleanup | Classic remains in the current code only while parity is verified. The approved final state is Pierre only: delete Classic rendering, its selector and the experimental preview once checks pass. No rollback window. |
 
 Browser access: local signed-in Chromium now exposes CDP on port 9222
@@ -59,6 +59,15 @@ Only after these checks should the approved complete replacement proceed.
 Missing live test evidence does not establish that these checks pass.
 
 ### Restored live-session checks
+
+TimeTravel text comparisons now use Pierre exclusively. Removed the Classic
+component, its CodeMirror diff helper/tests, and the renderer selector. Rich
+historical viewers and restore actions are unchanged. The focused test,
+frontend TypeScript build, lint and development build passed. Read-only live
+comparisons passed for Git, patchflow, snapshots and backups with no selector,
+no CodeMirror diff, no restore action in comparison mode and no page errors.
+The external Markdown fixture had only one backup, so backup comparison used
+the multi-version `src/package.json` fixture instead; no new archive was needed.
 
 Simultaneous-editor/focus check passed with `REVIEW_FOCUS=1` in the real Slate
 smoke script: private-note and inline-comment editors were both mounted, native
