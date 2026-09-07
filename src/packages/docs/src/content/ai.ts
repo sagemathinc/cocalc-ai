@@ -17,6 +17,26 @@ files, run commands, work with notebooks, and make changes.
 3. Start a Codex thread.
 4. Ask a concrete task, including relevant files and constraints.
 
+## Set defaults for new chats
+
+To reuse your preferred model and reasoning level, open account **AI**
+settings and find **New Codex chat defaults**.
+
+1. Choose **Model** and **Reasoning**. The reasoning choices depend on the
+   selected model.
+2. In Lite, also choose the default **Execution mode**. Hosted CoCalc shows
+   its full-project-access notice instead.
+3. Click **Save defaults**.
+
+The saved defaults are used when you create a new Codex chat. They do not
+serve as a bulk edit of existing threads: open a thread's **Codex settings**
+to adjust that thread. Use **Reset to built-in defaults** when you want new
+chats to start with CoCalc's supplied choices again.
+
+Review the selected thread's settings before starting a task, especially if
+you changed its payment source. Membership-funded turns use the settings
+selected by CoCalc even when your account defaults request another model.
+
 For terminal-native agents such as Claude Code or opencode, install and run them
 inside a normal project terminal. CoCalc provides the durable Linux environment;
 those tools provide their own agent interface.
