@@ -93,6 +93,27 @@ notebook inspection and execution instead of editing \`.ipynb\` JSON directly.
 If a kernel stops, restarts, or the project runs out of memory, check the
 resource indicators and restart only the affected kernel when possible. For
 memory-specific failures, see [Troubleshoot project memory](/docs/troubleshooting/memory).
+
+## Send a notebook error to Agent
+
+When **Fix with Agent** appears with a notebook error, use it to start a repair
+request from that failure.
+
+1. Click **Fix with Agent** beside the error output.
+2. In the dialog, check **Recent agent sessions** when shown and select the
+   conversation that should receive the request.
+3. Click **Fix with Agent** in the dialog to submit it.
+4. Follow the investigation in the agent chat. Review any reported verification and
+   rerun the affected cell if needed.
+
+The request includes the notebook path, the cell ID when available, the
+traceback, the cell input, and the kernel language when available. Long traceback and input text can be shortened.
+The agent is instructed to inspect the live notebook, investigate the cause,
+and apply a fix when possible; it can read current cell content and outputs
+instead of relying solely on the attached error text.
+
+This shortcut submits a repair request. Include additional constraints or
+corrections in the agent conversation if the failure needs more context.
 `;
 
 export const JUPYTER_STUDIO_BODY = String.raw`
