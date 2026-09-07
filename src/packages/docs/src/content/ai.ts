@@ -300,6 +300,29 @@ Use **Run now** to try the configured command before relying on scheduled
 runs, and inspect its result. That manual run leaves the next scheduled
 occurrence in place, so account for both when the command changes data.
 
+## Control and acknowledge scheduled runs
+
+Open the automation details in its chat thread to see the schedule, latest
+result, and available controls.
+
+- **Run now** starts a manual run without moving the next scheduled run.
+  If a run is already active, it does not queue another one.
+- **Skip next** skips only the next scheduled occurrence.
+- **Pause** and **Resume** control whether scheduled work continues. Pausing
+  the schedule does not cancel a run already in progress.
+- **Edit** opens the configuration. Deleting the automation removes the
+  schedule from the chat thread.
+
+Overlapping runs are not queued. Check **Last run**, the status, and any
+displayed error when investigating a missing or unsuccessful result.
+
+Finished automated runs increase the **unacknowledged** count, including
+successful, failed, or interrupted runs and **Run now** executions. At **Pause after unacknowledged runs**, the automation
+pauses until you review it. Click the unacknowledged-count button to clear
+the count; sending a new request to Codex in that thread also clears it.
+Acknowledging does not itself mean resuming: use **Resume** when you want
+a paused schedule to continue, and confirm the next-run display afterward.
+
 ## Why this matters in CoCalc
 
 CoCalc is both a collaborative workspace and an agent sandbox. Humans can review
