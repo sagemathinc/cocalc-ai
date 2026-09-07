@@ -34,8 +34,10 @@ Keying/rotation notes:
 const TOKEN_TYPE = "JWT";
 const TOKEN_ALG = "EdDSA";
 const TOKEN_VERSION = "phat-v1";
+const RESTRICTED_BROWSER_SESSION_TOKEN_VERSION = "phat-v2";
 const DEFAULT_TTL_SECONDS = 10 * 60;
 const MAX_TTL_SECONDS = 30 * 60;
+const MAX_BROWSER_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 const MIN_TTL_SECONDS = 60;
 const CLOCK_TOLERANCE_SECONDS = 30;
 export type ProjectHostAuthActor = "account" | "hub";
@@ -51,6 +53,7 @@ export interface ProjectHostAuthClaims {
   v: string;
   act?: ProjectHostAuthActor;
   sid?: string;
+  browser_session_exp_s?: number;
 }
 
 export interface IssueProjectHostTokenOptions {
@@ -63,6 +66,7 @@ export interface IssueProjectHostTokenOptions {
   account_id?: string;
   hub_id?: string;
   session_id?: string;
+  browser_session_exp_s?: number;
 }
 
 export interface VerifyProjectHostTokenOptions {
@@ -152,6 +156,7 @@ export function issueProjectHostAuthToken({
   account_id,
   hub_id,
   session_id,
+  browser_session_exp_s,
 }: IssueProjectHostTokenOptions): {
   token: string;
   expires_at: number;
@@ -165,6 +170,18 @@ export function issueProjectHostAuthToken({
   const key = getPrivateKey(private_key);
   const iat = Math.floor(now_ms / 1000);
   const exp = iat + normalizeTtlSeconds(ttl_seconds);
+  const browserSessionExp =
+    browser_session_exp_s == null
+      ? undefined
+      : Math.floor(Number(browser_session_exp_s));
+  if (
+    browserSessionExp != null &&
+    (!Number.isSafeInteger(browserSessionExp) ||
+      browserSessionExp <= iat ||
+      browserSessionExp > iat + MAX_BROWSER_SESSION_TTL_SECONDS)
+  ) {
+    throw new Error("invalid browser session expiration");
+  }
   const claims: ProjectHostAuthClaims = {
     iss: issuer,
     sub: identity.subject,
@@ -172,9 +189,15 @@ export function issueProjectHostAuthToken({
     iat,
     exp,
     jti: randomUUID(),
-    v: TOKEN_VERSION,
+    v:
+      browserSessionExp == null
+        ? TOKEN_VERSION
+        : RESTRICTED_BROWSER_SESSION_TOKEN_VERSION,
     act: identity.actor,
     ...(session_id ? { sid: session_id } : {}),
+    ...(browserSessionExp == null
+      ? {}
+      : { browser_session_exp_s: browserSessionExp }),
   };
 
   const header = {
@@ -235,7 +258,10 @@ export function verifyProjectHostAuthToken({
     throw new Error("invalid token signature");
   }
 
-  if (claims?.v !== TOKEN_VERSION) {
+  if (
+    claims?.v !== TOKEN_VERSION &&
+    claims?.v !== RESTRICTED_BROWSER_SESSION_TOKEN_VERSION
+  ) {
     throw new Error("invalid token version");
   }
   if (claims?.iss !== issuer) {
@@ -276,6 +302,18 @@ export function verifyProjectHostAuthToken({
   }
   if (claims.sid != null && !isValidUUID(claims.sid)) {
     throw new Error("invalid token session");
+  }
+  if (claims.v === RESTRICTED_BROWSER_SESSION_TOKEN_VERSION) {
+    if (
+      !Number.isSafeInteger(claims.browser_session_exp_s) ||
+      claims.browser_session_exp_s! <= claims.iat ||
+      claims.browser_session_exp_s! >
+        claims.iat + MAX_BROWSER_SESSION_TTL_SECONDS
+    ) {
+      throw new Error("invalid browser session expiration");
+    }
+  } else if (claims.browser_session_exp_s != null) {
+    throw new Error("invalid browser session token version");
   }
 
   return claims;

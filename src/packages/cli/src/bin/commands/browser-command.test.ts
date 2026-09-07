@@ -8,9 +8,23 @@ import { registerBrowserCommand } from "./browser";
 import {
   resolveBrowserSessionDaemonScriptPath,
   authorizeTestingBrowser,
+  testingBrowserProfileName,
 } from "./browser/register-session-commands";
 
 const PROJECT_A = "00000000-1000-4000-8000-0000000000aa";
+
+test("testing browser profile names safely distinguish API origins", () => {
+  const ipv6 = testingBrowserProfileName("http://[::1]:9100", PROJECT_A);
+  assert.match(ipv6, /^[a-zA-Z0-9._-]+$/);
+  assert.notEqual(
+    ipv6,
+    testingBrowserProfileName("https://[::1]:9100", PROJECT_A),
+  );
+  assert.notEqual(
+    ipv6,
+    testingBrowserProfileName("http://[::1]:9200", PROJECT_A),
+  );
+});
 
 test("testing browser rejects wrong identities, cross-origin targets and old servers", async () => {
   let calls = 0;

@@ -3123,6 +3123,7 @@ async function startProjectHostAuthTokenService(): Promise<void> {
       project_id,
       public_directory_share_id,
       ttl_seconds,
+      browser_session_exp_s,
     }) =>
       await issueProjectHostAuthTokenLocal({
         account_id,
@@ -3131,6 +3132,7 @@ async function startProjectHostAuthTokenService(): Promise<void> {
         project_id,
         public_directory_share_id,
         ttl_seconds,
+        browser_session_exp_s,
       }),
   };
   services.push(

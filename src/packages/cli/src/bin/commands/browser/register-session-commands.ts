@@ -3,6 +3,7 @@ Register `cocalc browser session ...` subcommands.
 */
 
 import { Command } from "commander";
+import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import { URL } from "node:url";
 import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
@@ -17,6 +18,22 @@ import type {
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 
 const DEFAULT_SIGN_IN_COOKIE_MAX_AGE_MS = 12 * 3600 * 1000;
+
+export function testingBrowserProfileName(
+  api: string,
+  account_id: string,
+): string {
+  const url = new URL(api);
+  const host = url.hostname
+    .replace(/^\[|\]$/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const originHash = createHash("sha256")
+    .update(url.origin)
+    .digest("hex")
+    .slice(0, 12);
+  return `browser-test-${host || "site"}-${originHash}-${account_id}`;
+}
 
 export async function authorizeTestingBrowser(
   ctx: BrowserCommandContext,

@@ -237,6 +237,7 @@ import { createWorkspacesApi } from "../api/workspaces";
 import { openCurrentProjectConnection } from "../api/current-project";
 import {
   registerBrowserCommand,
+  testingBrowserProfileName,
   type BrowserCommandDeps,
 } from "./commands/browser";
 import {
@@ -3265,7 +3266,7 @@ registerExecCommand(program, execCommandDeps);
 
 const browserCommandDeps = {
   createTestingContext: async ({ api, account_id, remember_me }) => {
-    const profile = `browser-test-${new URL(api).hostname}-${account_id}`;
+    const profile = testingBrowserProfileName(api, account_id);
     const config = loadAuthConfig();
     // Replace, never merge: no operator credentials may survive in this profile.
     config.profiles[profile] = {
