@@ -1,3 +1,31 @@
+diff --git a/es/TabNavList/index.js b/es/TabNavList/index.js
+--- a/es/TabNavList/index.js
++++ b/es/TabNavList/index.js
+@@ -433,7 +433,9 @@
+     tabs.forEach(({
+       key
+     }) => {
+-      const btnNode = tabListRef.current?.querySelector(`[data-node-key="${genDataNodeKey(key)}"]`);
++      // Tab keys can be filenames containing CSS string delimiters.
++      const selectorKey = genDataNodeKey(key).replace(/\\/g, '\\\\').replace(/\n/g, '\\a ').replace(/\r/g, '\\d ').replace(/\f/g, '\\c ');
++      const btnNode = tabListRef.current?.querySelector(`[data-node-key="${selectorKey}"]`);
+       if (btnNode) {
+         const [width, height, left, top] = getTabSize(btnNode, listRect);
+         newSizes.set(key, {
+diff --git a/lib/TabNavList/index.js b/lib/TabNavList/index.js
+--- a/lib/TabNavList/index.js
++++ b/lib/TabNavList/index.js
+@@ -441,7 +441,9 @@
+     tabs.forEach(({
+       key
+     }) => {
+-      const btnNode = tabListRef.current?.querySelector(`[data-node-key="${(0, _util.genDataNodeKey)(key)}"]`);
++      // Tab keys can be filenames containing CSS string delimiters.
++      const selectorKey = (0, _util.genDataNodeKey)(key).replace(/\\/g, '\\\\').replace(/\n/g, '\\a ').replace(/\r/g, '\\d ').replace(/\f/g, '\\c ');
++      const btnNode = tabListRef.current?.querySelector(`[data-node-key="${selectorKey}"]`);
+       if (btnNode) {
+         const [width, height, left, top] = getTabSize(btnNode, listRect);
+         newSizes.set(key, {
 diff --git a/es/hooks/useIndicator.js b/es/hooks/useIndicator.js
 --- a/es/hooks/useIndicator.js
 +++ b/es/hooks/useIndicator.js
