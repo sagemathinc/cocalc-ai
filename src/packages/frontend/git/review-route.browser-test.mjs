@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url);
 const { chromium, expect } = require("@playwright/test");
 
 const [chatUrl, commit] = process.argv.slice(2);
-if (!chatUrl || !/^[a-f0-9]{7,40}$/i.test(commit ?? "")) {
+if (!chatUrl || !/^[a-f0-9]{7,64}$/i.test(commit ?? "")) {
   throw Error("Supply a chat URL and a commit present in its repository.");
 }
 const url = new URL(chatUrl);
@@ -20,8 +20,8 @@ const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
 try {
   await page.goto(url.href, { waitUntil: "domcontentloaded" });
-  const preview = page.getByRole("button", {
-    name: "Preview with Pierre",
+  const preview = page.getByRole("combobox", {
+    name: "Diff renderer",
     exact: true,
   });
   await expect(preview).toBeVisible({ timeout: 60000 });

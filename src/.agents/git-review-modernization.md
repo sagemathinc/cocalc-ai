@@ -133,6 +133,13 @@ saved scroll position; that was a harness assumption, not a historical-loader
 failure. These checks do not cover patchflow/snapshot/backup restore or
 renamed/deleted files.
 
+Live route follow-up: `review-route.browser-test.mjs` passed deep-link opening,
+Older selection, reload, Escape, reopening, Back/Forward and preservation of an
+unrelated query parameter, with no page errors. The readiness locator now uses
+the current Diff renderer selector rather than the experiment's preview button.
+This checks URL/drawer lifecycle, not semantic scroll restoration or agent
+working-directory dispatch.
+
 ### Single-file stress evidence (2026-09-07)
 
 Run `STRESS=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`
