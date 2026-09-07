@@ -569,6 +569,12 @@ describe("initCodexProjectRunner", () => {
         `--volume=${codexHome}:/run/cocalc/codex-subscription`,
       ]),
     );
+    expect(runCall![1].slice(-4)).toEqual([
+      "--rootfs",
+      path.join(tmp, "rootfs"),
+      "/usr/bin/sleep",
+      "infinity",
+    ]);
 
     proc.emit("close", 0, null);
   });
