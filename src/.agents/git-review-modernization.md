@@ -543,6 +543,26 @@ field. Live end-to-end recorded-session/streaming acceptance and the older
 non-app-server producer path still need release review; do not infer those from
 the standalone source-bearing fixture.
 
+Bare commit containment (2026-09-07): the drawer now uses the existing ancestry
+reader for an initial commit link without explicit cwd/history context. It
+preserves the current checkout when that checkout contains the commit, selects
+only a unique available containing worktree otherwise, and leaves the requested
+commit selected while pinning that worktree's history tip. Ambiguous/no-match
+cases remain historical-only with an explanation and the existing working-copy
+chooser. Fresh registration/common-directory/HEAD validation precedes selection;
+there is no checkout, branch switch, or project-wide directory search.
+Explicit originating contexts are not overridden. Starting feedback or a write
+operation cancels pending selection, and a later response cannot move context.
+Uncertain contexts do not offer agent mutation actions. Automatic cross-worktree
+selection remains read-only pending validated agent routing.
+
+Real Git fixtures cover current, unique, merged/ambiguous, unreferenced, and
+concurrently moved-HEAD cases while verifying checkout/index/dirty state.
+React tests cover StrictMode replay, one lookup per request, interruption by
+feedback, stale navigation results, and ambiguity. A live unique-worktree
+fixture in the browser project remains an acceptance check; local worktrees in
+the development checkout are not assumed to exist in that separate project.
+
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the
 delivery order at the end of this section describes independently reviewable

@@ -21,6 +21,7 @@ import { GitReadService, GIT_READ_LIMIT } from "./read-service";
 import type { GitReadExecutor } from "./read-service";
 import { loadGitHistoricalFile } from "./historical-file";
 import { resolveHistorySelection } from "./history-selection";
+import { locateCommitWorktree } from "./commit-worktree";
 import {
   parseHistory,
   parseRawDiff,
@@ -126,6 +127,75 @@ describe("read-only Git fixtures", () => {
   });
 
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  test("bare commit lookup prefers current containment, chooses only unique worktrees, and leaves checkouts untouched", async () => {
+    const state = () =>
+      [main, feature, detached].map((path) => ({
+        head: git(path, ["rev-parse", "HEAD"]),
+        status: git(path, ["status", "--porcelain=v1"]),
+      }));
+    const before = state();
+    const index = readFileSync(join(main, ".git/index"));
+    const current = await locateCommitWorktree(
+      service,
+      await service.discover("project", main),
+      featureTip.slice(0, 10),
+    );
+    expect(current).toEqual({ kind: "current", commit: featureTip });
+    const origin = await service.discover("project", detached);
+    const ambiguous = await locateCommitWorktree(service, origin, featureTip);
+    expect(ambiguous).toMatchObject({
+      kind: "ambiguous",
+      commit: featureTip,
+      paths: expect.arrayContaining([main, feature]),
+    });
+    const unique = await locateCommitWorktree(service, origin, mainTip);
+    expect(unique).toMatchObject({
+      kind: "unique",
+      commit: mainTip,
+      selection: { worktree: main, ref: mergeTip },
+      tip: mergeTip,
+    });
+    const tree = git(main, ["rev-parse", `${root}^{tree}`]).trim();
+    const orphan = git(main, [
+      "commit-tree",
+      tree,
+      "-m",
+      "unreferenced historical commit",
+    ]).trim();
+    expect(await locateCommitWorktree(service, origin, orphan)).toEqual({
+      kind: "historical",
+      commit: orphan,
+      paths: [],
+    });
+    expect(state()).toEqual(before);
+    expect(readFileSync(join(main, ".git/index"))).toEqual(index);
+  });
+
+  test("does not select a checkout whose HEAD changed during locator validation", async () => {
+    const origin = await service.discover("project", detached);
+    const discover = service.discover.bind(service);
+    const spy = jest
+      .spyOn(service, "discover")
+      .mockImplementation(async (project, path) => {
+        const found = await discover(project, path);
+        return path === main
+          ? {
+              ...found,
+              worktrees: found.worktrees.map((tree) =>
+                tree.path === main ? { ...tree, head: root } : tree,
+              ),
+            }
+          : found;
+      });
+    try {
+      await expect(
+        locateCommitWorktree(service, origin, mainTip),
+      ).rejects.toThrow("changed during lookup");
+    } finally {
+      spy.mockRestore();
+    }
+  });
 
   test("historical opening pins unchanged/off-branch files and deleted/renamed sources without a checkout", async () => {
     const index = readFileSync(join(main, ".git/index"));

@@ -71,6 +71,7 @@ import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
 import { currentHistorySelection } from "@cocalc/frontend/git/history-selection";
 import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
+import { useCommitWorktree } from "@cocalc/frontend/git/use-commit-worktree";
 import type {
   GitReviewHistoryRoute,
   GitComparisonRoute,
@@ -699,6 +700,41 @@ export function GitCommitDrawer({
       ? repositoryDiscovery.discovery
       : undefined;
   const cwd = selectedHistory?.selection.worktree ?? originCwd;
+  const commitContextKey = JSON.stringify([
+    repositoryScope,
+    commitSelectionRequestToken,
+    commitHash,
+  ]);
+  const contextNotice = useCommitWorktree({
+    requestKey: commitContextKey,
+    enabled: Boolean(
+      open &&
+      commitHash &&
+      !isHeadCommit(commitHash) &&
+      !cwdOverride &&
+      !initialHistory &&
+      !selectedHistory &&
+      commit === parseCommitHash(commitHash),
+    ),
+    blocked: Boolean(
+      activeInlineDraft ||
+      activeInlineEditId ||
+      reviewNoteEditing ||
+      reviewSaving ||
+      reviewSubmitBusy ||
+      headCommitBusy ||
+      headStatusAction,
+    ),
+    origin: originDiscovery,
+    commit: commitHash,
+    onSelect: (result) =>
+      setHistorySelection({
+        scope: repositoryScope,
+        requestToken: commitSelectionRequestToken,
+        selection: result.selection,
+        tip: result.tip,
+      }),
+  });
   const comparisonRepository = useMemo(
     () =>
       originDiscovery
@@ -726,6 +762,7 @@ export function GitCommitDrawer({
   );
   const readOnlyWorktree =
     crossWorktree ||
+    Boolean(contextNotice?.historicalOnly) ||
     Boolean(originDiscovery?.worktrees.find((tree) => tree.path === cwd)?.bare);
   // Cross-worktree writes require validated thread routing (a later integration
   // step). Merely browsing history must not repurpose the originating agent.
@@ -3263,6 +3300,9 @@ export function GitCommitDrawer({
               setSelectedCommit(tip);
             }}
           />
+        )}
+        {contextNotice && (
+          <Alert type="info" title={contextNotice.message} showIcon />
         )}
         {gitLogError ? (
           <Alert
