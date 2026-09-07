@@ -366,7 +366,7 @@ export function AgentActivityChip({
   const palette = generating
     ? {
         background: UI_COLORS.warningBg,
-        border: UI_COLORS.warningBg,
+        border: UI_COLORS.warning,
         text: UI_COLORS.warning,
         accent: liveStatusIssue
           ? liveStatus === "error"

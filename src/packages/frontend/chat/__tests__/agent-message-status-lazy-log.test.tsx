@@ -59,6 +59,11 @@ describe("AgentMessageStatus activity loading", () => {
 
     expect(mockCodexLogPanel).not.toHaveBeenCalled();
     expect(screen.getByText(/2 subagents working/)).toBeTruthy();
+    const activityButton = screen.getByRole("button", {
+      name: "Open Codex activity details",
+    });
+    expect(activityButton.style.border).toContain(UI_COLORS.warning);
+    expect(activityButton.style.background).toBe(UI_COLORS.warningBg);
 
     fireEvent.click(
       screen.getByRole("button", { name: "Open Codex activity details" }),
