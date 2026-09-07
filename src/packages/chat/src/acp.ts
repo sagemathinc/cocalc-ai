@@ -62,8 +62,7 @@ export function buildCodexAcpConfig({
   const workingDirectory =
     config?.workingDirectory || resolveChatWorkingDirectory(path);
   const opts: CodexSessionConfig = { workingDirectory, maxConcurrentSubagents };
-  const defaultModel =
-    DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
+  const defaultModel = DEFAULT_CODEX_MODEL_NAME;
   const selectedModel = config?.model ?? model ?? defaultModel;
   if (selectedModel) opts.model = selectedModel;
   const modelInfo = DEFAULT_CODEX_MODELS.find(

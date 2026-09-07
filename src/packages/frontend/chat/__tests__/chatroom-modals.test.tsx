@@ -8,6 +8,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { ChatRoomModals, getDefaultForkName } from "../chatroom-modals";
+import userEvent from "@testing-library/user-event";
 
 jest.mock("@cocalc/frontend/app-framework", () => {
   const React = require("react");
@@ -16,6 +17,7 @@ jest.mock("@cocalc/frontend/app-framework", () => {
     useEffect: React.useEffect,
     useMemo: React.useMemo,
     useState: React.useState,
+    redux: { getActions: () => ({ erase_active_key_handler: jest.fn() }) },
   };
 });
 
@@ -41,6 +43,78 @@ jest.mock("../thread-image-upload", () => ({
 }));
 
 describe("chatroom fork modal defaults", () => {
+  it.each([
+    { accountDefault: true, override: undefined, muted: false },
+    { accountDefault: false, override: undefined, muted: true },
+    { accountDefault: true, override: "off", muted: true },
+    { accountDefault: false, override: "on", muted: false },
+  ])(
+    "edits completion muting only on Behavior save: %j",
+    async ({ accountDefault, override, muted }) => {
+      const user = userEvent.setup();
+      const actions: any = {
+        getThreadMetadata: jest.fn(() => ({
+          agent_kind: "acp",
+          codex_completion_notification: override,
+          acp_config: { model: "gpt-5.6-sol" },
+        })),
+        setCodexConfig: jest.fn(),
+        setCodexCompletionNotificationOverride: jest.fn(),
+      };
+      let handlers: any;
+      render(
+        <ChatRoomModals
+          actions={actions}
+          path="project/chat/test.chat"
+          accountCompletionNotificationDefault={accountDefault}
+          onHandlers={(next) => {
+            handlers = next;
+          }}
+        />,
+      );
+      await waitFor(() => expect(handlers?.openBehaviorModal).toBeDefined());
+      act(() => handlers.openBehaviorModal("thread-1"));
+      const checkbox = await screen.findByRole("checkbox", {
+        name: "Mute completion notifications for this thread",
+      });
+      expect((checkbox as HTMLInputElement).checked).toBe(muted);
+      checkbox.focus();
+      await user.keyboard(" ");
+      expect((checkbox as HTMLInputElement).checked).toBe(!muted);
+      expect(
+        actions.setCodexCompletionNotificationOverride,
+      ).not.toHaveBeenCalled();
+      await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Edit Thread Behavior" }),
+        ).not.toBeInTheDocument(),
+      );
+      expect(
+        actions.setCodexCompletionNotificationOverride,
+      ).not.toHaveBeenCalled();
+
+      act(() => handlers.openBehaviorModal("thread-1"));
+      const reopened = await screen.findByRole("checkbox", {
+        name: "Mute completion notifications for this thread",
+      });
+      expect((reopened as HTMLInputElement).checked).toBe(muted);
+      await user.click(screen.getByRole("button", { name: "OK" }));
+      expect(
+        actions.setCodexCompletionNotificationOverride,
+      ).not.toHaveBeenCalled();
+      act(() => handlers.openBehaviorModal("thread-1"));
+      await user.click(
+        await screen.findByRole("checkbox", {
+          name: "Mute completion notifications for this thread",
+        }),
+      );
+      await user.click(screen.getByRole("button", { name: "OK" }));
+      expect(
+        actions.setCodexCompletionNotificationOverride,
+      ).toHaveBeenCalledWith("thread-1", muted ? "on" : "off");
+    },
+  );
   it("builds the initial fork title without a follow-up effect", () => {
     expect(getDefaultForkName("Original chat")).toBe("Fork of Original chat");
     expect(getDefaultForkName("  Original chat  ")).toBe(
