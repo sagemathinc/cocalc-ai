@@ -13,6 +13,7 @@ import { copyTextToClipboard } from "@cocalc/frontend/components/copy-button";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { filenameMode } from "@cocalc/frontend/file-associations";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { COLORS } from "@cocalc/util/theme";
 import { memo } from "react";
 import { RENDERED_DIFF_LINES_INCREMENT } from "./diff-find";
 import {
@@ -215,7 +216,7 @@ export const DiffBlock = memo(function DiffBlock({
             >
               <div
                 style={{
-                  color: UI_COLORS.secondary,
+                  color: COLORS.GRAY_D,
                   width: lineNumberWidth,
                   minWidth: lineNumberWidth,
                   maxWidth: lineNumberWidth,
@@ -229,7 +230,7 @@ export const DiffBlock = memo(function DiffBlock({
               </div>
               <div
                 style={{
-                  color: UI_COLORS.secondary,
+                  color: COLORS.GRAY_D,
                   width: lineNumberWidth,
                   minWidth: lineNumberWidth,
                   maxWidth: lineNumberWidth,
