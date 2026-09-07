@@ -6,6 +6,7 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { readTargetDiff } from "./read-target-diff";
 import {
   mkdtempSync,
   mkdirSync,
@@ -293,6 +294,25 @@ describe("read-only Git fixtures", () => {
     await expect(
       service.pinCommit(repository, mergeTip, 2),
     ).rejects.toMatchObject({ kind: "invalid" });
+  });
+
+  test("drawer target diffs retain literal paths and explicit source revisions", async () => {
+    const initial = await service.pinCommit(repository, root);
+    const parsed = await readTargetDiff(service, initial, 3);
+    expect(parsed.summary.commit).toBe(root);
+    expect(parsed.files.map((file) => file.path)).toEqual(
+      expect.arrayContaining(names),
+    );
+    for (const file of parsed.files) {
+      expect(file.oldSource).toBeUndefined();
+      expect(file.newSource?.commit).toBe(root);
+      expect(file.newSource?.path).toBe(file.path);
+    }
+    const second = await service.pinCommit(repository, mergeTip, 1);
+    const diff = await readTargetDiff(service, second, 3);
+    expect(diff.files.some((file) => file.path === "main.txt")).toBe(true);
+    const range = await service.compare(repository, root, root, "trees");
+    expect((await readTargetDiff(service, range, 3)).files).toEqual([]);
   });
 
   test("merge-base and trees are distinct; refs moving cannot change a pinned review", async () => {

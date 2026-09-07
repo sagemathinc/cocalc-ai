@@ -94,7 +94,7 @@ test("merge-parent reviews are distinct from one another and from comparisons", 
     repository: target.repository,
     commit: target.head,
     parent: target.base,
-    parentIndex: 1,
+    parentIndex: 0,
   };
   await saveTargetReview({
     accountId: "a",
@@ -107,7 +107,7 @@ test("merge-parent reviews are distinct from one another and from comparisons", 
     (
       await loadTargetReview({
         accountId: "a",
-        target: { ...commit, parentIndex: 2 },
+        target: { ...commit, parentIndex: 1 },
         kv,
       })
     ).heads,

@@ -424,8 +424,19 @@ Still pending: remaining Slate lifecycle checks and native diff clipboard tests;
 semantic scroll restoration and remaining renderer parity; comparison controls;
 historical source integration in the new renderer; comparison persistence and canonical-key
 migration; validated agent routing; activity adaptation; release acceptance and
-default/cleanup. Discovery/history use the service; patch loading still uses the
-legacy path. Incoming-commit containment routing remains pending.
+default/cleanup. Discovery/history and immutable commit patch loading use the
+service; working-change loading still uses the legacy path. Incoming-commit
+containment routing remains pending.
+
+Immutable loader integration (2026-09-07): drawer commits now pin a full commit
+and explicit zero-based parent before reading metadata/patch/summary. NUL-delimited
+metadata supplies literal paths and source/blob identities; historical opening
+uses those descriptors directly. Mismatched metadata/patch counts and truncated
+combined output fail visibly rather than yielding a partially mapped review.
+The target store's parent convention now matches the reader (first parent = 0).
+Real-Git fixtures cover root and merge diffs, unusual literal filenames, and empty
+two-tree comparisons. Selecting nondefault parents/comparisons in the UI remains
+pending.
 
 Comparison storage foundation (2026-09-07): `git-target-review-store.ts` adds an
 account-scoped namespace keyed by repository and pinned target identity. Each

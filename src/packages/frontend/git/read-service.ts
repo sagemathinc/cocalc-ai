@@ -302,6 +302,21 @@ export class GitReadService {
     };
   }
 
+  async commitSummary(
+    repository: RepositoryContext,
+    commit: string,
+  ): Promise<string> {
+    requireObject(commit);
+    return this.run(repository.projectId, repository.locator, [
+      "show",
+      "--no-patch",
+      "--no-color",
+      "--format=fuller",
+      commit,
+      "--",
+    ]);
+  }
+
   async compare(
     repository: RepositoryContext,
     baseRef: string,

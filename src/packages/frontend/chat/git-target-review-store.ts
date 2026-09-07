@@ -60,7 +60,7 @@ export function validateReviewTarget(target: ImmutableReviewTarget): void {
       target.parentIndex < 0 ||
       (target.parent === null
         ? target.parentIndex !== 0
-        : !hash.test(target.parent) || target.parentIndex < 1)
+        : !hash.test(target.parent))
     ) {
       throw Error("Review commits and parents must be pinned object IDs");
     }

@@ -69,6 +69,7 @@ import { GitHistoryControls } from "./git-commit/history-controls";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
 import { currentHistorySelection } from "@cocalc/frontend/git/history-selection";
+import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
 import type { GitReviewHistoryRoute } from "@cocalc/frontend/git/review-route";
 import type {
   GitHistorySelection,
@@ -2370,6 +2371,24 @@ export function GitCommitDrawer({
     setLoadedCommit(undefined);
     (async () => {
       try {
+        if (!isHeadSelected) {
+          const discovery = await projectGitReader.discover(projectId, cwd);
+          const target = await projectGitReader.pinCommit(
+            discovery.repository,
+            commit,
+          );
+          const parsed = await readTargetDiff(
+            projectGitReader,
+            target,
+            contextLines,
+          );
+          if (!cancelled) {
+            setData(parsed);
+            setLoadedCommit(requestedCommit);
+            setError("");
+          }
+          return;
+        }
         const args = buildGitShowArgs({
           isHeadSelected,
           contextLines,
@@ -3416,16 +3435,24 @@ export function GitCommitDrawer({
                     onOpenFile={openFile}
                     onViewFile={
                       projectId && commit && !isHeadSelected
-                        ? (path) =>
+                        ? (path) => {
+                            const file = currentData.files.find(
+                              (file) => file.path === path,
+                            );
+                            const source = file?.newSource ?? file?.oldSource;
                             setHistoricalFile({
                               scope: scrollStorageId,
-                              request: {
-                                projectId,
-                                cwd: repoRoot || currentData.repoRoot || cwd,
-                                commit,
-                                path,
-                              },
-                            })
+                              request: source
+                                ? { source }
+                                : {
+                                    projectId,
+                                    cwd:
+                                      repoRoot || currentData.repoRoot || cwd,
+                                    commit,
+                                    path,
+                                  },
+                            });
+                          }
                         : undefined
                     }
                     onShowMoreLines={showMoreDiffLines}
