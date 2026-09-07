@@ -53,6 +53,34 @@ Use chat when discussion should remain part of the project context. Use a
 Markdown file when the result should become durable documentation, instructions,
 or a polished explanation.
 
+## Discuss a notebook cell
+
+Use a notebook cell's **Chat** controls to keep questions and review notes
+attached to that cell.
+
+1. Click **Chat** on the cell to open its side-chat discussion. If there are
+   unread messages, this opens the newest discussion with unread messages.
+   Otherwise, it opens the latest active discussion or creates one when needed.
+2. Open the arrow beside **Chat** to choose a particular discussion, or choose
+   **New Thread** to start another discussion for the same cell.
+3. Write your message in the side chat. Use the dropdown to return to the
+   discussion you want to continue.
+
+A red badge counts unread messages; a gray badge counts messages when none are
+unread. These counts cover the cell's active discussions, excluding archived
+and resolved threads.
+
+## Resolve a LaTeX marker discussion
+
+For a LaTeX discussion attached to a source chat marker, the side-chat header
+can show a green check. Choose it and confirm **Resolve** to mark the discussion
+done and remove its source marker. All discussions attached to that marker are
+resolved together.
+
+The messages remain available as read-only history. Open **Archived…** in the
+chat sidebar and choose **Open** beside the resolved discussion. Its notice
+identifies who resolved it and when; replying and unarchiving are unavailable.
+
 ## Mentions
 
 Use @mentions to notify collaborators and create a link back to the relevant
