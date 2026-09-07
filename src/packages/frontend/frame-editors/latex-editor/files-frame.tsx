@@ -3,61 +3,45 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { List } from "immutable";
-import { useEffect, useState } from "react";
-
+import { List, Map } from "immutable";
+import { useEffect } from "react";
 import { useRedux } from "@cocalc/frontend/app-framework";
-import { project_api } from "@cocalc/frontend/frame-editors/generic/client";
-import { getLogger } from "@cocalc/frontend/logger";
-
 import type { Actions } from "./actions";
 import { OutputFiles } from "./output-files";
-import { useTexSummaries } from "./use-summarize";
 
-const logger = getLogger("latex-files");
 const EMPTY_FILES = List<string>();
 
 // Shared by the standalone Files frame and the Output panel's Files tab.
 export function LatexFiles({
   actions,
   font_size,
-  reload,
 }: {
   actions: Actions;
   font_size: number;
-  reload?: number;
 }) {
   const files: List<string> =
     useRedux([actions.name, "switch_to_files"]) ?? EMPTY_FILES;
-  const [homeDir, setHomeDir] = useState<string | null>(null);
-  const { project_id, path } = actions;
-
+  const summaries = useRedux([actions.name, "file_summaries"]);
+  const loading: boolean =
+    useRedux([actions.name, "file_summaries_loading"]) ?? false;
   useEffect(() => {
-    let active = true;
-    setHomeDir(null);
-    async function loadHomeDirectory() {
-      try {
-        const api = await project_api(project_id);
-        const dir = await api.getHomeDirectory();
-        if (active) setHomeDir(dir);
-      } catch (error) {
-        logger.warn("Unable to load home directory for file summaries", error);
-      }
-    }
-    void loadHomeDirectory();
-    return () => {
-      active = false;
-    };
-  }, [project_id]);
-
-  const summaries = useTexSummaries(files, project_id, path, homeDir, reload);
+    void actions.updateFileSummaries();
+  }, [actions, files]);
+  // Redux deep-converts nested values to Immutable Maps.
+  const fileSummaries: Record<string, string> = Map.isMap(summaries)
+    ? summaries.toJS()
+    : (summaries ?? {});
   return (
     <OutputFiles
       switch_to_files={files}
-      path={path}
+      path={actions.path}
       actions={actions}
       uiFontSize={font_size}
-      {...summaries}
+      fileSummaries={fileSummaries}
+      summariesLoading={loading}
+      refreshSummaries={() => {
+        void actions.updateFileSummaries(true);
+      }}
     />
   );
 }

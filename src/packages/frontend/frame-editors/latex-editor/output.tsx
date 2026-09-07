@@ -153,6 +153,8 @@ export function Output(props: OutputProps) {
   // List of LaTeX files in the project
   const switch_to_files: List<string> = useRedux([name, "switch_to_files"]);
 
+  const summariesLoading = useRedux([name, "file_summaries_loading"]) ?? false;
+
   // Word count state
   const [wordCountLoading, setWordCountLoading] = useState<boolean>(false);
 
@@ -527,13 +529,11 @@ export function Output(props: OutputProps) {
       key: "files",
       label: (
         <span style={LABEL_STYLE}>
-          <Icon name="file" />
+          {summariesLoading ? <Spin size="small" /> : <Icon name="file" />}
           {intl.formatMessage(labels.files)}
         </span>
       ),
-      children: (
-        <LatexFiles actions={actions} font_size={uiFontSize} reload={reload} />
-      ),
+      children: <LatexFiles actions={actions} font_size={uiFontSize} />,
     };
   }
 
