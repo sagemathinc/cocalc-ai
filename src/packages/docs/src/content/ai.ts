@@ -93,6 +93,31 @@ explicit source to Automatic is also disabled after a session starts.
 In Lite, configure a ChatGPT plan or an OpenAI API key in account AI settings;
 if both are configured, Lite uses the ChatGPT plan.
 
+## Check usage and recover a failed sign-in
+
+Open account **AI** settings to inspect the connection. **ChatGPT Codex
+usage** appears when ChatGPT Plan is the resolved payment source. Click
+**Refresh usage** to request a live check. Meters show the percentage remaining
+and reset timing for each reported usage window; they are not a per-thread
+spending total. Missing or unchecked usage data does not mean the allowance
+is zero. The displayed account and plan help identify the connection. Hosted
+usage checks and device sign-in need an available project; open one when
+prompted and retry.
+
+**Connection not verified** means a stored credential was found but the live
+check did not confirm access. **Sign-in needs refresh** means that connection
+needs attention before Codex can use it.
+
+1. For an expired-authentication error, choose **Sign in again**, or update
+   the OpenAI API key used by the thread.
+2. Refresh usage or check the connection status again.
+3. Return to the failed message and use **Submit again** when offered.
+
+An allowance error is different from an expired sign-in. Follow its **Open
+AI Settings** or usage link and check the thread's selected payment source.
+Membership-funded access depends on the deployment and account; connecting
+a personal plan does not increase the membership allowance itself.
+
 ## Use project secrets for keys
 
 For code that calls OpenAI directly from a notebook, script, or terminal, store
