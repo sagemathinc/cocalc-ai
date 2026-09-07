@@ -501,6 +501,27 @@ passed reload, account review loading, scoped search, and local-draft close
 without remote review writes. Semantic scroll/selection links and full live
 comment-save/reconnect remain separate acceptance gates.
 
+TimeTravel text integration (2026-09-07): the Changes view now offers an inline
+Classic/Pierre selector instead of only a frozen experimental popup. The shared
+document adapter receives both selected document strings directly, follows slider
+updates using versioned Pierre items, expands complete-document context, and uses
+the shared highlighting pool, split/wrap preferences, and CoCalc appearance.
+It has a bounded independent keyboard-scroll viewport and explicitly refuses
+inputs over 4 MB or 100,000 combined lines rather than silently truncating.
+Classic remains available and the default during the acceptance window. Rich
+Markdown/chat/notebook/whiteboard/task viewers and source restore actions are
+unchanged; this integration performs no repository or file writes.
+
+The new document browser fixture verifies actual 5,000-line scrolling, live
+version replacement, split mode, 1200/600/320px containment, explicit appearance
+overriding the OS, and rendered font-size updates. Pierre code font sizes require
+shadow-root CSS variables, now shared with the Git renderer and preview and
+paired with virtual line-height estimates. Focused tests cover keyboard renderer
+switching, exact history/JSON inputs, size limits, and existing rich-viewer paths.
+Live source-specific TimeTravel checks (Git, patchflow, snapshot, backup) and
+restore-action regression remain release acceptance work; the standalone browser
+fixture does not claim to verify those storage integrations.
+
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the
 delivery order at the end of this section describes independently reviewable

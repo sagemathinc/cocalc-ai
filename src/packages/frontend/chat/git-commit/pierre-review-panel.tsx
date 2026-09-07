@@ -9,6 +9,10 @@ import { CodeView } from "@pierre/diffs/react";
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { CodeViewItem, CodeViewLineSelection } from "@pierre/diffs";
 import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
+import {
+  diffFontStyle,
+  diffLineHeight,
+} from "@cocalc/frontend/components/diff-viewer/font-metrics";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { copyTextToClipboard } from "@cocalc/frontend/components/copy-button";
 import { DiffHighlightingProvider } from "@cocalc/frontend/components/diff-viewer/highlighting-provider";
@@ -291,6 +295,7 @@ function ReviewContent(props: ReviewDiffPanelProps) {
           stickyHeaders: true,
           itemMetrics: {
             diffHeaderHeight: reviewFileHeaderHeight(props.fontSize),
+            lineHeight: diffLineHeight(props.fontSize),
           },
           theme: { light: "github-light", dark: "github-dark" },
           themeType: resolved,
@@ -302,7 +307,7 @@ function ReviewContent(props: ReviewDiffPanelProps) {
           overflow: "auto",
           width: "100%",
           minWidth: 0,
-          fontSize: props.fontSize,
+          ...diffFontStyle(props.fontSize),
           border: `1px solid ${UI_COLORS.border}`,
         }}
         onScroll={() => {

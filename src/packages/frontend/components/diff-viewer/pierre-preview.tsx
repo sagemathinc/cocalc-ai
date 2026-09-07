@@ -24,6 +24,7 @@ import {
   isEditableOrKeyboardInteractiveTarget,
 } from "@cocalc/frontend/keyboard/boundary";
 import { parsePreviewSource } from "./pierre-model";
+import { diffFontStyle, diffLineHeight } from "./font-metrics";
 import type { DiffPreviewSource } from "./preview-types";
 import { ReviewFileHeader, reviewFileHeaderHeight } from "./review-file-header";
 import { ChangedFilesLayout } from "./changed-files-layout";
@@ -154,7 +155,10 @@ function PierrePreviewContent({
       lineDiffType: "word" as const,
       enableLineSelection: true,
       stickyHeaders: true,
-      itemMetrics: { diffHeaderHeight: reviewFileHeaderHeight(fontSize) },
+      itemMetrics: {
+        diffHeaderHeight: reviewFileHeaderHeight(fontSize),
+        lineHeight: diffLineHeight(fontSize),
+      },
       // A collapsed context jump only reaches its separator in Pierre 1.3.6.
       expandUnchanged: source.kind === "documents",
       theme: { light: "github-light", dark: "github-dark" },
@@ -364,7 +368,7 @@ function PierrePreviewContent({
             maxWidth: "100%",
             boxSizing: "border-box",
             border: `1px solid ${UI_COLORS.border}`,
-            fontSize,
+            ...diffFontStyle(fontSize),
           }}
           renderAnnotation={(annotation) => {
             const comment = comments.find(

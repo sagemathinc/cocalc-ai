@@ -1,106 +1,49 @@
 /*
- *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-/*
-Render a diff of two versions of a document for use in TimeTravel.
+import { lazy, Suspense, useState } from "react";
+import { ClassicDiff } from "./classic-diff";
+import type { TimeTravelDiffProps } from "./classic-diff";
+import { DiffRenderBoundary } from "@cocalc/frontend/components/diff-viewer/render-boundary";
 
-NOTE: I did extensively test out using https://github.com/praneshr/react-diff-viewer.
-Though it seems reasonably mature and has some work done on it, building on other great
-tools, it is has some major show-stopper limitations, e.g., it doesn't support large documents
-via windowing. Also, I had a lot of css conflicts trying to use it (it just looked very wrong,
-and it uses tables)  Codemirror automatically supports large documents, editor themes, etc.,
-so we build something on Codemirror instead
-*/
+const DocumentDiff = lazy(
+  () => import("@cocalc/frontend/components/diff-viewer/document-diff"),
+);
 
-import * as CodeMirror from "codemirror";
-import { debounce } from "lodash";
-import { MutableRefObject, useEffect, useRef } from "react";
-
-import { AccountState } from "@cocalc/frontend/account/types";
-import { DiffPreviewButton } from "@cocalc/frontend/components/diff-viewer/preview-button";
-import { cm_options } from "../codemirror/cm-options";
-import { init_style_hacks } from "../codemirror/util";
-import { set_cm_line_diff } from "./diff-util";
-
-interface Props {
-  v0: string;
-  v1: string;
-  path: string; // filename of doc, which determines what sort of syntax highlighting to use.
-  editor_settings: AccountState["editor_settings"];
-  font_size: number;
-  use_json: boolean;
-}
-
-export function Diff(props: Props) {
-  const updateRef = useRef<Function>(null) as MutableRefObject<Function>;
-  const cmRef = useRef<CodeMirror.Editor | null>(
-    null,
-  ) as MutableRefObject<CodeMirror.Editor | null>;
-  const textAreaRef = useRef<any>(null);
-
-  const initCodemirror = () => {
-    const textarea = textAreaRef.current;
-    if (textarea == null) return; // can't happen
-    const options: any = cm_options(
-      props.use_json ? "a.js" : props.path,
-      props.editor_settings,
-    );
-    options.readOnly = true;
-    cmRef.current = CodeMirror.fromTextArea(textarea, options);
-    init_style_hacks(cmRef.current);
-    $(cmRef.current.getWrapperElement()).css({
-      flex: "1 1 0",
-      minHeight: 0,
-    });
-    set_cm_line_diff(cmRef.current, props.v0, props.v1);
-    requestAnimationFrame(() => cmRef.current?.refresh());
-    const f = (v0: string, v1: string): void => {
-      if (cmRef.current == null) return;
-      set_cm_line_diff(cmRef.current, v0, v1);
-      requestAnimationFrame(() => cmRef.current?.refresh());
-    };
-    updateRef.current = debounce(f, 300);
-  };
-
-  useEffect(() => {
-    initCodemirror();
-    return () => {
-      if (cmRef.current == null) return;
-      $(cmRef.current.getWrapperElement()).remove();
-      cmRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    updateRef.current?.(props.v0, props.v1);
-    cmRef.current?.refresh();
-  }, [props.v0, props.v1]);
-
+export function Diff(props: TimeTravelDiffProps) {
+  const [renderer, setRenderer] = useState("classic");
   return (
     <div
       className="smc-vfill"
-      style={{
-        fontSize: `${props.font_size}px`,
-        height: "100%",
-        minHeight: 0,
-        overflow: "hidden",
-      }}
+      style={{ minHeight: 0, minWidth: 0, height: "100%", overflow: "hidden" }}
     >
-      <div style={{ padding: 4, flexShrink: 0 }}>
-        <DiffPreviewButton
-          fontSize={props.font_size}
-          getSource={() => ({
-            kind: "documents",
-            path: props.use_json ? "history.json" : props.path,
-            before: props.v0,
-            after: props.v1,
-            label: `${props.path}: selected TimeTravel versions`,
-          })}
-        />
-      </div>
-      <textarea ref={textAreaRef} style={{ display: "none" }} />
+      <label style={{ padding: 4, flexShrink: 0 }}>
+        Text diff renderer{" "}
+        <select
+          value={renderer}
+          onChange={(event) => setRenderer(event.target.value)}
+        >
+          <option value="classic">Classic</option>
+          <option value="pierre">Pierre (experimental)</option>
+        </select>
+      </label>
+      {renderer === "classic" ? (
+        <ClassicDiff {...props} />
+      ) : (
+        <DiffRenderBoundary>
+          <Suspense fallback={<div role="status">Loading text diff...</div>}>
+            <DocumentDiff
+              before={props.v0}
+              after={props.v1}
+              path={props.use_json ? "history.json" : props.path}
+              label={`${props.path}: selected TimeTravel versions`}
+              fontSize={props.font_size}
+            />
+          </Suspense>
+        </DiffRenderBoundary>
+      )}
     </div>
   );
 }
