@@ -193,6 +193,17 @@ The harness uses Ant Design's visible option rows/radio labels because its
 accessibility proxy options and radio inputs are hidden. This proves the live
 Git-source renderer integration, not snapshot/backup loading or restore behavior.
 
+Live archive comparison follow-up: the same script now accepts
+`REVIEW_HISTORY_SOURCE=Snapshots|Backups|TimeTravel` (Git remains the default).
+Snapshots and Backups both passed on the package.json fixture through Pierre
+and Classic, with source/mode assertions and no file writes. The first backup
+attempt clicked Compare Changes before it became enabled, leaving Single
+Version displayed; the harness now waits for the visible option to be enabled
+and confirms the selected mode. A subsequent full backup run passed. This was
+not evidence of a missing backup fixture or a renderer failure. Failure
+diagnostics include available version counts. Archive restoration and live
+patchflow comparison remain separate acceptance items.
+
 ### Single-file stress evidence (2026-09-07)
 
 Run `STRESS=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`
