@@ -17,13 +17,36 @@ not a current checklist. The objective is not complete. Current release work:
 | Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
 | TimeTravel | Shared document rendering and arbitrary Git revision viewing are implemented. Verify Git, patchflow, snapshot and backup text comparisons plus rich-viewer/restore behavior end to end; the standalone document fixture is not source-specific acceptance. |
 | Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live agent dispatch and originating-context links still need end-to-end confirmation. |
-| Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Record production bundle-size deltas and complete full-app appearance/editor acceptance; investigate intermittent native-copy harness failure. Measured main-thread heap excludes worker heaps. |
+| Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor acceptance remains; investigate intermittent native-copy failure if reproduced. Measured main-thread heap excludes worker heaps. |
 | Default and cleanup | Classic is still the default and rollback path. Do not delete it or the experiment until the compatibility gates pass and maintainer testing supports the switch. |
 
 Browser access: the forwarded CDP port currently resets. Local fresh-auth
 bootstrap succeeded, but automatic browser account login is explicitly disabled
 inside this collaborative project. Do not bypass that safeguard; use a restored
 forward or another supported signed-in session for live acceptance.
+
+Resume live acceptance when the signed-in forward is restored. Check these in
+the actual application, not the service/Slate-stubbed harness:
+
+1. Open the same review in two browser windows. Save independent comments,
+   reconnect, and verify neither is lost; exercise an alias conflict and its
+   explicit choice without modifying the alternative record.
+2. Paste an image into a Slate review comment, scroll while uploading, then
+   return, edit and undo. Change renderer/layout/appearance and close/reopen;
+   verify draft content, image rendering, focus, and semantic scroll position.
+3. Browse unique, ambiguous and absent-worktree history, then move a ref and
+   verify pinned endpoints. Explicitly submit feedback to the chosen worktree
+   and confirm the resulting agent thread uses that directory.
+4. Compare Git, patchflow, snapshot and backup text versions in TimeTravel;
+   verify rich historical viewers and source-specific restore behavior still
+   work. Check both sides of a renamed/deleted file.
+5. Verify activity provenance links and native partial selection while
+   scrolling a long diff. Investigate any recurrence of the empty clipboard
+   with the recorded copy-event selection diagnostics.
+
+Only after these checks and maintainer acceptance should the default change and
+rollback-window decision proceed. The current lack of a signed-in test session
+is not evidence that these checks pass.
 
 ### Single-file stress evidence (2026-09-07)
 
