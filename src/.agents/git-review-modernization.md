@@ -681,6 +681,18 @@ Round-trip tests cover SHA-256 export/import, drafts, image Markdown and submiss
 metadata; this does not migrate short-key records or enable canonical-only writes.
 The conflict-preserving alias migration below remains required.
 
+Alias-aware storage bridge (2026-09-07): the drawer now resolves review input
+through the selected repository before loading or saving. New records use full
+IDs. Existing account-scoped V1/V2 keys and account drafts whose IDs prefix the
+resolved commit are independently verified by Git, never associated on prefix
+alone. A single existing key remains the storage owner; short/full conflicts
+fail explicitly and remain exportable without overwriting or deleting either
+record. Draft edits follow the loaded storage key, not the displayed input, and
+cannot create a competing key while resolution is pending. Tests cover new
+canonical writes, legacy alias edits, ambiguous prefixes, and conflict-preserving
+exports. Explicit reconciliation/migration of multiple legacy keys is still
+pending; this bridge intentionally does not choose a winner or rewrite them.
+
 `chat/git-review-store.ts` currently stores account-scoped V2 commit records and
 local drafts, with `file_path`, `side` (`old`, `new`, `context`), line, hunk hash,
 snippet, revision, and submission identifiers. Keys accept abbreviated hashes;

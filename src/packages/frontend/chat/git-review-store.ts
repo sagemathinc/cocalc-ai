@@ -8,6 +8,61 @@ const LEGACY_REVIEW_DRAFT_STORAGE_PREFIX = "cocalc:git-review:draft:v2:commit:";
 const COMMIT_HASH_RE = /^[0-9a-f]{7,64}$/i;
 const REVIEW_EXPORT_KIND = "cocalc-git-review-export-v1";
 
+export type ResolveReviewCommit = (input: string) => Promise<string>;
+
+// Retain an existing legacy key until explicit reconciliation. New reviews use
+// the full repository-resolved ID; never create a competing canonical record.
+export async function resolveReviewStorageCommit({
+  accountId,
+  commitSha,
+  resolveCommit,
+}: {
+  accountId: string;
+  commitSha: string;
+  resolveCommit: ResolveReviewCommit;
+}): Promise<string> {
+  const full = (await resolveCommit(commitSha)).toLowerCase();
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(full))
+    throw Error("Git did not resolve the review to a full object ID.");
+  const cn = webapp_client.conat_client.conat();
+  const v2 = getReviewStore(accountId);
+  const v1 = cn.sync.akv<LegacyCommitReviewRecord>({
+    account_id: accountId,
+    name: REVIEW_STORE_V1,
+  });
+  const candidates = new Set<string>();
+  for (const key of await v2.keys()) {
+    if (key.startsWith("commit:")) candidates.add(key.slice(7));
+  }
+  for (const key of await v1.keys()) candidates.add(key);
+  try {
+    const prefix = makeDraftStoragePrefix(accountId);
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(prefix)) candidates.add(key.slice(prefix.length));
+    }
+  } catch {
+    // Server records still work when browser storage is disabled.
+  }
+  const matches: string[] = [];
+  for (const candidate of candidates) {
+    const id = normalizeCommitSha(candidate);
+    if (!id || !full.startsWith(id)) continue;
+    // A prefix is not proof: Git must reject ambiguous abbreviations in this
+    // repository instead of associating another commit's review by string match.
+    if ((await resolveCommit(id)).toLowerCase() !== full)
+      throw Error("Legacy review abbreviation resolved to a different commit.");
+    const hasRecord =
+      (await v2.get(`commit:${id}`)) != null || (await v1.get(id)) != null;
+    if (hasRecord || loadReviewDraft(id, accountId)) matches.push(id);
+  }
+  if (matches.length > 1)
+    throw Error(
+      `Conflicting review keys for ${full}: ${matches.join(", ")}. No records were changed. Export reviews before reconciling these records.`,
+    );
+  return matches[0] ?? full;
+}
+
 type LegacyCommitReviewRecord = {
   version?: number;
   reviewed?: boolean;
@@ -385,10 +440,23 @@ export function mergeRecordWithDraft(
 export async function loadReviewRecord({
   accountId,
   commitSha,
+  resolveCommit,
 }: {
   accountId: string;
   commitSha: string;
+  resolveCommit?: ResolveReviewCommit;
 }): Promise<GitReviewRecordV2 | undefined> {
+  if (resolveCommit) {
+    const storageCommit = await resolveReviewStorageCommit({
+      accountId,
+      commitSha,
+      resolveCommit,
+    });
+    return (
+      (await loadReviewRecord({ accountId, commitSha: storageCommit })) ??
+      emptyRecord({ accountId, commitSha: storageCommit })
+    );
+  }
   const normalizedCommit = normalizeCommitSha(commitSha);
   const key = makeReviewKey(commitSha);
   if (!normalizedCommit || !key) return undefined;
@@ -492,10 +560,19 @@ export async function saveReviewRecord(
   record: GitReviewRecordV2,
   opts?: {
     clearDraftThroughRevision?: number;
+    resolveCommit?: ResolveReviewCommit;
   },
 ): Promise<GitReviewRecordV2> {
   const accountId = `${record.account_id ?? ""}`.trim();
-  const commitSha = normalizeCommitSha(record.commit_sha);
+  const commitSha = normalizeCommitSha(
+    opts?.resolveCommit
+      ? await resolveReviewStorageCommit({
+          accountId,
+          commitSha: record.commit_sha,
+          resolveCommit: opts.resolveCommit,
+        })
+      : record.commit_sha,
+  );
   const key = makeReviewKey(commitSha);
   if (!accountId || !commitSha || !key) {
     throw new Error("invalid review record");

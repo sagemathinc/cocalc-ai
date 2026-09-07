@@ -9,6 +9,7 @@ import {
   deleteAllReviewRecords,
   exportReviewBundle,
   importReviewBundle,
+  resolveReviewStorageCommit,
 } from "../git-review-store";
 
 const stores = new Map<string, Map<string, any>>();
@@ -80,6 +81,116 @@ describe("git review import/export", () => {
     akvMock.mockClear();
     dkvMock.mockClear();
     localStorage.clear();
+  });
+
+  it("resolves new abbreviated reviews to full IDs before saving", async () => {
+    const full = "a".repeat(64);
+    const resolveCommit = jest.fn(async () => full);
+    const record = await loadReviewRecord({
+      accountId: "canonical",
+      commitSha: "aaaaaaa",
+      resolveCommit,
+    });
+    expect(record?.commit_sha).toBe(full);
+    await saveReviewRecord(
+      { ...record!, note: "new review" },
+      { resolveCommit },
+    );
+    expect([...getStore("canonical", "cocalc-git-review-v2").keys()]).toEqual([
+      `commit:${full}`,
+    ]);
+  });
+
+  it("loads and edits an existing alias without creating or deleting a competing key", async () => {
+    const full = "b".repeat(40);
+    const resolveCommit = async () => full;
+    const alias = "bbbbbbb";
+    await saveReviewRecord({
+      version: 2,
+      account_id: "alias",
+      commit_sha: alias,
+      reviewed: false,
+      note: "legacy",
+      comments: {},
+      created_at: 1,
+      updated_at: 1,
+      revision: 1,
+    });
+    const record = await loadReviewRecord({
+      accountId: "alias",
+      commitSha: full,
+      resolveCommit,
+    });
+    expect(record?.commit_sha).toBe(alias);
+    saveReviewDraft(
+      record!.commit_sha,
+      { reviewed: false, note: "edited" },
+      "alias",
+    );
+    await saveReviewRecord(
+      { ...record!, commit_sha: full, note: "edited" },
+      { resolveCommit },
+    );
+    expect([...getStore("alias", "cocalc-git-review-v2").keys()]).toEqual([
+      `commit:${alias}`,
+    ]);
+    expect(loadReviewDraft(alias, "alias")).toBeUndefined();
+    expect(
+      (
+        await loadReviewRecord({
+          accountId: "alias",
+          commitSha: full,
+          resolveCommit,
+        })
+      )?.note,
+    ).toBe("edited");
+  });
+
+  it("rejects conflicting full/short records while preserving both in exports", async () => {
+    const full = "c".repeat(40);
+    for (const commit of [full, full.slice(0, 7)]) {
+      await saveReviewRecord({
+        version: 2,
+        account_id: "conflict",
+        commit_sha: commit,
+        reviewed: false,
+        note: commit,
+        comments: {},
+        created_at: 1,
+        updated_at: 1,
+        revision: 1,
+      });
+    }
+    const before = await exportReviewBundle({ accountId: "conflict" });
+    await expect(
+      loadReviewRecord({
+        accountId: "conflict",
+        commitSha: full,
+        resolveCommit: async () => full,
+      }),
+    ).rejects.toThrow("Conflicting review keys");
+    await expect(
+      saveReviewRecord(before.records[0], { resolveCommit: async () => full }),
+    ).rejects.toThrow("Conflicting review keys");
+    expect(
+      (await exportReviewBundle({ accountId: "conflict" })).records,
+    ).toEqual(before.records);
+  });
+
+  it("requires Git to disambiguate legacy prefixes, not just a string prefix match", async () => {
+    const full = "d".repeat(40);
+    saveReviewDraft("ddddddd", { reviewed: false, note: "keep" }, "ambiguous");
+    await expect(
+      resolveReviewStorageCommit({
+        accountId: "ambiguous",
+        commitSha: full,
+        resolveCommit: async (input) => {
+          if (input.length < 40) throw Error("ambiguous revision");
+          return full;
+        },
+      }),
+    ).rejects.toThrow("ambiguous revision");
+    expect(loadReviewDraft("ddddddd", "ambiguous")?.note).toBe("keep");
   });
 
   it("round-trips SHA-256 reviews and literal filename whitespace without losing submission metadata", async () => {

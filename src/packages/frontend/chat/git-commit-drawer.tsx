@@ -610,6 +610,7 @@ export function GitCommitDrawer({
     undefined,
   );
   const [reviewDirty, setReviewDirty] = useState(false);
+  const [reviewStorageResolved, setReviewStorageResolved] = useState(false);
   const [reviewRecord, setReviewRecord] = useState<
     GitReviewRecordV2 | undefined
   >(undefined);
@@ -1537,6 +1538,7 @@ export function GitCommitDrawer({
       );
       setReviewDirty(false);
       setReviewRecord(undefined);
+      setReviewStorageResolved(false);
       setReviewStateCommit(normalizedNext);
       if (normalizedNext) {
         setReviewedByCommit((prev) =>
@@ -1564,9 +1566,17 @@ export function GitCommitDrawer({
         const rec = await loadReviewRecord({
           accountId,
           commitSha: normalizedCommit,
+          resolveCommit: async (input) => {
+            const { repository } = await projectGitReader.discover(
+              projectId!,
+              cwd,
+            );
+            return projectGitReader.resolveCommit(repository, input);
+          },
         });
         if (reviewLoadTokenRef.current !== token) return;
         setReviewRecord(rec);
+        setReviewStorageResolved(true);
         setReviewed(Boolean(rec?.reviewed));
         setReviewedByCommit((prev) =>
           applyGitReviewedByCommitEntries({
@@ -1604,7 +1614,7 @@ export function GitCommitDrawer({
         setReviewLoading(false);
       }
     })();
-  }, [open, accountId, commit, reviewReloadCounter]);
+  }, [open, accountId, commit, reviewReloadCounter, projectId, cwd]);
 
   useEffect(() => {
     if (
@@ -1810,9 +1820,13 @@ export function GitCommitDrawer({
       > = {},
     ) => {
       if (!accountId || !commit || isHeadCommit(commit)) return;
+      if (reviewLoading || !reviewRecord || !reviewStorageResolved) return;
       const normalizedCommit = normalizeCommitSha(commit);
       if (!normalizedCommit) return;
-      const latestDraft = loadReviewDraft(normalizedCommit, accountId);
+      const latestDraft = loadReviewDraft(
+        reviewRecord?.commit_sha ?? normalizedCommit,
+        accountId,
+      );
       const resolved = resolveGitReviewSaveState({
         next,
         draft: latestDraft,
@@ -1866,6 +1880,13 @@ export function GitCommitDrawer({
           },
           {
             clearDraftThroughRevision: latestDraft?.revision,
+            resolveCommit: async (input) => {
+              const { repository } = await projectGitReader.discover(
+                projectId!,
+                cwd,
+              );
+              return projectGitReader.resolveCommit(repository, input);
+            },
           },
         );
         setReviewedByCommit((prev) => ({
@@ -1876,7 +1897,7 @@ export function GitCommitDrawer({
           const mergedPayload =
             mergeRecordWithDraft(
               payload,
-              loadReviewDraft(normalizedCommit, accountId),
+              loadReviewDraft(payload.commit_sha, accountId),
             ) ?? payload;
           const completion = resolveGitReviewSaveCompletion({
             payload: mergedPayload,
@@ -1904,7 +1925,18 @@ export function GitCommitDrawer({
         }
       }
     },
-    [accountId, commit, reviewed, reviewNote, reviewNoteDraft, reviewRecord],
+    [
+      accountId,
+      commit,
+      reviewed,
+      reviewNote,
+      reviewNoteDraft,
+      reviewRecord,
+      reviewLoading,
+      reviewStorageResolved,
+      projectId,
+      cwd,
+    ],
   );
 
   const allInlineComments = useMemo(
@@ -1943,9 +1975,13 @@ export function GitCommitDrawer({
       ) => Record<string, GitReviewCommentV2>,
     ) => {
       if (!accountId || !commit || isHeadCommit(commit)) return;
+      if (reviewLoading || !reviewRecord || !reviewStorageResolved) return;
       const normalizedCommit = normalizeCommitSha(commit);
       if (!normalizedCommit) return;
-      const latestDraft = loadReviewDraft(normalizedCommit, accountId);
+      const latestDraft = loadReviewDraft(
+        reviewRecord?.commit_sha ?? normalizedCommit,
+        accountId,
+      );
       const resolved = resolveGitReviewSaveState({
         draft: latestDraft,
         reviewed,
@@ -1956,7 +1992,7 @@ export function GitCommitDrawer({
       const current = resolved.comments;
       const next = mutate({ ...current });
       saveReviewDraft(
-        normalizedCommit,
+        reviewRecord?.commit_sha ?? normalizedCommit,
         {
           reviewed: resolved.reviewed,
           note: resolved.note,
@@ -1973,7 +2009,9 @@ export function GitCommitDrawer({
     [
       accountId,
       commit,
-      reviewRecord?.comments,
+      reviewRecord,
+      reviewLoading,
+      reviewStorageResolved,
       reviewNoteDraft,
       reviewNote,
       reviewed,
@@ -2330,6 +2368,7 @@ export function GitCommitDrawer({
 
   const sendInlineReviewToAgent = async () => {
     if (!onRequestAgentTurn || !commit || isHeadSelected) return;
+    if (reviewLoading || !reviewRecord || !reviewStorageResolved) return;
     const startedScope = normalizeCommitSha(commit);
     if (!startedScope) return;
     const actionable = actionableInlineComments;
@@ -2369,7 +2408,10 @@ export function GitCommitDrawer({
       const turnId = `git-review-${now}`;
       const normalizedCommit = normalizeCommitSha(commit);
       const latestDraft = normalizedCommit
-        ? loadReviewDraft(normalizedCommit, accountId)
+        ? loadReviewDraft(
+            reviewRecord?.commit_sha ?? normalizedCommit,
+            accountId,
+          )
         : undefined;
       const resolved = resolveGitReviewSaveState({
         draft: latestDraft,
@@ -2387,7 +2429,7 @@ export function GitCommitDrawer({
       if (commit) {
         if (normalizedCommit) {
           saveReviewDraft(
-            normalizedCommit,
+            reviewRecord?.commit_sha ?? normalizedCommit,
             {
               reviewed: resolved.reviewed,
               note: resolved.note,
@@ -2435,10 +2477,16 @@ export function GitCommitDrawer({
     const normalizedCommit = normalizeCommitSha(commit);
     if (!normalizedCommit) return;
     if (reviewStateCommit !== normalizedCommit) return;
-    if (reviewLoading || reviewSaving) return;
+    if (
+      reviewLoading ||
+      reviewSaving ||
+      !reviewRecord ||
+      !reviewStorageResolved
+    )
+      return;
     if (!reviewDirty) return;
     saveReviewDraft(
-      normalizedCommit,
+      reviewRecord?.commit_sha ?? normalizedCommit,
       {
         reviewed: Boolean(reviewed),
         note: `${reviewNoteDraft ?? ""}`,
@@ -2452,11 +2500,12 @@ export function GitCommitDrawer({
     commit,
     reviewLoading,
     reviewSaving,
+    reviewStorageResolved,
     reviewDirty,
     reviewStateCommit,
     reviewed,
     reviewNoteDraft,
-    reviewRecord?.comments,
+    reviewRecord,
   ]);
 
   useEffect(() => {
@@ -3466,10 +3515,12 @@ export function GitCommitDrawer({
               if (activeReviewCommitRef.current !== currentReviewCommit) {
                 return;
               }
+              if (reviewLoading || !reviewRecord || !reviewStorageResolved)
+                return;
               setReviewNoteDraft(value);
               setReviewDirty(true);
               saveReviewDraft(
-                currentReviewCommit,
+                reviewRecord?.commit_sha ?? currentReviewCommit,
                 {
                   reviewed: Boolean(reviewed),
                   note: `${value ?? ""}`,
