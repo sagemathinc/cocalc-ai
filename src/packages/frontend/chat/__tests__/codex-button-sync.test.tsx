@@ -263,6 +263,52 @@ describe("CodexConfigButton", () => {
     expect(options).toHaveLength(3);
   });
 
+  it("offers Astra before discovery and respects account availability afterward", () => {
+    const initial = codexModelOptionsForCatalog().find(
+      ({ value }) => value === "gpt-6-astra",
+    );
+    expect(initial).toMatchObject({
+      value: "gpt-6-astra",
+      serviceTiers: ["fast"],
+    });
+    expect(initial?.disabled).not.toBe(true);
+
+    const catalog = [
+      {
+        model: "gpt-5.6-luna",
+        displayName: "Luna",
+        reasoning: [],
+        serviceTiers: [],
+      },
+    ];
+    expect(
+      codexModelOptionsForCatalog(catalog).some(
+        ({ value }) => value === "gpt-6-astra",
+      ),
+    ).toBe(false);
+    expect(
+      codexModelOptionsForCatalog(catalog, "gpt-6-astra").find(
+        ({ value }) => value === "gpt-6-astra",
+      ),
+    ).toMatchObject({ disabled: true });
+    expect(
+      codexModelOptionsForCatalog([
+        {
+          model: "gpt-6-astra",
+          displayName: "Astra",
+          reasoning: [
+            { id: "high", description: "Account default", default: true },
+          ],
+          serviceTiers: [],
+        },
+      ])[0],
+    ).toMatchObject({
+      value: "gpt-6-astra",
+      reasoning: [{ id: "high", default: true }],
+      serviceTiers: [],
+    });
+  });
+
   it("opens the compact picker from the fresh account catalog without a request", async () => {
     writeCachedCodexModelCatalog({
       projectId: "project-1",
