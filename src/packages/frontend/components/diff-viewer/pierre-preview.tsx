@@ -12,7 +12,8 @@ import type {
 } from "@pierre/diffs";
 import { CodeView } from "@pierre/diffs/react";
 import type { CodeViewHandle } from "@pierre/diffs/react";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import { MarkdownHistoryInput } from "@cocalc/frontend/chat/git-commit/review-editors";
 import {
   matchGitDrawerScrollCommand,
@@ -56,6 +57,7 @@ function PierrePreviewContent({
   fontSize: number;
 }) {
   const scope = useId();
+  const { resolved } = useAppearance();
   const viewer = useRef<CodeViewHandle<string, undefined>>(null);
   const viewport = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -153,9 +155,10 @@ function PierrePreviewContent({
       // A collapsed context jump only reaches its separator in Pierre 1.3.6.
       expandUnchanged: source.kind === "documents",
       theme: { light: "github-light", dark: "github-dark" },
+      themeType: resolved,
       overflow: wrap ? ("wrap" as const) : ("scroll" as const),
     }),
-    [split, wrap, source.kind, fontSize],
+    [split, wrap, source.kind, fontSize, resolved],
   );
 
   const addComment = () => {
@@ -353,7 +356,7 @@ function PierrePreviewContent({
             width: "100%",
             maxWidth: "100%",
             boxSizing: "border-box",
-            border: `1px solid ${COLORS.GRAY_L}`,
+            border: `1px solid ${UI_COLORS.border}`,
             fontSize,
           }}
           renderAnnotation={(annotation) => {
@@ -365,7 +368,8 @@ function PierrePreviewContent({
               <div
                 style={{
                   padding: 12,
-                  background: COLORS.GRAY_LLL,
+                  background: UI_COLORS.surface,
+                  color: UI_COLORS.text,
                   minWidth: 0,
                 }}
               >

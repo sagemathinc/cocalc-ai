@@ -146,6 +146,25 @@ both modes, not merely the React options.
 
 ## Implementation readiness
 
+### CoCalc appearance integration
+
+Pierre and Trees must follow CoCalc's resolved appearance, not independently
+follow the operating system. Use `useAppearance().resolved` so explicit Light,
+explicit Dark, and System preferences update an already-open review without
+remounting the renderer or resetting selection, scroll, comments, or tree state.
+Use Pierre's `github-light` / `github-dark` themes with an explicit `themeType`.
+Trees supports inherited CSS `color-scheme` and theme variables; set the resolved
+scheme on its host and use semantic CoCalc surface/text/border tokens around it.
+Keep standard Ant Design controls on the application theme. All custom headers,
+annotation cards, search/status/error panels, and historical-source wrappers
+must pair theme-aware foreground/background tokens.
+
+Acceptance: test CoCalc Light with a dark OS and CoCalc Dark with a light OS,
+System-mode changes, and live preference changes with a selected line and an
+active Slate draft. Inspect actual rendered code/gutters/additions/deletions,
+Trees selection/focus/search states, sticky headers, and comments in both modes.
+This applies to Git review, TimeTravel text diffs, and Codex activity diffs.
+
 ### Changed-files navigation with Trees
 
 Adopt `@pierre/trees` as a read-only changed-files navigator alongside the

@@ -5,7 +5,7 @@
 
 import { Button, Dropdown } from "antd";
 import { useRef } from "react";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export function reviewFileHeaderHeight(fontSize: number): number {
   return Math.ceil(Math.max(13, fontSize) * 1.5) + 44;
@@ -79,9 +79,9 @@ export function ReviewFileHeader({
         minWidth: 0,
         overflow: "hidden",
         padding: "6px 10px",
-        background: COLORS.GRAY_LLL,
-        color: COLORS.GRAY_D,
-        borderBottom: `1px solid ${COLORS.GRAY_LL}`,
+        background: UI_COLORS.inset,
+        color: UI_COLORS.text,
+        borderBottom: `1px solid ${UI_COLORS.border}`,
         display: "flex",
         flexDirection: "column",
         gap: 4,

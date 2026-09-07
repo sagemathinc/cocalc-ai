@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import type { GitStatusEntry } from "@pierre/trees";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import { changedFileLabel, prepareChangedFiles } from "./changed-files-model";
 import type { ChangedFileEntry } from "./changed-files-model";
 
@@ -18,6 +19,7 @@ export default function ChangedFilesTree(props: ChangedFilesTreeProps) {
 }
 
 function Tree({ files, activeId, onSelect }: ChangedFilesTreeProps) {
+  const { resolved } = useAppearance();
   const [query, setQuery] = useState("");
   const updating = useRef(false);
   const latest = useRef({
@@ -117,7 +119,8 @@ function Tree({ files, activeId, onSelect }: ChangedFilesTreeProps) {
           height: "45vh",
           minHeight: 160,
           overflow: "auto",
-          border: `1px solid ${COLORS.GRAY_L}`,
+          colorScheme: resolved,
+          border: `1px solid ${UI_COLORS.border}`,
         }}
       />
     </div>

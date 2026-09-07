@@ -31,6 +31,8 @@ const built = await build({
       import ChangedFilesTree from './components/diff-viewer/changed-files-tree';
       import { DiffHighlightingProvider } from './components/diff-viewer/highlighting-provider';
       import { useWorkerPool } from '@pierre/diffs/react';
+      import { getBrowserAppearanceStore } from '@cocalc/util/appearance-browser';
+      window.chooseAppearance = (preference) => getBrowserAppearanceStore().choose(preference);
       function PoolProbe() {
         const pool = useWorkerPool();
         const [stats, setStats] = React.useState(() => pool.getStats());
@@ -151,6 +153,21 @@ try {
   await expect(b).toBeVisible();
   await b.click();
   await expect(page.getByLabel("Selected file")).toHaveText("b");
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.evaluate(() => window.chooseAppearance("dark"));
+  await expect(page.locator("file-tree-container")).toHaveCSS(
+    "color-scheme",
+    "dark",
+  );
+  await expect(page.getByLabel("Selected file")).toHaveText("b");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.evaluate(() => window.chooseAppearance("light"));
+  await expect(page.locator("file-tree-container")).toHaveCSS(
+    "color-scheme",
+    "light",
+  );
+  await page.evaluate(() => window.chooseAppearance("system"));
+  await page.emulateMedia({ colorScheme: "light" });
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("Enter");
   await expect(page.getByLabel("Selected file")).toHaveText("a");
@@ -256,6 +273,17 @@ try {
       .poll(() => diff.evaluate((e) => getComputedStyle(e).backgroundColor))
       .toBe(background);
   }
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.evaluate(() => window.chooseAppearance("dark"));
+  await expect
+    .poll(() => diff.evaluate((e) => getComputedStyle(e).backgroundColor))
+    .toBe("rgb(36, 41, 46)");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.evaluate(() => window.chooseAppearance("light"));
+  await expect
+    .poll(() => diff.evaluate((e) => getComputedStyle(e).backgroundColor))
+    .toBe("rgb(255, 255, 255)");
+  await page.evaluate(() => window.chooseAppearance("system"));
   await page.emulateMedia({ colorScheme: "light" });
   await expect
     .poll(() => viewport.evaluate((e) => getComputedStyle(e).overflowY))
