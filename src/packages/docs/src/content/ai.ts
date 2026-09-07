@@ -100,6 +100,27 @@ Inspect the response and project state to confirm how Codex applied the
 guidance. When no Codex turn is running, the composer uses **Send** for a
 normal message instead.
 
+## Set the parallel subagent preference
+
+Codex can use worker agents alongside the manager handling your request.
+The **Parallel subagents** button in **Codex settings** opens the same
+preference as **Maximum concurrent subagents** in account **AI** settings.
+
+1. Open either control.
+2. Choose **Automatic (currently 3)** or a number from 1 through 16.
+3. Allow the setting to take effect when the Codex session is next loaded.
+
+The number describes worker agents in addition to the manager. It is an
+account preference used to configure sessions, not a request to immediately
+create that many workers, and not a displayed total for every session on
+the account.
+
+Higher values can consume your Codex or API allowance much faster. Start
+with a value appropriate for the work and inspect session activity if you
+are unsure what remains running. Changing the preference does not by itself
+stop existing workers; use the session's stop controls when you need to
+interrupt ongoing work.
+
 ## Give better tasks
 
 Name files, describe the desired outcome, and ask Codex to validate changes.
