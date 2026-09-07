@@ -1,0 +1,17 @@
+@media (max-width: 767px) {
+  .cocalc-slate-edit-bar-popup {
+    max-width: calc(100vw - 48px);
+  }
+
+  .cocalc-slate-edit-bar-popup .cocalc-slate-marks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .cocalc-slate-edit-bar-popup button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

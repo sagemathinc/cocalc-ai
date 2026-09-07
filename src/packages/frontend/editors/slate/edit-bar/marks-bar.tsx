@@ -7,7 +7,7 @@ import { Button } from "antd";
 import React, { CSSProperties } from "react";
 
 import { Icon, IconName, Tooltip } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { SlateEditor } from "../editable-markdown";
 import { formatAction } from "../format";
 import ColorButton from "./color-button";
@@ -20,10 +20,10 @@ import LinkButton from "./link";
 import { Marks } from "./marks";
 
 export const BUTTON_STYLE = {
-  color: COLORS.GRAY_M,
+  color: UI_COLORS.text,
   height: "24px",
-  borderLeft: "1px solid lightgray",
-  borderRight: "1px solid lightgray",
+  borderLeft: `1px solid ${UI_COLORS.border}`,
+  borderRight: `1px solid ${UI_COLORS.border}`,
   borderTop: "none",
   borderBottom: "none",
   padding: "0 10px",
@@ -39,10 +39,12 @@ const MarkButton: React.FC<MarkButtonProps> = ({ mark, active, editor }) => {
   return (
     <Tooltip title={TITLES[mark]} mouseEnterDelay={1}>
       <Button
+        aria-label={TITLES[mark]}
+        aria-pressed={active}
         type="text"
         style={{
           ...BUTTON_STYLE,
-          backgroundColor: active ? "#ccc" : undefined,
+          backgroundColor: active ? UI_COLORS.hover : undefined,
         }}
         onClick={() => formatAction(editor, mark, [])}
       >
@@ -100,7 +102,10 @@ export const MarksBar: React.FC<MarksBarProps> = (props: MarksBarProps) => {
   );
   v.push(<FontFamily key={"font"} editor={editor} font={getFontMark(marks)} />);
   return (
-    <div style={{ paddingRight: "10px", flex: 1, whiteSpace: "nowrap" }}>
+    <div
+      className="cocalc-slate-marks"
+      style={{ paddingRight: "10px", flex: 1, whiteSpace: "nowrap" }}
+    >
       {v}
     </div>
   );
