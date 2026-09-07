@@ -28,6 +28,30 @@ For live notebooks, ask Codex to use the live notebook APIs. For UI actions,
 docs action ids such as \`settings.environment.secrets\` let agents open the
 right panel directly.
 
+## Schedule Codex work in a thread
+
+Open a Codex chat's thread menu and choose **Automation settings…**. The
+**Thread automation** dialog lets you configure recurring work in that
+thread. Availability and active-automation limits depend on the project and
+membership tier; an admission limit can prevent enabling another schedule.
+
+1. Enable **Enable scheduled automation for this thread**, give it a
+   **Title**, and choose **Codex prompt** as the **Run type**.
+2. Enter what Codex should do on each scheduled run.
+3. Under **Schedule**, choose **Daily** or **Every N minutes** and select
+   the weekdays under **Repeat on**.
+4. For Daily, enter **Run at (24h)**. For an interval, enter **Repeat every
+   (minutes)** and either enable **Run all day** or set **From (24h)** and
+   **Until (24h)**. Until must be later than From on the same day; this form
+   does not accept a window crossing midnight.
+5. Check **Timezone**, choose the **Pause after unacknowledged runs** limit,
+   and click **Save**.
+
+Use a named timezone such as Europe/Madrid. The form initially uses your
+browser's timezone, so verify it before saving a schedule intended for
+another location. After saving, inspect the thread's schedule summary and
+**Next** run display to confirm the intended timing.
+
 ## Why this matters in CoCalc
 
 CoCalc is both a collaborative workspace and an agent sandbox. Humans can review
