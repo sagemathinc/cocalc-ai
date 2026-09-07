@@ -10,6 +10,25 @@ Codex chat is the integrated agent interface in CoCalc-ai. A project chat thread
 can include humans and Codex, and Codex can use project-aware tools to inspect
 files, run commands, work with notebooks, and make changes.
 
+## Understand Codex access
+
+New chats created through the hosted CoCalc UI use full project access:
+Codex can read and modify files, run commands, install software, and use the
+network inside the project environment. Explicitly read-only sessions can
+still be created through other supported interfaces. A working directory
+selects where commands start; it is not a permission boundary.
+
+1. Open the project whose files and software Codex should work with.
+2. Click **Codex** in the chat controls to open **Codex settings**.
+3. Read the **Access** notice and include the files, intended changes, and
+   constraints in your request.
+
+CoCalc Lite offers an **Access** choice instead: **Read only**, **Workspace
+write**, or **Full access**. These configure the Codex command sandbox. Read
+only still permits network access. Workspace write permits workspace and
+temporary-directory writes; Full access removes that command-sandbox file
+restriction. Select the mode appropriate for the task and click **Save**.
+
 ## Open Codex
 
 1. Open the project.
