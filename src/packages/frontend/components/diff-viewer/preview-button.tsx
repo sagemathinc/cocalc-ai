@@ -40,9 +40,16 @@ export function DiffPreviewButton({
 }) {
   // Freeze the source on opening: live history updates must not move a draft.
   const [source, setSource] = useState<DiffPreviewSource>();
+  const [layoutReady, setLayoutReady] = useState(false);
   return (
     <>
-      <Button size="small" onClick={() => setSource(getSource())}>
+      <Button
+        size="small"
+        onClick={() => {
+          setLayoutReady(false);
+          setSource(getSource());
+        }}
+      >
         Preview with Pierre
       </Button>
       <Modal
@@ -52,8 +59,10 @@ export function DiffPreviewButton({
         footer={null}
         width="95vw"
         destroyOnHidden
+        afterOpenChange={setLayoutReady}
       >
-        {source != null && (
+        {/* Modal scale animation distorts virtualizer row measurements. */}
+        {source != null && layoutReady && (
           <KeyboardBoundary
             boundary="diff-preview"
             onKeyDown={(event) => {

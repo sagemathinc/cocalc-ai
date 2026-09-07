@@ -21,6 +21,16 @@ const patch = ["first.ts", "second.ts"]
       ).join(""),
   )
   .join("");
+const largePatch = Array.from({ length: 80 }, (_, file) => {
+  const name = `src/file-${String(file).padStart(3, "0")}.ts`;
+  return (
+    `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n@@ -1,220 +1,220 @@\n-old ${file}\n+new ${file}\n` +
+    Array.from(
+      { length: 219 },
+      (_, line) => ` const value${line} = ${line};\n`,
+    ).join("")
+  );
+}).join("");
 const built = await build({
   absWorkingDir: frontend,
   stdin: {
@@ -63,6 +73,7 @@ const built = await build({
         if (location.pathname === '/tree') return <><ChangedFilesTree expansionScope={JSON.stringify(files.map(f=>f.path))} files={files} activeId={selected} onSelect={setSelected}/><output aria-label="Selected file">{selected}</output></>;
         window.previewSetFontSize = setFontSize;
         if (location.pathname === '/copy') return <DiffPreviewButton fontSize={14} getSource={() => (${JSON.stringify({ kind: "documents", path: "operators.ts", before: "+before;\n-before;\n", after: "+after;\n-after;\n", label: "Literal operators" })})} />;
+        if (location.pathname === '/large') return <DiffPreviewButton fontSize={14} getSource={() => ({kind:'patch',label:'Large review fixture',patch:${JSON.stringify(largePatch)}})} />;
         return <DiffPreviewButton fontSize={fontSize} getSource={() => ({kind:'patch',label:'Browser fixture',patch:${JSON.stringify(patch)}})} />;
       }
       createRoot(document.getElementById('root')).render(<Harness />);`,
@@ -155,6 +166,88 @@ try {
   const errors = [];
   page.setDefaultTimeout(10000);
   page.on("pageerror", (error) => errors.push(error.message));
+  if (process.env.BENCHMARK) {
+    await page.goto(`http://127.0.0.1:${server.address().port}/large`);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Performance.enable");
+    const measure = async () => {
+      await cdp.send("HeapProfiler.collectGarbage");
+      const { metrics } = await cdp.send("Performance.getMetrics");
+      return Object.fromEntries(
+        metrics
+          .filter(({ name }) =>
+            ["JSHeapUsedSize", "Nodes", "JSEventListeners"].includes(name),
+          )
+          .map(({ name, value }) => [name, value]),
+      );
+    };
+    const baseline = await measure();
+    const cycles = [];
+    for (let cycle = 0; cycle < 5; cycle++) {
+      const start = performance.now();
+      await page.getByRole("button", { name: "Preview with Pierre" }).click();
+      await page
+        .getByRole("combobox", { name: "Preview file" })
+        .selectOption("0");
+      await page.getByRole("region", { name: "Diff preview" }).focus();
+      await page.keyboard.press("Home");
+      await expect(
+        page
+          .locator("diffs-container [data-line]")
+          .filter({ hasText: /^\s*new 0\s*$/ })
+          .first(),
+      ).toBeVisible();
+      const openMs = performance.now() - start;
+      const navigateStart = performance.now();
+      await page
+        .getByRole("combobox", { name: "Preview file" })
+        .selectOption("79");
+      await expect(
+        page
+          .locator("diffs-container [data-line]")
+          .filter({ hasText: /^\s*new 79\s*$/ })
+          .first(),
+      ).toBeVisible();
+      const navigateMs = performance.now() - navigateStart;
+      const mountedRows = await page
+        .locator("diffs-container [data-line]")
+        .count();
+      assert.ok(mountedRows < 2000, "large review keeps code rows virtualized");
+      await page.getByRole("region", { name: "Diff preview" }).focus();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect.poll(() => page.workers().length).toBe(0);
+      cycles.push({ openMs, navigateMs, mountedRows, closed: await measure() });
+    }
+    assert.ok(
+      cycles[4].closed.JSHeapUsedSize - cycles[1].closed.JSHeapUsedSize <
+        20 * 1024 * 1024,
+      "repeated reviews do not retain unbounded main-thread heaps",
+    );
+    assert.ok(
+      cycles[4].closed.Nodes <= cycles[1].closed.Nodes + 100,
+      "closed review DOM does not accumulate",
+    );
+    assert.ok(
+      cycles[4].closed.JSEventListeners <=
+        cycles[1].closed.JSEventListeners + 20,
+      "closed review event handlers do not accumulate",
+    );
+    console.log(
+      "BENCHMARK",
+      JSON.stringify({
+        browser: browser.version(),
+        viewport: page.viewportSize(),
+        files: 80,
+        patchLines: largePatch.split("\n").length,
+        bytes: Buffer.byteLength(largePatch),
+        baseline,
+        cycles,
+        note: "Development bundle; GC main-thread heap excludes worker heaps. Workers terminate after each close.",
+      }),
+    );
+    await cdp.detach();
+  }
   if (!process.env.TREE_ONLY) {
     await page.goto(`http://127.0.0.1:${server.address().port}/activity`);
     await page

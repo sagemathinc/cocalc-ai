@@ -44,6 +44,7 @@ export function ComparisonModal({
   onRequestAgentTurn?: RequestComparisonAgentTurn;
 }) {
   const [target, setTarget] = useState<ImmutableReviewTarget>();
+  const [layoutReady, setLayoutReady] = useState(false);
   const [editing, setEditing] = useState(false);
   const [closeWarning, setCloseWarning] = useState(false);
   const [restoring, setRestoring] = useState(!!initialComparison);
@@ -75,6 +76,7 @@ export function ComparisonModal({
       title="Compare and review revisions"
       footer={null}
       width="95vw"
+      afterOpenChange={setLayoutReady}
       onCancel={() => {
         if (editing) setCloseWarning(true);
         else onClose();
@@ -111,7 +113,8 @@ export function ComparisonModal({
             description={restoreError}
           />
         )}
-        {target && (
+        {/* Do not measure virtualized rows during the modal scale animation. */}
+        {target && layoutReady && (
           <Suspense
             fallback={<div role="status">Loading comparison renderer...</div>}
           >

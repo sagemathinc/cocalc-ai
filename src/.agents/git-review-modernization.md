@@ -606,6 +606,27 @@ turning the experimental modal into a second complete Git browser.
 
 ### Remaining targeted investigations
 
+Large-review benchmark (2026-09-07): run
+`BENCHMARK=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`.
+The deterministic fixture is 80 files, 18,001 patch lines, 395,500 UTF-8 bytes;
+Chromium 149.0.7827.196, 1200x900, development bundle. Five open/navigate/close
+cycles measured 941 ms cold opening and 834-866 ms warm opening (including modal
+animation and keyboard positioning), and 46-61 ms to select/render the last
+file. Only 79 code rows were mounted at that position. All workers terminated
+after every close. Forced-GC main-thread heap was 11.6 MB after the first close
+and 13.3 MB after the fifth; DOM nodes (1,196) and event listeners (586) remained
+constant across closes. These are local measurements, not production latency
+guarantees or worker-heap measurements. The test guards virtualized row counts,
+worker teardown, and excessive retained main-thread heap/DOM/listener growth.
+
+The benchmark caught a warm-open correctness regression: Pierre measured rows
+while Ant Design's modal scale animation was active, leaving line 54 at
+scrollTop zero after reopening. Preview and comparison modals now wait for
+`afterOpenChange` before mounting the virtualized renderer. This does not remount
+an active editor on theme/layout changes. The repeated-open benchmark and the
+existing keyboard/focus tests pass with the fix. Full-app editor and historical
+restore acceptance still requires the live browser; port 9222 currently resets.
+
 Legacy activity producer (2026-09-07): the ACP handler now attaches bounded
 complete read/write observations to its diff events. The read baseline is the
 complete adapter result before optional line slicing, and it is cleared when a
