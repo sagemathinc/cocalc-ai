@@ -8,9 +8,19 @@ import {
   exportTargetReview,
 } from "../git-target-review-store";
 import type { ImmutableReviewTarget } from "@cocalc/frontend/components/diff-viewer/review-model";
+import { validateAgentWorktree } from "@cocalc/frontend/git/agent-worktree";
 
 jest.mock("@cocalc/frontend/git/project-read-service", () => ({
-  projectGitReader: {},
+  projectGitReader: {
+    invalidateDiscovery: jest.fn(),
+    discover: jest.fn(async () => ({
+      worktrees: [{ path: "/repo", branch: "refs/heads/main" }],
+    })),
+  },
+}));
+jest.mock("@cocalc/frontend/git/agent-worktree", () => ({
+  ...jest.requireActual("@cocalc/frontend/git/agent-worktree"),
+  validateAgentWorktree: jest.fn(),
 }));
 let mockViewerProps: any;
 jest.mock("@cocalc/frontend/git/read-target-diff", () => ({
@@ -62,6 +72,16 @@ const props = {
 beforeEach(() => {
   localStorage.clear();
   jest.clearAllMocks();
+  jest
+    .mocked(validateAgentWorktree)
+    .mockResolvedValue({
+      projectId: "p",
+      commonDirectory: "/repo/.git",
+      workingDirectory: "/repo",
+      expectedHead: "b".repeat(40),
+      reviewedCommit: "b".repeat(40),
+      expectedBranch: "refs/heads/main",
+    });
   let id = 0;
   Object.defineProperty(crypto, "randomUUID", {
     configurable: true,
@@ -79,6 +99,104 @@ beforeEach(() => {
       body,
       updatedAt: 1,
     }));
+});
+
+function savedFeedback() {
+  const body = { reviewed: false, note: "Please address this", comments: {} };
+  const revision = {
+    version: 1 as const,
+    accountId: "a",
+    target,
+    id: "saved",
+    parents: [],
+    body,
+    updatedAt: 1,
+  };
+  jest
+    .mocked(loadTargetReview)
+    .mockResolvedValue({ heads: [revision], revisions: [revision] });
+  return revision;
+}
+
+test("saved comparison feedback requires keyboard opt-in and carries pinned endpoints", async () => {
+  savedFeedback();
+  const send = jest.fn();
+  const user = userEvent.setup();
+  render(<TargetReviewPane {...props} onRequestAgentTurn={send} />);
+  const button = await screen.findByRole("button", {
+    name: "Send saved review to agent",
+  });
+  expect(button).toBeDisabled();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Comparison review note" }),
+    ).toHaveValue("Please address this"),
+  );
+  screen.getByRole("checkbox", { name: /Send agent feedback in/ }).focus();
+  await user.keyboard(" ");
+  expect(button).toBeEnabled();
+  await user.click(button);
+  await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+  expect(send.mock.calls[0][0]).toContain(target.head);
+  expect(send.mock.calls[0][0]).toContain(target.base);
+  expect(send.mock.calls[0][1]).toEqual({
+    title: "Address comparison review",
+    workingDirectory: "/repo",
+  });
+  await waitFor(() => expect(saveTargetReview).toHaveBeenCalled());
+  expect(
+    jest.mocked(saveTargetReview).mock.calls[0][0].body.last_submitted_at,
+  ).toEqual(expect.any(Number));
+});
+
+test("changed saved heads prevent comparison dispatch", async () => {
+  savedFeedback();
+  const send = jest.fn();
+  const user = userEvent.setup();
+  render(<TargetReviewPane {...props} onRequestAgentTurn={send} />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Comparison review note" }),
+    ).toBeEnabled(),
+  );
+  await user.click(
+    screen.getByRole("checkbox", { name: /Send agent feedback in/ }),
+  );
+  jest.mocked(loadTargetReview).mockResolvedValue({ heads: [], revisions: [] });
+  await user.click(
+    screen.getByRole("button", { name: "Send saved review to agent" }),
+  );
+  await screen.findByText(/saved review changed/);
+  expect(send).not.toHaveBeenCalled();
+});
+
+test("a failed receipt save retains a draft and warns against resending", async () => {
+  savedFeedback();
+  jest.mocked(saveTargetReview).mockRejectedValue(Error("offline"));
+  const send = jest.fn();
+  const user = userEvent.setup();
+  render(<TargetReviewPane {...props} onRequestAgentTurn={send} />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Comparison review note" }),
+    ).toBeEnabled(),
+  );
+  await user.click(
+    screen.getByRole("checkbox", { name: /Send agent feedback in/ }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Send saved review to agent" }),
+  );
+  await screen.findByText(/Feedback was sent, but saving its receipt failed/);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(
+    screen.getByRole("button", { name: "Send saved review to agent" }),
+  ).toBeDisabled();
+  expect(
+    Object.values(localStorage).some((value) =>
+      String(value).includes("last_submission_turn_id"),
+    ),
+  ).toBe(true);
 });
 
 test("unsaved review survives unmount and explicit recovery without writing a commit review", async () => {

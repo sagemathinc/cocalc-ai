@@ -3721,6 +3721,7 @@ export function GitCommitDrawer({
           commit={commit ?? "HEAD"}
           accountId={accountId}
           fontSize={effectiveFontSize}
+          onRequestAgentTurn={requestAgentTurn}
           onClose={() => {
             setComparisonOpen(false);
             onComparisonChange?.(undefined);

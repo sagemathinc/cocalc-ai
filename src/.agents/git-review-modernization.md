@@ -597,6 +597,20 @@ turning the experimental modal into a second complete Git browser.
 
 ### Remaining targeted investigations
 
+Comparison agent submission (2026-09-07): saved, single-head comparison reviews
+now expose an explicit working-directory opt-in and Send saved review to agent.
+Submission requires no active editor or unsaved changes, reloads saved review
+heads, validates the registered checkout at the comparison head, and includes
+the immutable target and draft comment locations in the prompt. The existing
+agent helper creates a fresh thread when cwd differs. Pending validation is
+cancelled by unmount/target changes. After dispatch, submitted comments and a
+receipt are persisted in a new review revision; a failed receipt save retains
+a local draft and explicitly warns not to resend. Tests cover keyboard opt-in,
+endpoint provenance, changed saved heads, and failed receipt persistence. Live
+end-to-end agent dispatch is not yet verified. Historical comparisons whose
+head is not the selected working copy's HEAD fail with an explicit mismatch;
+they never silently target another checkout.
+
 Tree expansion persistence (2026-09-07): changed-file navigation now saves
 expanded directories per account/repository/review scope, including comparison
 targets. Restore all-collapsed state explicitly (Trees' open initialization

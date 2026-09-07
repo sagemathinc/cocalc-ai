@@ -14,6 +14,7 @@ import type {
 import { reviewTargetKey } from "@cocalc/frontend/components/diff-viewer/review-model";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { ComparisonControls } from "./comparison-controls";
+import type { RequestComparisonAgentTurn } from "./comparison-feedback";
 
 const TargetReviewPane = lazy(() =>
   import("./target-review-pane").then((module) => ({
@@ -30,6 +31,7 @@ export function ComparisonModal({
   onView,
   initialComparison,
   onTargetChange,
+  onRequestAgentTurn,
 }: {
   repository: RepositoryContext;
   commit: string;
@@ -39,6 +41,7 @@ export function ComparisonModal({
   onView: (source: GitSource) => void;
   initialComparison?: GitComparisonRoute;
   onTargetChange?: (route: GitComparisonRoute) => void;
+  onRequestAgentTurn?: RequestComparisonAgentTurn;
 }) {
   const [target, setTarget] = useState<ImmutableReviewTarget>();
   const [editing, setEditing] = useState(false);
@@ -120,6 +123,7 @@ export function ComparisonModal({
               onView={onView}
               onEditing={setEditing}
               onLeave={onClose}
+              onRequestAgentTurn={onRequestAgentTurn}
             />
           </Suspense>
         )}
