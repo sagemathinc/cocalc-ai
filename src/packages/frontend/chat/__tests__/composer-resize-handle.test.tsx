@@ -82,6 +82,41 @@ describe("ChatRoomComposer resize handle", () => {
     lastChatInputProps = undefined;
   });
 
+  it.each([false, true])(
+    "shows the selected thread title without a custom appearance (AI: %s)",
+    (isAI) => {
+      renderComposer({
+        selectedThread: {
+          key: "thread-1",
+          label: "Original title",
+          displayLabel: "Goal UI smoke test",
+          newestTime: 0,
+          messageCount: 1,
+          hasCustomName: true,
+          hasCustomAppearance: false,
+          readCount: 1,
+          unreadCount: 0,
+          isAI,
+          isAutomation: false,
+          isPinned: false,
+          isArchived: false,
+        },
+        actions: {
+          syncdb: {},
+          getThreadMetadata: () => ({ agent_kind: isAI ? "acp" : "none" }),
+          isCodexThread: () => isAI,
+        } as any,
+      });
+
+      const title = screen.getByText("Goal UI smoke test");
+      expect(title.getAttribute("title")).toBe("Goal UI smoke test");
+      expect(title.parentElement?.style.marginLeft).toBe("auto");
+      if (isAI) {
+        expect(screen.getByRole("button", { name: "Set goal" })).not.toBeNull();
+      }
+    },
+  );
+
   it("does not show the resize handle when the composer is empty but focused", () => {
     const { container } = renderComposer();
     expect(container.querySelector('[style*="row-resize"]')).toBeNull();

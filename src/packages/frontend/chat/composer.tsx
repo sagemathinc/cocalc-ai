@@ -110,7 +110,6 @@ export function ChatRoomComposer({
   const threadAccentColor = selectedThread?.threadAccentColor;
   const threadIcon = selectedThread?.threadIcon;
   const threadImage = selectedThread?.threadImage;
-  const hasCustomAppearance = selectedThread?.hasCustomAppearance ?? false;
   const threadMetadata = selectedThread
     ? actions?.getThreadMetadata?.(selectedThread.key)
     : undefined;
@@ -475,7 +474,7 @@ export function ChatRoomComposer({
               />
             </div>
           )}
-          {hasCustomAppearance && threadLabel && (
+          {threadLabel && (
             <div
               style={{
                 display: "flex",
