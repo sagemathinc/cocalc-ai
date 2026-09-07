@@ -1,0 +1,44 @@
+.cocalc-chat-mobile-header {
+  display: flex;
+  align-items: center;
+  flex: 0 0 48px;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--cocalc-ui-border);
+  background: var(--cocalc-ui-surface);
+  color: var(--cocalc-ui-text);
+}
+
+.cocalc-chat-mobile-header .ant-btn {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+}
+
+.cocalc-chat-mobile-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cocalc-chat-narrow [data-testid="chat-composer"] {
+  flex-shrink: 0;
+  padding: 4px;
+}
+
+.cocalc-chat-narrow [data-testid="chat-composer"] .ant-btn {
+  min-height: 36px;
+}
+
+.cocalc-chat-narrow pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.cocalc-chat-narrow img {
+  max-width: 100%;
+}

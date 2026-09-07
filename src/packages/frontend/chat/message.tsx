@@ -21,6 +21,7 @@ import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { codexAgentName } from "@cocalc/frontend/account/chatbot";
 import { CSS, useMemo, useRef, useState } from "@cocalc/frontend/app-framework";
+import { useNarrowChatViewport } from "./use-chat-viewport";
 import {
   DropdownMenu,
   Gap,
@@ -394,6 +395,8 @@ export default function Message({
   onCachedCodexActivityBlocksChange,
 }: Props) {
   const intl = useIntl();
+  const narrow = useNarrowChatViewport();
+  const fullWidthContent = narrow && (mode === "sidechat" || !show_avatar);
   const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
 
   const [edited_message, set_edited_message] = useState<string>(
@@ -2489,7 +2492,7 @@ export default function Message({
   }
 
   function contentColumn() {
-    const mainXS = mode === "standalone" ? 20 : 22;
+    const mainXS = fullWidthContent ? 24 : mode === "standalone" ? 20 : 22;
 
     const { background, color, lighten, message_class } = message_colors(
       account_id,
@@ -2512,7 +2515,7 @@ export default function Message({
       fontSize: `${font_size}px`,
       paddingBottom: baseBottomPadding,
       ...padding,
-      ...(is_viewers_message && mode === "standalone"
+      ...(is_viewers_message && mode === "standalone" && !narrow
         ? { marginLeft: VIEWER_MESSAGE_LEFT_MARGIN }
         : undefined),
       ...(mode === "sidechat"
@@ -2791,6 +2794,7 @@ export default function Message({
       case "standalone":
         return {
           ...getStyleBase(),
+          ...(narrow ? { marginLeft: 4, marginRight: 4, paddingLeft: 0 } : {}),
           opacity: dim ? 0.45 : 1,
         };
       case "sidechat":
@@ -2808,6 +2812,7 @@ export default function Message({
   }
 
   function renderCols(): React.JSX.Element[] | React.JSX.Element {
+    if (fullWidthContent) return contentColumn();
     switch (mode) {
       case "standalone":
         const cols = [avatar_column(), contentColumn(), BLANK_COLUMN(2)];

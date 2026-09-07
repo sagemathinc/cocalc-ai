@@ -512,6 +512,8 @@ interface ChatRoomThreadPanelProps {
     commitHash?: string;
   }) => void;
   readOnly?: boolean;
+  mobile?: boolean;
+  onMobileToolsAction?: () => void;
 }
 
 export function ChatRoomThreadPanel({
@@ -557,6 +559,8 @@ export function ChatRoomThreadPanel({
   topRightControlsPortal,
   onOpenGitBrowser,
   readOnly = false,
+  mobile = false,
+  onMobileToolsAction,
 }: ChatRoomThreadPanelProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
   const accountId = useTypedRedux("account", "account_id");
@@ -1547,7 +1551,7 @@ export function ChatRoomThreadPanel({
               </div>
               <div
                 style={{
-                  color: COLORS.GRAY_M,
+                  color: UI_COLORS.secondary,
                   fontSize: 12,
                   lineHeight: 1.3,
                   whiteSpace: "normal",
@@ -1570,7 +1574,14 @@ export function ChatRoomThreadPanel({
           padding: "14px 10px",
         }}
       >
-        <div style={SETUP_CARD_STYLE}>
+        <div
+          style={{
+            ...SETUP_CARD_STYLE,
+            ...(mobile
+              ? { width: "100%", boxSizing: "border-box", padding: 12 }
+              : {}),
+          }}
+        >
           <div
             style={{
               display: "flex",
@@ -1582,7 +1593,7 @@ export function ChatRoomThreadPanel({
           >
             <div style={{ fontWeight: 600 }}>New chat setup</div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ color: COLORS.GRAY_D, fontSize: 13 }}>
+              <span style={{ color: UI_COLORS.text, fontSize: 13 }}>
                 Automation
               </span>
               <Switch
@@ -1598,7 +1609,13 @@ export function ChatRoomThreadPanel({
               />
             </div>
           </div>
-          <div style={{ color: COLORS.GRAY_M, marginBottom: 14, fontSize: 13 }}>
+          <div
+            style={{
+              color: UI_COLORS.secondary,
+              marginBottom: 14,
+              fontSize: 13,
+            }}
+          >
             All fields are optional and can be edited later from settings. Codex
             is selected by default.
           </div>
@@ -1608,7 +1625,7 @@ export function ChatRoomThreadPanel({
                 style={{
                   textAlign: "center",
                   fontWeight: 600,
-                  color: COLORS.GRAY_D,
+                  color: UI_COLORS.text,
                   marginBottom: 8,
                 }}
               >
@@ -1647,21 +1664,26 @@ export function ChatRoomThreadPanel({
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
               gap: 12,
               marginBottom: 12,
             }}
           >
             <div>
-              <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Title</div>
+              <div style={{ marginBottom: 4, color: UI_COLORS.text }}>
+                Title
+              </div>
               <Input
+                aria-label="Chat title"
+                style={{ fontSize: mobile ? 16 : undefined }}
                 placeholder="Optional title"
                 value={newThreadSetup.title}
                 onChange={(e) => update({ title: e.target.value })}
               />
             </div>
             <div>
-              <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Icon</div>
+              <div style={{ marginBottom: 4, color: UI_COLORS.text }}>Icon</div>
               <ChatIconPicker
                 value={newThreadSetup.icon}
                 onChange={(value) =>
@@ -1672,7 +1694,9 @@ export function ChatRoomThreadPanel({
               />
             </div>
             <div>
-              <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Color</div>
+              <div style={{ marginBottom: 4, color: UI_COLORS.text }}>
+                Color
+              </div>
               <Space>
                 <div
                   style={{
@@ -1700,7 +1724,7 @@ export function ChatRoomThreadPanel({
             <>
               {!lite ? (
                 <div style={{ marginBottom: 12 }}>
-                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                  <div style={{ marginBottom: 4, color: UI_COLORS.text }}>
                     Payment source
                   </div>
                   <Select
@@ -1735,7 +1759,8 @@ export function ChatRoomThreadPanel({
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                  gridTemplateColumns:
+                    "repeat(auto-fit, minmax(min(220px, 100%), 1fr))",
                   gap: 12,
                   marginBottom: 12,
                 }}
@@ -1744,7 +1769,7 @@ export function ChatRoomThreadPanel({
                   <div
                     style={{
                       alignItems: "center",
-                      color: COLORS.GRAY_D,
+                      color: UI_COLORS.text,
                       display: "flex",
                       justifyContent: "space-between",
                       marginBottom: 4,
@@ -1807,7 +1832,7 @@ export function ChatRoomThreadPanel({
                   />
                 </div>
                 <div>
-                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                  <div style={{ marginBottom: 4, color: UI_COLORS.text }}>
                     Reasoning
                   </div>
                   <Select
@@ -1835,7 +1860,7 @@ export function ChatRoomThreadPanel({
                   />
                 </div>
                 <div>
-                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                  <div style={{ marginBottom: 4, color: UI_COLORS.text }}>
                     Speed
                   </div>
                   <Select
@@ -1862,7 +1887,7 @@ export function ChatRoomThreadPanel({
                 </div>
                 {lite ? (
                   <div>
-                    <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    <div style={{ marginBottom: 4, color: UI_COLORS.text }}>
                       Execution mode
                     </div>
                     <Select
@@ -1894,7 +1919,7 @@ export function ChatRoomThreadPanel({
                   marginBottom: 12,
                 }}
               >
-                <span style={{ color: COLORS.GRAY_D, fontSize: 13 }}>
+                <span style={{ color: UI_COLORS.text, fontSize: 13 }}>
                   Save this Codex setup as the default for future new chats.
                 </span>
                 {stagedCodexMatchesDefault ? (
@@ -2033,9 +2058,10 @@ export function ChatRoomThreadPanel({
   const threadImagePreview = showThreadImagePreview
     ? compactThreadImage?.trim()
     : undefined;
-  const runningStatusTop = showTopControls ? 52 : 8;
+  const runningStatusTop = !mobile && showTopControls ? 52 : 8;
   const contentTopInset =
-    (showTopControls ? 44 : 0) + (selectedRunningCodexMessage ? 56 : 0);
+    (!mobile && showTopControls ? 44 : 0) +
+    (selectedRunningCodexMessage ? 56 : 0);
   const compactTopRightButtonStyle = compactTopRightControls
     ? { minWidth: 24, height: 22, padding: "0 4px" }
     : undefined;
@@ -2057,9 +2083,21 @@ export function ChatRoomThreadPanel({
             }
           : undefined),
         display: "inline-flex",
+        ...(mobile
+          ? {
+              position: "static",
+              width: "100%",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              flexWrap: "wrap",
+              height: "auto",
+              marginTop: 12,
+              padding: 8,
+            }
+          : {}),
         alignItems: "center",
         gap: compactTopRightControls ? 4 : 6,
-        ...(compactTopRightControls
+        ...(compactTopRightControls && !mobile
           ? {
               height: 28,
               padding: "0 7px",
@@ -2073,6 +2111,29 @@ export function ChatRoomThreadPanel({
       }}
     >
       {topRightControlsPrefix}
+      {mobile && shouldShowCodexConfig && (
+        <CodexConfigButton
+          compact
+          threadKey={selectedThreadKey}
+          chatPath={path ?? ""}
+          projectId={project_id}
+          actions={actions}
+          threadConfig={selectedThreadMeta?.acp_config ?? null}
+          paymentSource={codexPaymentSource}
+          paymentSourceLoading={codexPaymentSourceLoading}
+          refreshPaymentSource={refreshCodexPaymentSource}
+        />
+      )}
+      {mobile && (
+        <>
+          <ThreadAnchorButton
+            actions={actions}
+            threadKey={selectedThreadId}
+            label={compactThreadLabel ?? "Chat"}
+          />
+          <ThreadResolveButton actions={actions} threadKey={selectedThreadId} />
+        </>
+      )}
       {showGitTopRightButton ? (
         <Tooltip title="Open git browser">
           <Button
@@ -2084,6 +2145,7 @@ export function ChatRoomThreadPanel({
                 return;
               }
               onOpenGitBrowser?.({ threadKey: selectedThreadKey });
+              onMobileToolsAction?.();
             }}
             icon={<Icon name="git" />}
             style={compactTopRightButtonStyle}
@@ -2098,6 +2160,7 @@ export function ChatRoomThreadPanel({
           type={compactTopRightControls ? "text" : "default"}
           aria-label="Search thread"
           onClick={() => {
+            onMobileToolsAction?.();
             setThreadSearchOpen((open) => {
               const next = !open;
               if (next) {
@@ -2132,7 +2195,7 @@ export function ChatRoomThreadPanel({
         flexDirection: "column",
       }}
     >
-      {showTopControls && (
+      {showTopControls && !mobile && (
         <div style={{ position: "absolute", top: 8, left: 8, zIndex: 10 }}>
           <Space size={6}>
             {allowSidebarToggle ? (
@@ -2265,9 +2328,9 @@ export function ChatRoomThreadPanel({
           <div
             style={{
               padding: "8px 12px",
-              borderBottom: "1px solid #e5e5e5",
-              background: "#f7f7f7",
-              color: "#555",
+              borderBottom: `1px solid ${UI_COLORS.border}`,
+              background: UI_COLORS.surface,
+              color: UI_COLORS.text,
               fontWeight: 600,
               fontSize: "12px",
               letterSpacing: "0.02em",
@@ -2306,7 +2369,8 @@ export function ChatRoomThreadPanel({
         <div
           style={{
             position: "absolute",
-            top: 44,
+            top: mobile ? 0 : 44,
+            maxWidth: "calc(100% - 24px)",
             right: threadImagePreview ? 116 : 12,
             zIndex: 21,
             padding: "10px",
@@ -2314,8 +2378,8 @@ export function ChatRoomThreadPanel({
             flexDirection: "column",
             alignItems: "stretch",
             gap: 8,
-            background: "rgba(250,250,250,0.98)",
-            border: "1px solid #ddd",
+            background: UI_COLORS.surface,
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 8,
             boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
             width: "min(90vw, 350px)",
@@ -2326,6 +2390,7 @@ export function ChatRoomThreadPanel({
               ref={searchInputRef}
               size="small"
               allowClear
+              aria-label="Find in this thread"
               placeholder={
                 selectedThreadId
                   ? "Find in this thread"
@@ -2337,12 +2402,17 @@ export function ChatRoomThreadPanel({
                 if (!matchCount) return;
                 setThreadSearchCursor((n) => n + 1);
               }}
-              style={{ flex: 1, minWidth: 180 }}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                fontSize: mobile ? 16 : undefined,
+              }}
               disabled={!selectedThreadId}
             />
             <Button
               size="small"
               type="text"
+              aria-label="Close thread search"
               onClick={() => setThreadSearchOpen(false)}
             >
               ×
@@ -2402,9 +2472,9 @@ export function ChatRoomThreadPanel({
               alignItems: "center",
               gap: 10,
               flexWrap: "wrap",
-              color: "#666",
+              color: UI_COLORS.secondary,
               fontSize: 12,
-              borderTop: "1px solid #efefef",
+              borderTop: `1px solid ${UI_COLORS.border}`,
               paddingTop: 6,
             }}
           >

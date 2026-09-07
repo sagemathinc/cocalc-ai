@@ -6,6 +6,8 @@
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import {
   Button,
+  Badge,
+  Drawer,
   Modal,
   Popconfirm,
   Space,
@@ -25,7 +27,14 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
+import { Icon, Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import {
+  useChatVisualViewport,
+  useChatFocusIsolation,
+  useNarrowChatViewport,
+} from "./use-chat-viewport";
+import "./mobile-chat.css";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { NodeDesc } from "../frame-editors/frame-tree/types";
 import { EditorComponentProps } from "../frame-editors/frame-tree/types";
@@ -591,6 +600,7 @@ export interface ChatPanelProps {
   threadPanelCompactTopRightControls?: boolean;
   threadPanelTopRightControlsPortal?: HTMLElement | null;
   readOnly?: boolean;
+  isCurrent?: boolean;
 }
 
 function getDescValue(desc: NodeDesc | undefined, key: string) {
@@ -655,7 +665,23 @@ export function ChatPanel({
   threadPanelCompactTopRightControls,
   threadPanelTopRightControlsPortal,
   readOnly = false,
+  isCurrent = true,
 }: ChatPanelProps) {
+  const narrow = useNarrowChatViewport();
+  const standalone = variant === "default";
+  const [focusOverride, setFocusOverride] = useState<boolean | undefined>();
+  const focused =
+    standalone &&
+    isCurrent &&
+    isVisible &&
+    tabIsVisible &&
+    (focusOverride ?? narrow);
+  const viewport = useChatVisualViewport(focused);
+  const focusRootRef = useRef<HTMLDivElement>(null);
+  useChatFocusIsolation(focusRootRef, focused && messages != null);
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const [mobileToolsPortal, setMobileToolsPortal] =
+    useState<HTMLDivElement | null>(null);
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   const storeName = chatActionsStoreName(actions);
   const actionStoreActivity = useRedux([
@@ -682,7 +708,7 @@ export function ChatPanel({
     actionStoreReadStateVersion ??
     editorStoreReadStateVersion;
   const account_id = useTypedRedux("account", "account_id");
-  if (IS_MOBILE) {
+  if (narrow) {
     variant = "compact";
   }
   const scrollToIndex = getDescValue(desc, "data-scrollToIndex") ?? null;
@@ -2398,6 +2424,7 @@ export function ChatPanel({
         }
         openAutomationModal={openAutomationModalForThread}
         buttonAriaLabel="Selected thread actions"
+        buttonLabel={narrow ? "Thread actions" : undefined}
       />
     ) : null;
   const threadPanelTopRightPrefix =
@@ -2408,6 +2435,22 @@ export function ChatPanel({
         {effectiveThreadPanelTopRightControlsPrefix}
       </>
     ) : undefined;
+
+  const focusButton = standalone ? (
+    <Tooltip title={focused ? "Show project navigation" : "Focus conversation"}>
+      <Button
+        type="text"
+        aria-label={focused ? "Show project navigation" : "Focus conversation"}
+        aria-pressed={focused}
+        icon={
+          <Icon
+            name={focused ? (narrow ? "arrow-left" : "compress") : "expand"}
+          />
+        }
+        onClick={() => setFocusOverride(!focused)}
+      />
+    </Tooltip>
+  ) : null;
 
   const automationScheduleSummary = describeAutomationSchedule(
     selectedThreadAutomationConfig,
@@ -2677,7 +2720,7 @@ export function ChatPanel({
         newThreadSetup={newThreadSetup}
         onNewThreadSetupChange={setNewThreadSetup}
         onCreateThread={createThreadWithoutMessage}
-        showThreadImagePreview={showThreadImagePreview}
+        showThreadImagePreview={showThreadImagePreview && !narrow}
         hideChatTypeSelector={hideChatTypeSelector || !aiAgentPolicyAllowed}
         activityJumpDate={
           activityJumpAttentionId ? undefined : activityJumpDate
@@ -2689,13 +2732,22 @@ export function ChatPanel({
         isVisible={isVisible && tabIsVisible}
         onOpenGitBrowser={openGitBrowserFromMessage}
         hideTopControls={hideTopControls}
-        hideCompactThreadHeader={hideCompactThreadHeader}
+        hideCompactThreadHeader={hideCompactThreadHeader || narrow}
+        mobile={narrow}
+        onMobileToolsAction={() => setMobileToolsOpen(false)}
         allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}
         sidebarHidden={sidebarHidden}
         onToggleSidebar={() => setSidebarHidden((hidden) => !hidden)}
-        topRightControlsPrefix={threadPanelTopRightPrefix}
+        topRightControlsPrefix={
+          <>
+            {threadPanelTopRightPrefix}
+            {!narrow && !focused && focusButton}
+          </>
+        }
         compactTopRightControls={effectiveThreadPanelCompactTopRightControls}
-        topRightControlsPortal={threadPanelTopRightControlsPortal}
+        topRightControlsPortal={
+          narrow ? mobileToolsPortal : threadPanelTopRightControlsPortal
+        }
         readOnly={effectiveReadOnly}
       />
       {automationBanner}
@@ -2708,6 +2760,7 @@ export function ChatPanel({
             project_id={project_id}
             path={path}
             fontSize={fontSize}
+            mobile={narrow}
             composerDraftKey={composerDraftKey}
             composerSession={composerSession}
             input={input}
@@ -2782,18 +2835,102 @@ export function ChatPanel({
 
   return (
     <div
+      ref={focusRootRef}
       onMouseMove={mark_as_read}
       onClick={mark_as_read}
       onWheel={mark_as_read}
       onTouchMove={mark_as_read}
       onFocusCapture={onFocus}
-      className="smc-vfill"
+      className={`smc-vfill${narrow ? " cocalc-chat-narrow" : ""}`}
+      data-chat-focus={focused || undefined}
       style={{
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
+        minWidth: 0,
+        ...(focused
+          ? {
+              position: "fixed",
+              top: viewport.top,
+              left: viewport.left,
+              width: viewport.width || "100%",
+              height: viewport.height || "100dvh",
+              zIndex: 900,
+              background: UI_COLORS.page,
+              boxSizing: "border-box",
+              paddingTop: "env(safe-area-inset-top)",
+              paddingBottom: "env(safe-area-inset-bottom)",
+              paddingLeft: "env(safe-area-inset-left)",
+              paddingRight: "env(safe-area-inset-right)",
+            }
+          : {}),
       }}
     >
+      {!narrow && focused && (
+        <div
+          style={{ display: "flex", justifyContent: "flex-end", flexShrink: 0 }}
+        >
+          {focusButton}
+        </div>
+      )}
+      {narrow && (
+        <div className="cocalc-chat-mobile-header">
+          {!hideSidebar && (
+            <Badge dot={totalUnread > 0}>
+              <Button
+                type="text"
+                aria-label="Open chats"
+                aria-haspopup="dialog"
+                icon={<Icon name="bars" />}
+                onClick={() => setSidebarVisible(true)}
+              />
+            </Badge>
+          )}
+          <span
+            className="cocalc-chat-mobile-title"
+            title={stripThreadHtml(
+              selectedThread?.displayLabel ??
+                selectedThread?.label ??
+                "New chat",
+            )}
+          >
+            {stripThreadHtml(
+              selectedThread?.displayLabel ??
+                selectedThread?.label ??
+                "New chat",
+            )}
+          </span>
+          {focusButton}
+          <Button
+            type="text"
+            aria-label="Chat tools"
+            aria-haspopup="dialog"
+            icon={<Icon name="ellipsis" />}
+            onClick={() => setMobileToolsOpen(true)}
+          />
+        </div>
+      )}
+      <Drawer
+        title="Chat tools"
+        open={narrow && mobileToolsOpen}
+        forceRender
+        placement="right"
+        size="min(360px, 100vw)"
+        onClose={() => setMobileToolsOpen(false)}
+      >
+        <KeyboardBoundary boundary="chat-tools">
+          <Button
+            icon={<Icon name="plus" />}
+            onClick={() => {
+              onNewChat();
+              setMobileToolsOpen(false);
+            }}
+          >
+            New Chat
+          </Button>
+          <div ref={setMobileToolsPortal} />
+        </KeyboardBoundary>
+      </Drawer>
       <ChatRoomLayout
         variant={variant === "compact" ? "compact" : "default"}
         sidebarWidth={sidebarWidth}
@@ -2801,7 +2938,8 @@ export function ChatPanel({
         sidebarVisible={sidebarVisible}
         setSidebarVisible={setSidebarVisible}
         totalUnread={totalUnread}
-        hideSidebar={hideSidebar || sidebarHidden}
+        hideSidebar={hideSidebar || (!narrow && sidebarHidden)}
+        hideCompactNavigation={narrow}
         sidebarContent={
           <ChatRoomSidebarContent
             actions={actions}
@@ -2903,6 +3041,7 @@ function ChatRoomInner({
   onFocus,
   is_visible,
   tab_is_visible,
+  is_current,
 }: EditorComponentProps) {
   const { messages, threadIndex, version } = useChatDoc();
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
@@ -2927,6 +3066,7 @@ function ChatRoomInner({
       onFocus={onFocus}
       isVisible={is_visible}
       tabIsVisible={tab_is_visible}
+      isCurrent={is_current}
       readOnly={readOnly}
     />
   );

@@ -122,6 +122,7 @@ function getModeOptions(): ModeOption[] {
 }
 
 export interface CodexConfigButtonProps {
+  compact?: boolean;
   threadKey: string;
   chatPath: string;
   projectId?: string;
@@ -491,6 +492,7 @@ export function CodexPaymentCredentialsModal({
 }
 
 export function CodexConfigButton({
+  compact = false,
   threadKey,
   chatPath,
   projectId,
@@ -1153,7 +1155,11 @@ export function CodexConfigButton({
           maxWidth: "min(760px, calc(100vw - 32px))",
         }}
       >
-        {controlsCollapsed ? (
+        {compact ? (
+          <Button icon={<Icon name="sliders" />} onClick={() => setOpen(true)}>
+            Codex settings
+          </Button>
+        ) : controlsCollapsed ? (
           <span
             style={{
               alignItems: "center",
