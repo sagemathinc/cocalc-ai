@@ -1,9 +1,13 @@
 # Agent Documentation Consolidation, 2026-09-07
 
-Consolidates the 38 open `docs:` PRs reviewed on September 7, based on
+Consolidates the 38 `docs:` PRs that were open when reviewed on September 7, based on
 `82bbbbfd9d`. Original content by **Blaec-CoCalc**; consolidated commits retain
-co-author attribution. Original PRs and overlapping #478 remain open. This four-PR alternative is
+co-author attribution. Overlapping #478 remains open. This four-PR alternative is
 ready for review only: do not merge or close anything without maintainer approval.
+
+At the final audit, Blaec-CoCalc had independently closed 22 originals in the
+#427-#453 range within this scope. All 38 source heads still matched the reviewed
+mapping. This task has not merged, closed, or reopened any PR.
 
 ## Review Order
 
@@ -13,7 +17,7 @@ ready for review only: do not merge or close anything without maintainer approva
    #439, #440, #441, #444, #445, #447, #448, #449, #450, #467, #468.
 3. [Editor workflows, #481](https://github.com/sagemathinc/cocalc-ai/pull/481), based on #480:
    #446, #451, #452, #453, #454, #455 (guide only), #456, #457, #458, #459, #460, #465, #466.
-4. Developer reference (`docs/consolidate-developer-reference`), independently based on main:
+4. [Developer reference, #482](https://github.com/sagemathinc/cocalc-ai/pull/482), independently based on main:
    #427, #428, #433, #462, #463, #464.
 
 The first three form a review stack so each incremental diff has working links
