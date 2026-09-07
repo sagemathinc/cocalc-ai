@@ -107,6 +107,29 @@ For live notebooks, ask Codex to use the live notebook APIs. For UI actions,
 docs action ids such as \`settings.environment.secrets\` let agents open the
 right panel directly.
 
+## Manage a queued or unsent message
+
+A queued Codex message has controls alongside its status.
+
+1. Choose **Edit** to revise the request, then save the edit before the next
+   turn starts. The saved version will be used for that turn; the UI can show
+   **edited version sent** to identify it.
+2. Choose **Steer** if the waiting text should instead guide the currently
+   running turn.
+3. Choose **Cancel** to cancel that queued request.
+
+Check the message status after acting. Once execution has started, changing
+the displayed message is not the same operation as updating a waiting
+request.
+
+A **not sent** message can be a cancelled request or a failed submission.
+When **Submit again** is offered, inspect the text before using it. If an error
+is reported, resolve it first, such as reconnecting an expired ChatGPT sign-in
+or updating the selected API key. Read the
+reported error instead of assuming that every failed request is an allowance
+problem. Retrying is an explicit submission, so verify the message text
+before sending it again.
+
 ## Why this matters in CoCalc
 
 CoCalc is both a collaborative workspace and an agent sandbox. Humans can review
