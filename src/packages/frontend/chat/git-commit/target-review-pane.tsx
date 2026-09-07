@@ -1,0 +1,447 @@
+import { Alert, Button } from "antd";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  GitSource,
+  ImmutableReviewTarget,
+} from "@cocalc/frontend/components/diff-viewer/review-model";
+import { reviewTargetKey } from "@cocalc/frontend/components/diff-viewer/review-model";
+import { ChangedFilesLayout } from "@cocalc/frontend/components/diff-viewer/changed-files-layout";
+import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
+import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
+import { loadTargetReview, saveTargetReview } from "../git-target-review-store";
+import type {
+  TargetReviewBody,
+  TargetReviewRevision,
+} from "../git-target-review-store";
+import type { GitReviewCommentV2 } from "../git-review-store";
+import type { CommentAnchor, GitShowParsed } from "./types";
+import type { ReviewDiffNavigation } from "./review-diff-panel";
+import PierreReviewPanel from "./pierre-review-panel";
+import {
+  getEventPath,
+  isEditableOrKeyboardInteractiveTarget,
+} from "@cocalc/frontend/keyboard/boundary";
+import {
+  matchGitDrawerScrollCommand,
+  runGitDrawerScrollCommand,
+} from "./drawer-scroll";
+
+type Draft = {
+  body: TargetReviewBody;
+  parents: string[];
+  editor?: { anchor?: CommentAnchor; id?: string; text: string };
+};
+const empty = (): TargetReviewBody => ({
+  reviewed: false,
+  note: "",
+  comments: {},
+});
+
+export function TargetReviewPane({
+  target,
+  accountId,
+  fontSize,
+  onView,
+  onEditing,
+  onLeave,
+}: {
+  target: ImmutableReviewTarget;
+  accountId: string;
+  fontSize: number;
+  onView: (source: GitSource) => void;
+  onEditing: (editing: boolean) => void;
+  onLeave: () => void;
+}) {
+  const scope = reviewTargetKey(target);
+  const prefix = `cocalc:git-target-draft:v1:${JSON.stringify([accountId, scope])}:`;
+  const writer = useRef(crypto.randomUUID());
+  const key = prefix + writer.current;
+  const [draft, setDraft] = useState<Draft>({ body: empty(), parents: [] });
+  const current = useRef(draft);
+  const [heads, setHeads] = useState<TargetReviewRevision[]>([]);
+  const [recovered, setRecovered] = useState<
+    Array<{ key: string; draft: Draft }>
+  >([]);
+  const [data, setData] = useState<GitShowParsed>();
+  const [ready, setReady] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [localStored, setLocalStored] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const saving = useRef(false);
+  const [error, setError] = useState("");
+  const [activeFile, setActiveFile] = useState(0);
+  const navigationRef = useRef<ReviewDiffNavigation | null>(null);
+  const unusedRef = useRef(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const diff = await readTargetDiff(projectGitReader, target, 3);
+        if (!cancelled) setData(diff);
+        const drafts: Array<{ key: string; draft: Draft }> = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const oldKey = localStorage.key(i)!;
+          if (!oldKey.startsWith(prefix) || oldKey === key) continue;
+          try {
+            const value = JSON.parse(localStorage.getItem(oldKey)!);
+            if (
+              value?.body &&
+              typeof value.body.note === "string" &&
+              value.body.comments &&
+              typeof value.body.comments === "object" &&
+              !Array.isArray(value.body.comments) &&
+              Array.isArray(value.parents) &&
+              value.parents.every((id: unknown) => typeof id === "string")
+            )
+              drafts.push({ key: oldKey, draft: value });
+          } catch {
+            /* Leave unreadable drafts untouched. */
+          }
+        }
+        setRecovered(drafts);
+        const reviews = await loadTargetReview({ accountId, target });
+        if (cancelled) return;
+        setHeads(reviews.heads);
+        const saved = reviews.heads.length === 1 ? reviews.heads[0] : undefined;
+        const initial = {
+          body: saved?.body ?? empty(),
+          parents: saved ? [saved.id] : [],
+        };
+        current.current = initial;
+        setDraft(initial);
+        setReady(true);
+      } catch (err) {
+        if (!cancelled) setError(String(err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+      onEditing(false);
+    };
+  }, [target, accountId, prefix, key, onEditing]);
+  const change = (next: Draft) => {
+    if (saving.current) return;
+    try {
+      localStorage.setItem(key, JSON.stringify(next));
+      setLocalStored(true);
+    } catch {
+      setLocalStored(false);
+      setError(
+        "Local draft storage failed. Keep this window open and save the review.",
+      );
+    }
+    current.current = next;
+    setDraft(next);
+    setDirty(true);
+  };
+  useEffect(() => {
+    onEditing(Boolean(draft.editor) || busy || dirty);
+  }, [draft.editor, busy, dirty, onEditing]);
+  const updateComment = async (
+    id: string,
+    update: Partial<GitReviewCommentV2>,
+  ) => {
+    const old = current.current.body.comments[id];
+    if (!old) return;
+    change({
+      ...current.current,
+      editor: undefined,
+      body: {
+        ...current.current.body,
+        comments: {
+          ...current.current.body.comments,
+          [id]: {
+            ...old,
+            ...update,
+            updated_at: Date.now(),
+            local_revision: old.local_revision + 1,
+          },
+        },
+      },
+    });
+  };
+  const save = async (reconcile: boolean) => {
+    if (saving.current) return;
+    saving.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const saved = await saveTargetReview({
+        accountId,
+        target,
+        body: current.current.body,
+        parents: reconcile
+          ? heads.map((head) => head.id)
+          : current.current.parents,
+      });
+      const next = { body: saved.body, parents: [saved.id] };
+      current.current = next;
+      setDraft(next);
+      setDirty(false);
+      localStorage.removeItem(key);
+      setHeads((await loadTargetReview({ accountId, target })).heads);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      saving.current = false;
+      setBusy(false);
+    }
+  };
+  const comments = useMemo(() => {
+    const result = new Map<string, GitReviewCommentV2[]>();
+    for (const comment of Object.values(draft.body.comments))
+      result.set(comment.file_path, [
+        ...(result.get(comment.file_path) ?? []),
+        comment,
+      ]);
+    return result;
+  }, [draft.body.comments]);
+  if (!data) return <div role="status">{error || "Loading comparison..."}</div>;
+  const editor = draft.editor;
+  return (
+    <section
+      aria-label="Comparison review"
+      onKeyDown={(event) => {
+        const native = event.nativeEvent;
+        if (event.defaultPrevented || native.isComposing) return;
+        const path = getEventPath(native);
+        const viewport = navigationRef.current?.viewport();
+        if (
+          !viewport ||
+          !path.includes(viewport) ||
+          path.some(isEditableOrKeyboardInteractiveTarget)
+        )
+          return;
+        const command = matchGitDrawerScrollCommand(native);
+        if (!command) return;
+        event.preventDefault();
+        event.stopPropagation();
+        runGitDrawerScrollCommand(viewport, command);
+      }}
+    >
+      <p style={{ overflowWrap: "anywhere" }}>
+        {target.kind === "comparison"
+          ? `${target.mode}: ${target.base} to ${target.head}`
+          : `${target.commit} versus parent ${target.parentIndex + 1} (${target.parent ?? "empty tree"})`}
+      </p>
+      {error && (
+        <Alert
+          type="error"
+          title="Review operation failed"
+          description={error}
+        />
+      )}
+      {heads.length > 1 && (
+        <Alert
+          type="warning"
+          title="Concurrent review versions"
+          description="No version was overwritten. Inspect the versions below and explicitly reconcile their contents before saving a combined review."
+        />
+      )}
+      {heads.length > 1 &&
+        heads.map((head) => (
+          <details key={head.id}>
+            <summary>
+              Version {head.id} ({Object.keys(head.body.comments).length}{" "}
+              comments)
+            </summary>
+            <pre style={{ whiteSpace: "pre-wrap" }}>
+              {JSON.stringify(head.body, null, 2)}
+            </pre>
+            <Button
+              disabled={dirty || busy || Boolean(editor)}
+              onClick={() => {
+                const next = { body: head.body, parents: [head.id] };
+                current.current = next;
+                setDraft(next);
+              }}
+            >
+              Use this version
+            </Button>
+          </details>
+        ))}
+      {recovered.map((entry, i) => (
+        <span key={entry.key}>
+          <Button
+            disabled={dirty || busy || (!ready && !error)}
+            onClick={() => {
+              change(entry.draft);
+              setReady(true);
+            }}
+          >
+            Recover local draft {i + 1}
+          </Button>
+          <Button
+            disabled={busy}
+            onClick={() => {
+              if (
+                localStorage.getItem(entry.key) !== JSON.stringify(entry.draft)
+              ) {
+                setError(
+                  "This draft changed in another window; it was not deleted.",
+                );
+                return;
+              }
+              localStorage.removeItem(entry.key);
+              setRecovered(recovered.filter((item) => item.key !== entry.key));
+            }}
+          >
+            Discard local draft {i + 1}
+          </Button>
+        </span>
+      ))}
+      <label>
+        Review note{" "}
+        <textarea
+          aria-label="Comparison review note"
+          disabled={!ready || busy}
+          value={draft.body.note}
+          onChange={(event) =>
+            change({
+              ...draft,
+              body: { ...draft.body, note: event.target.value },
+            })
+          }
+          style={{ width: "100%" }}
+        />
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          disabled={!ready || busy}
+          checked={draft.body.reviewed}
+          onChange={(event) =>
+            change({
+              ...draft,
+              body: { ...draft.body, reviewed: event.target.checked },
+            })
+          }
+        />{" "}
+        Reviewed this comparison
+      </label>{" "}
+      <Button
+        disabled={!ready || busy || Boolean(editor)}
+        onClick={() => void save(false)}
+      >
+        Save review
+      </Button>{" "}
+      {dirty && (
+        <Button
+          disabled={!localStored || busy || Boolean(editor)}
+          onClick={onLeave}
+        >
+          Keep local draft and close
+        </Button>
+      )}
+      {heads.length > 1 && (
+        <Button
+          disabled={!ready || busy || Boolean(editor)}
+          onClick={() => void save(true)}
+        >
+          Save reconciliation of loaded versions
+        </Button>
+      )}
+      {!data.files.length && (
+        <Alert type="info" title="No changes between these pinned endpoints" />
+      )}
+      <ChangedFilesLayout
+        files={data.files.map((file, index) => ({
+          id: String(index),
+          path: file.path,
+          commentCount: comments.get(file.path)?.length,
+        }))}
+        activeId={String(activeFile)}
+        onSelect={(id) => navigationRef.current?.navigateToFile(Number(id))}
+      >
+        <PierreReviewPanel
+          files={data.files}
+          fontSize={fontSize}
+          reviewEditorScope={JSON.stringify([accountId, scope])}
+          firstParentProvenance={false}
+          inlineCommentsByFile={comments}
+          showResolvedComments={true}
+          isHeadSelected={false}
+          commentingDisabled={!ready || busy}
+          visibleDiffLinesByFile={{}}
+          drawerScrollParent={null}
+          virtuosoRef={unusedRef}
+          navigationRef={navigationRef}
+          onActiveFile={setActiveFile}
+          linesTruncated={data.linesTruncated}
+          repoRoot={target.repository.locator}
+          onOpenFile={async () => {}}
+          onViewFile={(path) => {
+            const file = data.files.find((file) => file.path === path);
+            const source = file?.newSource ?? file?.oldSource;
+            if (source) onView(source);
+          }}
+          onShowMoreLines={() => {}}
+          activeDraft={editor?.anchor}
+          activeDraftBody={editor?.anchor ? editor.text : ""}
+          activeEditingId={editor?.id}
+          activeEditingBody={editor?.id ? editor.text : ""}
+          pendingKey={busy ? "saving" : ""}
+          onOpenDraft={(anchor) =>
+            change({
+              ...draft,
+              editor: {
+                anchor: {
+                  ...anchor,
+                  side: anchor.side === "context" ? "new" : anchor.side,
+                },
+                text: "",
+              },
+            })
+          }
+          onDraftBodyChange={(text) =>
+            change({ ...draft, editor: { ...editor!, text } })
+          }
+          onCancelDraft={() => change({ ...draft, editor: undefined })}
+          onOpenEdit={(comment) =>
+            change({
+              ...draft,
+              editor: { id: comment.id, text: comment.body_md },
+            })
+          }
+          onEditingBodyChange={(text) =>
+            change({ ...draft, editor: { ...editor!, text } })
+          }
+          onCancelEdit={() => change({ ...draft, editor: undefined })}
+          onCreateComment={async (anchor, text) => {
+            const id = crypto.randomUUID();
+            const now = Date.now();
+            change({
+              ...current.current,
+              editor: undefined,
+              body: {
+                ...current.current.body,
+                comments: {
+                  ...current.current.body.comments,
+                  [id]: {
+                    id,
+                    file_path: anchor.filePath,
+                    side: anchor.side,
+                    line: anchor.line,
+                    hunk_header: anchor.hunk_header,
+                    hunk_hash: anchor.hunk_hash,
+                    snippet: anchor.snippet,
+                    body_md: text,
+                    status: "draft",
+                    created_at: now,
+                    updated_at: now,
+                    local_revision: 1,
+                  },
+                },
+              },
+            });
+          }}
+          onUpdateComment={(id, text) => updateComment(id, { body_md: text })}
+          onResolveComment={(id) => updateComment(id, { status: "resolved" })}
+          onReopenComment={(id) => updateComment(id, { status: "draft" })}
+          diffFindMatchCounts={new Map()}
+          diffFindMatchedLineIndexes={new Map()}
+        />
+      </ChangedFilesLayout>
+    </section>
+  );
+}

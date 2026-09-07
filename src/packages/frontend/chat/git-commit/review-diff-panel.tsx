@@ -21,6 +21,8 @@ export type ReviewDiffPanelProps = GitDiffFilesPanelProps & {
   linesTruncated: boolean;
   repoRoot?: string;
   activeDraft?: import("./types").CommentAnchor;
+  firstParentProvenance?: boolean;
+  commentingDisabled?: boolean;
 };
 
 export function ReviewDiffPanel(props: ReviewDiffPanelProps) {

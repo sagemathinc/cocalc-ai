@@ -448,8 +448,22 @@ conflicts. Tests cover account/repository/mode/parent separation, shared worktre
 identity, SHA-1/SHA-256 pins, unavailable parents, failed saves, image Markdown,
 submission identifiers, and corrupt ancestry. V2 records are not migrated or
 modified by this store. Wiring comparison controls, drafts, conflict selection,
-and store export/import into the drawer remains pending; this foundation alone
-does not enable comparison reviews in the UI.
+and store export/import into the drawer remains pending at this foundation stage.
+
+Initial comparison UI (2026-09-07): **Compare revisions...** opens a separately
+scoped review using explicit base/head refs or a numbered merge parent. The
+controls revalidate the repository, pin endpoints, reject late results while
+editing, and never assume `main` or perform checkout. The pane reuses Pierre,
+Trees, exact historical sources, and retained Slate inline editors. Notes,
+reviewed status, and inline comments save to target snapshots, never V2 commit
+records. Concurrent versions are visible and reconciliation is explicit.
+Per-writer local drafts survive closing/reopening; recovery remains available
+after a remote review-load failure. Active editors block context changes, and
+an explicit keep-draft close is available after finishing the editor.
+The live empty-tree comparison/account-load/local-close smoke passes without
+remote writes (`REVIEW_COMPARE=1` with the existing live harness). Full comparison
+URL routing, export/import controls, search parity, agent submission, and live
+nonempty comment-save/reconnect acceptance remain pending.
 
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the

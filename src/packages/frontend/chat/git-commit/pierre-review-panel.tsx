@@ -64,10 +64,16 @@ function ReviewContent(props: ReviewDiffPanelProps) {
         targetId: reviewEditorScope,
         files: locations,
         comments,
-        firstParentProvenance: true,
+        firstParentProvenance: props.firstParentProvenance ?? true,
         showResolvedComments: props.showResolvedComments,
       }),
-    [reviewEditorScope, locations, comments, props.showResolvedComments],
+    [
+      reviewEditorScope,
+      locations,
+      comments,
+      props.showResolvedComments,
+      props.firstParentProvenance,
+    ],
   );
   const parsed = useMemo(() => {
     try {
@@ -228,6 +234,7 @@ function ReviewContent(props: ReviewDiffPanelProps) {
           disabled={
             !selectedAnchor ||
             props.isHeadSelected ||
+            props.commentingDisabled ||
             Boolean(activeDraft || activeEditingId)
           }
           onClick={() => {

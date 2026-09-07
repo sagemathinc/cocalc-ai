@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Checkbox, Drawer, Spin, Alert, type MenuProps } from "antd";
+import { Checkbox, Drawer, Spin, Alert, Button, type MenuProps } from "antd";
+import { ComparisonModal } from "./git-commit/comparison-modal";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import type {
   CommentAnchor,
@@ -475,6 +476,7 @@ export function GitCommitDrawer({
   reviewSubmissionHelpText,
 }: GitCommitDrawerProps) {
   const accountId = useTypedRedux("account", "account_id");
+  const [comparisonOpen, setComparisonOpen] = useState(false);
   const editorTheme = useEffectiveEditorThemeForPath(projectId, sourcePath);
   const [localFontSize, setLocalFontSize] = useState(() =>
     clampGitReviewFontSize(fontSize),
@@ -685,6 +687,13 @@ export function GitCommitDrawer({
       ? repositoryDiscovery.discovery
       : undefined;
   const cwd = selectedHistory?.selection.worktree ?? originCwd;
+  const comparisonRepository = useMemo(
+    () =>
+      originDiscovery
+        ? { ...originDiscovery.repository, locator: cwd }
+        : undefined,
+    [originDiscovery, cwd],
+  );
   useEffect(() => {
     if (open && commit)
       onSelectedCommitChange?.(
@@ -3201,6 +3210,19 @@ export function GitCommitDrawer({
           color: UI_COLORS.text,
         }}
       >
+        {originDiscovery && accountId && (
+          <Button
+            onClick={() => setComparisonOpen(true)}
+            disabled={Boolean(
+              activeInlineDraft ||
+              activeInlineEditId ||
+              reviewNoteEditing ||
+              reviewSaving,
+            )}
+          >
+            Compare revisions...
+          </Button>
+        )}
         {originDiscovery && (
           <GitHistoryControls
             origin={originDiscovery}
@@ -3500,6 +3522,18 @@ export function GitCommitDrawer({
           </div>
         ) : null}
       </div>
+      {comparisonOpen && open && comparisonRepository && accountId && (
+        <ComparisonModal
+          repository={comparisonRepository}
+          commit={commit ?? "HEAD"}
+          accountId={accountId}
+          fontSize={effectiveFontSize}
+          onClose={() => setComparisonOpen(false)}
+          onView={(source) =>
+            setHistoricalFile({ scope: scrollStorageId, request: { source } })
+          }
+        />
+      )}
       <GitRevisionModal
         request={
           open && historicalFile?.scope === scrollStorageId
