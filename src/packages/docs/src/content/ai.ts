@@ -53,9 +53,10 @@ Browser delivery also needs browser permission; use **Enable browser notificatio
 and **Test notification** in account settings. CoCalc suppresses the extra toast
 or browser alert when you are directly watching that thread.
 
-Successful completion uses **Codex turn finished**; an error uses
-**Codex turn ended with an error**. A completion notice does not establish that
-every background command or descendant agent has stopped. Inspect the account's
+In CoCalc, successful completion uses **Codex turn finished**; an error uses
+**Codex turn ended with an error**. Browser notifications use the generic title
+**Codex finished**; open CoCalc to inspect the outcome. A completion notice does
+not establish that every background command or descendant agent has stopped. Inspect the account's
 Codex sessions panel when you need to confirm remaining activity.
 
 ## Why this matters in CoCalc
