@@ -28,6 +28,30 @@ For live notebooks, ask Codex to use the live notebook APIs. For UI actions,
 docs action ids such as \`settings.environment.secrets\` let agents open the
 right panel directly.
 
+## Point an editor request at the right content
+
+An editor's **Agent** button can attach context from the current frame to your
+request. Make the intended target clear before opening the popup.
+
+1. In a text editor, select the passage or code you want to discuss or change.
+2. If nothing is selected, put the cursor near the relevant text and describe
+   the location in your request.
+3. Open **Agent** and state the desired result and any constraints.
+4. Follow the request in the agent chat and review changes in the document.
+
+Supported editors choose the current selection or a narrower cell or page
+context when available, falling back to document content. Text-editor
+requests can include the file path, source-line range, and cursor location;
+line precision depends on the editor.
+Selected context guides the request; it does not restrict the agent's project
+access. Long excerpts may be shortened; the agent is instructed to inspect current
+live content before editing.
+
+When a terminal frame provides a live session ID, the request identifies that
+session. The agent can inspect and write to it, so describe whether you want an
+explanation or a command executed. The terminal's file path alone does not
+identify the running shell.
+
 ## Why this matters in CoCalc
 
 CoCalc is both a collaborative workspace and an agent sandbox. Humans can review
