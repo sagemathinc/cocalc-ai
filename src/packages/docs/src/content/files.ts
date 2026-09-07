@@ -120,6 +120,26 @@ If the PDF does not build, start with the first meaningful LaTeX error rather
 than later follow-up errors. Clean auxiliary files when stale build state is
 suspect. For large documents, isolate failing sections in a small test file
 before changing the full paper.
+
+## Ask Agent about a LaTeX build error
+
+An error entry with a source line can offer **Fix with Agent...** and
+**Ask Agent for a Hint...**, depending on the AI access allowed in the project.
+
+1. Build the document and find the first useful error in the errors panel.
+2. Choose **Fix with Agent...** to request a repair, or **Ask Agent for a
+   Hint...** to request debugging guidance.
+3. Review the displayed error context and choose the recent agent session
+   when the selector is shown.
+4. Confirm with **Send to Agent** for a repair, or **Ask Agent** for a hint.
+5. Follow the response in the agent chat. Review any edits and rebuild the PDF
+   to check the result.
+
+The repair request identifies the document, the reported error file and line,
+the error message, and the configured build command. This helps the agent
+locate an error in an included file and reproduce the build. It is instructed
+to use the live document when available. Warnings and errors without a source
+line do not receive this particular error-row shortcut.
 `;
 
 export const R_MARKDOWN_BODY = String.raw`
