@@ -51,8 +51,13 @@ has not been made discoverable as part of this work.
   ownership/cleanup, mobile composer expansion, steer/queue callbacks, settings
   summary, and keyboard formatting/upload access.
 - Full static builds and frontend lint passed throughout the implementation.
-  Latest broad check before the drawer-focus follow-up: 81 chat suites,
-  689 tests passed; Markdown-input contracts also passed separately.
+  Latest broad check after the message-focus follow-up: 87 chat/Markdown-input
+  suites, 739 tests passed.
+- Goal dialog passes its focused axe scan, including expanded Budget and usage.
+  Its objective and budget fields now render at 16px in compact viewports,
+  matching the composer; browser-computed styles verified after rebuilding.
+  Ten focused goal tests, lint, and the full build passed after this change.
+  No goal was created, modified, or saved during the browser audit.
 - Expanded Codex message output fits the phone viewport and passes a focused
   axe scan. Its trigger is now named "Focus this message". Escape and the Close
   button return focus to the source message (or its trigger if still mounted),
