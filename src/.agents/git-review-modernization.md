@@ -51,6 +51,17 @@ would not be evidence that these checks pass.
 
 ### Restored live-session checks
 
+Live private-note recovery passed with `REVIEW_NOTE_RECOVERY=1` in
+`review-concurrency-live.browser-test.mjs` on disposable commit
+`dc94e484ef3665b80c47f89b3942d80c5cd52d92`. Two real application tabs loaded
+the same empty review. The first saved; the second's stale save was rejected
+while retaining its Slate draft. Reload exposed both notes, then saving a
+reconciled note and reloading again retained both originals in the read-only
+recovery section. The small fixture is intentionally retained; no existing
+branch, worktree or user review was changed. Lint and script syntax checks pass.
+This closes the live note reconciliation case, not the separate network
+disconnect/reconnect gate.
+
 Native-selection fix: pointer diagnostics reproduced replacement of the selected
 text node during interaction. The Pierre React wrapper compares options and
 forces a render when they change; our fresh onPostRender callback and metrics

@@ -1,5 +1,7 @@
 // Real application save-conflict test. Requires an initially empty private
 // note; preserves other review fields and removes its test note on success.
+// REVIEW_NOTE_RECOVERY=1 instead retains a disposable review with both recovered
+// versions and a reconciled note. Use a fresh, throwaway commit for that mode.
 import assert from "node:assert/strict";
 const [chat, hash] = process.argv.slice(2);
 if (!chat || !/^[a-f0-9]{40,64}$/.test(hash ?? ""))
@@ -118,22 +120,61 @@ try {
       await second.evaluate(`JSON.stringify(window.__raceSlate.children)`),
       /second window/,
     );
-    await click(second, "Cancel");
-    // First still owns the latest successful sequence and can restore the empty
-    // note. A concurrent third writer causes a conflict rather than being erased.
-    await edit(first, "");
-    await click(first, "Save note");
-    await first.until(
-      `!${button("Save note")} && document.body.innerText.includes('No private review note yet.')`,
-    );
-    saved = false;
-    await first.send("Page.reload", {});
-    await first.until(
-      `document.body.innerText.includes('No private review note yet.')`,
-    );
-    console.log(
-      "PASS: first save succeeded, stale second save rejected with Slate draft retained, original empty note restored and verified after reload.",
-    );
+    if (process.env.REVIEW_NOTE_RECOVERY) {
+      await second.send("Page.reload", {});
+      await second.until(
+        `!!Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('Recovered private note versions'))`,
+      );
+      await second.evaluate(
+        `Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('Recovered private note versions')).click()`,
+      );
+      await second.until(
+        `Array.from(document.querySelectorAll('textarea[readonly]')).some(e=>e.value.includes('CoCalc concurrency smoke: first window'))`,
+      );
+      await second.until(
+        `document.querySelector('.ant-drawer-body').innerText.includes('CoCalc concurrency smoke: second window')`,
+      );
+      // Save the recovered record, then verify recovery versions survive without
+      // relying on the local draft. This mode intentionally retains its fixture.
+      await edit(second, "CoCalc concurrency smoke: reconciled note");
+      await click(second, "Save note");
+      await second.until(
+        `!${button("Save note")} && document.body.innerText.includes('CoCalc concurrency smoke: reconciled note')`,
+      );
+      await second.send("Page.reload", {});
+      await second.until(
+        `document.body.innerText.includes('CoCalc concurrency smoke: reconciled note')`,
+      );
+      await second.evaluate(
+        `Array.from(document.querySelectorAll('button')).find(e=>e.textContent.includes('Recovered private note versions')).click()`,
+      );
+      for (const version of ["first window", "second window"])
+        await second.until(
+          `Array.from(document.querySelectorAll('textarea[readonly]')).some(e=>e.value.includes(${JSON.stringify(version)}))`,
+        );
+      saved = false;
+      console.log(
+        "PASS: stale private note recovered, both versions retained through reconciliation/save/reload. Disposable fixture retained.",
+      );
+      process.exitCode = 0;
+    } else {
+      await click(second, "Cancel");
+      // First still owns the latest successful sequence and can restore the empty
+      // note. A concurrent third writer causes a conflict rather than being erased.
+      await edit(first, "");
+      await click(first, "Save note");
+      await first.until(
+        `!${button("Save note")} && document.body.innerText.includes('No private review note yet.')`,
+      );
+      saved = false;
+      await first.send("Page.reload", {});
+      await first.until(
+        `document.body.innerText.includes('No private review note yet.')`,
+      );
+      console.log(
+        "PASS: first save succeeded, stale second save rejected with Slate draft retained, original empty note restored and verified after reload.",
+      );
+    }
   }
 } finally {
   if (saved)
