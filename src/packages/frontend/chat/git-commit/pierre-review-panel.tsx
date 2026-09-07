@@ -359,6 +359,17 @@ function ReviewContent(props: ReviewDiffPanelProps) {
         >
           Copy selected source
         </Button>
+        <Button
+          size="small"
+          disabled={!files.length}
+          onClick={() =>
+            void copy(
+              files.map((file) => file.lines.join("\n") + "\n").join(""),
+            )
+          }
+        >
+          Copy loaded patch
+        </Button>
       </div>
       <div role="status">{message}</div>
       <CodeView<string>

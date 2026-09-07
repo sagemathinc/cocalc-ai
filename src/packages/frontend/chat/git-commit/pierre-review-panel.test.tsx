@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import PierreReviewPanel from "./pierre-review-panel";
 import type { ReviewDiffPanelProps } from "./review-diff-panel";
 import { buildDiffLineMetas, makeCommentAnchor } from "./diff-lines";
+import { copyTextToClipboard } from "@cocalc/frontend/components/copy-button";
 import { writeScrollAnchor } from "@cocalc/frontend/components/diff-viewer/scroll-anchor";
 
 test("restores a semantic old-side anchor, but refuses a line missing from the patch", () => {
@@ -204,6 +205,23 @@ beforeEach(() => {
   mockTheme = "light";
   mockRecycle = false;
   mockScrollTo.mockClear();
+  jest.mocked(copyTextToClipboard).mockClear();
+});
+
+test("patch copying retains headers and markers and is separate from selected source", async () => {
+  const user = userEvent.setup();
+  render(<PierreReviewPanel {...props()} />);
+  const copyPatch = screen.getByRole("button", { name: "Copy loaded patch" });
+  copyPatch.focus();
+  await user.keyboard("{Enter}");
+  expect(copyTextToClipboard).toHaveBeenLastCalledWith({
+    text: file.lines.join("\n") + "\n",
+  });
+  expect(copyPatch).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "Select new line" }));
+  screen.getByRole("button", { name: "Copy selected source" }).focus();
+  await user.keyboard("{Enter}");
+  expect(copyTextToClipboard).toHaveBeenLastCalledWith({ text: "new" });
 });
 
 test("selection creates the exact legacy anchor, with keyboard comment activation", async () => {

@@ -4,6 +4,27 @@ Status: proceed with Pierre integration, following maintainer acceptance of the
 experiment on September 6, 2026. Production replacement remains gated on product
 parity and data-safety checks below. Definition lookup remains future work.
 
+## Current completion audit (2026-09-07)
+
+The dated progress notes below are chronological; an old "pending" statement is
+not a current checklist. The objective is not complete. Current release work:
+
+| Requirement | Current evidence and remaining work |
+| --- | --- |
+| Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Validate the live drawer on unique/ambiguous/no-worktree commits and moved refs; do not infer that from helper tests. |
+| Review preservation | V2 adapters, account-scoped alias discovery, comparison revisions, export/import and recovery-draft tests exist. Short/full alias conflicts still stop loading; explicit conflict-preserving reconciliation is not implemented. Existing aliases intentionally remain under their original keys. |
+| Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Verify actual drawer close/reopen and renderer switching. Native partial-text selection across virtual windows remains a browser acceptance case. |
+| Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
+| TimeTravel | Shared document rendering and arbitrary Git revision viewing are implemented. Verify Git, patchflow, snapshot and backup text comparisons plus rich-viewer/restore behavior end to end; the standalone document fixture is not source-specific acceptance. |
+| Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live agent dispatch and originating-context links still need end-to-end confirmation. |
+| Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying and an 18,001-line benchmark. Record production bundle-size deltas and complete the full-app appearance/editor and large-file cases; measured main-thread heap excludes worker heaps. |
+| Default and cleanup | Classic is still the default and rollback path. Do not delete it or the experiment until the compatibility gates pass and maintainer testing supports the switch. |
+
+Browser access: the forwarded CDP port currently resets. Local fresh-auth
+bootstrap succeeded, but automatic browser account login is explicitly disabled
+inside this collaborative project. Do not bypass that safeguard; use a restored
+forward or another supported signed-in session for live acceptance.
+
 ## Objective
 
 Make reading and discussing agent-produced code reliable across branches,
