@@ -20,12 +20,12 @@ not a current checklist. The objective is not complete. Current release work:
 | Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor acceptance remains; investigate intermittent native-copy failure if reproduced. Measured main-thread heap excludes worker heaps. |
 | Default and cleanup | Classic is still the default and rollback path. Do not delete it or the experiment until the compatibility gates pass and maintainer testing supports the switch. |
 
-Browser access: the forwarded CDP port currently resets. Local fresh-auth
-bootstrap succeeded, but automatic browser account login is explicitly disabled
-inside this collaborative project. Do not bypass that safeguard; use a restored
-forward or another supported signed-in session for live acceptance.
+Browser access: the maintainer restored the CDP forward and signed-in session.
+Live checks below now run in isolated targets on Chrome 151.0.7922.71. Do not
+use automatic account login inside this collaborative project or bypass its
+credential-storage safeguard.
 
-Resume live acceptance when the signed-in forward is restored. Check these in
+Continue live acceptance using the signed-in forward. Check these in
 the actual application, not the service/Slate-stubbed harness:
 
 1. Open the same review in two browser windows. Save independent comments,
@@ -46,7 +46,31 @@ the actual application, not the service/Slate-stubbed harness:
 
 Only after these checks and maintainer acceptance should the default change and
 rollback-window decision proceed. The current lack of a signed-in test session
-is not evidence that these checks pass.
+would not be evidence that these checks pass.
+
+### Restored live-session checks
+
+The real application smoke script passed on the maintainer-provided `x.chat`
+in project `1ce4fe78-19c7-40a8-a598-947975744cd9` at commit
+`3365e54323ddcc71dda4fe8577cbfec75bdfb587`:
+
+- Pierre gutter selection opened the real Slate editor. Its DOM identity and
+  draft text survived scrolling away/back and explicit Light/Dark transitions;
+  the draft was cancelled without saving. The maintainer also independently
+  confirmed Pierre dark mode works properly.
+- `REVIEW_HISTORY_REF=refs/heads/main` pinned the selected ref and restored its
+  context and URL on page reload. An initial test using `main` was invalid
+  because the selector uses full ref names; the harness now rejects missing
+  options immediately instead of silently setting an empty value.
+- `REVIEW_COMPARE=1` passed for identical endpoints and for the nonempty base
+  `6057d353ea327374e288eed0f543c48199866ddd`. Controls, pinned endpoints,
+  account review loading, diff search on nonempty input, and local-draft close
+  worked without remote review writes.
+
+These DOM-driven checks do not prove native clipboard behavior, upload/undo,
+multi-window persistence, moved-ref handling, or agent dispatch. Keep those
+acceptance items open. Each run closes only its own browser target and restores
+the previous appearance preference.
 
 ### Single-file stress evidence (2026-09-07)
 

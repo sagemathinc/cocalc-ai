@@ -73,7 +73,7 @@ async function click(expression) {
 }
 const select = (label, value) =>
   evaluate(
-    `(()=>{const e=document.querySelector('select[aria-label=${JSON.stringify(label)}]');e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('change',{bubbles:true}))})()`,
+    `(()=>{const e=document.querySelector('select[aria-label=${JSON.stringify(label)}]');if(!e || !Array.from(e.options).some(option=>option.value===${JSON.stringify(value)}))throw Error(${JSON.stringify(`Missing option ${value} in ${label}`)});e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('change',{bubbles:true}))})()`,
   );
 const button = (label) =>
   `Array.from(document.querySelectorAll('button')).find(e=>e.textContent.trim()===${JSON.stringify(label)})`;
