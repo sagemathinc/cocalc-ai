@@ -17,7 +17,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, win32 } from "node:path";
+import { isAbsolute, join, resolve, win32 } from "node:path";
 
 import { cocalcCliDataDir as nativeCliDataDir } from "../../core/platform-paths";
 
@@ -235,15 +235,17 @@ async function isExecutable(path: string): Promise<boolean> {
 export function resolveCloudflaredBinary(): string {
   const configured = `${process.env.COCALC_CLI_CLOUDFLARED ?? ""}`.trim();
   if (configured) {
-    if (!commandExists(configured)) {
+    const path = resolveCommandPath(configured);
+    if (!path) {
       throw new Error(
         `COCALC_CLI_CLOUDFLARED is set but not executable: ${configured}`,
       );
     }
-    return configured;
+    return resolve(path);
   }
-  if (commandExists("cloudflared")) {
-    return "cloudflared";
+  const path = resolveCommandPath("cloudflared");
+  if (path) {
+    return resolve(path);
   }
   throw new Error(
     `cloudflared is required for project ssh via the Cloudflare ssh hostname; install it (${cloudflaredInstallHint()}) or use --direct`,
@@ -255,7 +257,7 @@ export async function ensureCloudflaredBinary(): Promise<string> {
   if (configured || commandExists("cloudflared")) {
     return resolveCloudflaredBinary();
   }
-  const destination = localCloudflaredBinaryPath();
+  const destination = resolve(localCloudflaredBinaryPath());
   if (await isExecutable(destination)) {
     return destination;
   }
