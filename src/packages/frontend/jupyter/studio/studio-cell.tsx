@@ -25,7 +25,7 @@ import type { AITools } from "@cocalc/jupyter/types";
 import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { hash_string } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { CellOutput } from "@cocalc/frontend/jupyter/cell-output";
 import { CellToolbar } from "@cocalc/frontend/jupyter/cell-toolbar";
 import { CellInput } from "@cocalc/frontend/jupyter/cell-input";
@@ -285,7 +285,7 @@ export const StudioCell: React.FC<StudioCellProps> = React.memo((props) => {
       ? {
           ...CODE_BAR_BTN_STYLE,
           height: "auto",
-          color: COLORS.ANTD_RED,
+          color: UI_COLORS.danger,
           ...extraStyle,
         }
       : { ...CODE_BAR_BTN_STYLE, height: "auto", ...extraStyle };
@@ -579,7 +579,7 @@ export const StudioCell: React.FC<StudioCellProps> = React.memo((props) => {
                     frameActions.current?.scroll("cell visible");
                   }
                 }}
-                style={{ color: COLORS.GRAY_M }}
+                style={{ color: UI_COLORS.secondary }}
               />
             </Tooltip>
           </div>
@@ -762,7 +762,7 @@ export const StudioCell: React.FC<StudioCellProps> = React.memo((props) => {
                     // Only the "text" link diverges (converts to markdown).
                     <div
                       style={{
-                        color: COLORS.GRAY_L,
+                        color: UI_COLORS.muted,
                         padding: "8px 4px",
                         fontSize: "13px",
                         minHeight: "36px",
@@ -776,13 +776,13 @@ export const StudioCell: React.FC<StudioCellProps> = React.memo((props) => {
                           e.stopPropagation();
                           handleActivateCode();
                         }}
-                        style={{ color: COLORS.GRAY_L }}
+                        style={{ color: UI_COLORS.muted }}
                       >
                         code
                       </a>
                       {", "}
                       <a
-                        style={{ color: COLORS.GRAY_L }}
+                        style={{ color: UI_COLORS.muted }}
                         onClick={(e) => {
                           e.stopPropagation();
                           frameActions.current?.set_selected_cell_type(
@@ -824,7 +824,7 @@ export const StudioCell: React.FC<StudioCellProps> = React.memo((props) => {
                     ) : (
                       <div
                         style={{
-                          color: COLORS.GRAY_L,
+                          color: UI_COLORS.muted,
                           padding: "4px",
                           fontStyle: "italic",
                           cursor: "pointer",
@@ -910,7 +910,7 @@ export const StudioCell: React.FC<StudioCellProps> = React.memo((props) => {
                         wordBreak: "break-word",
                         fontFamily: "monospace",
                         fontSize: `${font_size}px`,
-                        color: COLORS.GRAY_D,
+                        color: UI_COLORS.text,
                         background: "transparent",
                         border: "none",
                       }}
@@ -920,7 +920,7 @@ export const StudioCell: React.FC<StudioCellProps> = React.memo((props) => {
                   ) : (
                     <div
                       style={{
-                        color: COLORS.GRAY_L,
+                        color: UI_COLORS.muted,
                         padding: "4px 8px",
                         fontStyle: "italic",
                       }}
@@ -1055,8 +1055,8 @@ export const StudioCell: React.FC<StudioCellProps> = React.memo((props) => {
                               zIndex: 1,
                               display: "flex",
                               gap: "2px",
-                              background: "white",
-                              border: `1px solid ${COLORS.GRAY_L}`,
+                              background: UI_COLORS.surface,
+                              border: `1px solid ${UI_COLORS.muted}`,
                               borderBottom: "none",
                               borderRadius: "4px 4px 0 0",
                               padding: "1px 2px",
@@ -1204,7 +1204,7 @@ export const StudioCell: React.FC<StudioCellProps> = React.memo((props) => {
                   frameActions.current?.scroll("cell visible");
                 }
               }}
-              style={{ color: COLORS.GRAY_M }}
+              style={{ color: UI_COLORS.secondary }}
             />
           </Tooltip>
         </div>
@@ -1287,12 +1287,12 @@ function SectionDividerRow({
   const [hovered, setHovered] = useState(false);
   const bg =
     runState === "error"
-      ? COLORS.ANTD_BG_RED_L
+      ? UI_COLORS.dangerBg
       : hovered
-        ? COLORS.GRAY_LL
-        : COLORS.GRAY_LLL;
-  const borderTop = isFirst ? undefined : `1px solid ${COLORS.GRAY_LL}`;
-  const borderBottom = `1px solid ${COLORS.GRAY_LL}`;
+        ? UI_COLORS.hover
+        : UI_COLORS.inset;
+  const borderTop = isFirst ? undefined : `1px solid ${UI_COLORS.border}`;
+  const borderBottom = `1px solid ${UI_COLORS.border}`;
   const segmentClass =
     runState === "running" ? "studio-section-running" : undefined;
   const segmentStyle: React.CSSProperties = {
@@ -1333,14 +1333,14 @@ function SectionDividerRow({
         >
           <Icon
             name={sectionCollapsed ? "plus-square" : "minus-square"}
-            style={{ color: COLORS.GRAY_M, fontSize: "14px" }}
+            style={{ color: UI_COLORS.secondary, fontSize: "14px" }}
           />
         </div>
         {/* Title */}
         {sectionCollapsed && sectionTitle ? (
           <span
             style={{
-              color: COLORS.GRAY_D,
+              color: UI_COLORS.text,
               fontSize: "13px",
               fontWeight: 600,
               overflow: "hidden",
@@ -1367,7 +1367,7 @@ function SectionDividerRow({
                 onRunSection();
               }}
               style={{
-                color: COLORS.GRAY_M,
+                color: UI_COLORS.secondary,
                 visibility: hovered ? "visible" : "hidden",
                 marginRight: "4px",
               }}

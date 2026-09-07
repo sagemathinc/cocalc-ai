@@ -15,7 +15,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { NotificationFilter } from "./mentions/types";
 import { MSGS } from "./notification-i18n";
 import { NotificationList } from "./notification-list";
@@ -52,7 +52,7 @@ export function NotificationPage() {
 
   function renderExplanation() {
     return (
-      <Paragraph style={{ color: COLORS.GRAY_D, flex: "0 0 auto" }}>
+      <Paragraph style={{ color: UI_COLORS.secondary, flex: "0 0 auto" }}>
         {intl.formatMessage(
           {
             id: "notifications.page.intro",
@@ -205,6 +205,7 @@ export function NotificationPage() {
           {intl.formatMessage(labels.notifications)}
           <Button
             type="link"
+            aria-label={intl.formatMessage(labels.help)}
             style={{ fontSize: "12pt" }}
             onClick={() => setShowHelp(true)}
           >

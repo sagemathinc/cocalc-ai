@@ -4,6 +4,7 @@
  */
 
 import { renderToStaticMarkup } from "react-dom/server";
+import { appearanceStyleSheet } from "@cocalc/util/appearance-palette";
 
 import type { DocsAccess, DocsEntryImage } from "@cocalc/docs";
 import { listDocsEntries } from "@cocalc/docs";
@@ -74,18 +75,39 @@ export function wrapDocsPrintHtml(
   <head>
     <title>CoCalc documentation</title>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="google" content="notranslate" />
+    <meta name="color-scheme" content="light dark" />
+    <style>${appearanceStyleSheet()}</style>
     <base href="${BASE_URL}/" />
     ${includeResourceLinks ? resource_links_string(BASE_URL) : ""}
     <style>
-      html, body { background: white; }
       body { margin: 0; padding: 24px; }
+      .cocalc-docs-export-appearance { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 16px; }
+      .cocalc-docs-export-appearance select { color: var(--cocalc-ui-text); background: var(--cocalc-ui-surface); border: 1px solid var(--cocalc-ui-controlBorder); padding: 4px; }
       @media screen and (max-width: 640px) { body { padding: 12px; } }
-      @media print { body { padding: 0; } }
+      @media print { body { padding: 0; } .cocalc-docs-export-appearance { display: none; } }
     </style>
   </head>
   <body>
+    <label class="cocalc-docs-export-appearance">Appearance
+      <select id="cocalc-docs-appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select>
+    </label>
     ${html}
+    <script>
+      (function () {
+        var select = document.getElementById("cocalc-docs-appearance");
+        var media = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+        function apply() {
+          var mode = select.value === "system" ? (media && media.matches ? "dark" : "light") : select.value;
+          document.documentElement.dataset.cocalcTheme = mode;
+          document.documentElement.style.colorScheme = mode;
+        }
+        select.addEventListener("change", apply);
+        if (media) media.addEventListener("change", apply);
+        apply();
+      })();
+    </script>
     ${
       autoPrint
         ? `<script>

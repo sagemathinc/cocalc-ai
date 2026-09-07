@@ -42,6 +42,10 @@ with a keyboard and reviewing behavior at narrow widths and browser zoom.
 
 ## Visual And Responsive Checklist
 
+- Use `UI_COLORS` from `@cocalc/util/appearance-palette` for themed UI colors,
+  pairing text and surface tokens. Fixed `COLORS` values are not a substitute
+  for dark-mode support. See [UI colors and appearance](../../docs/STYLE.md#ui-colors-and-appearance)
+  for CSS variables and intentionally fixed-color exceptions.
 - General-purpose UI must remain usable at 200% browser zoom and reflow without
   losing content or controls at 320 CSS pixels wide. Intrinsically
   two-dimensional content such as canvases and large data grids may be a

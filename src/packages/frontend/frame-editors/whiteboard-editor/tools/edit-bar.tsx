@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
 Editing bar for editing one (or more) selected elements.
 */
@@ -95,7 +96,7 @@ export default function EditBar(opts: Props) {
 
 export const BUTTON_STYLE: CSS = {
   fontSize: "22px",
-  color: "#666",
+  color: UI_COLORS.secondary,
   height: "42px",
   padding: "4px 5px",
 } as const;
@@ -160,10 +161,10 @@ function ColorButton(props: ButtonProps) {
           color={color}
           onChange={setColor}
           style={{
-            background: "white",
+            background: UI_COLORS.elevated,
             padding: "10px",
-            border: "1px solid grey",
-            boxShadow: "0 0 5px grey",
+            border: `1px solid ${UI_COLORS.border}`,
+            boxShadow: `0 0 5px ${UI_COLORS.shadow}`,
             borderRadius: "3px",
             position: "absolute",
             top: "50px" /* TODO: may want more intelligent positioning */,
@@ -221,7 +222,7 @@ function FontSize(props: ButtonProps) {
         style={{
           width: "64px",
           fontSize: "20px",
-          color: "#666",
+          color: UI_COLORS.secondary,
         }}
         min={minFontSize}
         max={maxFontSize}
@@ -251,7 +252,7 @@ function Radius(props: ButtonProps) {
         style={{
           width: "70px",
           fontSize: "20px",
-          color: "#666",
+          color: UI_COLORS.secondary,
         }}
         min={0}
         max={maxRadius}
@@ -287,7 +288,7 @@ function Opacity(props: ButtonProps) {
         style={{
           width: "70px",
           fontSize: "20px",
-          color: "#666",
+          color: UI_COLORS.secondary,
         }}
         min={0}
         max={1}

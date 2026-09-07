@@ -137,6 +137,7 @@ import {
   LockFilled,
   LockOutlined,
   LoginOutlined,
+  LogoutOutlined,
   MailOutlined,
   MedicineBoxOutlined,
   MehOutlined,
@@ -544,7 +545,7 @@ const IconSpec = {
   server: CloudServerOutlined,
   servers: { IconFont: "servers" },
   "sign-in": LoginOutlined,
-  "sign-out-alt": LoginOutlined, // Yes, since the logout one breaks darkreader, weirdly! they both look reasonable.
+  "sign-out-alt": LogoutOutlined,
   sitemap: ClusterOutlined,
   "share-square": ShareAltOutlined,
   "shopping-cart": ShoppingCartOutlined,

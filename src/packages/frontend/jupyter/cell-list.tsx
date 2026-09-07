@@ -24,7 +24,7 @@ import {
 } from "@cocalc/frontend/keyboard/boundary";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { AITools, NotebookMode, Scroll } from "@cocalc/jupyter/types";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { JupyterActions } from "./browser-actions";
 import { Cell } from "./cell";
 import HeadingTagComponent from "./heading-tag";
@@ -183,7 +183,7 @@ function renderLoading() {
     <div
       style={{
         fontSize: "32pt",
-        color: "#888",
+        color: UI_COLORS.muted,
         textAlign: "center",
         marginTop: "15px",
       }}
@@ -771,19 +771,20 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
     const prompt = dragPreviewPromptForCell(id);
     const inputLines = dragPreviewLinesForCell(id, Math.max(index, 0));
     const hasOutput = dragPreviewHasOutput(id);
-    const inputBackground = cellType === "markdown" ? "white" : COLORS.GRAY_LLL;
+    const inputBackground =
+      cellType === "markdown" ? UI_COLORS.surface : UI_COLORS.inset;
     return (
       <div
         style={{
           width: "min(720px, calc(100vw - 48px))",
           maxHeight: "70vh",
           overflow: "hidden",
-          borderLeft: `5px solid ${COLORS.BS_BLUE_TEXT}`,
+          borderLeft: `5px solid ${UI_COLORS.focus}`,
           borderRadius: "5px",
           padding: "2px 2px 5px 2px",
-          background: "white",
-          boxShadow: `0 0 0 2px ${COLORS.BS_BLUE_TEXT}, 0 12px 32px rgba(0, 0, 0, 0.22)`,
-          color: COLORS.GRAY_D,
+          background: UI_COLORS.surface,
+          boxShadow: `0 0 0 2px ${UI_COLORS.focus}, 0 12px 32px ${UI_COLORS.shadow}`,
+          color: UI_COLORS.text,
         }}
       >
         <div
@@ -809,7 +810,7 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
             style={{
               flex: 1,
               minWidth: 0,
-              border: `1px solid ${COLORS.GRAY_L0}`,
+              border: `1px solid ${UI_COLORS.border}`,
               borderRadius: "2px",
               background: inputBackground,
               padding: cellType === "markdown" ? "8px 10px" : "7px 10px",
@@ -841,8 +842,8 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
               style={{
                 flex: 1,
                 minWidth: 0,
-                borderTop: `1px solid ${COLORS.GRAY_LL}`,
-                color: COLORS.GRAY,
+                borderTop: `1px solid ${UI_COLORS.border}`,
+                color: UI_COLORS.secondary,
                 fontSize: "12px",
                 padding: "3px 10px",
               }}
@@ -900,10 +901,10 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
         style={{
           minHeight: `${h}px`,
           marginBottom: "10px",
-          borderLeft: "2px solid #e2e8f0",
+          borderLeft: `2px solid ${UI_COLORS.border}`,
           padding: "8px 10px",
-          color: "#64748b",
-          background: "#f8fafc",
+          color: UI_COLORS.secondary,
+          background: UI_COLORS.inset,
           fontFamily:
             "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
           fontSize: `${Math.max(11, Math.floor(font_size * 0.85))}px`,

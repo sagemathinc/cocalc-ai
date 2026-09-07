@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -80,8 +81,8 @@ export const Build: React.FC<Props> = React.memo((props) => {
   const logStyle: CSS = {
     fontFamily: "monospace",
     whiteSpace: "pre-line",
-    color: COLORS.GRAY_D,
-    background: COLORS.GRAY_LLL,
+    color: UI_COLORS.text,
+    background: UI_COLORS.inset,
     width: "100%",
     padding: "5px",
     fontSize: `${font_size}px`,
@@ -100,7 +101,7 @@ export const Build: React.FC<Props> = React.memo((props) => {
     error?: boolean,
     job_info_str?: string,
   ): AntdTabItem {
-    const err_style = error ? { background: COLORS.ANTD_BG_RED_L } : undefined;
+    const err_style = error ? { background: UI_COLORS.dangerBg } : undefined;
     const tab_button = <div style={err_style}>{title}</div>;
 
     // Determine if stderr is informational (not actual errors)
@@ -141,7 +142,7 @@ export const Build: React.FC<Props> = React.memo((props) => {
                 <div
                   style={{
                     fontWeight: "bold",
-                    color: COLORS.GRAY_M,
+                    color: UI_COLORS.secondary,
                     borderBottom: `1px solid ${COLORS.GRAY_LL}`,
                     paddingBottom: "5px",
                     marginBottom: "5px",
@@ -154,7 +155,7 @@ export const Build: React.FC<Props> = React.memo((props) => {
                   style={{
                     flex: 1,
                     overflowY: "auto",
-                    background: COLORS.GRAY_LLL,
+                    background: UI_COLORS.inset,
                     padding: "5px",
                     borderRadius: "3px",
                   }}
@@ -170,7 +171,7 @@ export const Build: React.FC<Props> = React.memo((props) => {
                 <div
                   style={{
                     fontWeight: "bold",
-                    color: error ? COLORS.ANTD_RED : COLORS.GRAY_M,
+                    color: error ? UI_COLORS.danger : UI_COLORS.secondary,
                     borderBottom: `1px solid ${
                       error ? COLORS.ANTD_RED_WARN : COLORS.GRAY_LL
                     }`,
@@ -186,8 +187,8 @@ export const Build: React.FC<Props> = React.memo((props) => {
                     flex: 1,
                     overflowY: "auto",
                     background: stderrIsInformational
-                      ? COLORS.GRAY_LLL
-                      : COLORS.ANTD_BG_RED_L,
+                      ? UI_COLORS.inset
+                      : UI_COLORS.dangerBg,
                     padding: "5px",
                     borderRadius: "3px",
                   }}
@@ -417,7 +418,7 @@ export const Build: React.FC<Props> = React.memo((props) => {
                 <div
                   style={{
                     fontWeight: "bold",
-                    color: COLORS.GRAY_M,
+                    color: UI_COLORS.secondary,
                     borderBottom: `1px solid ${COLORS.GRAY_LL}`,
                     paddingBottom: "5px",
                     marginBottom: "5px",
@@ -432,7 +433,7 @@ export const Build: React.FC<Props> = React.memo((props) => {
                   style={{
                     flex: 1,
                     overflowY: "auto",
-                    background: COLORS.GRAY_LLL,
+                    background: UI_COLORS.inset,
                     padding: "5px",
                     borderRadius: "3px",
                   }}
@@ -453,7 +454,7 @@ export const Build: React.FC<Props> = React.memo((props) => {
                 <div
                   style={{
                     fontWeight: "bold",
-                    color: COLORS.GRAY_M,
+                    color: UI_COLORS.secondary,
                     borderBottom: `1px solid ${COLORS.GRAY_LL}`,
                     paddingBottom: "5px",
                     marginBottom: "5px",
@@ -468,7 +469,7 @@ export const Build: React.FC<Props> = React.memo((props) => {
                   style={{
                     flex: 1,
                     overflowY: "auto",
-                    background: COLORS.GRAY_LLL,
+                    background: UI_COLORS.inset,
                     padding: "5px",
                     borderRadius: "3px",
                   }}

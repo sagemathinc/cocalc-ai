@@ -51,6 +51,13 @@ jest.mock("./cell-output-time", () => ({
 }));
 
 import { CellButtonBar } from "./cell-buttonbar";
+import { CODE_BAR_BTN_STYLE, MINI_BUTTONS_STYLE_INNER } from "./consts";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+
+it("uses theme-aware foregrounds for cell actions", () => {
+  expect(CODE_BAR_BTN_STYLE.color).toBe(UI_COLORS.secondary);
+  expect(MINI_BUTTONS_STYLE_INNER.color).toBe(UI_COLORS.secondary);
+});
 
 const BASE_PROPS = {
   id: "cell-1",

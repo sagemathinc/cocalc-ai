@@ -1,5 +1,6 @@
 import { Button, Popover, Progress, Space, Spin, Tag, Timeline } from "antd";
 import { useMemo, useRef, useState } from "react";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components";
 import {
@@ -89,11 +90,12 @@ export default function RootfsPublishOps({
   return (
     <div
       style={{
-        border: "1px solid #ddd",
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: "4px",
         padding: "6px 8px",
         marginBottom: "8px",
-        background: "white",
+        background: UI_COLORS.surface,
+        color: UI_COLORS.text,
       }}
     >
       <div style={{ fontWeight: 600, fontSize: "12px", marginBottom: "6px" }}>

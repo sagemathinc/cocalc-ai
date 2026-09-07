@@ -1,0 +1,43 @@
+/* The library consumes CSS variables, so an open dialog follows appearance
+   without rebuilding it or losing the user's pending consent choices. */
+#cc-main {
+  --cc-bg: var(--cocalc-ui-surface);
+  --cc-primary-color: var(--cocalc-ui-text);
+  --cc-secondary-color: var(--cocalc-ui-secondary);
+  --cc-link-color: var(--cocalc-ui-link);
+  --cc-btn-primary-bg: var(--cocalc-ui-primary);
+  --cc-btn-primary-color: var(--cocalc-ui-onPrimary);
+  --cc-btn-primary-border-color: var(--cocalc-ui-primary);
+  --cc-btn-primary-hover-bg: var(--cocalc-ui-primary);
+  --cc-btn-primary-hover-color: var(--cocalc-ui-onPrimary);
+  --cc-btn-primary-hover-border-color: var(--cocalc-ui-controlBorder);
+  --cc-btn-secondary-bg: var(--cocalc-ui-inset);
+  --cc-btn-secondary-color: var(--cocalc-ui-text);
+  --cc-btn-secondary-border-color: var(--cocalc-ui-controlBorder);
+  --cc-btn-secondary-hover-bg: var(--cocalc-ui-hover);
+  --cc-btn-secondary-hover-color: var(--cocalc-ui-text);
+  --cc-btn-secondary-hover-border-color: var(--cocalc-ui-controlBorder);
+  --cc-separator-border-color: var(--cocalc-ui-border);
+  --cc-toggle-on-bg: var(--cocalc-ui-primary);
+  --cc-toggle-off-bg: var(--cocalc-ui-muted);
+  --cc-toggle-on-knob-bg: var(--cocalc-ui-onPrimary);
+  --cc-toggle-off-knob-bg: var(--cocalc-ui-onPrimary);
+  --cc-toggle-enabled-icon-color: var(--cocalc-ui-primary);
+  --cc-toggle-disabled-icon-color: var(--cocalc-ui-muted);
+  --cc-toggle-readonly-bg: var(--cocalc-ui-border);
+  --cc-toggle-readonly-knob-bg: var(--cocalc-ui-onPrimary);
+  --cc-toggle-readonly-knob-icon-color: var(--cocalc-ui-muted);
+  --cc-cookie-category-block-bg: var(--cocalc-ui-inset);
+  --cc-cookie-category-block-border: var(--cocalc-ui-border);
+  --cc-cookie-category-block-hover-bg: var(--cocalc-ui-hover);
+  --cc-cookie-category-block-hover-border: var(--cocalc-ui-border);
+  --cc-cookie-category-expanded-block-hover-bg: var(--cocalc-ui-hover);
+  --cc-overlay-bg: var(--cocalc-ui-scrim);
+  --cc-footer-bg: var(--cocalc-ui-inset);
+  --cc-footer-color: var(--cocalc-ui-secondary);
+  --cc-footer-border-color: var(--cocalc-ui-border);
+}
+
+:root[data-animations="off"] #cc-main {
+  --cc-modal-transition-duration: 0s;
+}

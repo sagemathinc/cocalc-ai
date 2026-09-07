@@ -16,6 +16,10 @@ import {
 
 import { DEFAULT_LOCALE } from "@cocalc/util/consts/locale";
 import { normalizeDisplayName } from "@cocalc/util/accounts/display-name";
+import {
+  FOLLOW_APPEARANCE,
+  FOLLOW_APPEARANCE_LABEL,
+} from "@cocalc/util/appearance-editor";
 
 export const USER_SEARCH_LIMIT = 250;
 export const ADMIN_SEARCH_LIMIT = 2500;
@@ -688,6 +692,7 @@ export const EDITOR_BINDINGS = {
 };
 
 export const EDITOR_COLOR_SCHEMES: { [name: string]: string } = {
+  [FOLLOW_APPEARANCE]: FOLLOW_APPEARANCE_LABEL,
   default: "Default",
   "3024-day": "3024 day",
   "3024-night": "3024 night",

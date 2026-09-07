@@ -102,13 +102,17 @@ function Alert({
       ? {
           ...ALERT_BASE_STYLE,
           background: PUBLIC_COLORS.errorTint,
-          border: `1px solid ${PUBLIC_COLORS.errorBorder}`,
+          borderWidth: 1,
+          borderStyle: "solid",
+          borderColor: PUBLIC_COLORS.errorBorder,
           color: PUBLIC_COLORS.error,
         }
       : {
           ...ALERT_BASE_STYLE,
           background: PUBLIC_COLORS.infoTint,
-          border: `1px solid ${PUBLIC_COLORS.infoBorder}`,
+          borderWidth: 1,
+          borderStyle: "solid",
+          borderColor: PUBLIC_COLORS.infoBorder,
           color: PUBLIC_COLORS.info,
         };
   return <div style={style}>{children}</div>;

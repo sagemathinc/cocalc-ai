@@ -43,7 +43,7 @@ import type {
   DedicatedHostPurchase,
   Purchase,
 } from "@cocalc/util/db-schema/purchases";
-import { getAmountStyle } from "@cocalc/util/db-schema/purchases";
+import { getAmountStyle } from "./amount-style";
 import {
   formatMembershipDebitPurchaseDescription,
   formatTeamLicenseDebitPurchaseDescription,
@@ -1541,12 +1541,7 @@ function Amount({ record }) {
     const amountValue = toDecimal(cost).neg();
     const amount = amountValue.toNumber();
     return (
-      <span
-        style={{
-          ...getAmountStyle(amount),
-          ...(record.pending ? { color: "#999" } : undefined),
-        }}
-      >
+      <span style={getAmountStyle(amount, record.pending)}>
         {currency(amount, 2)}
       </span>
     );

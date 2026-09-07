@@ -5,6 +5,8 @@
 
 import type { Map as ImmutableMap } from "immutable";
 import type { WorkspaceRecord } from "./types";
+import type { ResolvedAppearance } from "@cocalc/util/appearance";
+import { resolveAppearanceEditorTheme } from "@cocalc/util/appearance-editor";
 
 export function normalizeWorkspaceTerminalTheme(
   theme?: string | null,
@@ -22,8 +24,12 @@ export function workspaceTerminalTheme(
 export function effectiveTerminalColorScheme(
   terminal?: ImmutableMap<string, any> | null,
   record?: Pick<WorkspaceRecord, "terminal_theme"> | null,
+  appearance: ResolvedAppearance = "light",
 ): string {
-  return (
-    workspaceTerminalTheme(record) ?? terminal?.get("color_scheme") ?? "default"
+  return resolveAppearanceEditorTheme(
+    workspaceTerminalTheme(record) ??
+      terminal?.get("color_scheme") ??
+      "default",
+    appearance,
   );
 }

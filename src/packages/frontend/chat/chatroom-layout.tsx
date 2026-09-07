@@ -7,11 +7,12 @@ import { Badge, Button, Drawer, Layout } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { ChatRoomSidebar } from "./chatroom-sidebar";
 
 const CHAT_LAYOUT_STYLE: React.CSSProperties = {
   height: "100%",
-  background: "white",
+  background: UI_COLORS.page,
 } as const;
 
 interface ChatRoomLayoutProps {
@@ -43,7 +44,10 @@ export function ChatRoomLayout({
 }: ChatRoomLayoutProps) {
   if (hideSidebar) {
     return (
-      <div className="smc-vfill" style={{ background: "white", minHeight: 0 }}>
+      <div
+        className="smc-vfill"
+        style={{ background: UI_COLORS.page, minHeight: 0 }}
+      >
         {chatContent}
       </div>
     );
@@ -51,7 +55,7 @@ export function ChatRoomLayout({
 
   if (variant === "compact") {
     return (
-      <div className="smc-vfill" style={{ background: "white" }}>
+      <div className="smc-vfill" style={{ background: UI_COLORS.page }}>
         <Drawer
           open={sidebarVisible}
           onClose={() => setSidebarVisible(false)}
@@ -109,7 +113,7 @@ export function ChatRoomLayout({
       <Layout.Content
         className="smc-vfill"
         style={{
-          background: "white",
+          background: UI_COLORS.page,
           display: "flex",
           flexDirection: "column",
           minHeight: 0,

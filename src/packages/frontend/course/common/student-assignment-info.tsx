@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -388,7 +389,7 @@ export function StudentAssignmentInfo({
       <div
         key="time"
         style={{
-          color: COLORS.GRAY_M,
+          color: UI_COLORS.secondary,
           fontSize: 12,
           lineHeight: "14px",
           minHeight: 14,
@@ -627,14 +628,14 @@ export function StudentAssignmentInfo({
             : COLORS.GRAY_L;
     const background =
       state === "done"
-        ? COLORS.BS_GREEN_LL
+        ? UI_COLORS.successBg
         : state === "error"
-          ? COLORS.ANTD_BG_RED_L
+          ? UI_COLORS.dangerBg
           : state === "running"
-            ? COLORS.YELL_LLL
+            ? UI_COLORS.warningBg
             : state === "ready"
-              ? COLORS.ANTD_BG_BLUE_L
-              : COLORS.GRAY_LLL;
+              ? UI_COLORS.infoBg
+              : UI_COLORS.inset;
     return {
       background,
       border: `1px solid ${borderColor}`,
@@ -702,7 +703,7 @@ export function StudentAssignmentInfo({
             justifyContent: "space-between",
           }}
         >
-          <span style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
+          <span style={{ color: UI_COLORS.text, fontWeight: 600 }}>
             {step_intl(step, false)}
           </span>
           {render_stage_tag(state)}
@@ -715,7 +716,7 @@ export function StudentAssignmentInfo({
           </div>
         ) : (
           <div style={workflowCardContentStyle}>
-            <span style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+            <span style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
               Waiting for the previous stage.
             </span>
             {render_last_time(data.time)}
@@ -867,7 +868,7 @@ export function StudentAssignmentInfo({
         {show_grade_col && (
           <div
             style={{
-              background: is_editing ? COLORS.ANTD_BG_BLUE_L : COLORS.GRAY_LLL,
+              background: is_editing ? UI_COLORS.infoBg : UI_COLORS.inset,
               border: `1px solid ${
                 is_editing ? COLORS.ANTD_LINK_BLUE : COLORS.GRAY_L
               }`,
@@ -892,7 +893,7 @@ export function StudentAssignmentInfo({
             >
               <span
                 style={{
-                  color: COLORS.GRAY_D,
+                  color: UI_COLORS.text,
                   fontWeight: 600,
                   minWidth: 0,
                   overflow: "hidden",
@@ -964,7 +965,7 @@ export function StudentAssignmentInfo({
         <Col md={4} key="title" style={{ paddingRight: 12 }}>
           <div
             style={{
-              color: COLORS.GRAY_D,
+              color: UI_COLORS.text,
               fontWeight: 600,
               overflowWrap: "anywhere",
               paddingTop: 8,

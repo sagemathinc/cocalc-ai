@@ -32,7 +32,7 @@ import { BACKUPS } from "@cocalc/util/consts/backups";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { Project } from "./types";
 import { human_readable_size } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import MoveProject from "./move-project";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { StartButton } from "@cocalc/frontend/project/start-button";
@@ -57,7 +57,7 @@ function RailRow({
   label,
   children,
   action,
-  iconColor = COLORS.GRAY,
+  iconColor = UI_COLORS.secondary,
 }: {
   icon: IconName;
   label: string;
@@ -68,7 +68,7 @@ function RailRow({
   return (
     <div
       style={{
-        borderTop: "1px solid #edf2f7",
+        borderTop: `1px solid ${UI_COLORS.border}`,
         display: "grid",
         gap: 8,
         gridTemplateColumns: "22px minmax(0, 1fr) auto",
@@ -128,7 +128,7 @@ export function ProjectSettingsHealthRail({
       style={{
         position: "sticky",
         top: 16,
-        border: "1px solid #d9e2ec",
+        border: `1px solid ${UI_COLORS.border}`,
         boxShadow: "0 8px 28px rgba(15, 23, 42, 0.05)",
       }}
       styles={{ body: { padding: 12 } }}
@@ -136,8 +136,8 @@ export function ProjectSettingsHealthRail({
       <div
         style={{
           alignItems: "center",
-          background: "linear-gradient(135deg, #f6fbff, #ffffff)",
-          border: "1px solid #e6f0fb",
+          background: UI_COLORS.infoBg,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: 10,
           display: "flex",
           gap: 8,
@@ -183,7 +183,7 @@ export function ProjectSettingsHealthRail({
         {typeof userCount === "number" && (
           <RailRow
             icon="users"
-            iconColor={COLORS.GRAY}
+            iconColor={UI_COLORS.secondary}
             label="People"
             action={
               <Button size="small" href="#people" style={SMALL_ACTION_STYLE}>
@@ -225,8 +225,8 @@ function RuntimeHealthBlock({
   return (
     <div
       style={{
-        borderTop: "1px solid #edf2f7",
-        background: "linear-gradient(135deg, #f8fcf9, #ffffff)",
+        borderTop: `1px solid ${UI_COLORS.border}`,
+        background: UI_COLORS.successBg,
         borderRadius: 10,
         display: "grid",
         gap: 8,
@@ -237,7 +237,7 @@ function RuntimeHealthBlock({
         padding: "8px 8px 7px",
       }}
     >
-      <Icon name="server" style={{ color: COLORS.BS_GREEN_D }} />
+      <Icon name="server" style={{ color: UI_COLORS.success }} />
       <div style={{ minWidth: 0 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {displayProjectState ? (
@@ -289,7 +289,7 @@ function RecoveryHealthRow({
 }) {
   const { loading, snapshot } = useLatestSnapshot(project_id);
   return (
-    <RailRow icon="life-ring" iconColor={COLORS.COCALC_ORANGE} label="Recovery">
+    <RailRow icon="life-ring" iconColor={UI_COLORS.warning} label="Recovery">
       <Space vertical size={2} style={{ width: "100%" }}>
         <RecoveryLine
           action="Backup"
@@ -409,7 +409,7 @@ function ProcessHealthRow({
     return (
       <RailRow
         icon="info-circle"
-        iconColor={COLORS.BLUE_DD}
+        iconColor={UI_COLORS.info}
         label="Processes"
         action={
           <Button
@@ -438,7 +438,7 @@ function ProcessHealthRow({
   return (
     <RailRow
       icon="info-circle"
-      iconColor={COLORS.BLUE_DD}
+      iconColor={UI_COLORS.info}
       label="Processes"
       action={
         <Button
@@ -514,7 +514,7 @@ function MemoryHealthRow({
   return (
     <RailRow
       icon="microchip"
-      iconColor={COLORS.ANTD_GREEN_D}
+      iconColor={UI_COLORS.success}
       label="Memory"
       action={
         <Button
@@ -568,7 +568,7 @@ function StorageHealthRow({ project_id }: { project_id: string }) {
   return (
     <RailRow
       icon="disk-round"
-      iconColor={COLORS.BLUE_D}
+      iconColor={UI_COLORS.info}
       label="Storage"
       action={
         <DiskUsage
@@ -610,7 +610,7 @@ function NetworkHealthRow({ project_id }: { project_id: string }) {
   return (
     <RailRow
       icon="network"
-      iconColor={COLORS.ANTD_LINK_BLUE}
+      iconColor={UI_COLORS.info}
       label="Network"
       action={
         <ManagedEgressHistoryButton

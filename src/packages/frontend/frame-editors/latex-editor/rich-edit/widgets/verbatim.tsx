@@ -10,7 +10,7 @@ Multi-line `\begin{verbatim}…\end{verbatim}` is Phase 5 (needs the
 env-stack scanner that lists will also use).
 */
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { WidgetProps } from "../types";
 import { EmptyPlaceholder, Widget } from "./common";
@@ -38,7 +38,7 @@ export function VerbatimEnv(props: WidgetProps) {
         style={{
           fontFamily: "monospace",
           fontSize: "0.95em",
-          background: COLORS.GRAY_LL,
+          background: UI_COLORS.inset,
           padding: "4px 8px",
           borderRadius: 3,
           margin: 0,
@@ -68,7 +68,7 @@ export function Verb(props: WidgetProps) {
           style={{
             fontFamily: "monospace",
             fontSize: "0.95em",
-            background: COLORS.GRAY_LL,
+            background: UI_COLORS.inset,
             padding: "0 3px",
             borderRadius: 2,
           }}

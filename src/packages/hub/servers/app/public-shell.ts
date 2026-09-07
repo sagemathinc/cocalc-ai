@@ -37,6 +37,7 @@ import {
 import { EVENT_CHANNEL, SYSTEM_CHANNEL } from "@cocalc/util/types/news";
 import { initPublicDocsMetadata } from "@cocalc/util/public-site-metadata-docs";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import { appearanceHeadHtml } from "@cocalc/util/appearance-bootstrap";
 import {
   getCocalcProduct,
   isLaunchpadProduct,
@@ -53,6 +54,7 @@ initPublicDocsMetadata();
 const FALLBACK_PUBLIC_HTML = `<!DOCTYPE html>
 <html>
 <head>
+  ${appearanceHeadHtml()}
   ${PUBLIC_HEAD_PLACEHOLDER}
 </head>
 <body>

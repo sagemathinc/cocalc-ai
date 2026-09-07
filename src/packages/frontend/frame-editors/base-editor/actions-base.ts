@@ -303,7 +303,7 @@ export interface CodeEditorState {
   derived_file_types: iSet<string>;
   visible: boolean;
   switch_to_files: string[];
-  pdf_dark_mode_disabled?: { [id: string]: boolean };
+  pdf_invert_colors?: { [id: string]: boolean };
   // whether this account has a saved custom layout for this file's type
   has_custom_layout?: boolean;
 }
@@ -2514,9 +2514,9 @@ export class BaseEditorActions<
   }
 
   toggle_pdf_dark_mode(id: string): void {
-    const next = this.store.get("pdf_dark_mode_disabled")?.toJS() ?? {};
+    const next = this.store.get("pdf_invert_colors")?.toJS() ?? {};
     next[id] = !(next[id] ?? false);
-    this.setState({ pdf_dark_mode_disabled: next });
+    this.setState({ pdf_invert_colors: next });
   }
 
   /* zoom: 1=100%, 1.5=150%, ...*/

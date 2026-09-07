@@ -48,7 +48,7 @@ import {
   type DocsEntry,
 } from "@cocalc/docs";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { useProjectHostLatencies } from "@cocalc/frontend/hosts/use-project-host-latencies";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
@@ -73,8 +73,8 @@ const DOCS_FONT_SIZE_CONTROL_BUTTON_STYLE: CSSProperties = {
 function docsFontSizeControlStyle(framed: boolean): CSSProperties {
   return {
     alignItems: "center",
-    background: framed ? COLORS.TOP_BAR.ACTIVE : "transparent",
-    border: framed ? `1px solid ${COLORS.GRAY_L0}` : 0,
+    background: framed ? UI_COLORS.surface : "transparent",
+    border: framed ? `1px solid ${UI_COLORS.controlBorder}` : 0,
     borderRadius: 7,
     display: "inline-flex",
     gap: 2,
@@ -86,8 +86,8 @@ function docsFontSizeControlStyle(framed: boolean): CSSProperties {
 
 const DOCS_TOOLBAR_GROUP_STYLE: CSSProperties = {
   alignItems: "center",
-  background: COLORS.TOP_BAR.ACTIVE,
-  border: `1px solid ${COLORS.GRAY_LL}`,
+  background: UI_COLORS.surface,
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: 8,
   boxShadow: "0 1px 4px rgba(15, 23, 42, 0.08)",
   display: "inline-flex",
@@ -98,7 +98,7 @@ const DOCS_TOOLBAR_GROUP_STYLE: CSSProperties = {
 };
 const DOCS_TOOLBAR_DIVIDER_STYLE: CSSProperties = {
   alignSelf: "center",
-  background: COLORS.GRAY_LL,
+  background: UI_COLORS.border,
   flexShrink: 0,
   height: 18,
   margin: "0 2px",
@@ -121,7 +121,7 @@ const DOCS_BROWSER_TOC_LINK_STYLE: CSSProperties = {
 function docsBrowserTocLinkStyle(viewed: boolean): CSSProperties {
   return {
     ...DOCS_BROWSER_TOC_LINK_STYLE,
-    color: viewed ? COLORS.GRAY_M : COLORS.BLUE_DOC,
+    color: viewed ? UI_COLORS.secondary : UI_COLORS.link,
   };
 }
 export const DOCS_FONT_SIZE_MIN = 10;
@@ -313,7 +313,7 @@ function DocsFontSizeControl({ framed = true }: { framed?: boolean }) {
         <span
           aria-hidden="true"
           style={{
-            background: COLORS.GRAY_LL,
+            background: UI_COLORS.border,
             display: "inline-block",
             flexShrink: 0,
             height: 16,
@@ -476,7 +476,7 @@ function DocsEntryImage({
         src={src}
         style={{
           aspectRatio: isIcon ? "1 / 1" : "4 / 3",
-          border: `1px solid ${COLORS.GRAY_LL}`,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: 7,
           flex: "0 0 125px",
           objectFit: isIcon ? "contain" : "cover",
@@ -495,7 +495,7 @@ function DocsEntryImage({
         src={src}
         style={{
           aspectRatio: "1 / 1",
-          border: `1px solid ${COLORS.GRAY_LL}`,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: mode === "flyout-detail" ? 8 : 10,
           display: "block",
           margin: "0 auto",
@@ -513,7 +513,7 @@ function DocsEntryImage({
       src={src}
       style={{
         aspectRatio: "16 / 9",
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: mode === "flyout-detail" ? 8 : 10,
         display: "block",
         objectFit: "cover",
@@ -544,7 +544,7 @@ export function DocsCard({
         <DocsEntryImage entry={entry} mode="flyout-card" />
         <Flex gap={6} style={{ minWidth: 0 }} vertical>
           <Space size={6} wrap>
-            <BookOutlined style={{ color: COLORS.BLUE }} />
+            <BookOutlined style={{ color: UI_COLORS.link }} />
             <Text type="secondary" style={{ fontSize: "0.86em" }}>
               {entry.category}
             </Text>
@@ -554,7 +554,7 @@ export function DocsCard({
           </Text>
           <Text
             style={{
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.secondary,
               fontSize: "0.93em",
               lineHeight: 1.35,
             }}
@@ -617,7 +617,7 @@ export function DocsCard({
         <DocsEntryImage entry={entry} mode="flyout-card" />
         <Flex gap={7} style={{ minWidth: 0 }} vertical>
           <Space size={6} wrap>
-            <BookOutlined style={{ color: COLORS.BLUE }} />
+            <BookOutlined style={{ color: UI_COLORS.link }} />
             <Text type="secondary" style={{ fontSize: "0.88em" }}>
               {entry.category}
             </Text>
@@ -625,7 +625,7 @@ export function DocsCard({
           <Text strong style={{ fontSize: "1.08em", lineHeight: 1.25 }}>
             {entry.title}
           </Text>
-          <Text style={{ color: COLORS.GRAY_M, lineHeight: 1.38 }}>
+          <Text style={{ color: UI_COLORS.secondary, lineHeight: 1.38 }}>
             {entry.summary}
           </Text>
           <Space size={[4, 4]} wrap>
@@ -825,7 +825,7 @@ function DocsTocOverview({
                       {learned ? (
                         <CheckCircleFilled
                           style={{
-                            color: COLORS.BS_GREEN_D,
+                            color: UI_COLORS.success,
                             marginLeft: 6,
                           }}
                         />
@@ -1176,7 +1176,12 @@ export function DocsActions({
           relevant panel directly; for agents they provide precise action ids.
         </Paragraph>
       ) : null}
-      <Space orientation={layout === "flyout" ? "vertical" : "horizontal"} wrap>
+      <Flex
+        vertical={layout === "flyout"}
+        gap="small"
+        wrap
+        style={{ minWidth: 0 }}
+      >
         {visibleActions.map((action) => {
           const state = actionState(action);
           const values = {
@@ -1188,14 +1193,20 @@ export function DocsActions({
             (parameter) => parameter.required && !values[parameter.name],
           );
           return (
-            <Space.Compact
-              block={layout === "flyout"}
+            <Flex
+              wrap
+              gap={4}
               key={action.id}
-              style={layout === "flyout" ? { width: "100%" } : undefined}
+              style={{
+                maxWidth: "100%",
+                minWidth: 0,
+                ...(layout === "flyout" ? { width: "100%" } : {}),
+              }}
             >
               {action.parameters?.map((parameter) =>
                 parameter.type === "project-host" ? (
                   <Select
+                    aria-label={parameter.label}
                     allowClear
                     disabled={state.disabled || onRunAction == null}
                     key={parameter.name}
@@ -1213,7 +1224,8 @@ export function DocsActions({
                     showSearch
                     size={layout === "flyout" ? "small" : "middle"}
                     style={{
-                      minWidth: layout === "flyout" ? 0 : 220,
+                      minWidth: 0,
+                      maxWidth: "100%",
                       width: layout === "flyout" ? "60%" : 240,
                     }}
                     value={values[parameter.name]}
@@ -1227,19 +1239,22 @@ export function DocsActions({
                       setActionParameter(action, parameter.name, value)
                     }
                     style={{
-                      minWidth: layout === "flyout" ? 0 : 220,
+                      minWidth: 0,
+                      maxWidth: "100%",
                       width: layout === "flyout" ? "100%" : 360,
                     }}
                     value={values[parameter.name]}
                   />
                 ) : parameter.type === "project" ? (
                   <Select
+                    aria-label={parameter.label}
                     disabled
                     key={parameter.name}
                     placeholder={parameter.placeholder ?? parameter.label}
                     size={layout === "flyout" ? "small" : "middle"}
                     style={{
-                      minWidth: layout === "flyout" ? 0 : 220,
+                      minWidth: 0,
+                      maxWidth: "100%",
                       width: layout === "flyout" ? "100%" : 360,
                     }}
                     value={values[parameter.name]}
@@ -1263,10 +1278,10 @@ export function DocsActions({
               >
                 {state.buttonText}
               </Button>
-            </Space.Compact>
+            </Flex>
           );
         })}
-      </Space>
+      </Flex>
       {layout === "page" ? (
         <Space wrap>
           {visibleActions.map((action) => {
@@ -1326,7 +1341,7 @@ function DocsLinearNavigation({
       wrap
     >
       <Space size={[6, 4]} wrap>
-        <BookOutlined style={{ color: COLORS.BLUE }} />
+        <BookOutlined style={{ color: UI_COLORS.link }} />
         <Text type="secondary">
           Page {navigation.currentIndex + 1} of {navigation.count} in{" "}
           {navigation.entry.category}
@@ -1610,7 +1625,7 @@ export function DocsDetailContent({
           <Title level={3} style={{ margin: 0 }}>
             {entry.title}
           </Title>
-          <Text style={{ color: COLORS.GRAY_M, lineHeight: 1.4 }}>
+          <Text style={{ color: UI_COLORS.secondary, lineHeight: 1.4 }}>
             {entry.summary}
           </Text>
         </Flex>
@@ -1726,7 +1741,13 @@ export function DocsPrintContent({
       <style>
         {`
           .cocalc-docs-print-page {
+            --cocalc-slate-inline-code-bg: var(--cocalc-ui-codeBg);
+            --cocalc-slate-inline-code-fg: var(--cocalc-ui-codeText);
+            --cocalc-slate-inline-code-border: var(--cocalc-ui-border);
+            --cocalc-slate-link-chip-bg: transparent;
+            --cocalc-slate-link-chip-border: transparent;
             box-sizing: border-box;
+            color: var(--cocalc-ui-text);
             margin: 0 auto;
             max-width: 980px;
             overflow-wrap: anywhere;
@@ -1756,9 +1777,29 @@ export function DocsPrintContent({
             max-width: 100%;
           }
           .cocalc-docs-print-page .ant-card {
+            background: var(--cocalc-ui-surface);
+            color: var(--cocalc-ui-text);
+            border-color: var(--cocalc-ui-border);
             max-width: 100%;
             overflow: hidden;
           }
+          .cocalc-docs-print-page .ant-typography {
+            color: inherit;
+          }
+          .cocalc-docs-print-page a {
+            color: var(--cocalc-ui-link);
+          }
+          .cocalc-docs-print-page .cocalc-slate-code-block,
+          .cocalc-docs-print-page pre {
+            background: var(--cocalc-ui-codeBg);
+            color: var(--cocalc-ui-codeText);
+            border-color: var(--cocalc-ui-border);
+          }
+          .cocalc-docs-print-page .token.comment { color: var(--cocalc-ui-comment); }
+          .cocalc-docs-print-page .token.keyword { color: var(--cocalc-ui-keyword); }
+          .cocalc-docs-print-page .token.string { color: var(--cocalc-ui-string); }
+          .cocalc-docs-print-page .token.number { color: var(--cocalc-ui-number); }
+          .cocalc-docs-print-page .token.function { color: var(--cocalc-ui-function); }
           .cocalc-docs-print-page .ant-row {
             display: flex;
             flex-wrap: wrap;
@@ -2046,15 +2087,15 @@ export const DOCS_BROWSER_FLYOUT_STYLE: React.CSSProperties = {
 };
 
 export const DOCS_BROWSER_MUTED_TITLE_STYLE: React.CSSProperties = {
-  color: COLORS.GRAY_M,
+  color: UI_COLORS.secondary,
   fontSize: "0.93em",
   letterSpacing: 0,
   textTransform: "uppercase",
 };
 
 const DOCS_BROWSER_FLYOUT_ITEM_STYLE: React.CSSProperties = {
-  background: "#fff",
-  border: `1px solid ${COLORS.GRAY_LL}`,
+  background: UI_COLORS.surface,
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: 8,
   boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
   color: "inherit",
@@ -2070,15 +2111,15 @@ const DOCS_BROWSER_PAGE_ITEM_STYLE: React.CSSProperties = {
 };
 
 const DOCS_BROWSER_FLYOUT_ACTIONS_STYLE: React.CSSProperties = {
-  background: COLORS.ANTD_BG_BLUE_L,
-  border: `1px solid ${COLORS.BLUE_LLL}`,
+  background: UI_COLORS.infoBg,
+  border: `1px solid ${UI_COLORS.controlBorder}`,
   borderRadius: 8,
   padding: 12,
 };
 
 const DOCS_BROWSER_FLYOUT_MARKDOWN_STYLE: React.CSSProperties = {
-  background: "#fff",
-  border: `1px solid ${COLORS.GRAY_LL}`,
+  background: UI_COLORS.surface,
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: 8,
   padding: "4px 12px",
 };

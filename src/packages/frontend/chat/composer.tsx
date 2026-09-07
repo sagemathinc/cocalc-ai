@@ -32,6 +32,7 @@ import {
 } from "./composer-focus";
 import { AcpPromptModal } from "./acp-prompt-modal";
 import { isCodexPaymentSourceNeedsUserConfiguration } from "./codex-submit-preflight";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -394,7 +395,7 @@ export function ChatRoomComposer({
     width: "100%",
     height: isZenMode && isFullscreen ? "100%" : undefined,
     padding: isZenMode && isFullscreen ? "12px" : undefined,
-    background: isZenMode && isFullscreen ? "white" : undefined,
+    background: isZenMode && isFullscreen ? UI_COLORS.surface : undefined,
     boxSizing: "border-box",
   };
 
@@ -452,7 +453,7 @@ export function ChatRoomComposer({
               display: "flex",
               alignItems: "center",
               gap: "8px",
-              color: "#666",
+              color: UI_COLORS.secondary,
               fontSize: "12px",
               marginBottom: 6,
               borderLeft: themeLineColor

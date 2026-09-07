@@ -9,11 +9,11 @@
   z-index: 100;
   border-radius: 0;
   width: 100%;
-  background-color: var(--cocalc-col-gray-l0);
+  background-color: var(--cocalc-ui-inset);
 }
 
 .cocalc-top-bar-element:hover {
-  background-color: var(--cocalc-col-top-bar-hover);
+  background-color: var(--cocalc-ui-hover);
 }
 
 .cocalc-project-tabs.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab {

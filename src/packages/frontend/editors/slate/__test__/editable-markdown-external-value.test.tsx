@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { act, render, screen, waitFor } from "@testing-library/react";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   EditableMarkdown,
   shouldPublishReadOnlyExternalSlateValue,
@@ -28,6 +29,17 @@ function StreamingMarkdown({ value }: { value: string }) {
 }
 
 describe("EditableMarkdown external read-only values", () => {
+  it("pairs the document background with themed text", () => {
+    const { container } = render(<StreamingMarkdown value="Theme check" />);
+    expect(container.firstChild).toHaveStyle({
+      backgroundColor: UI_COLORS.surface,
+      color: UI_COLORS.text,
+    });
+    expect(container.querySelector("[data-slate-editor]")).toHaveStyle({
+      background: UI_COLORS.surface,
+      color: UI_COLORS.text,
+    });
+  });
   it("never uses the forced publication path for collaborative editors", () => {
     expect(
       shouldPublishReadOnlyExternalSlateValue({

@@ -27,6 +27,7 @@ import { background_color } from "@cocalc/frontend/frame-editors/terminal-editor
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { effectiveTerminalColorScheme } from "@cocalc/frontend/project/workspaces/terminal-theme";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import { escapeBashChangeDirPath } from "@cocalc/util/jupyter-api/chdir-commands";
 import { sha1 } from "@cocalc/util/misc";
 import { BACKUPS } from "@cocalc/util/consts/backups";
@@ -133,9 +134,11 @@ export function TerminalFlyout({
   const onNavigateRef = useRef(onNavigate);
   const homePath = getProjectHomeDirectory(project_id);
   const workspaceRecord = workspaces.resolveWorkspaceForPath(browsingPath);
+  const { resolved } = useAppearance();
   const terminalColorScheme = effectiveTerminalColorScheme(
     terminal,
     workspaceRecord,
+    resolved,
   );
   const terminalOwnerPath = flyoutTerminalOwnerPath({
     browsingPath,

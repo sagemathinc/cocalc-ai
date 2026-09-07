@@ -20,6 +20,33 @@ describe("accounts.createAccount", () => {
     passwordHashMock = jest.fn(() => "hashed-password");
   });
 
+  it.each(["system", "light", "dark"])(
+    "preserves a valid explicit %s preference and unrelated settings",
+    async (appearance_theme) => {
+      const createAccount = (await import("./create-account")).default;
+      const other_settings = { appearance_theme, locale: "de" };
+      await createAccount({
+        email: "appearance@test.local",
+        account_id: "11111111-1111-4111-8111-111111111111",
+        other_settings,
+      });
+      expect(queryMock.mock.calls[0][1][12]).toEqual(other_settings);
+    },
+  );
+
+  it("does not use malformed appearance input as the new-account default", async () => {
+    const createAccount = (await import("./create-account")).default;
+    await createAccount({
+      email: "appearance@test.local",
+      account_id: "11111111-1111-4111-8111-111111111111",
+      other_settings: { appearance_theme: "auto", locale: "fr" },
+    });
+    expect(queryMock.mock.calls[0][1][12]).toEqual({
+      appearance_theme: "system",
+      locale: "fr",
+    });
+  });
+
   it("stores the configured home bay on account creation", async () => {
     const createAccount = (await import("./create-account")).default;
     await createAccount({
@@ -46,11 +73,13 @@ describe("accounts.createAccount", () => {
         null,
         null,
         "bay-0",
-        null,
+        { appearance_theme: "system" },
         false,
         null,
         "10.1.2.3",
         null,
+        { theme: "follow-appearance" },
+        { color_scheme: "follow-appearance" },
       ],
     );
   });
@@ -81,11 +110,13 @@ describe("accounts.createAccount", () => {
         null,
         null,
         "bay-7",
-        null,
+        { appearance_theme: "system" },
         false,
         null,
         null,
         null,
+        { theme: "follow-appearance" },
+        { color_scheme: "follow-appearance" },
       ],
     );
   });

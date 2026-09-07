@@ -15,6 +15,68 @@ jest.mock("./jupyter-actions", () => ({
 import { EventEmitter } from "events";
 import { JupyterEditorActions } from "./actions";
 import { BaseEditorActions } from "../base-editor/actions-base";
+import { fromJS } from "immutable";
+import { hasNbgraderMetadata } from "./nbgrader-layout";
+
+describe("nbgrader frame restrictions", () => {
+  afterEach(() => jest.restoreAllMocks());
+  it("guards new split frames and permits Studio on ordinary notebooks", () => {
+    const base = jest
+      .spyOn(BaseEditorActions.prototype, "new_frame")
+      .mockReturnValue("new");
+    const target = {
+      studioUnavailableReason: jest.fn(() => "nbgrader"),
+    } as any;
+    expect(
+      JupyterEditorActions.prototype.new_frame.call(
+        target,
+        "jupyter_studio",
+        "row",
+        true,
+      ),
+    ).toBe("new");
+    expect(base).toHaveBeenLastCalledWith("jupyter_cell_notebook", "row", true);
+    target.studioUnavailableReason.mockReturnValue(undefined);
+    JupyterEditorActions.prototype.new_frame.call(target, "jupyter_studio");
+    expect(base).toHaveBeenLastCalledWith("jupyter_studio");
+  });
+  it("guards direct Studio requests without changing other frame types", () => {
+    const base = jest
+      .spyOn(BaseEditorActions.prototype, "set_frame_type")
+      .mockImplementation(() => {});
+    const target = { studioUnavailableReason: () => "nbgrader" } as any;
+    JupyterEditorActions.prototype.set_frame_type.call(
+      target,
+      "frame",
+      "jupyter_studio",
+    );
+    expect(base).toHaveBeenLastCalledWith("frame", "jupyter_cell_notebook");
+    JupyterEditorActions.prototype.set_frame_type.call(
+      target,
+      "frame",
+      "terminal",
+    );
+    expect(base).toHaveBeenLastCalledWith("frame", "terminal");
+  });
+  it("converts only Studio frames when assignment metadata arrives", () => {
+    const cells = fromJS({ a: { metadata: { nbgrader: { points: 10 } } } });
+    expect(hasNbgraderMetadata(cells)).toBe(true);
+    const target = {
+      jupyter_actions: { store: { get: () => cells } },
+      store: { get: () => false },
+      setState: jest.fn(),
+      _get_leaf_ids: () => ({ studio: true, terminal: true }),
+      _get_frame_type: (id) =>
+        id === "studio" ? "jupyter_studio" : "terminal",
+      set_frame_type: jest.fn(),
+    };
+    (JupyterEditorActions.prototype as any).enforceNbgraderLayout.call(target);
+    expect(target.set_frame_type.mock.calls).toEqual([
+      ["studio", "jupyter_cell_notebook"],
+    ]);
+    expect(target.setState).toHaveBeenCalledWith({ has_nbgrader: true });
+  });
+});
 
 describe("JupyterEditorActions.close", () => {
   afterEach(() => {

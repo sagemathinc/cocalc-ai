@@ -14,7 +14,7 @@ import { NEW_FILETYPE_ICONS } from "@cocalc/frontend/project/new/consts";
 import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import { capitalize, keys } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 interface Props {
   file_search: string;
@@ -154,7 +154,8 @@ function EmptyDirectoryWelcome({
   context: EmptyDirectoryContext;
 }) {
   const [showMoreFileTypes, setShowMoreFileTypes] = useState(false);
-  const heading = context === "project" ? "No files yet" : "This folder is empty";
+  const heading =
+    context === "project" ? "No files yet" : "This folder is empty";
   const description =
     context === "project"
       ? "Create a notebook, terminal, folder, or upload files to get started."
@@ -251,7 +252,7 @@ function EmptyDirectoryWelcome({
           <h2
             style={{
               margin: "0 0 4px 0",
-              color: COLORS.GRAY_DD,
+              color: UI_COLORS.text,
               fontSize: 22,
               fontWeight: 600,
             }}
@@ -260,7 +261,7 @@ function EmptyDirectoryWelcome({
           </h2>
           <div
             style={{
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.secondary,
               fontSize: 14,
               maxWidth: 520,
               margin: "0 auto",
@@ -291,13 +292,13 @@ function EmptyDirectoryWelcome({
                 type="button"
                 style={{
                   textAlign: "center",
-                  border: `1px solid ${COLORS.GRAY_DDD}`,
+                  border: `1px solid ${UI_COLORS.controlBorder}`,
                   borderRadius: 8,
                   padding: "10px 8px",
                   minHeight: 76,
-                  background: "white",
+                  background: UI_COLORS.surface,
                   cursor: "pointer",
-                  boxShadow: `0 2px 8px ${COLORS.GRAY_LLL}`,
+                  boxShadow: `0 2px 8px ${UI_COLORS.shadow}`,
                 }}
               >
                 <div
@@ -318,21 +319,21 @@ function EmptyDirectoryWelcome({
                       display: "inline-flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      background: COLORS.BLUE_LLLL,
-                      border: `1px solid ${COLORS.BLUE_LLL}`,
-                      color: COLORS.BLUE_DD,
+                      background: UI_COLORS.infoBg,
+                      border: `1px solid ${UI_COLORS.border}`,
+                      color: UI_COLORS.info,
                       fontSize: 15,
                     }}
                   >
                     <Icon name={action.icon} />
                   </span>
-                  <strong style={{ color: COLORS.GRAY_DD, fontSize: 14 }}>
+                  <strong style={{ color: UI_COLORS.text, fontSize: 14 }}>
                     {action.title}
                   </strong>
                 </div>
                 <div
                   style={{
-                    color: COLORS.GRAY_M,
+                    color: UI_COLORS.secondary,
                     lineHeight: 1.2,
                     fontSize: 12,
                   }}
@@ -522,8 +523,9 @@ function MoreFileTypesModal({
             type="button"
             style={{
               alignItems: "center",
-              background: "white",
-              border: `1px solid ${COLORS.GRAY_DDD}`,
+              background: UI_COLORS.surface,
+              color: UI_COLORS.text,
+              border: `1px solid ${UI_COLORS.controlBorder}`,
               borderRadius: 8,
               cursor: "pointer",
               display: "flex",
@@ -537,7 +539,7 @@ function MoreFileTypesModal({
             <span style={{ minWidth: 0 }}>
               <span
                 style={{
-                  color: COLORS.GRAY_DD,
+                  color: UI_COLORS.text,
                   display: "block",
                   fontWeight: 600,
                   overflow: "hidden",
@@ -547,7 +549,7 @@ function MoreFileTypesModal({
               >
                 {type.label}
               </span>
-              <span style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+              <span style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
                 .{type.ext}
               </span>
             </span>
@@ -555,7 +557,7 @@ function MoreFileTypesModal({
         ))}
       </div>
       {filtered.length === 0 ? (
-        <div style={{ color: COLORS.GRAY_M, padding: "18px 0" }}>
+        <div style={{ color: UI_COLORS.secondary, padding: "18px 0" }}>
           No file types match that search.
         </div>
       ) : null}

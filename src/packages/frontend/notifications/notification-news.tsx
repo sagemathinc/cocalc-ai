@@ -23,7 +23,7 @@ import {
 } from "@cocalc/frontend/components";
 import { BASE_URL, open_new_tab } from "@cocalc/frontend/misc";
 import { cmp_Date, getRandomColor } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   CHANNELS_ICONS,
   NewsItemWebapp,
@@ -163,7 +163,7 @@ export function NewsPanel(props: NewsPanelProps) {
           className="cocalc-notification-news-item"
           onClick={(e) => newsItemOnClick(e, n)}
           style={{
-            backgroundColor: isUnread ? COLORS.ANTD_BG_BLUE_L : undefined,
+            backgroundColor: isUnread ? UI_COLORS.infoBg : undefined,
           }}
         >
           <div className="cocalc-notification-news-main">
@@ -190,7 +190,7 @@ export function NewsPanel(props: NewsPanelProps) {
         key={id}
         onClick={(e) => newsItemOnClick(e, n)}
         style={{
-          backgroundColor: isUnread ? COLORS.ANTD_BG_BLUE_L : undefined,
+          backgroundColor: isUnread ? UI_COLORS.infoBg : undefined,
           alignItems: IS_MOBILE ? "flex-start" : undefined,
           gap: IS_MOBILE ? "6px" : undefined,
         }}
@@ -218,7 +218,7 @@ export function NewsPanel(props: NewsPanelProps) {
       title={<Title level={4}>{intl.formatMessage(MSGS.news)}</Title>}
       extra={renderNewsPanelExtra()}
       styles={{
-        header: { backgroundColor: COLORS.GRAY_LLL },
+        header: { backgroundColor: UI_COLORS.inset, color: UI_COLORS.text },
         body: { padding: "0px" },
       }}
       style={{ width: "100%" }}

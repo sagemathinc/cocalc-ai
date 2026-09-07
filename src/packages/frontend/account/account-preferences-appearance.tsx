@@ -3,31 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Card, Select, Slider } from "antd";
-import { debounce } from "lodash";
-import { ReactElement, useMemo } from "react";
-import {
-  FormattedMessage,
-  defineMessage,
-  defineMessages,
-  useIntl,
-} from "react-intl";
+import { Select } from "antd";
+import type { ReactElement } from "react";
+import { FormattedMessage, defineMessage, useIntl } from "react-intl";
 
 import { Panel, Switch } from "@cocalc/frontend/antd-bootstrap";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { A, HelpIcon, Icon, LabeledRow } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
-import { DARK_MODE_ICON } from "@cocalc/util/consts/ui";
-import {
-  DARK_MODE_DEFAULTS,
-  DEFAULT_EDITOR_THEME,
-} from "@cocalc/util/db-schema/accounts";
-import { COLORS } from "@cocalc/util/theme";
-import {
-  DARK_MODE_KEYS,
-  DARK_MODE_MINS,
-  get_dark_mode_config,
-} from "./dark-mode";
+import { DEFAULT_EDITOR_THEME } from "@cocalc/util/db-schema/accounts";
+import { AppearanceControl } from "@cocalc/frontend/appearance/control";
 import { EditorSettingsColorScheme } from "./editor-settings/color-schemes";
 import { I18NSelector, I18N_MESSAGE, I18N_TITLE } from "./i18n-selector";
 import { NavbarMembershipSetting } from "./navbar-membership-setting";
@@ -59,21 +44,6 @@ export function katexIsEnabled() {
   return redux.getStore("account")?.getIn(["other_settings", "katex"]) ?? true;
 }
 
-const DARK_MODE_LABELS = defineMessages({
-  brightness: {
-    id: "account.other-settings.theme.dark_mode.brightness",
-    defaultMessage: "Brightness",
-  },
-  contrast: {
-    id: "account.other-settings.theme.dark_mode.contrast",
-    defaultMessage: "Contrast",
-  },
-  sepia: {
-    id: "account.other-settings.theme.dark_mode.sepia",
-    defaultMessage: "Sepia",
-  },
-});
-
 export function AccountPreferencesAppearance() {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
@@ -90,16 +60,6 @@ export function AccountPreferencesAppearance() {
   function on_change_editor_settings(name: string, value: any): void {
     redux.getActions("account").set_editor_settings(name, value);
   }
-
-  // Debounced version for dark mode sliders to reduce CPU usage
-  const on_change_dark_mode = useMemo(
-    () =>
-      debounce((name: string, value: any) => on_change(name, value), 50, {
-        trailing: true,
-        leading: false,
-      }),
-    [],
-  );
 
   function render_katex() {
     if (!ALLOW_DISABLE_KATEX) {
@@ -121,102 +81,16 @@ export function AccountPreferencesAppearance() {
   }
 
   function renderDarkModePanel(): ReactElement {
-    const checked = !!other_settings.get("dark_mode");
-    const config = get_dark_mode_config(other_settings.toJS());
     return (
       <Panel
         size="small"
         header={
           <>
-            <Icon unicode={DARK_MODE_ICON} /> Dark Mode
+            <Icon name="eye" /> {intl.formatMessage(labels.appearance)}
           </>
         }
-        styles={{
-          header: {
-            color: COLORS.GRAY_LLL,
-            backgroundColor: COLORS.GRAY_DD,
-          },
-          body: {
-            color: COLORS.GRAY_LLL,
-            backgroundColor: COLORS.GRAY_D,
-          },
-        }}
       >
-        <div>
-          <Switch
-            checked={checked}
-            onChange={(e) => on_change("dark_mode", e.target.checked)}
-            labelStyle={{ color: COLORS.GRAY_LLL }}
-          >
-            <FormattedMessage
-              id="account.other-settings.theme.dark_mode.compact"
-              defaultMessage={`Dark mode: reduce eye strain by showing a dark background (via {DR})`}
-              values={{
-                DR: (
-                  <A
-                    style={{ color: "#e96c4d", fontWeight: 700 }}
-                    href="https://darkreader.org/"
-                  >
-                    DARK READER
-                  </A>
-                ),
-              }}
-            />
-          </Switch>
-          {checked ? (
-            <Card
-              size="small"
-              title={
-                <>
-                  <Icon unicode={DARK_MODE_ICON} />{" "}
-                  {intl.formatMessage({
-                    id: "account.other-settings.theme.dark_mode.configuration",
-                    defaultMessage: "Dark Mode Configuration",
-                  })}
-                </>
-              }
-            >
-              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                {DARK_MODE_KEYS.map((key) => (
-                  <div
-                    key={key}
-                    style={{ display: "flex", gap: 10, alignItems: "center" }}
-                  >
-                    <div style={{ width: 100 }}>
-                      {intl.formatMessage(DARK_MODE_LABELS[key])}
-                    </div>
-                    <Slider
-                      min={DARK_MODE_MINS[key]}
-                      max={100}
-                      value={config[key]}
-                      onChange={(x) =>
-                        on_change_dark_mode(`dark_mode_${key}`, x)
-                      }
-                      marks={{
-                        [DARK_MODE_DEFAULTS[key]]: String(
-                          DARK_MODE_DEFAULTS[key],
-                        ),
-                      }}
-                      style={{ flex: 1, width: 0 }}
-                    />
-                    <Button
-                      size="small"
-                      style={{ marginLeft: "20px" }}
-                      onClick={() =>
-                        on_change_dark_mode(
-                          `dark_mode_${key}`,
-                          DARK_MODE_DEFAULTS[key],
-                        )
-                      }
-                    >
-                      {intl.formatMessage(labels.reset)}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          ) : undefined}
-        </div>
+        <AppearanceControl />
       </Panel>
     );
   }

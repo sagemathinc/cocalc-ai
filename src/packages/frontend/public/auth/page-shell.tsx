@@ -7,7 +7,7 @@ import type { CSSProperties, ReactNode } from "react";
 
 import { Card } from "antd";
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 interface PublicAuthPageShellProps {
   cardWidth?: CSSProperties["width"];
@@ -26,18 +26,23 @@ export default function PublicAuthPageShell({
       style={{
         marginInline: "auto",
         width: cardWidth ?? "min(480px, 96vw)",
-        boxShadow: "0 12px 32px rgba(0, 0, 0, 0.08)",
+        maxWidth: "100%",
+        minWidth: 0,
+        boxShadow: `0 12px 32px ${UI_COLORS.shadow}`,
       }}
       styles={{
         body: {
           display: "grid",
           gap: 12,
           padding: 32,
+          minWidth: 0,
         },
       }}
     >
       {subtitle ? (
-        <div style={{ margin: 0, color: COLORS.GRAY, fontSize: "15px" }}>
+        <div
+          style={{ margin: 0, color: UI_COLORS.secondary, fontSize: "15px" }}
+        >
           {subtitle}
         </div>
       ) : null}

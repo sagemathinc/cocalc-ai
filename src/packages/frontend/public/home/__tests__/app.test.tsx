@@ -3,6 +3,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import PublicHomeApp from "../app";
+import { PUBLIC_COLORS, publicAccent } from "../../theme";
 import { COLORS } from "@cocalc/util/theme";
 import {
   combineLeak,
@@ -90,7 +91,7 @@ describe("PublicHomeApp", () => {
     expectHomepageSectionsLabeled(container);
     expect(
       screen.getByText("Shared Linux Workspace").closest(".ant-typography"),
-    ).toHaveStyle({ color: COLORS.BLUE_DD });
+    ).toHaveStyle({ color: PUBLIC_COLORS.linkHover });
 
     // Section identity + order are canaried by the aria-label array above.
     // Here we only hold the h2 count and an anti-sprawl length bound, so the
@@ -352,13 +353,13 @@ describe("PublicHomeApp", () => {
       expect(within(products).getByText(option)).not.toBeNull();
     }
     expect(within(products).getByText("Local")).toHaveStyle({
-      color: COLORS.ANTD_GREEN_D,
+      color: publicAccent(COLORS.ANTD_GREEN_D),
     });
     expect(within(products).getByText("One VM")).toHaveStyle({
-      color: COLORS.BRWN,
+      color: publicAccent(COLORS.BRWN),
     });
     expect(within(products).getByText("Private")).toHaveStyle({
-      color: COLORS.BRWN,
+      color: publicAccent(COLORS.BRWN),
     });
     for (const removedLabel of [
       "Same CoCalc project model",
@@ -385,10 +386,10 @@ describe("PublicHomeApp", () => {
       name: "Why CoCalc is different",
     });
     expect(within(difference).getByText("Review together")).toHaveStyle({
-      color: COLORS.ANTD_GREEN_D,
+      color: publicAccent(COLORS.ANTD_GREEN_D),
     });
     expect(within(difference).getByText("Keep moving")).toHaveStyle({
-      color: COLORS.BRWN,
+      color: publicAccent(COLORS.BRWN),
     });
     for (const title of [
       "Project-centered workflow",

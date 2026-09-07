@@ -19,12 +19,14 @@ import TagsToolbar from "./cell-toolbar-tags";
 import IdsToolbar from "./cell-toolbar-ids";
 import { CreateAssignmentToolbar } from "./nbgrader/cell-toolbar-create-assignment";
 import { PROMPT_MIN_WIDTH } from "./prompt/base";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const STYLE: CSS = {
   marginLeft: PROMPT_MIN_WIDTH,
   display: "flex",
-  background: "#eee",
-  border: "1px solid rgb(247, 247, 247)",
+  background: UI_COLORS.inset,
+  color: UI_COLORS.text,
+  border: `1px solid ${UI_COLORS.border}`,
 } as const;
 
 export interface CellToolbarProps {

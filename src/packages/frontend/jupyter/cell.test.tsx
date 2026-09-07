@@ -7,6 +7,7 @@
 
 import { fromJS, Map } from "immutable";
 import { render, screen } from "@testing-library/react";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 let mockStudioCellProps: any;
 let mockCellOutputProps: any;
@@ -106,5 +107,32 @@ describe("Cell in studio view mode", () => {
     expect(screen.queryByTestId("studio-cell")).toBeNull();
     expect(screen.getByTestId("cell-output")).toBeInTheDocument();
     expect(mockCellOutputProps.stdin).toBeUndefined();
+  });
+
+  it("uses a live semantic selection surface without replacing the output", () => {
+    const { container, rerender } = render(
+      <Cell
+        cell={cell}
+        cm_options={Map()}
+        mode="escape"
+        font_size={14}
+        is_selected
+      />,
+    );
+    const output = screen.getByTestId("cell-output");
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>("div")).some(
+        (element) => element.style.background === UI_COLORS.selected,
+      ),
+    ).toBe(true);
+    rerender(
+      <Cell cell={cell} cm_options={Map()} mode="escape" font_size={14} />,
+    );
+    expect(screen.getByTestId("cell-output")).toBe(output);
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>("div")).some(
+        (element) => element.style.background === UI_COLORS.selected,
+      ),
+    ).toBe(false);
   });
 });

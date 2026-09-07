@@ -40,28 +40,29 @@ import {
   trunc_middle,
 } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { FLYOUT_DEFAULT_WIDTH_PX, FLYOUT_PADDING } from "./consts";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { triggerFlyoutFileAction } from "./file-action-trigger";
 
 const FILE_ITEM_SELECTED_STYLE: CSS = {
-  backgroundColor: COLORS.BLUE_LLL, // bit darker than .cc-project-flyout-file-item:hover
+  backgroundColor: UI_COLORS.selected,
 } as const;
 
 export const FILE_ITEM_OPENED_STYLE: CSS = {
   fontWeight: "bold",
-  backgroundColor: COLORS.GRAY_LL,
-  color: COLORS.PROJECT.FIXED_LEFT_ACTIVE,
+  backgroundColor: UI_COLORS.inset,
+  color: UI_COLORS.text,
 } as const;
 
 const FILE_ITEM_ACTIVE_STYLE: CSS = {
   ...FILE_ITEM_OPENED_STYLE,
-  color: COLORS.PROJECT.FIXED_LEFT_OPENED,
+  color: UI_COLORS.link,
 } as const;
 
 const FILE_ITEM_ACTIVE_STYLE_2: CSS = {
   ...FILE_ITEM_ACTIVE_STYLE,
-  backgroundColor: COLORS.GRAY_L0,
+  backgroundColor: UI_COLORS.selected,
 } as const;
 
 const FILE_ITEM_STYLE: CSS = {
@@ -88,7 +89,7 @@ const FILE_ITEM_LINE_STYLE: CSS = {
   textOverflow: "ellipsis",
   padding: 0,
   margin: 0,
-  color: COLORS.GRAY_D,
+  color: UI_COLORS.text,
 } as const;
 
 const ICON_STYLE: CSS = {
@@ -241,7 +242,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
         ? { fontWeight: "bold" }
         : item.isDir
           ? undefined
-          : { color: COLORS.FILE_EXT }
+          : { color: UI_COLORS.secondary }
       : undefined;
 
     return (
@@ -261,8 +262,8 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
               style={{
                 color: !item.mask
                   ? dimFileExtensions
-                    ? COLORS.GRAY_M
-                    : COLORS.FILE_EXT
+                    ? UI_COLORS.secondary
+                    : "inherit"
                   : undefined,
               }}
             >

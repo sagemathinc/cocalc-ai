@@ -120,6 +120,9 @@ describe("HostCreateForm", () => {
     expect(html).toContain("Project host title");
     expect(html).toContain("Fall numerical methods course");
     expect(html).not.toContain("My host");
+    expect(html).toContain(
+      "background:var(--cocalc-ui-inset);color:var(--cocalc-ui-text);border:1px solid var(--cocalc-ui-border)",
+    );
   });
 
   it("mounts advanced storage fields before the panel is expanded", () => {

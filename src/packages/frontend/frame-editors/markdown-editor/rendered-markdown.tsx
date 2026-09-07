@@ -13,6 +13,7 @@
 //    - [x] math is properly typeset
 
 import { delay } from "awaiting";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import { is_different } from "@cocalc/util/misc";
@@ -116,7 +117,8 @@ export const RenderedMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const style_inner: CSS = {
     ...{
       padding: "40px 70px",
-      backgroundColor: "white",
+      backgroundColor: UI_COLORS.surface,
+      color: UI_COLORS.text,
       overflowY: "auto",
     },
     ...{
@@ -127,7 +129,10 @@ export const RenderedMarkdown: React.FC<Props> = React.memo((props: Props) => {
   };
 
   return (
-    <div className="smc-vfill" style={{ backgroundColor: "#eee" }}>
+    <div
+      className="smc-vfill"
+      style={{ backgroundColor: UI_COLORS.inset, color: UI_COLORS.text }}
+    >
       <Path is_current={is_current} path={path} project_id={project_id} />
       <div
         style={style}

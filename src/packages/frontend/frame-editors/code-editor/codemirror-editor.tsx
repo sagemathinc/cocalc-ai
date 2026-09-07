@@ -39,6 +39,7 @@ import { connect_editor_doc } from "./doc";
 import { AccountState } from "../../account/types";
 import { attachSyncListeners } from "./cm-adapter";
 import { CodeMirrorMinimap } from "./codemirror-minimap";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const STYLE: CSS = {
   width: "100%",
@@ -46,7 +47,8 @@ const STYLE: CSS = {
   // marginbottom: "1ex",
   // minheight: "2em",
   border: "0px",
-  background: "#fff",
+  background: UI_COLORS.surface,
+  color: UI_COLORS.text,
 } as const;
 
 function spellcheckHighlight(

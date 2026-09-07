@@ -20,7 +20,7 @@ import {
   R2_REGION_LABELS,
 } from "@cocalc/util/consts";
 import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { getDiskTypeOptions } from "../constants";
@@ -42,8 +42,9 @@ const MAX_DISK_SIZE = 10_000;
 const INITIAL_DISK_SIZE = 100;
 const NEBIUS_IO_M3_GB = 93;
 const FIELD_GROUP_STYLE: React.CSSProperties = {
-  background: COLORS.GRAY_LLL,
-  border: `1px solid ${COLORS.GRAY_LL}`,
+  background: UI_COLORS.inset,
+  color: UI_COLORS.text,
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: 10,
   marginBottom: 8,
   padding: "8px 10px 0",

@@ -9,7 +9,7 @@ import type { SizeType } from "antd/es/config-provider/SizeContext";
 import { createContext, ReactNode, useContext } from "react";
 
 import { isIntlMessage, type IntlMessage } from "@cocalc/util/i18n/types";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { ACTIVITY_BAR_LABELS_DEFAULT } from "@cocalc/frontend/project/page/activity-bar-consts";
 import {
@@ -63,14 +63,15 @@ export function calcStyle(isNarrow: boolean): PageStyle {
 
   const topBarStyle = {
     height: `${height}px`,
-    background: "#fafafa",
+    background: UI_COLORS.inset,
+    color: UI_COLORS.text,
   } as const;
 
   const fileUseStyle = {
-    background: "white",
-    border: `2px solid ${COLORS.GRAY_DDD}`,
+    background: UI_COLORS.elevated,
+    border: `2px solid ${UI_COLORS.controlBorder}`,
     borderRadius: "5px",
-    boxShadow: "0 0 15px #aaa",
+    boxShadow: `0 0 15px ${UI_COLORS.shadow}`,
     fontSize: "10pt",
     height: "90%",
     margin: 0,

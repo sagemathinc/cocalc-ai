@@ -56,6 +56,8 @@ import { touch, touch_project } from "../generic/client";
 import { ConnectedTerminalInterface } from "./connected-terminal-interface";
 import { open_init_file } from "./init-file";
 import { setTheme } from "./themes";
+import { getBrowserAppearanceStore } from "@cocalc/util/appearance-browser";
+import { resolveAppearanceEditorTheme } from "@cocalc/util/appearance-editor";
 import { termPath } from "@cocalc/util/terminal/names";
 import { dirname } from "path";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -377,6 +379,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private args?: string[];
   private workingDir?: string;
   private terminalThemeOverride: string | null = null;
+  private unsubscribeAppearance?: () => void;
   private appliedTerminalTheme: string | null = null;
   private transientReconnectStyleActive = false;
 
@@ -963,6 +966,8 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     this.set_connection_status("disconnected");
     this.state = "closed";
     this.account_store.removeListener("change", this.update_settings);
+    this.unsubscribeAppearance?.();
+    this.unsubscribeAppearance = undefined;
     this.projectsStore?.removeListener(
       "change",
       this.handleProjectsStoreChange,
@@ -1085,8 +1090,10 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     if (settings == null) {
       return;
     }
-    const effectiveTheme =
-      this.terminalThemeOverride ?? settings.get("color_scheme") ?? "default";
+    const effectiveTheme = resolveAppearanceEditorTheme(
+      this.terminalThemeOverride ?? settings.get("color_scheme") ?? "default",
+      getBrowserAppearanceStore().getSnapshot().resolved,
+    );
     if (
       this.terminal_settings.equals(settings) &&
       this.appliedTerminalTheme === effectiveTheme
@@ -2220,6 +2227,10 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
 
   init_settings(): void {
     this.account_store.on("change", this.update_settings);
+    this.unsubscribeAppearance?.();
+    this.unsubscribeAppearance = getBrowserAppearanceStore().subscribe(
+      this.update_settings,
+    );
   }
 
   focus(): void {

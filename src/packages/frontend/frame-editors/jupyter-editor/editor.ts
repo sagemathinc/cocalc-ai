@@ -105,7 +105,8 @@ const jupyter_cell_notebook: EditorDescription = {
 const jupyter_studio: EditorDescription = {
   type: "jupyter-studio",
   short: "Studio",
-  name: "Jupyter Studio",
+  name: "Jupyter Studio (experimental)",
+  unavailable_reason: (actions) => actions.studioUnavailableReason?.(),
   icon: "ipynb",
   component: CellNotebook,
   commands: jupyterCommands,
@@ -394,15 +395,6 @@ const JUPYTER_MENUS = {
     label: menu.view,
     pos: 2,
     entries: {
-      "view-mode": [
-        {
-          name: "toggle studio view",
-          label: ({ props }) =>
-            props.type === "jupyter_studio"
-              ? "Switch to Classic Notebook View"
-              : "Switch to Studio Notebook View",
-        },
-      ],
       components: [
         {
           icon: "tool",

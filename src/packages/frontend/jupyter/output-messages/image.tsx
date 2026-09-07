@@ -40,6 +40,8 @@ function renderImage({
     height: "auto",
     padding: src ? undefined : "15px",
     textAlign: "center",
+    // Preserve the original paper backing for plots with transparent pixels.
+    backgroundColor: src ? "white" : undefined,
   } as React.CSSProperties;
   if (on_error != null) {
     props["onError"] = on_error;

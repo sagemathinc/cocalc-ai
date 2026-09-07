@@ -1,7 +1,8 @@
 /** @jest-environment jsdom */
 
-import { act, render, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { ChatIndicator } from "./chat-indicator";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const mockEnsureSideChatActions = jest.fn();
 const mockHasUnreadSideChat = jest.fn(() => false);
@@ -95,6 +96,20 @@ function createMockChatActions(id: string, initialState = "ready") {
 describe("ChatIndicator", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("uses a themed surface for the open chat button", () => {
+    mockEnsureSideChatActions.mockReturnValue(createMockChatActions("open"));
+    render(
+      <ChatIndicator
+        project_id="project-1"
+        path="/home/user/notes.md"
+        chatState="external"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveStyle({
+      background: UI_COLORS.surface,
+    });
   });
 
   it("reacquires side-chat actions after the syncdb closes", async () => {

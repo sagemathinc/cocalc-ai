@@ -5,7 +5,7 @@
 
 import { Select } from "antd";
 import type { CSSProperties } from "react";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { HostFieldOption } from "../providers/registry";
 
 type HostOptionsSelectProps = {
@@ -301,7 +301,7 @@ export function HostOptionsSelect({
               {subLabel ? (
                 <span
                   style={{
-                    color: COLORS.GRAY_M,
+                    color: UI_COLORS.secondary,
                     fontSize: "12px",
                     lineHeight: 1.3,
                   }}
@@ -313,7 +313,7 @@ export function HostOptionsSelect({
             {detailLabel ? (
               <span
                 style={{
-                  color: COLORS.GRAY_M,
+                  color: UI_COLORS.secondary,
                   fontSize: "12px",
                   lineHeight: 1.3,
                   textAlign: "left",
@@ -327,7 +327,9 @@ export function HostOptionsSelect({
             {detail ? (
               <span
                 style={{
-                  color: data?.priceLabel ? COLORS.GRAY_D : COLORS.GRAY_M,
+                  color: data?.priceLabel
+                    ? UI_COLORS.text
+                    : UI_COLORS.secondary,
                   fontVariantNumeric: "tabular-nums",
                   overflow: "hidden",
                   textAlign: "right",

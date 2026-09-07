@@ -248,6 +248,13 @@ beforeEach(() => {
   });
 });
 
+test("projects page uses the application page surface instead of fixed white", () => {
+  render(<ProjectsPage />);
+  const content = screen.getByRole("main");
+  expect(content.style.background).toBe("var(--cocalc-ui-page)");
+  expect(content.parentElement?.style.background).toBe("var(--cocalc-ui-page)");
+});
+
 test("projects page allows existing project access when email verification is required", () => {
   mockEmailVerificationRequired = true;
   mockVisibleProjects.push("invited-project");

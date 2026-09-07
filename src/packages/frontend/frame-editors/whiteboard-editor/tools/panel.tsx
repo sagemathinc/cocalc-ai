@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
 
 Floating panel from which you can select a tool.
@@ -18,10 +19,11 @@ export const PANEL_STYLE: CSS = {
   zIndex: MAX_ELEMENTS + 1,
   position: "absolute",
   fontSize: "18px",
-  boxShadow: "0 0 5px grey",
+  boxShadow: `0 0 5px ${UI_COLORS.shadow}`,
   borderRadius: "3px",
   margin: "10px",
-  background: "white",
+  background: UI_COLORS.elevated,
+  color: UI_COLORS.text,
 } as const;
 
 interface Props {
@@ -52,8 +54,8 @@ export default function Panel({
         type="text"
         size="small"
         style={{
-          color: "#888",
-          background: minimizedTools ? undefined : "#eee",
+          color: UI_COLORS.secondary,
+          background: minimizedTools ? undefined : UI_COLORS.inset,
         }}
         onClick={() => {
           setMinimizedTools?.(!minimizedTools);

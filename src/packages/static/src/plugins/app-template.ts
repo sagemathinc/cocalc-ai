@@ -1,5 +1,6 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import { appearanceHeadHtml } from "@cocalc/util/appearance-bootstrap";
 import {
   PUBLIC_BODY_PLACEHOLDER,
   PUBLIC_HEAD_PLACEHOLDER,
@@ -27,9 +28,17 @@ function replaceExactlyOnce(
 
 export function renderAppTemplate(entry = "unknown"): string {
   if (entry === "ultralite") {
-    return readFileSync(resolve(__dirname, "../ultralite.html"), "utf8");
+    return replaceExactlyOnce(
+      readFileSync(resolve(__dirname, "../ultralite.html"), "utf8"),
+      "<!-- cocalc-appearance-placeholder -->",
+      appearanceHeadHtml("essential"),
+    );
   }
-  const template = readFileSync(resolve(__dirname, "../app.html"), "utf8");
+  const template = replaceExactlyOnce(
+    readFileSync(resolve(__dirname, "../app.html"), "utf8"),
+    "</head>",
+    `${appearanceHeadHtml(entry === "scratchpad" ? "scratchpad" : undefined)}</head>`,
+  );
   return replaceExactlyOnce(
     replaceExactlyOnce(
       replaceExactlyOnce(template, ENTRY_TEMPLATE_TOKEN, entry),

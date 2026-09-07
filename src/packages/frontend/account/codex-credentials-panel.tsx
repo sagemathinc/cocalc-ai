@@ -43,7 +43,7 @@ import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { formatCodexErrorForDisplay } from "@cocalc/frontend/chat/codex-error-presentation";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type {
   CodexPaymentSourceInfo,
   CodexUsageStatusInfo,
@@ -54,16 +54,16 @@ const { Text } = Typography;
 const SUBSCRIPTION_AUTH_PANEL_KEY = "subscription-auth";
 
 const recommendedCardStyle: CSSProperties = {
-  border: `1px solid ${COLORS.GRAY_LL}`,
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: 8,
-  background: "white",
+  background: UI_COLORS.surface,
   padding: 16,
 };
 
 const deviceAuthCodeStyle: CSSProperties = {
-  border: `1px solid ${COLORS.GRAY_L0}`,
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: 8,
-  background: COLORS.GRAY_LLL,
+  background: UI_COLORS.inset,
   padding: 12,
 };
 

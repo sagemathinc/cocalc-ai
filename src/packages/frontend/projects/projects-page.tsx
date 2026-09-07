@@ -23,7 +23,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { Icon, Loading, LoginLink, Title } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   IncomingInviteBanner,
   useInviteInboxState,
@@ -83,7 +83,7 @@ const NewProjectCreator = lazyWithRetry(
 const LOADING_STYLE: CSS = {
   fontSize: "40px",
   textAlign: "center",
-  color: COLORS.GRAY,
+  color: UI_COLORS.secondary,
 } as const;
 
 const PROJECTS_TABLE_INITIAL_BODY_HEIGHT = 400;
@@ -553,7 +553,7 @@ export const ProjectsPage: React.FC = () => {
     <div className={"smc-vfill"} style={{ overflow: "hidden" }}>
       <Layout
         style={{
-          background: "white",
+          background: UI_COLORS.page,
           height: "100%",
           display: "flex",
           flexDirection: "row",
@@ -576,7 +576,7 @@ export const ProjectsPage: React.FC = () => {
         )}
         <Layout.Content
           style={{
-            background: "white",
+            background: UI_COLORS.page,
             display: "flex",
             flex: "1 1 auto",
             flexDirection: "column",

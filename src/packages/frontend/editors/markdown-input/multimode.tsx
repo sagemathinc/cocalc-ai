@@ -14,6 +14,7 @@ import { useMultimodeFocusInteraction } from "./use-multimode-focus-interaction"
 import { useMultimodeModeState } from "./use-multimode-mode-state";
 import { useMultimodeSelection } from "./use-multimode-selection";
 import type { Mode, MultiMarkdownInputProps } from "./types";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 // NOTE: on mobile there is very little suppport for "editor" = "slate", but
 // very good support for "markdown", hence the default below.
@@ -234,8 +235,8 @@ export default function MultiMarkdownInput({
           ? undefined
           : {
               overflow: unboundedAutoGrow ? "visible" : "hidden",
-              background: "white",
-              color: "black",
+              background: UI_COLORS.surface,
+              color: UI_COLORS.text,
               ...(focused ? FOCUSED_STYLE : BLURED_STYLE),
             }),
       }}

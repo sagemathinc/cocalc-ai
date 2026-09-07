@@ -1,3 +1,4 @@
+import { useMinimapColors } from "@cocalc/frontend/components/minimap/use-colors";
 /*
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -45,11 +46,7 @@ import { React } from "@cocalc/frontend/app-framework";
 import type { MinimapCellTheme } from "@cocalc/frontend/components/minimap/colors";
 import { MinimapControls } from "@cocalc/frontend/components/minimap/controls";
 import { canvasBackingStoreSize } from "@cocalc/frontend/components/canvas-backing-store";
-import {
-  MINIMAP_CELL_THEME,
-  MINIMAP_COLORS,
-  type MinimapCellKind,
-} from "@cocalc/frontend/components/minimap/colors";
+import type { MinimapCellKind } from "@cocalc/frontend/components/minimap/colors";
 import {
   MinimapContextMenu,
   useMinimapSettingsModal,
@@ -251,6 +248,8 @@ export function useNotebookMinimap({
   hydrateVisibleCells,
   saveScrollDebounce,
 }: UseNotebookMinimapArgs): UseNotebookMinimapResult {
+  const { colors: MINIMAP_COLORS, cells: MINIMAP_CELL_THEME } =
+    useMinimapColors();
   const settings = useMinimapSettings(settingsApi);
   const minimapOptIn = settings.enabled;
   const minimapWidth = settings.width;
@@ -561,7 +560,7 @@ export function useNotebookMinimap({
         lineY += metrics.lineHeight;
       }
     }
-  }, [minimapData]);
+  }, [minimapData, MINIMAP_COLORS, MINIMAP_CELL_THEME]);
 
   const getGeometry = useCallback((): TextMinimapGeometry | null => {
     if (minimapData == null) return null;

@@ -98,6 +98,7 @@ import {
   mark_open_phase,
 } from "@cocalc/frontend/project/open-file";
 import { effectivePlainEditorSettings } from "@cocalc/frontend/project/workspaces/editor-theme";
+import { getBrowserAppearanceStore } from "@cocalc/util/appearance-browser";
 import { subscribeAccountSettingsStore } from "./account-settings-watcher";
 import {
   resolveRuntimeWorkspaceForPath,
@@ -240,6 +241,7 @@ export class JupyterActions extends JupyterActions0 {
   private runDebugCounter: number = 0;
   private runDebugMode: "off" | "on" | "json" | undefined;
   private workspaceRecordsChange?: EventListener;
+  private unsubscribeAppearance?: () => void;
   private liveRunSub?: any;
   private liveRunStore?: JupyterLiveRunStore;
   private liveRunContexts = new globalThis.Map<string, LiveRunRenderContext>();
@@ -1561,6 +1563,14 @@ export class JupyterActions extends JupyterActions0 {
 
       // set codemirror editor options whenever account editor_settings change.
       this.initAccountSettingsWatcher();
+      this.unsubscribeAppearance?.();
+      let appearance = getBrowserAppearanceStore().getSnapshot().resolved;
+      this.unsubscribeAppearance = getBrowserAppearanceStore().subscribe(() => {
+        const next = getBrowserAppearanceStore().getSnapshot().resolved;
+        if (next === appearance || this.isClosed()) return;
+        appearance = next;
+        this.set_cm_options();
+      });
       this.workspaceRecordsChange = ((event: Event) => {
         const detail = (
           event as CustomEvent<{
@@ -1732,6 +1742,8 @@ export class JupyterActions extends JupyterActions0 {
     try {
       if (this.isClosed()) return;
       this.recordJupyterOpenIncomplete("editor_closed");
+      this.unsubscribeAppearance?.();
+      this.unsubscribeAppearance = undefined;
       this.reconnectResource?.close();
       this.reconnectResource = undefined;
       this.projectStore?.removeListener?.(
@@ -2415,6 +2427,7 @@ export class JupyterActions extends JupyterActions0 {
     const editor_settings = effectivePlainEditorSettings(
       immutable_editor_settings.toJS(),
       workspaceRecord,
+      getBrowserAppearanceStore().getSnapshot().resolved,
     );
     const line_numbers =
       this.get_local_storage("line_numbers") ??

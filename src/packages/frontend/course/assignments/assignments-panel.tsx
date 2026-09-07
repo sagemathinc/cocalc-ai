@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -195,7 +196,7 @@ export function AssignmentsPanel(props: Props) {
         name={name}
         redux={redux}
         assignment={get_assignment(assignment_id)}
-        background={index % 2 === 0 ? "#eee" : undefined}
+        background={index % 2 === 0 ? UI_COLORS.inset : undefined}
         students={students}
         user_map={user_map}
         is_expanded={expanded_assignments.has(assignment_id)}

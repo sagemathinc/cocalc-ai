@@ -12,6 +12,7 @@ import { round2down, round2up } from "@cocalc/util/misc";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useEffect, useState } from "react";
 import { lite } from "@cocalc/frontend/lite";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   UsageWindowMeters,
   type UsageWindowMeter,
@@ -189,9 +190,7 @@ export function AIUsageStatus({
             <CompactUsageBar label="5h" window={window5h} />
           ) : (
             <Space orientation="vertical" size={2} style={{ width: "100%" }}>
-              <div style={{ marginBottom: "-8px" }}>
-                <CompactUsageBar label="5h" window={window5h} />
-              </div>
+              <CompactUsageBar label="5h" window={window5h} />
               <CompactUsageBar label="7d" window={window7d} />
             </Space>
           )}
@@ -246,7 +245,7 @@ export function AIUsageMeters({
   );
 }
 
-function CompactUsageBar({
+export function CompactUsageBar({
   label,
   window,
 }: {
@@ -255,14 +254,29 @@ function CompactUsageBar({
 }) {
   const limit = window?.limit ?? 0;
   const used = window?.used ?? 0;
-  const percent = limit > 0 ? Math.min(100, (100 * used) / limit) : 0;
+  const known =
+    !!window && Number.isFinite(limit) && limit > 0 && Number.isFinite(used);
+  const percent = known ? Math.max(0, Math.min(100, (100 * used) / limit)) : 0;
+  const usageLabel = !known
+    ? "Unavailable"
+    : percent > 0 && percent < 1
+      ? "<1% used"
+      : `${Math.round(percent)}% used`;
   const filled = Math.max(0, Math.min(4, Math.round((percent / 100) * 4)));
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
       <Text type="secondary" style={{ width: "22px" }}>
         {label}
       </Text>
-      <div style={{ display: "flex", gap: "4px", flex: 1 }}>
+      <div
+        role={known ? "meter" : undefined}
+        aria-label={`${label} AI usage`}
+        aria-valuemin={known ? 0 : undefined}
+        aria-valuemax={known ? 100 : undefined}
+        aria-valuenow={known ? percent : undefined}
+        aria-valuetext={known ? usageLabel : undefined}
+        style={{ display: "flex", gap: "4px", flex: 1, minWidth: 48 }}
+      >
         {Array.from({ length: 4 }, (_, idx) => (
           <div
             key={`${label}-${idx}`}
@@ -270,11 +284,22 @@ function CompactUsageBar({
               flex: 1,
               height: "5px",
               borderRadius: "4px",
-              background: idx < filled ? "#1677ff" : "#f0f0f0",
+              background: idx < filled ? UI_COLORS.link : UI_COLORS.inset,
+              border: `1px solid ${idx < filled ? UI_COLORS.link : UI_COLORS.border}`,
             }}
           />
         ))}
       </div>
+      <span
+        style={{
+          color: UI_COLORS.text,
+          minWidth: 65,
+          textAlign: "right",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {usageLabel}
+      </span>
     </div>
   );
 }

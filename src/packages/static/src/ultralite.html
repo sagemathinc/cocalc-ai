@@ -3,19 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light dark" />
+    <!-- cocalc-appearance-placeholder -->
     <meta name="robots" content="noindex,nofollow" />
     <title>CoCalc Essential</title>
-    <script>
-      try {
-        const preference = localStorage.getItem("cocalc-essential-theme");
-        const dark =
-          preference === "dark" ||
-          (preference !== "light" &&
-            matchMedia("(prefers-color-scheme: dark)").matches);
-        document.documentElement.style.colorScheme = dark ? "dark" : "light";
-      } catch {}
-    </script>
     <style>
       * {
         box-sizing: border-box;

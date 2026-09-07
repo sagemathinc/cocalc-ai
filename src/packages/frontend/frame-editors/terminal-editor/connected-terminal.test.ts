@@ -110,6 +110,11 @@ function loadTerminalModule({
   const uxLatencyEvents = jest.fn();
 
   jest.resetModules();
+  const appearance =
+    require("@cocalc/util/appearance-store").createAppearanceStore();
+  jest.doMock("@cocalc/util/appearance-browser", () => ({
+    getBrowserAppearanceStore: () => appearance,
+  }));
 
   jest.doMock("@xterm/xterm", () => {
     class MockTerminal {
@@ -236,6 +241,8 @@ function loadTerminalModule({
   const { Terminal } = require("./connected-terminal");
   return {
     Terminal,
+    appearance,
+    setTheme: require("./themes").setTheme,
     ptys: createdPtys,
     projectStore,
     terminalClient,
@@ -270,6 +277,33 @@ function makeActions() {
 }
 
 describe("connected terminal TUI selection", () => {
+  it("updates a Follow palette without replacing the terminal, resetting it, or reconnecting", async () => {
+    const { Terminal, appearance, setTheme, terminalClient } =
+      loadTerminalModule();
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const terminal = new Terminal(makeActions(), 0, "term-1", parent);
+    terminal.set_terminal_theme_override("follow-appearance");
+    const xterm = terminal["terminal"];
+    const element = xterm.element;
+    const connections = terminalClient.mock.calls.length;
+    setTheme.mockClear();
+    await appearance.choose("dark");
+    expect(setTheme).toHaveBeenLastCalledWith(xterm, "cocalc-dark");
+    expect(xterm.element).toBe(element);
+    expect(xterm.reset).not.toHaveBeenCalled();
+    expect(xterm.dispose).not.toHaveBeenCalled();
+    expect(terminalClient).toHaveBeenCalledTimes(connections);
+    terminal.set_terminal_theme_override("cocalc-light");
+    setTheme.mockClear();
+    await appearance.choose("light");
+    await appearance.choose("dark");
+    expect(setTheme).not.toHaveBeenCalled();
+    terminal.close();
+    await expect(appearance.choose("light")).resolves.toBeUndefined();
+    expect(setTheme).not.toHaveBeenCalled();
+  });
+
   it("enables the macOS modifier override for application mouse mode", () => {
     const { Terminal } = loadTerminalModule();
     const parent = document.createElement("div");

@@ -1,3 +1,69 @@
+.ul-app[data-ul-theme="light"] {
+  color-scheme: light;
+  --ul-accent: #2a5aa6;
+  --ul-accent-soft: #e6f4ff;
+  --ul-bg: white;
+  --ul-border: #eeeeee;
+  --ul-border-dark: #c0c0c0;
+  --ul-code-bg: #f5f5f5;
+  --ul-code-text: #303030;
+  --ul-danger: #dc3545;
+  --ul-danger-soft: #fff2f0;
+  --ul-focus: #bf7b00;
+  --ul-heading: #303030;
+  --ul-ink: #303030;
+  --ul-link: #2a5aa6;
+  --ul-muted: #5f5f5f;
+  --ul-on-accent: white;
+  --ul-output-image-bg: white;
+  --ul-paper: white;
+  --ul-rail: #f5f5f5;
+  --ul-success: #237804;
+  --ul-topbar: #4474c0;
+  --ul-token-comment: #5f5f5f;
+  --ul-token-function: #0e2b59;
+  --ul-token-keyword: #dc3545;
+  --ul-token-number: #2a5aa6;
+  --ul-token-string: #237804;
+  --ul-token-warning: #bf7b00;
+  --ul-terminal-bg: white;
+  --ul-warning: #bf7b00;
+  --ul-warning-soft: #fff2d0;
+}
+
+.ul-app[data-ul-theme="dark"] {
+  color-scheme: dark;
+  --ul-accent: #2a5aa6;
+  --ul-accent-soft: #0e2b59;
+  --ul-bg: #303030;
+  --ul-border: #5f5f5f;
+  --ul-border-dark: #808080;
+  --ul-code-bg: #303030;
+  --ul-code-text: #eeeeee;
+  --ul-danger: #dc3545;
+  --ul-danger-soft: color-mix(in srgb, #dc3545 18%, #434343);
+  --ul-focus: #fbb635;
+  --ul-heading: white;
+  --ul-ink: #eeeeee;
+  --ul-link: #80afff;
+  --ul-muted: #c0c0c0;
+  --ul-on-accent: white;
+  --ul-output-image-bg: white;
+  --ul-paper: #434343;
+  --ul-rail: #303030;
+  --ul-success: #87d068;
+  --ul-topbar: #0e2b59;
+  --ul-token-comment: #c0c0c0;
+  --ul-token-function: #80afff;
+  --ul-token-keyword: #ff7875;
+  --ul-token-number: #fcc861;
+  --ul-token-string: #87d068;
+  --ul-token-warning: #fbb635;
+  --ul-terminal-bg: #303030;
+  --ul-warning: #fbb635;
+  --ul-warning-soft: color-mix(in srgb, #bf7b00 22%, #434343);
+}
+
 :root {
   color-scheme: light dark;
 }
@@ -147,17 +213,28 @@ textarea {
   color: var(--ul-on-accent);
   display: inline-flex;
   font-size: 12px;
-  gap: 5px;
-  min-height: 36px;
+  position: relative;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  justify-content: center;
+}
+
+.ul-theme-control > svg {
+  position: absolute;
+  pointer-events: none;
 }
 
 .ul-theme-control select {
-  background: color-mix(in srgb, var(--ul-topbar) 78%, var(--ul-on-accent) 22%);
-  border: 1px solid rgb(255 255 255 / 55%);
+  appearance: none;
+  background: transparent;
+  border: 0;
   border-radius: 3px;
-  color: var(--ul-on-accent);
-  min-height: 30px;
-  padding: 3px 6px;
+  color: transparent;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  padding: 0;
 }
 
 .ul-theme-control option {
@@ -1539,14 +1616,6 @@ textarea {
 
   .ul-topbar-link {
     font-size: 0;
-  }
-
-  .ul-theme-control > span {
-    display: none;
-  }
-
-  .ul-theme-control select {
-    max-width: 78px;
   }
 
   .ul-project-layout {

@@ -33,6 +33,7 @@ import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { containingPath, humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   codexModelSupportsFastMode,
   DEFAULT_CODEX_MODEL_NAME,
@@ -111,7 +112,7 @@ import {
 
 const CHAT_LOG_STYLE: React.CSSProperties = {
   padding: "0",
-  background: "white",
+  background: UI_COLORS.page,
   flex: "1 1 0",
   minHeight: 0,
   position: "relative",
@@ -121,9 +122,9 @@ const SETUP_CARD_STYLE: React.CSSProperties = {
   width: "min(840px, 96%)",
   margin: "0 auto",
   padding: "18px 20px",
-  border: "1px solid #eee",
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: 12,
-  background: "#fcfcfc",
+  background: UI_COLORS.surface,
 } as const;
 
 const DEFAULT_CODEX_MODEL =
@@ -1528,15 +1529,15 @@ export function ChatRoomThreadPanel({
             minWidth: 210,
             padding: "12px 16px",
             textAlign: "left",
-            borderColor: selected ? COLORS.BLUE_D : COLORS.GRAY_L0,
-            background: selected ? COLORS.BLUE_LLLL : "white",
+            borderColor: selected ? UI_COLORS.primary : UI_COLORS.border,
+            background: selected ? UI_COLORS.selected : UI_COLORS.surface,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Icon
               name={icon}
               style={{
-                color: selected ? COLORS.BLUE_D : COLORS.GRAY_M,
+                color: selected ? UI_COLORS.link : UI_COLORS.secondary,
                 fontSize: 18,
               }}
             />
@@ -1544,7 +1545,7 @@ export function ChatRoomThreadPanel({
               <div
                 style={{
                   fontWeight: 600,
-                  color: selected ? COLORS.BLUE_DD : COLORS.GRAY_DD,
+                  color: selected ? UI_COLORS.link : UI_COLORS.text,
                 }}
               >
                 {title}
@@ -2067,10 +2068,10 @@ export function ChatRoomThreadPanel({
           ? {
               height: 28,
               padding: "0 7px",
-              border: `1px solid ${COLORS.GRAY_LL}`,
+              border: `1px solid ${UI_COLORS.border}`,
               borderRadius: 7,
-              background: "white",
-              boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+              background: UI_COLORS.surface,
+              boxShadow: `0 1px 4px ${UI_COLORS.shadow}`,
               whiteSpace: "nowrap" as const,
             }
           : undefined),
@@ -2248,9 +2249,9 @@ export function ChatRoomThreadPanel({
             zIndex: 10,
             borderRadius: 10,
             overflow: "hidden",
-            border: "1px solid #ddd",
-            background: "white",
-            boxShadow: "0 1px 8px rgba(0,0,0,0.12)",
+            border: `1px solid ${UI_COLORS.border}`,
+            background: UI_COLORS.surface,
+            boxShadow: `0 1px 8px ${UI_COLORS.shadow}`,
           }}
         >
           <img
@@ -2868,10 +2869,10 @@ export function ChatRoomThreadPanel({
             style={{
               margin: "8px 12px 0 12px",
               padding: "8px 10px",
-              border: "1px solid #ffe58f",
-              background: "#fffbe6",
+              border: `1px solid ${UI_COLORS.warning}`,
+              background: UI_COLORS.warningBg,
               borderRadius: 8,
-              color: "#8a6d3b",
+              color: UI_COLORS.warning,
               fontSize: 12,
               display: "flex",
               alignItems: "center",

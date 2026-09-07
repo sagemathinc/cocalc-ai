@@ -36,6 +36,7 @@ import useFiles, {
 } from "@cocalc/frontend/project/listing/use-files";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const NEW_FOLDER = "New Folder";
 
@@ -299,7 +300,7 @@ export default function DirectorySelector({
       }
       style={{
         width: "20em",
-        backgroundColor: "white",
+        backgroundColor: UI_COLORS.surface,
         ...style,
       }}
       styles={{
@@ -433,13 +434,7 @@ function SelectablePath({
       />
     );
   }
-  let color;
-  let backgroundColor: string | undefined = undefined;
-  if (isExcluded) {
-    color = "gray";
-  } else {
-    color = "black";
-  }
+  const color = isExcluded ? UI_COLORS.secondary : UI_COLORS.text;
 
   return (
     <Checkbox
@@ -454,7 +449,6 @@ function SelectablePath({
           overflowX: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
-          backgroundColor,
           color,
           borderRadius: "3px",
         }}
@@ -659,7 +653,7 @@ function CreateDirectory({ project_id, path, toggleSelection }) {
   };
 
   return (
-    <div style={{ color: "#666" }} key={"...-create-dir"}>
+    <div style={{ color: UI_COLORS.secondary }} key={"...-create-dir"}>
       <Modal
         title={
           <>

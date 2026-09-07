@@ -1298,6 +1298,27 @@ export async function executeBrowserAction({
         const pos = element.value.length;
         element.setSelectionRange(pos, pos);
       }
+    } else if (element instanceof HTMLSelectElement) {
+      // Native selects need a value/change action; synthetic key presses do not
+      // perform the browser's trusted keyboard default behavior.
+      if (append || element.multiple || element.matches(":disabled")) {
+        throw Error(
+          "select requires an enabled single-select and replacement value",
+        );
+      }
+      const option = Array.from(element.options).find(
+        (option) => option.value === text,
+      );
+      if (
+        !option ||
+        option.disabled ||
+        option.parentElement?.matches("optgroup:disabled")
+      ) {
+        throw Error("select value must match an enabled option");
+      }
+      element.value = text;
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
     } else if (isTypeableContentEditable(element)) {
       const editable = element;
       if (clear || !append) {

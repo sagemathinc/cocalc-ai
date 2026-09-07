@@ -9,17 +9,14 @@ Provides build, force build, clean, download, and print controls
 */
 
 import type { SizeType } from "antd/es/config-provider/SizeContext";
+import { PDFInvertColorsButton } from "../pdf-editor/invert-colors-button";
 
 import type { MenuProps } from "antd";
 import { Button, Dropdown, Space } from "antd";
 import { useIntl } from "react-intl";
 
 import { set_account_table } from "@cocalc/frontend/account/util";
-import { Button as BSButton } from "@cocalc/frontend/antd-bootstrap";
-import {
-  useAccountOtherSetting,
-  useRedux,
-} from "@cocalc/frontend/app-framework";
+import { useRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { COMMANDS } from "@cocalc/frontend/frame-editors/frame-tree/commands";
 import {
@@ -29,7 +26,6 @@ import {
 } from "@cocalc/frontend/frame-editors/frame-tree/commands/const";
 import { server_time } from "@cocalc/frontend/frame-editors/generic/client";
 import { editor, IntlMessage } from "@cocalc/frontend/i18n";
-import { DARK_MODE_ICON } from "@cocalc/util/consts/ui";
 
 import { Actions } from "./actions";
 
@@ -51,16 +47,6 @@ export function BuildControls({
   // Get build on save setting from account store
   const buildOnSave =
     useRedux(["account", "editor_settings", "build_on_save"]) ?? false;
-
-  // Check if global dark mode is enabled
-  const isDarkMode = useAccountOtherSetting<boolean>("dark_mode") ?? false;
-
-  // Get PDF dark mode disabled state from Redux store
-  const pdfDarkModeDisabledMap = useRedux(
-    actions.name,
-    "pdf_dark_mode_disabled",
-  );
-  const pdfDarkModeDisabled = pdfDarkModeDisabledMap?.get?.(id) ?? false;
 
   const handleBuild = () => {
     actions.build();
@@ -160,17 +146,7 @@ export function BuildControls({
         </Dropdown>
       </Space.Compact>
 
-      {/* Dark mode toggle - only shown when global dark mode is enabled */}
-      {isDarkMode && id != null && (
-        <BSButton
-          bsSize="xsmall"
-          active={pdfDarkModeDisabled}
-          onClick={() => actions.toggle_pdf_dark_mode(id)}
-          title={intl.formatMessage(editor.toggle_pdf_dark_mode_title)}
-        >
-          <Icon unicode={DARK_MODE_ICON} />
-        </BSButton>
-      )}
+      {id != null && <PDFInvertColorsButton actions={actions} id={id} />}
     </>
   );
 }

@@ -11,7 +11,7 @@ Orchestrates build, page navigation, sync, and zoom controls
 import { useEffect, useRef, useState } from "react";
 
 import { useRedux } from "@cocalc/frontend/app-framework";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { Actions } from "./actions";
 import { BuildControls } from "./output-control-build";
@@ -21,8 +21,9 @@ import { ZoomControls } from "./output-control-zoom";
 
 const CONTROL_STYLE = {
   padding: "5px 10px",
-  borderBottom: `1px solid ${COLORS.GRAY_L}`,
-  background: COLORS.GRAY_LL,
+  borderBottom: `1px solid ${UI_COLORS.border}`,
+  background: UI_COLORS.inset,
+  color: UI_COLORS.text,
   display: "flex",
   justifyContent: "space-between",
   alignItems: "center",

@@ -30,7 +30,7 @@ import { open_new_tab as openNewTab } from "@cocalc/frontend/misc/open-browser-t
 import { isChatPath } from "@cocalc/frontend/chat/paths";
 import openSupportTab from "@cocalc/frontend/support/open";
 
-import { DARK_MODE_ICON } from "@cocalc/util/consts/ui";
+import { MoonOutlined } from "@ant-design/icons";
 import { addCommands } from "./commands";
 import {
   BUILD_ON_SAVE_ICON_DISABLED,
@@ -300,14 +300,7 @@ addCommands({
     stayOpenOnClick: true,
     title: editor.toggle_pdf_dark_mode_title,
     label: editor.toggle_pdf_dark_mode_label,
-    icon: () => <Icon unicode={DARK_MODE_ICON} />,
-    isVisible: () => {
-      const other_settings = redux
-        .getStore("account")
-        .get("other_settings")
-        ?.toJS();
-      return other_settings?.dark_mode ?? false;
-    },
+    icon: () => <MoonOutlined aria-hidden />,
     onClick: ({ props }) => {
       props.actions.toggle_pdf_dark_mode?.(props.id);
     },

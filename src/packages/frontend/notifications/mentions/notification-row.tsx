@@ -2,6 +2,7 @@
  *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { Alert, Button, Modal, Space, Tag } from "antd";
 import { useEffect, useState } from "react";
@@ -32,7 +33,7 @@ const DESCRIPTION_STYLE: CSS = {
 } as const;
 
 const MARKDOWN_STYLE: CSS = {
-  color: "rgb(100, 100, 100)",
+  color: UI_COLORS.secondary,
   margin: "4px 0",
   overflowWrap: "normal",
   wordBreak: "normal",
@@ -118,7 +119,7 @@ export function NotificationRow(props: Props) {
   const is_read = mention.getIn(["users", target, "read"]);
 
   const row_style: CSS = {
-    ...(is_read ? { color: "rgb(88, 96, 105)" } : {}),
+    ...(is_read ? { color: UI_COLORS.secondary } : {}),
     ...(IS_MOBILE
       ? {
           alignItems: "flex-start",
@@ -396,7 +397,7 @@ export function NotificationRow(props: Props) {
               Needs attention
             </Tag>
           ) : null}
-          <div style={{ color: "rgb(100, 100, 100)" }}>
+          <div style={{ color: UI_COLORS.secondary }}>
             {origin_label ?? "System"}{" "}
             <TimeAgo date={(latestTime ?? time).getTime()} />
             {count > 1 ? (
@@ -404,7 +405,7 @@ export function NotificationRow(props: Props) {
             ) : null}
           </div>
           {count > 1 ? (
-            <div style={{ color: "rgb(100, 100, 100)", marginTop: 2 }}>
+            <div style={{ color: UI_COLORS.secondary, marginTop: 2 }}>
               Received from <TimeAgo date={(firstTime ?? time).getTime()} /> to{" "}
               <TimeAgo date={(latestTime ?? time).getTime()} />.
             </div>
@@ -477,7 +478,7 @@ export function NotificationRow(props: Props) {
         ) : (
           <Icon
             name={severityIcon(severity)}
-            style={{ fontSize: "24px", color: "rgb(100, 100, 100)" }}
+            style={{ fontSize: "24px", color: UI_COLORS.secondary }}
           />
         )}
       </div>

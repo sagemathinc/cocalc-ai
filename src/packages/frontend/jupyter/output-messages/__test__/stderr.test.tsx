@@ -8,6 +8,7 @@ import { render } from "@testing-library/react";
 import { Stderr } from "../stderr";
 import { Ansi } from "../ansi";
 import { fromJS } from "immutable";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 describe("basic Stderr hello test", () => {
   it("checks for the output", () => {
@@ -44,11 +45,7 @@ describe("Stderr style test", () => {
       <Stderr message={fromJS({ text: "Hello World" })} />,
     );
     const stderr = container.firstChild as HTMLElement;
-    // Check for inline style background-color. Adjust selector as needed.
-    expect(stderr.getAttribute("style")).toContain(
-      "background-color: rgb(255, 221, 221)",
-    );
-    // Or, if using CSS classes, use:
-    // expect(stderr).toHaveStyle("background-color: #fdd");
+    expect(stderr.style.backgroundColor).toBe(UI_COLORS.dangerBg);
+    expect(stderr.style.color).toBe(UI_COLORS.text);
   });
 });

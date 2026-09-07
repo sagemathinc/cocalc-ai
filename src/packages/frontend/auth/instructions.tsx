@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 interface AuthInstructionsProps {
   children?: string | null;
@@ -18,10 +18,10 @@ export default function AuthInstructions({ children }: AuthInstructionsProps) {
     <div
       role="note"
       style={{
-        background: COLORS.BLUE_LLLL,
-        border: `1px solid ${COLORS.BLUE_LLL}`,
+        background: UI_COLORS.infoBg,
+        border: `1px solid ${UI_COLORS.info}`,
         borderRadius: "8px",
-        color: COLORS.GRAY_DD,
+        color: UI_COLORS.text,
         fontSize: "14px",
         lineHeight: "20px",
         padding: "10px 12px",

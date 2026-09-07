@@ -6,6 +6,7 @@
 import { List } from "immutable";
 import { render, screen } from "@testing-library/react";
 import { LogView } from "./log-view";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 jest.mock("@cocalc/frontend/components", () => ({
   Loading: () => <div>Loading...</div>,
@@ -14,6 +15,29 @@ jest.mock("@cocalc/frontend/components", () => ({
 }));
 
 describe("time-travel log view", () => {
+  it("themes selected and unselected history rows", () => {
+    render(
+      <LogView
+        actions={{ snapshotWallTime: () => 0 } as any}
+        source="snapshots"
+        versions={List([1, 2])}
+        firstVersion={0}
+        currentVersion={2}
+        onSelectVersion={() => {}}
+      />,
+    );
+    for (const version of [1, 2]) {
+      const row = screen.getByText(`Snapshot ${version}`).parentElement!
+        .parentElement!;
+      expect(row.style.background).toBe(
+        version === 2 ? UI_COLORS.selected : UI_COLORS.surface,
+      );
+      expect(row.style.color).toBe(UI_COLORS.text);
+      expect(row.style.border).toContain(
+        version === 2 ? UI_COLORS.link : UI_COLORS.border,
+      );
+    }
+  });
   const actions = {} as any;
 
   it("shows loading instead of the empty-state message while versions are loading", () => {

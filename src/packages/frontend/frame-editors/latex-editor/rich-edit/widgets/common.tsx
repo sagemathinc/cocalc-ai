@@ -20,7 +20,7 @@ so the source-peek + click behavior is uniform.
 import { CSSProperties, ReactNode, useState } from "react";
 
 import { Tooltip } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { WidgetProps } from "../types";
 
@@ -96,7 +96,8 @@ export function Widget({
           // a pointer reads better than the text I-beam (which felt
           // wrong over non-text widgets like images).
           cursor: "pointer",
-          background: hover ? COLORS.GRAY_LL : "transparent",
+          color: UI_COLORS.text,
+          background: hover ? UI_COLORS.hover : "transparent",
           borderRadius: 2,
           padding: "0 1px",
           ...style,
@@ -113,7 +114,7 @@ export function EmptyPlaceholder({ label }: { label: string }) {
   return (
     <span
       style={{
-        color: COLORS.GRAY_L,
+        color: UI_COLORS.secondary,
         fontStyle: "italic",
         fontSize: "0.9em",
       }}

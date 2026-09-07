@@ -1,7 +1,7 @@
 import { Col, Collapse, Form, Input, Row, Select, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { FormInstance } from "antd/es/form";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { isNebiusSpotSupported } from "../providers/registry";
@@ -11,8 +11,8 @@ import { HostCreateProviderFields } from "./host-create-provider-fields";
 import { SshTargetLabel } from "./ssh-target-help";
 
 const FIELD_GROUP_STYLE: React.CSSProperties = {
-  background: COLORS.GRAY_LLL,
-  border: `1px solid ${COLORS.GRAY_LL}`,
+  background: UI_COLORS.inset,
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: 10,
   marginBottom: 8,
   padding: "8px 10px 0",

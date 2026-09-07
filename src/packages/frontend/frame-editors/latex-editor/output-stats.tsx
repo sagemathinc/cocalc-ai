@@ -8,7 +8,7 @@ import { defineMessage, useIntl } from "react-intl";
 
 import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { WORD_COUNT_ICON } from "./constants";
 import { OUTPUT_HEADER_STYLE } from "./util";
@@ -47,7 +47,7 @@ export function OutputStats({
       <div style={OUTPUT_HEADER_STYLE}>
         <span
           style={{
-            color: COLORS.GRAY_M,
+            color: UI_COLORS.secondary,
             fontSize: uiFontSize,
             display: "flex",
             alignItems: "center",
@@ -84,7 +84,8 @@ export function OutputStats({
             whiteSpace: "pre-wrap",
             wordWrap: "break-word",
             margin: 0,
-            color: COLORS.GRAY_D,
+            color: UI_COLORS.text,
+            background: UI_COLORS.surface,
           }}
         >
           {wordCount || "Click refresh to generate word count statistics..."}

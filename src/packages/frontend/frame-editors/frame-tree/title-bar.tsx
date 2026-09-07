@@ -11,6 +11,7 @@ FrameTitleBar - title bar in a frame, in the frame tree
 // cSpell:ignore rescan subframe
 
 import { useDraggable } from "@dnd-kit/core";
+import { PDFInvertColorsButton } from "../pdf-editor/invert-colors-button";
 import { ButtonGroup } from "@cocalc/frontend/antd-bootstrap";
 import { Button, Dropdown, Input, InputNumber, Popover } from "antd";
 import type * as CodeMirror from "codemirror";
@@ -46,6 +47,7 @@ import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
 
 import { copy, field_cmp, path_split, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
 import { useMinimapSettingsRevision } from "@cocalc/frontend/components/minimap/settings";
 import { is_safari } from "../generic/browser";
@@ -108,10 +110,9 @@ interface EditorActions extends Actions {
 
 const MAX_SEARCH_RESULTS = 10;
 
-const COL_BAR_BACKGROUND = "#f8f8f8";
+const COL_BAR_BACKGROUND = UI_COLORS.inset;
 const COL_BAR_BACKGROUND_DARK = COL_BAR_BACKGROUND;
-//const COL_BAR_BACKGROUND_DARK = "#ddd";
-const COL_BAR_BORDER = "rgb(204,204,204)";
+const COL_BAR_BORDER = UI_COLORS.border;
 
 const title_bar_style: CSS = {
   background: COL_BAR_BACKGROUND_DARK,
@@ -296,7 +297,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
     "show_uncommitted_changes",
   ]);
   const is_saving: boolean = useRedux([props.editor_actions.name, "is_saving"]);
-  const darkMode = useAccountOtherSetting("dark_mode");
   const showSymbolBarLabels =
     useAccountOtherSetting<boolean>("show_symbol_bar_labels") ?? false;
   const disableTourRefs = useRef<boolean>(false);
@@ -517,8 +517,8 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
               props.actions.unset_frame_full();
             }}
             style={{
-              color: darkMode ? "yellowgreen" : undefined,
-              background: !darkMode ? "yellowgreen" : undefined,
+              color: "var(--cocalc-ui-success)",
+              background: "var(--cocalc-ui-successBg)",
             }}
           >
             <Icon name={"compress"} />
@@ -1104,7 +1104,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
               fontSize: "14pt",
               padding: "0 5px",
               height: props.is_only || props.is_full ? "34px" : "30px",
-              background: popoverOpen ? "#eee" : undefined,
+              background: popoverOpen ? UI_COLORS.hover : undefined,
             }}
           >
             <Icon name="ellipsis-vertical" />
@@ -1213,7 +1213,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           position: "absolute",
           width: "100%",
           zIndex: 100,
-          background: "white",
+          background: UI_COLORS.surface,
           boxShadow: "rgba(0, 0, 0, 0.25) 0px 6px 24px",
         }}
       >
@@ -1256,8 +1256,18 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
       return null;
     }
     const { disabled, label, key, children, onClick } = item;
+    if (name === "toggle_pdf_dark_mode") {
+      return (
+        <PDFInvertColorsButton
+          key={key}
+          actions={props.actions}
+          id={props.id}
+          disabled={disabled}
+        />
+      );
+    }
     const style: CSS = {
-      color: "#333",
+      color: UI_COLORS.text,
       padding: showSymbolBarLabels ? "0" : "7.5px 0 0 0",
       height: showSymbolBarLabels ? "36px" : undefined,
     } as const;
@@ -1351,7 +1361,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         <div
           style={{
             borderBottom: popup ? undefined : "1px solid #ccc",
-            background: "#fafafa",
+            background: UI_COLORS.inset,
             opacity: is_active ? undefined : 0.3,
           }}
         >

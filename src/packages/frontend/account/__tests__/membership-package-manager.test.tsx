@@ -7,6 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import { useState } from "react";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import {
   ClaimableMembershipPackagesPanel,
@@ -815,6 +816,16 @@ describe("membership package managers", () => {
     });
 
     const domainInput = screen.getByLabelText("Allowed email domains");
+    const intro = screen
+      .getByText(/Create one customer-facing license/)
+      .closest(".ant-card") as HTMLElement;
+    expect(intro.style.background).toContain(UI_COLORS.infoBg);
+    expect(intro.style.background).toContain(UI_COLORS.successBg);
+    for (const label of screen.getAllByText(/Baseline campus access/)) {
+      const header = label.closest(".ant-card-body")
+        ?.firstElementChild as HTMLElement;
+      expect(header.style.background).toBe(UI_COLORS.successBg);
+    }
     fireEvent.change(domainInput, {
       target: { value: "example.edu, dept.example.edu" },
     });

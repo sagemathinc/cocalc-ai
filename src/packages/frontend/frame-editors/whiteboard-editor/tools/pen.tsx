@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
 The pen panel.
 */
@@ -8,7 +9,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import ToolPanel, { getPresetManager, Tool } from "./tool-panel";
 import type { PenNib } from "../types";
 import { defaultRadius, maxRadius as defaultMaxRadius } from "./defaults";
-import { SELECTED, WHITEBOARD_COMPACT_BUTTON_STYLE } from "./common";
+import { WHITEBOARD_COMPACT_BUTTON_STYLE } from "./common";
 
 interface Params {
   color?: string;
@@ -125,14 +126,14 @@ function AlternateTop({
         columnGap: "4px",
         padding: "6px",
         borderRadius: "10px",
-        background: "#fafafa",
+        background: UI_COLORS.inset,
       }}
     >
       <div
         style={{
           gridColumn: "1 / -1",
           textAlign: "center",
-          color: "#666",
+          color: UI_COLORS.secondary,
           fontSize: "14px",
         }}
       >
@@ -142,13 +143,16 @@ function AlternateTop({
         <Button
           style={{
             ...buttonStyle,
-            background: selected >= 0 ? "#e6f4ff" : undefined,
+            background: selected >= 0 ? UI_COLORS.selected : undefined,
           }}
           type="text"
           onClick={() => setSelected(0)}
         >
           <Icon
-            style={{ fontSize, color: selected >= 0 ? SELECTED : undefined }}
+            style={{
+              fontSize,
+              color: selected >= 0 ? UI_COLORS.link : undefined,
+            }}
             name="pencil"
           />
         </Button>
@@ -157,7 +161,8 @@ function AlternateTop({
         <Button
           style={{
             ...buttonStyle,
-            background: selected == HIGHLIGHTER ? "#e6f4ff" : undefined,
+            background:
+              selected == HIGHLIGHTER ? UI_COLORS.selected : undefined,
           }}
           type="text"
           onClick={() => setSelected(HIGHLIGHTER)}
@@ -165,7 +170,7 @@ function AlternateTop({
           <Icon
             style={{
               fontSize,
-              color: selected == HIGHLIGHTER ? SELECTED : undefined,
+              color: selected == HIGHLIGHTER ? UI_COLORS.link : undefined,
             }}
             name="blog"
           />
@@ -175,7 +180,7 @@ function AlternateTop({
         <Button
           style={{
             ...buttonStyle,
-            background: selected == ERASER ? "#e6f4ff" : undefined,
+            background: selected == ERASER ? UI_COLORS.selected : undefined,
           }}
           type="text"
           onClick={() => setSelected(ERASER)}
@@ -183,7 +188,7 @@ function AlternateTop({
           <Icon
             style={{
               fontSize,
-              color: selected == ERASER ? SELECTED : undefined,
+              color: selected == ERASER ? UI_COLORS.link : undefined,
             }}
             name="eraser"
           />
