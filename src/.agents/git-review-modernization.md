@@ -50,6 +50,21 @@ would not be evidence that these checks pass.
 
 ### Restored live-session checks
 
+Same-comment recovery follow-up: without a common-ancestor snapshot, timestamps
+cannot safely decide between differing same-ID bodies. Recovery now leaves the
+persisted version unchanged and creates a stable-ID local alternative with
+status `conflict`. The card labels it "Recovered local alternative" and explains
+Edit/Resolve; draft-only agent submission excludes it until explicitly edited.
+Repeated recovery reuses the alternative, and hash collisions retain additional
+versions rather than overwriting them. Unique local comments also survive an
+older overall draft timestamp. Existing note/reviewed timestamp policy is
+unchanged. Tests cover both timestamp orders, collision handling, persistence,
+idempotence and keyboard actions. All 104 focused tests, typecheck/lint and the
+development build passed. The real two-window same-ID edit check passed on
+`2214b54a4b37d4d95b84fb8aed2ec342c5d682d4`: stale edit rejected, reload showed
+both bodies and the recovery label. These are retained alternatives, not an
+automatic textual merge or a claim that every note-field conflict is resolved.
+
 Independent-comment recovery follow-up: a focused regression proved that a
 newer local draft replaced the entire persisted comment map on reload, dropping
 independently created remote comments. Recovery and subsequent save-state

@@ -134,6 +134,61 @@ try {
   console.log(
     "Passed: stale inline save retained editor and identity; reload and resave preserved both independent comments after the recovery draft was cleared.",
   );
+  if (process.env.REVIEW_EDIT_CONFLICT === "1") {
+    await first.reload({ waitUntil: "domcontentloaded" });
+    async function edit(page, body) {
+      await page.bringToFront();
+      const original = page
+        .getByText("Inline acceptance first window", { exact: true })
+        .first();
+      await expect(original).toBeVisible({ timeout: 60000 });
+      await original
+        .locator("xpath=ancestor::div[.//button[normalize-space()='Edit']][1]")
+        .getByRole("button", { name: "Edit", exact: true })
+        .click();
+      const editor = page
+        .locator('[contenteditable="true"]')
+        .filter({ hasText: "Inline acceptance first window" });
+      await expect(editor).toBeVisible();
+      await editor.evaluate((element, body) => {
+        let fiber =
+          element[
+            Object.keys(element).find((key) => key.startsWith("__reactFiber"))
+          ];
+        while (fiber && !fiber.memoizedProps?.editor?.insertText)
+          fiber = fiber.return;
+        const slate = fiber.memoizedProps.editor;
+        slate.select({
+          anchor: { path: [0, 0], offset: 0 },
+          focus: {
+            path: [0, 0],
+            offset: slate.children[0].children[0].text.length,
+          },
+        });
+        slate.insertText(body);
+      }, body);
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+    }
+    await edit(first, "Remote edited version");
+    await expect(
+      first.getByRole("button", { name: "Save", exact: true }),
+    ).toHaveCount(0);
+    await edit(second, "Local edited alternative");
+    await expect(
+      second.getByText(/another window may have changed it/),
+    ).toBeVisible();
+    await second.reload({ waitUntil: "domcontentloaded" });
+    for (const body of ["Remote edited version", "Local edited alternative"])
+      await expect(second.getByText(body, { exact: true }).first()).toBeVisible(
+        { timeout: 60000 },
+      );
+    await expect(
+      second.getByText(/Recovered local alternative.*Not sent to the agent/),
+    ).toBeVisible();
+    console.log(
+      "Passed: same-ID conflicting edit reload preserves both labelled alternatives.",
+    );
+  }
 } finally {
   for (const page of pages) await page.close();
 }

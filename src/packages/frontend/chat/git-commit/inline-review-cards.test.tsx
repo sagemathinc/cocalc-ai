@@ -78,6 +78,22 @@ test("saved comment actions preserve record identity and support keyboard activa
   expect(p.onReopenComment).toHaveBeenCalledWith(comment.id);
 });
 
+test("recovered alternatives explain acceptance and retain keyboard actions", async () => {
+  const user = userEvent.setup();
+  const p = props();
+  const alternative = { ...comment, status: "conflict" as const };
+  render(<InlineReviewCards {...p} lineComments={[alternative]} />);
+  expect(
+    screen.getByText(/Recovered local alternative.*Not sent to the agent/),
+  ).toBeVisible();
+  screen.getByRole("button", { name: "Edit", exact: true }).focus();
+  await user.keyboard("{Enter}");
+  expect(p.onOpenEdit).toHaveBeenCalledWith(alternative);
+  screen.getByRole("button", { name: "Resolve", exact: true }).focus();
+  await user.keyboard("{Enter}");
+  expect(p.onResolveComment).toHaveBeenCalledWith(alternative.id);
+});
+
 test("edit keeps the legacy cache identity through layout changes and saves buffered text", async () => {
   const user = userEvent.setup();
   const p = {

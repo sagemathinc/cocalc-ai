@@ -12,6 +12,7 @@ import {
   resolveReviewStorageCommit,
   chooseReviewAlias,
   GitReviewAliasConflict,
+  mergeRecordWithDraft,
 } from "../git-review-store";
 import { resolveGitReviewSaveState } from "../git-commit/review-state";
 
@@ -208,6 +209,77 @@ describe("git review import/export", () => {
       Object.keys((await loadReviewRecord(options))!.comments).sort(),
     ).toEqual(["local", "remote"]);
   });
+
+  it.each([50, 150])(
+    "retains both same-ID bodies from a draft timestamp %s",
+    async (updated_at) => {
+      const options = {
+        accountId: "conflict-recovery",
+        commitSha: "d".repeat(40),
+        resolveCommit: async () => "d".repeat(40),
+      };
+      const base = (await loadReviewRecord(options))!;
+      const comment = {
+        id: "shared",
+        file_path: "a.ts",
+        side: "new" as const,
+        body_md: "remote",
+        status: "draft" as const,
+        created_at: 1,
+        updated_at: 100,
+        local_revision: 1,
+      };
+      const record = {
+        ...base,
+        updated_at: 100,
+        comments: { shared: comment },
+      };
+      const draft = {
+        reviewed: false,
+        note: "",
+        updated_at,
+        revision: 2,
+        comments: {
+          shared: { ...comment, body_md: "local" },
+          unique: { ...comment, id: "unique", body_md: "independent" },
+        },
+      };
+      const recovered = mergeRecordWithDraft(record, draft)!;
+      expect(recovered.comments.shared).toEqual(comment);
+      expect(
+        Object.values(recovered.comments)
+          .map((c) => c.body_md)
+          .sort(),
+      ).toEqual(["independent", "local", "remote"]);
+      const alternative = Object.values(recovered.comments).find(
+        (c) => c.body_md === "local",
+      )!;
+      expect(alternative.status).toBe("conflict");
+      expect(alternative.id).not.toBe("shared");
+      const collision = mergeRecordWithDraft(
+        {
+          ...record,
+          comments: {
+            ...record.comments,
+            [alternative.id]: { ...alternative, body_md: "other recovery" },
+          },
+        },
+        draft,
+      )!;
+      expect(
+        Object.values(collision.comments)
+          .map((c) => c.body_md)
+          .sort(),
+      ).toEqual(["independent", "local", "other recovery", "remote"]);
+      expect(mergeRecordWithDraft(recovered, draft)!.comments).toEqual(
+        recovered.comments,
+      );
+      await saveReviewRecord(recovered);
+      expect((await loadReviewRecord(options))!.comments).toEqual(
+        recovered.comments,
+      );
+    },
+  );
 
   it("retains a deleted key's sequence when recreating a review", async () => {
     const options = { accountId: "deleted", commitSha: "b".repeat(40) };

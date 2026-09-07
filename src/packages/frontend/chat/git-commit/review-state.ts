@@ -9,6 +9,7 @@ import type {
   GitReviewCommentV2,
   GitReviewRecordV2,
 } from "../git-review-store";
+import { mergeRecoveredComments } from "../git-review-store";
 
 export function resolveGitReviewSaveState({
   next = {},
@@ -37,7 +38,8 @@ export function resolveGitReviewSaveState({
   return {
     reviewed: next.reviewed ?? draft?.reviewed ?? reviewed,
     note: next.note ?? draft?.note ?? reviewNoteDraft ?? reviewNote,
-    comments: next.comments ?? { ...reviewComments, ...draftComments },
+    comments:
+      next.comments ?? mergeRecoveredComments(reviewComments, draftComments),
   };
 }
 

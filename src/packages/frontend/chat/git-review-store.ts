@@ -1,5 +1,6 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
+import { hash_string } from "@cocalc/util/misc";
 
 const REVIEW_STORE_V2 = "cocalc-git-review-v2";
 const REVIEW_STORE_V1 = "cocalc-commit-review-v1";
@@ -175,7 +176,11 @@ type LegacyCommitReviewRecord = {
 };
 
 export type GitReviewCommentSide = "new" | "old" | "context";
-export type GitReviewCommentStatus = "draft" | "submitted" | "resolved";
+export type GitReviewCommentStatus =
+  | "draft"
+  | "submitted"
+  | "resolved"
+  | "conflict";
 
 export type GitReviewCommentV2 = {
   id: string;
@@ -294,7 +299,11 @@ function sanitizeComment(input: unknown): GitReviewCommentV2 | undefined {
     sideRaw === "old" || sideRaw === "context" ? sideRaw : "new";
   const statusRaw = `${raw?.status ?? ""}`.trim().toLowerCase();
   const status: GitReviewCommentStatus =
-    statusRaw === "submitted" || statusRaw === "resolved" ? statusRaw : "draft";
+    statusRaw === "submitted" ||
+    statusRaw === "resolved" ||
+    statusRaw === "conflict"
+      ? statusRaw
+      : "draft";
   const lineNum = Number(raw?.line);
   const createdAt = Number(raw?.created_at);
   const updatedAt = Number(raw?.updated_at);
@@ -514,6 +523,42 @@ export function clearReviewDraftThroughUpdatedAt(
   clearReviewDraft(commitSha, accountId);
 }
 
+export function mergeRecoveredComments(
+  record: Record<string, GitReviewCommentV2> = {},
+  draft: Record<string, GitReviewCommentV2> = {},
+): Record<string, GitReviewCommentV2> {
+  const result = { ...record };
+  const content = (comment: GitReviewCommentV2) =>
+    JSON.stringify([
+      comment.body_md,
+      comment.file_path,
+      comment.side,
+      comment.line,
+      comment.hunk_header,
+      comment.hunk_hash,
+      comment.snippet,
+    ]);
+  for (const [id, local] of Object.entries(draft)) {
+    const remote = record[id];
+    if (!remote) {
+      result[id] = local;
+    } else if (content(remote) === content(local)) {
+      if (local.updated_at > remote.updated_at) result[id] = local;
+    } else {
+      // There is no trustworthy common ancestor in legacy draft snapshots.
+      // Preserve both bodies instead of guessing which author intent wins.
+      const fingerprint = content(local);
+      const base = `${id}:recovered:${hash_string(fingerprint)}`;
+      let key = base;
+      let suffix = 0;
+      while (result[key] && content(result[key]) !== fingerprint)
+        key = `${base}:${++suffix}`;
+      if (!result[key]) result[key] = { ...local, id: key, status: "conflict" };
+    }
+  }
+  return result;
+}
+
 export function mergeRecordWithDraft(
   record: GitReviewRecordV2 | undefined,
   draft: GitReviewDraftV2 | undefined,
@@ -526,14 +571,18 @@ export function mergeRecordWithDraft(
     comments: sanitizeComments(record.comments),
   };
   if (!draft) return normalizedRecord;
-  if (draft.updated_at < normalizedRecord.updated_at) return normalizedRecord;
   const draftComments = sanitizeComments(draft.comments);
+  const comments = mergeRecoveredComments(
+    normalizedRecord.comments,
+    draftComments,
+  );
+  if (draft.updated_at < normalizedRecord.updated_at)
+    return { ...normalizedRecord, comments };
   return {
     ...normalizedRecord,
     reviewed: draft.reviewed,
     note: draft.note,
-    // A stale window's snapshot may not contain independently added comments.
-    comments: { ...normalizedRecord.comments, ...draftComments },
+    comments,
     updated_at: draft.updated_at,
     revision: Math.max(normalizedRecord.revision, draft.revision),
   };

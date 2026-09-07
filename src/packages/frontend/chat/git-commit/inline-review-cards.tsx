@@ -140,11 +140,13 @@ export function InlineReviewCards({
                   }}
                 >
                   <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                    {comment.status === "resolved"
-                      ? "Resolved"
-                      : comment.status === "submitted"
-                        ? "Submitted"
-                        : "Draft"}
+                    {comment.status === "conflict"
+                      ? "Recovered local alternative. Edit to accept; Resolve to dismiss. Not sent to the agent."
+                      : comment.status === "resolved"
+                        ? "Resolved"
+                        : comment.status === "submitted"
+                          ? "Submitted"
+                          : "Draft"}
                   </Typography.Text>
                   {isEditing ? null : (
                     <Space.Compact size="small">
