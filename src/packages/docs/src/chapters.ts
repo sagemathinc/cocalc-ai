@@ -37,7 +37,7 @@ export const DOCS_CHAPTERS: DocsChapter[] = [
     startEntryId: "ai.codex-chat",
     summary:
       "Use project agents, connect credentials, and keep AI workflows grounded in the files and state of a project.",
-    workflows: ["Project agents", "Credentials", "Context"],
+    workflows: ["Getting started", "Configuration", "Access"],
   },
   {
     category: "CLI",
