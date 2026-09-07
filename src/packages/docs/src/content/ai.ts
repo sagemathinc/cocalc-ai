@@ -21,6 +21,31 @@ For terminal-native agents such as Claude Code or opencode, install and run them
 inside a normal project terminal. CoCalc provides the durable Linux environment;
 those tools provide their own agent interface.
 
+## Set the working directory and keep session context
+
+Open a thread's **Codex settings** and find **Working directory** under
+**Model and session**. Enter the directory where Codex should run subsequent
+turns and click **Save**.
+
+CoCalc initially fills the working directory from the associated workspace
+root when available. A generated CoCalc chat otherwise uses the project home;
+an ordinary chat uses the directory containing its chat file. This matters
+when a project contains several repositories or related analyses. If you
+explicitly clear the directory setting, submission instead falls back to the
+chat file's containing directory. Set the directory explicitly when its choice
+matters to the task.
+
+A workspace can use its generated chat or an existing chat selected with
+**Use current chat tab** in the workspace editor. Its **Agent** button opens
+the latest agent thread associated with that workspace chat. If there is no
+agent thread yet, open **Chat** and start a Codex turn there first.
+
+**Session ID** is an advanced continuity setting. Keep the existing value
+when you only want to change directory. Clearing this field is not a reliable
+conversation reset: CoCalc can recover the live session ID from the thread.
+Start a new Codex chat when you need fresh conversation context. Workspace
+selection does not change project permissions.
+
 ## Give better tasks
 
 Name files, describe the desired outcome, and ask Codex to validate changes.
