@@ -76,3 +76,32 @@ test("unavailable historical opening never falls back to working-copy opening", 
     screen.queryByRole("button", { name: "View at this revision" }),
   ).toBeNull();
 });
+
+test("the previous revision is a separate keyboard-accessible action", async () => {
+  const user = userEvent.setup();
+  const before = jest.fn();
+  const after = jest.fn();
+  render(
+    <ReviewFileHeader
+      path="renamed.md"
+      oldPath="original.md"
+      fontSize={14}
+      onCopyPath={() => {}}
+      onViewRevision={after}
+      onViewBefore={before}
+    />,
+  );
+  screen.getByRole("button", { name: "More file actions: renamed.md" }).focus();
+  await user.keyboard("{Enter}");
+  const item = await screen.findByRole("menuitem", {
+    name: "View before this change",
+  });
+  item.focus();
+  expect(item).toHaveFocus();
+  // rc-menu reads the native keyCode, which user-event does not supply.
+  expect(
+    fireEvent.keyDown(item, { key: "Enter", code: "Enter", keyCode: 13 }),
+  ).toBe(false);
+  expect(before).toHaveBeenCalledTimes(1);
+  expect(after).not.toHaveBeenCalled();
+});

@@ -360,7 +360,7 @@ export const DiffFileSection = memo(function DiffFileSection({
   visibleLineLimit: number;
   editorHistoryScope: string;
   onOpenFile: (filePath: string) => Promise<void>;
-  onViewFile?: (filePath: string) => void;
+  onViewFile?: (filePath: string, side?: "old" | "new") => void;
   onShowMoreLines: (sectionId: string) => void;
   activeDraftAnchorId?: string;
   activeDraftBody: string;
@@ -492,6 +492,14 @@ export const DiffFileSection = memo(function DiffFileSection({
           {file.path}
         </Button>
         <Space size="small" style={{ marginLeft: "auto" }}>
+          {!isHeadSelected &&
+            file.oldSource &&
+            file.newSource &&
+            onViewFile && (
+              <Button size="small" onClick={() => onViewFile(file.path, "old")}>
+                View before this change
+              </Button>
+            )}
           <Typography.Text
             style={{
               fontSize: 11,

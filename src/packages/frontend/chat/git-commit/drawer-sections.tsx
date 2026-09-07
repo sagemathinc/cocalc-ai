@@ -1198,7 +1198,7 @@ export type GitDiffFilesPanelProps = {
   isHeadSelected: boolean;
   visibleDiffLinesByFile: Record<string, number>;
   onOpenFile: (filePath: string) => Promise<void>;
-  onViewFile?: (filePath: string) => void;
+  onViewFile?: (filePath: string, side?: "old" | "new") => void;
   onShowMoreLines: (sectionId: string) => void;
   activeDraftAnchorId?: string;
   activeDraftBody: string;

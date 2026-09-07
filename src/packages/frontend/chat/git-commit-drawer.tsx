@@ -3704,11 +3704,17 @@ export function GitCommitDrawer({
                     onOpenFile={openFile}
                     onViewFile={
                       projectId && commit && !isHeadSelected
-                        ? (path) => {
+                        ? (path, side) => {
                             const file = currentData.files.find(
                               (file) => file.path === path,
                             );
-                            const source = file?.newSource ?? file?.oldSource;
+                            const source =
+                              side === "old"
+                                ? file?.oldSource
+                                : side === "new"
+                                  ? file?.newSource
+                                  : (file?.newSource ?? file?.oldSource);
+                            if (side && !source) return;
                             setHistoricalFile({
                               scope: scrollStorageId,
                               request: source

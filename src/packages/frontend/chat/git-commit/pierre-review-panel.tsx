@@ -470,6 +470,11 @@ function ReviewContent(props: ReviewDiffPanelProps) {
                 onViewRevision={
                   props.onViewFile ? () => props.onViewFile?.(path) : undefined
                 }
+                onViewBefore={
+                  file.file.oldSource && file.file.newSource && props.onViewFile
+                    ? () => props.onViewFile?.(path, "old")
+                    : undefined
+                }
                 onEditWorking={
                   props.isHeadSelected
                     ? () => void props.onOpenFile(path)

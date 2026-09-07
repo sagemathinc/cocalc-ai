@@ -660,9 +660,14 @@ export function TargetReviewPane({
           linesTruncated={data.linesTruncated}
           repoRoot={target.repository.locator}
           onOpenFile={async () => {}}
-          onViewFile={(path) => {
+          onViewFile={(path, side) => {
             const file = data.files.find((file) => file.path === path);
-            const source = file?.newSource ?? file?.oldSource;
+            const source =
+              side === "old"
+                ? file?.oldSource
+                : side === "new"
+                  ? file?.newSource
+                  : (file?.newSource ?? file?.oldSource);
             if (source) onView(source);
           }}
           onShowMoreLines={() => {}}

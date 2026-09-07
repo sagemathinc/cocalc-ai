@@ -26,7 +26,22 @@ let mockViewerProps: any;
 jest.mock("@cocalc/frontend/git/read-target-diff", () => ({
   readTargetDiff: async () => ({
     files: [
-      { path: "needle.ts", lines: ["@@ -1 +1 @@", "-needle", "+needle"] },
+      {
+        path: "needle.ts",
+        lines: ["@@ -1 +1 @@", "-needle", "+needle"],
+        oldSource: {
+          kind: "git",
+          repository: target.repository,
+          commit: target.base,
+          path: "old-name.ts",
+        },
+        newSource: {
+          kind: "git",
+          repository: target.repository,
+          commit: target.head,
+          path: "needle.ts",
+        },
+      },
     ],
     linesTruncated: false,
   }),
@@ -69,6 +84,24 @@ const props = {
   onEditing: jest.fn(),
   onLeave: jest.fn(),
 };
+test("historical side opening preserves renamed path and endpoint", async () => {
+  render(<TargetReviewPane {...props} />);
+  await screen.findByText("Diff");
+  mockViewerProps.onViewFile("needle.ts", "old");
+  expect(props.onView).toHaveBeenLastCalledWith({
+    kind: "git",
+    repository: target.repository,
+    commit: target.base,
+    path: "old-name.ts",
+  });
+  mockViewerProps.onViewFile("needle.ts");
+  expect(props.onView).toHaveBeenLastCalledWith({
+    kind: "git",
+    repository: target.repository,
+    commit: target.head,
+    path: "needle.ts",
+  });
+});
 beforeEach(() => {
   localStorage.clear();
   jest.clearAllMocks();

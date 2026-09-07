@@ -15,7 +15,7 @@ not a current checklist. The objective is not complete. Current release work:
 | Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Conflicting aliases now offer an explicit active-record choice without changing either record; changed alternatives reopen the conflict. Existing keys remain intact rather than being physically rewritten. Live multi-window acceptance is pending. |
 | Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Live renderer roundtrip and drawer close/reopen preserve the source position within a few wrapped lines (details below). Native partial-text selection across virtual windows remains a browser acceptance case. |
 | Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
-| TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Renamed/deleted Git file viewing remains a separate acceptance case. |
+| TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Both rename sides passed in Classic/Pierre; deleted-file viewing passed in Pierre. Classic deletion navigation remains pending. |
 | Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live agent dispatch and originating-context links still need end-to-end confirmation. |
 | Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor acceptance remains; investigate intermittent native-copy failure if reproduced. Measured main-thread heap excludes worker heaps. |
 | Default and cleanup | Classic is still the default and rollback path. Do not delete it or the experiment until the compatibility gates pass and maintainer testing supports the switch. |
@@ -49,6 +49,29 @@ rollback-window decision proceed. The current lack of a signed-in test session
 would not be evidence that these checks pass.
 
 ### Restored live-session checks
+
+Historical side-opening follow-up: commit and comparison review now expose
+"View before this change" when both pinned sources exist (under Pierre's More
+file actions menu). The previous path/revision is selected explicitly, including
+renames; an explicitly unavailable side never falls back to another source or
+the working copy. The existing revision action still opens the new side, or the
+old side for a deletion. The More menu has an overlay keyboard boundary and
+returns modal focus to its persistent trigger. Native Enter required preventing
+the remaining browser default action after rc-menu's keydown activation moved
+focus; without that, the historical dialog did not stay open despite the action
+callback running.
+
+`git/historical-file.browser-test.mjs` can compare the displayed path, revision,
+and full source with remote `git show` using `REVIEW_SOURCE_COMMIT` and
+`REVIEW_SOURCE_PATH`; `REVIEW_SIDE=old` exercises the new action. Both rename sides
+passed in Classic and Pierre against commit
+`4bd4d826e83f64901f54761799bec53629beb9ea` and parent
+`e696ab2aaba94cedb1a5765ccc51de7be5941cdc`. These checks include rich Markdown,
+read-only source, native keyboard activation, Escape and focus return, and
+unchanged review routing. Pierre also passed deleted-file viewing with exact
+parent contents from `202bc869cf2774a6964ab8f687718383ab3ef7ae`. The Classic deletion fixture at
+`50a46a2af102d80c97c2560117370a29831e7957` remains pending: its header was recycled
+between finding it and activating it. That navigation case is not a pass.
 
 Semantic scroll follow-up: `git/review-scroll-live.browser-test.mjs` switches
 Pierre -> Classic -> Pierre and closes/reopens the actual drawer, checking the

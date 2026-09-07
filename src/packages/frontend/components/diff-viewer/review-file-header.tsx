@@ -5,7 +5,9 @@
 
 import { Button, Dropdown } from "antd";
 import { useRef } from "react";
+import type { KeyboardEvent } from "react";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 
 export function reviewFileHeaderHeight(fontSize: number): number {
   return Math.ceil(Math.max(13, fontSize) * 1.5) + 44;
@@ -22,6 +24,7 @@ export function ReviewFileHeader({
   onCopyRelative,
   onCopyReference,
   onViewRevision,
+  onViewBefore,
   onEditWorking,
   workingOnly = false,
 }: {
@@ -34,11 +37,33 @@ export function ReviewFileHeader({
   onCopyRelative?: () => void;
   onCopyReference?: () => void;
   onViewRevision?: () => void;
+  onViewBefore?: () => void;
   onEditWorking?: () => void;
   workingOnly?: boolean;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const extra = [
+    ...(!workingOnly && onViewBefore
+      ? [
+          {
+            key: "before",
+            label: "View before this change",
+            onKeyDown: (event: KeyboardEvent) => {
+              // rc-menu activates on keydown. Suppress another native Enter
+              // activation after opening the modal moves focus.
+              if (event.key === "Enter") event.preventDefault();
+            },
+            onClick: () => {
+              // The menu item disappears; let the revision modal restore focus
+              // to the persistent trigger instead of that detached item.
+              root.current
+                ?.querySelector<HTMLButtonElement>("[data-review-file-actions]")
+                ?.focus({ preventScroll: true });
+              onViewBefore();
+            },
+          },
+        ]
+      : []),
     ...(onCopyRelative
       ? [
           {
@@ -155,8 +180,20 @@ export function ReviewFileHeader({
           </Button>
         ) : null}
         {extra.length ? (
-          <Dropdown menu={{ items: extra }} trigger={["click"]}>
-            <Button size="small" aria-label={`More file actions: ${path}`}>
+          <Dropdown
+            menu={{ items: extra }}
+            trigger={["click"]}
+            popupRender={(menu) => (
+              <KeyboardBoundary boundary="git-file-actions">
+                {menu}
+              </KeyboardBoundary>
+            )}
+          >
+            <Button
+              size="small"
+              data-review-file-actions
+              aria-label={`More file actions: ${path}`}
+            >
               More
             </Button>
           </Dropdown>
