@@ -358,6 +358,40 @@ Example:
 cocalc --profile alice --api https://lite4b.cocalc.ai auth login --email alice@example.com
 ```
 
+## Leave Workspace Messages And Notices
+
+Use `workspaces list --project "$COCALC_PROJECT_ID"` to find the saved workspace
+ID. Set `workspace_id` to that result before writing a handoff:
+
+```bash
+cocalc workspaces message "$workspace_id" \
+  --project "$COCALC_PROJECT_ID" --stdin <<'MESSAGE'
+The run finished. Results are in results/summary.csv; the failed inputs are
+listed in runs/failures.txt.
+MESSAGE
+```
+
+`message` appends to the workspace's canonical chat in its **Workspace notices**
+thread, creating the chat/thread assignment if needed. It persists without an
+open browser. It records a message; it does not submit a new Codex turn.
+
+Add `--open --browser "$COCALC_BROWSER_ID"` when the written chat should also
+open in a selected browser session. The message is saved before the optional
+browser action, so inspect the chat before retrying if opening fails.
+
+For a short status on the workspace card, use a notice instead:
+
+```bash
+cocalc workspaces notify "$workspace_id" --project "$COCALC_PROJECT_ID" \
+  --level success --title "Run complete" "See results/summary.csv"
+cocalc workspaces clear-notice "$workspace_id" \
+  --project "$COCALC_PROJECT_ID"
+```
+
+`notify` replaces the card notice; `clear-notice` clears it. These operate on
+the saved workspace record and do not create chat messages. Use durable chat
+messages for the record of what happened and the card notice for current status.
+
 ## Phase 0 Commands
 
 - `plus ...` (forward to `cocalc-plus`; installs if missing)
