@@ -220,6 +220,18 @@ live write; the file and history remain as reusable test evidence. This passed
 with frontend lint. Git/snapshot/backup restoration uses the separate external
 document branch and is not proved by this patchflow restore test.
 
+Live Git restore follow-up: created the isolated repository
+`/home/user/scratch/git-review-repo-20260907-41b85f` in the browser project,
+with `git-review-timetravel-external.md` and Alpha/Beta/Gamma commits. Live text
+API writes supplied each committed version; no application repository branch
+or user document was changed. The guarded restore harness now accepts an
+explicit history source and fixtures inside similarly named scratch repos.
+`REVIEW_HISTORY_SOURCE=Git` passed rich Beta selection, keyboard Restore, new
+live version verification, historical Gamma preservation, and guarded cleanup
+back to Gamma. The repository/file remain as reusable acceptance fixtures.
+Frontend lint passed. This verifies the external Git restore branch, but does
+not yet establish snapshot/backup restoration end to end.
+
 ### Single-file stress evidence (2026-09-07)
 
 Run `STRESS=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`

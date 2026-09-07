@@ -6,9 +6,11 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { chromium, expect } = require("@playwright/test");
 const [target] = process.argv.slice(2);
+const source = process.env.REVIEW_HISTORY_SOURCE ?? "TimeTravel";
+assert(["TimeTravel", "Git", "Snapshots", "Backups"].includes(source));
 const url = new URL(target);
 const match = decodeURIComponent(url.pathname).match(
-  /^\/projects\/([^/]+)\/files\/(home\/user\/scratch\/)\.(git-review-timetravel-[a-z0-9-]+\.md)\.time-travel$/,
+  /^\/projects\/([^/]+)\/files\/(home\/user\/scratch\/(?:git-review-repo-[a-z0-9-]+\/)?)\.(git-review-timetravel-[a-z0-9-]+\.md)\.time-travel$/,
 );
 assert(match, "Only explicitly named scratch smoke fixtures can be restored");
 const projectIdentifier = match[1],
@@ -48,7 +50,10 @@ try {
   await expect(body).toBeVisible({ timeout: 60000 });
   const scope = body.locator("..");
   await scope.getByRole("combobox").nth(0).click();
-  await page.locator('.ant-select-item-option[title="TimeTravel"]').click();
+  await page
+    .locator(`.ant-select-item-option[title=${JSON.stringify(source)}]`)
+    .click();
+  await expect(scope.locator(".ant-select").nth(0)).toContainText(source);
   await scope
     .getByRole("radio", { name: "File", exact: true })
     .locator("xpath=ancestor::label")
@@ -87,7 +92,7 @@ try {
     "Restore must retain the previous latest version",
   );
   console.log(
-    "Passed: rich historical Markdown selected, keyboard Restore created a new live version, original Gamma version still readable.",
+    `Passed (${source}): rich historical Markdown selected, keyboard Restore created a new live version, original Gamma version still readable.`,
   );
 } finally {
   await page.close();
