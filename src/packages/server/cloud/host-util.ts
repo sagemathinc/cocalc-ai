@@ -70,6 +70,7 @@ const isNebiusGpuFamily = (family?: string | null) =>
   !!family && /cuda|nvidia/i.test(family);
 
 const MIN_UBUNTU_VERSION = 2404;
+const GCP_PROJECT_HOST_ISOLATION_TAG = "cocalc-project-host-isolated";
 
 const parseUbuntuVersion = (value?: string | null): number | undefined => {
   if (!value) return undefined;
@@ -547,6 +548,7 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
     name: providerName,
     region: row.region ?? "us-west1",
     zone: machine.zone,
+    tags: providerId === "gcp" ? [GCP_PROJECT_HOST_ISOLATION_TAG] : undefined,
     pricing_model: activePricingModel,
     interruption_restore_policy:
       metadata.interruption_restore_policy === "immediate"
