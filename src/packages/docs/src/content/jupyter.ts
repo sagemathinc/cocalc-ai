@@ -65,6 +65,28 @@ CoCalc notebooks are designed for shared and long-running work:
 5. Large notebooks and large outputs are handled with CoCalc-specific rendering.
 6. Side chat, agents, terminals, and project files live next to the notebook.
 
+## Improve a Markdown cell with Agent
+
+An editable Markdown cell has its own **Agent** dropdown when project policy
+allows AI tools.
+Use it for the explanatory text and mathematics that accompany a computation.
+
+Choose one action: **Ask** for a question, **Document** for an explanation,
+**Proofread** to improve the writing, **Add Formulas** for mathematical content,
+or **Translate** for another language.
+
+1. Enter a question for **Ask**, or optionally describe what **Document**
+   should emphasize. For **Translate**, check the target-language field.
+2. Check **Recent agent sessions** when shown, then choose **Send**. If
+   **Automatically submit to Agent** is unchecked, send the prepared draft
+   from the agent chat. Follow the request there and review the result.
+
+The agent is directed to the selected cell in the live notebook. After it
+responds, inspect the rendered Markdown and any changed mathematics. For a
+specific requirement, use **Ask** or the optional **Document** instructions;
+for example, request an explanation suitable for readers encountering the
+method for the first time.
+
 ## Choose a notebook view
 
 A notebook frame can use the classic cell-oriented layout or the content-first
