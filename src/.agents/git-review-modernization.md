@@ -377,8 +377,30 @@ Exact historical file opening implemented in the existing Git drawer:
   behavior, line-50 navigation, Escape/focus restoration, and unchanged review
   URL. Run `git/historical-file.browser-test.mjs <chat-url> <commit> <md-path>`.
 
+Production-shell integration started (2026-09-07): the existing drawer now offers
+an explicit Classic/Pierre renderer selector, with Classic still the default.
+Pierre uses V2 comment anchors and persistence callbacks, the existing source
+coordinate mapping for search, file navigation, exact historical opening, custom
+sticky headers, the shared highlighting pool, and CoCalc-resolved appearance.
+Unmatched saved comments remain visible and actionable rather than being moved.
+Active comment editors live in a labeled, sticky editor area outside recyclable
+diff rows. Changing renderer is disabled until that editor is saved/cancelled;
+switching to a different comment is guarded for the same reason.
+
+Focused tests cover exact selection anchors, retained editor identity/buffer
+through simulated recycling/layout/theme changes, unmatched records, and the
+existing drawer regressions. Frontend typecheck/lint and the real-renderer
+Chromium suite pass. A live lite1b smoke test using actual Slate verifies gutter
+selection, editor identity/text through scrolling and Light/Dark changes, and
+Cancel without creating a review comment. Its input is DOM-driven because the
+forwarded Chrome session acknowledged native input commands without delivering
+them; it is not native pointer or clipboard evidence. Run
+`git/pierre-review-live.browser-test.mjs <chat-url> <commit>` with an isolated
+signed-in Chrome target. Actual upload completion, local undo, and target-switch
+draft behavior remain separate acceptance gates.
+
 Still pending: remaining Slate lifecycle checks and native diff clipboard tests;
-production renderer toggle and adapter wiring; worktree/ref/comparison controls;
+semantic scroll restoration and remaining renderer parity; worktree/ref/comparison controls;
 historical source integration in the new renderer; comparison persistence and canonical-key
 migration; validated agent routing; activity adaptation; release acceptance and
 default/cleanup. The service is not yet wired into the existing drawer.

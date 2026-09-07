@@ -64,6 +64,8 @@ import {
   isGitDiffFindTargetRendered,
 } from "./git-commit/diff-find";
 import { DiffBlock } from "./git-commit/diff-components";
+import { ReviewDiffPanel } from "./git-commit/review-diff-panel";
+import type { ReviewDiffNavigation } from "./git-commit/review-diff-panel";
 import {
   commentAnchorKey,
   diffLineNumberColumnWidth,
@@ -606,6 +608,7 @@ export function GitCommitDrawer({
   const diffFindInputRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+  const pierreNavigationRef = useRef<ReviewDiffNavigation | null>(null);
   const drawerViewSessionEpochRef = useRef(0);
   const drawerViewWasOpenRef = useRef(false);
   const drawerViewScopeRef = useRef<string | undefined>(undefined);
@@ -2002,6 +2005,10 @@ export function GitCommitDrawer({
 
   const scrollToDiffFile = useCallback(
     (index: number, behavior: "auto" | "smooth" = "smooth") => {
+      if (pierreNavigationRef.current) {
+        pierreNavigationRef.current.navigateToFile(index);
+        return;
+      }
       virtuosoRef.current?.scrollToIndex({
         index,
         align: "start",
@@ -2029,6 +2036,9 @@ export function GitCommitDrawer({
 
   useEffect(() => {
     if (!open || !currentData || !activeDiffFindMatch) return;
+    // The Pierre adapter navigates in source coordinates, including search hits
+    // beyond its virtual window. Do not overwrite that with a file-top jump.
+    if (pierreNavigationRef.current) return;
     const file = currentData.files[activeDiffFindMatch.fileIndex];
     if (!file) return;
     if (activeDiffFindVisibleLineLimitUpdate) {
@@ -2070,6 +2080,7 @@ export function GitCommitDrawer({
           })
         : buildGitReviewFileSectionId(file.path, activeDiffFindMatch.fileIndex);
     const scrollTargetIntoView = () => {
+      if (pierreNavigationRef.current) return;
       const element = document.getElementById(targetId);
       if (element) {
         const node = scrollRef.current;
@@ -2864,10 +2875,12 @@ export function GitCommitDrawer({
       }
       const scrollCommand = matchGitDrawerScrollCommand(evt);
       if (scrollCommand) {
-        const node = scrollRef.current;
+        const node =
+          pierreNavigationRef.current?.viewport() ?? scrollRef.current;
         if (node && runGitDrawerScrollCommand(node, scrollCommand)) {
           evt.preventDefault();
-          persistDrawerScrollPosition(scrollStorageId, node.scrollTop);
+          if (node === scrollRef.current)
+            persistDrawerScrollPosition(scrollStorageId, node.scrollTop);
         }
         return;
       }
@@ -3243,7 +3256,17 @@ export function GitCommitDrawer({
                   }
                   onSelect={(id) => scrollToDiffFile(Number(id), "auto")}
                 >
-                  <GitDiffFilesPanel
+                  <ReviewDiffPanel
+                    navigationRef={pierreNavigationRef}
+                    onActiveFile={(index) =>
+                      setActiveNavigationFile({
+                        scope: scrollStorageId,
+                        id: String(index),
+                      })
+                    }
+                    linesTruncated={currentData.linesTruncated}
+                    repoRoot={repoRoot || currentData.repoRoot}
+                    activeDraft={activeInlineDraft ?? undefined}
                     files={currentData.files}
                     drawerScrollParent={drawerScrollParent}
                     virtuosoRef={virtuosoRef}

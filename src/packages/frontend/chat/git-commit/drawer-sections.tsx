@@ -1186,7 +1186,7 @@ export function GitChangedFilesPanel({
   );
 }
 
-type GitDiffFilesPanelProps = {
+export type GitDiffFilesPanelProps = {
   files: GitShowFile[];
   drawerScrollParent: HTMLElement | null;
   virtuosoRef: RefObject<any>;
