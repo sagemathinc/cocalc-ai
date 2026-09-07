@@ -16,7 +16,9 @@ export async function checkMessageFocus(page) {
       const dialog = page.getByRole("dialog");
       await dialog.waitFor();
       const bounds = await dialog.boundingBox();
-      const viewport = await page.evaluate(() => ({ width: window.innerWidth }));
+      const viewport = await page.evaluate(() => ({
+        width: window.innerWidth,
+      }));
       assert(bounds && viewport);
       assert(bounds.x >= -1 && bounds.x + bounds.width <= viewport.width + 1);
       if (closeMethod === "escape") {
