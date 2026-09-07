@@ -20,9 +20,9 @@ not a current checklist. The objective is not complete. Current release work:
 | Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor acceptance remains; investigate intermittent native-copy failure if reproduced. Measured main-thread heap excludes worker heaps. |
 | Default and cleanup | Classic is still the default and rollback path. Do not delete it or the experiment until the compatibility gates pass and maintainer testing supports the switch. |
 
-Browser access: the restored signed-in CDP forward supported the checks below,
-but port 9222 most recently stopped responding during native-copy validation.
-Live checks below now run in isolated targets on Chrome 151.0.7922.71. Do not
+Browser access: local signed-in Chromium now exposes CDP on port 9222
+(Chrome 149.0.7827.196), replacing the laptop forward. Earlier live checks
+used Chrome 151.0.7922.71. Do not
 use automatic account login inside this collaborative project or bypass its
 credential-storage safeguard.
 
@@ -50,6 +50,17 @@ rollback-window decision proceed. The current lack of a signed-in test session
 would not be evidence that these checks pass.
 
 ### Restored live-session checks
+
+Local Chromium native-copy follow-up: the probe now explicitly sets its page
+viewport (BrowserContext.newPage does not accept viewport options), scrolls the
+diff region onto the screen and dismisses the development stale-build banner
+through its accessible button in its own tab. Diagnostics proved that the
+previous coordinates were below the screen or covered by that banner. After
+those corrections the hit target is a Pierre source span, but native dragging
+still produces an empty or overlong selection rather than the expected partial
+substring. The probe remains failing/unverified; do not call this a clipboard
+handler bug until selection stability and browser behavior are isolated.
+No production behavior was changed in this diagnostic follow-up.
 
 Private-note recovery follow-up: regression tests reproduced timestamp selection
 dropping the other note from the recovered record. Recovery now retains distinct
