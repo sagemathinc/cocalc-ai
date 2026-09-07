@@ -22,6 +22,7 @@ import type { GitReadExecutor } from "./read-service";
 import { loadGitHistoricalFile } from "./historical-file";
 import { resolveHistorySelection } from "./history-selection";
 import { locateCommitWorktree } from "./commit-worktree";
+import { validateAgentWorktree } from "./agent-worktree";
 import {
   parseHistory,
   parseRawDiff,
@@ -127,6 +128,59 @@ describe("read-only Git fixtures", () => {
   });
 
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  test("agent worktree validation rejects moved HEADs, mismatched branches, missing paths and unrelated commits without writes", async () => {
+    const before = git(feature, ["status", "--porcelain=v1"]);
+    expect(
+      await validateAgentWorktree(
+        service,
+        repository,
+        feature,
+        featureTip,
+        root,
+        "refs/heads/feature",
+      ),
+    ).toMatchObject({
+      workingDirectory: feature,
+      expectedHead: featureTip,
+      reviewedCommit: root,
+    });
+    await expect(
+      validateAgentWorktree(
+        service,
+        repository,
+        feature,
+        root,
+        root,
+        "refs/heads/feature",
+      ),
+    ).rejects.toThrow("HEAD changed");
+    await expect(
+      validateAgentWorktree(
+        service,
+        repository,
+        feature,
+        featureTip,
+        root,
+        "refs/heads/other",
+      ),
+    ).rejects.toThrow("branch changed");
+    await expect(
+      validateAgentWorktree(service, repository, stale, root, root),
+    ).rejects.toThrow("no longer available");
+    await expect(
+      validateAgentWorktree(
+        service,
+        repository,
+        feature,
+        featureTip,
+        mainTip,
+        "refs/heads/feature",
+      ),
+    ).rejects.toThrow("not contained");
+    expect(git(feature, ["status", "--porcelain=v1"])).toBe(before);
+    expect(git(feature, ["rev-parse", "HEAD"]).trim()).toBe(featureTip);
+  });
 
   test("bare commit lookup prefers current containment, chooses only unique worktrees, and leaves checkouts untouched", async () => {
     const state = () =>

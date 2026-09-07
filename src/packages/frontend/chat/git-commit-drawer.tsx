@@ -72,6 +72,11 @@ import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
 import { currentHistorySelection } from "@cocalc/frontend/git/history-selection";
 import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
 import { useCommitWorktree } from "@cocalc/frontend/git/use-commit-worktree";
+import {
+  validateAgentWorktree,
+  dispatchWorktreeFeedback,
+} from "@cocalc/frontend/git/agent-worktree";
+import { WorktreeAgentConsent } from "./git-commit/worktree-agent-consent";
 import type {
   GitReviewHistoryRoute,
   GitComparisonRoute,
@@ -764,9 +769,64 @@ export function GitCommitDrawer({
     crossWorktree ||
     Boolean(contextNotice?.historicalOnly) ||
     Boolean(originDiscovery?.worktrees.find((tree) => tree.path === cwd)?.bare);
-  // Cross-worktree writes require validated thread routing (a later integration
-  // step). Merely browsing history must not repurpose the originating agent.
-  const onRequestAgentTurn = readOnlyWorktree ? undefined : requestAgentTurn;
+  const expectedAgentBranch = selectedHistory?.selection.ref.startsWith(
+    "refs/heads/",
+  )
+    ? selectedHistory.selection.ref
+    : originDiscovery?.worktrees.find((tree) => tree.path === cwd)?.branch;
+  const agentRoutingScope = JSON.stringify([
+    repositoryScope,
+    cwd,
+    commit,
+    selectedHistory?.tip,
+    expectedAgentBranch,
+    commitSelectionRequestToken,
+  ]);
+  const [agentWorktreeConsent, setAgentWorktreeConsent] = useState<string>();
+  const agentRoutingCurrent = useRef<string | undefined>(undefined);
+  agentRoutingCurrent.current =
+    open && agentWorktreeConsent === agentRoutingScope
+      ? agentRoutingScope
+      : undefined;
+  useEffect(
+    () => () => {
+      agentRoutingCurrent.current = undefined;
+    },
+    [],
+  );
+  const canRouteWorktree = Boolean(
+    crossWorktree &&
+    !isHeadSelected &&
+    originDiscovery &&
+    selectedHistory &&
+    requestAgentTurn,
+  );
+  // Direct staging/commit controls remain read-only. Agent feedback has its own
+  // explicit opt-in and is revalidated immediately before creating a turn.
+  const onRequestAgentTurn = !readOnlyWorktree
+    ? requestAgentTurn
+    : canRouteWorktree && agentWorktreeConsent === agentRoutingScope
+      ? async (
+          prompt: string,
+          options?: { title?: string; workingDirectory?: string },
+        ) => {
+          await dispatchWorktreeFeedback({
+            prompt,
+            title: options?.title,
+            isCurrent: () => agentRoutingCurrent.current === agentRoutingScope,
+            send: requestAgentTurn!,
+            validate: () =>
+              validateAgentWorktree(
+                projectGitReader,
+                originDiscovery!.repository,
+                cwd,
+                selectedHistory!.tip,
+                commit!,
+                expectedAgentBranch,
+              ),
+          });
+        }
+      : undefined;
   const historyControlsSelection = useMemo<GitHistorySelection>(
     () =>
       selectedHistory?.selection ?? {
@@ -3299,6 +3359,16 @@ export function GitCommitDrawer({
               });
               setSelectedCommit(tip);
             }}
+          />
+        )}
+        {canRouteWorktree && (
+          <WorktreeAgentConsent
+            path={cwd}
+            checked={agentWorktreeConsent === agentRoutingScope}
+            disabled={reviewSubmitBusy}
+            onChange={(checked) =>
+              setAgentWorktreeConsent(checked ? agentRoutingScope : undefined)
+            }
           />
         )}
         {contextNotice && (

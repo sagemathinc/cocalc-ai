@@ -140,8 +140,8 @@ keyboard focusable; comments and controls retain native key handling. Other
 preview keys cannot invoke the underlying drawer's commit/review shortcuts;
 Escape still closes the modal and restores trigger focus. Commit/review/search
 commands belong in the integrated review shell, not this frozen-input modal.
-Use Pierre's `github-light` / `github-dark` themes, following the browser color
-preference. The browser regression checks actual rendered background colors in
+Use Pierre's `github-light` / `github-dark` themes, following CoCalc's resolved
+appearance (the OS preference applies only in System mode). The browser regression checks actual rendered background colors in
 both modes, not merely the React options.
 
 ## Implementation readiness
@@ -575,6 +575,19 @@ stale metadata, and literal path preservation. Cross-worktree drawer writes
 remain disabled until request-time repository/worktree validation and the
 explicit routing UI are integrated; this helper fix alone does not satisfy
 that full release gate.
+
+Validated worktree feedback (2026-09-07): immutable cross-worktree commit reviews
+now offer an explicit, context-scoped opt-in for agent feedback. Before dispatch,
+refresh repository discovery and verify common-directory identity, registered
+worktree availability, checked-out branch, pinned HEAD, and reviewed-commit
+ancestry. Recheck worktree identity/HEAD/branch after ancestry validation. Closing
+or changing the review while validation is pending cancels dispatch. The agent
+receives the validated context and an instruction to verify it again before
+editing, since validation cannot lock an externally mutable working copy.
+The directory-routing helper creates a new thread on a cwd mismatch. Direct
+staging/commit actions remain read-only; comparison-pane agent submission is
+still pending. Real-Git validation, stale-dispatch cancellation, and keyboard
+opt-in tests pass; live end-to-end agent creation remains an acceptance check.
 
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the
