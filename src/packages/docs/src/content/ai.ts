@@ -28,6 +28,36 @@ For live notebooks, ask Codex to use the live notebook APIs. For UI actions,
 docs action ids such as \`settings.environment.secrets\` let agents open the
 right panel directly.
 
+## Get a notification when a turn finishes
+
+In account settings, find **Notifications** and **Codex and agents**.
+**Notify when Codex turns complete by default** sets the preference for threads
+that inherit the account default. The channel table separately controls
+**Inbox**, **Toast**, **Browser**, and **Email** for **Needs attention**,
+**Turn completed**, and **Turn failed**.
+
+To set a thread's completion preference:
+
+1. Open its menu and choose **Behavior...**.
+2. In **Edit Thread Behavior**, clear **Mute completion notifications for this thread**
+   to request notices, or check it to mute them.
+3. Confirm the dialog. Changing this checkbox saves an explicit preference for that thread.
+
+Set the preference before starting work when possible. A turn's completion can
+race with a settings change, and changing settings does not withdraw a notice
+already produced.
+
+Delivery depends on the enabled channels and site settings. CoCalc can show a
+toast while its page is visible or a browser notification while it is hidden.
+Browser delivery also needs browser permission; use **Enable browser notifications**
+and **Test notification** in account settings. CoCalc suppresses the extra toast
+or browser alert when you are directly watching that thread.
+
+Successful completion uses **Codex turn finished**; an error uses
+**Codex turn ended with an error**. A completion notice does not establish that
+every background command or descendant agent has stopped. Inspect the account's
+Codex sessions panel when you need to confirm remaining activity.
+
 ## Why this matters in CoCalc
 
 CoCalc is both a collaborative workspace and an agent sandbox. Humans can review
