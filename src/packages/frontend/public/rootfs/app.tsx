@@ -300,8 +300,13 @@ function RootfsCatalogCard({
                 </Text>
                 {hasOlder ? (
                   <Tag
-                    color="green"
-                    style={{ flex: "0 0 auto", marginInlineEnd: 0 }}
+                    style={{
+                      flex: "0 0 auto",
+                      marginInlineEnd: 0,
+                      color: PUBLIC_COLORS.success,
+                      background: PUBLIC_COLORS.successTint,
+                      borderColor: PUBLIC_COLORS.successBorder,
+                    }}
                   >
                     Latest
                   </Tag>
@@ -583,7 +588,15 @@ function RootfsLandingPage({
                   {entry.official ? "Official image" : "Runtime image"}
                 </Tag>
                 {entry.visibility === "public" ? (
-                  <Tag color="green">Public</Tag>
+                  <Tag
+                    style={{
+                      color: PUBLIC_COLORS.success,
+                      background: PUBLIC_COLORS.successTint,
+                      borderColor: PUBLIC_COLORS.successBorder,
+                    }}
+                  >
+                    Public
+                  </Tag>
                 ) : null}
               </Space>
               <Title level={1} style={{ margin: 0 }}>

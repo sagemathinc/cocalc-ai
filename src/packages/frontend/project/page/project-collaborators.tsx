@@ -23,7 +23,7 @@ import {
 import { Alert, Button, Card, Modal, Space, Switch, Typography } from "antd";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { ICON_USERS, ROOT_STYLE } from "../servers/consts";
 import { useProject } from "./common";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -205,8 +205,8 @@ function CollaboratorManagementPolicy({
         <div
           style={{
             alignItems: "center",
-            background: COLORS.GRAY_LLL,
-            border: `1px solid ${COLORS.GRAY_LL}`,
+            background: UI_COLORS.inset,
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 8,
             display: "grid",
             gap: 12,
@@ -216,7 +216,9 @@ function CollaboratorManagementPolicy({
         >
           <div style={{ minWidth: 0 }}>
             <Text strong>Allow other users to manage collaborators</Text>
-            <div style={{ color: COLORS.GRAY_M, fontSize: 12, marginTop: 2 }}>
+            <div
+              style={{ color: UI_COLORS.secondary, fontSize: 12, marginTop: 2 }}
+            >
               {allowOtherUsers
                 ? "Collaborators can invite people and remove non-owner collaborators."
                 : "Only project owners can invite people or remove other collaborators. Collaborators can still remove themselves."}
@@ -464,7 +466,7 @@ function AccessRequestsPanel({
             <Text strong>Blocked requesters</Text>
             <div
               style={{
-                color: COLORS.GRAY_M,
+                color: UI_COLORS.secondary,
                 fontSize: 12,
                 marginBottom: 8,
                 marginTop: 2,
@@ -506,7 +508,9 @@ function AccessRequestsPanel({
                         <div>
                           <strong>{name}</strong>
                         </div>
-                        <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+                        <div
+                          style={{ color: UI_COLORS.secondary, fontSize: 12 }}
+                        >
                           Blocked <TimeAgo date={block.created} />
                         </div>
                       </div>

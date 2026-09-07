@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
 Component for adding one or more students to the course.
 */
@@ -181,7 +182,7 @@ export default function AddStudents({ name, students, close }: Props) {
             size="small"
             style={{
               marginTop: 16,
-              background: COLORS.GRAY_LLL,
+              background: UI_COLORS.inset,
               borderColor: COLORS.GRAY_L0,
             }}
           >

@@ -22,7 +22,7 @@ import type {
   Usage,
 } from "@cocalc/jupyter/types";
 import { capitalize, closest_kernel_match, rpad_html } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   Button,
   Checkbox,
@@ -43,7 +43,6 @@ import ProgressEstimate from "../components/progress-estimate";
 import { labels } from "../i18n";
 import { JupyterActions } from "./browser-actions";
 import Logo from "./logo";
-import { SwitchToStudioButton } from "./studio/frame-type-toggle";
 import { StudioControls } from "./studio/studio-controls";
 import type { StudioLayout } from "./studio/types";
 import { KernelSelector } from "./select-kernel";
@@ -52,7 +51,7 @@ import { ALERT_COLS } from "./usage";
 const KERNEL_NAME_STYLE: CSS = {
   margin: "0px 5px",
   display: "block",
-  color: COLORS.BLUE_DD,
+  color: UI_COLORS.link,
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis",
@@ -60,8 +59,8 @@ const KERNEL_NAME_STYLE: CSS = {
 
 const KERNEL_USAGE_STYLE: CSS = {
   margin: "0px 5px",
-  color: COLORS.GRAY_M,
-  borderRight: `1px solid ${COLORS.GRAY}`,
+  color: UI_COLORS.secondary,
+  borderRight: `1px solid ${UI_COLORS.border}`,
   paddingRight: "5px",
   display: "flex",
   alignItems: "center",
@@ -74,9 +73,9 @@ const KERNEL_USAGE_STYLE_NUM: CSS = {
 
 const KERNEL_ERROR_STYLE: CSS = {
   margin: "5px",
-  color: "white",
+  color: UI_COLORS.danger,
   padding: "5px",
-  backgroundColor: COLORS.ANTD_BG_RED_M,
+  backgroundColor: UI_COLORS.dangerBg,
 } as const;
 
 const MEMORY_DOCS_SLUG = "troubleshooting/memory";
@@ -415,7 +414,7 @@ export function Kernel({
         switch (displayKernelStateValue) {
           case "busy":
             name = "circle";
-            color = "#5cb85c";
+            color = UI_COLORS.success;
             break;
           case "idle":
             name = "cocalc-ring";
@@ -445,9 +444,9 @@ export function Kernel({
           style={{
             display: "flex",
             alignItems: "center",
-            color: COLORS.GRAY_M,
+            color: UI_COLORS.secondary,
             paddingLeft: "6px",
-            borderLeft: `1px solid ${COLORS.GRAY_L}`,
+            borderLeft: `1px solid ${UI_COLORS.border}`,
             whiteSpace: "nowrap",
           }}
         >
@@ -461,7 +460,7 @@ export function Kernel({
             display: "flex",
             alignItems: "center",
             paddingLeft: "6px",
-            borderLeft: `1px solid ${COLORS.GRAY_L}`,
+            borderLeft: `1px solid ${UI_COLORS.border}`,
             whiteSpace: "nowrap",
           }}
         >
@@ -473,7 +472,6 @@ export function Kernel({
             })}
           >
             <Button
-              style={{ marginTop: compact ? 0 : "-2.5px" }}
               danger
               onClick={(e) => {
                 // don't let the click bubble to the surrounding kernel-info
@@ -644,7 +642,7 @@ export function Kernel({
         <div
           style={{
             flex: "0 0 auto",
-            color: COLORS.GRAY_M,
+            color: UI_COLORS.secondary,
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -662,7 +660,7 @@ export function Kernel({
   function renderKernelStateAction(): ReactNode {
     if (read_only || backend_state !== "running") return null;
     const buttonStyle: CSS = {
-      color: COLORS.GRAY_M,
+      color: UI_COLORS.secondary,
       padding: "0 6px",
     };
     switch (displayKernelStateValue) {
@@ -878,7 +876,7 @@ export function Kernel({
       100 * (usage.cpu_runtime / expected_cell_runtime),
     );
 
-    const railColor = COLORS.GRAY_LL;
+    const railColor = UI_COLORS.border;
 
     // Narrow frame: the same three readings stacked as unlabeled bars, so
     // they cost ~50px instead of ~300px and the rest of the bar still fits.
@@ -913,7 +911,7 @@ export function Kernel({
             justifyContent: "center",
             gap: "1px",
             width: "50px",
-            borderLeft: `1px solid ${COLORS.GRAY}`,
+            borderLeft: `1px solid ${UI_COLORS.border}`,
             paddingLeft: "6px",
             cursor: "pointer",
           }}
@@ -939,7 +937,7 @@ export function Kernel({
     const style: CSS = {
       display: "flex",
       width: "300px",
-      borderLeft: `1px solid ${COLORS.GRAY}`,
+      borderLeft: `1px solid ${UI_COLORS.border}`,
       cursor: "pointer",
       alignItems: "center",
     };
@@ -969,7 +967,9 @@ export function Kernel({
           >
             <div style={usage_style}>
               {showLabel ? (
-                <span style={{ marginRight: "5px", color: COLORS.GRAY_M }}>
+                <span
+                  style={{ marginRight: "5px", color: UI_COLORS.secondary }}
+                >
                   Code
                 </span>
               ) : (
@@ -987,7 +987,7 @@ export function Kernel({
         )}
         <div style={usage_style}>
           {showLabel ? (
-            <span style={{ marginRight: "5px", color: COLORS.GRAY_M }}>
+            <span style={{ marginRight: "5px", color: UI_COLORS.secondary }}>
               CPU
             </span>
           ) : (
@@ -1004,7 +1004,7 @@ export function Kernel({
         </div>
         <div style={usage_style}>
           {showLabel ? (
-            <span style={{ marginRight: "5px", color: COLORS.GRAY_M }}>
+            <span style={{ marginRight: "5px", color: UI_COLORS.secondary }}>
               RAM
             </span>
           ) : (
@@ -1025,18 +1025,21 @@ export function Kernel({
 
   // helper for render_usage_text
   function usage_text_style_level(level: AlertLevel) {
-    // ATTN for text, the high background color is different, with white text
+    // Pair highlighted readings with a foreground for the same theme.
     const style = KERNEL_USAGE_STYLE_NUM;
     switch (level) {
       case "low":
-        return { ...style, backgroundColor: ALERT_COLS.low };
       case "mid":
-        return { ...style, backgroundColor: ALERT_COLS.mid };
+        return {
+          ...style,
+          backgroundColor: UI_COLORS.warningBg,
+          color: UI_COLORS.warning,
+        };
       case "high":
         return {
           ...style,
-          backgroundColor: ALERT_COLS.high,
-          color: "white",
+          backgroundColor: UI_COLORS.dangerBg,
+          color: UI_COLORS.danger,
         };
       case "none":
       default:
@@ -1110,7 +1113,7 @@ export function Kernel({
   const body = (
     <div
       style={{
-        color: COLORS.GRAY_M,
+        color: UI_COLORS.secondary,
         cursor: "pointer",
       }}
       onClick={openKernelDrawer}
@@ -1130,11 +1133,12 @@ export function Kernel({
             // spawns a horizontal scrollbar at the bottom of the notebook
             boxSizing: "border-box",
             padding: "4px 6px",
-            backgroundColor: COLORS.GRAY_LLL,
+            backgroundColor: UI_COLORS.inset,
+            color: UI_COLORS.text,
             display: "flex",
             alignItems: "center",
             gap: "6px",
-            borderBottom: "1px solid #ccc",
+            borderBottom: `1px solid ${UI_COLORS.border}`,
             ...style,
           }}
         >
@@ -1219,11 +1223,12 @@ export function Kernel({
             // see compact header: avoid 100%+padding horizontal overflow
             boxSizing: "border-box",
             padding: "5px",
-            backgroundColor: COLORS.GRAY_LLL,
+            backgroundColor: UI_COLORS.inset,
+            color: UI_COLORS.text,
             display: "flex",
             alignItems: "center",
             gap: "6px",
-            borderBottom: "1px solid #ccc",
+            borderBottom: `1px solid ${UI_COLORS.border}`,
             ...style,
           }}
         >
@@ -1274,22 +1279,6 @@ export function Kernel({
               onClick={openKernelDrawer}
             >
               {renderUsage()}
-            </div>
-          )}
-          {!IS_MOBILE && (
-            <div
-              style={{
-                // flex wrapper so the inline-block button doesn't add
-                // baseline descender space and grow the status bar height;
-                // small margin only — the header padding (now border-box)
-                // provides the rest of the gap to the frame edge
-                display: "flex",
-                alignItems: "center",
-                flex: "0 0 auto",
-                marginRight: "3px",
-              }}
-            >
-              <SwitchToStudioButton iconsOnly={iconsOnly} />
             </div>
           )}
         </div>

@@ -6,6 +6,7 @@
 // data and functions specific to the latex editor.
 
 import { separate_file_extension } from "@cocalc/util/misc";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { TITLE_BAR_BORDER } from "../frame-tree/style";
 
 export const OUTPUT_HEADER_STYLE = {
@@ -14,7 +15,8 @@ export const OUTPUT_HEADER_STYLE = {
   alignItems: "center",
   padding: "10px",
   borderBottom: TITLE_BAR_BORDER,
-  backgroundColor: "white",
+  backgroundColor: UI_COLORS.surface,
+  color: UI_COLORS.text,
   flexShrink: 0,
 } as const;
 

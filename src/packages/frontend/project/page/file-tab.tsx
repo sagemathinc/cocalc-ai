@@ -35,7 +35,7 @@ import {
 } from "@cocalc/frontend/project/project-status-alerts";
 
 import { filename_extension, path_split, path_to_tab } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import { useProjectContext } from "../context";
 import { generatedWorkspaceChatLabel } from "../workspaces/chat-display";
@@ -422,7 +422,7 @@ export function FileTab(props: Readonly<Props>) {
   } else {
     // highlight info tab if there is at least one alert
     if (statusAlerts.length > 0) {
-      style = { backgroundColor: COLORS.ANTD_BG_RED_L };
+      style = { backgroundColor: UI_COLORS.dangerBg };
     } else {
       style = { flex: "none" };
     }
@@ -431,7 +431,7 @@ export function FileTab(props: Readonly<Props>) {
   // how to read: default color -> style for component -> override color if there is activity
   const icon_style: CSSProperties = {
     marginRight: isFixedTab ? 0 : "2px",
-    color: COLORS.FILE_ICON,
+    color: UI_COLORS.secondary,
     ...props.iconStyle,
     ...(has_activity ? { color: "orange" } : undefined),
   };
@@ -484,7 +484,7 @@ export function FileTab(props: Readonly<Props>) {
                   paddingInline: "2px",
                   marginInlineEnd: "4px",
                 }}
-                color={COLORS.ANTD_BG_RED_M}
+                color={UI_COLORS.danger}
               >
                 {getAlertName(alert.type)}
               </Tag>
@@ -646,7 +646,7 @@ export function FileTab(props: Readonly<Props>) {
       }}
       content={() => (
         // only editor-tabs can pop up (we returned early above for fixed tabs)
-        <span style={{ color: COLORS.GRAY }}>
+        <span style={{ color: UI_COLORS.secondary }}>
           Hint: Shift+click to open in new window.
         </span>
       )}
@@ -710,7 +710,7 @@ const LABEL_STYLE: CSS = {
   whiteSpace: "nowrap",
 } as const;
 
-const DIMMED_STYLE = { color: COLORS.FILE_DIMMED } as const;
+const DIMMED_STYLE = { color: UI_COLORS.muted } as const;
 
 const FULLPATH_LABEL_STYLE: CSS = {
   // using a full path for the label instead of just a filename

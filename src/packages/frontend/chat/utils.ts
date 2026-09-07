@@ -4,6 +4,7 @@
  */
 
 import { throttle } from "lodash";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { redux } from "@cocalc/frontend/app-framework";
 import type {
   ChatMessageTyped,
@@ -120,12 +121,14 @@ export function message_colors(
 } {
   if (sender_is_viewer(account_id, message)) {
     return {
-      background: "#f4f4f4",
+      background: UI_COLORS.inset,
+      color: UI_COLORS.text,
       message_class: "smc-message-from-viewer",
     };
   } else {
     return {
-      lighten: { color: "#888" },
+      color: UI_COLORS.text,
+      lighten: { color: UI_COLORS.muted },
       message_class: "smc-message-from-other",
     };
   }

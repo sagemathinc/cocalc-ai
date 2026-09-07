@@ -37,10 +37,14 @@ import {
 import {
   PUBLIC_ELEVATION,
   PUBLIC_COLORS,
+  PUBLIC_THEME_CSS,
+  getPublicColors,
   PUBLIC_DISPLAY_FONT_FAMILY,
 } from "@cocalc/frontend/public/theme";
 import { COMPANY_NAME } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
+import { getBaseAntdTheme } from "@cocalc/frontend/app/antd-base-theme";
 import PublicTopNav, { type PublicTopNavActiveKey } from "./top-nav";
 
 const { Content, Footer, Header, Sider } = Layout;
@@ -71,6 +75,11 @@ export const PUBLIC_PAGE_CSS = `
 
   .cocalc-public-footer a:hover {
     color: ${PUBLIC_COLORS.accent} !important;
+  }
+
+  .cocalc-public-page .ant-typography a:not(.ant-btn) {
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
   }
 
   .cocalc-public-page .ant-row {
@@ -408,6 +417,9 @@ export function PublicPage({
   title,
 }: PublicPageProps) {
   const { token } = theme.useToken();
+  const { resolved } = useAppearance();
+  const colors = getPublicColors(resolved);
+  const baseTheme = getBaseAntdTheme(resolved);
   const [siderHiddenByBreakpoint, setSiderHiddenByBreakpoint] = useState(false);
   const publicPageStyle = {
     "--cocalc-public-anchor-offset": `${token.Layout?.headerHeight ?? 64}px`,
@@ -417,32 +429,35 @@ export function PublicPage({
   return (
     <ConfigProvider
       theme={{
+        algorithm:
+          resolved === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
         components: {
+          ...baseTheme.components,
           Menu: {
-            itemSelectedColor: PUBLIC_COLORS.brandActive,
+            itemSelectedColor: colors.link,
           },
         },
         token: {
+          ...baseTheme.token,
           borderRadius: 8,
-          colorBgLayout: PUBLIC_COLORS.pageBackground,
-          colorBorder: PUBLIC_COLORS.border,
-          colorBorderSecondary: PUBLIC_COLORS.border,
-          colorInfo: PUBLIC_COLORS.brand,
-          colorLink: PUBLIC_COLORS.link,
-          colorLinkActive: PUBLIC_COLORS.brandActive,
-          colorLinkHover: PUBLIC_COLORS.linkHover,
-          colorPrimary: PUBLIC_COLORS.brandActive,
-          colorPrimaryActive: PUBLIC_COLORS.brandActive,
-          colorPrimaryHover: PUBLIC_COLORS.linkHover,
-          colorText: PUBLIC_COLORS.text,
-          colorTextDescription: PUBLIC_COLORS.mutedText,
-          colorTextHeading: PUBLIC_COLORS.heading,
-          colorTextSecondary: PUBLIC_COLORS.mutedText,
+          colorBgLayout: colors.pageBackground,
+          colorBgContainer: colors.surface,
+          colorBorderSecondary: colors.border,
+          colorInfo: colors.info,
+          colorLink: colors.link,
+          colorLinkActive: colors.linkHover,
+          colorLinkHover: colors.linkHover,
+          colorPrimary: colors.primary,
+          colorText: colors.text,
+          colorTextDescription: colors.mutedText,
+          colorTextHeading: colors.heading,
+          colorTextSecondary: colors.mutedText,
         },
       }}
     >
       <PublicConfigProvider config={config}>
         <AntdApp>
+          <style>{PUBLIC_THEME_CSS}</style>
           <style>{PUBLIC_PAGE_CSS}</style>
           <Layout className="cocalc-public-page" style={publicPageStyle}>
             <Header

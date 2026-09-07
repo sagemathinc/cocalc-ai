@@ -36,7 +36,7 @@ import { cocalc_setup_profile } from "@cocalc/frontend/components/constants";
 import { labels } from "@cocalc/frontend/i18n";
 
 import { R2_REGION_LABELS } from "@cocalc/util/consts";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
 import {
   latestRootfsVersionEntries,
@@ -401,7 +401,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       <Card
         size="small"
         styles={{ body: { padding: "10px 12px" } }}
-        style={{ borderColor: COLORS.GRAY_LL }}
+        style={{ borderColor: UI_COLORS.border }}
       >
         <Space orientation="vertical" size={6} style={{ width: "100%" }}>
           <Space
@@ -413,9 +413,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
               <span
                 style={{
                   alignItems: "center",
-                  background: COLORS.YELL_LLL,
+                  background: UI_COLORS.warningBg,
                   borderRadius: 10,
-                  color: COLORS.YELL_D,
+                  color: UI_COLORS.warning,
                   display: "inline-flex",
                   height: 32,
                   justifyContent: "center",
@@ -425,7 +425,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 <Icon name="cube" />
               </span>
               <span>
-                <div style={{ fontWeight: 700, color: COLORS.GRAY_D }}>
+                <div style={{ fontWeight: 700, color: UI_COLORS.text }}>
                   Image
                   <Popover content={renderRootfsHelp()} trigger="click">
                     <Button
@@ -455,13 +455,13 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                     disabled={saving}
                     onClick={() => handleApplyPreset(preset.mode)}
                     style={{
-                      borderColor: active
-                        ? COLORS.BS_BLUE_BGRND
-                        : COLORS.GRAY_LL,
-                      background: active ? COLORS.ANTD_BG_BLUE_L : "white",
-                      color: active ? COLORS.BS_BLUE_TEXT : COLORS.GRAY_D,
+                      borderColor: active ? UI_COLORS.focus : UI_COLORS.border,
+                      background: active
+                        ? UI_COLORS.selected
+                        : UI_COLORS.surface,
+                      color: active ? UI_COLORS.link : UI_COLORS.text,
                       boxShadow: active
-                        ? `0 0 0 1px ${COLORS.BS_BLUE_BGRND} inset`
+                        ? `0 0 0 1px ${UI_COLORS.focus} inset`
                         : undefined,
                     }}
                   >
@@ -504,41 +504,41 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         icon: "project-outlined",
         label: "Project name",
         value: title,
-        color: COLORS.ANTD_BG_BLUE_L,
+        color: UI_COLORS.infoBg,
       },
       {
         icon: "sliders",
         label: "Preset",
         value: presetTitle(draft.mode),
-        color: COLORS.GRAY_LLL,
+        color: UI_COLORS.inset,
         hidden: !runtime.rootfs,
       },
       {
         icon: "cube",
         label: "Image",
         value: summary.rootfsLabel,
-        color: COLORS.YELL_LLL,
+        color: UI_COLORS.warningBg,
         hidden: !runtime.rootfs,
       },
       {
         icon: "servers",
         label: "Host / region",
         value: summary.hostName || summary.host_id || "Automatic placement",
-        color: COLORS.BS_GREEN_LL,
+        color: UI_COLORS.successBg,
         hidden: IS_STAR_SETUP_PROFILE || !runtime.host_placement,
       },
       {
         icon: "database",
         label: "Backups",
         value: R2_REGION_LABELS[draft.region],
-        color: COLORS.GRAY_LLL,
+        color: UI_COLORS.inset,
         hidden: !runtime.backups,
       },
       {
         icon: "terminal",
         label: "Runtime",
         value: runtime.label,
-        color: COLORS.ANTD_BG_BLUE_L,
+        color: UI_COLORS.infoBg,
       },
     ];
     return (
@@ -547,8 +547,8 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
         styles={{ body: { padding: 16 } }}
         className="cc-project-create-summary-card"
         style={{
-          borderColor: COLORS.GRAY_LL,
-          background: "white",
+          borderColor: UI_COLORS.border,
+          background: UI_COLORS.surface,
         }}
       >
         <Space orientation="vertical" size={12} style={{ width: "100%" }}>
@@ -566,25 +566,25 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                     borderBottom:
                       index === visibleItems.length - 1
                         ? undefined
-                        : `1px solid ${COLORS.GRAY_LL}`,
+                        : `1px solid ${UI_COLORS.border}`,
                   }}
                 >
                   <span
                     className="cc-project-create-summary-icon"
                     style={{
                       background: item.color,
-                      color: COLORS.BS_BLUE_TEXT,
+                      color: UI_COLORS.info,
                     }}
                   >
                     <Icon name={item.icon as any} />
                   </span>
                   <span style={{ minWidth: 0 }}>
-                    <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+                    <div style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
                       {item.label}
                     </div>
                     <div
                       style={{
-                        color: COLORS.GRAY_D,
+                        color: UI_COLORS.text,
                         fontSize: 13,
                         fontWeight: 600,
                         overflowWrap: "anywhere",
@@ -746,8 +746,8 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
           <span
             className="cc-project-create-title-icon"
             style={{
-              background: COLORS.ANTD_BG_BLUE_L,
-              color: COLORS.BS_BLUE_TEXT,
+              background: UI_COLORS.infoBg,
+              color: UI_COLORS.info,
             }}
           >
             <Icon name="plus-circle" />
@@ -770,7 +770,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       mask={{ closable: !saving }}
       styles={{
         body: {
-          background: COLORS.GRAY_LLL,
+          background: UI_COLORS.inset,
           maxHeight: "min(780px, 88vh)",
           overflowY: "auto",
           padding: 14,

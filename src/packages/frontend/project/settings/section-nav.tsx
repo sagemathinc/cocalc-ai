@@ -7,7 +7,7 @@ import { Badge, Card, Typography } from "antd";
 import type { ReactNode } from "react";
 
 import { Icon, IconName } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const { Text } = Typography;
 
@@ -30,8 +30,8 @@ export function ProjectSettingsSectionNav({
       style={{
         position: "sticky",
         top: 16,
-        border: "1px solid #d9e2ec",
-        boxShadow: "0 8px 28px rgba(15, 23, 42, 0.05)",
+        border: `1px solid ${UI_COLORS.border}`,
+        boxShadow: `0 8px 28px ${UI_COLORS.shadow}`,
       }}
       styles={{ body: { padding: 8 } }}
     >
@@ -56,7 +56,7 @@ export function ProjectSettingsSectionNav({
             style={{
               alignItems: "center",
               borderRadius: 8,
-              color: item.danger ? COLORS.BS_RED : COLORS.GRAY_DD,
+              color: item.danger ? UI_COLORS.danger : UI_COLORS.text,
               display: "flex",
               gap: 9,
               marginBottom: 2,

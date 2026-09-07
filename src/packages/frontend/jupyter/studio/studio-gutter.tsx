@@ -8,7 +8,7 @@ import React, { useMemo, useState } from "react";
 
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { DragHandle } from "@cocalc/frontend/components/sortable-list";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { SECTION_LINE_WIDTH } from "./styles";
 
 export function formatDuration(ms: number): string {
@@ -41,12 +41,12 @@ export type CellRunState =
   | "markdown";
 
 const RUN_STATE_COLORS: Record<CellRunState, string> = {
-  idle: COLORS.GRAY_L0,
-  running: "#5cb85c",
-  queued: "#2e7d32", // dark green — waiting to run
-  error: COLORS.ANTD_RED,
-  stale: COLORS.GRAY_L0,
-  markdown: COLORS.GRAY_L0,
+  idle: UI_COLORS.controlBorder,
+  running: UI_COLORS.success,
+  queued: UI_COLORS.info,
+  error: UI_COLORS.danger,
+  stale: UI_COLORS.controlBorder,
+  markdown: UI_COLORS.controlBorder,
 };
 
 interface StudioGutterProps {
@@ -137,8 +137,8 @@ export const StudioGutter: React.FC<StudioGutterProps> = React.memo(
           paddingTop: "9px",
           userSelect: "none",
           position: "relative",
-          backgroundColor: COLORS.GRAY_LLL,
-          borderRight: `1px solid ${COLORS.GRAY_LL}`,
+          backgroundColor: UI_COLORS.inset,
+          borderRight: `1px solid ${UI_COLORS.border}`,
           cursor: draggable ? "grab" : "default",
           flex: 1,
         }}
@@ -182,7 +182,7 @@ export const StudioGutter: React.FC<StudioGutterProps> = React.memo(
                     : isCurrent || isSelected
                       ? CURRENT_COLOR
                       : blockHighlighted
-                        ? COLORS.GRAY_L
+                        ? UI_COLORS.muted
                         : lineColor,
                 transition: "background-color 150ms ease",
               }}
@@ -205,13 +205,13 @@ export const StudioGutter: React.FC<StudioGutterProps> = React.memo(
                   ? lineColor
                   : isCurrent || isSelected
                     ? CURRENT_COLOR
-                    : COLORS.GRAY_D,
+                    : UI_COLORS.text,
             }}
           >
             <span
               style={{
                 fontSize: "11px",
-                color: COLORS.GRAY_M,
+                color: UI_COLORS.secondary,
                 fontWeight: 400,
               }}
             >
@@ -226,7 +226,7 @@ export const StudioGutter: React.FC<StudioGutterProps> = React.memo(
           <Tooltip title="Protected from modifications" placement="left">
             <span
               style={{
-                color: COLORS.GRAY_M,
+                color: UI_COLORS.secondary,
                 fontSize: "12px",
                 zIndex: 2,
                 marginTop: "2px",
@@ -240,7 +240,7 @@ export const StudioGutter: React.FC<StudioGutterProps> = React.memo(
           <Tooltip title="Protected from deletion" placement="left">
             <span
               style={{
-                color: COLORS.GRAY_M,
+                color: UI_COLORS.secondary,
                 fontSize: "12px",
                 zIndex: 2,
                 marginTop: "2px",
@@ -271,7 +271,7 @@ export const StudioGutter: React.FC<StudioGutterProps> = React.memo(
                       onStop();
                     }}
                     style={{
-                      color: COLORS.ANTD_RED,
+                      color: UI_COLORS.danger,
                       transition: "color 150ms ease",
                       zIndex: 2,
                     }}
@@ -292,10 +292,10 @@ export const StudioGutter: React.FC<StudioGutterProps> = React.memo(
                   }}
                   style={{
                     color: hovered
-                      ? COLORS.GRAY_D
+                      ? UI_COLORS.text
                       : isDirty
-                        ? COLORS.GRAY_M
-                        : COLORS.GRAY_L,
+                        ? UI_COLORS.secondary
+                        : UI_COLORS.muted,
                     transition: "color 150ms ease",
                     zIndex: 2,
                   }}
@@ -318,7 +318,7 @@ export const StudioGutter: React.FC<StudioGutterProps> = React.memo(
                 onInsertCell();
               }}
               style={{
-                color: COLORS.GRAY_D,
+                color: UI_COLORS.text,
                 marginTop: "auto",
                 transition: "opacity 150ms ease",
                 zIndex: 2,

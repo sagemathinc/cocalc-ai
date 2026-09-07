@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Divider, Tag } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useEffect, useState } from "react";
@@ -75,7 +76,7 @@ export default function Payment({ balance, update, cost }: Props) {
                 style={{
                   margin: "auto",
                   maxWidth: "800px",
-                  background: "white",
+                  background: UI_COLORS.surface,
                   padding: "30px 0",
                 }}
               >

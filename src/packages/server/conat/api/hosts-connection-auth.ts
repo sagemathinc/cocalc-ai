@@ -330,6 +330,7 @@ export async function issueProjectHostAuthTokenLocalHelper({
   project_id,
   public_directory_share_id,
   ttl_seconds,
+  browser_session_exp_s,
   loadHostForListing,
 }: {
   account_id: string;
@@ -337,6 +338,7 @@ export async function issueProjectHostAuthTokenLocalHelper({
   project_id?: string;
   public_directory_share_id?: string;
   ttl_seconds?: number;
+  browser_session_exp_s?: number;
   loadHostForListing: (id: string, account_id?: string) => Promise<any>;
 }): Promise<{
   host_id: string;
@@ -370,6 +372,7 @@ export async function issueProjectHostAuthTokenLocalHelper({
     account_id,
     host_id,
     ttl_seconds,
+    browser_session_exp_s,
     private_key: getProjectHostAuthTokenPrivateKey(),
   });
   return { host_id, token, expires_at };

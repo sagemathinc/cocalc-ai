@@ -18,7 +18,7 @@ import type {
   HostCatalog,
   HostCatalogEntry,
 } from "@cocalc/conat/hub/api/hosts";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const NEBIUS_DISK_INCREMENT_GB = 93;
 const GCP_SHARED_SCRATCH_MIN_GB = 10;
@@ -337,8 +337,8 @@ export const HostSharedScratchFields: React.FC<
   return (
     <div
       style={{
-        background: COLORS.GRAY_LLL,
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        background: UI_COLORS.inset,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: 10,
         marginBottom: 8,
         padding: "8px 10px",
@@ -463,7 +463,7 @@ export const HostSharedScratchFields: React.FC<
             {autoGrowSupported && (
               <div
                 style={{
-                  borderTop: `1px solid ${COLORS.GRAY_LL}`,
+                  borderTop: `1px solid ${UI_COLORS.border}`,
                   marginTop: 4,
                   paddingTop: 10,
                 }}

@@ -3,6 +3,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { capitalize, plural } from "@cocalc/util/misc";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { useState } from "react";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 
 export function describeNumberOf({
   n,
@@ -82,6 +83,7 @@ export function RawJson({
   label?;
   defaultOpen?: boolean;
 }) {
+  const { resolved } = useAppearance();
   const [show, setShow] = useState<boolean>(!!defaultOpen);
   return (
     <>
@@ -95,6 +97,7 @@ export function RawJson({
       {show && (
         <div style={style}>
           <StaticMarkdown
+            editorTheme={`cocalc-${resolved}`}
             value={"```json\n" + JSON.stringify(value, undefined, 2) + "\n```"}
           />
         </div>

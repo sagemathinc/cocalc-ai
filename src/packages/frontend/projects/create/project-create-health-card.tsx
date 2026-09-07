@@ -11,7 +11,7 @@ import type { MembershipDetails } from "@cocalc/conat/hub/api/purchases";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { humanSize } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const { Text } = Typography;
 
@@ -207,7 +207,7 @@ function GaugeCard({ gauge, isLast }: { gauge: Gauge; isLast?: boolean }) {
     <div
       className="cc-project-create-health-gauge"
       style={{
-        borderRight: isLast ? undefined : `1px solid ${COLORS.GRAY_LL}`,
+        borderRight: isLast ? undefined : `1px solid ${UI_COLORS.border}`,
         minWidth: 0,
         padding: "0 16px",
       }}
@@ -222,7 +222,7 @@ function GaugeCard({ gauge, isLast }: { gauge: Gauge; isLast?: boolean }) {
           </Text>
           <span style={{ fontSize: 11 }}>{gaugeTag(gauge.tone)}</span>
         </Space>
-        <Text strong style={{ color: COLORS.GRAY_D, fontSize: 16 }}>
+        <Text strong style={{ color: UI_COLORS.text, fontSize: 16 }}>
           {gauge.value}
         </Text>
         {gauge.percent != null && (
@@ -325,8 +325,8 @@ export function ProjectCreateHealthCard({ open }: { open: boolean }) {
       styles={{ body: { padding: "10px 12px" } }}
       className="cc-project-create-health-card"
       style={{
-        borderColor: COLORS.GRAY_LL,
-        background: "white",
+        borderColor: UI_COLORS.border,
+        background: UI_COLORS.surface,
       }}
     >
       <Space orientation="vertical" size="small" style={{ width: "100%" }}>

@@ -51,6 +51,7 @@ import {
 } from "@cocalc/frontend/project_actions";
 import { url_href } from "@cocalc/frontend/project/utils";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { isBackupsPath, BACKUPS } from "@cocalc/util/consts/backups";
 import { isSnapshotsPath, SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import {
@@ -197,7 +198,7 @@ function SortIndicator({
 }) {
   if (sortColumn !== columnKey) return null;
   const Caret = sortDescending ? CaretDownFilled : CaretUpFilled;
-  return <Caret style={{ color: COLORS.ANTD_LINK_BLUE, marginLeft: 4 }} />;
+  return <Caret style={{ color: UI_COLORS.link, marginLeft: 4 }} />;
 }
 
 function useContainerWidth(el: HTMLDivElement | null): number {
@@ -251,12 +252,12 @@ function renderTimestamp({
     return (
       <TimeAgo
         date={new Date(mtime).toISOString()}
-        style={{ color: COLORS.GRAY_M, whiteSpace: "nowrap" }}
+        style={{ color: UI_COLORS.secondary, whiteSpace: "nowrap" }}
       />
     );
   } catch {
     return (
-      <span style={{ color: COLORS.GRAY_M, whiteSpace: "nowrap" }}>
+      <span style={{ color: UI_COLORS.secondary, whiteSpace: "nowrap" }}>
         Invalid Date
       </span>
     );
@@ -264,7 +265,7 @@ function renderTimestamp({
 }
 
 function renderFileIcon(record: FileEntry, isExpanded?: boolean) {
-  const color = record.mask ? COLORS.GRAY_M : COLORS.FILE_ICON;
+  const color = record.mask ? UI_COLORS.muted : UI_COLORS.secondary;
   if (record.isDir) {
     return (
       <span style={{ color, verticalAlign: "sub", whiteSpace: "nowrap" }}>
@@ -314,14 +315,14 @@ function renderFileName(record: FileEntry) {
         textOverflow: "ellipsis",
         minWidth: 0,
         flex: "0 1 auto",
-        color: record.mask ? COLORS.GRAY_M : COLORS.TAB,
+        color: record.mask ? UI_COLORS.secondary : UI_COLORS.text,
         ...(record.isOpen ? FILE_ITEM_OPENED_STYLE : undefined),
       }}
     >
       {displayName}
       {ext !== "" && (
         <span
-          style={{ color: record.mask ? COLORS.GRAY_M : COLORS.FILE_DIMMED }}
+          style={{ color: record.mask ? UI_COLORS.secondary : UI_COLORS.muted }}
         >
           .{ext}
         </span>
@@ -395,8 +396,8 @@ function VirtualDropOnlyRow({
       style={{
         ...props.style,
         ...rowProps.style,
-        ...(isOver ? { background: COLORS.BLUE_LLL } : {}),
-        ...(isInvalidDrop ? { background: COLORS.ANTD_RED_WARN } : {}),
+        ...(isOver ? { background: UI_COLORS.selected } : {}),
+        ...(isInvalidDrop ? { background: UI_COLORS.dangerBg } : {}),
       }}
       data-folder-drop-path={parentPath}
       className={`ant-table-row ${props.className ?? ""}`}
@@ -456,8 +457,8 @@ function VirtualDraggableRow({
       style={{
         ...props.style,
         ...rowProps.style,
-        ...(isOver ? { background: COLORS.BLUE_LLL } : {}),
-        ...(isInvalidDrop ? { background: COLORS.ANTD_RED_WARN } : {}),
+        ...(isOver ? { background: UI_COLORS.selected } : {}),
+        ...(isInvalidDrop ? { background: UI_COLORS.dangerBg } : {}),
         opacity: isDragging ? 0.45 : rowProps.style.opacity,
       }}
       {...(record.isDir ? { "data-folder-drop-path": record.fullPath } : {})}
@@ -980,9 +981,9 @@ export function FileListing({
           // the row (see itemContent), because in the separated borders model
           // (the default for our tables) borders on <tr> are ignored.
           ...(record.isOpen ? FILE_ITEM_OPENED_STYLE : undefined),
-          ...(isChecked ? { backgroundColor: COLORS.GRAY_LLL } : undefined),
-          ...(isSelected ? { backgroundColor: COLORS.BLUE_LLL } : undefined),
-          ...(record.mask ? { color: COLORS.FILE_DIMMED } : undefined),
+          ...(isChecked ? { backgroundColor: UI_COLORS.inset } : undefined),
+          ...(isSelected ? { backgroundColor: UI_COLORS.selected } : undefined),
+          ...(record.mask ? { color: UI_COLORS.muted } : undefined),
         } satisfies React.CSSProperties,
       };
     },
@@ -1033,8 +1034,8 @@ export function FileListing({
       textAlign: "left",
       position: "sticky",
       top: 0,
-      background: COLORS.GRAY_LL,
-      borderBottom: `1px solid ${COLORS.GRAY_L0}`,
+      background: UI_COLORS.hover,
+      borderBottom: `1px solid ${UI_COLORS.border}`,
       fontWeight: 600,
       zIndex: 1,
     };
@@ -1057,8 +1058,8 @@ export function FileListing({
       (!readOnly || allowReadOnlyCopy);
     const sortLabelStyle = (columnKey: string): React.CSSProperties =>
       sortColumn === columnKey
-        ? { color: COLORS.ANTD_LINK_BLUE }
-        : { color: COLORS.GRAY_D };
+        ? { color: UI_COLORS.link }
+        : { color: UI_COLORS.text };
 
     return (
       <tr>
@@ -1119,7 +1120,7 @@ export function FileListing({
             <span>
               <FilterOutlined
                 style={{
-                  color: type_filter != null ? COLORS.ANTD_ORANGE : undefined,
+                  color: type_filter != null ? UI_COLORS.warning : undefined,
                 }}
               />
             </span>
@@ -1235,7 +1236,7 @@ export function FileListing({
             colSpan={numCols}
             style={{
               padding: 0,
-              background: "white",
+              background: UI_COLORS.surface,
               borderLeft: `${FILE_RECENCY_BORDER_WIDTH_PX} solid ${FILE_RECENCY_COLOR_NONE}`,
             }}
           >
@@ -1271,7 +1272,7 @@ export function FileListing({
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
-        borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
+        borderBottom: `1px solid ${UI_COLORS.inset}`,
       };
       // the colored bar at the very left of the row indicates how recently the
       // file was modified – same as in the "Files" flyout.  It has to live on
@@ -1345,7 +1346,7 @@ export function FileListing({
                 style={{
                   cursor: "pointer",
                   fontSize: "14pt",
-                  color: record.isStarred ? COLORS.STAR : COLORS.GRAY_L,
+                  color: record.isStarred ? COLORS.STAR : UI_COLORS.muted,
                 }}
               />
             )}
@@ -1409,7 +1410,7 @@ export function FileListing({
                 style={{ ...cellStyle, width: COL_W.SIZE, textAlign: "right" }}
               >
                 {record.isDir ? (
-                  <span style={{ color: COLORS.TAB, whiteSpace: "nowrap" }}>
+                  <span style={{ color: UI_COLORS.text, whiteSpace: "nowrap" }}>
                     {record.name === ".."
                       ? "-"
                       : (() => {
@@ -1433,7 +1434,7 @@ export function FileListing({
                       });
                     }}
                     style={{
-                      color: COLORS.TAB,
+                      color: UI_COLORS.text,
                       whiteSpace: "nowrap",
                       padding: "0 4px",
                       height: "auto",
@@ -1442,7 +1443,7 @@ export function FileListing({
                     <Icon
                       name="cloud-download"
                       className="cc-explorer-hover-icon"
-                      style={{ color: COLORS.TAB, marginRight: 4 }}
+                      style={{ color: UI_COLORS.text, marginRight: 4 }}
                     />
                     {misc.human_readable_size(record.size)}
                   </Button>
@@ -1470,7 +1471,11 @@ export function FileListing({
                           setContextMenu({ items, x: e.clientX, y: e.clientY });
                         }
                       }}
-                      style={{ color: COLORS.TAB, padding: 0, width: "100%" }}
+                      style={{
+                        color: UI_COLORS.text,
+                        padding: 0,
+                        width: "100%",
+                      }}
                     >
                       <Icon name="ellipsis-vertical" />
                     </Button>

@@ -21,7 +21,7 @@ import { IS_TOUCH } from "@cocalc/frontend/feature";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
 import { clear_selection } from "@cocalc/frontend/misc/clear-selection";
 import { AITools } from "@cocalc/jupyter/types";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { JupyterActions } from "./browser-actions";
 import { CellInput } from "./cell-input";
 import { CellOutput } from "./cell-output";
@@ -30,7 +30,6 @@ import { Position } from "./insert-cell/types";
 import { StudioCell } from "./studio/studio-cell";
 import type { StudioLayout } from "./studio/types";
 import { NBGraderMetadata } from "./nbgrader/cell-metadata";
-import { INPUT_PROMPT_COLOR } from "./prompt/base";
 import { withDisplayedCellRuntime } from "./run-cell-overlay";
 
 interface Props {
@@ -466,7 +465,7 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
     };
 
     if (props.is_selected) {
-      style.background = "#e3f2fd";
+      style.background = UI_COLORS.selected;
     }
 
     return style;
@@ -499,13 +498,13 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
         top: 0,
         left: "2px",
         whiteSpace: "nowrap",
-        color: COLORS.GRAY_L,
+        color: UI_COLORS.muted,
       };
     } else {
       // Need arbitrarily much horizontal space, so we
       // get our own line.
       style = {
-        color: COLORS.GRAY_L,
+        color: UI_COLORS.muted,
         marginBottom: "5px",
         top: 0,
         left: "2px",
@@ -518,7 +517,7 @@ export const Cell: React.FC<Props> = React.memo((props: Props) => {
 
     if (props.is_current || props.is_selected) {
       // style.color = COLORS.BS_RED;
-      style.color = INPUT_PROMPT_COLOR; // should be the same as the prompt; it's not an error.
+      style.color = UI_COLORS.link;
     }
 
     if (props.height) {

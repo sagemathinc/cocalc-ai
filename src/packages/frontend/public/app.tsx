@@ -7,6 +7,7 @@ import { Suspense, lazy, useEffect, useState } from "react";
 
 import { Button, Typography } from "antd";
 import { getControlPlaneAuthBootstrap } from "@cocalc/frontend/auth/api";
+import { receiveAppearanceBootstrap } from "@cocalc/frontend/appearance/bootstrap-account";
 import {
   hasTrackingConsent,
   onConsentChange,
@@ -220,6 +221,7 @@ export default function PublicApp({
       try {
         const bootstrap = await getControlPlaneAuthBootstrap();
         if (cancelled || typeof bootstrap?.signed_in !== "boolean") return;
+        receiveAppearanceBootstrap(bootstrap);
         setResolvedConfig((current) => ({
           ...(current ?? config ?? {}),
           account_display_name: bootstrap?.display_name,

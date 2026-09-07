@@ -30,7 +30,7 @@ import { Tooltip } from "@cocalc/frontend/components";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { React } from "@cocalc/frontend/app-framework";
 import { COCALC_CLI_DOWNLOAD_URL } from "@cocalc/util/consts/ui";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   getHostOnlineTooltip,
   getHostStatusTooltip,
@@ -55,10 +55,10 @@ import {
 const CARD_STYLE: CSSProperties = {
   minWidth: 280,
   maxWidth: 360,
-  border: `1px solid ${COLORS.GRAY_LL}`,
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: 12,
   padding: 10,
-  background: "white",
+  background: UI_COLORS.surface,
   boxShadow: "0 1px 4px rgba(0, 0, 0, 0.05)",
 };
 
@@ -85,29 +85,29 @@ const TONE_COLORS: Record<
   { text: string; background: string; border: string }
 > = {
   green: {
-    text: COLORS.ANTD_GREEN_D,
-    background: COLORS.BS_GREEN_LL,
-    border: COLORS.ANTD_GREEN,
+    text: UI_COLORS.success,
+    background: UI_COLORS.successBg,
+    border: UI_COLORS.success,
   },
   blue: {
-    text: COLORS.ANTD_LINK_BLUE,
-    background: COLORS.BLUE_LLLL,
-    border: COLORS.BLUE_LLL,
+    text: UI_COLORS.link,
+    background: UI_COLORS.infoBg,
+    border: UI_COLORS.infoBg,
   },
   orange: {
-    text: COLORS.YELL_D,
-    background: COLORS.YELL_LLL,
-    border: COLORS.YELL_LL,
+    text: UI_COLORS.warning,
+    background: UI_COLORS.warningBg,
+    border: UI_COLORS.warning,
   },
   red: {
-    text: COLORS.FG_RED,
-    background: COLORS.ANTD_BG_RED_L,
-    border: COLORS.ANTD_BG_RED_M,
+    text: UI_COLORS.danger,
+    background: UI_COLORS.dangerBg,
+    border: UI_COLORS.danger,
   },
   gray: {
-    text: COLORS.GRAY_M,
-    background: COLORS.GRAY_LLL,
-    border: COLORS.GRAY_L0,
+    text: UI_COLORS.secondary,
+    background: UI_COLORS.inset,
+    border: UI_COLORS.border,
   },
 };
 
@@ -360,7 +360,7 @@ function SummaryRow({
         minHeight: 24,
       }}
     >
-      <span style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 16 }}>{icon}</span>
+      <span style={{ color: UI_COLORS.link, fontSize: 16 }}>{icon}</span>
       <Typography.Text style={{ fontSize: 12 }}>{label}</Typography.Text>
       <Typography.Text
         type="secondary"
@@ -507,7 +507,7 @@ function DetailRow({
         minHeight: 27,
       }}
     >
-      <span style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 15 }}>{icon}</span>
+      <span style={{ color: UI_COLORS.link, fontSize: 15 }}>{icon}</span>
       <Typography.Text style={{ fontSize: 13 }}>{label}</Typography.Text>
       <Typography.Text
         style={{
@@ -540,17 +540,15 @@ function DetailSection({
   return (
     <div
       style={{
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: 10,
-        background: "white",
+        background: UI_COLORS.surface,
         overflow: "hidden",
       }}
     >
       <div style={{ padding: "12px 14px 8px" }}>
         <Space size={7} align="start">
-          <span style={{ color: COLORS.ANTD_LINK_BLUE, marginTop: 2 }}>
-            {icon}
-          </span>
+          <span style={{ color: UI_COLORS.link, marginTop: 2 }}>{icon}</span>
           <span>
             <Typography.Text strong style={{ fontSize: 15 }}>
               {title}
@@ -568,8 +566,8 @@ function DetailSection({
       {footer ? (
         <div
           style={{
-            borderTop: `1px solid ${COLORS.GRAY_LL}`,
-            background: COLORS.GRAY_LLL,
+            borderTop: `1px solid ${UI_COLORS.border}`,
+            background: UI_COLORS.inset,
             padding: "6px 14px",
             textAlign: "center",
           }}
@@ -1263,7 +1261,7 @@ export function HostStatusSummary({
         size={3}
         style={{
           width: "100%",
-          borderTop: `1px solid ${COLORS.GRAY_LL}`,
+          borderTop: `1px solid ${UI_COLORS.border}`,
           marginTop: 8,
           paddingTop: 8,
         }}
@@ -1295,7 +1293,7 @@ export function HostStatusSummary({
       </Space>
       <div
         style={{
-          borderTop: `1px solid ${COLORS.GRAY_LL}`,
+          borderTop: `1px solid ${UI_COLORS.border}`,
           marginTop: 8,
           paddingTop: 5,
           textAlign: "center",

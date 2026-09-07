@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createAppearanceStore } from "@cocalc/util/appearance-store";
 import {
   getActivityBarCollapsed,
   getActivityBarPanelMode,
@@ -9,6 +10,10 @@ import {
 } from "./activity-bar-storage";
 
 const mockSetActiveTab = jest.fn();
+let mockAppearanceStore = createAppearanceStore({ systemDark: true });
+jest.mock("@cocalc/util/appearance-browser", () => ({
+  getBrowserAppearanceStore: () => mockAppearanceStore,
+}));
 const mockToggleFlyout = jest.fn();
 const mockSetFlyoutExpanded = jest.fn();
 const mockToggleActionButtons = jest.fn();
@@ -77,10 +82,11 @@ jest.mock("antd", () => {
   Modal.success = (...args: any[]) => mockModalSuccess(...args);
   Modal.error = (...args: any[]) => mockModalError(...args);
   const Tooltip = ({ children }: any) => children;
-  return { Button, Checkbox, Dropdown, Modal, Tooltip };
+  return { Button, Checkbox, Dropdown, Modal, Tooltip, Popover: Tooltip };
 });
 
 jest.mock("react-intl", () => ({
+  IntlContext: require("react").createContext(null),
   defineMessage: (value: any) => value,
   defineMessages: (value: any) => value,
   useIntl: () => ({
@@ -505,6 +511,7 @@ describe("VerticalFixedTabs overflow actions", () => {
 
 describe("ProjectTabs settings affordance", () => {
   beforeEach(() => {
+    mockAppearanceStore = createAppearanceStore({ systemDark: true });
     mockLite = false;
     mockPageState = {};
     mockProjectAccessRole = "collaborator";
@@ -520,6 +527,7 @@ describe("ProjectTabs settings affordance", () => {
     render(<ProjectTabs project_id="project-1" />);
 
     expect(screen.queryByTestId("account-settings-button")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Appearance" })).toBeNull();
   });
 
   it("shows account settings in lite mode", () => {
@@ -529,6 +537,23 @@ describe("ProjectTabs settings affordance", () => {
 
     expect(screen.getByTestId("account-settings-button")).toBeTruthy();
   });
+
+  it.each(["collaborator", "viewer"] as const)(
+    "offers all appearance choices in Lite for a %s and retains focus",
+    (role) => {
+      mockLite = true;
+      mockProjectAccessRole = role;
+      render(<ProjectTabs project_id="project-1" />);
+      const select = screen.getByRole("combobox", { name: "Appearance" });
+      select.focus();
+      for (const mode of ["light", "dark", "system"]) {
+        fireEvent.change(select, { target: { value: mode } });
+        expect(select).toHaveValue(mode);
+        expect(select).toHaveFocus();
+        expect(mockAppearanceStore.getSnapshot().preference).toBe(mode);
+      }
+    },
+  );
 });
 
 describe("HiddenActivityBarLauncher", () => {

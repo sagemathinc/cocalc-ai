@@ -6,7 +6,7 @@
 import { Space, Typography } from "antd";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { HostProvider } from "../types";
 import {
   getHostPricingModeEstimates,
@@ -127,11 +127,11 @@ export function PriceSummaryRow({
     <span
       style={{
         display: "block",
-        border: `1px solid ${current ? COLORS.BLUE_L : COLORS.GRAY_LL}`,
+        border: `1px solid ${current ? UI_COLORS.info : UI_COLORS.border}`,
         borderRadius: 8,
         boxSizing: "border-box",
         padding: "5px 7px",
-        background: current ? COLORS.BLUE_LLLL : "white",
+        background: current ? UI_COLORS.infoBg : UI_COLORS.surface,
         boxShadow: current ? "0 1px 4px rgba(68, 116, 192, 0.18)" : undefined,
         width: "100%",
       }}

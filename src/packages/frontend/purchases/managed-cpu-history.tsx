@@ -35,7 +35,7 @@ import {
 } from "@cocalc/frontend/purchases/managed-egress-history";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const { Text } = Typography;
 
@@ -222,7 +222,7 @@ function CpuHistoryLine({
   return (
     <div
       style={{
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: "8px",
         marginBottom: "12px",
         padding: "14px",
@@ -253,7 +253,7 @@ function CpuHistoryLine({
           <polyline
             fill="none"
             points={polyline}
-            stroke={COLORS.BLUE_D}
+            stroke={UI_COLORS.link}
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeWidth="3"
@@ -265,7 +265,7 @@ function CpuHistoryLine({
                 x2={hoveredPoint.x}
                 y1={0}
                 y2={height}
-                stroke={COLORS.BLUE_D}
+                stroke={UI_COLORS.link}
                 strokeOpacity="0.25"
                 strokeWidth="1"
                 strokeDasharray="3 3"
@@ -274,8 +274,8 @@ function CpuHistoryLine({
                 cx={hoveredPoint.x}
                 cy={hoveredPoint.y}
                 r="4"
-                fill={COLORS.BLUE_D}
-                stroke="white"
+                fill={UI_COLORS.link}
+                stroke={UI_COLORS.surface}
                 strokeWidth="1.5"
               />
             </>
@@ -284,11 +284,11 @@ function CpuHistoryLine({
         {hoveredPoint && hoveredHistoryPoint && placement ? (
           <div
             style={{
-              background: "white",
-              border: `1px solid ${COLORS.GRAY_LL}`,
+              background: UI_COLORS.elevated,
+              border: `1px solid ${UI_COLORS.border}`,
               borderRadius: "8px",
-              boxShadow: "0 6px 18px rgba(15, 23, 42, 0.16)",
-              color: COLORS.GRAY_D,
+              boxShadow: `0 6px 18px ${UI_COLORS.shadow}`,
+              color: UI_COLORS.text,
               left: placement.left,
               maxWidth: "360px",
               minWidth: "280px",
@@ -329,7 +329,7 @@ function CpuHistoryLine({
       </div>
       <div
         style={{
-          color: COLORS.GRAY_M,
+          color: UI_COLORS.secondary,
           display: "flex",
           fontSize: "12px",
           justifyContent: "space-between",
@@ -357,7 +357,9 @@ function SummaryCard({
       <Text strong>{label}</Text>
       <div style={{ fontSize: "20px", marginTop: "4px" }}>{value}</div>
       {detail ? (
-        <div style={{ color: COLORS.GRAY_M, marginTop: "4px" }}>{detail}</div>
+        <div style={{ color: UI_COLORS.secondary, marginTop: "4px" }}>
+          {detail}
+        </div>
       ) : null}
     </div>
   );
@@ -574,7 +576,7 @@ export function ManagedCpuHistoryModal({
           marginBottom: "16px",
         }}
       >
-        <div style={{ color: COLORS.GRAY_M, maxWidth: "520px" }}>
+        <div style={{ color: UI_COLORS.secondary, maxWidth: "520px" }}>
           Managed CPU is sampled from project-host process trees and attributed
           to accounts and projects. Spikes are review signals; they are not by
           themselves abuse verdicts.

@@ -40,7 +40,7 @@ import { confirmRemoveMyselfFromProject } from "@cocalc/frontend/projects/remove
 import { useProjectRuntimeCapabilities } from "@cocalc/frontend/project/runtime-capabilities";
 
 import { tab_to_path } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { ACTIVITY_BAR_TOGGLE_LABELS } from "./activity-bar-consts";
 import {
   FileTab,
@@ -51,6 +51,7 @@ import {
 import FileTabs from "./file-tabs";
 import { lite } from "@cocalc/frontend/lite";
 import SettingsButton from "@cocalc/frontend/account/settings-button";
+import { AppearanceControl } from "@cocalc/frontend/appearance/control";
 import { RemoteSshButton, SshButton } from "@cocalc/frontend/ssh";
 import SshUpgradeButton from "@cocalc/frontend/ssh/ssh-upgrade-button";
 import { workspaceStrongThemeChrome } from "../workspaces/strong-theme";
@@ -83,7 +84,7 @@ const INDICATOR_STYLE: React.CSSProperties = {
   paddingLeft: "5px",
 } as const;
 
-export const FIXED_TABS_BG_COLOR = "rgba(0, 0, 0, 0.02)";
+export const FIXED_TABS_BG_COLOR = UI_COLORS.inset;
 const VIEWER_FIXED_TABS = new Set<FixedTab>([
   "active",
   "docs",
@@ -258,6 +259,11 @@ export default function ProjectTabs(props: PTProps) {
             <SettingsButton />
           </>
         )}
+        {lite && (
+          <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+            <AppearanceControl compact />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -391,21 +397,16 @@ export function VerticalFixedTabs({
 
   const items: ReactNode[] = [];
   for (const name of pinnedTabs) {
-    const color =
-      activeTab == name
-        ? { color: COLORS.PROJECT.FIXED_LEFT_ACTIVE }
-        : undefined;
+    const color = activeTab == name ? { color: UI_COLORS.link } : undefined;
 
     const isActive = active_flyout === name;
 
     const style: CSS = {
       ...color,
       margin: "0",
-      borderLeft: `4px solid ${
-        isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : "transparent"
-      }`,
+      borderLeft: `4px solid ${isActive ? UI_COLORS.link : "transparent"}`,
       // highlight active flyout in flyout-only mode more -- see https://github.com/sagemathinc/cocalc/issues/6855
-      ...(isActive ? { backgroundColor: COLORS.BLUE_LLLL } : undefined),
+      ...(isActive ? { backgroundColor: UI_COLORS.selected } : undefined),
     };
 
     const spacing: string = showActBarLabels
@@ -564,14 +565,14 @@ export function VerticalFixedTabs({
                 borderRight: 0,
                 borderBottom: 0,
                 borderLeft: `4px solid ${
-                  isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : "transparent"
+                  isActive ? UI_COLORS.link : "transparent"
                 }`,
                 borderRadius: 0,
                 outline: "none",
                 background: isActive
-                  ? COLORS.BLUE_LLLL
+                  ? UI_COLORS.selected
                   : workspaceChrome?.activityBarBackground,
-                color: isActive ? COLORS.PROJECT.FIXED_LEFT_ACTIVE : undefined,
+                color: isActive ? UI_COLORS.link : undefined,
                 textAlign: "inherit",
                 font: "inherit",
               }}
@@ -769,9 +770,9 @@ export function HiddenActivityBarLauncher() {
             border: "none",
             borderRadius: "0",
             fontSize: "22px",
-            color: menuOpen ? COLORS.ANTD_LINK_BLUE : COLORS.FILE_ICON,
+            color: menuOpen ? UI_COLORS.link : UI_COLORS.secondary,
             transitionDuration: "0s",
-            background: "#fafafa",
+            background: UI_COLORS.surface,
           }}
         >
           <Icon name="bars" style={{ verticalAlign: "4px" }} />
@@ -1068,7 +1069,7 @@ export function CustomizeRailButtonsModal({
         </Button>,
       ]}
     >
-      <p style={{ color: COLORS.GRAY }}>
+      <p style={{ color: UI_COLORS.secondary }}>
         Check a button to show it on the left rail. Drag to reorder buttons.
         These preferences are stored in this browser only.
       </p>
@@ -1088,7 +1089,7 @@ export function CustomizeRailButtonsModal({
                   alignItems: "center",
                   gap: "10px",
                   padding: "8px 0",
-                  borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
+                  borderBottom: `1px solid ${UI_COLORS.inset}`,
                 }}
               >
                 <Checkbox
@@ -1108,10 +1109,10 @@ export function CustomizeRailButtonsModal({
                     fontSize: "11px",
                     fontWeight: 600,
                     letterSpacing: "0.01em",
-                    background: visible ? COLORS.BS_GREEN_LL : COLORS.BLUE_LLLL,
-                    color: visible
-                      ? COLORS.ANTD_GREEN_D
-                      : COLORS.ANTD_LINK_BLUE_DARK,
+                    background: visible
+                      ? UI_COLORS.successBg
+                      : UI_COLORS.selected,
+                    color: visible ? UI_COLORS.success : UI_COLORS.link,
                     marginRight: "4px",
                   }}
                 >

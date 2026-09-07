@@ -17,7 +17,7 @@ import type {
   HostMetricsHistoryPoint,
   HostMetricsRiskLevel,
 } from "@cocalc/conat/hub/api/hosts";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { openHostDrawer } from "../open-host-drawer";
 import { formatBinaryBytes } from "../utils/format";
 
@@ -136,29 +136,29 @@ const RESOURCE_TONES: Record<
   { text: string; background: string; border: string }
 > = {
   green: {
-    text: COLORS.ANTD_GREEN_D,
-    background: COLORS.BS_GREEN_LL,
-    border: COLORS.ANTD_GREEN,
+    text: UI_COLORS.success,
+    background: UI_COLORS.successBg,
+    border: UI_COLORS.success,
   },
   blue: {
-    text: COLORS.ANTD_LINK_BLUE,
-    background: COLORS.BLUE_LLLL,
-    border: COLORS.BLUE_LLL,
+    text: UI_COLORS.link,
+    background: UI_COLORS.infoBg,
+    border: UI_COLORS.border,
   },
   orange: {
-    text: COLORS.YELL_D,
-    background: COLORS.YELL_LLL,
-    border: COLORS.YELL_LL,
+    text: UI_COLORS.warning,
+    background: UI_COLORS.warningBg,
+    border: UI_COLORS.warning,
   },
   red: {
-    text: COLORS.FG_RED,
-    background: COLORS.ANTD_BG_RED_L,
-    border: COLORS.ANTD_BG_RED_M,
+    text: UI_COLORS.danger,
+    background: UI_COLORS.dangerBg,
+    border: UI_COLORS.danger,
   },
   gray: {
-    text: COLORS.GRAY_M,
-    background: COLORS.GRAY_LLL,
-    border: COLORS.GRAY_L0,
+    text: UI_COLORS.secondary,
+    background: UI_COLORS.inset,
+    border: UI_COLORS.border,
   },
 };
 
@@ -795,7 +795,7 @@ function Sparkline({
       >
         <polyline
           fill="none"
-          stroke={color ?? COLORS.BLUE_D}
+          stroke={color ?? UI_COLORS.link}
           strokeWidth="2"
           points={sparklinePoints(values, chartWidth, chartHeight)}
           strokeLinecap="round"
@@ -807,7 +807,7 @@ function Sparkline({
               x2={hoveredPoint.x}
               y1={0}
               y2={chartHeight}
-              stroke={color ?? COLORS.BLUE_D}
+              stroke={color ?? UI_COLORS.link}
               strokeOpacity="0.25"
               strokeWidth="1"
               strokeDasharray="3 3"
@@ -816,8 +816,8 @@ function Sparkline({
               cx={hoveredPoint.x}
               cy={hoveredPoint.y}
               r="3.5"
-              fill={color ?? COLORS.BLUE_D}
-              stroke="white"
+              fill={color ?? UI_COLORS.link}
+              stroke={UI_COLORS.surface}
               strokeWidth="1.5"
             />
           </>
@@ -893,6 +893,7 @@ function CompactMetricLine({
         {display != null ? `${display}%` : (unknownLabel ?? "n/a")}
       </Typography.Text>
       <Progress
+        aria-label={label}
         percent={display ?? 0}
         size="small"
         status={tone ? "normal" : progressStatus(displayPercent)}
@@ -947,7 +948,7 @@ function MetricBar({
         alignItems: "center",
         width: "100%",
         padding: compact ? "8px 0" : "12px 0",
-        borderTop: `1px solid ${COLORS.GRAY_LL}`,
+        borderTop: `1px solid ${UI_COLORS.border}`,
       }}
     >
       <span
@@ -958,8 +959,8 @@ function MetricBar({
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          color: color ?? COLORS.BLUE_D,
-          background: COLORS.GRAY_LLL,
+          color: color ?? UI_COLORS.link,
+          background: UI_COLORS.inset,
           fontSize: compact ? 17 : 20,
         }}
       >
@@ -987,6 +988,7 @@ function MetricBar({
       <Sparkline points={trendPoints} color={color} compact={compact} />
       <div>
         <Progress
+          aria-label={label}
           percent={display ?? 0}
           size="small"
           status={tone ? "normal" : progressStatus(displayPercent)}
@@ -998,7 +1000,7 @@ function MetricBar({
             style={{
               display: "flex",
               justifyContent: "space-around",
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.secondary,
               fontSize: 11,
             }}
           >
@@ -1079,7 +1081,7 @@ function ScratchNotConfiguredMetric({
         alignItems: "center",
         width: "100%",
         padding: compact ? "8px 0" : "12px 0",
-        borderTop: `1px solid ${COLORS.GRAY_LL}`,
+        borderTop: `1px solid ${UI_COLORS.border}`,
       }}
     >
       <span
@@ -1090,8 +1092,8 @@ function ScratchNotConfiguredMetric({
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          color: COLORS.GRAY_M,
-          background: COLORS.GRAY_LLL,
+          color: UI_COLORS.secondary,
+          background: UI_COLORS.inset,
           fontSize: compact ? 17 : 20,
         }}
       >
@@ -1293,7 +1295,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   const metadataColor = RESOURCE_TONES[metadataTone].text;
   const metricsStaleness = getMetricsStaleness(host);
   const metricTone = metricsStaleness.stale ? "gray" : undefined;
-  const metricColor = metricsStaleness.stale ? COLORS.GRAY_M : undefined;
+  const metricColor = metricsStaleness.stale ? UI_COLORS.secondary : undefined;
   const riskTags = metricsStaleness.stale
     ? null
     : renderDerivedRiskTags(derived);
@@ -1349,9 +1351,10 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             minWidth: 0,
             width: "100%",
             maxWidth: 236,
-            border: `1px solid ${COLORS.GRAY_LL}`,
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 10,
-            background: "white",
+            background: UI_COLORS.surface,
+            color: UI_COLORS.text,
             padding: "6px 9px",
             overflow: "hidden",
           }}
@@ -1378,7 +1381,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             percent={cpuPercent}
             detail={load ? `load ${load.split(" / ")[0]}` : undefined}
             tone={metricTone}
-            color={metricColor ?? COLORS.BLUE_D}
+            color={metricColor ?? UI_COLORS.link}
           />
           <CompactMetricLine
             label="RAM"
@@ -1389,7 +1392,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
                 : undefined
             }
             tone={metricTone}
-            color={metricColor ?? COLORS.ANTD_GREEN_D}
+            color={metricColor ?? UI_COLORS.success}
           />
           <CompactMetricLine
             label="Disk"
@@ -1398,7 +1401,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
               diskUsed && diskTotal ? `${diskUsed} / ${diskTotal}` : diskTotal
             }
             tone={metricTone}
-            color={metricColor ?? COLORS.ANTD_ORANGE}
+            color={metricColor ?? UI_COLORS.warning}
           />
           {sharedScratchConfigured || sharedScratchMeasured ? (
             <CompactMetricLine
@@ -1407,7 +1410,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
               detail={sharedScratchDetail}
               unknownLabel={sharedScratchUnknownLabel}
               tone={metricTone}
-              color={metricColor ?? COLORS.COCALC_BLUE}
+              color={metricColor ?? UI_COLORS.info}
             />
           ) : (
             <ScratchNotConfiguredMetric host={host} dense />
@@ -1427,7 +1430,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           ) : null}
           <div
             style={{
-              borderTop: `1px solid ${COLORS.GRAY_LL}`,
+              borderTop: `1px solid ${UI_COLORS.border}`,
               paddingTop: 5,
               marginTop: 4,
               display: "flex",
@@ -1463,7 +1466,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           compact
           historyPoints={cpuHistory}
           tone={metricTone}
-          color={metricColor ?? COLORS.BLUE_D}
+          color={metricColor ?? UI_COLORS.link}
           icon={<CloudServerOutlined />}
         />
         <MetricBar
@@ -1477,7 +1480,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           compact
           historyPoints={memoryHistory}
           tone={metricTone}
-          color={metricColor ?? COLORS.ANTD_GREEN_D}
+          color={metricColor ?? UI_COLORS.success}
           icon={<HddOutlined />}
         />
         <MetricBar
@@ -1489,7 +1492,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           compact
           historyPoints={diskHistory}
           tone={metricTone}
-          color={metricColor ?? COLORS.ANTD_ORANGE}
+          color={metricColor ?? UI_COLORS.warning}
           icon={<DatabaseOutlined />}
         />
         {sharedScratchConfigured || sharedScratchMeasured ? (
@@ -1501,7 +1504,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             compact
             historyPoints={sharedScratchHistory}
             tone={metricTone}
-            color={metricColor ?? COLORS.COCALC_BLUE}
+            color={metricColor ?? UI_COLORS.info}
             icon={<DatabaseOutlined />}
           />
         ) : (
@@ -1526,9 +1529,10 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
     return (
       <div
         style={{
-          border: `1px solid ${COLORS.GRAY_LL}`,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: 10,
-          background: "white",
+          background: UI_COLORS.surface,
+          color: UI_COLORS.text,
           padding: 10,
           width: "100%",
         }}
@@ -1564,9 +1568,10 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
   return (
     <div
       style={{
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: 12,
-        background: "white",
+        background: UI_COLORS.surface,
+        color: UI_COLORS.text,
         width: "100%",
         overflow: "hidden",
       }}
@@ -1578,8 +1583,8 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
       </div>
       <div
         style={{
-          borderTop: `1px solid ${COLORS.GRAY_LL}`,
-          borderBottom: `1px solid ${COLORS.GRAY_LL}`,
+          borderTop: `1px solid ${UI_COLORS.border}`,
+          borderBottom: `1px solid ${UI_COLORS.border}`,
           padding: "12px 14px",
           display: "grid",
           gridTemplateColumns:
@@ -1594,9 +1599,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           tone={health.tone}
         />
         <Space size={8}>
-          <TeamOutlined
-            style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 20 }}
-          />
+          <TeamOutlined style={{ color: UI_COLORS.link, fontSize: 20 }} />
           <Typography.Text>
             <strong>{metrics.running_project_count ?? 0}</strong> running
             <br />
@@ -1606,7 +1609,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
         {metrics.collected_at ? (
           <Space size={8}>
             <ClockCircleOutlined
-              style={{ color: COLORS.GRAY_M, fontSize: 20 }}
+              style={{ color: UI_COLORS.secondary, fontSize: 20 }}
             />
             <Typography.Text>
               Sampled
@@ -1624,7 +1627,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           detail={load ? `load ${load}` : undefined}
           historyPoints={cpuHistory}
           tone={metricTone}
-          color={metricColor ?? COLORS.BLUE_D}
+          color={metricColor ?? UI_COLORS.link}
           icon={<CloudServerOutlined />}
         />
         <MetricBar
@@ -1637,7 +1640,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           }
           historyPoints={memoryHistory}
           tone={metricTone}
-          color={metricColor ?? COLORS.ANTD_GREEN_D}
+          color={metricColor ?? UI_COLORS.success}
           icon={<HddOutlined />}
         />
         <MetricBar
@@ -1648,7 +1651,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
           }
           historyPoints={diskHistory}
           tone={metricTone}
-          color={metricColor ?? COLORS.ANTD_ORANGE}
+          color={metricColor ?? UI_COLORS.warning}
           icon={<DatabaseOutlined />}
         />
         {sharedScratchConfigured || sharedScratchMeasured ? (
@@ -1659,7 +1662,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
             unknownLabel={sharedScratchUnknownLabel}
             historyPoints={sharedScratchHistory}
             tone={metricTone}
-            color={metricColor ?? COLORS.COCALC_BLUE}
+            color={metricColor ?? UI_COLORS.info}
             icon={<DatabaseOutlined />}
           />
         ) : (
@@ -1681,7 +1684,7 @@ export const HostCurrentMetrics: React.FC<HostCurrentMetricsProps> = ({
       </div>
       <div
         style={{
-          borderTop: `1px solid ${COLORS.GRAY_LL}`,
+          borderTop: `1px solid ${UI_COLORS.border}`,
           padding: "10px 14px",
         }}
       >

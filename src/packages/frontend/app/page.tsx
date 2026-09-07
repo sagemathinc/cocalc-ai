@@ -16,6 +16,7 @@ import { Alert, Spin } from "antd";
 import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
+import { AppearanceControl } from "@cocalc/frontend/appearance/control";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
   CSS,
@@ -32,7 +33,7 @@ import Next from "@cocalc/frontend/components/next";
 import { labels } from "@cocalc/frontend/i18n";
 import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { IS_ANDROID, IS_IOS, IS_MOBILE, IS_SAFARI } from "../feature";
 import { ActiveContent } from "./active-content";
 import { ConnectionIndicator } from "./connection-indicator";
@@ -115,7 +116,7 @@ const PAGE_STYLE: CSS = {
   height: PAGE_HEIGHT, // see note
   width: "100vw",
   overflow: "hidden",
-  background: "white",
+  background: UI_COLORS.page,
 } as const;
 
 function PostSurfaceSlot({
@@ -366,9 +367,9 @@ export const Page: React.FC = () => {
         sameTab
         href={signInHrefWithCurrentTarget()}
         style={{
-          backgroundColor: COLORS.TOP_BAR.SIGN_IN_BG,
+          backgroundColor: UI_COLORS.warningBg,
           fontSize: "16pt",
-          color: "black",
+          color: UI_COLORS.warning,
           padding: "5px 15px",
         }}
       >
@@ -434,6 +435,7 @@ export const Page: React.FC = () => {
         ) : undefined}
         {render_docs_tab()}
         {render_support()}
+        <AppearanceControl compact />
         <ConnectionIndicator height={pageStyle.height} pageStyle={pageStyle} />
         {render_fullscreen()}
       </div>

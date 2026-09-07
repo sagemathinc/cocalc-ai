@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -356,7 +357,7 @@ export function Student({
     }
     if (!hasLinkedAccount) {
       return (
-        <span style={{ color: COLORS.GRAY_M }}>
+        <span style={{ color: UI_COLORS.secondary }}>
           <FormattedMessage
             id="course.students-panel-student.last_active.no_account"
             defaultMessage="(has not created account yet)"
@@ -414,7 +415,7 @@ export function Student({
         }
         tip={tip}
       >
-        <span style={{ color: COLORS.GRAY_M, cursor: "pointer" }}>
+        <span style={{ color: UI_COLORS.secondary, cursor: "pointer" }}>
           <Icon name={icon} /> {description}
           {state}
         </span>
@@ -1053,7 +1054,7 @@ export function Student({
         <Col xs={24}>
           <div
             style={{
-              background: COLORS.GRAY_LLL,
+              background: UI_COLORS.inset,
               border: `1px solid ${COLORS.GRAY_DDD}`,
               borderRadius: "6px",
               padding: "12px",
@@ -1153,7 +1154,7 @@ export function Student({
           </h6>
         </Col>
         <Col md={4} style={cellStyle}>
-          <h6 style={{ color: COLORS.GRAY_D, margin: 0, overflow: "hidden" }}>
+          <h6 style={{ color: UI_COLORS.text, margin: 0, overflow: "hidden" }}>
             {render_student_email()}
           </h6>
         </Col>
@@ -1341,7 +1342,7 @@ export function Student({
       <div style={{ whiteSpace: "normal" }}>
         <div
           style={{
-            background: COLORS.GRAY_LLL,
+            background: UI_COLORS.inset,
             border: `1px solid ${COLORS.GRAY_L}`,
             borderRadius: 6,
             marginBottom: 10,
@@ -1442,7 +1443,7 @@ export function Student({
       content = (
         <Space wrap>
           <Tag color="green">Assigned</Tag>
-          <span style={{ color: COLORS.GRAY_M }}>
+          <span style={{ color: UI_COLORS.secondary }}>
             Package owned by{" "}
             {redux
               .getStore("users")
@@ -1462,7 +1463,7 @@ export function Student({
       );
     } else if (!coursePackage) {
       content = (
-        <span style={{ color: COLORS.GRAY_M }}>
+        <span style={{ color: UI_COLORS.secondary }}>
           {coursePackages.length > 0
             ? "Paid seats exist, but only the purchaser or an administrator can assign them."
             : "No institute-paid course seats have been purchased yet."}
@@ -1470,13 +1471,13 @@ export function Student({
       );
     } else if (!hasAccount && !studentEmailAddress) {
       content = (
-        <span style={{ color: COLORS.GRAY_M }}>
+        <span style={{ color: UI_COLORS.secondary }}>
           Add an email address before reserving a paid seat.
         </span>
       );
     } else if (!studentProjectId) {
       content = (
-        <span style={{ color: COLORS.GRAY_M }}>
+        <span style={{ color: UI_COLORS.secondary }}>
           Create the student project before assigning a paid seat so usage is
           attributed correctly.
         </span>
@@ -1495,7 +1496,9 @@ export function Student({
             <Icon name="check" /> {hasAccount ? "Assign" : "Reserve"} paid seat
           </Button>
           {coursePackage.available_seat_count <= 0 && (
-            <span style={{ color: COLORS.GRAY_M }}>No seats available.</span>
+            <span style={{ color: UI_COLORS.secondary }}>
+              No seats available.
+            </span>
           )}
         </Space>
       );

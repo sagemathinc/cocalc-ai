@@ -3,6 +3,7 @@
 import { createRef } from "react";
 import { render } from "@testing-library/react";
 import { SlateRichTextAdapter } from "./adapters";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const editableMarkdownProps: any[] = [];
 
@@ -17,6 +18,35 @@ describe("SlateRichTextAdapter", () => {
   beforeEach(() => {
     editableMarkdownProps.length = 0;
   });
+
+  it.each([false, true])(
+    "pairs editor text and surface colors (minimal=%s)",
+    (minimal) => {
+      render(
+        <SlateRichTextAdapter
+          autoFocus={false}
+          controlRef={createRef()}
+          editBar2={createRef()}
+          minimal={minimal}
+          noVfill={false}
+          onAltEnter={() => undefined}
+          onChange={() => undefined}
+          saveDebounceMs={0}
+          selectionRef={createRef()}
+        />,
+      );
+      const props = editableMarkdownProps[0];
+      const background = minimal ? "transparent" : UI_COLORS.surface;
+      expect(props.style).toMatchObject({
+        backgroundColor: background,
+        color: UI_COLORS.text,
+      });
+      expect(props.pageStyle).toMatchObject({
+        background,
+        color: UI_COLORS.text,
+      });
+    },
+  );
 
   it("passes enableUpload through to the rich text editor", () => {
     render(

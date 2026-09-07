@@ -89,8 +89,17 @@ export function OverflowMenu({
 export function ThemeControl() {
   const { preference, setPreference } = useEssentialTheme();
   return (
-    <label className="ul-theme-control">
-      <span>Theme</span>
+    <label className="ul-theme-control" title={`Appearance: ${preference}`}>
+      <UltraliteIcon
+        name={
+          preference === "system"
+            ? "desktop"
+            : preference === "dark"
+              ? "moon"
+              : "sun"
+        }
+        size={16}
+      />
       <select
         aria-label="Color theme"
         onChange={(event) =>

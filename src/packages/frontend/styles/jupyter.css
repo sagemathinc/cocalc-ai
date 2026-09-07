@@ -1,15 +1,15 @@
 .smc-jupyter-nbviewer-content {
-  border: 1px solid lightgray;
+  border: 1px solid var(--cocalc-ui-border);
 }
 
 .smc-jupyter-nbviewer {
-  background: white;
+  background: var(--cocalc-ui-surface);
   position: fixed;
   width: 100%;
 }
 
 .smc-jupyter-notebook {
-  background: white;
+  background: var(--cocalc-ui-surface);
   width: 100%;
   left: 0px;
   min-height: 10em;
@@ -20,11 +20,11 @@
   top: 8px;
   right: 5px;
   width: 80%;
-  background: white;
-  border: 2px solid orange;
+  background: var(--cocalc-ui-elevated);
+  border: 2px solid var(--cocalc-ui-warning);
   border-radius: 4px;
   padding: 20px;
-  box-shadow: 5px 6px 4px lightgray;
+  box-shadow: 5px 6px 4px var(--cocalc-ui-shadow);
 }
 
 .smc-jupyter-notebook-history-slider {
@@ -36,10 +36,10 @@
 }
 
 .smc-jupyter-notebook-danger {
-  color: white;
+  color: var(--cocalc-ui-danger);
   font-weight: bold;
   font-size: 7pt;
-  background: red;
+  background: var(--cocalc-ui-dangerBg);
 }
 
 .smc-jupyter-history-revision-number {
@@ -92,5 +92,5 @@
 }
 
 .cc-jupyter-buttonbar-dropdown .ant-dropdown-menu-item {
-  color: var(--cocalc-col-gray-d) !important;
+  color: var(--cocalc-ui-text) !important;
 }

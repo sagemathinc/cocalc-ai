@@ -3,6 +3,7 @@ Search for any file you've edited in the last year.
 */
 
 import { Input } from "antd";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useIntl } from "react-intl";
 import { Tooltip } from "@cocalc/frontend/components";
 import { CSS, useState, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -81,10 +82,10 @@ export function FilenameSearch({ style }: Props) {
           style={{
             position: "absolute",
             zIndex: 10,
-            background: "white",
+            background: UI_COLORS.elevated,
             padding: "15px",
-            border: "1px solid #ddd",
-            boxShadow: "0 0 15px #aaa",
+            border: `1px solid ${UI_COLORS.border}`,
+            boxShadow: `0 0 15px ${UI_COLORS.shadow}`,
             overflow: "scroll",
             maxHeight: "70vh",
             left: "10px",

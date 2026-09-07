@@ -26,7 +26,7 @@ import {
   runtimeSponsorAccountId,
 } from "@cocalc/frontend/projects/runtime-start-policy";
 import { User } from "@cocalc/frontend/users/user";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import type { Project } from "./types";
 
@@ -34,8 +34,8 @@ const { Text } = Typography;
 
 const ROW_STYLE: CSSProperties = {
   alignItems: "center",
-  background: COLORS.GRAY_LLL,
-  border: `1px solid ${COLORS.GRAY_LL}`,
+  background: UI_COLORS.inset,
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: 8,
   display: "grid",
   gap: 12,
@@ -248,7 +248,7 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
     <section>
       <Space vertical size={8} style={{ width: "100%" }}>
         <SponsorRow
-          icon={<Icon name="user" style={{ color: COLORS.BS_BLUE_TEXT }} />}
+          icon={<Icon name="user" style={{ color: UI_COLORS.info }} />}
           title="Sponsor"
           summary={<>Starts use {sponsor} membership.</>}
           details="The sponsor's simultaneous running-project limit, shared-compute priority, and RAM limits apply while this project is running."
@@ -262,7 +262,7 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
           }
         />
         <SponsorRow
-          icon={<Icon name="users" style={{ color: COLORS.BS_GREEN_D }} />}
+          icon={<Icon name="users" style={{ color: UI_COLORS.success }} />}
           title="Collaborator starts"
           summary={
             checked
@@ -282,7 +282,7 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
           }
         />
         <SponsorRow
-          icon={<Icon name="play" style={{ color: COLORS.BG_WARNING }} />}
+          icon={<Icon name="play" style={{ color: UI_COLORS.warning }} />}
           title="Automatic starts"
           summary={
             autostartChecked
@@ -302,7 +302,7 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
           }
         />
         <SponsorRow
-          icon={<Icon name="history" style={{ color: COLORS.BS_RED }} />}
+          icon={<Icon name="history" style={{ color: UI_COLORS.danger }} />}
           title="Storage history"
           summary={
             storageHistoryChecked
@@ -484,7 +484,7 @@ export function RuntimeSponsorUsageSummary({
               />
             )}
             {hiddenCount > 0 && (
-              <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
+              <div style={{ color: UI_COLORS.secondary, marginTop: 4 }}>
                 {hiddenCount} sponsored running{" "}
                 {hiddenCount === 1 ? "project is" : "projects are"} hidden
                 because you are not a collaborator.

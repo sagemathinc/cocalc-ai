@@ -30,7 +30,7 @@ inspect the source.
 import { useState } from "react";
 
 import { path_split } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { raw_url } from "../../../frame-tree/util";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
@@ -95,10 +95,10 @@ function resolveImageUrl(
 const PLACEHOLDER_STYLE = {
   display: "inline-block",
   padding: "12px 18px",
-  background: COLORS.GRAY_LLL,
-  border: `1px dashed ${COLORS.GRAY_L}`,
+  background: UI_COLORS.inset,
+  border: `1px dashed ${UI_COLORS.border}`,
   borderRadius: 4,
-  color: COLORS.GRAY_M,
+  color: UI_COLORS.secondary,
   fontFamily: "sans-serif",
   fontSize: "0.85em",
   fontStyle: "italic",

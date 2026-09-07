@@ -17,6 +17,7 @@ import React, { MutableRefObject, useMemo, useRef } from "react";
 
 import { hash_string } from "@cocalc/util/misc";
 import { MINIMAP_COLORS } from "@cocalc/frontend/components/minimap/colors";
+import { useMinimapColors } from "@cocalc/frontend/components/minimap/use-colors";
 import { MinimapControls } from "@cocalc/frontend/components/minimap/controls";
 import { MinimapContextMenu } from "@cocalc/frontend/components/minimap/settings-ui";
 import { NOTEBOOK_MINIMAP_LABELS } from "../minimap-settings";
@@ -191,7 +192,18 @@ export function buildStudioMinimapEntries({
  */
 export function minimapBlocksFromEntries(
   entries: StudioMinimapEntry[],
+  colors: Record<keyof typeof MINIMAP_COLORS, string> = MINIMAP_COLORS,
 ): MinimapBlock[] {
+  const statusColors = {
+    ...STATUS_COLORS,
+    running: colors.running,
+    queued: colors.queued,
+    error: colors.error,
+    stale: colors.block,
+    dirty: colors.block,
+    idle: colors.blockQuiet,
+    markdown: colors.blockQuiet,
+  };
   return entries.map((entry) => {
     const { id, status, isCode, isCurrent, isSelected } = entry;
     const isEval = status === "running" || status === "queued";
@@ -199,14 +211,14 @@ export function minimapBlocksFromEntries(
       return {
         id,
         pixelHeight: entry.pixelHeight,
-        color: MINIMAP_COLORS.current,
+        color: colors.current,
         opacity: isCurrent ? 0.8 : 0.5,
       };
     }
     return {
       id,
       pixelHeight: entry.pixelHeight,
-      color: STATUS_COLORS[status],
+      color: statusColors[status],
       opacity: isCode ? 0.8 : 0.5,
       blink: status === "running",
     };
@@ -248,6 +260,7 @@ export const StudioMinimap: React.FC<StudioMinimapProps> = React.memo(
     curId,
     selIds,
   }) => {
+    const { colors } = useMinimapColors();
     // Persistent height cache: cellId → last known pixel height
     const heightCacheRef = useRef<{ [id: string]: number }>({});
     // Track cells that were evaluating in the previous render
@@ -326,7 +339,7 @@ export const StudioMinimap: React.FC<StudioMinimapProps> = React.memo(
         style={{ alignItems: "flex-start" }}
       >
         <BlockMinimap
-          blocks={minimapBlocksFromEntries(entries)}
+          blocks={minimapBlocksFromEntries(entries, colors)}
           height={height}
           width={width}
           adapter={adapter}

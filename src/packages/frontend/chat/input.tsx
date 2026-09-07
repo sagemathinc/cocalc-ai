@@ -20,6 +20,7 @@ import { lite } from "@cocalc/frontend/lite";
 import type { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import { shouldIgnoreSentEcho, type SentEchoGuard } from "./send-echo-guard";
 import { SubmitMentionsRef } from "./types";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 interface Props {
   on_send: (value: string) => void;
@@ -245,7 +246,7 @@ export default function ChatInput({
         maxWidth: "280px",
         fontSize: "12px",
         lineHeight: 1.5,
-        color: "#555",
+        color: UI_COLORS.secondary,
       }}
     >
       Use Markdown and LaTeX. You can upload or paste images, mention people

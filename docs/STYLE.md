@@ -62,6 +62,48 @@ const MyButton: React.FC<MyButtonProps> = (props) => {
 
 ## UI Design
 
+### UI Colors And Appearance
+
+For first-party UI in the app, public pages, and admin tools, use semantic,
+theme-aware colors:
+
+```tsx
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+
+const panelStyle = {
+  background: UI_COLORS.surface,
+  color: UI_COLORS.text,
+  border: `1px solid ${UI_COLORS.border}`,
+};
+```
+
+Prefer the existing Ant Design theme for standard controls, alerts, and menus.
+Avoid unnecessary overrides that change the official light-mode appearance.
+Custom surfaces must pair foreground and background tokens; changing only one
+can leave unreadable text. Include nested panels, selected/hover states,
+secondary text, and icons in light/dark checks.
+
+In stylesheets, use the corresponding variables, such as
+`var(--cocalc-ui-surface)`, `var(--cocalc-ui-text)`, and
+`var(--cocalc-ui-border)`. Token names retain their casing:
+`UI_COLORS.successBg` corresponds to `var(--cocalc-ui-successBg)`.
+The shared appearance stylesheet updates these variables; ordinary DOM styling
+does not need a theme hook or separate light/dark branches.
+
+`UI_COLORS` values are CSS-variable references, not hex colors. For APIs that
+require concrete colors (canvas, chart libraries, or color manipulation), use
+`appearancePalette(resolvedAppearance)` from the same module and update through
+the renderer's supported live options when appearance changes. Use the existing
+appearance integration; do not recreate editors or terminals to change colors.
+
+Keep `COLORS` from `@cocalc/util/theme` for deliberately fixed colors, such as
+branding, authored chart colors, or document content that must not be recolored.
+Do not globally rewrite `COLORS`, invert media, or theme persisted user content.
+For UI color choices not covered by existing tokens, extend the shared semantic
+palette with both light and dark values rather than adding isolated literals.
+
+### Components
+
 - As much as possible, use [Antd components](https://ant.design/) in the standard way.
   - Avoid doing new design if possible; use the conventions and components of Antd.
   - If there is a cancel button next to another button, then cancel goes first, following the Antd convention, e.g., see Popconfirm.

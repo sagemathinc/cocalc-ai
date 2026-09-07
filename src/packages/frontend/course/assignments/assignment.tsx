@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -137,7 +138,7 @@ export function Assignment({
   function render_due() {
     return (
       <Space>
-        <div style={{ marginTop: "8px", color: "#666" }}>
+        <div style={{ marginTop: "8px", color: UI_COLORS.secondary }}>
           <Tip
             placement="top"
             title="Set the due date"
@@ -182,7 +183,7 @@ export function Assignment({
             }
           />
           {enabled && scheduledAt ? (
-            <span style={{ color: "#666" }}>
+            <span style={{ color: UI_COLORS.secondary }}>
               scheduled <BigTime date={scheduledAt} />
             </span>
           ) : undefined}
@@ -213,7 +214,7 @@ export function Assignment({
           >
             Private Assignment Notes
             <br />
-            <span style={{ color: "#666" }} />
+            <span style={{ color: UI_COLORS.secondary }} />
           </Tip>
         </Col>
         <Col xs={20}>
@@ -247,7 +248,7 @@ export function Assignment({
           >
             Export file use times
             <br />
-            <span style={{ color: "#666" }} />
+            <span style={{ color: UI_COLORS.secondary }} />
           </Tip>
         </Col>
         <Col xs={20}>
@@ -273,7 +274,7 @@ export function Assignment({
           >
             Export collected student files
             <br />
-            <span style={{ color: "#666" }} />
+            <span style={{ color: UI_COLORS.secondary }} />
           </Tip>
         </Col>
         <Col xs={20}>
@@ -619,7 +620,13 @@ export function Assignment({
       .slice(0, 3) as any[];
     if (!recent.length) return;
     return (
-      <div style={{ color: "#666", fontSize: "12px", marginTop: "8px" }}>
+      <div
+        style={{
+          color: UI_COLORS.secondary,
+          fontSize: "12px",
+          marginTop: "8px",
+        }}
+      >
         Recent selected file sends:{" "}
         {recent.map((update, index) => (
           <span key={update.update_id}>
@@ -1346,7 +1353,7 @@ export function Assignment({
     const due_date = assignment.get("due_date");
     if (due_date) {
       return (
-        <span style={{ color: COLORS.GRAY_D }}>
+        <span style={{ color: UI_COLORS.text }}>
           Due <BigTime date={due_date} />
         </span>
       );

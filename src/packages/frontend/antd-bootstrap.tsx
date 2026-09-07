@@ -30,11 +30,10 @@ import {
 import { useId } from "react";
 import type { MouseEventHandler } from "react";
 
-import { inDarkMode } from "@cocalc/frontend/account/dark-mode";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Gap } from "@cocalc/frontend/components/gap";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { r_join } from "@cocalc/frontend/components/r_join";
-import { COLORS } from "@cocalc/util/theme";
 import { CSS } from "./app-framework";
 
 // Note regarding buttons -- there are 6 semantics meanings in bootstrap, but
@@ -90,31 +89,25 @@ function parse_bsStyle(props: {
       : (BS_STYLE_TO_TYPE[props.bsStyle] ?? "default");
 
   let style: React.CSSProperties | undefined = undefined;
-  // antd has no analogue of "success" & "warning", it's not clear to me what
-  // it should be so for now just copy the style from react-bootstrap.
-  if (!inDarkMode()) {
-    if (props.bsStyle === "warning") {
-      // antd has no analogue of "warning", it's not clear to me what
-      // it should be so for
-      // now just copy the style.
-      style = {
-        backgroundColor: COLORS.BG_WARNING,
-        borderColor: "#eea236",
-        color: "#ffffff",
-      };
-    } else if (props.bsStyle === "success") {
-      style = {
-        backgroundColor: "#5cb85c",
-        borderColor: "#4cae4c",
-        color: "#ffffff",
-      };
-    } else if (props.bsStyle == "info") {
-      style = {
-        backgroundColor: "rgb(91, 192, 222)",
-        borderColor: "rgb(70, 184, 218)",
-        color: "#ffffff",
-      };
-    }
+  // Semantic status pairs also update buttons that are already mounted.
+  if (props.bsStyle === "warning") {
+    style = {
+      backgroundColor: UI_COLORS.warningBg,
+      borderColor: UI_COLORS.warning,
+      color: UI_COLORS.warning,
+    };
+  } else if (props.bsStyle === "success") {
+    style = {
+      backgroundColor: UI_COLORS.successBg,
+      borderColor: UI_COLORS.success,
+      color: UI_COLORS.success,
+    };
+  } else if (props.bsStyle == "info") {
+    style = {
+      backgroundColor: UI_COLORS.infoBg,
+      borderColor: UI_COLORS.info,
+      color: UI_COLORS.info,
+    };
   }
   if (props.disabled && style != null) {
     style.opacity = 0.65;
@@ -163,8 +156,8 @@ export const Button = (props: {
     size = "small";
   }
   if (props.active) {
-    style.backgroundColor = "#d4d4d4";
-    style.boxShadow = "inset 0 3px 5px rgb(0 0 0 / 13%)";
+    style.backgroundColor = UI_COLORS.selected;
+    style.boxShadow = `inset 0 3px 5px ${UI_COLORS.shadow}`;
   }
   const btn = (
     <AntdButton
@@ -250,7 +243,10 @@ export function Well(props: {
   onMouseDown?;
 }) {
   let style: React.CSSProperties = {
-    ...{ backgroundColor: "white", border: "1px solid #e3e3e3" },
+    ...{
+      backgroundColor: UI_COLORS.surface,
+      border: `1px solid ${UI_COLORS.border}`,
+    },
     ...props.style,
   };
   return (
@@ -488,7 +484,7 @@ export function Alert(props: AlertProps) {
 }
 
 const PANEL_DEFAULT_STYLES: { header: CSS } = {
-  header: { color: COLORS.GRAY_DD, backgroundColor: COLORS.GRAY_LLL },
+  header: { color: UI_COLORS.text, backgroundColor: UI_COLORS.inset },
 } as const;
 
 export function Panel(props: {

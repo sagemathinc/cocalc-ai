@@ -13,7 +13,7 @@ import { Icon, isIconName } from "@cocalc/frontend/components/icon";
 import { capitalize, path_to_title } from "@cocalc/util/misc";
 import { AddPaymentMethodButton } from "./stripe-payment";
 import { AddressButton } from "./address";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -274,7 +274,7 @@ export function PaymentMethod({
         <Flex>
           {title}
           <div style={{ flex: 1 }} />
-          <div style={{ color: "#666", fontSize: "13pt" }}>
+          <div style={{ color: UI_COLORS.secondary, fontSize: "13pt" }}>
             Expires {paymentMethod.card.exp_month} /{" "}
             {paymentMethod.card.exp_year}
           </div>
@@ -356,9 +356,9 @@ function PaymentTitle({
   isDefault?;
 }) {
   return (
-    <b style={{ fontSize: "12pt", color: COLORS.GRAY_M }}>
+    <b style={{ fontSize: "12pt", color: UI_COLORS.text }}>
       {icon != null && (
-        <Icon name={icon} style={{ width: "25px", color: "darkblue" }} />
+        <Icon name={icon} style={{ width: "25px", color: UI_COLORS.link }} />
       )}{" "}
       {children}
       {!!isDefault && (

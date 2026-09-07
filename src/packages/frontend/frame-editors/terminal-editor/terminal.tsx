@@ -23,6 +23,7 @@ import { set_buffer } from "@cocalc/frontend/copy-paste-buffer";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { effectiveTerminalColorScheme } from "@cocalc/frontend/project/workspaces/terminal-theme";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import { MobileTerminalToolbar } from "./mobile-terminal-toolbar";
 import type { Terminal } from "./connected-terminal";
 import { background_color } from "./themes";
@@ -74,9 +75,11 @@ export const TerminalFrame: React.FC<Props> = React.memo((props: Props) => {
     props.project_id,
   );
   const workspaceRecord = workspaces.resolveWorkspaceForPath(props.path);
+  const { resolved } = useAppearance();
   const terminalColorScheme = effectiveTerminalColorScheme(
     props.terminal,
     workspaceRecord,
+    resolved,
   );
 
   useEffect(() => {

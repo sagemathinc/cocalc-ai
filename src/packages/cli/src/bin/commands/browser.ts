@@ -105,6 +105,7 @@ import type {
   SpawnStateRecord,
 } from "./browser/types";
 export type { BrowserCommandDeps } from "./browser/types";
+export { testingBrowserProfileName } from "./browser/register-session-commands";
 
 const QUICKJS_BROWSER_EXEC_API_DECLARATION = `/**
  * Browser exec API available in QuickJS sandbox mode.

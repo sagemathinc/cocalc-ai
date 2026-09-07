@@ -13,10 +13,8 @@ import { CSS } from "@cocalc/frontend/app-framework";
 import { Icon, LabeledRow, SelectorInput } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { AsyncComponent } from "@cocalc/frontend/misc/async-component";
-import {
-  DEFAULT_EDITOR_THEME,
-  EDITOR_COLOR_SCHEMES,
-} from "@cocalc/util/db-schema/accounts";
+import { EDITOR_COLOR_SCHEMES } from "@cocalc/util/db-schema/accounts";
+import { FOLLOW_APPEARANCE } from "@cocalc/util/appearance-editor";
 
 interface Props {
   theme: string;
@@ -47,10 +45,10 @@ export function EditorSettingsColorScheme(props: Props): React.JSX.Element {
     >
       <LabeledRow label={capitalize(title)}>
         <Button
-          disabled={props.theme === DEFAULT_EDITOR_THEME}
+          disabled={props.theme === FOLLOW_APPEARANCE}
           style={{ float: "right" }}
           onClick={() => {
-            props.on_change(DEFAULT_EDITOR_THEME);
+            props.on_change(FOLLOW_APPEARANCE);
           }}
         >
           {intl.formatMessage(labels.reset)}

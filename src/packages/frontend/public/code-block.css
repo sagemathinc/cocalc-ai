@@ -1,3 +1,11 @@
+.cocalc-public-code-block {
+  --cocalc-slate-inline-code-bg: var(--cocalc-ui-codeBg);
+  --cocalc-slate-inline-code-fg: var(--cocalc-ui-codeText);
+  --cocalc-slate-inline-code-border: var(--cocalc-ui-border);
+  --cocalc-slate-link-chip-bg: transparent;
+  --cocalc-slate-link-chip-border: transparent;
+}
+
 .cocalc-public-code-block,
 .cocalc-public-code-block .cocalc-slate-render {
   box-sizing: border-box;
@@ -14,10 +22,10 @@
   overflow-wrap: normal;
   white-space: pre;
   -webkit-overflow-scrolling: touch;
-  background: var(--cocalc-slate-code-bg, #fff);
-  border: 1px solid var(--cocalc-slate-code-border, rgb(192, 192, 192));
+  background: var(--cocalc-ui-codeBg);
+  border: 1px solid var(--cocalc-ui-border);
   border-radius: 8px;
-  color: var(--cocalc-slate-code-fg, #24292e);
+  color: var(--cocalc-ui-codeText);
   font-family: Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 13px;
   line-height: 1.7;
@@ -34,11 +42,11 @@
 .cocalc-public-code-block .cocalc-slate-code-block .token.prolog,
 .cocalc-public-code-block .cocalc-slate-code-block .token.doctype,
 .cocalc-public-code-block .cocalc-slate-code-block .token.cdata {
-  color: var(--cocalc-slate-code-comment, #6a737d);
+  color: var(--cocalc-ui-comment);
 }
 
 .cocalc-public-code-block .cocalc-slate-code-block .token.punctuation {
-  color: var(--cocalc-slate-code-comment, #999);
+  color: var(--cocalc-ui-comment);
   opacity: 0.8;
 }
 
@@ -49,7 +57,7 @@
 .cocalc-public-code-block .cocalc-slate-code-block .token.constant,
 .cocalc-public-code-block .cocalc-slate-code-block .token.symbol,
 .cocalc-public-code-block .cocalc-slate-code-block .token.deleted {
-  color: var(--cocalc-slate-code-number, #905);
+  color: var(--cocalc-ui-number);
 }
 
 .cocalc-public-code-block .cocalc-slate-code-block .token.selector,
@@ -58,7 +66,7 @@
 .cocalc-public-code-block .cocalc-slate-code-block .token.char,
 .cocalc-public-code-block .cocalc-slate-code-block .token.builtin,
 .cocalc-public-code-block .cocalc-slate-code-block .token.inserted {
-  color: var(--cocalc-slate-code-string, #690);
+  color: var(--cocalc-ui-string);
 }
 
 .cocalc-public-code-block .cocalc-slate-code-block .token.operator,
@@ -67,18 +75,18 @@
 .cocalc-public-code-block .cocalc-slate-code-block .token.atrule,
 .cocalc-public-code-block .cocalc-slate-code-block .token.attr-value,
 .cocalc-public-code-block .cocalc-slate-code-block .token.keyword {
-  color: var(--cocalc-slate-code-keyword, #07a);
+  color: var(--cocalc-ui-keyword);
 }
 
 .cocalc-public-code-block .cocalc-slate-code-block .token.function,
 .cocalc-public-code-block .cocalc-slate-code-block .token.class-name {
-  color: var(--cocalc-slate-code-definition, #a61e4d);
+  color: var(--cocalc-ui-function);
 }
 
 .cocalc-public-code-block .cocalc-slate-code-block .token.regex,
 .cocalc-public-code-block .cocalc-slate-code-block .token.important,
 .cocalc-public-code-block .cocalc-slate-code-block .token.variable {
-  color: var(--cocalc-slate-code-number, #e90);
+  color: var(--cocalc-ui-number);
 }
 
 .cocalc-public-code-block .cocalc-slate-code-block .token.bold {

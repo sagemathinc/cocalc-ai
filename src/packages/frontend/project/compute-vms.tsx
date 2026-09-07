@@ -99,6 +99,7 @@ import { getHostsPageHref, openHostsPage } from "../hosts/navigation";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { CloudServerOutlined, EnvironmentOutlined } from "@ant-design/icons";
+import { VM_PREVIEW_CATALOG } from "./compute-vms-preview";
 
 const { Paragraph, Text, Title } = Typography;
 const COPYABLE_PROPS = {
@@ -407,10 +408,11 @@ function originalTtlMinutes(vm: ComputeVm): number | null {
   );
 }
 
-function VmCreateModal({
+export function VmCreateModal({
   open,
   project_id,
   catalog,
+  creationUnavailable,
   volumes,
   initial,
   projectSshPublicKey,
@@ -425,6 +427,7 @@ function VmCreateModal({
   open: boolean;
   project_id?: string;
   catalog: ComputeCatalog;
+  creationUnavailable?: string;
   volumes: ComputeVolume[];
   initial: VmDraft;
   projectSshPublicKey: string | null;
@@ -639,10 +642,12 @@ function VmCreateModal({
         : values.ssh_public_key,
   });
 
-  const reviewCreate = () =>
+  const reviewCreate = () => {
+    if (creationUnavailable) return;
     void form
       .validateFields()
       .then((values) => setConfirmedDraft(withResolvedSshKey(values)));
+  };
 
   return (
     <Modal
@@ -665,7 +670,7 @@ function VmCreateModal({
               Cancel
             </Button>
             <Popconfirm
-              open={confirmedDraft != null}
+              open={!creationUnavailable && confirmedDraft != null}
               title={`Create ${confirmedDraft?.name ?? "this VM"}?`}
               description={
                 confirmedDraft && (
@@ -705,7 +710,7 @@ function VmCreateModal({
               cancelText="Review"
               okButtonProps={{ loading: saving }}
               onConfirm={() => {
-                if (!confirmedDraft) return;
+                if (creationUnavailable || !confirmedDraft) return;
                 const values = confirmedDraft;
                 setConfirmedDraft(undefined);
                 void onCreate(values);
@@ -716,7 +721,9 @@ function VmCreateModal({
                 type="primary"
                 loading={saving}
                 disabled={
-                  saving || (draft.create_home_volume && !newVolumePrice)
+                  !!creationUnavailable ||
+                  saving ||
+                  (draft.create_home_volume && !newVolumePrice)
                 }
                 onClick={reviewCreate}
               >
@@ -729,6 +736,15 @@ function VmCreateModal({
       styles={{ body: { maxHeight: "calc(100vh - 190px)", overflowY: "auto" } }}
       width={920}
     >
+      {creationUnavailable && (
+        <Alert
+          showIcon
+          type="warning"
+          title="VM creation unavailable"
+          description={creationUnavailable}
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <Form<VmDraft>
         form={form}
         layout="vertical"
@@ -4150,9 +4166,17 @@ export function ProjectComputeVms({
             <Button
               type="primary"
               icon={<Icon name="plus" />}
-              disabled={!catalog}
               onClick={() => {
-                setVmInitial(defaultVm());
+                setVmInitial(
+                  catalog
+                    ? defaultVm()
+                    : {
+                        ...defaultVm(),
+                        region: "",
+                        zone: "",
+                        machine_type: "",
+                      },
+                );
                 setVmCreateError(undefined);
                 setVmModalOpen(true);
               }}
@@ -4327,11 +4351,16 @@ export function ProjectComputeVms({
         style={{ marginTop: 20 }}
       />
 
-      {accountMode && catalog && vmInitial && (
+      {accountMode && vmInitial && (
         <VmCreateModal
           open={vmModalOpen}
           project_id={projectId}
-          catalog={catalog}
+          catalog={catalog ?? VM_PREVIEW_CATALOG}
+          creationUnavailable={
+            !catalog
+              ? "The VM catalog is unavailable. You can inspect this form, but creating a VM requires an administrator to configure managed compute and cloud-provider credentials. If setup is already complete, refresh the Virtual Machines page to retry loading the catalog. Machine choices, funding options, and prices will appear when the catalog is available."
+              : undefined
+          }
           volumes={volumes}
           initial={vmInitial}
           projectSshPublicKey={projectSshPublicKey}

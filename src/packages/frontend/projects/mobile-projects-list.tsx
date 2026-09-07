@@ -11,6 +11,7 @@ import { useActions } from "@cocalc/frontend/app-framework";
 import { Icon, ProjectState, TimeAgo } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 
 import { CollaboratorsAvatars } from "./collaborators-avatars";
@@ -131,7 +132,7 @@ export function MobileProjectsList({
         style={{
           padding: "24px 12px",
           textAlign: "center",
-          color: COLORS.GRAY,
+          color: UI_COLORS.secondary,
         }}
       >
         No projects
@@ -170,8 +171,8 @@ export function MobileProjectsList({
                 }
               }}
               style={{
-                background: "white",
-                border: `1px solid ${COLORS.GRAY_LL}`,
+                background: UI_COLORS.surface,
+                border: `1px solid ${UI_COLORS.border}`,
                 borderLeft: `5px solid ${record.color ?? "transparent"}`,
                 borderRadius: "6px",
                 cursor: record.deletionBlocked ? "not-allowed" : "pointer",
@@ -290,7 +291,7 @@ export function MobileProjectsList({
               </div>
               <div
                 style={{
-                  borderTop: `1px solid ${COLORS.GRAY_LL}`,
+                  borderTop: `1px solid ${UI_COLORS.border}`,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
@@ -312,7 +313,9 @@ export function MobileProjectsList({
                       <Icon
                         name={record.starred ? "star-filled" : "star"}
                         style={{
-                          color: record.starred ? COLORS.STAR : COLORS.GRAY,
+                          color: record.starred
+                            ? COLORS.STAR
+                            : UI_COLORS.secondary,
                         }}
                       />
                     }

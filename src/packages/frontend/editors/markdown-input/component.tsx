@@ -30,8 +30,10 @@ import { Cursors, CursorsType } from "@cocalc/frontend/jupyter/cursors";
 import Fragment, { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import { useProjectHasInternetAccess } from "@cocalc/frontend/project/settings/has-internet-access-hook";
 import { effectiveImmutableEditorSettings } from "@cocalc/frontend/project/workspaces/editor-theme";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import { useWorkspaceRecordForPath } from "@cocalc/frontend/project/workspaces/use-workspace-record";
 import { len, trunc, trunc_middle } from "@cocalc/util/misc";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Complete, Item } from "./complete";
 import {
   ALL_PROJECT_COLLABORATORS_MENTION_ID,
@@ -204,9 +206,15 @@ export function MarkdownInput(props: Props) {
   const editorHostRef = divRef ?? internalDivRef;
   const editor_settings = useRedux(["account", "editor_settings"]);
   const workspaceRecord = useWorkspaceRecordForPath(project_id, path);
+  const { resolved } = useAppearance();
   const effectiveEditorSettings = useMemo(
-    () => effectiveImmutableEditorSettings(editor_settings, workspaceRecord),
-    [editor_settings, workspaceRecord],
+    () =>
+      effectiveImmutableEditorSettings(
+        editor_settings,
+        workspaceRecord,
+        resolved,
+      ),
+    [editor_settings, workspaceRecord, resolved],
   );
   const options = useMemo(() => {
     return {
@@ -1194,10 +1202,10 @@ export function MarkdownInput(props: Props) {
     return (
       <div
         style={{
-          color: "#767676",
+          color: UI_COLORS.muted,
           fontSize: "12px",
           padding: "2.5px 15px",
-          background: "white",
+          background: UI_COLORS.surface,
           ...instructionsStyle,
         }}
       >
@@ -1219,10 +1227,10 @@ export function MarkdownInput(props: Props) {
     return (
       <div
         style={{
-          color: "#767676",
+          color: UI_COLORS.muted,
           fontSize: "12px",
           padding: "3px 15px",
-          background: "white",
+          background: UI_COLORS.surface,
           ...instructionsStyle,
         }}
       >

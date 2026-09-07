@@ -2,6 +2,7 @@ import {
   buildProjectHostBrowserSessionCookie,
   buildProjectHostBrowserSessionCookieDeletion,
   createProjectHostBrowserSessionToken,
+  restrictedBrowserSessionTtlSeconds,
   resolveProjectHostBrowserSessionFromCookieHeader,
 } from "./browser-session";
 
@@ -118,5 +119,29 @@ describe("project-host shared browser session", () => {
         max_age_seconds: 600,
       }),
     ).toContain("Max-Age=600");
+  });
+
+  it("preserves a restricted session's absolute expiration", () => {
+    expect(restrictedBrowserSessionTtlSeconds(4600, 1000)).toBe(3600);
+    expect(restrictedBrowserSessionTtlSeconds(undefined, 1000)).toBeUndefined();
+    expect(() => restrictedBrowserSessionTtlSeconds(1000, 1000)).toThrow(
+      "browser session authorization expired",
+    );
+
+    const now = jest.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      const token = createProjectHostBrowserSessionToken({
+        account_id: "00000000-1000-4000-8000-000000000001",
+        now_ms: Date.now(),
+        ttl_seconds: 10,
+      });
+      expect(
+        resolveProjectHostBrowserSessionFromCookieHeader(
+          `cocalc_project_host_session=${encodeURIComponent(token)}`,
+        ),
+      ).toMatchObject({ exp_s: 1010 });
+    } finally {
+      now.mockRestore();
+    }
   });
 });

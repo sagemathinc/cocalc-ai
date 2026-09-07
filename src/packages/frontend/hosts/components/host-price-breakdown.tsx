@@ -1,7 +1,7 @@
 import { React } from "@cocalc/frontend/app-framework";
 import { Button, Divider, Popover, Space, Typography } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type {
   PriceDisplayMode,
   ProviderPriceEstimate,
@@ -62,7 +62,7 @@ export const HostPriceBreakdown: React.FC<HostPriceBreakdownProps> = ({
   return (
     <div
       style={{
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: 8,
         padding: compact ? "8px 10px" : 12,
       }}

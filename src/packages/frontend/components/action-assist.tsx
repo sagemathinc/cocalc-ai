@@ -8,7 +8,7 @@ import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import { Paragraph } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 type ActionAssistProps = {
   title?: ReactNode;
@@ -64,10 +64,11 @@ export default function ActionAssist({
   return (
     <div
       style={{
-        border: `1px solid ${COLORS.GRAY_L}`,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: "8px",
         padding: "12px",
-        background: COLORS.GRAY_LL,
+        background: UI_COLORS.inset,
+        color: UI_COLORS.text,
         ...style,
       }}
     >

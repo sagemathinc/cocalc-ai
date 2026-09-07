@@ -7,7 +7,9 @@ import { Button } from "antd";
 
 import { Icon, IconName } from "@cocalc/frontend/components/icon";
 import { unreachable } from "@cocalc/util/misc";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { COLORS } from "@cocalc/util/theme";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import { NEW_FILETYPE_ICONS, isNewFiletypeIconName } from "./consts";
 
 export const STYLE = {
@@ -19,7 +21,7 @@ export const STYLE = {
 } as const;
 
 const ICON_STYLE = {
-  color: COLORS.FILE_ICON,
+  color: UI_COLORS.secondary,
   fontSize: "125%",
 } as const;
 
@@ -55,7 +57,12 @@ export function NewFileButton({
   size = "large",
   mode = "primary",
 }: Props) {
-  const iconStyle = size === "large" ? ICON_STYLE_LARGE : ICON_STYLE;
+  const { resolved } = useAppearance();
+  const iconStyle = {
+    ...(size === "large" ? ICON_STYLE_LARGE : ICON_STYLE),
+    color: resolved === "light" ? COLORS.FILE_ICON : UI_COLORS.info,
+  };
+  const labelColor = resolved === "light" ? COLORS.GRAY_D : UI_COLORS.text;
   const icon: IconName =
     propsIcon ??
     (isNewFiletypeIconName(ext) ? NEW_FILETYPE_ICONS[ext!] : "file");
@@ -70,8 +77,8 @@ export function NewFileButton({
     ...STYLE,
     ...(active
       ? {
-          borderColor: COLORS.ANTD_LINK_BLUE,
-          backgroundColor: COLORS.ANTD_BG_BLUE_L,
+          borderColor: UI_COLORS.focus,
+          backgroundColor: UI_COLORS.selected,
         }
       : {}),
     ...(mode === "secondary" ? { padding: "5px" } : { width: "100%" }),
@@ -86,7 +93,7 @@ export function NewFileButton({
           <div>
             {displayed_icon}
             <br />
-            <span style={{ color: COLORS.GRAY_D }}>{name}</span>
+            <span style={{ color: labelColor }}>{name}</span>
           </div>
         );
       case "small":
@@ -95,7 +102,7 @@ export function NewFileButton({
             style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
           >
             {displayed_icon}
-            <span style={{ color: COLORS.GRAY_D }}>{name}</span>
+            <span style={{ color: labelColor }}>{name}</span>
           </span>
         );
       default:

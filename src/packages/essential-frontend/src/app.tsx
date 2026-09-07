@@ -182,7 +182,7 @@ export function UltraliteApp() {
   }, []);
 
   return (
-    <EssentialThemeProvider>
+    <EssentialThemeProvider bootstrap={bootstrap}>
       <a className="ul-skip" href="#main-content">
         Skip to content
       </a>

@@ -11,7 +11,7 @@ import {
   type ProjectViewerReadPolicy,
   type ProjectViewerReadRule,
 } from "@cocalc/util/project-access";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 type ViewerReadPolicyPreset = "full" | "selected";
 
@@ -179,7 +179,7 @@ export function ViewerReadPolicyEditor({
         ]}
       />
       {preset === "full" ? (
-        <div style={{ color: COLORS.GRAY_M, fontSize: 12, marginTop: 6 }}>
+        <div style={{ color: UI_COLORS.secondary, fontSize: 12, marginTop: 6 }}>
           Includes the whole project except <code>.snapshots</code>,{" "}
           <code>.ssh</code>, and <code>.local/share/cocalc</code>. These
           sensitive paths stay excluded in the first viewer milestone.
@@ -194,7 +194,9 @@ export function ViewerReadPolicyEditor({
               onChange(selectedViewerPolicyFromText(e.target.value))
             }
           />
-          <div style={{ color: COLORS.GRAY_M, fontSize: 12, marginTop: 6 }}>
+          <div
+            style={{ color: UI_COLORS.secondary, fontSize: 12, marginTop: 6 }}
+          >
             Enter one project-relative file, directory, or glob per line. A
             directory ending in <code>/</code> includes everything under it.
             Sensitive defaults remain excluded.

@@ -25,6 +25,8 @@ import { canRunFile } from "../code-editor/run-commands";
 
 import { AccountState } from "../../account/types";
 import { valid_indent } from "./util";
+import { resolveAppearanceEditorTheme } from "@cocalc/util/appearance-editor";
+import { getBrowserAppearanceStore } from "@cocalc/util/appearance-browser";
 
 function save(cm) {
   (CodeMirror as any).commands.save(cm);
@@ -46,7 +48,10 @@ export function cm_options(
   frame_tree_actions: any = undefined,
   frame_id: string = "",
 ) {
-  let theme = editor_settings?.get("theme");
+  let theme = resolveAppearanceEditorTheme(
+    editor_settings?.get("theme"),
+    getBrowserAppearanceStore().getSnapshot().resolved,
+  );
   // if we do not know the theme, fallback to default
   if (!theme || EDITOR_COLOR_SCHEMES[theme] == null) {
     console.warn(

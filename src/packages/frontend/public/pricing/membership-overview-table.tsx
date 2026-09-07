@@ -218,7 +218,12 @@ export function MembershipOverviewTable({
       <Title level={2} style={{ margin: 0 }}>
         Compare Memberships
       </Title>
-      <div style={{ overflowX: "auto" }}>
+      <div
+        role="region"
+        aria-label="Membership comparison"
+        tabIndex={0}
+        style={{ overflowX: "auto" }}
+      >
         <table aria-label="Membership comparison" style={tableStyle}>
           <thead>
             <tr>

@@ -44,6 +44,15 @@ describe("PublicTopNav", () => {
     setViewportWidth(1280);
   });
 
+  it("uses the compact appearance selector in desktop navigation", async () => {
+    await renderTopNav(<PublicTopNav />);
+
+    expect(screen.getByRole("combobox", { name: "Appearance" })).toHaveStyle({
+      width: "32px",
+      height: "24px",
+    });
+  });
+
   async function renderTopNav(node: ReactElement) {
     const result = render(
       <PublicConfigProvider config={{ site_name: "Launchpad" }}>

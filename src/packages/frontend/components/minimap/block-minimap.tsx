@@ -1,3 +1,4 @@
+import { useMinimapColors } from "@cocalc/frontend/components/minimap/use-colors";
 /*
  *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -22,7 +23,6 @@ CodeMirror-specific is left in here.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
-import { MINIMAP_COLORS } from "./colors";
 import { MINIMAP_SCROLLBAR_ARIA, scrollDeltaForKey } from "./text-rail";
 
 export const BLOCK_MINIMAP_DEFAULT_WIDTH = 40;
@@ -248,6 +248,7 @@ export const BlockMinimap: React.FC<BlockMinimapProps> = React.memo(
     children,
     style,
   }) => {
+    const { colors: MINIMAP_COLORS } = useMinimapColors();
     const [scrollRatio, setScrollRatio] = useState(0);
     const [viewportRatio, setViewportRatio] = useState(1);
     const [clientHeight, setClientHeight] = useState(0);

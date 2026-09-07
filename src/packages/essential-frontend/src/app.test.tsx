@@ -2,13 +2,18 @@ import "@testing-library/jest-dom";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { getAuthBootstrap } from "./api";
 import { UltraliteApp } from "./app";
-import { ESSENTIAL_THEME_STORAGE_KEY } from "./theme";
+import {
+  APPEARANCE_STORAGE_KEY,
+  serializeAppearance,
+} from "@cocalc/util/appearance";
+import { disposeBrowserAppearanceStore } from "@cocalc/util/appearance-browser";
 
 jest.mock("./api", () => ({ getAuthBootstrap: jest.fn() }));
 
 const getAuthBootstrapMock = jest.mocked(getAuthBootstrap);
 
 beforeEach(() => {
+  disposeBrowserAppearanceStore();
   window.localStorage.clear();
 });
 
@@ -68,13 +73,15 @@ test("follows the system theme and exposes a persistent upper-right control", ()
 
   fireEvent.change(control, { target: { value: "light" } });
   expect(app).toHaveAttribute("data-ul-theme", "light");
-  expect(window.localStorage.getItem(ESSENTIAL_THEME_STORAGE_KEY)).toBe(
-    "light",
+  expect(window.localStorage.getItem(APPEARANCE_STORAGE_KEY)).toBe(
+    serializeAppearance("light"),
   );
 
   fireEvent.change(control, { target: { value: "system" } });
   expect(app).toHaveAttribute("data-ul-theme", "dark");
-  expect(window.localStorage.getItem(ESSENTIAL_THEME_STORAGE_KEY)).toBeNull();
+  expect(window.localStorage.getItem(APPEARANCE_STORAGE_KEY)).toBe(
+    serializeAppearance("system"),
+  );
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     value: originalMatchMedia,

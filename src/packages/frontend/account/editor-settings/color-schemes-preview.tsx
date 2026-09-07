@@ -7,6 +7,8 @@ import type { AccountState } from "@cocalc/frontend/account/types";
 import { cm_options } from "@cocalc/frontend/frame-editors/codemirror/cm-options";
 import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
 import "@cocalc/frontend/codemirror/init";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
+import { effectiveImmutableEditorSettings } from "@cocalc/frontend/project/workspaces/editor-theme";
 
 const VALUE = `\
 def is_prime_lucas_lehmer(p):
@@ -27,7 +29,11 @@ export default function CodeMirrorPreview({
   editor_settings: AccountState["editor_settings"];
   font_size?: number;
 }) {
-  const options = cm_options("a.py", editor_settings);
+  const { resolved } = useAppearance();
+  const options = cm_options(
+    "a.py",
+    effectiveImmutableEditorSettings(editor_settings, undefined, resolved),
+  );
   options.lineNumbers = false;
   return (
     <CodeMirrorStatic options={options} value={VALUE} font_size={font_size} />

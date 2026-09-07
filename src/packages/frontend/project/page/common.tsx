@@ -13,9 +13,9 @@ import {
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SCHEMA } from "@cocalc/util/db-schema";
 import { keys } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
-export const FIX_BORDER = `1px solid ${COLORS.GRAY_L0}`;
+export const FIX_BORDER = `1px solid ${UI_COLORS.border}`;
 
 export const FIX_BORDERS: React.CSSProperties = {
   borderTop: FIX_BORDER,

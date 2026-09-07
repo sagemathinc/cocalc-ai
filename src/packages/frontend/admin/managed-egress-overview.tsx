@@ -35,7 +35,7 @@ import {
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { humanSize } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { AccountStatusTags } from "./account-status-tags";
 
 const { Paragraph, Text } = Typography;
@@ -259,7 +259,7 @@ export function ManagedEgressAdminOverview() {
 
           <div
             style={{
-              border: `1px solid ${COLORS.GRAY_LL}`,
+              border: `1px solid ${UI_COLORS.border}`,
               borderRadius: "8px",
               padding: "12px 14px",
             }}
@@ -274,7 +274,7 @@ export function ManagedEgressAdminOverview() {
 
           <div
             style={{
-              border: `1px solid ${COLORS.GRAY_LL}`,
+              border: `1px solid ${UI_COLORS.border}`,
               borderRadius: "8px",
               padding: "12px 14px",
             }}

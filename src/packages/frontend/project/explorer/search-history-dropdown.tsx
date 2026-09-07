@@ -6,17 +6,17 @@
 import React from "react";
 
 import { Icon } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const DROPDOWN_STYLE: React.CSSProperties = {
   position: "absolute",
   top: "40px",
   width: "100%",
   zIndex: 120,
-  background: "white",
-  border: `1px solid ${COLORS.GRAY_L}`,
+  background: UI_COLORS.elevated,
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: "6px",
-  boxShadow: `0 8px 16px ${COLORS.GRAY_L}`,
+  boxShadow: `0 8px 16px ${UI_COLORS.shadow}`,
   maxHeight: "30vh",
   overflowY: "auto",
 };
@@ -45,8 +45,9 @@ export const SearchHistoryDropdown: React.FC<Props> = React.memo(
             }
             style={{
               alignItems: "center",
-              background: idx === historyIndex ? COLORS.GRAY_LL : "white",
-              color: COLORS.TAB,
+              background:
+                idx === historyIndex ? UI_COLORS.selected : UI_COLORS.elevated,
+              color: UI_COLORS.text,
               cursor: "pointer",
               display: "flex",
               gap: "8px",

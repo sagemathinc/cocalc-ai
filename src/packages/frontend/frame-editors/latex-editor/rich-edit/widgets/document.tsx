@@ -16,7 +16,7 @@ renders independently:
   \tableofcontents → neutral chip "Table of contents"
 */
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { WidgetProps } from "../types";
 import { EmptyPlaceholder, Widget } from "./common";
@@ -29,12 +29,12 @@ const NEUTRAL_CHIP_STYLE = {
   display: "inline-block",
   padding: "2px 8px",
   borderRadius: 4,
-  background: COLORS.GRAY_LL,
-  color: COLORS.GRAY_D,
+  background: UI_COLORS.inset,
+  color: UI_COLORS.text,
   fontFamily: "sans-serif",
   fontSize: "0.85em",
   fontWeight: 500,
-  border: `1px dashed ${COLORS.GRAY_L}`,
+  border: `1px dashed ${UI_COLORS.border}`,
   letterSpacing: "0.02em",
 } as const;
 
@@ -49,7 +49,7 @@ export function Title(props: WidgetProps) {
           style={{
             fontSize: "1.6em",
             fontWeight: 700,
-            color: COLORS.GRAY_DD,
+            color: UI_COLORS.text,
           }}
         >
           {text}
@@ -69,7 +69,7 @@ export function Author(props: WidgetProps) {
         <span
           style={{
             fontStyle: "italic",
-            color: COLORS.GRAY_D,
+            color: UI_COLORS.text,
           }}
         >
           {text}
@@ -86,7 +86,9 @@ export function DateWidget(props: WidgetProps) {
       {text === "" ? (
         <EmptyPlaceholder label="empty date" />
       ) : (
-        <span style={{ color: COLORS.GRAY, fontSize: "0.95em" }}>{text}</span>
+        <span style={{ color: UI_COLORS.secondary, fontSize: "0.95em" }}>
+          {text}
+        </span>
       )}
     </Widget>
   );

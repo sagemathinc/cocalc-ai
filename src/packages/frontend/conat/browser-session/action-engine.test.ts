@@ -43,6 +43,51 @@ describe("browser action-engine contenteditable typing", () => {
     expect(send.disabled).toBe(false);
   });
 
+  it("selects an enabled native option and emits change with focus", async () => {
+    document.body.innerHTML =
+      '<select aria-label="Appearance"><option value="light">Light</option><option value="dark">Dark</option></select>';
+    const select = document.querySelector("select")!;
+    const changed = jest.fn();
+    select.addEventListener("change", changed);
+    await executeBrowserAction({
+      project_id: "94ee01cf-2d7a-4e56-b8af-76d9a697877b",
+      action: {
+        name: "type",
+        selector: 'select[aria-label="Appearance"]',
+        text: "dark",
+      },
+    });
+    expect(select.value).toBe("dark");
+    expect(document.activeElement).toBe(select);
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["disabled", '<option value="dark">Dark</option>', "dark"],
+    ["multiple", '<option value="dark">Dark</option>', "dark"],
+    ["", '<option value="dark" disabled>Dark</option>', "dark"],
+    [
+      "",
+      '<optgroup disabled><option value="dark">Dark</option></optgroup>',
+      "dark",
+    ],
+    ["", '<option value="light">Light</option>', "missing"],
+  ])(
+    "rejects unavailable select choices (%s %s)",
+    async (attributes, options, text) => {
+      document.body.innerHTML = `<select ${attributes}>${options}</select>`;
+      const select = document.querySelector("select")!;
+      const before = select.value;
+      await expect(
+        executeBrowserAction({
+          project_id: "94ee01cf-2d7a-4e56-b8af-76d9a697877b",
+          action: { name: "type", selector: "select", text },
+        }),
+      ).rejects.toThrow(/select/);
+      expect(select.value).toBe(before);
+    },
+  );
+
   it("uses the Slate-style React beforeinput hook when present", async () => {
     const textbox = document.createElement("div");
     textbox.setAttribute("role", "textbox");

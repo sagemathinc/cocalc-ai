@@ -12,7 +12,7 @@ import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { User } from "@cocalc/frontend/users";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { NotificationFilter, MentionInfo } from "./types";
 import { BOOKMARK_ICON_NAME } from "./util";
 
@@ -67,12 +67,12 @@ export function MentionRow(props: Props) {
   // think of "in transition" between read and unread
   const clickedStyle: CSS =
     clicked && (filter === "unread" || filter === "read")
-      ? { backgroundColor: COLORS.GRAY_LL }
+      ? { backgroundColor: UI_COLORS.hover }
       : {};
 
   const row_style: CSS =
     is_read && !clicked
-      ? { color: "rgb(88, 96, 105)", ...clickedStyle }
+      ? { color: UI_COLORS.secondary, ...clickedStyle }
       : { ...clickedStyle };
 
   function markReadState(how: "read" | "unread") {
@@ -131,7 +131,7 @@ export function MentionRow(props: Props) {
           <Icon
             name={read_icon}
             onClick={on_read_unread_click}
-            style={{ fontSize: "20px", color: "rgb(100, 100, 100)" }}
+            style={{ fontSize: "20px", color: UI_COLORS.secondary }}
           />
         </Tooltip>
       </div>
@@ -155,7 +155,7 @@ export function MentionRow(props: Props) {
         <ProjectTitle project_id={project_id} />.
         {description ? (
           <StaticMarkdown
-            style={{ color: "rgb(100, 100, 100)", margin: "4px 10px" }}
+            style={{ color: UI_COLORS.secondary, margin: "4px 10px" }}
             value={description}
           />
         ) : (
@@ -176,8 +176,8 @@ export function MentionRow(props: Props) {
             onClick={on_save_unsave_click}
             style={{
               fontSize: "20px",
-              color: "rgb(100, 100, 100)",
-              backgroundColor: is_saved ? "yellow" : undefined,
+              color: UI_COLORS.secondary,
+              backgroundColor: is_saved ? UI_COLORS.warningBg : undefined,
               marginRight: "10px",
             }}
           />

@@ -22,7 +22,7 @@ import {
 import { labels } from "@cocalc/frontend/i18n";
 import * as misc from "@cocalc/util/misc";
 import { COMPUTE_STATES } from "@cocalc/util/schema";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useProjectContext } from "../context";
 import { RestartProject } from "./restart-project";
 import { StopProject } from "./stop-project";
@@ -99,13 +99,13 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   function render_state() {
     if (lifecycle.isNew) {
       return (
-        <span style={{ fontSize: "12pt", color: COLORS.GRAY_M }}>
+        <span style={{ fontSize: "12pt", color: UI_COLORS.secondary }}>
           <Icon name="plus-circle" /> New
         </span>
       );
     }
     return (
-      <span style={{ fontSize: "12pt", color: COLORS.GRAY_M }}>
+      <span style={{ fontSize: "12pt", color: UI_COLORS.secondary }}>
         <ProjectState show_desc={true} state={displayProjectState} />
       </span>
     );
@@ -143,7 +143,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       COMPUTE_STATES[state].commands) || ["save", "stop", "start"];
     return (
       <section>
-        <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: "8px" }}>
+        <Paragraph style={{ color: UI_COLORS.text, marginBottom: "8px" }}>
           Use these controls when the active runtime is stuck or needs to be
           restarted.
         </Paragraph>
@@ -167,7 +167,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       archivedAt: project.get("archived_at"),
     });
     return (
-      <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: "12px" }}>
+      <Paragraph style={{ color: UI_COLORS.text, marginBottom: "12px" }}>
         {lifecycle.kind === "archived" && archiveReason && (
           <>
             <strong>{archiveReason}</strong> <br />
@@ -195,7 +195,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
         style={rowStyle()}
         vertical={isFlyout}
       >
-        <span style={{ color: COLORS.GRAY_M }}>
+        <span style={{ color: UI_COLORS.secondary }}>
           <Icon name="clock" />{" "}
           <FormattedMessage
             id="project.settings.control.uptime.info"
@@ -226,7 +226,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
         style={rowStyle(true)}
         vertical={isFlyout}
       >
-        <span style={{ color: COLORS.GRAY_M }}>
+        <span style={{ color: UI_COLORS.secondary }}>
           <Icon name="calculator" />{" "}
           <FormattedMessage
             id="project.settings.control.cpu_usage.info"
@@ -241,8 +241,8 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
   function rowStyle(delim?): React.CSSProperties | undefined {
     if (!delim) return;
     return {
-      borderBottom: "1px solid #ddd",
-      borderTop: "1px solid #ddd",
+      borderBottom: `1px solid ${UI_COLORS.border}`,
+      borderTop: `1px solid ${UI_COLORS.border}`,
       paddingBottom: isFlyout ? undefined : "10px",
       paddingTop: "10px",
       marginBottom: "10px",
@@ -257,7 +257,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
             <Tag color={runtime.trusted ? "orange" : "blue"}>
               {runtime.label}
             </Tag>
-            <span style={{ color: COLORS.GRAY_M }}>
+            <span style={{ color: UI_COLORS.secondary }}>
               {runtime.isolation === "trusted-workspace"
                 ? "Direct process on the Launchpad workspace host"
                 : "Isolated project runtime"}
@@ -273,7 +273,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
           {render_state()}
         </LabeledRow>
         {hostUnavailable && (
-          <Paragraph style={{ color: COLORS.GRAY_D }}>
+          <Paragraph style={{ color: UI_COLORS.text }}>
             {assignedHostLabel} is unavailable ({hostUnavailableReason}). Move
             this project to an available host, or start the assigned host.
           </Paragraph>

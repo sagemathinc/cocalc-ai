@@ -13,6 +13,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   arePublicPoliciesVisible,
   COCALC_WORDMARK_BLACK_URL,
+  COCALC_WORDMARK_WHITE_URL,
   getLogoSquare,
   getSiteName,
   type PublicConfig,
@@ -26,6 +27,8 @@ import {
   PUBLIC_FEATURE_NAV_ITEMS,
 } from "@cocalc/util/public-feature-pages";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import { AppearanceControl } from "@cocalc/frontend/appearance/control";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 
 type PublicInfoPageKey =
   | "home"
@@ -54,6 +57,12 @@ const { Text } = Typography;
 // Compact styling for the Features dropdown popup (16 entries): smaller
 // rows than antd's default menu size, scrollable if the viewport is low.
 const FEATURES_POPUP_CSS = `
+  /* Menu overflow placeholders still contain links. Keep their measured width
+     without leaving invisible links in the keyboard tab order. */
+  .cocalc-public-navigation > .ant-menu-overflow-item[aria-hidden="true"] {
+    visibility: hidden;
+  }
+
   .cocalc-features-nav-popup .ant-menu {
     max-height: min(560px, 75vh);
     overflow-y: auto;
@@ -133,6 +142,7 @@ function HomeLogoLink({
 }) {
   const { token } = theme.useToken();
   const showWordmark = !isCompact && usesDefaultCoCalcBranding(config);
+  const { resolved } = useAppearance();
 
   return (
     <a
@@ -163,7 +173,11 @@ function HomeLogoLink({
         <img
           alt=""
           aria-hidden="true"
-          src={COCALC_WORDMARK_BLACK_URL}
+          src={
+            resolved === "dark"
+              ? COCALC_WORDMARK_WHITE_URL
+              : COCALC_WORDMARK_BLACK_URL
+          }
           style={{
             display: "block",
             height: 18,
@@ -247,7 +261,7 @@ export default function PublicTopNav({
         key: item.key,
         popupClassName: "cocalc-features-nav-popup",
         label: (
-          <span style={{ color: token.colorPrimaryActive }}>
+          <span style={{ color: token.colorLink }}>
             {item.label}
             {/* the drawer's inline menu brings its own expand caret */}
             {!isCompact && (
@@ -264,7 +278,7 @@ export default function PublicTopNav({
           href={item.href}
           rel={item.rel}
           style={{
-            color: active === item.key ? token.colorPrimaryActive : undefined,
+            color: active === item.key ? token.colorLink : undefined,
           }}
           target={item.target}
         >
@@ -357,6 +371,9 @@ export default function PublicTopNav({
           size={280}
           title="Navigation"
         >
+          <div style={{ marginBottom: 16 }}>
+            <AppearanceControl compact />
+          </div>
           <Menu
             aria-label="Public pages"
             items={menuItems}
@@ -371,7 +388,7 @@ export default function PublicTopNav({
 
   return (
     <Flex align="center">
-      {featuresDropdownItems != null && <style>{FEATURES_POPUP_CSS}</style>}
+      <style>{FEATURES_POPUP_CSS}</style>
       <HomeLogoLink
         active={active}
         config={config}
@@ -381,6 +398,7 @@ export default function PublicTopNav({
       />
       <Menu
         aria-label="Public pages"
+        className="cocalc-public-navigation"
         items={menuItems}
         mode="horizontal"
         selectedKeys={selectedKeys}
@@ -389,10 +407,18 @@ export default function PublicTopNav({
           background: "transparent",
           borderBottom: 0,
           flex: "1 1 auto",
+          minWidth: 0,
           marginInlineStart: DESKTOP_LOGO_MENU_GAP_PX,
         }}
       />
-      <Space>{isAuthenticated ? appActions : authActions}</Space>
+      <Flex
+        align="center"
+        gap={8}
+        style={{ flexShrink: 0, lineHeight: "normal" }}
+      >
+        <AppearanceControl compact />
+        {isAuthenticated ? appActions : authActions}
+      </Flex>
     </Flex>
   );
 }

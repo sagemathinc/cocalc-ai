@@ -2,6 +2,7 @@ import { Popover, Radio } from "antd";
 import { MutableRefObject, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { Mode } from "./types";
 
 interface MarkdownInputModeSwitchProps {
@@ -83,8 +84,8 @@ export function MarkdownInputModeSwitch({
     >
       <div
         style={{
-          background: "white",
-          color: COLORS.GRAY_M,
+          background: UI_COLORS.surface,
+          color: UI_COLORS.secondary,
           ...(layout === "float"
             ? mode == "editor" || hideHelp
               ? {
@@ -109,7 +110,9 @@ export function MarkdownInputModeSwitch({
                     label: renderEllipsis(),
                     value: "menu",
                     style: {
-                      backgroundColor: menuOpen ? COLORS.GRAY_L : "white",
+                      backgroundColor: menuOpen
+                        ? UI_COLORS.hover
+                        : UI_COLORS.surface,
                       paddingLeft: 10,
                       paddingRight: 10,
                     },

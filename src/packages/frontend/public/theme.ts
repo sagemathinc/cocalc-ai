@@ -4,6 +4,11 @@
  */
 
 import { COLORS } from "@cocalc/util/theme";
+import type { ResolvedAppearance } from "@cocalc/util/appearance";
+import {
+  darkAppearance,
+  lightAppearance,
+} from "@cocalc/util/appearance-palette";
 
 export const PUBLIC_DISPLAY_FONT_FAMILY =
   '"Space Grotesk", "Helvetica Neue", Arial, sans-serif';
@@ -11,7 +16,7 @@ export const PUBLIC_DISPLAY_FONT_FAMILY =
 // Warm paper tone from the public-site mock; no matching global COLORS token.
 const PUBLIC_PAPER_BACKGROUND = "#fbf8f3";
 
-export const PUBLIC_COLORS = {
+export const PUBLIC_LIGHT_COLORS = {
   accent: COLORS.YELL_L,
   accentActive: COLORS.YELL_D,
   brand: COLORS.BLUE_D,
@@ -36,7 +41,11 @@ export const PUBLIC_COLORS = {
   mutedText: COLORS.GRAY_M,
   pageBackground: PUBLIC_PAPER_BACKGROUND,
   paperBackground: PUBLIC_PAPER_BACKGROUND,
-  success: COLORS.RUN,
+  primary: COLORS.BLUE_DD,
+  onPrimary: COLORS.WHITE,
+  heroBackground: COLORS.BLUE_DD,
+  shadowInk: COLORS.BLUE_DDD,
+  success: lightAppearance.success,
   successBorder: COLORS.BS_GREEN,
   successTint: COLORS.BS_GREEN_LL,
   surface: COLORS.TOP_BAR.ACTIVE,
@@ -47,6 +56,107 @@ export const PUBLIC_COLORS = {
   warningTint: COLORS.YELL_LLL,
 } as const;
 
+type PublicColorKey = keyof typeof PUBLIC_LIGHT_COLORS;
+export type PublicColors = Record<PublicColorKey, string>;
+
+export const PUBLIC_DARK_COLORS: PublicColors = {
+  ...PUBLIC_LIGHT_COLORS,
+  brand: darkAppearance.link,
+  brandActive: darkAppearance.link,
+  brandSubtle: darkAppearance.controlBorder,
+  brandTint: darkAppearance.infoBg,
+  border: darkAppearance.border,
+  codeDefinition: darkAppearance.keyword,
+  error: darkAppearance.danger,
+  errorBorder: darkAppearance.danger,
+  errorTint: darkAppearance.dangerBg,
+  heading: darkAppearance.text,
+  info: darkAppearance.info,
+  infoBorder: darkAppearance.info,
+  infoTint: darkAppearance.infoBg,
+  link: darkAppearance.link,
+  linkHover: darkAppearance.linkHover,
+  mutedText: darkAppearance.secondary,
+  pageBackground: darkAppearance.page,
+  paperBackground: darkAppearance.page,
+  primary: darkAppearance.primary,
+  shadowInk: "#000000",
+  surface: darkAppearance.surface,
+  surfaceMuted: darkAppearance.inset,
+  text: darkAppearance.text,
+  success: darkAppearance.success,
+  successBorder: darkAppearance.success,
+  successTint: darkAppearance.successBg,
+  warning: darkAppearance.warning,
+  warningBorder: darkAppearance.warning,
+  warningTint: darkAppearance.warningBg,
+};
+
+export function getPublicColors(mode: ResolvedAppearance): PublicColors {
+  return mode === "dark" ? PUBLIC_DARK_COLORS : PUBLIC_LIGHT_COLORS;
+}
+
+// DOM styles stay reactive without rebuilding every feature/demo component.
+// Consumers that calculate colors (notably ConfigProvider) use getPublicColors.
+export const PUBLIC_COLORS = Object.fromEntries(
+  Object.keys(PUBLIC_LIGHT_COLORS).map((key) => [
+    key,
+    `var(--cocalc-public-${key})`,
+  ]),
+) as PublicColors;
+
+function publicDeclarations(colors: PublicColors): string {
+  return Object.entries(colors)
+    .map(([key, value]) => `--cocalc-public-${key}:${value}`)
+    .join(";");
+}
+
+// Small icons and feature accents are UI, unlike the fixed artwork below.
+// Preserve each light identity while giving it a readable dark counterpart.
+const ACCENT_PAIRS = [
+  [COLORS.ANTD_LINK_BLUE_DARK, darkAppearance.link],
+  [COLORS.BLUE_D, darkAppearance.link],
+  [COLORS.BLUE_DD, darkAppearance.link],
+  [COLORS.FEATURE_BLUE, darkAppearance.link],
+  [COLORS.FEATURE_R_BLUE, darkAppearance.link],
+  [COLORS.FEATURE_OCTAVE_BLUE, darkAppearance.link],
+  [COLORS.AI_ASSISTANT_FONT, darkAppearance.warning],
+  [COLORS.YELL_D, darkAppearance.warning],
+  [COLORS.BG_WARNING, darkAppearance.warning],
+  [COLORS.FEATURE_ORANGE, darkAppearance.number],
+  ["#d46b08", darkAppearance.number],
+  [COLORS.RUN, darkAppearance.success],
+  [COLORS.ANTD_GREEN_D, darkAppearance.success],
+  [COLORS.BRWN, darkAppearance.warning],
+  [COLORS.GRAY_D, darkAppearance.secondary],
+  [COLORS.GRAY_M, darkAppearance.secondary],
+  [COLORS.ANTD_RED, darkAppearance.danger],
+  [COLORS.FG_RED, darkAppearance.danger],
+  [COLORS.FEATURE_RED, darkAppearance.danger],
+  [COLORS.FEATURE_JULIA_PURPLE, darkAppearance.keyword],
+  [COLORS.FEATURE_PURPLE, darkAppearance.keyword],
+  [COLORS.FEATURE_TEAL, darkAppearance.string],
+] as const;
+
+export function publicAccent(color: string): string {
+  const index = ACCENT_PAIRS.findIndex(([light]) => light === color);
+  return index < 0 ? color : `var(--cocalc-public-accent-${index})`;
+}
+
+function accentDeclarations(mode: ResolvedAppearance): string {
+  return ACCENT_PAIRS.map(
+    ([light, dark], index) =>
+      `--cocalc-public-accent-${index}:${mode === "dark" ? dark : light}`,
+  ).join(";");
+}
+
+export const PUBLIC_THEME_CSS = `
+:root{${publicDeclarations(PUBLIC_LIGHT_COLORS)};${accentDeclarations("light")}}
+:root[data-cocalc-theme="dark"]{${publicDeclarations(PUBLIC_DARK_COLORS)};${accentDeclarations("dark")}}
+@media(prefers-color-scheme:dark){:root:not([data-cocalc-theme]){${publicDeclarations(PUBLIC_DARK_COLORS)};${accentDeclarations("dark")}}}
+@media print{:root,:root[data-cocalc-theme="dark"]{${publicDeclarations(PUBLIC_LIGHT_COLORS)};${accentDeclarations("light")}}}
+`;
+
 // ── Design-system tokens (D1, Tier A) ────────────────────────────────────────
 // Codify the latent system the home page already embodies so the whole public
 // site is consistent. These are INERT until pages consume them (no visual change
@@ -56,6 +166,9 @@ export const PUBLIC_COLORS = {
 // copies (home/app, features/app, features/compare-page, features/teaching-page)
 // import one source instead of redefining it.
 export function alpha(hexColor: string, opacity: number): string {
+  if (hexColor.startsWith("var(")) {
+    return `color-mix(in srgb, ${hexColor} ${Math.max(0, Math.min(1, opacity)) * 100}%, transparent)`;
+  }
   if (hexColor === COLORS.TOP_BAR.ACTIVE) {
     return `rgba(255, 255, 255, ${opacity})`;
   }
@@ -99,7 +212,7 @@ export const PUBLIC_WEIGHT = {
 // One elevation ink. Derived from the home page's existing shadow values (it
 // uses alpha(brandDark)), so home stays pixel-identical while feature pages —
 // which currently use a parallel slate rgba(33,49,57) ink — converge onto these.
-const ELEVATION_INK = PUBLIC_COLORS.brandDark;
+const ELEVATION_INK = PUBLIC_COLORS.shadowInk;
 export const PUBLIC_ELEVATION = {
   sm: `0 10px 30px ${alpha(ELEVATION_INK, 0.05)}`,
   md: `0 18px 44px ${alpha(ELEVATION_INK, 0.07)}`,
@@ -113,10 +226,8 @@ export const PUBLIC_ELEVATION = {
   panelStrong: `0 18px 52px ${alpha(ELEVATION_INK, 0.12)}`,
 } as const;
 
-// Dark is reserved EXCLUSIVELY for terminal/code/editor/notebook mock chrome.
-// Single source the DARK_FEATURE_CARD_STYLE test derives from, so adding a mock
-// surface updates token + guard together. (deepSurface #0b1f47 is the jupyter
-// agent-CLI panel, previously an unnamed literal.)
+// Fixed artwork palette for terminal/code/editor/notebook mock chrome. These
+// demos retain their authored colors independently of the page appearance.
 export const PUBLIC_DARK = {
   terminalSurface: "#0b1522",
   codeSurface: "#10213f",

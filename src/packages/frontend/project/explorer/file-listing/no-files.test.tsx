@@ -99,6 +99,14 @@ describe("NoFiles", () => {
     );
 
     expect(screen.getByText("No files yet")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "No files yet" }).style.color,
+    ).toBe("var(--cocalc-ui-text)");
+    expect(
+      screen.getByRole("button", {
+        name: "Create a Jupyter notebook for code, text, plots, and results.",
+      }).style.background,
+    ).toBe("var(--cocalc-ui-surface)");
     expect(screen.getByTestId("empty-directory-welcome")).toHaveStyle({
       margin: "26px auto",
       width: "calc(100% - 48px)",

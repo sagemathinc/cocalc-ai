@@ -75,7 +75,7 @@ const ABOUT_PAGE_CSS = `
     background:
       radial-gradient(circle at 88% 18%, ${alpha(PUBLIC_COLORS.accent, 0.22)}, transparent 28%),
       radial-gradient(circle at 72% 90%, ${alpha(PUBLIC_COLORS.brand, 0.3)}, transparent 38%),
-      linear-gradient(135deg, ${PUBLIC_COLORS.brandDark} 0%, ${PUBLIC_COLORS.brandActive} 100%);
+      linear-gradient(135deg, ${PUBLIC_COLORS.brandDark} 0%, ${PUBLIC_COLORS.heroBackground} 100%);
     border-radius: ${PUBLIC_RADIUS.media}px;
     box-shadow: ${PUBLIC_ELEVATION.lg};
     color: ${PUBLIC_COLORS.footerText};
@@ -89,8 +89,8 @@ const ABOUT_PAGE_CSS = `
 
   .cocalc-about-hero-proof {
     align-self: stretch;
-    background: ${alpha(PUBLIC_COLORS.surface, 0.1)};
-    border: 1px solid ${alpha(PUBLIC_COLORS.surface, 0.2)};
+    background: ${alpha(PUBLIC_COLORS.onPrimary, 0.1)};
+    border: 1px solid ${alpha(PUBLIC_COLORS.onPrimary, 0.2)};
     border-radius: ${PUBLIC_RADIUS.media}px;
     display: flex;
     flex-direction: column;
@@ -330,7 +330,7 @@ function AboutOverview() {
             <Title
               level={2}
               style={{
-                color: PUBLIC_COLORS.surface,
+                color: PUBLIC_COLORS.onPrimary,
                 fontSize: "clamp(36px, 5vw, 58px)",
                 lineHeight: 1.04,
                 margin: 0,
@@ -377,7 +377,7 @@ function AboutOverview() {
             </div>
             <div
               style={{
-                color: PUBLIC_COLORS.surface,
+                color: PUBLIC_COLORS.onPrimary,
                 fontSize: PUBLIC_TYPE.lead,
                 marginTop: 8,
               }}
@@ -391,9 +391,9 @@ function AboutOverview() {
                 <Tag
                   key={label}
                   style={{
-                    background: alpha(PUBLIC_COLORS.surface, 0.1),
-                    borderColor: alpha(PUBLIC_COLORS.surface, 0.22),
-                    color: PUBLIC_COLORS.surface,
+                    background: alpha(PUBLIC_COLORS.onPrimary, 0.1),
+                    borderColor: alpha(PUBLIC_COLORS.onPrimary, 0.22),
+                    color: PUBLIC_COLORS.onPrimary,
                     margin: 0,
                   }}
                 >

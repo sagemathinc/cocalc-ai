@@ -258,10 +258,14 @@ export type BrowserCommandContext = {
       removeBrowserSession: (opts: {
         browser_id: string;
       }) => Promise<{ removed?: boolean }>;
-      issueBrowserSignInCookie: (opts?: { max_age_ms?: number }) => Promise<{
+      issueBrowserSignInCookie: (opts?: {
+        max_age_ms?: number;
+        testing_account_id?: string;
+      }) => Promise<{
         remember_me?: string;
         account_id?: string;
         max_age_ms?: number;
+        testing_account?: boolean;
       }>;
     };
     hosts?: {
@@ -292,6 +296,15 @@ export type BrowserWithContext = (
 ) => Promise<void>;
 
 export type BrowserCommandDeps = {
+  createTestingContext?: (opts: {
+    api: string;
+    account_id: string;
+    remember_me: string;
+  }) => Promise<{
+    ctx: BrowserCommandContext;
+    profile: string;
+    close: () => void;
+  }>;
   withContext: BrowserWithContext;
   authConfigPath: (env?: NodeJS.ProcessEnv) => string;
   loadAuthConfig: (path?: string) => AuthConfig;
