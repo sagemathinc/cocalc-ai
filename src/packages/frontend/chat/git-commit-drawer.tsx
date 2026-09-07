@@ -65,6 +65,10 @@ import {
 } from "./git-commit/diff-find";
 import { DiffBlock } from "./git-commit/diff-components";
 import { ReviewDiffPanel } from "./git-commit/review-diff-panel";
+import { GitHistoryControls } from "./git-commit/history-controls";
+import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
+import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
+import type { GitHistorySelection } from "@cocalc/frontend/git/history-selection";
 import type { ReviewDiffNavigation } from "./git-commit/review-diff-panel";
 import {
   commentAnchorKey,
@@ -450,7 +454,7 @@ export function GitCommitDrawer({
   onClose,
   onSelectedCommitChange,
   fontSize = 14,
-  onRequestAgentTurn,
+  onRequestAgentTurn: requestAgentTurn,
   onDirectCommitLogged,
   onFindInChat,
   onOpenActivityLog,
@@ -633,11 +637,47 @@ export function GitCommitDrawer({
   const [inlineCommentPendingKey, setInlineCommentPendingKey] = useState("");
   const inlineCommentPendingKeyRef = useRef(inlineCommentPendingKey);
 
-  const cwd = useMemo(() => {
+  const originCwd = useMemo(() => {
     const override = `${cwdOverride ?? ""}`.trim();
     if (override) return override;
     return containingPath(sourcePath ?? ".") || ".";
   }, [sourcePath, cwdOverride]);
+  const repositoryScope = `${projectId ?? ""}\0${originCwd}`;
+  const [repositoryDiscovery, setRepositoryDiscovery] = useState<{
+    scope: string;
+    discovery: RepositoryDiscovery;
+  }>();
+  const [historySelection, setHistorySelection] = useState<{
+    scope: string;
+    selection: GitHistorySelection;
+    tip: string;
+  }>();
+  const selectedHistory =
+    historySelection?.scope === repositoryScope ? historySelection : undefined;
+  const originDiscovery =
+    repositoryDiscovery?.scope === repositoryScope
+      ? repositoryDiscovery.discovery
+      : undefined;
+  const cwd = selectedHistory?.selection.worktree ?? originCwd;
+  const crossWorktree = Boolean(
+    selectedHistory &&
+    selectedHistory.selection.worktree !== originDiscovery?.repository.locator,
+  );
+  const readOnlyWorktree =
+    crossWorktree ||
+    Boolean(originDiscovery?.worktrees.find((tree) => tree.path === cwd)?.bare);
+  // Cross-worktree writes require validated thread routing (a later integration
+  // step). Merely browsing history must not repurpose the originating agent.
+  const onRequestAgentTurn = readOnlyWorktree ? undefined : requestAgentTurn;
+  const historyControlsSelection = useMemo<GitHistorySelection>(
+    () =>
+      selectedHistory?.selection ?? {
+        worktree: originDiscovery?.repository.locator ?? originCwd,
+        ref: "HEAD",
+        firstParent: true,
+      },
+    [selectedHistory, originDiscovery, originCwd],
+  );
 
   useEffect(() => {
     reviewNoteDraftRef.current = reviewNoteDraft;
@@ -874,37 +914,49 @@ export function GitCommitDrawer({
     let cancelled = false;
     (async () => {
       try {
-        const rootResult = await runGitCommand({
-          projectId,
-          cwd,
-          args: ["rev-parse", "--show-toplevel"],
-        });
-        if (rootResult.exit_code !== 0) {
-          throw new Error(
-            (
-              rootResult.stderr ||
-              rootResult.stdout ||
-              "not a git repository"
-            ).trim(),
+        const origin = await projectGitReader.discover(projectId, originCwd);
+        const discovery =
+          cwd === originCwd
+            ? origin
+            : await projectGitReader.discover(projectId, cwd);
+        if (
+          discovery.repository.commonDirectory !==
+          origin.repository.commonDirectory
+        )
+          throw Error(
+            "The selected worktree no longer belongs to this repository.",
           );
-        }
-        const root = `${rootResult.stdout ?? ""}`.trim();
+        const root = discovery.repository.locator;
         if (!cancelled) {
+          setRepositoryDiscovery({ scope: repositoryScope, discovery: origin });
           setRepoRoot(root);
           setNonRepoError("");
           setGitLogError("");
         }
-        const logResult = await runGitCommand({
-          projectId,
-          cwd: root || cwd,
-          args: buildGitLogArgs(gitLogFetchCount),
-        });
-        if (logResult.exit_code !== 0) {
-          throw new Error(
-            (logResult.stderr || logResult.stdout || "git log failed").trim(),
+        const tip =
+          selectedHistory?.tip ??
+          (await projectGitReader.resolveCommit(discovery.repository, "HEAD"));
+        const history: Awaited<ReturnType<typeof projectGitReader.history>> =
+          [];
+        while (history.length < gitLogFetchCount && !cancelled) {
+          const count = Math.min(500, gitLogFetchCount - history.length);
+          const page = await projectGitReader.history(
+            discovery.repository,
+            tip,
+            {
+              skip: history.length,
+              count,
+              firstParent: selectedHistory?.selection.firstParent ?? true,
+            },
           );
+          history.push(...page);
+          if (page.length < count) break;
         }
-        const entries = parseGitLogOutput(logResult.stdout ?? "");
+        const entries = history.map((entry) => ({
+          hash: entry.commit,
+          subject: entry.subject,
+          committedAt: entry.timestamp,
+        }));
         if (!cancelled) {
           setGitLog(entries);
           setNonRepoError("");
@@ -922,7 +974,16 @@ export function GitCommitDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, projectId, cwd, gitLogFetchCount, gitLogReloadCounter]);
+  }, [
+    open,
+    projectId,
+    cwd,
+    originCwd,
+    repositoryScope,
+    selectedHistory,
+    gitLogFetchCount,
+    gitLogReloadCounter,
+  ]);
 
   useEffect(() => {
     if (!open || !isHeadSelected) return;
@@ -2329,6 +2390,7 @@ export function GitCommitDrawer({
   };
 
   const initializeGitRepo = async () => {
+    if (readOnlyWorktree) return;
     if (!projectId) return;
     const startedScope = repoBootstrapScopeRef.current;
     if (!startedScope) return;
@@ -2461,6 +2523,7 @@ export function GitCommitDrawer({
   };
 
   const addUntrackedFile = async (path: string) => {
+    if (readOnlyWorktree) return;
     if (!projectId) return;
     const startedScope = headScopeRef.current;
     if (!startedScope) return;
@@ -2501,6 +2564,7 @@ export function GitCommitDrawer({
   };
 
   const ignoreUntrackedFile = async (path: string) => {
+    if (readOnlyWorktree) return;
     if (!projectId) return;
     const startedScope = headScopeRef.current;
     if (!startedScope) return;
@@ -2722,6 +2786,7 @@ export function GitCommitDrawer({
   };
 
   const doHeadCommit = async () => {
+    if (readOnlyWorktree) return;
     if (!projectId) return;
     const trimmed = headCommitMessage.trim();
     if (!trimmed) {
@@ -3078,6 +3143,27 @@ export function GitCommitDrawer({
           color: UI_COLORS.text,
         }}
       >
+        {originDiscovery && (
+          <GitHistoryControls
+            origin={originDiscovery}
+            selection={historyControlsSelection}
+            disabled={Boolean(
+              activeInlineDraft ||
+              activeInlineEditId ||
+              reviewNoteEditing ||
+              reviewSaving ||
+              headCommitBusy ||
+              headStatusAction,
+            )}
+            onApply={(selection, discovery, tip) => {
+              setData(undefined);
+              setLoadedCommit(undefined);
+              setRepoRoot(discovery.repository.locator);
+              setHistorySelection({ scope: repositoryScope, selection, tip });
+              setSelectedCommit(tip);
+            }}
+          />
+        )}
         {gitLogError ? (
           <Alert
             type="warning"
@@ -3098,6 +3184,12 @@ export function GitCommitDrawer({
             onAskAgent={() => {
               void requestAgentRepoSetup();
             }}
+          />
+        ) : isHeadSelected && readOnlyWorktree ? (
+          <Alert
+            type="info"
+            title="Read-only worktree review"
+            description="Working changes can be inspected here. Commit, staging, and agent write actions are unavailable until this worktree has a matching agent context."
           />
         ) : isHeadSelected ? (
           <GitHeadCommitPanel

@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { GitReadService, GIT_READ_LIMIT } from "./read-service";
 import type { GitReadExecutor } from "./read-service";
 import { loadGitHistoricalFile } from "./historical-file";
+import { resolveHistorySelection } from "./history-selection";
 import {
   parseHistory,
   parseRawDiff,
@@ -172,6 +173,50 @@ describe("read-only Git fixtures", () => {
     expect(readFileSync(join(main, ".git/index"))).toEqual(index);
     expect(git(main, ["status", "--porcelain=v1"])).toBe(status);
     expect(git(detached, ["rev-parse", "HEAD"]).trim()).toBe(root);
+  });
+
+  test("history selection pins refs without changing either working copy", async () => {
+    const origin = await service.discover("p", main);
+    const before = [main, feature].map((path) => [
+      git(path, ["rev-parse", "HEAD"]),
+      git(path, ["status", "--porcelain=v1"]),
+    ]);
+    const selected = await resolveHistorySelection(service, origin, {
+      worktree: feature,
+      ref: "refs/heads/main",
+      firstParent: true,
+    });
+    expect(selected.discovery.repository.locator).toBe(feature);
+    expect(selected.tip).toBe(git(main, ["rev-parse", "HEAD"]).trim());
+    expect(
+      [main, feature].map((path) => [
+        git(path, ["rev-parse", "HEAD"]),
+        git(path, ["status", "--porcelain=v1"]),
+      ]),
+    ).toEqual(before);
+    await expect(
+      resolveHistorySelection(service, origin, {
+        worktree: stale,
+        ref: "HEAD",
+        firstParent: true,
+      }),
+    ).rejects.toThrow(/no longer available/);
+    await expect(
+      resolveHistorySelection(service, origin, {
+        worktree: dir,
+        ref: "HEAD",
+        firstParent: true,
+      }),
+    ).rejects.toThrow(/no longer available/);
+    expect(
+      (
+        await resolveHistorySelection(service, origin, {
+          worktree: detached,
+          ref: "HEAD",
+          firstParent: false,
+        })
+      ).tip,
+    ).toBe(root);
   });
 
   test("shared identity, distinct worktrees, detached and removed metadata", async () => {

@@ -2,8 +2,10 @@
 // page CDP connection avoids attaching to every preexisting maintainer tab.
 // Usage: node .../pierre-review-live.browser-test.mjs <chat-url> <commit>
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 
 const [chat, commit] = process.argv.slice(2);
+const historyWorktree = process.argv[4];
 if (!chat || !/^[a-f0-9]{7,64}$/i.test(commit ?? ""))
   throw Error("Supply an isolated chat URL and a commit in its repository.");
 const endpoint = process.env.CDP_URL ?? "http://localhost:9222";
@@ -84,55 +86,99 @@ try {
   appearance = await evaluate(
     `document.querySelector('select[aria-label="Appearance"]').value`,
   );
-  await select("Diff renderer", "pierre");
-  await until(
-    `!!document.querySelector('diffs-container')?.shadowRoot?.querySelector('[data-gutter] [data-line-number-content]')`,
+  if (historyWorktree) {
+    const git = (...args) =>
+      execFileSync("git", ["-C", historyWorktree, ...args], {
+        encoding: "utf8",
+      });
+    const expected = git("rev-parse", "HEAD").trim();
+    const before = git("status", "--porcelain=v1");
+    await until(
+      `!!document.querySelector('select[aria-label="Review working copy"]')`,
+    );
+    assert.equal(
+      await evaluate(
+        `Array.from(document.querySelector('select[aria-label="Review working copy"]').options).some(option => option.value === ${JSON.stringify(historyWorktree)})`,
+      ),
+      true,
+      "The browser project must contain the supplied local worktree; a different project can have a separate checkout.",
+    );
+    await select("Review working copy", historyWorktree);
+    await select("History ref", "HEAD");
+    assert.equal(
+      await evaluate(`new URL(location.href).searchParams.get('git-hash')`),
+      commit,
+    );
+    await click(button("Browse / Refresh"));
+    await until(
+      `new URL(location.href).searchParams.get('git-hash') === ${JSON.stringify(expected)}`,
+    );
+    await until(
+      `document.querySelector('select[aria-label="Review working copy"]').value === ${JSON.stringify(historyWorktree)}`,
+    );
+    assert.equal(git("rev-parse", "HEAD").trim(), expected);
+    assert.equal(git("status", "--porcelain=v1"), before);
+    console.log(
+      "PASS: explicit live worktree browsing pins the selected HEAD without checkout or working-copy changes.",
+    );
+  } else {
+    await select("Diff renderer", "pierre");
+    await until(
+      `!!document.querySelector('diffs-container')?.shadowRoot?.querySelector('[data-gutter] [data-line-number-content]')`,
+    );
+    await click(
+      `document.querySelector('diffs-container').shadowRoot.querySelector('[data-column-number="10"]')`,
+    );
+    await until(`!${button("Add inline comment")}.disabled`);
+    await click(button("Add inline comment"));
+    const editor = `document.querySelector('[aria-label="Active inline comment"] [contenteditable="true"]')`;
+    await until(`!!${editor}`);
+    await click(editor);
+    await evaluate(
+      `(()=>{const range=document.createRange();range.selectNodeContents(${editor});range.collapse(true);const selection=getSelection();selection.removeAllRanges();selection.addRange(range)})()`,
+    );
+    await evaluate(
+      `document.execCommand('insertText',false,'Pierre live retained draft')`,
+    );
+    await evaluate(`void (window.__reviewEditor = ${editor})`);
+    await evaluate(
+      `document.querySelector('[aria-label="Git diff"]').scrollTop = 10000`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await select("Appearance", "dark");
+    await until(
+      `document.querySelector('diffs-container')?.shadowRoot?.querySelector('pre') && getComputedStyle(document.querySelector('diffs-container').shadowRoot.querySelector('pre')).backgroundColor === 'rgb(36, 41, 46)'`,
+    );
+    assert.equal(await evaluate(`${editor} === window.__reviewEditor`), true);
+    assert.match(
+      await evaluate(`${editor}.textContent`),
+      /Pierre live retained draft/,
+    );
+    await select("Appearance", "light");
+    await until(
+      `document.querySelector('diffs-container')?.shadowRoot?.querySelector('pre') && getComputedStyle(document.querySelector('diffs-container').shadowRoot.querySelector('pre')).backgroundColor === 'rgb(255, 255, 255)'`,
+    );
+    await evaluate(
+      `document.querySelector('[aria-label="Git diff"]').scrollTop = 0`,
+    );
+    assert.equal(await evaluate(`${editor} === window.__reviewEditor`), true);
+    await click(
+      `Array.from(document.querySelectorAll('[aria-label="Active inline comment"] button')).find(e => e.textContent.trim() === 'Cancel')`,
+    );
+    await until(
+      `!document.querySelector('[aria-label="Active inline comment"]')`,
+    );
+    console.log(
+      "PASS: live Pierre gutter selection, real Slate editor retained through virtualization and Light/Dark changes, draft cancelled without saving.",
+    );
+  }
+} catch (error) {
+  console.error(
+    await evaluate(
+      `JSON.stringify({url:location.href,error:document.querySelector('[aria-label="Repository history"] .ant-alert')?.innerText})`,
+    ),
   );
-  await click(
-    `document.querySelector('diffs-container').shadowRoot.querySelector('[data-column-number="10"]')`,
-  );
-  await until(`!${button("Add inline comment")}.disabled`);
-  await click(button("Add inline comment"));
-  const editor = `document.querySelector('[aria-label="Active inline comment"] [contenteditable="true"]')`;
-  await until(`!!${editor}`);
-  await click(editor);
-  await evaluate(
-    `(()=>{const range=document.createRange();range.selectNodeContents(${editor});range.collapse(true);const selection=getSelection();selection.removeAllRanges();selection.addRange(range)})()`,
-  );
-  await evaluate(
-    `document.execCommand('insertText',false,'Pierre live retained draft')`,
-  );
-  await evaluate(`void (window.__reviewEditor = ${editor})`);
-  await evaluate(
-    `document.querySelector('[aria-label="Git diff"]').scrollTop = 10000`,
-  );
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  await select("Appearance", "dark");
-  await until(
-    `document.querySelector('diffs-container')?.shadowRoot?.querySelector('pre') && getComputedStyle(document.querySelector('diffs-container').shadowRoot.querySelector('pre')).backgroundColor === 'rgb(36, 41, 46)'`,
-  );
-  assert.equal(await evaluate(`${editor} === window.__reviewEditor`), true);
-  assert.match(
-    await evaluate(`${editor}.textContent`),
-    /Pierre live retained draft/,
-  );
-  await select("Appearance", "light");
-  await until(
-    `document.querySelector('diffs-container')?.shadowRoot?.querySelector('pre') && getComputedStyle(document.querySelector('diffs-container').shadowRoot.querySelector('pre')).backgroundColor === 'rgb(255, 255, 255)'`,
-  );
-  await evaluate(
-    `document.querySelector('[aria-label="Git diff"]').scrollTop = 0`,
-  );
-  assert.equal(await evaluate(`${editor} === window.__reviewEditor`), true);
-  await click(
-    `Array.from(document.querySelectorAll('[aria-label="Active inline comment"] button')).find(e => e.textContent.trim() === 'Cancel')`,
-  );
-  await until(
-    `!document.querySelector('[aria-label="Active inline comment"]')`,
-  );
-  console.log(
-    "PASS: live Pierre gutter selection, real Slate editor retained through virtualization and Light/Dark changes, draft cancelled without saving.",
-  );
+  throw error;
 } finally {
   if (appearance) await select("Appearance", appearance);
   socket.close();

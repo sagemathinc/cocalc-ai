@@ -399,11 +399,25 @@ them; it is not native pointer or clipboard evidence. Run
 signed-in Chrome target. Actual upload completion, local undo, and target-switch
 draft behavior remain separate acceptance gates.
 
+Read-only history controls started (2026-09-07): the drawer now discovers
+registered worktrees and refs through the bounded Git service, with explicit
+Browse / Refresh to validate the locator and pin its ref tip. History is paged
+and defaults to first-parent, with all-ancestor browsing available. Changing
+selectors does not check out a branch. Active edits disable context changes;
+cross-worktree and bare working views disable write/agent actions until routing
+is implemented. Real-Git and keyboard tests cover detached/unavailable worktrees,
+unchanged checkout/index state, explicit application, and stale responses.
+Frontend typecheck and lint pass. A live test correctly rejected a worktree
+present only on the development machine, not in the browser project's separate
+checkout; successful live cross-worktree validation remains pending.
+
 Still pending: remaining Slate lifecycle checks and native diff clipboard tests;
-semantic scroll restoration and remaining renderer parity; worktree/ref/comparison controls;
+semantic scroll restoration and remaining renderer parity; comparison controls;
 historical source integration in the new renderer; comparison persistence and canonical-key
 migration; validated agent routing; activity adaptation; release acceptance and
-default/cleanup. The service is not yet wired into the existing drawer.
+default/cleanup. Discovery/history use the service; patch loading still uses the
+legacy path. Incoming-commit containment routing and URL worktree context remain
+pending.
 
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the
