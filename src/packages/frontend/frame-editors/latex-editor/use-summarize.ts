@@ -172,7 +172,7 @@ export function useTexSummaries(
   // Function to generate file summaries using Python script
   const generateFileSummaries = useCallback(
     async (forceRefresh: boolean = false) => {
-      if (!switch_to_files || switch_to_files.size === 0) return;
+      if (!homeDir || !switch_to_files || switch_to_files.size === 0) return;
 
       const now = Date.now();
       const oneMinute = 60 * 1000;
@@ -194,12 +194,6 @@ export function useTexSummaries(
           path: path_split(path).head,
           timeout: 5,
         });
-
-        // Use the pre-fetched home directory
-        if (!homeDir) {
-          console.warn("Home directory not available yet");
-          return;
-        }
 
         // switch_to_files may contain absolute or home-relative paths;
         // pass home directory so the helper can resolve both.
@@ -249,7 +243,7 @@ export function useTexSummaries(
         setSummariesLoading(false);
       }
     },
-    [switch_to_files, lastSummariesFetch, reload],
+    [switch_to_files, project_id, path, homeDir, lastSummariesFetch, reload],
   );
 
   // Manual refresh function that bypasses the rate limiting

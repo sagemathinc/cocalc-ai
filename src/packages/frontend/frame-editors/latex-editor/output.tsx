@@ -37,7 +37,6 @@ import {
   Tip,
 } from "@cocalc/frontend/components";
 import { EditorState } from "@cocalc/frontend/frame-editors/frame-tree/types";
-import { project_api } from "@cocalc/frontend/frame-editors/generic/client";
 import { editor, labels } from "@cocalc/frontend/i18n";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -49,12 +48,11 @@ import { WORD_COUNT_ICON } from "./constants";
 import { ErrorsAndWarnings } from "./errors-and-warnings";
 import { use_build_logs } from "./hooks";
 import { PDFControls } from "./output-control";
-import { OutputFiles } from "./output-files";
+import { LatexFiles } from "./files-frame";
 import { OutputStats } from "./output-stats";
 import { PDFJS } from "./pdfjs";
 import { LatexTOCBody } from "./table-of-contents-frame";
 import { BuildLogs } from "./types";
-import { useTexSummaries } from "./use-summarize";
 import { OUTPUT_HEADER_STYLE } from "./util";
 
 interface OutputProps {
@@ -155,18 +153,6 @@ export function Output(props: OutputProps) {
   // List of LaTeX files in the project
   const switch_to_files: List<string> = useRedux([name, "switch_to_files"]);
 
-  // Home directory - computed once since it never changes
-  const [homeDir, setHomeDir] = useState<string | null>(null);
-
-  // File summaries using the custom hook
-  const { fileSummaries, summariesLoading, refreshSummaries } = useTexSummaries(
-    switch_to_files,
-    project_id,
-    path,
-    homeDir,
-    reload,
-  );
-
   // Word count state
   const [wordCountLoading, setWordCountLoading] = useState<boolean>(false);
 
@@ -189,22 +175,6 @@ export function Output(props: OutputProps) {
     },
     [actions, activeTab],
   );
-
-  // Fetch home directory once when component mounts or project_id changes
-  React.useEffect(() => {
-    const fetchHomeDir = async () => {
-      try {
-        const projectAPI = await project_api(project_id);
-        const dir = await projectAPI.getHomeDirectory();
-        setHomeDir(dir);
-      } catch (error) {
-        console.warn("Failed to fetch home directory:", error);
-        setHomeDir(null);
-      }
-    };
-
-    fetchHomeDir();
-  }, [project_id]);
 
   // Update table of contents when component mounts
   useEffect(() => {
@@ -557,20 +527,12 @@ export function Output(props: OutputProps) {
       key: "files",
       label: (
         <span style={LABEL_STYLE}>
-          {summariesLoading ? <Spin size="small" /> : <Icon name="file" />}
-          Files
+          <Icon name="file" />
+          {intl.formatMessage(labels.files)}
         </span>
       ),
       children: (
-        <OutputFiles
-          switch_to_files={switch_to_files}
-          path={path}
-          fileSummaries={fileSummaries}
-          summariesLoading={summariesLoading}
-          refreshSummaries={refreshSummaries}
-          actions={actions}
-          uiFontSize={uiFontSize}
-        />
+        <LatexFiles actions={actions} font_size={uiFontSize} reload={reload} />
       ),
     };
   }

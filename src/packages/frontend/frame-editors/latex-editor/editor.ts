@@ -12,13 +12,14 @@ import { editor, labels } from "@cocalc/frontend/i18n";
 import { set } from "@cocalc/util/misc";
 import { WORD_COUNT_ICON } from "./constants";
 import { createEditor } from "../frame-tree/editor";
-import { EditorDescription } from "../frame-tree/types";
+import type { EditorDescription } from "../frame-tree/types";
 import { terminal } from "../terminal-editor/editor";
 import { time_travel } from "../time-travel-editor/editor";
 import { Build } from "./build";
 import { ErrorsAndWarnings } from "./errors-and-warnings";
 import { LatexWordCount } from "./latex-word-count";
 import { Output } from "./output";
+import { LatexFiles } from "./files-frame";
 import { PDFEmbed } from "./pdf-embed";
 import { PDFJS } from "./pdfjs";
 import { LatexCodemirrorEditor } from "./rich-edit";
@@ -193,6 +194,15 @@ const latex_table_of_contents: EditorDescription = {
   commands: set(["decrease_font_size", "increase_font_size"]),
 } as const;
 
+const latex_files: EditorDescription = {
+  type: "latex-files",
+  short: labels.files,
+  name: labels.files,
+  icon: "file",
+  component: LatexFiles,
+  commands: set(["decrease_font_size", "increase_font_size"]),
+} as const;
+
 const word_count: EditorDescription = {
   type: "latex-word_count",
   short: labels.word_count,
@@ -218,6 +228,7 @@ const EDITOR_SPEC = {
   error,
   build,
   latex_table_of_contents,
+  latex_files,
   word_count,
   terminal,
   //settings: SETTINGS_SPEC,

@@ -71,6 +71,7 @@ type EditorType =
   | "jupyter-studio"
   | "latex-build"
   | "latex-output"
+  | "latex-files"
   | "latex-toc"
   | "latex-word_count"
   | "latex"
