@@ -167,3 +167,38 @@ it("does not overwrite completed goals when stopping", async () => {
     request.mock.calls.every(([method]) => method === "thread/goal/get"),
   ).toBe(true);
 });
+
+it("cancels an unapplied edit on Stop so the next turn cannot replay it", async () => {
+  const { sync, readPending, events } = setup();
+  await sync.start();
+  readPending.mockReturnValue({
+    id: "queued-resume",
+    action: "set",
+    status: "active",
+  });
+  await sync.pauseForStop();
+  expect(events).toContainEqual({
+    type: "goal",
+    phase: "command",
+    ack: { id: "queued-resume", state: "cancelled" },
+  });
+  await sync.finish();
+});
+
+it("still pauses the runtime if saving a cancellation fails", async () => {
+  const { sync, request, readPending, emit } = setup();
+  await sync.start();
+  readPending.mockReturnValue({
+    id: "queued-resume",
+    action: "set",
+    status: "active",
+  });
+  emit.mockRejectedValueOnce(Error("chat storage unavailable"));
+  await expect(sync.pauseForStop()).rejects.toThrow("chat storage unavailable");
+  expect(request.mock.calls).toContainEqual([
+    "thread/goal/set",
+    { threadId: "session", status: "paused" },
+    5000,
+  ]);
+  await sync.finish();
+});

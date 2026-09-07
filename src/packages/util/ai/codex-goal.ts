@@ -32,7 +32,7 @@ export interface CodexGoalCommand {
 }
 export interface CodexGoalAck {
   id: string;
-  state?: "applying" | "applied" | "failed";
+  state?: "applying" | "applied" | "failed" | "cancelled";
   error?: string;
 }
 export interface CodexGoalEvent {

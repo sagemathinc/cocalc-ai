@@ -49,19 +49,43 @@ export class CodexGoalSync {
 
   async pauseForStop() {
     if (this.timer) clearInterval(this.timer);
-    await this.busy;
-    if (!this.supported) return;
-    await this.snapshot("update");
-    if (this.last?.goal?.status !== "active") return;
-    await this.options.request(
-      "thread/goal/set",
-      {
-        threadId: this.options.sessionId,
-        status: "paused",
-      },
-      5000,
-    );
-    await this.snapshot("update");
+    // A persistence failure must not prevent attempting the actual Stop.
+    await this.busy?.catch(() => {});
+    try {
+      const pending = this.options.readPending?.();
+      if (pending && !this.seen.has(pending.id)) {
+        this.seen.add(pending.id);
+        await this.options.emit({
+          type: "goal",
+          phase: "command",
+          ack: {
+            id: pending.id,
+            state: "cancelled",
+          },
+        });
+      }
+    } finally {
+      // Read directly: failure to persist a display snapshot must not block
+      // pausing the runtime before interrupting it.
+      const response = await this.options.request(
+        "thread/goal/get",
+        {
+          threadId: this.options.sessionId,
+        },
+        5000,
+      );
+      if (normalizeCodexGoal(response?.goal)?.status === "active") {
+        await this.options.request(
+          "thread/goal/set",
+          {
+            threadId: this.options.sessionId,
+            status: "paused",
+          },
+          5000,
+        );
+        await this.snapshot("update");
+      }
+    }
   }
 
   private async snapshot(phase: CodexGoalEvent["phase"]) {
