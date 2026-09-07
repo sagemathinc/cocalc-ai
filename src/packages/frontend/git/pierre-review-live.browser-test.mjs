@@ -240,7 +240,7 @@ try {
       `!!document.querySelector('diffs-container')?.shadowRoot?.querySelector('[data-gutter] [data-line-number-content]')`,
     );
     await click(
-      `document.querySelector('diffs-container').shadowRoot.querySelector('[data-column-number="10"]')`,
+      `document.querySelector('diffs-container').shadowRoot.querySelector('[data-gutter] [data-line-number-content]')`,
     );
     await until(`!${button("Add inline comment")}.disabled`);
     await click(button("Add inline comment"));
@@ -250,13 +250,36 @@ try {
     await evaluate(
       `(()=>{const range=document.createRange();range.selectNodeContents(${editor});range.collapse(true);const selection=getSelection();selection.removeAllRanges();selection.addRange(range)})()`,
     );
-    await evaluate(
-      `document.execCommand('insertText',false,'Pierre live retained draft')`,
-    );
+    await evaluate(`(()=>{
+      const element=${editor};let fiber=element[Object.keys(element).find(key=>key.startsWith('__reactFiber'))];
+      while(fiber && !fiber.memoizedProps?.editor?.insertText)fiber=fiber.return;
+      if(!fiber)throw Error('Unable to locate the live Slate editor');
+      const slate=window.__reviewSlate=fiber.memoizedProps.editor;
+      slate.select({anchor:{path:[0,0],offset:0},focus:{path:[0,0],offset:0}});
+      slate.insertText('Pierre live retained draft');
+    })()`);
     await evaluate(`void (window.__reviewEditor = ${editor})`);
+    if (process.env.REVIEW_IMAGE) {
+      await evaluate(`(async()=>{
+        const canvas=document.createElement('canvas');canvas.width=64;canvas.height=64;
+        const ctx=canvas.getContext('2d');ctx.fillStyle='#2684ff';ctx.fillRect(0,0,64,64);
+        const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+        const data=new DataTransfer();data.items.add(new File([blob],'review-smoke.png',{type:'image/png'}));
+        window.__reviewSlate.insertData(data);
+      })()`);
+    }
     await evaluate(
       `document.querySelector('[aria-label="Git diff"]').scrollTop = 10000`,
     );
+    if (process.env.REVIEW_IMAGE) {
+      await until(
+        `Array.from(${editor}.querySelectorAll('img')).some(img=>img.complete && img.naturalWidth===64)`,
+      );
+      await evaluate(
+        `window.__reviewImageSrc=Array.from(${editor}.querySelectorAll('img')).find(img=>img.naturalWidth===64).src`,
+      );
+      assert.match(await evaluate(`window.__reviewImageSrc`), /\/blobs\//);
+    }
     await new Promise((resolve) => setTimeout(resolve, 300));
     await select("Appearance", "dark");
     await until(
@@ -275,6 +298,22 @@ try {
       `document.querySelector('[aria-label="Git diff"]').scrollTop = 0`,
     );
     assert.equal(await evaluate(`${editor} === window.__reviewEditor`), true);
+    if (process.env.REVIEW_IMAGE) {
+      await until(
+        `Array.from(${editor}.querySelectorAll('img')).some(img=>img.src===window.__reviewImageSrc && img.complete && img.naturalWidth===64 && img.getBoundingClientRect().height>0)`,
+      );
+      const undo = await evaluate(`(()=>{
+        const slate=window.__reviewSlate;
+        const before=JSON.stringify(slate.children);
+        slate.undo();const undone=JSON.stringify(slate.children);
+        slate.redo();const redone=JSON.stringify(slate.children);
+        return {changed:before!==undone,restored:before===redone};
+      })()`);
+      assert.deepEqual(undo, { changed: true, restored: true });
+      await until(
+        `Array.from(${editor}.querySelectorAll('img')).some(img=>img.src===window.__reviewImageSrc && img.complete && img.naturalWidth===64)`,
+      );
+    }
     await click(
       `Array.from(document.querySelectorAll('[aria-label="Active inline comment"] button')).find(e => e.textContent.trim() === 'Cancel')`,
     );
@@ -284,6 +323,10 @@ try {
     console.log(
       "PASS: live Pierre gutter selection, real Slate editor retained through virtualization and Light/Dark changes, draft cancelled without saving.",
     );
+    if (process.env.REVIEW_IMAGE)
+      console.log(
+        "PASS: real Slate image-file insertion uploaded a blob, survived scrolling/themes and undo/redo; no review comment saved (not a native clipboard test).",
+      );
   }
 } catch (error) {
   console.error(

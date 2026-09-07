@@ -72,6 +72,24 @@ multi-window persistence, moved-ref handling, or agent dispatch. Keep those
 acceptance items open. Each run closes only its own browser target and restores
 the previous appearance preference.
 
+Live image/undo follow-up: `REVIEW_IMAGE=1` now generates a 64x64 PNG and feeds
+its File/DataTransfer through the real Slate `insertData` upload plugin. It
+scrolls immediately, waits for a loaded `/blobs/` image, changes appearance,
+returns to the editor and verifies positive rendered image height. Calling the
+real editor's undo/redo changes then exactly restores its serialized document,
+and the image loads again. This passed with the review draft cancelled. Small
+test blobs are uploaded; no remote review comment is saved.
+
+This also corrected a weakness in the earlier harness: `execCommand` inserted
+DOM text while leaving Slate's placeholder visible, and synthetic paste did
+not start an upload. The harness now inserts through the actual Slate instance
+and tests its document state, not just DOM text. This is editor/plugin-level
+integration, not native clipboard/keyboard evidence. It scrolls after starting
+the upload but does not deliberately stall the network to prove a prolonged
+in-flight upload. Saved semantic scroll can omit line 10 from the virtual DOM,
+so gutter selection now uses a currently rendered row rather than that fixed
+line. Prior DOM-only retention evidence should be interpreted with this caveat.
+
 ### Single-file stress evidence (2026-09-07)
 
 Run `STRESS=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`
