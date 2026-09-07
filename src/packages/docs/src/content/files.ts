@@ -141,6 +141,26 @@ Run chunks incrementally while developing. If a full render fails, rerun the
 failing chunk in a fresh session and check package availability in the project
 environment.
 
+## Ask Agent to repair a render failure
+
+A failed R Markdown render can offer **Fix with Agent...** below the error
+output when AI help is available. Use that control to carry the render failure
+into an agent conversation.
+
+1. Render the document and inspect the error output in the build log.
+2. Choose **Fix with Agent...**. If you want debugging guidance first and the
+   option is available, choose **Ask Agent for a Hint...**.
+3. Review the error context in the confirmation and select a recent agent
+   session when shown.
+4. Confirm with **Send to Agent** or **Ask Agent**, then follow the request in
+   the agent chat.
+5. Inspect any changed source and render the document again to check the result.
+
+The request includes the render error and build command. When the log identifies
+a source-line range, that range is also supplied. The agent is directed to read
+the live document before editing. Ordinary informational output from a
+successful render does not trigger this failed-build shortcut.
+
 ## Reproducibility
 
 Keep package setup, data paths, and rendering commands explicit. For classes or
