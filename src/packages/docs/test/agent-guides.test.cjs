@@ -7,6 +7,10 @@ const { verifyDocsStatic } = require("../dist/verification");
 
 const guides = {
   "ai/codex-settings": "Reasoning level",
+  "ai/codex-conversations": "Fork chat",
+  "ai/codex-goals": "Snooze 5 minutes",
+  "ai/codex-automation": "unacknowledged",
+  "ai/codex-notifications": "Stop all active or uncertain",
 };
 
 test("agent guides are registered, linked from the introduction, and searchable", () => {

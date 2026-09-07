@@ -28,6 +28,10 @@ On phones, open **Chat tools** using the ellipsis button, then choose
 
 - [Connect access and choose funding](/docs/ai/connect-credentials).
 - [Configure models, access, and defaults](/docs/ai/codex-settings).
+- [Steer, queue, and fork conversations](/docs/ai/codex-conversations).
+- [Manage goals and answer questions](/docs/ai/codex-goals).
+- [Schedule recurring work](/docs/ai/codex-automation).
+- [Set notifications and inspect sessions](/docs/ai/codex-notifications).
 
 ## Give better tasks
 
@@ -260,4 +264,314 @@ membership funding do not use this account-model refresh control.
 ## Related guides
 
 - [Connect AI access](/docs/ai/connect-credentials)
+`;
+
+export const CODEX_CONVERSATIONS_BODY = String.raw`
+Start with [Open Codex chat](/docs/ai/codex-chat) if you have not used the agent before.
+
+## Guide a running turn or queue a follow-up
+
+While Codex is working, the composer offers **Steer** and **Queue**.
+
+Use **Steer** to send guidance to the running turn. For example, if Codex is
+editing a notebook and you notice the wrong dataset, write "Use the August
+data in data/august.csv" and click **Steer**. CoCalc requests steering of the
+active turn. If the turn ends at that boundary, the request can become queued
+instead; check its displayed status to see how it was accepted.
+
+Use **Queue** for a separate follow-up that should run after the current
+turn, such as "After this finishes, summarize the changed cells." Type the
+message and click **Queue**. It appears with a queued label while it waits.
+
+Steering supplies an instruction; it does not undo changes already made.
+Inspect the response and project state to confirm how Codex applied the
+guidance. When no Codex turn is running, the composer uses **Send** for a
+normal message instead.
+
+## Manage a queued or unsent message
+
+A queued Codex message has controls alongside its status.
+
+1. Choose **Edit** to revise the request, then save the edit before the next
+   turn starts. The saved version will be used for that turn; the UI can show
+   **edited version sent** to identify it.
+2. Choose **Steer** if the waiting text should instead guide the currently
+   running turn.
+3. Choose **Cancel** to cancel that queued request.
+
+Check the message status after acting. Once execution has started, changing
+the displayed message is not the same operation as updating a waiting
+request.
+
+A **not sent** message can be a cancelled request or a failed submission.
+When **Submit again** is offered, inspect the text before using it. If an error
+is reported, resolve it first, such as reconnecting an expired ChatGPT sign-in
+or updating the selected API key. Read the
+reported error instead of assuming that every failed request is an allowance
+problem. Retrying is an explicit submission, so verify the message text
+before sending it again.
+
+## Set the working directory and keep session context
+
+Open a thread's **Codex settings** and find **Working directory** under
+**Model and session**. Enter the directory where Codex should run subsequent
+turns and click **Save**.
+
+CoCalc initially fills the working directory from the associated workspace
+root when available. A generated CoCalc chat otherwise uses the project home;
+an ordinary chat uses the directory containing its chat file. This matters
+when a project contains several repositories or related analyses. If you
+explicitly clear the directory setting, submission instead falls back to the
+chat file's containing directory. Set the directory explicitly when its choice
+matters to the task.
+
+A workspace can use its generated chat or an existing chat selected with
+**Use current chat tab** in the workspace editor. Its **Agent** button opens
+the latest agent thread associated with that workspace chat. If there is no
+agent thread yet, open **Chat** and start a Codex turn there first.
+
+**Session ID** is an advanced continuity setting. Keep the existing value
+when you only want to change directory. Clearing this field is not a reliable
+conversation reset: CoCalc can recover the live session ID from the thread.
+Start a new Codex chat when you need fresh conversation context. Workspace
+selection does not change project permissions.
+
+## Fork a chat to explore another approach
+
+Use a fork when you want a new conversation that starts from an existing
+Codex session's context.
+
+1. Open the source chat's thread menu and choose **Fork chat…**.
+2. Enter the **New chat name** and click **Fork**.
+3. Continue in the new chat with the alternative task or approach.
+
+CoCalc creates a new chat linked to the original. For a Codex chat with an
+existing session, it forks the agent session and carries its context and
+configuration into the new one. The visible new chat starts empty: earlier
+messages are not copied into it. A link points back to the source discussion.
+Without an existing Codex session ID, configuration and linkage can be copied,
+but there is no model-session context to fork.
+
+The fork is a conversation/session fork within the same project. It does
+not create a separate copy of project files or a Git worktree. Changes made
+from either chat therefore concern the shared project environment. Use
+separate directories or an explicitly prepared repository checkout when
+your experiment requires separate file state, and verify the new thread's
+working directory before asking it to edit files.
+
+## Related guides
+
+- [Connect AI access](/docs/ai/connect-credentials)
+- [Configure Codex chats](/docs/ai/codex-settings)
+`;
+
+export const CODEX_GOALS_BODY = String.raw`
+Start with [Open Codex chat](/docs/ai/codex-chat) if you have not used the agent before.
+
+## Set and manage a Codex goal
+
+A goal gives a Codex chat thread an objective to keep working toward across
+automatic continuations.
+
+1. In the Codex thread's composer, click **Set goal**.
+2. Describe the outcome in **What should Codex accomplish?**
+3. Optionally expand **Budget and usage** and enter a positive whole number in
+   **Token budget (optional)**. Leave it blank for no goal token budget.
+4. Click **Save goal**. If the thread is idle, send a message to start its next
+   turn.
+
+Click **Goal: ...** to edit the objective or budget and inspect the reported
+tokens used and elapsed minutes. Changes apply during a running turn or when
+the next requested turn starts; they can remain **pending** until then.
+Opening the goal dialog does not start Codex. A failed change is shown in the
+control and its error appears when you reopen the dialog.
+
+Use **Pause** to prevent automatic continuation while allowing the current turn
+to finish. **Stop** also interrupts the current turn and requests that its active
+goal be paused. Use **Resume** to reactivate an unfinished goal; if the thread is
+idle, start another turn for the change to apply. Editing a paused goal's text
+or budget alone does not resume it.
+
+Choose **Clear goal** in the dialog to remove the goal. Use **Stop** as well if
+you need to interrupt work already running.
+
+## Answer questions from Codex
+
+When Codex needs your input, an orange badge can mark the conversation in the
+chat list. Open that conversation to see its pending requests above the messages.
+
+1. Read the request's status. A blocking question pauses the current turn.
+   For an asynchronous question, Codex may continue working while it waits;
+   your response is added to the conversation as a user message.
+2. Answer every question. Choose a suggested answer, or use the text field
+   when one is offered.
+3. Choose **Send response** and check the status. **Response submitted** means
+   your response is saved and is waiting for Codex to accept it. Follow the
+   conversation to see what happens next.
+
+Choose **Decline** to tell Codex you will not answer the question.
+**Acknowledge** suppresses a pending email notification, while **Snooze 5 minutes**
+delays it when email delivery is enabled. Both leave the question open; a
+paused turn still needs a response.
+
+If a disconnected request offers **Continue with this answer**, use it to
+submit the saved response again. If the request card is no longer available,
+send your answer in the conversation.
+
+In **CoCalc Lite**, requests are available within the project. Cross-device
+inbox and email delivery are unavailable.
+
+## Related guides
+
+- [Connect AI access](/docs/ai/connect-credentials)
+- [Configure Codex chats](/docs/ai/codex-settings)
+`;
+
+export const CODEX_AUTOMATION_BODY = String.raw`
+Start with [Open Codex chat](/docs/ai/codex-chat) if you have not used the agent before.
+
+## Schedule Codex work in a thread
+
+Open a Codex chat's thread menu and choose **Automation settings…**. The
+**Thread automation** dialog lets you configure recurring work in that
+thread. Availability and active-automation limits depend on the project and
+membership tier; an admission limit can prevent enabling another schedule.
+
+1. Enable **Enable scheduled automation for this thread**, give it a
+   **Title**, and choose **Codex prompt** as the **Run type**.
+2. Enter what Codex should do on each scheduled run.
+3. Under **Schedule**, choose **Daily** or **Every N minutes** and select
+   the weekdays under **Repeat on**.
+4. For Daily, enter **Run at (24h)**. For an interval, enter **Repeat every
+   (minutes)** and either enable **Run all day** or set **From (24h)** and
+   **Until (24h)**. Until must be later than From on the same day; this form
+   does not accept a window crossing midnight.
+5. Check **Timezone**, choose the **Pause after unacknowledged runs** limit,
+   and click **Save**.
+
+Use a named timezone such as Europe/Madrid. The form initially uses your
+browser's timezone, so verify it before saving a schedule intended for
+another location. After saving, inspect the thread's schedule summary and
+**Next** run display to confirm the intended timing.
+
+## Run a Bash command on a schedule
+
+For a repeatable script that does not need a new agent decision each time,
+use a command automation. Availability and active-automation limits depend
+on the project and membership tier. Commands run unattended and can modify
+project data; begin with a read-only or idempotent command you have reviewed.
+
+1. Open a Codex chat's **Automation settings…**, enable the schedule, enter a
+   **Title**, and select **Bash command** under **Run type**.
+2. Enter the **Command**, for example \`pwd\` for a harmless first run.
+3. Set **Working directory** explicitly for commands using relative paths.
+   Otherwise it is derived from the chat file path, which may be a generated
+   chat directory; if no parent is available, it falls back to \`/\` in the
+   project runtime.
+4. Set **Timeout (seconds)** and **Max output to capture (KB)** to fit the
+   command, then configure the schedule and click **Save**.
+
+The run report records the command and working directory, an exit code or
+signal when available, and captured stdout and stderr. A truncation notice
+means output exceeded the capture limit; it does not mean the command's
+entire output was retained in chat. A command with no captured output is
+reported as such.
+
+Use **Run now** to try the configured command before relying on scheduled
+runs, and inspect its result. That manual run leaves the next scheduled
+occurrence in place, so account for both when the command changes data.
+
+## Control and acknowledge scheduled runs
+
+Open the automation details in its chat thread to see the schedule, latest
+result, and available controls.
+
+- **Run now** starts a manual run without moving the next scheduled run.
+  If a run is already active, it does not queue another one.
+- **Skip next** skips only the next scheduled occurrence.
+- **Pause** and **Resume** control whether scheduled work continues. Pausing
+  the schedule does not cancel a run already in progress.
+- **Edit** opens the configuration. Deleting the automation removes the
+  schedule from the chat thread.
+
+Overlapping runs are not queued. Check **Last run**, the status, and any
+displayed error when investigating a missing or unsuccessful result.
+
+Finished automated runs increase the **unacknowledged** count, including
+successful, failed, or interrupted runs and **Run now** executions. At **Pause after unacknowledged runs**, the automation
+pauses until you review it. Click the unacknowledged-count button to clear
+the count; sending a new request to Codex in that thread also clears it.
+Acknowledging does not itself mean resuming: use **Resume** when you want
+a paused schedule to continue, and confirm the next-run display afterward.
+
+## Related guides
+
+- [Goals and questions](/docs/ai/codex-goals)
+- [Notifications and session activity](/docs/ai/codex-notifications)
+`;
+
+export const CODEX_NOTIFICATIONS_BODY = String.raw`
+Start with [Open Codex chat](/docs/ai/codex-chat) if you have not used the agent before.
+
+## Get a notification when a turn finishes
+
+In account settings, find **Notifications** and **Codex and agents**.
+**Notify when Codex turns complete by default** sets the preference for threads
+that inherit the account default. The channel table separately controls
+**Inbox**, **Toast**, **Browser**, and **Email** for **Needs attention**,
+**Turn completed**, and **Turn failed**.
+
+To set a thread's completion preference:
+
+1. Open its menu and choose **Behavior...**.
+2. In **Edit Thread Behavior**, clear **Mute completion notifications for this thread**
+   to request notices, or check it to mute them.
+3. Confirm the dialog. Changing this checkbox saves an explicit preference for that thread.
+
+Set the preference before starting work when possible. A turn's completion can
+race with a settings change, and changing settings does not withdraw a notice
+already produced.
+
+Delivery depends on the enabled channels and site settings. CoCalc can show a
+toast while its page is visible or a browser notification while it is hidden.
+Browser delivery also needs browser permission; use **Enable browser notifications**
+and **Test notification** in account settings. CoCalc suppresses the extra toast
+or browser alert when you are directly watching that thread.
+
+In CoCalc, successful completion uses **Codex turn finished**; an error uses
+**Codex turn ended with an error**. Browser notifications use the generic title
+**Codex finished**; open CoCalc to inspect the outcome. A completion notice does
+not establish that every background command or descendant agent has stopped. Inspect the account's
+Codex sessions panel when you need to confirm remaining activity.
+
+## Inspect and stop Codex sessions
+
+Open account **AI** settings and choose **View Codex sessions**. The panel
+groups recent turn records by session and shows each session's latest state,
+model, payment source, and update time. Use **Open chat**, when available, to
+return to its chat file. Some records omit details you cannot access.
+
+The list and account stop request operate on a bounded set of recent records,
+not an exhaustive inventory or an instant guarantee that all account activity
+has ended. Refresh and inspect the reported outcome after requesting a stop.
+
+1. Click **Refresh** to update the list.
+2. Use a row's **Stop all** control to request interruption of that session,
+   or **Stop all active or uncertain** for the account-level stop action.
+3. Read the result and refresh again if interruption could not be confirmed.
+
+An **uncertain** state, stale heartbeat, or failed interrupt can mean CoCalc
+cannot yet establish whether AI activity has ended. The panel keeps those
+records visible as possible ongoing resource use. It can also report active
+descendant threads or background commands, with a warning that usage may
+continue.
+
+Treat an interruption request as pending until the status confirms its
+outcome. A finished manager response alone does not establish that all of
+its reported descendant work has ended.
+
+## Related guides
+
+- [Connect AI access](/docs/ai/connect-credentials)
+- [Configure Codex chats](/docs/ai/codex-settings)
 `;
