@@ -16,7 +16,21 @@ jest.mock("../codex-log-panel", () => ({
   default: (props: unknown) => mockCodexLogPanel(props),
 }));
 
-import { AgentMessageStatus } from "../agent-message-status";
+import { AgentMessageStatus, SteerGuidanceCard } from "../agent-message-status";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+
+it("renders attached guidance with theme-aware colors", () => {
+  const { container } = render(
+    <SteerGuidanceCard
+      steer={{ text: "Please check dark mode", state: "sent" } as any}
+    />,
+  );
+  const card = container.querySelector<HTMLElement>(
+    ".cocalc-steer-guidance-card",
+  )!;
+  expect(card.style.background).toBe(UI_COLORS.infoBg);
+  expect(card.style.color).toBe(UI_COLORS.text);
+});
 
 describe("AgentMessageStatus activity loading", () => {
   beforeEach(() => {

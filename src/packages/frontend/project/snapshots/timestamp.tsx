@@ -1,5 +1,5 @@
 import { TimeAgo } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const SNAPSHOT_TIMESTAMP_RE =
   /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/;
@@ -34,7 +34,7 @@ export function SnapshotTimestamp({
   return (
     <span
       style={{
-        color: COLORS.GRAY_M,
+        color: UI_COLORS.secondary,
         display: "inline-flex",
         flexDirection: "column",
         lineHeight: 1.2,
