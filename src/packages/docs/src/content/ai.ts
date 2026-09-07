@@ -58,6 +58,31 @@ For code that calls OpenAI directly from a notebook, script, or terminal, store
 the API key as a project secret such as \`OPENAI_API_KEY\`. Do not paste keys
 into notebooks, chat messages, shell history, or committed files.
 
+## Complete a Codex authorization request
+
+On sites that enable this workflow, a sensitive CoCalc CLI action can show
+**Codex needs fresh account authorization** in the chat, with the status
+**Waiting for authorization**.
+
+1. Keep the originating CoCalc browser tab open and choose **Approve in
+   CoCalc** on the card.
+2. In the authorization page, check the account shown. Follow any instruction
+   to sign in with that account.
+3. Use an available verification method and choose **Approve CLI Elevation**.
+   Complete password or second-factor verification on that page.
+4. Return to the chat and inspect the result. The waiting integrated CLI
+   command retries automatically after approval, so check its state before
+   requesting another attempt.
+
+**Acknowledge** and **Snooze 5 minutes** manage the notification; they do not
+authorize the action. An ordinary chat reply or question response also does
+not complete this verification. Keep passwords and verification codes out
+of chat.
+
+If the request is canceled or expired, inspect the command's reported state
+before asking Codex to try again. This card is conditional on site support;
+it is not available for every command or deployment.
+
 ## Why this matters in CoCalc
 
 AI access is both account-level and project-contextual. The account connection
