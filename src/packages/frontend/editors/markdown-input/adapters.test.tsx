@@ -49,12 +49,16 @@ describe("SlateRichTextAdapter", () => {
   );
 
   it("passes enableUpload through to the rich text editor", () => {
+    const onUploadStart = jest.fn();
+    const onUploadEnd = jest.fn();
     render(
       <SlateRichTextAdapter
         autoFocus={false}
         controlRef={createRef()}
         editBar2={createRef()}
         enableUpload={false}
+        onUploadStart={onUploadStart}
+        onUploadEnd={onUploadEnd}
         externalMultilinePasteAsCodeBlock={false}
         noVfill={false}
         onAltEnter={() => undefined}
@@ -66,6 +70,8 @@ describe("SlateRichTextAdapter", () => {
     );
 
     expect(editableMarkdownProps[0]?.enableUpload).toBe(false);
+    expect(editableMarkdownProps[0]?.onUploadStart).toBe(onUploadStart);
+    expect(editableMarkdownProps[0]?.onUploadEnd).toBe(onUploadEnd);
   });
 
   it("does not add a second scroll container around the rich text editor", () => {

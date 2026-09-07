@@ -445,6 +445,8 @@ interface Props {
   dirtyRef?: MutableRefObject<boolean>;
   minimal?: boolean;
   enableUpload?: boolean;
+  onUploadStart?: () => void;
+  onUploadEnd?: () => void;
   controlRef?: MutableRefObject<
     | (RichTextSelectionBridgeControl & {
         setSelection?: (selection: any) => boolean;
@@ -495,6 +497,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     isFocused,
     minimal,
     enableUpload = true,
+    onUploadStart,
+    onUploadEnd,
     noVfill,
     onBlur,
     onCursorBottom,
@@ -3032,17 +3036,30 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       />
     </ChangeContext.Provider>
   );
-  return enableUpload ? <UploadBody editor={editor} body={body} /> : body;
+  return enableUpload ? (
+    <UploadBody
+      editor={editor}
+      body={body}
+      onUploadStart={onUploadStart}
+      onUploadEnd={onUploadEnd}
+    />
+  ) : (
+    body
+  );
 });
 
 function UploadBody({
   editor,
   body,
+  onUploadStart,
+  onUploadEnd,
 }: {
   editor: SlateEditor;
   body: React.JSX.Element;
+  onUploadStart?: () => void;
+  onUploadEnd?: () => void;
 }): React.JSX.Element {
-  return useUpload(editor, body);
+  return useUpload(editor, body, { onUploadStart, onUploadEnd });
 }
 
 export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {

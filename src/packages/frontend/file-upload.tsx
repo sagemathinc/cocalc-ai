@@ -699,6 +699,7 @@ export function BlobUpload(props) {
             type: "error",
             message: normalizeUploadError(undefined, file.xhr),
           });
+          props.event_handlers?.complete?.(file);
           return;
         }
         const url = `${join(
