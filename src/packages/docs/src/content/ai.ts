@@ -188,6 +188,28 @@ workflow. The button is conditional, so an ordinary chat may not show it.
 It is an editor for this prepared prompt, not a viewer for every instruction
 inside the agent runtime or a way to revise an already-running request.
 
+## Choose where an editor request goes
+
+Before sending a request from an editor's **Agent** popup, check its destination
+and submission controls.
+
+1. Use **Recent agent sessions** to select the conversation that should receive
+   the request. Continue an existing session when its earlier discussion is
+   relevant.
+2. When offered, choose **New agent thread** to begin with fresh conversation
+   context. The editor title-bar and kernel-installation popups offer this
+   choice; other helper dialogs may show only recent sessions.
+3. Leave **Automatically submit to Agent** checked to send the request when you
+   choose **Send**.
+4. Uncheck it to place the prepared request in the agent chat's composer. Review
+   or extend the message there, then send it from the chat when ready.
+
+The popup remembers recent-session choices for its project, file, and type of
+request. The automatic-submission preference is stored in the browser and is
+shared by popups using that control. Check both controls when moving between
+unrelated tasks. Error-repair dialogs have their own explicit confirmation and
+may not offer the checkbox.
+
 ## Give better tasks
 
 Name files, describe the desired outcome, and ask Codex to validate changes.
