@@ -122,6 +122,17 @@ successful save, provided the commit and draft still match. The script has a
 No agent turn was dispatched. Concurrent comment merging, reconnect scenarios,
 and stale-draft reconciliation remain distinct from this save-rejection check.
 
+Live historical Git Markdown follow-up: `historical-file.browser-test.mjs`
+passed against the same pinned commit and `src/.agents/git-review-modernization.md`
+with both `REVIEW_RENDERER=legacy` and `REVIEW_RENDERER=pierre`. Each checks rich
+Markdown rendering, read-only original source, source-line positioning, keyboard
+close with focus restored to the opener, and an unchanged review URL. The harness
+explicitly selects and restores the renderer and resets saved scroll before
+finding the header. An initial attempt could not find a virtualized header at the
+saved scroll position; that was a harness assumption, not a historical-loader
+failure. These checks do not cover patchflow/snapshot/backup restore or
+renamed/deleted files.
+
 ### Single-file stress evidence (2026-09-07)
 
 Run `STRESS=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`

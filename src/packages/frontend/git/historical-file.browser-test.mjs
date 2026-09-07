@@ -6,7 +6,7 @@ const { chromium, expect } = require("@playwright/test");
 const [chatUrl, commit, path] = process.argv.slice(2);
 if (
   !chatUrl ||
-  !/^[a-f0-9]{7,40}$/i.test(commit ?? "") ||
+  !/^[a-f0-9]{7,64}$/i.test(commit ?? "") ||
   !path?.endsWith(".md")
 ) {
   throw Error(
@@ -20,12 +20,30 @@ const browser = await chromium.connectOverCDP(
 );
 const page = await browser.contexts()[0].newPage();
 const errors = [];
+let previousRenderer;
+const mode = process.env.REVIEW_RENDERER ?? "legacy";
 page.on("pageerror", (error) => errors.push(error.message));
 try {
   await page.goto(url.href, { waitUntil: "domcontentloaded" });
-  const section = page
-    .locator('[data-git-diff-section="true"]')
-    .filter({ has: page.getByRole("button", { name: path, exact: true }) });
+  const renderer = page.getByRole("combobox", {
+    name: "Diff renderer",
+    exact: true,
+  });
+  await expect(renderer).toBeVisible({ timeout: 60000 });
+  previousRenderer = await renderer.inputValue();
+  await renderer.selectOption(mode);
+  await page.locator(".ant-drawer-body").evaluate((body) => {
+    for (const e of body.querySelectorAll("div"))
+      if (getComputedStyle(e).overflowY === "auto") e.scrollTop = 0;
+  });
+  const section =
+    mode === "pierre"
+      ? page.locator(`[data-review-file-header=${JSON.stringify(path)}]`)
+      : page
+          .locator('[data-git-diff-section="true"]')
+          .filter({
+            has: page.getByRole("button", { name: path, exact: true }),
+          });
   const open = section.getByRole("button", {
     name: "View at this revision",
     exact: true,
@@ -60,12 +78,17 @@ try {
   expect(new URL(page.url()).searchParams.get("git-hash")).toBe(commit);
   expect(errors).toEqual([]);
   console.log(
-    "Passed: rich historical Markdown, read-only original source, exact line jump, keyboard close/focus, unchanged review URL.",
+    `Passed (${mode}): rich historical Markdown, read-only original source, exact line jump, keyboard close/focus, unchanged review URL.`,
   );
 } catch (error) {
   console.error(error);
   process.exitCode = 1;
 } finally {
+  if (previousRenderer)
+    await page
+      .getByRole("combobox", { name: "Diff renderer", exact: true })
+      .selectOption(previousRenderer)
+      .catch(() => {});
   await page.close();
   process.exit(process.exitCode ?? 0);
 }
