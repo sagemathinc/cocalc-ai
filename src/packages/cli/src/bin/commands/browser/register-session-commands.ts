@@ -27,10 +27,9 @@ export async function authorizeTestingBrowser(
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
       accountId,
-    ) ||
-    ctx.accountId !== accountId
+    )
   )
-    throw new Error("Select a signed-in profile for the exact testing account");
+    throw new Error("Select an exact testing account UUID");
   const origin = new URL(ctx.apiBaseUrl).origin;
   for (const value of [apiUrl, targetUrl ?? apiUrl]) {
     const url = new URL(value);
@@ -501,6 +500,10 @@ export function registerBrowserSessionCommands({
             "browser session spawn is unsupported in standalone SEA binary; use JS CLI (e.g. node ./packages/cli/dist/bin/cocalc.js ...).",
           );
         }
+        if (opts.testingAccount && opts.use)
+          throw new Error(
+            "Testing browsers use the returned testing_profile; --use cannot modify the operator profile",
+          );
         if (isCliAgentMode() && !opts.testingAccount) {
           throw new Error(
             "browser session spawn is unavailable under agent auth; use a signed-in CLI context to spawn a dedicated browser session, or reuse an existing COCALC_BROWSER_ID",
@@ -532,218 +535,236 @@ export function registerBrowserSessionCommands({
                   opts.targetUrl,
                 )
               : undefined;
-            if (!opts.testingAccount)
-              await reapSpawnStates({
-                timeoutMs: 1_500,
-                stopRunning: false,
-                removeStateFiles: true,
-              });
-            if (!opts.testingAccount)
-              await reapSpawnStatesWithMissingRemoteSessions({
-                ctx,
-                timeoutMs: 1_500,
-                removeStateFiles: true,
-              });
-            const projectHint =
-              `${opts.projectId ?? opts.project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
-            const project_id = !projectHint
-              ? undefined
-              : isValidUUID(projectHint)
-                ? projectHint
-                : (await deps.resolveProject(ctx, projectHint)).project_id;
-            const spawnId = `${opts.spawnId ?? ""}`.trim() || randomSpawnId();
-            const stateFile = spawnStateFile(spawnId);
-            const existing = readSpawnState(stateFile);
-            if (existing?.pid && isProcessRunning(existing.pid)) {
-              throw new Error(
-                `spawn id '${spawnId}' is already active (pid ${existing.pid}); destroy it first`,
-              );
-            }
-            const marker = `${spawnId}-${Math.random().toString(36).slice(2, 8)}`;
-            const targetUrl = resolveSpawnTargetUrl({
-              apiUrl: parsedApiUrl,
-              projectId: project_id,
-              explicitTargetUrl: opts.targetUrl,
-            });
-            const markedTargetUrl = withSpawnMarker(targetUrl, marker);
-            const chromiumPath = resolveChromiumExecutablePath(opts.chromium);
-            if (!chromiumPath) {
-              throw new Error(
-                "unable to find Chromium executable; pass --chromium <path> or set COCALC_CHROMIUM_BIN",
-              );
-            }
-            const hubPassword = opts.testingAccount
-              ? undefined
-              : resolveSecret(
-                  globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
-                );
-            const apiKey = opts.testingAccount
-              ? undefined
-              : resolveSecret(globals.apiKey ?? process.env.COCALC_API_KEY);
-            const signInCookie: Awaited<
-              ReturnType<typeof resolveSpawnRememberMeCookie>
-            > =
-              testingCookie ??
-              (await resolveSpawnRememberMeCookie({
-                ctx,
-              }));
-            const cookieApiUrls = Array.from(
-              new Set(
-                [parsedApiUrl, new URL(markedTargetUrl).origin]
-                  .map((url) => `${url ?? ""}`.trim())
-                  .filter(Boolean),
-              ),
-            );
-            const cookies = cookieApiUrls
-              .flatMap((apiUrl) =>
-                buildSpawnCookies({
-                  apiUrl,
-                  hubPassword,
-                  apiKey,
-                  rememberMe: signInCookie?.remember_me,
-                  accountId: signInCookie?.account_id,
-                }),
-              )
-              .concat(
-                await resolveProjectHostBrowserSessionCookies({
-                  ctx,
-                  deps,
-                  project_id,
-                }),
-              );
-            const sessionName =
-              `${opts.sessionName ?? ""}`.trim() ||
-              `CoCalc Agent Session (${spawnId})`;
-            const daemonConfigPath = join(
-              SPAWN_STATE_DIR,
-              `${spawnId}.config-${process.pid}-${Date.now()}.json`,
-            );
-            const daemonScript = resolveBrowserSessionDaemonScriptPath({
-              resolvePath,
-              existsSync,
-              cliBinPath: process.env.COCALC_CLI_BIN,
-              argvPath: process.argv[1],
-            });
-            if (!daemonScript) {
-              throw new Error(
-                "missing browser-session-playwright-daemon.js (build @cocalc/cli first or set COCALC_CLI_BIN to a built CLI dist)",
-              );
-            }
-            if (opts.headless && opts.headed) {
-              throw new Error("choose only one of --headless or --headed");
-            }
-            const spawnHeadless = opts.headed ? false : true;
-            writeDaemonConfig(daemonConfigPath, {
-              spawn_id: spawnId,
-              state_file: stateFile,
-              target_url: markedTargetUrl,
-              sign_in_url: signInCookie?.sign_in_url,
-              headless: spawnHeadless,
-              timeout_ms: parseDiscoveryTimeout(
-                opts.readyTimeout,
-                DEFAULT_READY_TIMEOUT_MS,
-              ),
-              executable_path: chromiumPath,
-              session_name: sessionName,
-              cookies,
-              control_plane_origin: new URL(markedTargetUrl).origin,
-              control_plane_storage_key:
-                buildControlPlaneOriginStorageKey(parsedApiUrl),
-              remember_me_storage_keys: signInCookie?.remember_me
-                ? cookieApiUrls.flatMap((apiUrl) =>
-                    buildRememberMeStorageKeys(apiUrl),
-                  )
-                : undefined,
-            });
-            const child = spawnProcess(
-              process.execPath,
-              [daemonScript, daemonConfigPath],
-              {
-                detached: true,
-                stdio: "ignore",
-                env: opts.testingAccount
-                  ? Object.fromEntries(
-                      [
-                        "PATH",
-                        "HOME",
-                        "TMPDIR",
-                        "DISPLAY",
-                        "XAUTHORITY",
-                        "XDG_RUNTIME_DIR",
-                        "LANG",
-                        "LC_ALL",
-                      ]
-                        .filter((key) => process.env[key] !== undefined)
-                        .map((key) => [key, process.env[key]]),
-                    )
-                  : process.env,
-              },
-            );
-            child.unref();
-            const daemonPid = child.pid;
-            if (!daemonPid || daemonPid <= 0) {
-              throw new Error("failed to start browser spawn daemon");
-            }
-
+            const testingConnection =
+              testingCookie && deps.createTestingContext
+                ? await deps.createTestingContext({
+                    api: ctx.apiBaseUrl,
+                    account_id: testingCookie.account_id!,
+                    remember_me: testingCookie.remember_me!,
+                  })
+                : undefined;
+            if (testingCookie && !testingConnection)
+              throw new Error("Testing browser context support is unavailable");
+            if (testingConnection) ctx = testingConnection.ctx;
             try {
-              await waitForSpawnStateReady({
-                stateFile,
-                timeoutMs: parseDiscoveryTimeout(
+              if (!opts.testingAccount)
+                await reapSpawnStates({
+                  timeoutMs: 1_500,
+                  stopRunning: false,
+                  removeStateFiles: true,
+                });
+              if (!opts.testingAccount)
+                await reapSpawnStatesWithMissingRemoteSessions({
+                  ctx,
+                  timeoutMs: 1_500,
+                  removeStateFiles: true,
+                });
+              const projectHint =
+                `${opts.projectId ?? opts.project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
+              const project_id = !projectHint
+                ? undefined
+                : isValidUUID(projectHint)
+                  ? projectHint
+                  : (await deps.resolveProject(ctx, projectHint)).project_id;
+              const spawnId = `${opts.spawnId ?? ""}`.trim() || randomSpawnId();
+              const stateFile = spawnStateFile(spawnId);
+              const existing = readSpawnState(stateFile);
+              if (existing?.pid && isProcessRunning(existing.pid)) {
+                throw new Error(
+                  `spawn id '${spawnId}' is already active (pid ${existing.pid}); destroy it first`,
+                );
+              }
+              const marker = `${spawnId}-${Math.random().toString(36).slice(2, 8)}`;
+              const targetUrl = resolveSpawnTargetUrl({
+                apiUrl: parsedApiUrl,
+                projectId: project_id,
+                explicitTargetUrl: opts.targetUrl,
+              });
+              const markedTargetUrl = withSpawnMarker(targetUrl, marker);
+              const chromiumPath = resolveChromiumExecutablePath(opts.chromium);
+              if (!chromiumPath) {
+                throw new Error(
+                  "unable to find Chromium executable; pass --chromium <path> or set COCALC_CHROMIUM_BIN",
+                );
+              }
+              const hubPassword = opts.testingAccount
+                ? undefined
+                : resolveSecret(
+                    globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
+                  );
+              const apiKey = opts.testingAccount
+                ? undefined
+                : resolveSecret(globals.apiKey ?? process.env.COCALC_API_KEY);
+              const signInCookie: Awaited<
+                ReturnType<typeof resolveSpawnRememberMeCookie>
+              > =
+                testingCookie ??
+                (await resolveSpawnRememberMeCookie({
+                  ctx,
+                }));
+              const cookieApiUrls = Array.from(
+                new Set(
+                  [parsedApiUrl, new URL(markedTargetUrl).origin]
+                    .map((url) => `${url ?? ""}`.trim())
+                    .filter(Boolean),
+                ),
+              );
+              const cookies = cookieApiUrls
+                .flatMap((apiUrl) =>
+                  buildSpawnCookies({
+                    apiUrl,
+                    hubPassword,
+                    apiKey,
+                    rememberMe: signInCookie?.remember_me,
+                    accountId: signInCookie?.account_id,
+                  }),
+                )
+                .concat(
+                  await resolveProjectHostBrowserSessionCookies({
+                    ctx,
+                    deps,
+                    project_id,
+                  }),
+                );
+              const sessionName =
+                `${opts.sessionName ?? ""}`.trim() ||
+                `CoCalc Agent Session (${spawnId})`;
+              const daemonConfigPath = join(
+                SPAWN_STATE_DIR,
+                `${spawnId}.config-${process.pid}-${Date.now()}.json`,
+              );
+              const daemonScript = resolveBrowserSessionDaemonScriptPath({
+                resolvePath,
+                existsSync,
+                cliBinPath: process.env.COCALC_CLI_BIN,
+                argvPath: process.argv[1],
+              });
+              if (!daemonScript) {
+                throw new Error(
+                  "missing browser-session-playwright-daemon.js (build @cocalc/cli first or set COCALC_CLI_BIN to a built CLI dist)",
+                );
+              }
+              if (opts.headless && opts.headed) {
+                throw new Error("choose only one of --headless or --headed");
+              }
+              const spawnHeadless = opts.headed ? false : true;
+              writeDaemonConfig(daemonConfigPath, {
+                spawn_id: spawnId,
+                state_file: stateFile,
+                target_url: markedTargetUrl,
+                sign_in_url: signInCookie?.sign_in_url,
+                headless: spawnHeadless,
+                timeout_ms: parseDiscoveryTimeout(
                   opts.readyTimeout,
                   DEFAULT_READY_TIMEOUT_MS,
                 ),
-              });
-              const sessionInfo = await waitForSpawnedSession({
-                ctx,
-                marker,
-                timeoutMs: parseDiscoveryTimeout(
-                  opts.timeout,
-                  DEFAULT_DISCOVERY_TIMEOUT_MS,
-                ),
-              });
-              const latest = readSpawnState(stateFile);
-              if (latest) {
-                writeSpawnState(stateFile, {
-                  ...latest,
-                  browser_id: sessionInfo.browser_id,
-                  session_url: `${sessionInfo.url ?? ""}`.trim() || undefined,
-                  updated_at: nowIso(),
-                });
-              }
-              if (opts.use) {
-                saveProfileBrowserId({
-                  deps,
-                  command,
-                  browser_id: sessionInfo.browser_id,
-                  apiBaseUrl: ctx.apiBaseUrl,
-                });
-              }
-              return {
-                spawn_id: spawnId,
-                pid: daemonPid,
-                browser_id: sessionInfo.browser_id,
-                state_file: stateFile,
-                target_url: targetUrl,
-                launched_url: markedTargetUrl,
+                executable_path: chromiumPath,
                 session_name: sessionName,
-                project_id: project_id ?? "",
-                profile: profileSelection.profile,
-                profile_default_set: !!opts.use,
-                mode: "playwright-spawned",
-                ...sessionTargetContext(ctx, sessionInfo, project_id),
-              };
-            } catch (err) {
-              await terminateSpawnedProcess({
-                pid: daemonPid,
-                timeoutMs: 2_500,
+                cookies,
+                control_plane_origin: new URL(markedTargetUrl).origin,
+                control_plane_storage_key:
+                  buildControlPlaneOriginStorageKey(parsedApiUrl),
+                remember_me_storage_keys: signInCookie?.remember_me
+                  ? cookieApiUrls.flatMap((apiUrl) =>
+                      buildRememberMeStorageKeys(apiUrl),
+                    )
+                  : undefined,
               });
-              throw err;
-            } finally {
-              try {
-                unlinkSync(daemonConfigPath);
-              } catch {
-                // best-effort cleanup
+              const child = spawnProcess(
+                process.execPath,
+                [daemonScript, daemonConfigPath],
+                {
+                  detached: true,
+                  stdio: "ignore",
+                  env: opts.testingAccount
+                    ? Object.fromEntries(
+                        [
+                          "PATH",
+                          "HOME",
+                          "TMPDIR",
+                          "DISPLAY",
+                          "XAUTHORITY",
+                          "XDG_RUNTIME_DIR",
+                          "LANG",
+                          "LC_ALL",
+                        ]
+                          .filter((key) => process.env[key] !== undefined)
+                          .map((key) => [key, process.env[key]]),
+                      )
+                    : process.env,
+                },
+              );
+              child.unref();
+              const daemonPid = child.pid;
+              if (!daemonPid || daemonPid <= 0) {
+                throw new Error("failed to start browser spawn daemon");
               }
+
+              try {
+                await waitForSpawnStateReady({
+                  stateFile,
+                  timeoutMs: parseDiscoveryTimeout(
+                    opts.readyTimeout,
+                    DEFAULT_READY_TIMEOUT_MS,
+                  ),
+                });
+                const sessionInfo = await waitForSpawnedSession({
+                  ctx,
+                  marker,
+                  timeoutMs: parseDiscoveryTimeout(
+                    opts.timeout,
+                    DEFAULT_DISCOVERY_TIMEOUT_MS,
+                  ),
+                });
+                const latest = readSpawnState(stateFile);
+                if (latest) {
+                  writeSpawnState(stateFile, {
+                    ...latest,
+                    browser_id: sessionInfo.browser_id,
+                    session_url: `${sessionInfo.url ?? ""}`.trim() || undefined,
+                    updated_at: nowIso(),
+                  });
+                }
+                if (opts.use) {
+                  saveProfileBrowserId({
+                    deps,
+                    command,
+                    browser_id: sessionInfo.browser_id,
+                    apiBaseUrl: ctx.apiBaseUrl,
+                  });
+                }
+                return {
+                  spawn_id: spawnId,
+                  pid: daemonPid,
+                  browser_id: sessionInfo.browser_id,
+                  state_file: stateFile,
+                  target_url: targetUrl,
+                  launched_url: markedTargetUrl,
+                  session_name: sessionName,
+                  project_id: project_id ?? "",
+                  profile: profileSelection.profile,
+                  profile_default_set: !!opts.use,
+                  mode: "playwright-spawned",
+                  ...(testingConnection
+                    ? { testing_profile: testingConnection.profile }
+                    : {}),
+                  ...sessionTargetContext(ctx, sessionInfo, project_id),
+                };
+              } catch (err) {
+                await terminateSpawnedProcess({
+                  pid: daemonPid,
+                  timeoutMs: 2_500,
+                });
+                throw err;
+              } finally {
+                try {
+                  unlinkSync(daemonConfigPath);
+                } catch {
+                  // best-effort cleanup
+                }
+              }
+            } finally {
+              testingConnection?.close();
             }
           },
         );

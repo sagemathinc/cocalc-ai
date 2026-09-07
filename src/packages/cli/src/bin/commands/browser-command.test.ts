@@ -56,6 +56,11 @@ test("testing browser rejects wrong identities, cross-origin targets and old ser
     await authorizeTestingBrowser(ctx, PROJECT_A, ctx.apiBaseUrl),
     cookie,
   );
+  ctx.accountId = "00000000-1000-4000-8000-000000000099";
+  assert.equal(
+    await authorizeTestingBrowser(ctx, PROJECT_A, ctx.apiBaseUrl),
+    cookie,
+  );
   cookie.testing_account = false;
   await assert.rejects(
     authorizeTestingBrowser(ctx, PROJECT_A, ctx.apiBaseUrl),

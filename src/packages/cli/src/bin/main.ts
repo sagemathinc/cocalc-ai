@@ -3264,6 +3264,27 @@ const execCommandDeps = {
 registerExecCommand(program, execCommandDeps);
 
 const browserCommandDeps = {
+  createTestingContext: async ({ api, account_id, remember_me }) => {
+    const profile = `browser-test-${new URL(api).hostname}-${account_id}`;
+    const config = loadAuthConfig();
+    // Replace, never merge: no operator credentials may survive in this profile.
+    config.profiles[profile] = {
+      api,
+      account_id,
+      cookie: `remember_me=${remember_me}`,
+    };
+    saveAuthConfig(config);
+    const ctx = await contextForGlobals({
+      profile,
+      api,
+      disableEnvAuthDefaults: true,
+    });
+    if (ctx.accountId !== account_id) {
+      closeCommandContext(ctx);
+      throw new Error("Testing profile authenticated as the wrong account");
+    }
+    return { ctx, profile, close: () => closeCommandContext(ctx) };
+  },
   withContext,
   authConfigPath,
   loadAuthConfig,

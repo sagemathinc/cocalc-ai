@@ -6877,7 +6877,11 @@ export async function issueBrowserSignInCookie({
   if (testing_account_id !== undefined) {
     const { assertBrowserTestingAccount } =
       await import("@cocalc/server/auth/browser-testing-account");
-    await assertBrowserTestingAccount(account_id, testing_account_id);
+    if (account_id !== testing_account_id && !(await isAdmin(account_id)))
+      throw new Error(
+        "Only an administrator can authorize another testing account",
+      );
+    await assertBrowserTestingAccount(testing_account_id, testing_account_id);
   }
   await requireDangerousSessionAuth({
     account_id,
@@ -6888,6 +6892,7 @@ export async function issueBrowserSignInCookie({
       : {}),
   });
   const cleanMaxAgeMs = Number(max_age_ms);
+  const subjectAccountId = testing_account_id ?? account_id;
   const resolvedMaxAgeMs =
     Number.isFinite(cleanMaxAgeMs) && cleanMaxAgeMs > 0
       ? Math.min(
@@ -6900,11 +6905,11 @@ export async function issueBrowserSignInCookie({
         ? 3600000
         : DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS;
   const { value, hash, expire } = await createRememberMeCookie(
-    account_id,
+    subjectAccountId,
     Math.max(60, Math.floor(resolvedMaxAgeMs / 1000)),
   );
   await recordNewAuthSession({
-    account_id,
+    account_id: subjectAccountId,
     session_hash: hash,
     expire,
     authenticated_at: new Date(),
@@ -6913,11 +6918,13 @@ export async function issueBrowserSignInCookie({
     fresh_auth_until: null,
     metadata: {
       issued_by: "issueBrowserSignInCookie",
-      ...(testing_account_id !== undefined ? { testing_account: true } : {}),
+      ...(testing_account_id !== undefined
+        ? { testing_account: true, authorized_by_account_id: account_id }
+        : {}),
     },
   });
   return {
-    account_id,
+    account_id: subjectAccountId,
     remember_me: value,
     max_age_ms: resolvedMaxAgeMs,
     ...(testing_account_id !== undefined

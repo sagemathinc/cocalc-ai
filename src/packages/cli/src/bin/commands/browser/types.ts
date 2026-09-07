@@ -296,6 +296,15 @@ export type BrowserWithContext = (
 ) => Promise<void>;
 
 export type BrowserCommandDeps = {
+  createTestingContext?: (opts: {
+    api: string;
+    account_id: string;
+    remember_me: string;
+  }) => Promise<{
+    ctx: BrowserCommandContext;
+    profile: string;
+    close: () => void;
+  }>;
   withContext: BrowserWithContext;
   authConfigPath: (env?: NodeJS.ProcessEnv) => string;
   loadAuthConfig: (path?: string) => AuthConfig;

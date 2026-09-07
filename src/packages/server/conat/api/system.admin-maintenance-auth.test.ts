@@ -505,6 +505,43 @@ describe("admin maintenance dangerous-session auth", () => {
     expect(createRememberMeCookieMock).toHaveBeenCalledWith(ACCOUNT_ID, 3600);
   });
 
+  it("admin delegation authenticates the actor but mints only the designated subject cookie", async () => {
+    const { issueBrowserSignInCookie } = await import("./system");
+    const opts = {
+      account_id: ACCOUNT_ID,
+      testing_account_id: SUBJECT_ACCOUNT_ID,
+      session_hash: "admin-session",
+    };
+    isAdminMock.mockResolvedValueOnce(false);
+    await expect(issueBrowserSignInCookie(opts)).rejects.toThrow(
+      "administrator",
+    );
+    await expect(issueBrowserSignInCookie(opts)).rejects.toThrow("fresh auth");
+    expect(createRememberMeCookieMock).not.toHaveBeenCalled();
+    requireDangerousSessionAuthMock.mockResolvedValueOnce({});
+    await expect(issueBrowserSignInCookie(opts)).resolves.toMatchObject({
+      account_id: SUBJECT_ACCOUNT_ID,
+      testing_account: true,
+    });
+    expect(testingAccountMock).toHaveBeenCalledWith(
+      SUBJECT_ACCOUNT_ID,
+      SUBJECT_ACCOUNT_ID,
+    );
+    expect(createRememberMeCookieMock).toHaveBeenCalledWith(
+      SUBJECT_ACCOUNT_ID,
+      3600,
+    );
+    expect(recordNewAuthSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: SUBJECT_ACCOUNT_ID,
+        fresh_auth_until: null,
+        metadata: expect.objectContaining({
+          authorized_by_account_id: ACCOUNT_ID,
+        }),
+      }),
+    );
+  });
+
   it("allows listing account API keys without fresh auth", async () => {
     requireDangerousSessionAuthMock = jest.fn(async () => undefined);
     const { manageApiKeys } = await import("./system");
