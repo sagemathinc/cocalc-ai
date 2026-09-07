@@ -245,6 +245,18 @@ try {
     await expect(
       documentRegion.getByText("old version", { exact: true }),
     ).toBeVisible();
+    await expect(page.getByRole("status")).toHaveText("Identical versions");
+    await documentRegion.focus();
+    await page.keyboard.press("Space");
+    await expect
+      .poll(() => documentRegion.evaluate((node) => node.scrollTop))
+      .toBeGreaterThan(100);
+    await page.keyboard.press("Home");
+    await page.evaluate(() => window.changeDocumentRevision("different again"));
+    await expect(
+      documentRegion.getByText("different again", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("Identical versions")).toHaveCount(0);
     await page.setViewportSize({ width: 1200, height: 900 });
     await page.goto(`http://127.0.0.1:${server.address().port}/pool`);
     await expect(page.getByLabel("Worker pool status").first()).toHaveText(

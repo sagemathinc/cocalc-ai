@@ -607,10 +607,18 @@ filtering, cleanup, and invalid/unavailable storage. The real Chromium tree test
 collapses by keyboard, reloads, and expands by keyboard; it passes with
 `TREE_ONLY=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`.
 That mode skips the preceding activity/document/pool scenarios, not the tree or
-subsequent preview checks. The full browser suite currently fails intermittently
-at the equal-document `old version` visibility assertion after layout/reflow;
-investigate this before declaring TimeTravel acceptance complete. Semantic diff
-scroll restoration remains pending.
+subsequent preview checks. Semantic diff scroll restoration remains pending.
+
+Equal-document rendering fix (2026-09-07): the full browser suite exposed a
+genuine empty viewport when changing a comparison to identical contents. DOM
+inspection showed no rendered code and only a 44-pixel item at scrollTop zero;
+this was not merely a locator or offscreen-line failure. Identical full-document
+sources now use Pierre's plain-file item with an explicit "Identical versions"
+status, preserving the complete historical text without inventing changes.
+The full standalone browser suite passes, including scrolling the equal file
+and transitioning back to a changed diff, plus the existing theme/layout and
+tree tests. This does not replace the outstanding live source-specific
+TimeTravel restore checks.
 
 | Investigation                           | Evidence required before the affected feature replaces existing behavior                                                                                                                                                                                                                                                                                                                   |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

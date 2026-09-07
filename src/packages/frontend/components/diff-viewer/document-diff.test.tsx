@@ -26,8 +26,9 @@ jest.mock(
         data-version={items[0].version}
         data-theme={options.themeType}
         data-split={options.diffStyle}
+        data-kind={items[0].type}
       >
-        {items[0].fileDiff.contents}
+        {(items[0].fileDiff ?? items[0].file).contents}
       </div>
     ),
   }),
@@ -87,4 +88,17 @@ test("oversized sources fail explicitly without invoking the parser or truncatin
   expect(
     screen.getByRole("region", { name: "Selected versions" }),
   ).toHaveTextContent("new");
+});
+
+test("equal versions use a file item and can transition back to a diff", () => {
+  const { rerender } = render(<DocumentDiff {...props} />);
+  rerender(<DocumentDiff {...props} after="old" />);
+  const viewport = screen.getByRole("region", { name: "Selected versions" });
+  expect(viewport).toHaveAttribute("data-kind", "file");
+  expect(viewport).toHaveTextContent("old");
+  expect(screen.getByRole("status")).toHaveTextContent("Identical versions");
+  rerender(<DocumentDiff {...props} after="new again" />);
+  expect(viewport).toHaveAttribute("data-kind", "diff");
+  expect(viewport).toHaveTextContent("new again");
+  expect(screen.queryByRole("status")).toBeNull();
 });

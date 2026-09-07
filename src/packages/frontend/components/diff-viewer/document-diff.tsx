@@ -107,12 +107,24 @@ function DocumentDiffContent({
   if (generation.current.parsed !== parsed) {
     generation.current = { parsed, version: generation.current.version + 1 };
   }
-  const items: CodeViewItem<undefined>[] = parsed.files.map((fileDiff) => ({
-    id: JSON.stringify([fileDiff.prevName, fileDiff.name]),
-    type: "diff",
-    fileDiff,
-    version: generation.current.version,
-  }));
+  const identical =
+    source.kind === "documents" && source.before === source.after;
+  const items: CodeViewItem<undefined>[] =
+    identical && !parsed.error
+      ? [
+          {
+            id: JSON.stringify([source.path, "identical"]),
+            type: "file",
+            file: { name: source.path, contents: source.after },
+            version: generation.current.version,
+          },
+        ]
+      : parsed.files.map((fileDiff) => ({
+          id: JSON.stringify([fileDiff.prevName, fileDiff.name]),
+          type: "diff",
+          fileDiff,
+          version: generation.current.version,
+        }));
   useEffect(() => {
     const node = viewport.current;
     if (!node) return;
@@ -177,6 +189,9 @@ function DocumentDiffContent({
           Wrap lines
         </label>
       </div>
+      {identical && !parsed.error && (
+        <div role="status">Identical versions</div>
+      )}
       {parsed.error ? (
         <Alert
           type="error"
