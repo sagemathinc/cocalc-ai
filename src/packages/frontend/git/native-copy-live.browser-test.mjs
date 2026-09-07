@@ -1,5 +1,5 @@
 // Native mouse selection and Ctrl+C in the real drawer, across virtual windows.
-// Diagnostic probe: not yet a passed acceptance test on the forwarded browser.
+// Requires a signed-in CDP browser; uses an isolated tab.
 // Overwrite the clipboard with a test marker before reading copied output.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -68,7 +68,8 @@ try {
             }
             if (text.textContent.length < 24) continue;
             const range = document.createRange();
-            range.selectNodeContents(text);
+            range.setStart(text, 2);
+            range.setEnd(text, 20);
             if (range.getClientRects().length !== 1) continue;
             const rect = range.getBoundingClientRect();
             if (rect.top < bounds.top + 100 || rect.bottom > bounds.bottom - 20)
@@ -97,6 +98,7 @@ try {
             )
               continue;
             return {
+              probe: ((window.__copyNode = text), true),
               start,
               end,
               expected: text.textContent.slice(2, 20),
@@ -119,42 +121,15 @@ try {
       navigator.clipboard.writeText("CoCalc native-copy acceptance marker"),
     );
     await page.mouse.down();
+    assert(
+      await page.evaluate(() => window.__copyNode.isConnected),
+      "Source node was replaced on pointer-down",
+    );
     await page.mouse.move(coordinates.end.x, coordinates.end.y, { steps: 10 });
     await page.mouse.up();
-    console.log(
-      await viewport.evaluate((node) => {
-        const a = [];
-        for (let p = node; p; p = p.parentElement)
-          a.push({
-            tag: p.tagName,
-            cls: p.className,
-            select: getComputedStyle(p).userSelect,
-          });
-        return a;
-      }),
-    );
-    console.log(
-      await page.evaluate(({ start }) => {
-        let el = document.elementFromPoint(start.x, start.y);
-        const chain = [];
-        while (el) {
-          chain.push({
-            tag: el.tagName,
-            select: getComputedStyle(el).userSelect,
-            text: el.textContent?.slice(0, 60),
-          });
-          const deep = el.shadowRoot?.elementFromPoint(start.x, start.y);
-          if (!deep || deep === el) break;
-          el = deep;
-        }
-        const s = window.getSelection();
-        return {
-          chain,
-          selection: s?.toString(),
-          anchor: s?.anchorNode?.nodeName,
-          offset: s?.anchorOffset,
-        };
-      }, coordinates),
+    assert(
+      await page.evaluate(() => window.__copyNode.isConnected),
+      "Source node was replaced during selection",
     );
     await expect
       .poll(() => page.evaluate(() => window.getSelection()?.toString()))

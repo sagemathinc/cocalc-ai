@@ -51,6 +51,20 @@ would not be evidence that these checks pass.
 
 ### Restored live-session checks
 
+Native-selection fix: pointer diagnostics reproduced replacement of the selected
+text node during interaction. The Pierre React wrapper compares options and
+forces a render when they change; our fresh onPostRender callback and metrics
+object changed on incidental renders. Memoizing the options by their actual
+inputs preserves the DOM during selection while still updating font, layout,
+theme and search. A focused test checks identity across selection and parent
+rerenders and invalidation for font changes. The real native mouse/Ctrl+C test
+then passed at four scroll positions on Chromium 149, with the original source
+node retained and exact expected substring copied. Eight panel tests, typecheck,
+lint and the development build pass. The probe measures the selected substring's
+rectangle so wrapped full lines do not incorrectly disqualify visible text.
+This closes the reproduced native partial-selection failure; it does not claim
+unloaded lines can be selected across a virtualization gap.
+
 Local Chromium native-copy follow-up: the probe now explicitly sets its page
 viewport (BrowserContext.newPage does not accept viewport options), scrolls the
 diff region onto the screen and dismisses the development stale-build banner

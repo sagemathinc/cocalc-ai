@@ -82,7 +82,21 @@ test("does not restore a persisted line into mutable working changes", () => {
 });
 
 let mockTheme = "light";
+test("selection and incidental renders preserve Pierre option identity", async () => {
+  const user = userEvent.setup();
+  const p = props();
+  const view = render(<PierreReviewPanel {...p} />);
+  const original = mockOptions;
+  await user.click(screen.getByRole("button", { name: "Select new line" }));
+  expect(mockOptions).toBe(original);
+  view.rerender(<PierreReviewPanel {...p} />);
+  expect(mockOptions).toBe(original);
+  view.rerender(<PierreReviewPanel {...p} fontSize={p.fontSize + 1} />);
+  expect(mockOptions).not.toBe(original);
+});
+
 let mockRecycle = false;
+let mockOptions: unknown;
 const mockScrollTo = jest.fn();
 jest.mock("@cocalc/frontend/appearance/use-appearance", () => ({
   useAppearance: () => ({ resolved: mockTheme }),
@@ -119,6 +133,7 @@ jest.mock(
     const React = require("react");
     return {
       CodeView: React.forwardRef((props: any, ref: any) => {
+        mockOptions = props.options;
         React.useImperativeHandle(ref, () => ({ scrollTo: mockScrollTo }));
         return (
           <div

@@ -7,7 +7,11 @@ import { Alert, Button } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CodeView } from "@pierre/diffs/react";
 import type { CodeViewHandle } from "@pierre/diffs/react";
-import type { CodeViewItem, CodeViewLineSelection } from "@pierre/diffs";
+import type {
+  CodeViewItem,
+  CodeViewLineSelection,
+  CodeViewOptions,
+} from "@pierre/diffs";
 import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import {
   diffFontStyle,
@@ -104,6 +108,31 @@ function ReviewContent(props: ReviewDiffPanelProps) {
   const searchLines = useMemo(
     () => pierreSearchLines(locations, props.diffFindMatchedLineIndexes),
     [locations, props.diffFindMatchedLineIndexes],
+  );
+  // Pierre forces a DOM render when option identities change. In particular,
+  // fresh callbacks/metrics on incidental React renders destroy native selection.
+  const options = useMemo<CodeViewOptions<string, undefined>>(
+    () => ({
+      unsafeCSS: PIERRE_SEARCH_CSS,
+      onPostRender: (node, _instance, phase, context) => {
+        highlightPierreSearch(
+          node,
+          phase === "unmount" ? undefined : searchLines.get(context.item.id),
+        );
+      },
+      diffStyle: split ? "split" : "unified",
+      lineDiffType: "word",
+      enableLineSelection: true,
+      stickyHeaders: true,
+      itemMetrics: {
+        diffHeaderHeight: reviewFileHeaderHeight(props.fontSize),
+        lineHeight: diffLineHeight(props.fontSize),
+      },
+      theme: { light: "github-light", dark: "github-dark" },
+      themeType: resolved,
+      overflow: wrap ? "wrap" : "scroll",
+    }),
+    [searchLines, split, wrap, resolved, props.fontSize],
   );
   useEffect(() => {
     for (const host of viewport.current?.querySelectorAll<HTMLElement>(
@@ -379,28 +408,7 @@ function ReviewContent(props: ReviewDiffPanelProps) {
         items={items}
         selectedLines={selection}
         onSelectedLinesChange={setSelection}
-        options={{
-          unsafeCSS: PIERRE_SEARCH_CSS,
-          onPostRender: (node, _instance, phase, context) => {
-            highlightPierreSearch(
-              node,
-              phase === "unmount"
-                ? undefined
-                : searchLines.get(context.item.id),
-            );
-          },
-          diffStyle: split ? "split" : "unified",
-          lineDiffType: "word",
-          enableLineSelection: true,
-          stickyHeaders: true,
-          itemMetrics: {
-            diffHeaderHeight: reviewFileHeaderHeight(props.fontSize),
-            lineHeight: diffLineHeight(props.fontSize),
-          },
-          theme: { light: "github-light", dark: "github-dark" },
-          themeType: resolved,
-          overflow: wrap ? "wrap" : "scroll",
-        }}
+        options={options}
         style={{
           height: "60vh",
           minHeight: 200,
