@@ -274,6 +274,41 @@ try {
       slate.insertText('Pierre live retained draft');
     })()`);
     await evaluate(`void (window.__reviewEditor = ${editor})`);
+    if (process.env.REVIEW_FOCUS) {
+      await click(
+        `Array.from(Array.from(document.querySelectorAll('.ant-drawer-body label')).find(e=>e.textContent.trim()==='Reviewed').parentElement.parentElement.querySelectorAll('button')).find(e=>e.textContent.trim()==='Edit')`,
+      );
+      await until(`!!${button("Save note")}`);
+      await evaluate(`(()=>{
+        const element=${button("Save note")}.parentElement.parentElement.querySelector('[contenteditable="true"]');
+        if(!element || element===window.__reviewEditor)throw Error('Separate note editor missing');
+        window.__reviewNoteEditor=element;
+        let fiber=element[Object.keys(element).find(key=>key.startsWith('__reactFiber'))];
+        while(fiber && !fiber.memoizedProps?.editor?.insertText)fiber=fiber.return;
+        const slate=window.__reviewNoteSlate=fiber.memoizedProps.editor;
+        element.focus();
+        slate.select({anchor:{path:[0,0],offset:0},focus:{path:[0,0],offset:0}});
+      })()`);
+      await send("Input.insertText", {
+        text: "Separate private keyboard draft",
+      });
+      await until(
+        `window.__reviewNoteEditor.textContent.includes('Separate private keyboard draft')`,
+      );
+      await evaluate(
+        `window.__reviewEditor.focus();window.__reviewSlate.select({anchor:{path:[0,0],offset:0},focus:{path:[0,0],offset:0}})`,
+      );
+      await send("Input.insertText", { text: "Inline keyboard input: " });
+      await until(
+        `window.__reviewEditor.textContent.includes('Inline keyboard input: ')`,
+      );
+      assert.equal(
+        await evaluate(
+          `window.__reviewNoteEditor.textContent.includes('Inline keyboard input: ')`,
+        ),
+        false,
+      );
+    }
     if (process.env.REVIEW_IMAGE) {
       if (uploadDelay)
         await send("Fetch.enable", {
@@ -354,6 +389,36 @@ try {
       assert.deepEqual(undo, { changed: true, restored: true });
       await until(
         `Array.from(${editor}.querySelectorAll('img')).some(img=>img.src===window.__reviewImageSrc && img.complete && img.naturalWidth===64)`,
+      );
+    }
+    if (process.env.REVIEW_FOCUS) {
+      assert.equal(
+        await evaluate(
+          `window.__reviewNoteEditor.isConnected && window.__reviewEditor.isConnected`,
+        ),
+        true,
+      );
+      assert.match(
+        await evaluate(`window.__reviewNoteEditor.textContent`),
+        /Separate private keyboard draft/,
+      );
+      await evaluate(`window.__reviewNoteEditor.focus()`);
+      await send("Input.insertText", { text: " after scroll" });
+      await until(
+        `window.__reviewNoteEditor.textContent.includes('after scroll')`,
+      );
+      assert.equal(
+        await evaluate(
+          `window.__reviewEditor.textContent.includes('after scroll')`,
+        ),
+        false,
+      );
+      await click(
+        `Array.from(${button("Save note")}.parentElement.querySelectorAll('button')).find(e=>e.textContent.trim()==='Cancel')`,
+      );
+      await until(`!${button("Save note")}`);
+      console.log(
+        "PASS: simultaneous real Slate note/inline editors retained independent content through scroll/themes and native text input after focus transfer.",
       );
     }
     await click(

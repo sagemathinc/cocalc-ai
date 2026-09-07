@@ -4,6 +4,16 @@ Status: proceed with Pierre integration, following maintainer acceptance of the
 experiment on September 6, 2026. Production replacement remains gated on product
 parity and data-safety checks below. Definition lookup remains future work.
 
+Maintainer decision (September 7, 2026): after the compatibility checks pass,
+completely replace Classic with Pierre. Remove the Classic rendering path,
+renderer selector and experimental preview; do not retain a rollback option or
+release window. Preserve all reusable review logic and rich non-diff viewers.
+This supersedes earlier chronological notes about a default/rollback period.
+The maintainer describes this as effectively greenfield developer functionality,
+with little existing adoption. Do not build a staged dual-renderer product for
+an assumed installed base. Prioritize a coherent worktree-aware review tool,
+while retaining correctness and personal review-data preservation checks.
+
 ## Current completion audit (2026-09-07)
 
 The dated progress notes below are chronological; an old "pending" statement is
@@ -18,7 +28,7 @@ not a current checklist. The objective is not complete. Current release work:
 | TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Both rename sides and deleted-file viewing passed in Classic/Pierre. |
 | Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live UI submission created a separate thread with the selected worktree in both persisted thread config and Codex activity config. Execution stopped at the connected account's usage limit; actual command execution and originating-context links still need end-to-end confirmation. |
 | Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor acceptance remains; investigate intermittent native-copy failure if reproduced. Measured main-thread heap excludes worker heaps. |
-| Default and cleanup | Classic is still the default and rollback path. Do not delete it or the experiment until the compatibility gates pass and maintainer testing supports the switch. |
+| Default and cleanup | Classic remains in the current code only while parity is verified. The approved final state is Pierre only: delete Classic rendering, its selector and the experimental preview once checks pass. No rollback window. |
 
 Browser access: local signed-in Chromium now exposes CDP on port 9222
 (Chrome 149.0.7827.196), replacing the laptop forward. Earlier live checks
@@ -45,11 +55,18 @@ the actual application, not the service/Slate-stubbed harness:
    scrolling a long diff. Investigate any recurrence of the empty clipboard
    with the recorded copy-event selection diagnostics.
 
-Only after these checks and maintainer acceptance should the default change and
-rollback-window decision proceed. The current lack of a signed-in test session
-would not be evidence that these checks pass.
+Only after these checks should the approved complete replacement proceed.
+Missing live test evidence does not establish that these checks pass.
 
 ### Restored live-session checks
+
+Simultaneous-editor/focus check passed with `REVIEW_FOCUS=1` in the real Slate
+smoke script: private-note and inline-comment editors were both mounted, native
+CDP text input went only to the focused editor, and independent content survived
+scrolling and Light/Dark changes. After returning, focus transferred back to
+the note and further input did not alter the inline comment. Both edits were
+cancelled without saving. The first probe selected an unrelated Edit button;
+scoping it to the private review card fixed the harness ambiguity.
 
 Live reconnect recovery passed with `REVIEW_RECONNECT=1` in
 `inline-concurrency-live.browser-test.mjs` on disposable commit
@@ -1471,7 +1488,7 @@ selection with a whole-file or whole-hunk copy.
 | 4. Range and merge review          | Add explicit base/head/parent UI and versioned comparison records with non-destructive legacy handling. Test divergent, merged, squash/rebase, root-commit, empty, and force-moved-ref cases.                                                                                                        |
 | 5. Agent context                   | Carry validated project/repository/worktree/target through links, feedback, and new turns; reject mismatched existing-thread mutation routing. Test busy threads and a worktree disappearing or changing branch between selection and submission.                                                    |
 | 6. Other diff surfaces             | Reuse the adapter for TimeTravel text comparisons, preserving rich historical viewers and restore semantics. Then add the proven sparse-hunk activity adapter with bounded streaming updates. Do not change inline Slate activity Markdown rendering.                                                |
-| 7. Default and cleanup             | After maintainer testing, make Pierre default while retaining a rollback selector for an agreed release window. Remove legacy rendering and the experimental modal only after the compatibility matrix passes; retain reusable review logic and non-diff viewers.                                    |
+| 7. Default and cleanup             | After the compatibility matrix passes, make Pierre the only renderer. Delete Classic rendering, its selector and the experimental modal, retaining reusable review logic and rich non-diff viewers. The maintainer explicitly rejected a rollback window on September 7. |
 
 For every change-set run package-local types/tests and frontend lint where
 applicable. For each interactive milestone run the real-renderer browser suite
