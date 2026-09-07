@@ -3,6 +3,9 @@ import { createAppearanceStore } from "@cocalc/util/appearance-store";
 import { saveAccountAppearance } from "@cocalc/conat/hub/account-appearance";
 
 let mockStore: ReturnType<typeof createAppearanceStore>;
+jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
+  appBasePath: "/prefix",
+}));
 jest.mock("@cocalc/util/appearance-browser", () => ({
   getBrowserAppearanceStore: () => mockStore,
 }));
@@ -28,6 +31,7 @@ test("existing bootstrap hydrates appearance without a theme request or write", 
   expect(saveAccountAppearance).toHaveBeenCalledWith(
     { account_id: "alice", home_bay_url: "https://bay-2.example.com" },
     "system",
+    "/prefix",
   );
 });
 

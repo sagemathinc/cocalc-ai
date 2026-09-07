@@ -4,6 +4,7 @@
  */
 
 import type { AuthBootstrapResponse } from "@cocalc/frontend/auth/api";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getBrowserAppearanceStore } from "@cocalc/util/appearance-browser";
 import { parseAppearancePreference } from "@cocalc/util/appearance";
 
@@ -21,7 +22,11 @@ export function receiveAppearanceBootstrap(bootstrap: AuthBootstrapResponse) {
       async (preference) => {
         const { saveAccountAppearance } =
           await import("@cocalc/conat/hub/account-appearance");
-        await saveAccountAppearance({ account_id, home_bay_url }, preference);
+        await saveAccountAppearance(
+          { account_id, home_bay_url },
+          preference,
+          appBasePath,
+        );
       },
     );
   }

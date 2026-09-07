@@ -63,6 +63,22 @@ test("failed authentication closes the temporary connection without writing", as
   expect(mockClose).toHaveBeenCalledTimes(1);
 });
 
+test.each(["/prefix", "/prefix/", "/nested/prefix"])(
+  "includes application base path %s in the home-bay address",
+  async (basePath) => {
+    await saveAccountAppearance(
+      { account_id: "alice", home_bay_url: "https://bay-2.example.com/" },
+      "dark",
+      basePath,
+    );
+    expect(mockConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: `https://bay-2.example.com${basePath.replace(/\/$/, "")}`,
+      }),
+    );
+  },
+);
+
 test("a failed save is not reported as success", async () => {
   mockCall.mockResolvedValueOnce({ error: "failed" });
   await expect(

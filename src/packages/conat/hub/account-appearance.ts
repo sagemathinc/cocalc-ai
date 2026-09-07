@@ -16,12 +16,17 @@ import callHub from "./call-hub";
 export async function saveAccountAppearance(
   { account_id, home_bay_url }: { account_id: string; home_bay_url: string },
   preference: AppearancePreference,
+  appBasePath = "/",
 ): Promise<void> {
   if (!account_id || !home_bay_url || !parseAppearancePreference(preference)) {
     throw Error("Invalid account appearance request");
   }
   const client = connect({
-    address: home_bay_url,
+    address:
+      `${home_bay_url.replace(/\/+$/, "")}/${appBasePath.replace(/^\/+|\/+$/g, "")}`.replace(
+        /\/+$/,
+        "",
+      ),
     inboxPrefix: inboxPrefix({ account_id }),
     forceNew: true,
     noCache: true,
