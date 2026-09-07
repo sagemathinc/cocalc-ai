@@ -1477,10 +1477,18 @@ describe("knitr frame-type TimeTravel", () => {
       expect(getNode().get("path")).toBe(source);
       actions.set_frame_type("frame", "cm");
       expect(getNode().get("type")).toBe("cm");
+      expect(getNode().get("path")).toBe(source);
       actions.set_frame_type("frame", "time_travel");
       expect(getNode().get("path")).toBe(source);
     },
   );
+
+  it("leaves an existing Code subfile selected when choosing Code again", () => {
+    const { actions, getNode } = createActions("/project/paper.rnw", true);
+    actions.set_frame_tree({ path: "/project/included.tex" });
+    actions.set_frame_type("frame", "cm");
+    expect(getNode().get("path")).toBe("/project/included.tex");
+  });
 
   it("keeps ordinary LaTeX history on the tex source", () => {
     const { actions, getNode } = createActions("/project/paper.tex", false);

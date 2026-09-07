@@ -1654,9 +1654,11 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   set_frame_type(id: string, type: string): void {
+    const node = this._get_frame_node(id);
+    if (node == null || node.get("type") === type) return;
     super.set_frame_type(id, type);
-    if (type === "time_travel" && this.knitr) {
-      // Use the source .rnw/.rtex path for time travel frames.
+    if ((type === "time_travel" || type === "cm") && this.knitr) {
+      // Both history and Code must use the authored source, not generated TeX.
       this.set_frame_tree({ id, path: this.filename_knitr });
     }
   }
