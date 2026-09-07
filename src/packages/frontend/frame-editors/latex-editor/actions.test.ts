@@ -1,6 +1,7 @@
 import { fromJS, List, Map } from "immutable";
 import * as CodeMirror from "codemirror";
 import { Actions } from "./actions";
+import * as synctex from "./synctex";
 import { EventEmitter } from "events";
 import { ChatMarkerManager } from "./chat-marker-manager";
 
@@ -1445,5 +1446,71 @@ describe("LaTeX fatal build error toast", () => {
     );
     actions.check_for_fatal_error();
     expect(actions.set_error).not.toHaveBeenCalled();
+  });
+});
+
+describe("Synctex PDF-to-source navigation", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function createActions() {
+    const actions = createActionsFixture();
+    actions.path = "/project/main.tex";
+    actions.project_id = "project-1";
+    actions.get_output_directory = () => undefined;
+    actions.is_auto_sync_in_progress = () => false;
+    actions.set_auto_sync_in_progress = jest.fn();
+    actions.set_status = jest.fn();
+    actions.set_error = jest.fn();
+    actions.goto_line_in_file = jest.fn(async () => undefined);
+    return actions;
+  }
+
+  it.each(["tex", "TEX", "latex", "sty", "cls", "Rnw", "rtex"])(
+    "navigates to a %s source file",
+    async (ext) => {
+      const input = `/project/chapter.${ext}`;
+      jest
+        .spyOn(synctex, "pdf_to_tex")
+        .mockResolvedValue({ Input: input, Line: 42 });
+      const actions = createActions();
+      await actions.synctex_pdf_to_tex(1, 10, 20);
+      expect(actions.goto_line_in_file).toHaveBeenCalledWith(42, input);
+      expect(actions.set_status).toHaveBeenLastCalledWith("");
+      expect(actions.set_error).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["figure.pdf", "image.png", "main.aux", "main.log", "README"])(
+    "ignores %s and releases automatic sync for the next request",
+    async (file) => {
+      const lookup = jest.spyOn(synctex, "pdf_to_tex");
+      lookup.mockResolvedValueOnce({ Input: `/project/${file}`, Line: 1 });
+      const actions = createActions();
+      await actions.synctex_pdf_to_tex(1, 10, 20);
+      expect(actions.goto_line_in_file).not.toHaveBeenCalled();
+      expect(actions.set_auto_sync_in_progress.mock.calls).toEqual([
+        [true],
+        [false],
+      ]);
+      expect(actions.set_status).toHaveBeenLastCalledWith("");
+      expect(actions.set_error).not.toHaveBeenCalled();
+      lookup.mockResolvedValueOnce({ Input: "/project/main.tex", Line: 5 });
+      await actions.synctex_pdf_to_tex(1, 10, 20);
+      expect(actions.goto_line_in_file).toHaveBeenCalledWith(
+        5,
+        "/project/main.tex",
+      );
+    },
+  );
+
+  it("ignores non-source manual targets without changing the automatic sync flag", async () => {
+    jest
+      .spyOn(synctex, "pdf_to_tex")
+      .mockResolvedValue({ Input: "/project/image.pdf", Line: 1 });
+    const actions = createActions();
+    await actions.synctex_pdf_to_tex(1, 10, 20, true);
+    expect(actions.goto_line_in_file).not.toHaveBeenCalled();
+    expect(actions.set_auto_sync_in_progress).not.toHaveBeenCalled();
+    expect(actions.set_status).toHaveBeenLastCalledWith("");
   });
 });

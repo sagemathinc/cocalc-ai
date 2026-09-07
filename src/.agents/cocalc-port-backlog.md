@@ -3,6 +3,8 @@
 **This is the working notes file for the cocalc→cocalc-ai porting effort.**
 Keep all triage decisions, findings and staging plans here. Started 2026-08-27,
 re-verified against `cocalc-ai/main` on **2026-08-28**.
+Small-fix backlog rechecked **2026-09-07** against `a447e89fab`; other tiers
+still reflect the August review unless explicitly updated below.
 
 Label: <https://github.com/sagemathinc/cocalc/pulls?q=is%3Apr+label%3APR-TODO-cocalc2>
 
@@ -110,45 +112,48 @@ still hold. Only line numbers drifted (noted inline).
 2. **#8815** — wanted, deferred, to be done in stages. See §4.
 3. **#8669** — priority 0, keep referenced only (one owner per project today). See Tier 7.
 
-The cheap alternative to starting #8636, if a short slot is what's available: the
-**Tier 1 pair** (#8724/#8733 + #8698) is still untouched and is genuinely a
-two-file change plus a test — the highest value-per-line left on the list.
+**2026-09-07 selection:** port the remaining Synctex frontend changes from
+**#8701 + #8705** in `synctex-fixes-20260907`. The small-fix audit is below;
+#8636 remains the next larger feature previously selected.
 
 **Keep on the list, but parked** (Tier 7): **#8888** super low priority;
 **#8663** low priority and the _approach_ is unresolved (overlaps #8815's contrast
 parameter); **#8686** blocked on a design call, since both trees reworked the same
 student list after the fork.
 
-Opportunistic, whenever convenient: the Tier 1 two-liners (#8724/#8733 sanitize,
-#8698 get-random-values) and the Tier 2 small-bug batch.
+Opportunistic, whenever convenient: the remaining Tier 1 and Tier 2 items below.
 
 ---
 
 ## 2. Recommended next actions (priority order)
 
-### Tier 1 — do now: small, unambiguous, high value
+### Tier 1 — small-fix audit, 2026-09-07
 
-| PR                | What                                                                                                        | Evidence it's missing                                                                                                                                                                                                                                                                                                                                                           |
-| ----------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **#8724 + #8733** | `sanitize_html_attributes` XSS hardening (case-folding, whitespace/control-char normalization, `vbscript:`) | `util/misc.ts:2466` (was `:2454`) is the literal pre-fix version; still reachable via `frontend/misc/sanitize.ts:46`. Two tiny diffs + a 95-line test.                                                                                                                                                                                                                          |
-| **#8698**         | Drop `get-random-values` → `globalThis.crypto.getRandomValues`                                              | Still a real dep: `util/package.json:57`, `util/misc.ts:85`, call at `:833` in `secure_random_token`. Installed as `get-random-values@1.2.2`, dragging in `min-document@2.19.2`. Safe here: cocalc-ai pins `"node": ">=22"`; mobile's `react-native-get-random-values` is a _different_ package polyfilling the same global. Upstream's README/node-version hunk is not needed. |
+- **#8724 + #8733 — DONE on main.** The deployed sanitizer hotfix landed via
+  `2fd8ed567c` (including `d6a5b34075`). The old missing-fix verdict is obsolete.
+- **#8698 — implemented on a branch, NOT on main.** The native-crypto replacement
+  exists as `0d5d58bb73` on `cocalc-ai/hotfix/html-sanitizer-20260828` (with earlier
+  equivalent commits). Current main still imports and calls `get-random-values`
+  in `util/misc.ts` and declares it in `util/package.json`. Recover the existing
+  change separately; do not count it as landed or reimplement it in the Synctex PR.
+- **#8697 project half — still open.** `project/exec_shell_code.ts:31` calls
+  `handleExecShellCode(mesg)` without `await`. This is TypeScript project-service
+  code, not the replaced Python cocalc-api package. Its Next route half remains moot.
 
-_(#8697's project half — the missing `await handleExecShellCode(mesg)` in
-`project/exec_shell_code.ts:31` — is also Tier 1, but the label is already
-removed. Don't lose it.)_
+### Tier 2 — small-fix audit, 2026-09-07
 
-### Tier 2 — small bug batch, one PR
+| PR    | What                                                  | Current verdict                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #8692 | Collaborator cursor crash                             | **Parked / partially addressed.** See the dated cursor finding below.                                                                                                                                                                                                                                                                                                                                                                               |
+| #8701 | Synctex jumps into non-source files                   | **Implemented in `synctex-fixes-20260907`, pending merge.** Permit tex/latex/sty/cls/rnw/rtex (case-insensitive); ignore other targets and release the automatic-sync flag. The sync-doc half is **superseded**: `syncstring_table_get_one()` now delegates to `getDocumentMetadataState()`, which handles absent legacy tables and uses patchflow metadata or an empty Map. Porting the old early-return guard would skip valid metadata handling. |
+| #8705 | Synctex numeric RegExp recompiled per call            | **Implemented in `synctex-fixes-20260907`, pending merge.** Compile once at module scope; retain parsing behavior.                                                                                                                                                                                                                                                                                                                                  |
+| #8700 | AI-history event-emitter leak                         | **Still open.** `frame-editors/ai/use-ai-history.ts` still registers a per-hook `listenerRef`; upstream uses a shared listener and subscribers.                                                                                                                                                                                                                                                                                                     |
+| #8693 | knitr TimeTravel frame path                           | **Still open.** LaTeX actions still lack the `set_frame_type` override that assigns `filename_knitr` when switching a frame to TimeTravel.                                                                                                                                                                                                                                                                                                          |
+| #8655 | Starred-projects bar unnecessary remeasurement        | **Still open.** `projects/projects-starred.tsx` resets measurement on `[starredProjects]`, not a signature of layout-affecting fields.                                                                                                                                                                                                                                                                                                              |
+| #8714 | Peer-grading parsing runs serially                    | **Still open.** `course/assignments/actions.ts` loops over `peer_student_ids` serially while reading grades. Other parallel copy loops do not implement this fix.                                                                                                                                                                                                                                                                                   |
+| #8723 | Email-address field retains edited value after Cancel | **Still open.** `account/settings/email-address-setting.tsx` clears state/password but not `email_address`; the view still renders that local value. Reopening resets it, but Cancel itself leaves the incorrect displayed address. Port only the state fix.                                                                                                                                                                                        |
 
-| PR    | What                                                                                   | State in cocalc-ai                                                                                                                                                                                                                                   |
-| ----- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #8692 | Crash when collaborator avatar has no cursor `locs`                                    | No null guard in `code-editor/actions.ts`; `jupyter-editor/actions.ts:790 gotoUser` is the old `.toJS()` form.                                                                                                                                       |
-| #8701 | Synctex jumps into non-source files; `sync-doc` throwing on missing `syncstring_table` | Neither `SYNCTEX_SOURCE_EXTS` nor the guards exist.                                                                                                                                                                                                  |
-| #8700 | LLM history event-emitter leak                                                         | Upstream's `use-llm-history.ts` is `frame-editors/ai/use-ai-history.ts` here, still the **pre-fix per-hook `listenerRef`** shape (`:139` on / `:151` off). Upstream replaced it with one shared listener + subscriber set. Real leak, still present. |
-| #8693 | knitr time-travel frame path                                                           | No `set_frame_type` override in latex actions.                                                                                                                                                                                                       |
-| #8705 | Synctex RegExp recompiled per call                                                     | `synctex.ts:119` still inside `parse_synctex_output`. Trivial.                                                                                                                                                                                       |
-| #8655 | Starred-projects bar re-measures on every `project_map` change                         | `projects-starred.tsx:214` still depends on `[starredProjects]`.                                                                                                                                                                                     |
-| #8714 | Peer grading serial loop                                                               | `course/assignments/actions.ts:1931` still a `for` loop.                                                                                                                                                                                             |
-| #8723 | Email-address field keeps edited value after Cancel                                    | `email-address-setting.tsx:50 cancel_editing()` does **not** reset `email_address` — the exact bug. (cocalc-ai has diverged: fresh-auth `runSecurityAction`, `Alert`, still `Card` not `Modal` — port the state fix only, not the Modal rework.)     |
+This audit did not refresh GitHub label counts or the larger-feature tiers.
 
 ### Tier 3 — partially ported, needs scoping
 
@@ -243,6 +248,15 @@ getRecent / cancel`), landed in commit `035fc76478` _"document-build: integrate
   **Port these two together, #8754 last** (it supersedes/extends #8715).
 
 ### Tier 7 — larger features, each needs a yes/no
+
+- **#8692 — PARKED / PARTIAL (2026-09-07 independent review).** Avatar navigation
+  and the whiteboard missing-position crash were fixed in `7e9fd8287b`; Jupyter
+  `gotoUser` also guards absent positions. Remaining upstream defensive guards
+  are still missing in `frame-editors/base-editor/actions-base.ts:2301` and
+  `jupyter/cursor-manager.ts:48`, which call `info.get("locs").forEach(...)`
+  directly. Current SyncDoc cursor-map construction forwards `state.locs`
+  unchanged, so the new transport does not make these guards obsolete.
+  Reassess a targeted defensive port separately. No live crash reproduced.
 
 - **#8888** Jupyter versioned-kernel update awareness — **KEEP, super low priority**
   (Harald). Nothing in `frontend/jupyter/kernelspecs.ts` / `jupyter/util/misc.ts`;

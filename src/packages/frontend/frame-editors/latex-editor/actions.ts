@@ -113,6 +113,14 @@ import {
   snapshotParsedLog,
 } from "./document-build";
 
+const SYNCTEX_SOURCE_EXTS: ReadonlySet<string> = new Set([
+  "tex",
+  "latex",
+  "sty",
+  "cls",
+  ...KNITR_EXTS,
+]);
+
 interface LatexEditorState extends CodeEditorState {
   build_logs: BuildLogs;
   sync: string;
@@ -1292,7 +1300,18 @@ export class Actions extends BaseActions<LatexEditorState> {
       if (typeof info.Input != "string") {
         throw Error("unable to determine source file");
       }
-      await this.goto_line_in_file(line, info.Input);
+      const input = info.Input;
+      if (
+        !SYNCTEX_SOURCE_EXTS.has(
+          separate_file_extension(input).ext.toLowerCase(),
+        )
+      ) {
+        if (!manual) {
+          this.set_auto_sync_in_progress(false);
+        }
+        return;
+      }
+      await this.goto_line_in_file(line, input);
     } catch (err) {
       if (err.message.indexOf("ENOENT") != -1) {
         console.log("synctex_pdf_to_tex err:", err);
