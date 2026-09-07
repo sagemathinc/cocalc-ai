@@ -8,6 +8,8 @@ has not been made discoverable as part of this work.
 
 - User tested on iPhone and confirmed all reported layout/composer issues fixed.
 - User independently confirmed Upload files works on the phone.
+- User explicitly confirmed Stop and sending follow-ups while Codex is running
+  (Steer/Queue) work during normal iPhone use.
 - User confirmed on iPhone 17 Pro that an unsent draft survives rotation to
   landscape and back, then keyboard dismissal and reopening, with the header
   and Send button reachable throughout.
@@ -67,13 +69,23 @@ has not been made discoverable as part of this work.
   with Enter and exercises both close paths without sending or editing.
   The live check, 22 focused message tests, lint, and full build passed.
 
-## Remaining Acceptance Checks
+## Implementation Signoff
+
+The requested iPhone chat implementation is ready for review. The user has
+confirmed the reported usability fixes, attachment upload, rotation/keyboard
+draft continuity, and running-turn controls on the actual phone. Browser
+checks and regression tests above cover the responsive layout, retained
+controls, settings, formatting, focus modes, and desktop-sized transitions.
+This is implementation acceptance, not a claim of production deployment or
+exhaustive accessibility certification of the entire application.
+
+## Coverage Limits And Follow-ups
 
 - Broader overlay accessibility: the conversation, three primary panels, and
   Codex settings passed focused axe scans, not every nested menu, credentials
   form, or activity dialog.
-- Long-running Codex approval/stop/steer/queue interactions on the actual phone
-  need explicit end-to-end coverage beyond callback tests and ordinary usage.
+- Permission-approval prompts have not had a dedicated real-phone audit;
+  the user's running-turn confirmation covers Stop/Steer/Queue, not approvals.
 - iPad keyboard/split-view still needs explicit device coverage; desktop width
   emulation is not equivalent. The phone rotation/keyboard sequence above has
   been confirmed by the user, not by automated Safari testing.
