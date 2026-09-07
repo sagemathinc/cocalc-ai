@@ -246,6 +246,31 @@ tools, or a clean release record.
 Store deploy keys and access tokens using project secrets or SSH keys, not
 inside the repository.
 
+## Set up and commit from a Codex thread
+
+Open the Codex thread's menu and choose **Git browser**. Check the displayed
+repository path before using its actions. If the folder is not a repository,
+**Initialize Git Repo** creates one. **Ask Agent to Set Up Repo** asks the thread's
+agent to initialize it, choose a \`.gitignore\`, stage appropriate source files,
+make the first commit, and summarize inclusions and exclusions.
+
+In the commit selector, choose **HEAD** (**Uncommitted changes (git diff HEAD)**)
+to open **Commit changes**, then inspect **Uncommitted files**:
+
+1. **Commit** with a message runs \`git commit -a\` directly with that message.
+2. **Commit** with an empty message asks the agent to create the commit.
+3. **Commit with AI Summary** asks the agent to commit and write the message;
+   if you supplied text, the prompt requests that text as the first line.
+
+These actions include all tracked changes, not only the file currently shown.
+Untracked files are excluded. Use **Add** beside an untracked file when it should
+be included, or **Ignore** when it belongs in \`.gitignore\`; review the resulting
+file list before committing. Agent actions need an available Codex thread.
+
+After an agent request, inspect its response and the resulting commit in the
+Git browser. Sending the request is not proof that a commit succeeded. Review
+commits and use TimeTravel for file-level recovery as described below.
+
 ## Git and TimeTravel
 
 Git and TimeTravel solve different problems. Git is for intentional repository
