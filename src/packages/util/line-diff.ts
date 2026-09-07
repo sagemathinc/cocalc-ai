@@ -13,6 +13,9 @@ import { StringCharMapping } from "./misc";
 export type LineDiffOp = -1 | 0 | 1;
 
 export interface LineDiffResult {
+  // Optional lossless producer input. Display gutters alone cannot recover
+  // empty-side hunk positions or final-newline evidence in historical events.
+  source?: { kind: "unified" | "add" | "delete"; text: string };
   // Content of the line after expansion of the char mapping.
   lines: string[];
   // Operation per line: -1 delete, 0 context, 1 insert.

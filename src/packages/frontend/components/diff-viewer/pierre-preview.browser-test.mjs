@@ -29,6 +29,7 @@ const built = await build({
       import { createRoot } from 'react-dom/client';
       import { DiffPreviewButton } from './components/diff-viewer/preview-button';
       import DocumentDiff from './components/diff-viewer/document-diff';
+      import { ActivityDiff } from './chat/activity-diff';
       import ChangedFilesTree from './components/diff-viewer/changed-files-tree';
       import { DiffHighlightingProvider } from './components/diff-viewer/highlighting-provider';
       import { useWorkerPool } from '@pierre/diffs/react';
@@ -45,6 +46,7 @@ const built = await build({
         const [revision, setRevision] = React.useState('new version');
         window.changeDocumentRevision = setRevision;
         window.previewSetFontSize = setFontSize;
+        if (location.pathname === '/activity') return <ActivityDiff diff={{lines:[],types:[],gutters:[],chunkBoundaries:[],source:{kind:'unified',text:'@@ -10 +20 @@\\n-old activity\\n+'+revision+'\\n@@ -90 +100 @@\\n-last\\n+end\\n'}}} path='activity.ts' fontSize={14}><div>Classic activity</div></ActivityDiff>;
         if (location.pathname === '/documents') return <div style={{display:'flex',height:600,minWidth:0}}><DocumentDiff before={'old version\\n'+Array.from({length:5000},(_,i)=>'const n'+i+' = '+i+';\\n').join('')} after={revision+'\\n'+Array.from({length:5000},(_,i)=>'const n'+i+' = '+i+';\\n').join('')} path='history.ts' label='Selected historical versions' fontSize={fontSize}/></div>;
         const [files, setFiles] = React.useState([{id:'a',path:'src/a.ts',status:'added'}, {id:'b',path:'src/b.ts',status:'modified',commentCount:2}]);
         const [selected, setSelected] = React.useState('');
@@ -70,6 +72,15 @@ const built = await build({
     {
       name: "application-service-stubs",
       setup(builder) {
+        builder.onResolve(
+          {
+            filter:
+              /^@cocalc\/frontend\/components\/diff-viewer\/(document-diff|render-boundary)$/,
+          },
+          ({ path }) => ({
+            path: `${frontend}components/diff-viewer/${path.split("/").at(-1)}.tsx`,
+          }),
+        );
         builder.onResolve({ filter: /\.\/highlighting-worker$/ }, () => ({
           path: "highlighting-worker",
           namespace: "stub",
@@ -138,6 +149,32 @@ try {
   const errors = [];
   page.setDefaultTimeout(10000);
   page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${server.address().port}/activity`);
+  await page
+    .getByRole("combobox", { name: "Activity diff renderer" })
+    .selectOption("pierre");
+  const activityRegion = page.getByRole("region", {
+    name: "activity.ts: recorded activity change (not a Git revision)",
+  });
+  await expect(
+    activityRegion.getByText("new version", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("note")).toContainText(
+    "omitted context is unavailable",
+  );
+  await page.evaluate(() =>
+    window.changeDocumentRevision("next streamed value"),
+  );
+  await expect(
+    activityRegion.getByText("next streamed value", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    activityRegion.getByText("new version", { exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("combobox", { name: "Activity diff renderer" })
+    .selectOption("classic");
+  await expect(page.getByText("Classic activity")).toBeVisible();
   await page.goto(`http://127.0.0.1:${server.address().port}/documents`);
   const documentRegion = page.getByRole("region", {
     name: "Selected historical versions",

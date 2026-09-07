@@ -522,6 +522,27 @@ Live source-specific TimeTravel checks (Git, patchflow, snapshot, backup) and
 restore-action regression remain release acceptance work; the standalone browser
 fixture does not claim to verify those storage integrations.
 
+Activity integration (2026-09-07): new app-server file-change events retain the
+original unified patch or added/deleted text in an optional `LineDiffResult.source`
+field. Existing display arrays remain intact for compatibility. This preserves
+empty-side hunk coordinates and final-newline evidence that cannot be recovered
+reliably from legacy gutters. Old events without this source retain Classic;
+the UI does not guess missing coordinates or fetch current file contents.
+New events offer an inline Classic/Pierre selector using the shared bounded
+read-only renderer, with explicit recorded-activity/missing-context labeling.
+Patch adaptation verifies hunk counts, coordinate ranges and newline markers,
+preserves source carriage returns, and keeps sparse hunks sparse. Progressive
+event replacement updates versioned renderer items without remounting the view.
+The rich Markdown activity body remains untouched.
+
+The app-server producer suite (70 tests), frontend adapter/keyboard tests, real
+Pierre sparse-parser fixtures, and Chromium activity switching/update checks
+pass. The frontend build can display new source-bearing events; existing running
+project services need their normal code upgrade/reload before emitting that new
+field. Live end-to-end recorded-session/streaming acceptance and the older
+non-app-server producer path still need release review; do not infer those from
+the standalone source-bearing fixture.
+
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the
 delivery order at the end of this section describes independently reviewable

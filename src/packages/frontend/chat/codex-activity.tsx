@@ -37,6 +37,7 @@ import {
   languageHintFromPath,
 } from "./diff-prism";
 import { CodexVmApprovalPrompt } from "./codex-vm-approval";
+import { ActivityDiff } from "./activity-diff";
 
 const { Text } = Typography;
 type SubagentEvent = Extract<AcpStreamEvent, { type: "subagent" }>;
@@ -740,11 +741,17 @@ function ActivityRow({
             </TimestampTooltip>
             <ActivityTimestamp time={entry.time} />
           </Space>
-          <DiffPreview
+          <ActivityDiff
             diff={entry.diff}
+            path={entry.path ?? "activity.txt"}
             fontSize={fontSize}
-            languageHint={languageHintFromPath(entry.path)}
-          />
+          >
+            <DiffPreview
+              diff={entry.diff}
+              fontSize={fontSize}
+              languageHint={languageHintFromPath(entry.path)}
+            />
+          </ActivityDiff>
         </div>
       );
     case "config":

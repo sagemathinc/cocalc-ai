@@ -19,6 +19,7 @@ import {
 } from "@cocalc/frontend/chat/git-commit/drawer-scroll";
 import { DiffHighlightingProvider } from "./highlighting-provider";
 import { parsePreviewSource } from "./pierre-model";
+import type { DiffPreviewSource } from "./preview-types";
 import { diffFontStyle, diffLineHeight } from "./font-metrics";
 import {
   setDiffViewPreference,
@@ -34,6 +35,23 @@ export interface DocumentDiffProps {
 }
 
 export default function DocumentDiff(props: DocumentDiffProps) {
+  const source = useMemo<DiffPreviewSource>(
+    () => ({
+      kind: "documents",
+      before: props.before,
+      after: props.after,
+      path: props.path,
+      label: props.label,
+    }),
+    [props.before, props.after, props.path, props.label],
+  );
+  return <ReadOnlyDiff source={source} fontSize={props.fontSize} />;
+}
+
+export function ReadOnlyDiff(props: {
+  source: DiffPreviewSource;
+  fontSize: number;
+}) {
   return (
     <DiffHighlightingProvider>
       <DocumentDiffContent {...props} />
@@ -42,29 +60,36 @@ export default function DocumentDiff(props: DocumentDiffProps) {
 }
 
 function DocumentDiffContent({
-  before,
-  after,
-  path,
-  label,
+  source,
   fontSize,
-}: DocumentDiffProps) {
+}: {
+  source: DiffPreviewSource;
+  fontSize: number;
+}) {
+  const { label } = source;
   const { resolved } = useAppearance();
   const { split, wrap } = useDiffViewPreferences();
   const viewport = useRef<HTMLDivElement>(null);
   const parsed = useMemo(() => {
     try {
+      const texts =
+        source.kind === "documents"
+          ? [source.before, source.after]
+          : [source.patch];
       // Refuse oversized sources instead of presenting a truncated document as
       // complete. The caller retains its original text renderer.
       if (
-        before.length + after.length > 4 * 1024 * 1024 ||
-        new TextEncoder().encode(before).length +
-          new TextEncoder().encode(after).length >
+        texts.reduce((sum, text) => sum + text.length, 0) > 4 * 1024 * 1024 ||
+        texts.reduce(
+          (sum, text) => sum + new TextEncoder().encode(text).length,
+          0,
+        ) >
           4 * 1024 * 1024
       ) {
         throw Error("Text comparison exceeds 4 MB; use the Classic renderer.");
       }
       let lines = 2;
-      for (const text of [before, after]) {
+      for (const text of texts) {
         for (let index = 0; index < text.length; index++) {
           if (text.charCodeAt(index) === 10 && ++lines > 100_000)
             throw Error(
@@ -72,24 +97,18 @@ function DocumentDiffContent({
             );
         }
       }
-      const files = parsePreviewSource({
-        kind: "documents",
-        before,
-        after,
-        path,
-        label,
-      });
+      const files = parsePreviewSource(source);
       return { files, error: "" };
     } catch (error) {
       return { files: [], error: String(error) };
     }
-  }, [before, after, path, label]);
+  }, [source]);
   const generation = useRef({ parsed, version: 0 });
   if (generation.current.parsed !== parsed) {
     generation.current = { parsed, version: generation.current.version + 1 };
   }
   const items: CodeViewItem<undefined>[] = parsed.files.map((fileDiff) => ({
-    id: path,
+    id: JSON.stringify([fileDiff.prevName, fileDiff.name]),
     type: "diff",
     fileDiff,
     version: generation.current.version,
@@ -172,7 +191,7 @@ function DocumentDiffContent({
             diffStyle: split ? "split" : "unified",
             overflow: wrap ? "wrap" : "scroll",
             lineDiffType: "word",
-            expandUnchanged: true,
+            expandUnchanged: source.kind === "documents",
             stickyHeaders: true,
             itemMetrics: { lineHeight: diffLineHeight(fontSize) },
             theme: { light: "github-light", dark: "github-dark" },

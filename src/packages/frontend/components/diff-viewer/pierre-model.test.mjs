@@ -1,11 +1,36 @@
 // Run with node --experimental-strip-types --test; tests the real ESM Pierre.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { activityDiffSource } from "../../chat/activity-diff-source.ts";
 import {
   containsPreviewLine,
   parsePreviewSource,
   parseReviewPatchFiles,
 } from "./pierre-model.ts";
+
+test("recorded activity retains multiple sparse hunks and literal filenames", () => {
+  const [file] = parsePreviewSource(
+    activityDiffSource(
+      {
+        lines: [],
+        types: [],
+        gutters: [],
+        chunkBoundaries: [],
+        source: {
+          kind: "unified",
+          text: "@@ -10,1 +20,1 @@\n--old\n++new\n@@ -90,1 +100,1 @@\n-last\n+changed\n\\ No newline at end of file\n",
+        },
+      },
+      "a b.ts",
+    ),
+  );
+  assert.equal(file.name, "a b.ts");
+  assert.equal(file.isPartial, true);
+  assert.equal(containsPreviewLine(file, 20, "additions"), true);
+  assert.equal(containsPreviewLine(file, 90, "deletions"), true);
+  assert.equal(containsPreviewLine(file, 50, "additions"), false);
+  assert.equal(file.hunks.length, 2);
+});
 
 test("a sparse patch retains old/new line positions and excludes missing context", () => {
   const [file] = parsePreviewSource({
