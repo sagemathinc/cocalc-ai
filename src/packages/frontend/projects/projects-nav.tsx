@@ -615,6 +615,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
               switch_to: true,
             });
             setDropdownOpen(false);
+            setSearchValue("");
           }}
         >
           <span

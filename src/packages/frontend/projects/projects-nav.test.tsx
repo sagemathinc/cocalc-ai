@@ -213,7 +213,7 @@ describe("ProjectsNav", () => {
     expect(
       selectedLabel()?.querySelector('[data-testid="project-theme-avatar"]'),
     ).toBeNull();
-    expect(screen.getByText("Alpha")).toBeVisible();
+    await waitFor(() => expect(screen.getByText("Alpha")).toBeVisible());
     await user.clear(input);
     expect(selectedLabel()?.textContent).toContain("Alpha");
     await user.type(input, "not a project");
@@ -225,6 +225,24 @@ describe("ProjectsNav", () => {
     expect(selectedLabel()?.textContent).toContain("Alpha");
     expect(input).toHaveFocus();
     expect(projectActions.open_project).not.toHaveBeenCalled();
+  });
+
+  it("clears search and restores the label after choosing a custom result", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<ProjectsNav height={42} />);
+    await user.click(screen.getByRole("button", { name: "Tabs" }));
+    const input = screen.getByRole("combobox", { name: "Switch project" });
+    await user.type(input, "Al");
+    await waitFor(() => expect(screen.getByText("Alpha")).toBeVisible());
+    await user.click(screen.getByText("Alpha"));
+    expect(projectActions.open_project).toHaveBeenCalledWith({
+      project_id: "project-1",
+      switch_to: true,
+    });
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(container.querySelector(".ant-select-content")).toHaveTextContent(
+      "Alpha",
+    );
   });
 
   it("reports mode changes to the app navigation", async () => {
