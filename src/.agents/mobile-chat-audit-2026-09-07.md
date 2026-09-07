@@ -8,6 +8,9 @@ has not been made discoverable as part of this work.
 
 - User tested on iPhone and confirmed all reported layout/composer issues fixed.
 - User independently confirmed Upload files works on the phone.
+- User confirmed on iPhone 17 Pro that an unsent draft survives rotation to
+  landscape and back, then keyboard dismissal and reopening, with the header
+  and Send button reachable throughout.
 - Chrome at 320 and 402 CSS pixels: full-width input, send actions above it,
   reduced avatar-free message gutter, compact header, model/reasoning summary.
 - Header model/reasoning summary opens the existing complete settings dialog;
@@ -44,8 +47,9 @@ has not been made discoverable as part of this work.
   dialog.
 - Long-running Codex approval/stop/steer/queue interactions on the actual phone
   need explicit end-to-end coverage beyond callback tests and ordinary usage.
-- iPad keyboard/split-view and phone rotation/keyboard dismissal combinations
-  need explicit device coverage; desktop width emulation is not equivalent.
+- iPad keyboard/split-view still needs explicit device coverage; desktop width
+  emulation is not equivalent. The phone rotation/keyboard sequence above has
+  been confirmed by the user, not by automated Safari testing.
 - Desktop Safari automation was reachable but its isolated session was not
   signed in. Real iPhone user feedback provides device evidence, not a claim of
   comprehensive automated Safari coverage.
