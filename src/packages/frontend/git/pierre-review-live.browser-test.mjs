@@ -7,6 +7,12 @@ import { execFileSync } from "node:child_process";
 const [chat, commit] = process.argv.slice(2);
 const historyWorktree = process.argv[4];
 const historyRef = process.env.REVIEW_HISTORY_REF;
+const uploadDelay = Number(process.env.REVIEW_UPLOAD_DELAY_MS ?? 0);
+assert(
+  Number.isFinite(uploadDelay) && uploadDelay >= 0 && uploadDelay <= 10000,
+);
+if (uploadDelay)
+  assert(process.env.REVIEW_IMAGE, "Delayed upload requires REVIEW_IMAGE=1");
 if (!chat || !/^[a-f0-9]{7,64}$/i.test(commit ?? ""))
   throw Error("Supply an isolated chat URL and a commit in its repository.");
 const endpoint = process.env.CDP_URL ?? "http://localhost:9222";
@@ -20,9 +26,18 @@ await new Promise((resolve, reject) => {
 });
 let sequence = 0;
 const requests = new Map();
+let pausedUpload;
 socket.onmessage = ({ data }) => {
   const message = JSON.parse(data);
   if (message.id) requests.get(message.id)?.(message);
+  if (message.method === "Fetch.requestPaused") {
+    if (message.params.request.method === "POST")
+      pausedUpload = message.params.requestId;
+    else
+      void send("Fetch.continueRequest", {
+        requestId: message.params.requestId,
+      });
+  }
 };
 function send(method, params = {}) {
   return new Promise((resolve, reject) => {
@@ -260,6 +275,10 @@ try {
     })()`);
     await evaluate(`void (window.__reviewEditor = ${editor})`);
     if (process.env.REVIEW_IMAGE) {
+      if (uploadDelay)
+        await send("Fetch.enable", {
+          patterns: [{ urlPattern: "*/blobs?*", requestStage: "Request" }],
+        });
       await evaluate(`(async()=>{
         const canvas=document.createElement('canvas');canvas.width=64;canvas.height=64;
         const ctx=canvas.getContext('2d');ctx.fillStyle='#2684ff';ctx.fillRect(0,0,64,64);
@@ -271,6 +290,29 @@ try {
     await evaluate(
       `document.querySelector('[aria-label="Git diff"]').scrollTop = 10000`,
     );
+    if (uploadDelay) {
+      const deadline = Date.now() + 15000;
+      while (!pausedUpload && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      assert(pausedUpload, "No actual blob upload request was intercepted");
+      await new Promise((resolve) => setTimeout(resolve, uploadDelay));
+      assert.equal(await evaluate(`${editor} === window.__reviewEditor`), true);
+      assert.equal(
+        await evaluate(`${editor}.querySelectorAll('img').length`),
+        0,
+      );
+      assert(
+        await evaluate(
+          `document.querySelector('[aria-label="Git diff"]').scrollTop > 0`,
+        ),
+      );
+      await send("Fetch.continueRequest", { requestId: pausedUpload });
+      pausedUpload = undefined;
+      await send("Fetch.disable");
+      console.log(
+        `PASS: actual upload POST held for ${uploadDelay}ms while scrolled; original Slate editor retained before upload completed.`,
+      );
+    }
     if (process.env.REVIEW_IMAGE) {
       await until(
         `Array.from(${editor}.querySelectorAll('img')).some(img=>img.complete && img.naturalWidth===64)`,
@@ -336,6 +378,9 @@ try {
   );
   throw error;
 } finally {
+  if (pausedUpload)
+    await send("Fetch.continueRequest", { requestId: pausedUpload });
+  if (uploadDelay) await send("Fetch.disable");
   if (appearance) await select("Appearance", appearance);
   socket.close();
   await fetch(`${endpoint}/json/close/${target.id}`);

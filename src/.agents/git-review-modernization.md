@@ -14,13 +14,14 @@ not a current checklist. The objective is not complete. Current release work:
 | Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Live detached-worktree unique/ambiguous/absent cases, moved-ref pinning, and exact working-copy file opening in both renderers passed (details below). Actual agent dispatch remains a separate acceptance case. |
 | Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Live independent/same-ID comment recovery and draft-alias choice checks passed. Conflicting aliases offer an explicit active-record choice without changing either record; changed alternatives reopen the conflict. Existing keys remain intact rather than being physically rewritten. Network reconnect and note-field conflict cases remain separate from the completed reload checks. |
 | Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Live renderer roundtrip and drawer close/reopen preserve the source position within a few wrapped lines (details below). Native partial-text selection across virtual windows remains a browser acceptance case. |
-| Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
+| Rich comments | Active editors live outside recyclable rows. Real delayed HTTP upload, image rendering, undo/redo, theme changes, and two-window inline recovery passed. Multiple-editor/focus and network reconnect remain separate acceptance cases. |
 | TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Both rename sides and deleted-file viewing passed in Classic/Pierre. |
 | Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live UI submission created a separate thread with the selected worktree in both persisted thread config and Codex activity config. Execution stopped at the connected account's usage limit; actual command execution and originating-context links still need end-to-end confirmation. |
 | Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor acceptance remains; investigate intermittent native-copy failure if reproduced. Measured main-thread heap excludes worker heaps. |
 | Default and cleanup | Classic is still the default and rollback path. Do not delete it or the experiment until the compatibility gates pass and maintainer testing supports the switch. |
 
-Browser access: the maintainer restored the CDP forward and signed-in session.
+Browser access: the restored signed-in CDP forward supported the checks below,
+but port 9222 most recently stopped responding during native-copy validation.
 Live checks below now run in isolated targets on Chrome 151.0.7922.71. Do not
 use automatic account login inside this collaborative project or bypass its
 credential-storage safeguard.
@@ -49,6 +50,25 @@ rollback-window decision proceed. The current lack of a signed-in test session
 would not be evidence that these checks pass.
 
 ### Restored live-session checks
+
+Upload-in-flight follow-up: `REVIEW_IMAGE=1 REVIEW_UPLOAD_DELAY_MS=3000` in the
+real Slate smoke script pauses the actual `/blobs?project_id=...` POST with CDP
+Fetch interception in its isolated target. The request was confirmed paused;
+after three seconds scrolled away, the same editor remained mounted with no
+completed image. Releasing the POST produced the real blob image, which passed
+scroll/theme/undo/redo checks. No review comment was saved. This closes the
+previous short-upload timing caveat without replacing the uploader with a mock.
+
+`native-copy-live.browser-test.mjs` is an unverified diagnostic probe, not a
+passing gate. It uses native mouse dragging and Ctrl+C and overwrites a test
+clipboard marker before reading output. An initial copy-event-only assertion
+was invalid because browser-default copy text is not exposed there. Subsequent
+pointer coordinates selected underlying chat text rather than the intended
+source; hit-test validation was added. Before that revision could be checked,
+the forwarded CDP port stopped responding (connect timeout and independent
+five-second `/json/version` timeout). Do not count this as a viewer regression
+or successful native-copy validation. The clipboard-read permission is restored
+to its prior state by the probe's cleanup.
 
 Alias-choice live follow-up: `alias-choice-live.browser-test.mjs` seeds guarded,
 account-scoped full-hash and 12-character draft aliases for a disposable commit.
