@@ -13,6 +13,13 @@ has not been made discoverable as part of this work.
   and Send button reachable throughout.
 - Chrome at 320 and 402 CSS pixels: full-width input, send actions above it,
   reduced avatar-free message gutter, compact header, model/reasoning summary.
+- Chrome touch emulation at 874x402 exposed a desktop-layout fallback in phone
+  landscape. Compact chat now also applies to coarse-pointer viewports at most
+  1000px wide and 500px tall; formatting touch targets use the same rule.
+  The rebuilt page keeps header, draft input, and Send inside that viewport.
+  An unsent draft survived transitions through 402x850, 874x402 touch/mouse,
+  834x1194, 1194x834, and 1440x900. Mouse landscape and full-size iPad layouts
+  remain noncompact. Seven focused layout tests, lint, and full build passed.
 - Header model/reasoning summary opens the existing complete settings dialog;
   uses effective policy-aware settings rather than a separate configuration.
 - Chrome widths 320, 402, 440, 767, 834, 1194, 1440: responsive layout switches

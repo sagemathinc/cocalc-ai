@@ -3,9 +3,11 @@ import type { RefObject } from "react";
 
 let releaseActiveFocus: (() => void) | undefined;
 
-// Use layout width, not user-agent detection or the pinch-zoom viewport width.
+// Keep phone landscape compact too, without treating short desktop windows as
+// phones. Use layout dimensions, not the keyboard/pinch-zoom visual viewport.
 export function useNarrowChatViewport(): boolean {
-  const query = "(max-width: 767px)";
+  const query =
+    "(max-width: 767px), (max-width: 1000px) and (max-height: 500px) and (pointer: coarse)";
   const [narrow, setNarrow] = useState(
     () => typeof window !== "undefined" && !!window.matchMedia?.(query).matches,
   );

@@ -115,6 +115,30 @@ it("responds to layout width and keyboard viewport changes", () => {
   });
 });
 
+it("subscribes to compact phone landscape changes and cleans up on unmount", () => {
+  const remove = jest.spyOn(media, "removeEventListener");
+  function Harness() {
+    return <output>{useNarrowChatViewport() ? "compact" : "desktop"}</output>;
+  }
+  const { unmount } = render(<Harness />);
+  expect(window.matchMedia).toHaveBeenCalledWith(
+    "(max-width: 767px), (max-width: 1000px) and (max-height: 500px) and (pointer: coarse)",
+  );
+  expect(screen.getByRole("status").textContent).toBe("desktop");
+  act(() => {
+    media.matches = true;
+    media.dispatchEvent(new Event("change"));
+  });
+  expect(screen.getByRole("status").textContent).toBe("compact");
+  act(() => {
+    media.matches = false;
+    media.dispatchEvent(new Event("change"));
+  });
+  expect(screen.getByRole("status").textContent).toBe("desktop");
+  unmount();
+  expect(remove).toHaveBeenCalledWith("change", expect.any(Function));
+});
+
 it("makes covered navigation inert and restores its original state on exit", () => {
   function Harness({ focused }) {
     const ref = useRef<HTMLDivElement>(null);
