@@ -195,6 +195,8 @@ export type GitReviewCommentV2 = {
 };
 
 export type GitReviewRecordV2 = {
+  // Transport-only concurrency token; never persisted or exported.
+  storageSequence?: number;
   version: 2;
   account_id: string;
   commit_sha: string;
@@ -555,21 +557,24 @@ export async function loadReviewRecord({
       resolveCommit,
     });
     return (
-      (await loadReviewRecord({ accountId, commitSha: storageCommit })) ??
-      emptyRecord({ accountId, commitSha: storageCommit })
+      (await loadReviewRecord({ accountId, commitSha: storageCommit })) ?? {
+        ...emptyRecord({ accountId, commitSha: storageCommit }),
+        storageSequence: 0,
+      }
     );
   }
   const normalizedCommit = normalizeCommitSha(commitSha);
   const key = makeReviewKey(commitSha);
   if (!normalizedCommit || !key) return undefined;
   const kvV2 = getReviewStore(accountId);
-  const current = sanitizeReviewRecord(await kvV2.get(key), {
+  const message = await kvV2.getMessage(key, { includeDeleted: true });
+  const current = sanitizeReviewRecord(message?.data, {
     accountId,
     commitSha: normalizedCommit,
   });
   if (current) {
     return mergeRecordWithDraft(
-      current,
+      { ...current, storageSequence: message?.headers?.seq as number },
       loadReviewDraft(normalizedCommit, accountId),
     );
   }
@@ -582,14 +587,22 @@ export async function loadReviewRecord({
   const draft = loadReviewDraft(normalizedCommit, accountId);
   if (!legacy) {
     if (!draft) {
-      return undefined;
+      return message
+        ? {
+            ...emptyRecord({ accountId, commitSha: normalizedCommit }),
+            storageSequence: message.headers?.seq as number,
+          }
+        : undefined;
     }
     return mergeRecordWithDraft(
-      emptyRecord({
-        accountId,
-        commitSha: normalizedCommit,
-        now: draft.updated_at ?? Date.now(),
-      }),
+      {
+        ...emptyRecord({
+          accountId,
+          commitSha: normalizedCommit,
+          now: draft.updated_at ?? Date.now(),
+        }),
+        storageSequence: (message?.headers?.seq as number) ?? 0,
+      },
       draft,
     );
   }
@@ -605,8 +618,13 @@ export async function loadReviewRecord({
     updated_at: typeof legacy.updated_at === "number" ? legacy.updated_at : now,
     revision: 1,
   };
-  await kvV2.set(key, migrated);
-  return mergeRecordWithDraft(migrated, draft);
+  const saved = await kvV2.set(key, migrated, {
+    previousSeq: (message?.headers?.seq as number) ?? 0,
+  });
+  return mergeRecordWithDraft(
+    { ...migrated, storageSequence: saved.seq },
+    draft,
+  );
 }
 
 export async function loadReviewRecords({
@@ -681,8 +699,9 @@ export async function saveReviewRecord(
   }
   const kv = getReviewStore(accountId);
   const now = Date.now();
+  const { storageSequence, ...storedRecord } = record;
   const payload: GitReviewRecordV2 = {
-    ...record,
+    ...storedRecord,
     version: 2,
     account_id: accountId,
     commit_sha: commitSha,
@@ -692,13 +711,20 @@ export async function saveReviewRecord(
     updated_at: now,
     revision: Math.max(1, (record.revision ?? 0) + 1),
   };
-  await kv.set(key, payload);
+  let saved;
+  try {
+    saved = await kv.set(key, payload, { previousSeq: storageSequence ?? 0 });
+  } catch (error) {
+    throw new Error(
+      `Unable to save review; another window may have changed it. Your local draft was not cleared. Reload and reconcile before saving again. ${error}`,
+    );
+  }
   clearReviewDraftThroughRevision(
     commitSha,
     opts?.clearDraftThroughRevision,
     accountId,
   );
-  return payload;
+  return { ...payload, storageSequence: saved.seq };
 }
 
 export async function exportReviewBundle({

@@ -867,9 +867,10 @@ export class PersistentStream extends EventEmitter {
     }
     this.checkRequiredHeaders(headers);
     if (key !== undefined && previousSeq !== undefined) {
-      const { seq } = this.db
-        .prepare("SELECT seq FROM messages WHERE key=?")
-        .get(key) as any;
+      const { seq = 0 } =
+        (this.db
+          .prepare("SELECT seq FROM messages WHERE key=?")
+          .get(key) as any) ?? {};
       if (seq != previousSeq) {
         throw new ConatError("wrong last sequence", {
           code: "wrong-last-sequence",

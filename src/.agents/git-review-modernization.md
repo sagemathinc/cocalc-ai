@@ -90,6 +90,21 @@ in-flight upload. Saved semantic scroll can omit line 10 from the virtual DOM,
 so gutter selection now uses a currently rendered row rather than that fixed
 line. Prior DOM-only retention evidence should be interpreted with this caveat.
 
+Concurrent-save implementation follow-up: commit review loads now carry a
+transport-only account-store sequence token. Saves and legacy migration use
+conditional writes; stale windows receive an error without clearing their
+drafts, instead of replacing newer remote comments. Tokens are stripped from
+stored/exported records. Deleted-key recreation reads the tombstone's sequence.
+The persistence layer now treats an absent key as sequence zero for atomic
+creation (previously that path destructured an absent SQLite row).
+
+Real SQLite tests cover create/update/stale-write rejection; frontend store
+tests cover two stale writers, retained local drafts, token-free export, and
+deleted-key recreation. This is conflict rejection, not automatic comment
+merging. Full-app concurrent-save/reconnect acceptance is still required,
+including the user recovery flow. Deploy the persistence-service change with
+the frontend before testing creation; a frontend-only rebuild is insufficient.
+
 ### Single-file stress evidence (2026-09-07)
 
 Run `STRESS=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`

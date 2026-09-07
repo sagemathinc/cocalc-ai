@@ -15,6 +15,7 @@ import {
 } from "../git-review-store";
 
 const stores = new Map<string, Map<string, any>>();
+const sequences = new WeakMap<Map<string, any>, Map<string, number>>();
 const flushMock = jest.fn(async () => undefined);
 
 function getStore(accountId: string, name: string): Map<string, any> {
@@ -29,11 +30,31 @@ function getStore(accountId: string, name: string): Map<string, any> {
 
 const akvMock = jest.fn(({ account_id, name }: any) => {
   const store = getStore(account_id, name);
+  let seqs = sequences.get(store);
+  if (!seqs) {
+    seqs = new Map();
+    sequences.set(store, seqs);
+  }
   return {
     get: async (key: string) => store.get(key),
-    set: async (key: string, value: any) => {
+    getMessage: async (key: string) =>
+      store.has(key)
+        ? { data: store.get(key), headers: { seq: seqs.get(key) ?? 1 } }
+        : undefined,
+    set: async (
+      key: string,
+      value: any,
+      options?: { previousSeq?: number },
+    ) => {
+      const previous = store.has(key) ? (seqs.get(key) ?? 1) : 0;
+      if (
+        options?.previousSeq !== undefined &&
+        options.previousSeq !== previous
+      )
+        throw Error("sequence mismatch");
       store.set(key, value);
-      return { seq: 1, time: Date.now() };
+      seqs.set(key, previous + 1);
+      return { seq: previous + 1, time: Date.now() };
     },
     keys: async () => [...store.keys()],
   };
@@ -118,6 +139,48 @@ describe("git review import/export", () => {
     expect(conflict).toBeInstanceOf(GitReviewAliasConflict);
     return { options, conflict: conflict!, full };
   }
+
+  it("rejects stale window saves without clearing their draft or overwriting remote data", async () => {
+    const options = {
+      accountId: "concurrent",
+      commitSha: "a".repeat(40),
+      resolveCommit: async () => "a".repeat(40),
+    };
+    const first = (await loadReviewRecord(options))!;
+    const second = (await loadReviewRecord(options))!;
+    const saved = await saveReviewRecord({ ...first, note: "first window" });
+    saveReviewDraft(
+      options.commitSha,
+      { reviewed: false, note: "second window", comments: {} },
+      options.accountId,
+    );
+    await expect(
+      saveReviewRecord({ ...second, note: "second window" }),
+    ).rejects.toThrow("another window");
+    expect(loadReviewDraft(options.commitSha, options.accountId)?.note).toBe(
+      "second window",
+    );
+    const bundle = await exportReviewBundle({ accountId: options.accountId });
+    expect(bundle.records[0].note).toBe("first window");
+    expect(bundle.records[0].storageSequence).toBeUndefined();
+    await saveReviewRecord({ ...saved, note: "first window again" });
+  });
+
+  it("retains a deleted key's sequence when recreating a review", async () => {
+    const options = { accountId: "deleted", commitSha: "b".repeat(40) };
+    const kv = akvMock({
+      account_id: options.accountId,
+      name: "cocalc-git-review-v2",
+    });
+    await kv.set(`commit:${options.commitSha}`, null);
+    const record = (await loadReviewRecord(options))!;
+    expect(record.storageSequence).toBe(1);
+    const saved = await saveReviewRecord({ ...record, note: "recreated" });
+    expect(saved.storageSequence).toBe(2);
+    expect(
+      (await kv.get(`commit:${options.commitSha}`)).storageSequence,
+    ).toBeUndefined();
+  });
 
   it("explicitly chooses an alias without changing records and reopens conflicts on other edits", async () => {
     const { options, conflict, full } = await conflictingAliases();
