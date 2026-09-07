@@ -32,7 +32,7 @@ lint.select = ["E", "F", "B"]  # Pyflakes, pycodestyle, bugbear, etc.
 dev = [
     "ipython",
     "mkdocs",
-    "mkdocs-material",
+    "mkdocs-material>=9.7.7",
     "griffe<2",
     "mkdocstrings[python]<1",
     "mkdocstrings-python<2",

@@ -22,7 +22,7 @@
     "@cocalc/ai": "workspace:*",
     "@cocalc/backend": "workspace:*",
     "@cocalc/chat": "workspace:*",
-    "fflate": "^0.8.2"
+    "fflate": "^0.8.3"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
