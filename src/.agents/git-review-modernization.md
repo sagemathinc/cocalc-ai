@@ -60,6 +60,17 @@ Missing live test evidence does not establish that these checks pass.
 
 ### Restored live-session checks
 
+Deleted the now-unused Classic `DiffBlock`/`DiffFileSection` implementation,
+its test-only drawer exports and implementation-specific tests. Deleted the
+experimental Pierre preview, trigger and prototype-only tests/harness; reusable
+production diff components remain. The focused drawer/Pierre/header suite
+passed 73 tests, with frontend typecheck, lint and development build passing.
+The live deep-link test now targets the actual Git diff region and asserts that
+both renderer selector and preview trigger are absent. Commit selection,
+reload, Escape, Back/Forward, unrelated URL parameters and no-page-error checks
+passed. Activity rendering and remaining switch-based browser harnesses still
+need cleanup; this is not the full completion claim.
+
 The Git drawer now loads Pierre directly with no renderer selector. Removed
 the Classic virtualized panel and renderer-switch scroll implementation; Pierre
 retains its own semantic restoration and working-patch generation scopes.

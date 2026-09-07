@@ -22,7 +22,6 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
-import { DiffPreviewButton } from "@cocalc/frontend/components/diff-viewer/preview-button";
 import { ChangedFilesLayout } from "@cocalc/frontend/components/diff-viewer/changed-files-layout";
 import { matchFontSizeShortcut } from "@cocalc/frontend/editors/markdown-input/font-size-shortcut";
 import { redux } from "@cocalc/frontend/app-framework";
@@ -67,7 +66,6 @@ import {
   getRenderedDiffLineLimit,
   isGitDiffFindTargetRendered,
 } from "./git-commit/diff-find";
-import { DiffBlock } from "./git-commit/diff-components";
 import { ReviewDiffPanel } from "./git-commit/review-diff-panel";
 import { GitHistoryControls } from "./git-commit/history-controls";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
@@ -184,7 +182,6 @@ export {
   captureGitDiffScrollAnchor,
   commentAnchorKey,
   diffLineNumberColumnWidth,
-  DiffBlock,
   getGitDiffFindVisibleLineLimitUpdate,
   getNextRenderedDiffLineLimit,
   getRenderedDiffLineLimit,
@@ -3657,17 +3654,6 @@ export function GitCommitDrawer({
               <GitEmptyCommitDiff />
             ) : (
               <>
-                <DiffPreviewButton
-                  fontSize={effectiveFontSize}
-                  getSource={() => ({
-                    kind: "patch",
-                    patch:
-                      currentData.files
-                        .map((file) => file.lines.join("\n"))
-                        .join("\n") + "\n",
-                    label: `${commit}: currently loaded patch${currentData.linesTruncated ? " (truncated)" : ""}`,
-                  })}
-                />
                 <GitChangedFilesPanel
                   files={currentData.files}
                   inlineCommentsByFile={inlineCommentsByFile}

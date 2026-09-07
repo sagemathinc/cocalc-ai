@@ -20,11 +20,21 @@ const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
 try {
   await page.goto(url.href, { waitUntil: "domcontentloaded" });
-  const preview = page.getByRole("combobox", {
-    name: "Diff renderer",
+  const preview = page.getByRole("region", {
+    name: "Git diff",
     exact: true,
   });
   await expect(preview).toBeVisible({ timeout: 60000 });
+  await expect(
+    page.getByRole("combobox", { name: "Diff renderer", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Preview with Pierre", exact: true }),
+  ).toHaveCount(0);
+  const warning = page.getByRole("button", {
+    name: "Dismiss stale frontend build warning",
+  });
+  if (await warning.isVisible()) await warning.click();
   expect(new URL(page.url()).searchParams.get("git-hash")).toBe(commit);
   await expect(
     page.getByText(
