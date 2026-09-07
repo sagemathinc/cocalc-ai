@@ -24,6 +24,7 @@ import type { SubmitMentionsFn } from "./types";
 import { INPUT_HEIGHT } from "./utils";
 import type { ThreadMeta } from "./threads";
 import { ThreadBadge } from "./thread-badge";
+import { CodexGoalControl } from "./codex-goal";
 import type { ChatInputControl } from "./input";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import {
@@ -32,6 +33,7 @@ import {
 } from "./composer-focus";
 import { AcpPromptModal } from "./acp-prompt-modal";
 import { isCodexPaymentSourceNeedsUserConfiguration } from "./codex-submit-preflight";
+import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export interface ChatRoomComposerProps {
@@ -56,6 +58,7 @@ export interface ChatRoomComposerProps {
   hasActiveAcpTurn?: boolean;
   threads: ThreadMeta[];
   selectedThread?: ThreadMeta | null;
+  onEditThreadAppearance?: () => void;
   onComposerFocusChange: (focused: boolean) => void;
   onComposerReady?: (
     control: ChatInputControl | null,
@@ -90,6 +93,7 @@ export function ChatRoomComposer({
   hasActiveAcpTurn = false,
   threads: _threads,
   selectedThread,
+  onEditThreadAppearance,
   onComposerFocusChange,
   onComposerReady,
   codexPaymentSource,
@@ -110,7 +114,13 @@ export function ChatRoomComposer({
   const threadAccentColor = selectedThread?.threadAccentColor;
   const threadIcon = selectedThread?.threadIcon;
   const threadImage = selectedThread?.threadImage;
-  const hasCustomAppearance = selectedThread?.hasCustomAppearance ?? false;
+  const threadMetadata = selectedThread
+    ? actions?.getThreadMetadata?.(selectedThread.key)
+    : undefined;
+  const showGoal =
+    threadMetadata?.agent_kind === "acp" ||
+    threadMetadata?.acp_config != null ||
+    isCodexModelName(`${threadMetadata?.agent_model ?? ""}`.trim());
   const themeLineColor = threadColor ?? threadAccentColor;
   const contextThread = useMemo(
     () => selectedThread ?? undefined,
@@ -447,31 +457,76 @@ export function ChatRoomComposer({
             </div>
           </Tooltip>
         )}
-        {hasCustomAppearance && threadLabel && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              color: UI_COLORS.secondary,
-              fontSize: "12px",
-              marginBottom: 6,
-              borderLeft: themeLineColor
-                ? `3px solid ${themeLineColor}`
-                : undefined,
-              paddingLeft: themeLineColor ? 8 : 0,
-            }}
-          >
-            <ThreadBadge
-              icon={threadIcon}
-              color={threadColor}
-              accentColor={threadAccentColor}
-              image={threadImage}
-              size={18}
-            />
-            <span>{stripHtml(threadLabel)}</span>
-          </div>
-        )}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            marginBottom: 6,
+            minWidth: 0,
+            flexWrap: "wrap",
+          }}
+        >
+          {showGoal && selectedThread && (
+            <div style={{ flex: "1 1 180px", minWidth: 0 }}>
+              <CodexGoalControl
+                key={selectedThread.key}
+                snapshot={threadMetadata?.acp_goal}
+                request={threadMetadata?.acp_goal_request}
+                ack={threadMetadata?.acp_goal_ack}
+                onChange={(change) =>
+                  actions.setCodexGoal(selectedThread.key, change)
+                }
+              />
+            </div>
+          )}
+          {threadLabel && (
+            <button
+              type="button"
+              aria-label={`Edit Thread Appearance: ${stripHtml(threadLabel)}`}
+              aria-haspopup="dialog"
+              disabled={!onEditThreadAppearance}
+              onClick={onEditThreadAppearance}
+              style={{
+                background: "none",
+                border: 0,
+                padding: 0,
+                cursor: onEditThreadAppearance ? "pointer" : "default",
+                fontFamily: "inherit",
+                display: "flex",
+                alignItems: "center",
+                marginLeft: "auto",
+                minWidth: 0,
+                maxWidth: "100%",
+                gap: "8px",
+                color: UI_COLORS.secondary,
+                fontSize: "12px",
+                borderLeft: themeLineColor
+                  ? `3px solid ${themeLineColor}`
+                  : undefined,
+                paddingLeft: themeLineColor ? 8 : 0,
+              }}
+            >
+              <ThreadBadge
+                icon={threadIcon}
+                color={threadColor}
+                accentColor={threadAccentColor}
+                image={threadImage}
+                size={18}
+              />
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={stripHtml(threadLabel)}
+              >
+                {stripHtml(threadLabel)}
+              </span>
+            </button>
+          )}
+        </div>
         {showCodexPaymentSourceBanner && (
           <Alert
             action={

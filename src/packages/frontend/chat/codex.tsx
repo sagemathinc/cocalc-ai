@@ -57,6 +57,7 @@ import type {
 import {
   codexModelSupportsFastMode,
   DEFAULT_CODEX_MODELS,
+  DEFAULT_CODEX_MODEL_NAME,
   normalizeCodexSessionId,
   resolveCodexServiceTier,
   resolveCodexSessionMode,
@@ -84,7 +85,7 @@ import {
 } from "./use-codex-payment-source";
 
 const { Text } = Typography;
-const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODELS[0].name;
+const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODEL_NAME;
 const CODEX_CONTROLS_COLLAPSED_KEY = "cocalc.chat.codexControlsCollapsed";
 const REFRESH_MODELS_MENU_KEY = "__refresh-models__";
 
@@ -149,13 +150,13 @@ type ModelOption = {
 };
 
 function staticCodexModelOptions(): ModelOption[] {
-  return DEFAULT_CODEX_MODELS.map((model, index) => ({
+  return DEFAULT_CODEX_MODELS.map((model) => ({
     value: model.name,
     label: model.name,
     description: model.description,
     reasoning: model.reasoning,
     serviceTiers: model.serviceTiers?.map(({ id }) => id),
-    default: index === 0,
+    default: model.name === DEFAULT_CODEX_MODEL_NAME,
   }));
 }
 

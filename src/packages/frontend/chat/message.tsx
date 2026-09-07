@@ -318,8 +318,6 @@ interface Props {
   openActivityToken?: number;
   focusAttentionId?: string;
   onOverlayOpenChange?: (open: boolean) => void;
-  notifyOnTurnFinish?: boolean;
-  onNotifyOnTurnFinishChange?: (checked: boolean) => void;
   onOpenGitBrowser?: (request: {
     threadKey: string;
     cwdOverride?: string;
@@ -384,8 +382,6 @@ export default function Message({
   openActivityToken,
   focusAttentionId,
   onOverlayOpenChange,
-  notifyOnTurnFinish = false,
-  onNotifyOnTurnFinishChange,
   onOpenGitBrowser,
   attachedSteers,
   activitySteers,
@@ -2224,8 +2220,6 @@ export default function Message({
           focusAttentionId={focusAttentionId}
           jumpText={undefined}
           jumpToken={0}
-          notifyOnTurnFinish={notifyOnTurnFinish}
-          onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
           attachedSteers={attachedSteers}
           activitySteers={activitySteers}
           onOpenGitBrowser={

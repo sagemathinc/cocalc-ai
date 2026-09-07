@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Checkbox, Drawer } from "antd";
+import { Button, Drawer } from "antd";
 import { ClockCircleOutlined, LoadingOutlined } from "@ant-design/icons";
 import type { CSSProperties } from "react";
 import {
@@ -288,8 +288,6 @@ interface AgentMessageStatusProps {
   focusAttentionId?: string;
   jumpText?: string;
   jumpToken?: number;
-  notifyOnTurnFinish?: boolean;
-  onNotifyOnTurnFinishChange?: (checked: boolean) => void;
   onOpenGitBrowser?: () => void;
   onDrawerOpenChange?: (open: boolean) => void;
   logEvents?: AcpStreamMessage[] | null;
@@ -518,8 +516,6 @@ export function AgentMessageStatus({
   deleteLog,
   attachedSteers,
   activitySteers,
-  notifyOnTurnFinish = false,
-  onNotifyOnTurnFinishChange,
   interruptRequested = false,
   onInterrupt,
   onContinue,
@@ -780,21 +776,6 @@ export function AgentMessageStatus({
           <Button type="primary" size="small" onClick={onContinue}>
             Continue
           </Button>
-        ) : null}
-        {generating && onNotifyOnTurnFinishChange ? (
-          <Tooltip title="Override completion notifications for this Codex thread.">
-            <span
-              title="Override completion notifications for this Codex thread."
-              style={{ display: "inline-flex", alignItems: "center" }}
-            >
-              <Checkbox
-                checked={!notifyOnTurnFinish}
-                onChange={(e) => onNotifyOnTurnFinishChange(!e.target.checked)}
-              >
-                Mute completion notifications for this thread
-              </Checkbox>
-            </span>
-          </Tooltip>
         ) : null}
       </div>
       {!generating && outstandingWork > 0 ? (

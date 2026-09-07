@@ -2,6 +2,7 @@
 
 import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ChatRoomComposer } from "../composer";
 
 let lastChatInputProps: any;
@@ -38,6 +39,10 @@ jest.mock("react-intl", () => ({
 
 jest.mock("@cocalc/frontend/feature", () => ({
   IS_MOBILE: false,
+}));
+
+jest.mock("@cocalc/frontend/keyboard/boundary", () => ({
+  KeyboardBoundary: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 jest.mock("@cocalc/frontend/misc", () => ({
@@ -82,6 +87,58 @@ describe("ChatRoomComposer resize handle", () => {
     lastChatInputProps = undefined;
   });
 
+  it.each([false, true])(
+    "shows the selected thread title without a custom appearance (AI: %s)",
+    async (isAI) => {
+      const user = userEvent.setup();
+      const onEditThreadAppearance = jest.fn();
+      const onSend = jest.fn();
+      renderComposer({
+        onEditThreadAppearance,
+        on_send: onSend,
+        selectedThread: {
+          key: "thread-1",
+          label: "Original title",
+          displayLabel: "Goal UI smoke test",
+          newestTime: 0,
+          messageCount: 1,
+          hasCustomName: true,
+          hasCustomAppearance: false,
+          readCount: 1,
+          unreadCount: 0,
+          isAI,
+          isAutomation: false,
+          isPinned: false,
+          isArchived: false,
+        },
+        actions: {
+          syncdb: {},
+          getThreadMetadata: () => ({ agent_kind: isAI ? "acp" : "none" }),
+          isCodexThread: () => isAI,
+        } as any,
+      });
+
+      const title = screen.getByText("Goal UI smoke test");
+      expect(title.getAttribute("title")).toBe("Goal UI smoke test");
+      expect(title.parentElement?.style.marginLeft).toBe("auto");
+      const edit = screen.getByRole("button", {
+        name: "Edit Thread Appearance: Goal UI smoke test",
+      });
+      expect(edit.getAttribute("aria-haspopup")).toBe("dialog");
+      await user.click(edit);
+      expect(onEditThreadAppearance).toHaveBeenCalledTimes(1);
+      edit.focus();
+      await user.keyboard("{Enter}");
+      expect(onEditThreadAppearance).toHaveBeenCalledTimes(2);
+      await user.keyboard(" ");
+      expect(onEditThreadAppearance).toHaveBeenCalledTimes(3);
+      expect(onSend).not.toHaveBeenCalled();
+      if (isAI) {
+        expect(screen.getByRole("button", { name: "Set goal" })).not.toBeNull();
+      }
+    },
+  );
+
   it("does not show the resize handle when the composer is empty but focused", () => {
     const { container } = renderComposer();
     expect(container.querySelector('[style*="row-resize"]')).toBeNull();
@@ -91,6 +148,35 @@ describe("ChatRoomComposer resize handle", () => {
     });
 
     expect(container.querySelector('[style*="row-resize"]')).toBeNull();
+  });
+
+  it("shows goal controls for legacy Codex thread metadata", () => {
+    renderComposer({
+      selectedThread: {
+        key: "thread-legacy",
+        label: "Legacy Codex",
+        newestTime: 0,
+        messageCount: 1,
+        hasCustomName: false,
+        hasCustomAppearance: false,
+        readCount: 1,
+        unreadCount: 0,
+        isAI: true,
+        isAutomation: false,
+        isPinned: false,
+        isArchived: false,
+      },
+      actions: {
+        syncdb: {},
+        getThreadMetadata: () => ({
+          agent_kind: "none",
+          agent_model: "gpt-5.6",
+        }),
+        isCodexThread: () => true,
+      } as any,
+    });
+
+    expect(screen.getByRole("button", { name: "Set goal" })).not.toBeNull();
   });
 
   it("shows a proactive Codex setup banner for unconfigured AI chats", () => {

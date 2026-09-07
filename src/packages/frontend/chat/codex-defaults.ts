@@ -111,7 +111,7 @@ export function codexNewChatDefaultsEqual(
 function normalizeCodexModelName(model?: string): string {
   const value = `${model ?? ""}`.trim();
   if (DEFAULT_CODEX_MODELS.some((entry) => entry.name === value)) return value;
-  return DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
+  return DEFAULT_CODEX_MODEL_NAME;
 }
 
 function normalizeCodexSessionModeValue(mode?: string): CodexSessionMode {

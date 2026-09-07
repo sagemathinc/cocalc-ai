@@ -27,6 +27,8 @@ import {
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
+import { resolveCodexCompletionNotificationEnabled } from "@cocalc/util/notification-preferences";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { HelpIcon } from "@cocalc/frontend/components/help-icon";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import type { IconName } from "@cocalc/frontend/components/icon";
@@ -36,6 +38,7 @@ import { path_split } from "@cocalc/util/misc";
 import {
   codexModelSupportsFastMode,
   DEFAULT_CODEX_MODEL_NAME,
+  DEFAULT_CODEX_MODEL_INFO,
   DEFAULT_CODEX_MODELS,
   normalizeCodexSessionId,
   resolveCodexServiceTier,
@@ -73,12 +76,12 @@ interface ChatRoomModalsProps {
   path: string;
   selectedThreadKey?: string | null;
   selectedThreadLabel?: string;
+  accountCompletionNotificationDefault?: boolean;
   onHandlers?: (handlers: ChatRoomModalHandlers) => void;
 }
 
 type ThreadAgentMode = "codex" | "human";
-const DEFAULT_CODEX_MODEL =
-  DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
+const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODEL_NAME;
 type ExportRequest = {
   scope: ChatExportScope;
   threadKey?: string;
@@ -91,6 +94,7 @@ export function ChatRoomModals({
   path,
   selectedThreadKey,
   selectedThreadLabel,
+  accountCompletionNotificationDefault = true,
   onHandlers,
 }: ChatRoomModalsProps) {
   const defaultSessionMode = getDefaultCodexSessionMode();
@@ -100,6 +104,8 @@ export function ChatRoomModals({
   const [editingThread, setEditingThread] = useState<string | null>(null);
   const [appearanceOpen, setAppearanceOpen] = useState<boolean>(false);
   const [behaviorOpen, setBehaviorOpen] = useState<boolean>(false);
+  const [notifyOnTurnFinish, setNotifyOnTurnFinish] = useState(true);
+  const [notificationChanged, setNotificationChanged] = useState(false);
   const [renameValue, setRenameValue] = useState<string>("");
   const [renameColor, setRenameColor] = useState<string | undefined>(undefined);
   const [renameAccentColor, setRenameAccentColor] = useState<
@@ -174,6 +180,14 @@ export function ChatRoomModals({
       );
       setRenameImage(metadata?.thread_image?.trim() || "");
       setRenameAgentMode(agentMode);
+      setNotifyOnTurnFinish(
+        resolveCodexCompletionNotificationEnabled({
+          override: metadata?.codex_completion_notification,
+          legacy: metadata?.acp_config,
+          accountDefault: accountCompletionNotificationDefault,
+        }),
+      );
+      setNotificationChanged(false);
       const savedConfig = { ...(metadata?.acp_config ?? {}) };
       delete savedConfig.notifyOnTurnFinish;
       setRenameCodexConfig({
@@ -199,7 +213,13 @@ export function ChatRoomModals({
         }),
       });
     },
-    [actions, path, defaultSessionMode, workspaceWorkingDirectory],
+    [
+      actions,
+      path,
+      defaultSessionMode,
+      workspaceWorkingDirectory,
+      accountCompletionNotificationDefault,
+    ],
   );
 
   const openAppearanceModal = useCallback(
@@ -300,6 +320,12 @@ export function ChatRoomModals({
           ),
         sessionId: normalizeCodexSessionId(renameCodexConfig.sessionId),
       });
+      if (notificationChanged) {
+        actions.setCodexCompletionNotificationOverride(
+          editingThread,
+          notifyOnTurnFinish ? "on" : "off",
+        );
+      }
     }
     antdMessage.success("Behavior saved.");
     closeEditingModals();
@@ -748,6 +774,7 @@ export function ChatRoomModals({
       />
       <Modal
         title="Edit Thread Behavior"
+        modalRender={(modal) => <KeyboardBoundary>{modal}</KeyboardBoundary>}
         open={behaviorOpen}
         onCancel={closeEditingModals}
         onOk={handleBehaviorSave}
@@ -770,6 +797,15 @@ export function ChatRoomModals({
           </div>
           {renameAgentMode === "codex" ? (
             <Space orientation="vertical" size={10} style={{ width: "100%" }}>
+              <Checkbox
+                checked={!notifyOnTurnFinish}
+                onChange={(event) => {
+                  setNotifyOnTurnFinish(!event.target.checked);
+                  setNotificationChanged(true);
+                }}
+              >
+                Mute completion notifications for this thread
+              </Checkbox>
               <div>
                 <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
                   Codex model
@@ -1011,7 +1047,7 @@ function getReasoningForModel({
 }): CodexReasoningId | undefined {
   const model =
     DEFAULT_CODEX_MODELS.find((m) => m.name === modelValue) ??
-    DEFAULT_CODEX_MODELS[0];
+    DEFAULT_CODEX_MODEL_INFO;
   const options = model?.reasoning ?? [];
   if (!options.length) return undefined;
   const match = options.find((r) => r.id === desired);

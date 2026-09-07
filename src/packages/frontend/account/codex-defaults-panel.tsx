@@ -7,6 +7,7 @@ import { Button, Select, Space, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import {
   DEFAULT_CODEX_MODELS,
+  DEFAULT_CODEX_MODEL_INFO,
   type CodexReasoningLevel,
   type CodexReasoningId,
   type CodexSessionMode,
@@ -50,7 +51,7 @@ export function CodexDefaultsPanel({ other_settings }: Readonly<Props>) {
   const reasoningOptions = useMemo(() => {
     const model =
       DEFAULT_CODEX_MODELS.find((entry) => entry.name === draft.model) ??
-      DEFAULT_CODEX_MODELS[0];
+      DEFAULT_CODEX_MODEL_INFO;
     return (model?.reasoning ?? []).map((option: CodexReasoningLevel) => ({
       value: option.id,
       label: `${option.label}${option.default ? " (default)" : ""}`,
