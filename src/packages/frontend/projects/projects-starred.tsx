@@ -408,7 +408,7 @@ export function StarredProjectsBar() {
               >
                 <Button
                   icon={<Icon name="ellipsis-vertical" />}
-                  style={{ backgroundColor: "white", marginLeft: "auto" }}
+                  style={{ marginLeft: "auto" }}
                 >
                   +{overflowProjects.length}
                 </Button>
