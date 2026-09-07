@@ -427,6 +427,19 @@ migration; validated agent routing; activity adaptation; release acceptance and
 default/cleanup. Discovery/history use the service; patch loading still uses the
 legacy path. Incoming-commit containment routing remains pending.
 
+Comparison storage foundation (2026-09-07): `git-target-review-store.ts` adds an
+account-scoped namespace keyed by repository and pinned target identity. Each
+save creates an immutable revision with the parent revisions actually loaded by
+the editor. Concurrent saves retain separate heads instead of overwriting one
+another; explicit reconciliation can supersede both. Export retains all revisions,
+and import validates ancestry before writing with fresh IDs, preserving existing
+conflicts. Tests cover account/repository/mode/parent separation, shared worktree
+identity, SHA-1/SHA-256 pins, unavailable parents, failed saves, image Markdown,
+submission identifiers, and corrupt ancestry. V2 records are not migrated or
+modified by this store. Wiring comparison controls, drafts, conflict selection,
+and store export/import into the drawer remains pending; this foundation alone
+does not enable comparison reviews in the UI.
+
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the
 delivery order at the end of this section describes independently reviewable

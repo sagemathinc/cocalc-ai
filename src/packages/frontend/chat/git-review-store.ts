@@ -165,7 +165,9 @@ function sanitizeComment(input: unknown): GitReviewCommentV2 | undefined {
   };
 }
 
-function sanitizeComments(input: unknown): Record<string, GitReviewCommentV2> {
+export function sanitizeComments(
+  input: unknown,
+): Record<string, GitReviewCommentV2> {
   const out: Record<string, GitReviewCommentV2> = {};
   if (!input || typeof input !== "object") return out;
   for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
