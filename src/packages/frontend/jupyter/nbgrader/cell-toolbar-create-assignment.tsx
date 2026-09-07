@@ -23,6 +23,7 @@ import {
   value_to_template_content,
 } from "./cell-types";
 import type { Metadata } from "./types";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const OPTIONS_CODE = CELL_TYPE_INFO_LIST.filter((x) => !x.markdown_only).map(
   (x) => {
@@ -138,6 +139,7 @@ export const CreateAssignmentToolbar: React.FC<Props> = ({ actions, cell }) => {
       <>
         <span style={{ fontWeight: 400 }}>Points:</span>
         <DebounceInput
+          aria-label="Points"
           element={"input"}
           className="form-control"
           debounceTimeout={2000}
@@ -145,7 +147,9 @@ export const CreateAssignmentToolbar: React.FC<Props> = ({ actions, cell }) => {
           autoFocus={do_focus_points}
           onChange={(e) => set_points(parseFloat(`${(e as any).target.value}`))}
           style={{
-            color: "#666",
+            color: UI_COLORS.text,
+            background: UI_COLORS.surface,
+            border: `1px solid ${UI_COLORS.controlBorder}`,
             width: "10ex",
             marginLeft: "5px",
             fontSize: "14px",
@@ -177,6 +181,7 @@ export const CreateAssignmentToolbar: React.FC<Props> = ({ actions, cell }) => {
       <>
         <span style={{ marginLeft: "15px", fontWeight: 400 }}>ID:</span>
         <DebounceInput
+          aria-label="Grade ID"
           debounceTimeout={2000}
           spellCheck={false}
           element="input"
@@ -187,7 +192,9 @@ export const CreateAssignmentToolbar: React.FC<Props> = ({ actions, cell }) => {
             width: `${grade_id.length <= 6 ? 72 : 180}px`,
             marginLeft: "10px",
             paddingLeft: "5px",
-            color: "#666",
+            color: UI_COLORS.text,
+            background: UI_COLORS.surface,
+            border: `1px solid ${UI_COLORS.controlBorder}`,
             fontSize: "14px",
             height: "32px",
           }}
@@ -201,6 +208,7 @@ export const CreateAssignmentToolbar: React.FC<Props> = ({ actions, cell }) => {
       cell.get("cell_type", "code") == "code" ? OPTIONS_CODE : OPTIONS_NOTCODE;
     return (
       <Select
+        aria-label="Grading type"
         options={options}
         onChange={select}
         value={get_value()}
@@ -222,6 +230,7 @@ export const CreateAssignmentToolbar: React.FC<Props> = ({ actions, cell }) => {
     if (info == null) return;
     return (
       <Button
+        aria-label="Grading type help"
         onClick={() => click_help()}
         style={{ marginLeft: "15px" }}
         title={info.hover}
@@ -235,11 +244,11 @@ export const CreateAssignmentToolbar: React.FC<Props> = ({ actions, cell }) => {
   let background: string;
   let color: string;
   if (value == "" || value == "readonly") {
-    color = "#000";
-    background = "#eee";
+    color = UI_COLORS.text;
+    background = UI_COLORS.inset;
   } else {
-    color = "#fff";
-    background = "#337ab7";
+    color = UI_COLORS.onPrimary;
+    background = UI_COLORS.primary;
   }
   return (
     <div style={{ width: "100%", background, color, padding: "3px" }}>

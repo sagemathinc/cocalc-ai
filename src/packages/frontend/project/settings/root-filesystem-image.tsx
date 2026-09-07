@@ -80,6 +80,7 @@ import { themeDraftFromTheme } from "@cocalc/frontend/theme/types";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { split } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   ROOTFS_CONFIG_EXPORT_KIND,
   ROOTFS_CONFIG_EXPORT_VERSION,
@@ -1736,7 +1737,7 @@ export default function RootFilesystemImage({
             style={{ marginBottom: "12px" }}
           />
           {help && (
-            <div style={{ color: "#666", marginBottom: "8px" }}>
+            <div style={{ color: UI_COLORS.secondary, marginBottom: "8px" }}>
               <p>
                 Choose a managed catalog image for the normal case. Advanced
                 OCI/Docker images are admin-only because they bypass CoCalc's
@@ -1829,7 +1830,7 @@ export default function RootFilesystemImage({
                 </div>
                 <div
                   style={{
-                    border: `1px solid ${COLORS.GRAY_LL}`,
+                    border: `1px solid ${UI_COLORS.border}`,
                     borderRadius: 12,
                     maxHeight: 430,
                     overflowY: "auto",
@@ -1875,7 +1876,7 @@ export default function RootFilesystemImage({
                   ) : (
                     <div
                       style={{
-                        color: COLORS.GRAY_M,
+                        color: UI_COLORS.secondary,
                         padding: 28,
                         textAlign: "center",
                       }}
@@ -1887,7 +1888,7 @@ export default function RootFilesystemImage({
                 {draftRootfsEntry ? (
                   <div
                     style={{
-                      background: COLORS.GRAY_LL,
+                      background: UI_COLORS.inset,
                       borderRadius: 12,
                       padding: "12px 14px",
                     }}
@@ -1907,7 +1908,7 @@ export default function RootFilesystemImage({
                       ) : null}
                       <div
                         style={{
-                          color: COLORS.GRAY_M,
+                          color: UI_COLORS.secondary,
                           fontFamily: "monospace",
                           fontSize: 11,
                           overflowWrap: "anywhere",
@@ -2054,7 +2055,7 @@ export default function RootFilesystemImage({
                   </Paragraph>
                   <div
                     style={{
-                      color: COLORS.GRAY_M,
+                      color: UI_COLORS.secondary,
                       fontFamily: "monospace",
                       fontSize: 11,
                       overflowWrap: "anywhere",
@@ -3337,13 +3338,12 @@ function rootfsSummaryCardStyle(entry?: {
   theme?: RootfsImageTheme;
 }): CSSProperties {
   const themeColor = entry?.theme?.color?.trim() || COLORS.GRAY_L;
-  const accentColor = entry?.theme?.accent_color?.trim();
   return {
     border: `1px solid ${themeColor}`,
     borderRadius: 12,
     boxSizing: "border-box",
     padding: "12px 14px",
-    background: accentColor ? `${accentColor}18` : "rgba(0, 0, 0, 0.02)",
+    background: UI_COLORS.surface,
     maxWidth: "760px",
     minWidth: 0,
     width: "100%",
@@ -3367,8 +3367,8 @@ function rootfsHeroCardStyle(entry?: {
   const base = rootfsSummaryCardStyle(entry);
   return {
     ...base,
-    background: `linear-gradient(135deg, ${base.background}, rgba(255, 255, 255, 0.94))`,
-    boxShadow: "0 10px 30px rgba(0, 0, 0, 0.06)",
+    background: UI_COLORS.elevated,
+    boxShadow: `0 10px 30px ${UI_COLORS.shadow}`,
     padding: "18px 20px",
   };
 }
@@ -3437,7 +3437,6 @@ function RootfsCatalogCard({
   selected: boolean;
 }): React.JSX.Element {
   const themeColor = entry.theme?.color?.trim() || COLORS.GRAY_L;
-  const accentColor = entry.theme?.accent_color?.trim();
   const label = displayRootfsUpgradeLabel(entry, entry.image);
   const facts = [
     formatRootfsBaseSize(entry.size_gb),
@@ -3456,22 +3455,18 @@ function RootfsCatalogCard({
       onClick={onSelect}
       style={{
         appearance: "none",
-        background: selected
-          ? COLORS.ANTD_BG_BLUE_L
-          : accentColor
-            ? `${accentColor}14`
-            : "white",
+        background: selected ? UI_COLORS.selected : UI_COLORS.surface,
         border: `1px solid ${
           selected
-            ? COLORS.ANTD_LINK_BLUE
+            ? UI_COLORS.focus
             : recommended
-              ? COLORS.BG_WARNING
+              ? UI_COLORS.warning
               : themeColor
         }`,
         borderRadius: 12,
         boxShadow: selected
-          ? "0 8px 20px rgba(22, 119, 255, 0.12)"
-          : "0 2px 8px rgba(0, 0, 0, 0.03)",
+          ? `0 8px 20px ${UI_COLORS.shadow}`
+          : `0 2px 8px ${UI_COLORS.shadow}`,
         color: "inherit",
         cursor: "pointer",
         display: "flex",
@@ -3522,7 +3517,7 @@ function RootfsCatalogCard({
           <div
             title={contentTitle}
             style={{
-              color: COLORS.GRAY_D,
+              color: UI_COLORS.text,
               fontSize: 12,
               fontWeight: 600,
               marginBottom: 3,
@@ -3537,7 +3532,7 @@ function RootfsCatalogCard({
         {description ? (
           <div
             style={{
-              color: COLORS.GRAY_D,
+              color: UI_COLORS.text,
               display: "-webkit-box",
               fontSize: 12,
               lineHeight: "17px",
@@ -3562,7 +3557,7 @@ function RootfsCatalogCard({
         {facts ? (
           <div
             style={{
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.secondary,
               fontSize: 11,
               marginBottom: 6,
             }}
@@ -3573,7 +3568,7 @@ function RootfsCatalogCard({
         <div
           title={entry.image}
           style={{
-            color: COLORS.GRAY_M,
+            color: UI_COLORS.secondary,
             fontFamily: "monospace",
             fontSize: 11,
             overflow: "hidden",
@@ -3605,8 +3600,8 @@ function PublishOptionCard({
       onClick={onClick}
       style={{
         appearance: "none",
-        background: active ? COLORS.ANTD_BG_BLUE_L : "white",
-        border: `1px solid ${active ? COLORS.ANTD_LINK_BLUE : COLORS.GRAY_LL}`,
+        background: active ? UI_COLORS.selected : UI_COLORS.surface,
+        border: `1px solid ${active ? UI_COLORS.focus : UI_COLORS.border}`,
         borderRadius: 12,
         color: "inherit",
         cursor: "pointer",
@@ -3631,7 +3626,9 @@ function PublishOptionCard({
         </Tag>
         <div style={{ fontWeight: 700 }}>{title}</div>
       </div>
-      <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{description}</div>
+      <div style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
+        {description}
+      </div>
     </button>
   );
 }
@@ -3674,7 +3671,7 @@ function LifecycleRow({
         </div>
         <div
           style={{
-            color: COLORS.GRAY_M,
+            color: UI_COLORS.secondary,
             fontSize: 12,
             minWidth: 0,
             overflowWrap: "anywhere",
@@ -3863,7 +3860,8 @@ function TechnicalGroup({
   return (
     <div
       style={{
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        border: `1px solid ${UI_COLORS.border}`,
+        background: UI_COLORS.surface,
         borderRadius: 10,
         boxSizing: "border-box",
         minWidth: 0,
@@ -3898,7 +3896,7 @@ function TechnicalRow({
     <div style={{ minWidth: 0 }}>
       <div
         style={{
-          color: COLORS.GRAY_M,
+          color: UI_COLORS.secondary,
           fontSize: 11,
           fontWeight: 600,
           textTransform: "uppercase",
@@ -3908,7 +3906,7 @@ function TechnicalRow({
       </div>
       <div
         style={{
-          color: COLORS.GRAY_D,
+          color: UI_COLORS.text,
           fontSize: 12,
           minWidth: 0,
           overflowWrap: "anywhere",
@@ -3961,7 +3959,7 @@ function renderRootfsEntrySummary({
               style={{
                 fontFamily: "monospace",
                 fontSize: "11px",
-                color: COLORS.GRAY_M,
+                color: UI_COLORS.secondary,
                 overflowWrap: "anywhere",
               }}
             >

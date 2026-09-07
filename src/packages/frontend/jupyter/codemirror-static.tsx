@@ -144,7 +144,7 @@ export function CodeMirrorStatic(props: Props) {
       style = { ...BLURRED_STYLE, padding: `4px 4px 4px ${width + 4}px` };
     } else {
       width = 0;
-      style = BLURRED_STYLE;
+      style = { ...BLURRED_STYLE };
     }
     if (theme == "default") {
       style.background = "white";

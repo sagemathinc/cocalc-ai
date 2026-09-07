@@ -7,7 +7,7 @@ import { useState } from "react";
 import { Button, Card, Space, Tag, Typography } from "antd";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { Icon } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   HostPickerModal,
   HostPickerPanel,
@@ -68,7 +68,7 @@ export function SelectNewHost({
               >
                 <Icon name="servers" /> Host
               </div>
-              <div style={{ color: COLORS.GRAY_D }}>
+              <div style={{ color: UI_COLORS.text }}>
                 {selectedHost ? (
                   <Space orientation="vertical" size={4}>
                     <Space size={0} wrap>
@@ -142,7 +142,10 @@ export function SelectNewHost({
           <Card
             size="small"
             styles={{ body: { padding: "10px 12px" } }}
-            style={{ borderColor: COLORS.GRAY_LL, background: "white" }}
+            style={{
+              borderColor: UI_COLORS.border,
+              background: UI_COLORS.surface,
+            }}
           >
             <HostPickerPanel
               active={effectivePickerOpen}

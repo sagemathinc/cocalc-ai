@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -132,7 +133,7 @@ export function StudentAssignmentInfoHeader({
         <Tip title={title} tip={tip}>
           <span
             style={{
-              color: COLORS.GRAY_D,
+              color: UI_COLORS.text,
               display: "block",
               fontSize: 12,
               fontWeight: 700,
@@ -206,7 +207,7 @@ export function StudentAssignmentInfoHeader({
     <div>
       <Row
         style={{
-          background: COLORS.GRAY_LLL,
+          background: UI_COLORS.inset,
           border: `1px solid ${COLORS.GRAY_L}`,
           borderRadius: 6,
           marginBottom: 6,
@@ -226,7 +227,7 @@ export function StudentAssignmentInfoHeader({
           <Tip title={title} tip={tooltip}>
             <span
               style={{
-                color: COLORS.GRAY_D,
+                color: UI_COLORS.text,
                 display: "block",
                 fontSize: 12,
                 fontWeight: 700,

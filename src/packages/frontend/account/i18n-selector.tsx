@@ -110,6 +110,7 @@ export function LanguageSelector({
 }
 
 export function I18NSelector(props: Readonly<Props>) {
+  const [modal, modalContextHolder] = Modal.useModal();
   const { isWide = true, size, confirm = false } = props;
 
   const intl = useIntl();
@@ -152,7 +153,7 @@ export function I18NSelector(props: Readonly<Props>) {
       </Space>
     ),
     onClick: () =>
-      Modal.info({
+      modal.info({
         width: "min(90vw, 600px)",
         title: intl.formatMessage(I18N_TITLE),
         content: <Paragraph>{intl.formatMessage(I18N_MESSAGE)}</Paragraph>,
@@ -173,7 +174,7 @@ export function I18NSelector(props: Readonly<Props>) {
     onClick: ({ key }) => {
       if (key in LOCALIZATIONS) {
         if (confirm) {
-          Modal.confirm({
+          modal.confirm({
             onOk: () => changeLocale(key),
             title: intl.formatMessage(
               {
@@ -216,20 +217,23 @@ export function I18NSelector(props: Readonly<Props>) {
   );
 
   return (
-    <Tooltip title={langOpen ? undefined : tooltip} trigger={["hover"]}>
-      <Dropdown
-        menu={menu}
-        trigger={["click"]}
-        onOpenChange={(open) => setLangOpen(open)}
-      >
-        <Button size={size}>
-          <Space>
-            {lang_icon}
-            {isWide ? title : undefined}
-            <DownOutlined />
-          </Space>
-        </Button>
-      </Dropdown>
-    </Tooltip>
+    <>
+      {modalContextHolder}
+      <Tooltip title={langOpen ? undefined : tooltip} trigger={["hover"]}>
+        <Dropdown
+          menu={menu}
+          trigger={["click"]}
+          onOpenChange={(open) => setLangOpen(open)}
+        >
+          <Button size={size}>
+            <Space>
+              {lang_icon}
+              {isWide ? title : undefined}
+              <DownOutlined />
+            </Space>
+          </Button>
+        </Dropdown>
+      </Tooltip>
+    </>
   );
 }

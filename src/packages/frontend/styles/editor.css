@@ -7,7 +7,7 @@
   margin: 0;
   width: 100%;
   padding: 0;
-  background: white;
+  background: var(--cocalc-ui-surface);
 }
 .webapp-editor-content .table {
   width: auto;
@@ -15,7 +15,7 @@
 
 .webapp-editor-textedit-buttonbar {
   padding: 3px 3px 0px 3px;
-  background: #efefef;
+  background: var(--cocalc-ui-inset);
 }
 
 .webapp-editor-close-button-x {
@@ -25,7 +25,7 @@
   width: 2%;
 }
 .webapp-editor-close-button-x:hover {
-  color: #f00;
+  color: var(--cocalc-ui-danger);
 }
 
 .webapp-editor-tab-filename {
@@ -66,7 +66,7 @@
 }
 
 .webapp-editor-codemirror-button-row {
-  background: #efefef;
+  background: var(--cocalc-ui-inset);
 }
 
 .webapp-editor-codemirror-filename,
@@ -75,7 +75,7 @@
   margin-right: 10px;
   font-size: 11pt;
   font-weight: bold;
-  color: #555;
+  color: var(--cocalc-ui-secondary);
 }
 
 .webapp-editor-codemirror-message {
@@ -128,7 +128,7 @@
 
 .webapp-editor-latex-mesg-template {
   overflow-x: auto;
-  background: white;
+  background: var(--cocalc-ui-surface);
   margin-right: 2em;
 }
 
@@ -154,7 +154,7 @@
   background-color: #ad241f;
 }
 .webapp-editor-latex-right-pane > .nav-tabs > li > a {
-  color: #555;
+  color: var(--cocalc-ui-secondary);
   margin-top: 2px;
   padding-top: 6px;
   padding-bottom: 6px;
@@ -538,7 +538,7 @@ code {
 
 .webapp-editor-html-md-preview {
   padding: 12px;
-  background: white;
+  background: var(--cocalc-ui-surface);
   overflow: auto;
 }
 
@@ -661,7 +661,7 @@ h6 {
 
 .user-mention {
   color: #0958d9;
-  background: white;
+  background: var(--cocalc-ui-surface);
   padding: 3px;
   margin: -3px 0;
 }

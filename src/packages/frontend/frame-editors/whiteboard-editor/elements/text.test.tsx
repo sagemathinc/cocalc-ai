@@ -2,6 +2,8 @@
 
 import { render, screen } from "@testing-library/react";
 import Text from "./text";
+import { getStyle, getFullStyle } from "./text-static";
+import { lightAppearance } from "@cocalc/util/appearance-palette";
 
 let latestMarkdownProps: any;
 const setElement = jest.fn();
@@ -78,6 +80,10 @@ describe("whiteboard text editor", () => {
     expect(screen.getByTestId("markdown-input")).toBeInTheDocument();
     expect(latestMarkdownProps.autoGrow).toBe(true);
     expect(latestMarkdownProps.unboundedAutoGrow).toBe(true);
+    expect(latestMarkdownProps.style["--cocalc-ui-text"]).toBe(
+      lightAppearance.text,
+    );
+    expect(latestMarkdownProps.style.colorScheme).toBe("light");
   });
 
   it("does not mount a writable editor for a passive remote cursor", () => {
@@ -102,5 +108,36 @@ describe("whiteboard text editor", () => {
     expect(screen.getByTestId("static-text")).toBeInTheDocument();
     expect(screen.queryByTestId("markdown-input")).not.toBeInTheDocument();
     expect(latestMarkdownProps).toBeUndefined();
+  });
+});
+
+describe("whiteboard paper appearance", () => {
+  afterEach(() =>
+    document.documentElement.removeAttribute("data-cocalc-theme"),
+  );
+
+  it.each(["light", "dark"])("preserves authored colors in %s mode", (mode) => {
+    document.documentElement.setAttribute("data-cocalc-theme", mode);
+    const element = {
+      id: "note",
+      type: "text",
+      x: 0,
+      y: 0,
+      w: 100,
+      h: 100,
+      z: 0,
+      data: { color: "#123456", background: "#fff8b0" },
+    } as const;
+    for (const style of [getStyle(element), getFullStyle(element, false)]) {
+      expect(style).toMatchObject({
+        colorScheme: "light",
+        color: "#123456",
+        background: "#fff8b0",
+        "--cocalc-ui-text": "#123456",
+        "--cocalc-ui-link": lightAppearance.link,
+        "--cocalc-ui-codeText": lightAppearance.codeText,
+        "--cocalc-ui-surface": lightAppearance.surface,
+      });
+    }
   });
 });

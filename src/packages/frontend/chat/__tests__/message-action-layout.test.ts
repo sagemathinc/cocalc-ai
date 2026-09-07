@@ -1,4 +1,4 @@
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   getFocusMessageButtonStyle,
   safeRenderSyncdbGetOne,
@@ -98,7 +98,7 @@ describe("message action layout", () => {
 
   it("keeps selectable markdown links visually link-colored", () => {
     expect(SELECTABLE_MARKDOWN_STYLE["--cocalc-slate-link"]).toBe(
-      COLORS.ANTD_LINK_BLUE,
+      UI_COLORS.link,
     );
   });
 

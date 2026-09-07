@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
 Shows vertical linear sortable list of the pages in the whiteboard,
 where the page size expands to fit the width.
@@ -125,7 +126,7 @@ export default function Pages() {
           </div>
           <DragHandle
             id={`${sortedPageIds.get(index)}`}
-            style={{ marginRight: "5px", color: "#999" }}
+            style={{ marginRight: "5px", color: UI_COLORS.secondary }}
           />
           <Overview
             margin={15}
@@ -163,7 +164,11 @@ export default function Pages() {
   };
 
   return (
-    <div className="smc-vfill" ref={divRef} style={{ background: "#eee" }}>
+    <div
+      className="smc-vfill"
+      ref={divRef}
+      style={{ background: UI_COLORS.inset, color: UI_COLORS.text }}
+    >
       <SortableList
         items={sortedPageIds.toJS()}
         Item={({ id }) => {

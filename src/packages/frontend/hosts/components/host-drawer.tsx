@@ -56,7 +56,7 @@ import type {
   ManagedComponentUpgradePolicy,
 } from "@cocalc/conat/project-host/api";
 import { humanSize } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLogEntry } from "../hooks/use-host-log";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
@@ -2382,11 +2382,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                         </Typography.Text>
                       )}
                       {entry.provider && (
-                        <div style={{ color: COLORS.GRAY, fontSize: 12 }}>
+                        <div
+                          style={{ color: UI_COLORS.secondary, fontSize: 12 }}
+                        >
                           Provider: {entry.provider}
                         </div>
                       )}
-                      <div style={{ color: COLORS.GRAY, fontSize: 12 }}>
+                      <div style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
                         {entry.ts
                           ? new Date(entry.ts).toLocaleString()
                           : "unknown time"}
@@ -3300,9 +3302,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               style={{
                 maxHeight: 360,
                 overflow: "auto",
-                border: `1px solid ${COLORS.GRAY_LL}`,
+                border: `1px solid ${UI_COLORS.border}`,
                 borderRadius: 6,
-                background: COLORS.GRAY_LLL,
+                background: UI_COLORS.inset,
                 padding: 12,
                 fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                 fontSize: 12,
@@ -3797,9 +3799,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                       style={{
                         maxHeight: 360,
                         overflow: "auto",
-                        border: `1px solid ${COLORS.GRAY_LL}`,
+                        border: `1px solid ${UI_COLORS.border}`,
                         borderRadius: 6,
-                        background: COLORS.GRAY_LLL,
+                        background: UI_COLORS.inset,
                         padding: 12,
                         fontFamily:
                           "ui-monospace, SFMono-Regular, Menlo, monospace",

@@ -1,6 +1,7 @@
 import type { Map as ImmutableMap } from "immutable";
 import type { MutableRefObject, ReactNode, RefObject } from "react";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { MarkdownInput } from "./component";
 import { resolveUndoHandler } from "./undo-policy";
 import type {
@@ -303,22 +304,21 @@ export function SlateRichTextAdapter({
         is_current={true}
         hidePath
         disableWindowing={true}
-        style={
-          minimal
-            ? {
-                background: undefined,
-                backgroundColor: undefined,
-              }
-            : undefined
-        }
+        style={{
+          backgroundColor: minimal ? "transparent" : UI_COLORS.surface,
+          color: UI_COLORS.text,
+        }}
         pageStyle={
           minimal
             ? {
-                background: undefined,
+                background: "transparent",
+                color: UI_COLORS.text,
                 padding: 0,
                 minHeight: autoGrow ? `${MIN_INPUT_HEIGHT}px` : undefined,
               }
             : {
+                background: UI_COLORS.surface,
+                color: UI_COLORS.text,
                 padding: "5px 15px",
                 minHeight: autoGrow ? `${MIN_INPUT_HEIGHT}px` : undefined,
               }

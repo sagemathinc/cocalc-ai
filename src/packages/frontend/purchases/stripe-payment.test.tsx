@@ -22,6 +22,10 @@ import {
 } from "./api";
 
 let mockStripeEnabled = false;
+let mockAppearance = "light";
+jest.mock("@cocalc/frontend/appearance/use-appearance", () => ({
+  useAppearance: () => ({ resolved: mockAppearance }),
+}));
 let mockEmailVerificationRequired = false;
 
 function freshAuthRequiredError() {
@@ -96,7 +100,11 @@ jest.mock("@stripe/react-stripe-js", () => ({
   EmbeddedCheckoutProvider: ({ children }: { children?: ReactNode }) => (
     <>{children}</>
   ),
-  Elements: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  Elements: ({ children, options }: any) => (
+    <div data-testid="stripe-elements" data-theme={options.appearance.theme}>
+      {children}
+    </div>
+  ),
   PaymentElement: () => <div>Stripe payment element</div>,
   useElements: () => ({
     getElement: (type: string) =>
@@ -179,6 +187,7 @@ jest.mock("./api", () => ({
 
 describe("StripePayment", () => {
   beforeEach(() => {
+    mockAppearance = "light";
     mockStripeEnabled = false;
     mockEmailVerificationRequired = false;
     jest.mocked(createPaymentIntent).mockReset();
@@ -203,6 +212,19 @@ describe("StripePayment", () => {
     });
     jest.mocked(setStripeCustomer).mockReset();
     jest.mocked(setStripeCustomer).mockResolvedValue(undefined);
+  });
+
+  it("updates Stripe address appearance without remounting the form", async () => {
+    mockStripeEnabled = true;
+    const props = { onCancel: jest.fn(), requirePaymentMethod: false };
+    const { rerender } = render(<BillingSetupModal {...props} />);
+    const form = await screen.findByTestId("stripe-elements");
+    expect(form).toHaveAttribute("data-theme", "stripe");
+    mockAppearance = "dark";
+    rerender(<BillingSetupModal {...props} />);
+    expect(screen.getByTestId("stripe-elements")).toBe(form);
+    expect(form).toHaveAttribute("data-theme", "night");
+    expect(createSetupIntent).not.toHaveBeenCalled();
   });
 
   it("requires email verification before rendering purchase controls", () => {

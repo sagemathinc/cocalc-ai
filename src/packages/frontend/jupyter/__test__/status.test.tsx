@@ -2,6 +2,7 @@ import * as immutable from "immutable";
 import { act, render, screen } from "@testing-library/react";
 import { IntlProvider } from "react-intl";
 import { Kernel } from "../status";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const useRedux = jest.fn();
 const getProjectActions = jest.fn();
@@ -42,55 +43,97 @@ describe("Kernel", () => {
     getProjectActions.mockReset();
   });
 
-  it("falls back to actions.project_id when redux project_id is not set yet", () => {
-    const actions = {
-      name: "jupyter-test",
-      project_id: "project-1",
-      show_select_kernel: jest.fn(),
-      hide_select_kernel: jest.fn(),
-      kernel_dont_ask_again: jest.fn(),
-      set_kernel: jest.fn(),
-    } as any;
+  it.each([false, true])(
+    "does not offset the trust button above the header (compact=%s)",
+    (compact) => {
+      const state = {
+        trust: false,
+        kernel: "python3",
+        kernels: immutable.List(),
+        read_only: false,
+        backend_state: "running",
+        kernel_state: "idle",
+        runProgress: 0,
+      };
+      useRedux.mockImplementation(([, key]) => state[key]);
+      getProjectActions.mockReturnValue({ project_id: "project-1" });
+      render(
+        <IntlProvider locale="en" messages={{}}>
+          <Kernel
+            actions={{ name: "jupyter-test", project_id: "project-1" } as any}
+            compact={compact}
+            onLayoutChange={jest.fn()}
+          />
+        </IntlProvider>,
+      );
+      const button = screen.getByRole("button", { name: "Not Trusted" });
+      expect(button.style.marginTop).toBe("");
+      button.focus();
+      expect(button).toHaveFocus();
+    },
+  );
 
-    useRedux.mockImplementation(([name, key]) => {
-      if (name !== "jupyter-test") {
-        return;
+  it.each([false, true])(
+    "themes the header (compact=%s) and falls back to actions.project_id",
+    (compact) => {
+      const actions = {
+        name: "jupyter-test",
+        project_id: "project-1",
+        show_select_kernel: jest.fn(),
+        hide_select_kernel: jest.fn(),
+        kernel_dont_ask_again: jest.fn(),
+        set_kernel: jest.fn(),
+      } as any;
+
+      useRedux.mockImplementation(([name, key]) => {
+        if (name !== "jupyter-test") {
+          return;
+        }
+        switch (key) {
+          case "trust":
+            return true;
+          case "read_only":
+            return false;
+          case "kernel":
+            return "python3";
+          case "kernels":
+            return immutable.List();
+          case "runProgress":
+            return 0;
+          case "project_id":
+            return undefined;
+          case "kernel_info":
+            return immutable.fromJS({ display_name: "Python 3 (ipykernel)" });
+          case "show_kernel_selector":
+            return false;
+          case "backend_state":
+            return "off";
+          case "kernel_state":
+            return "idle";
+        }
+      });
+
+      getProjectActions.mockReturnValue({ project_id: "project-1" });
+
+      render(
+        <IntlProvider locale="en" messages={{}}>
+          <Kernel actions={actions} compact={compact} />
+        </IntlProvider>,
+      );
+
+      expect(getProjectActions).toHaveBeenCalledWith("project-1");
+      expect(screen.getByText("Python 3 (ipykernel)")).toBeTruthy();
+      const name = screen.getByText("Python 3 (ipykernel)");
+      expect(name.style.color).toBe(UI_COLORS.link);
+      let header: HTMLElement | null = name;
+      while (header && !header.style.backgroundColor) {
+        header = header.parentElement;
       }
-      switch (key) {
-        case "trust":
-          return true;
-        case "read_only":
-          return false;
-        case "kernel":
-          return "python3";
-        case "kernels":
-          return immutable.List();
-        case "runProgress":
-          return 0;
-        case "project_id":
-          return undefined;
-        case "kernel_info":
-          return immutable.fromJS({ display_name: "Python 3 (ipykernel)" });
-        case "show_kernel_selector":
-          return false;
-        case "backend_state":
-          return "off";
-        case "kernel_state":
-          return "idle";
-      }
-    });
-
-    getProjectActions.mockReturnValue({ project_id: "project-1" });
-
-    render(
-      <IntlProvider locale="en" messages={{}}>
-        <Kernel actions={actions} />
-      </IntlProvider>,
-    );
-
-    expect(getProjectActions).toHaveBeenCalledWith("project-1");
-    expect(screen.getByText("Python 3 (ipykernel)")).toBeTruthy();
-  });
+      expect(header?.style.backgroundColor).toBe(UI_COLORS.inset);
+      expect(header?.style.color).toBe(UI_COLORS.text);
+      expect(header?.style.borderBottom).toBe(`1px solid ${UI_COLORS.border}`);
+    },
+  );
 
   it("renders a compact embedded header without trust text or halt actions", () => {
     const actions = {

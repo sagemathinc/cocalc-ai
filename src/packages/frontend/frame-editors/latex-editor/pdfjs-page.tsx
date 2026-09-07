@@ -28,7 +28,7 @@ interface PageProps {
   scale: number;
   page: PDFPageProxy;
   syncHighlight?: SyncHighlight;
-  disableDarkMode?: boolean;
+  invertColors?: boolean;
 }
 
 export default function Page({
@@ -39,7 +39,7 @@ export default function Page({
   scale,
   page,
   syncHighlight,
-  disableDarkMode = false,
+  invertColors = false,
 }: PageProps) {
   const divRef = useRef<HTMLDivElement | null>(null);
 
@@ -112,7 +112,7 @@ export default function Page({
           scale={scale}
           clickAnnotation={clickAnnotation}
           syncHighlight={syncHighlight}
-          disableDarkMode={disableDarkMode}
+          invertColors={invertColors}
         />
       </div>
     </div>

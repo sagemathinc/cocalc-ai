@@ -11,9 +11,10 @@ import { useIntl } from "react-intl";
 import { useAccountOtherSetting } from "@cocalc/frontend/app-framework";
 import { IntlMessage, isIntlMessage } from "@cocalc/frontend/i18n";
 import { useActivityBarPreferences } from "@cocalc/frontend/project/page/activity-bar-storage";
-import { COLORS } from "@cocalc/util/theme";
 import { useAnimationsEnabled } from "./animations";
 import { getBaseAntdTheme } from "./antd-base-theme";
+import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
+import { appearancePalette } from "@cocalc/util/appearance-palette";
 import { NARROW_THRESHOLD_PX, PageStyle } from "./top-nav-consts";
 import useAppContext, { AppContext, AppState, calcStyle } from "./use-context";
 
@@ -79,39 +80,49 @@ export function useAppContextProvider(): AppState {
 }
 
 export function useAntdStyleProvider() {
-  const baseTheme = getBaseAntdTheme();
+  const { resolved } = useAppearance();
   const rounded = useAccountOtherSetting<boolean>("antd_rounded") ?? true;
   const animate = useAnimationsEnabled();
   const branded = useAccountOtherSetting<boolean>("antd_brandcolors") ?? false;
   const compact = useAccountOtherSetting<boolean>("antd_compact") ?? false;
 
-  const borderStyle = rounded
-    ? undefined
-    : { borderRadius: 0, borderRadiusLG: 0, borderRadiusSM: 0 };
+  const antdTheme = useMemo<ThemeConfig>(() => {
+    const baseTheme = getBaseAntdTheme(resolved);
+    const borderStyle = rounded
+      ? undefined
+      : { borderRadius: 0, borderRadiusLG: 0, borderRadiusSM: 0 };
 
-  const animationStyle = animate ? undefined : { motion: false };
+    const animationStyle = animate ? undefined : { motion: false };
 
-  const primaryColor = branded
-    ? undefined
-    : { colorPrimary: COLORS.ANTD_LINK_BLUE };
+    const primaryColor = branded
+      ? undefined
+      : { colorPrimary: appearancePalette(resolved).primary };
 
-  const algorithm = compact ? { algorithm: theme.compactAlgorithm } : undefined;
+    const algorithm = {
+      algorithm: [
+        resolved === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
+        ...(compact ? [theme.compactAlgorithm] : []),
+      ],
+    };
 
-  const antdTheme: ThemeConfig = {
-    ...baseTheme,
-    ...algorithm,
-    token: {
-      ...(baseTheme.token ?? {}),
-      ...primaryColor,
-      ...borderStyle,
-      ...animationStyle,
-    },
-    components: {
-      Button: {
+    return {
+      ...baseTheme,
+      ...algorithm,
+      token: {
+        ...(baseTheme.token ?? {}),
         ...primaryColor,
+        ...borderStyle,
+        ...animationStyle,
       },
-    },
-  };
+      components: {
+        ...baseTheme.components,
+        Button: {
+          ...baseTheme.components?.Button,
+          ...primaryColor,
+        },
+      },
+    };
+  }, [resolved, rounded, animate, branded, compact]);
 
   return {
     antdTheme,

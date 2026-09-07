@@ -3,11 +3,28 @@
 import {
   automationConfigMissingReason,
   describeAutomationSchedule,
+  getAutomationBannerAppearance,
   normalizeAutomationConfigForSave,
   shouldShowAutomationNextRun,
 } from "../automation-form";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 describe("automation form helpers", () => {
+  it("uses appearance-aware automation banner colors", () => {
+    expect(getAutomationBannerAppearance("active")).toEqual({
+      borderColor: UI_COLORS.info,
+      background: UI_COLORS.infoBg,
+    });
+    expect(getAutomationBannerAppearance("paused")).toEqual({
+      borderColor: UI_COLORS.warning,
+      background: UI_COLORS.warningBg,
+    });
+    expect(getAutomationBannerAppearance("error")).toEqual({
+      borderColor: UI_COLORS.danger,
+      background: UI_COLORS.dangerBg,
+    });
+  });
+
   it("normalizes interval schedules for save", () => {
     expect(
       normalizeAutomationConfigForSave({

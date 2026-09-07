@@ -2,6 +2,7 @@ import { Button, Layout } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { Resizable } from "re-resizable";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 type HostCreatePanelProps = {
   width: number;
@@ -11,8 +12,9 @@ type HostCreatePanelProps = {
 };
 
 const PANEL_STYLE: React.CSSProperties = {
-  background: "white",
-  borderRight: "1px solid #eee",
+  background: UI_COLORS.surface,
+  color: UI_COLORS.text,
+  borderRight: `1px solid ${UI_COLORS.border}`,
   padding: "16px",
   height: "100%",
   minHeight: 0,

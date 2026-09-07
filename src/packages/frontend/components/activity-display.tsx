@@ -11,18 +11,20 @@ import {
 } from "@cocalc/util/misc";
 import { Icon } from "./icon";
 import { CloseX } from "./close-x";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const ACTIVITY_STYLE = {
   float: "right",
-  backgroundColor: "white",
+  backgroundColor: UI_COLORS.surface,
+  color: UI_COLORS.text,
   position: "absolute",
   right: "25px",
   top: "65px",
-  border: "1px solid #ccc",
+  border: `1px solid ${UI_COLORS.border}`,
   padding: "10px",
   zIndex: 10,
   borderRadius: "5px",
-  boxShadow: "3px 3px 3px #ccc",
+  boxShadow: `3px 3px 3px ${UI_COLORS.border}`,
 } as CSS;
 
 const ACTIVITY_ITEM_STYLE = {

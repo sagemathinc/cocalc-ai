@@ -6,6 +6,7 @@
 // cSpell:ignore userdefined
 
 import { List, Map } from "immutable";
+import type { AppearancePreference } from "@cocalc/util/appearance";
 
 import { TypedMap } from "@cocalc/frontend/app-framework";
 import type { Locale, OTHER_SETTINGS_LOCALE_KEY } from "@cocalc/frontend/i18n";
@@ -52,6 +53,7 @@ export interface AccountState {
     no_free_warnings?: boolean;
     time_ago_absolute: boolean;
     dark_mode: boolean;
+    appearance_theme?: AppearancePreference;
     dark_mode_brightness: number;
     dark_mode_contrast: number;
     dark_mode_sepia: number;

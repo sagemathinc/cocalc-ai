@@ -13,3 +13,7 @@ The steps are:
 
 It DOES work fine to add multiple js files, since each just adds some hidden
 template svg element to the DOM. Just be sure to update `index.js` to include them.
+
+When refreshing `iconfont-3.js`, preserve `currentColor` for both paths in
+`icon-disk-snapshot`. Fixed gray fills make the Recovery icon unreadable on
+dark toolbars. `recovery-icon.test.ts` guards this local correction.

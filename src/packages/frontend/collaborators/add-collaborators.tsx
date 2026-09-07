@@ -29,7 +29,8 @@ import {
 import { Well } from "../antd-bootstrap";
 import { Icon, Loading, ErrorDisplay, Gap } from "../components";
 import { webapp_client } from "../webapp-client";
-import { COLORS, SITE_NAME } from "@cocalc/util/theme";
+import { SITE_NAME } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   plural,
   cmp,
@@ -484,7 +485,7 @@ export const AddCollaborators: React.FC<Props> = ({
               {r.extra != null && r.extra.length > 0 && (
                 <div
                   style={{
-                    color: COLORS.GRAY_M,
+                    color: UI_COLORS.secondary,
                     fontSize: 12,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -696,7 +697,7 @@ export const AddCollaborators: React.FC<Props> = ({
         />
         <div
           style={{
-            color: COLORS.GRAY,
+            color: UI_COLORS.secondary,
             fontSize: "12px",
             lineHeight: "18px",
             marginTop: "4px",
@@ -723,10 +724,10 @@ export const AddCollaborators: React.FC<Props> = ({
         {customize_email && (
           <div
             style={{
-              border: `1px solid ${COLORS.GRAY_L}`,
+              border: `1px solid ${UI_COLORS.border}`,
               padding: "10px",
               borderRadius: "5px",
-              backgroundColor: COLORS.WHITE,
+              backgroundColor: UI_COLORS.surface,
               marginTop: "8px",
             }}
           >
@@ -805,8 +806,8 @@ export const AddCollaborators: React.FC<Props> = ({
     return (
       <div
         style={{
-          background: COLORS.GRAY_LLL,
-          border: `1px solid ${COLORS.GRAY_LL}`,
+          background: UI_COLORS.inset,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: 10,
           marginBottom: 10,
           padding: 12,
@@ -834,7 +835,9 @@ export const AddCollaborators: React.FC<Props> = ({
             onChange={set_invite_read_policy}
           />
         ) : (
-          <div style={{ color: COLORS.GRAY_M, fontSize: 12, marginTop: 6 }}>
+          <div
+            style={{ color: UI_COLORS.secondary, fontSize: 12, marginTop: 6 }}
+          >
             Collaborators get normal read/write access, project runtimes,
             terminals, SSH, and project tools.
           </div>
@@ -926,8 +929,8 @@ export const AddCollaborators: React.FC<Props> = ({
     return (
       <div
         style={{
-          background: COLORS.GRAY_LLL,
-          border: `1px solid ${COLORS.GRAY_LL}`,
+          background: UI_COLORS.inset,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: 10,
           marginBottom: 10,
           padding: 12,
@@ -1121,8 +1124,8 @@ export const AddCollaborators: React.FC<Props> = ({
         aria-live="polite"
         role="status"
         style={{
-          background: COLORS.BLUE_LLLL,
-          border: `1px solid ${COLORS.BLUE_LLL}`,
+          background: UI_COLORS.infoBg,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: 12,
           margin: "10px 0",
           padding: 16,
@@ -1138,9 +1141,9 @@ export const AddCollaborators: React.FC<Props> = ({
           <div
             style={{
               alignItems: "center",
-              background: COLORS.BLUE_D,
+              background: UI_COLORS.primary,
               borderRadius: "50%",
-              color: COLORS.GRAY_LLL,
+              color: UI_COLORS.onPrimary,
               display: "flex",
               flex: "0 0 34px",
               height: 34,
@@ -1153,7 +1156,7 @@ export const AddCollaborators: React.FC<Props> = ({
           <div style={{ minWidth: 0, width: "100%" }}>
             <div
               style={{
-                color: COLORS.BLUE_DDD,
+                color: UI_COLORS.text,
                 fontSize: 16,
                 fontWeight: 700,
                 marginBottom: 4,
@@ -1161,7 +1164,7 @@ export const AddCollaborators: React.FC<Props> = ({
             >
               Invitation link created
             </div>
-            <div style={{ color: COLORS.GRAY_D, marginBottom: 14 }}>
+            <div style={{ color: UI_COLORS.secondary, marginBottom: 14 }}>
               <b>No email was sent.</b> You must copy and send this link through
               email, Canvas, Slack, chat, or another trusted channel.
               {membershipUpgradeAvailable ? (
@@ -1185,7 +1188,7 @@ export const AddCollaborators: React.FC<Props> = ({
                 <div key={`${entry.email_address}:${index}`}>
                   <div
                     style={{
-                      color: COLORS.GRAY_DD,
+                      color: UI_COLORS.text,
                       fontWeight: 600,
                       marginBottom: 6,
                     }}
@@ -1230,7 +1233,7 @@ export const AddCollaborators: React.FC<Props> = ({
                   {entry.reason ? (
                     <div
                       style={{
-                        color: COLORS.GRAY_D,
+                        color: UI_COLORS.secondary,
                         fontSize: 12,
                         marginTop: 6,
                       }}
@@ -1244,9 +1247,9 @@ export const AddCollaborators: React.FC<Props> = ({
             <div
               style={{
                 alignItems: "flex-start",
-                background: COLORS.BLUE_LLLL,
+                background: UI_COLORS.infoBg,
                 borderRadius: 8,
-                color: COLORS.BLUE_DDD,
+                color: UI_COLORS.text,
                 display: "flex",
                 gap: 8,
                 marginTop: 14,

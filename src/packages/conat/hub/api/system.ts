@@ -1072,6 +1072,7 @@ export interface ProjectRuntimeSlotReport {
 }
 
 export interface BrowserSignInCookieInfo {
+  testing_account?: boolean;
   remember_me?: string;
   account_id?: string;
   max_age_ms?: number;
@@ -3043,6 +3044,7 @@ export interface System {
     browser_id?: string | null;
     session_hash?: string | null;
     max_age_ms?: number;
+    testing_account_id?: string;
   }) => Promise<BrowserSignInCookieInfo>;
 
   getProjectAppPrivateHostnamePolicy: (opts: {

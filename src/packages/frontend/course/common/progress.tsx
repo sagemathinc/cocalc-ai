@@ -8,17 +8,17 @@ Progress indicator for assigning/collecting/etc. a particular assignment or hand
 */
 
 import { Icon, Gap } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const progress_info = {
-  color: COLORS.GRAY_D,
+  color: UI_COLORS.secondary,
   marginLeft: "10px",
   whiteSpace: "normal",
 } as const;
 
 const progress_info_done = {
   ...progress_info,
-  color: COLORS.BS_GREEN_DD,
+  color: UI_COLORS.success,
 } as const;
 
 interface ProgressProps {

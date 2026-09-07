@@ -39,7 +39,7 @@ import {
   TimeAgo,
 } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -445,9 +445,9 @@ function renderIncomingCards(
                     style={{
                       marginTop: "6px",
                       padding: "6px 8px",
-                      border: `1px solid ${COLORS.GRAY_L0}`,
+                      border: `1px solid ${UI_COLORS.border}`,
                       borderRadius: "4px",
-                      background: COLORS.GRAY_LLL,
+                      background: UI_COLORS.inset,
                     }}
                   >
                     <div style={{ fontSize: "12px", opacity: 0.75 }}>
@@ -831,7 +831,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
                         aria-label="Invitation email delivery status"
                         role="status"
                         style={{
-                          color: COLORS.FEATURE_ORANGE,
+                          color: UI_COLORS.warning,
                           fontSize: "12px",
                           marginTop: "4px",
                         }}
@@ -868,9 +868,9 @@ export const InviteInboxPanel: React.FC<Props> = ({
                       style={{
                         marginTop: "6px",
                         padding: "6px 8px",
-                        border: `1px solid ${COLORS.GRAY_L0}`,
+                        border: `1px solid ${UI_COLORS.border}`,
                         borderRadius: "4px",
-                        background: COLORS.GRAY_LLL,
+                        background: UI_COLORS.inset,
                       }}
                     >
                       <div style={{ fontSize: "12px", opacity: 0.75 }}>
@@ -891,7 +891,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
                   {invite.invite_source === "email" && !canCopyEmailLink && (
                     <div
                       style={{
-                        color: COLORS.GRAY_M,
+                        color: UI_COLORS.secondary,
                         fontSize: "12px",
                         marginTop: "4px",
                       }}
@@ -1017,8 +1017,8 @@ export const InviteInboxPanel: React.FC<Props> = ({
       <div
         style={{
           alignItems: "center",
-          background: "white",
-          border: `1px solid ${COLORS.GRAY_LL}`,
+          background: UI_COLORS.surface,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: 10,
           display: "flex",
           gap: 12,

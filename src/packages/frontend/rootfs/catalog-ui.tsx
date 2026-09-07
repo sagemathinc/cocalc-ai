@@ -14,7 +14,7 @@ import {
   managedRootfsContentKey,
   type RootfsImageEntry,
 } from "@cocalc/util/rootfs-images";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export function sectionLabel(section: RootfsImageEntry["section"]): string {
   switch (section) {
@@ -371,7 +371,7 @@ export function RootfsThemePreview({
       style={{
         ...boxStyle,
         alignItems: "center",
-        background: accentColor || COLORS.GRAY_LL,
+        background: accentColor || UI_COLORS.inset,
         color: color || undefined,
         display: "flex",
         justifyContent: "center",
@@ -406,7 +406,7 @@ function publishedLabel(created?: string): string | undefined {
 }
 
 export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
-  const themeColor = entry.theme?.color?.trim() || COLORS.GRAY_L;
+  const themeColor = entry.theme?.color?.trim() || UI_COLORS.border;
   const accentColor =
     entry.theme?.accent_color?.trim() || entry.theme?.color?.trim();
   const themeTitle = entry.theme?.title?.trim() || entry.label || entry.image;
@@ -428,7 +428,8 @@ export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
         border: `1px solid ${themeColor}`,
         borderRadius: 12,
         padding: "10px 12px",
-        background: accentColor ? `${accentColor}18` : "rgba(0, 0, 0, 0.02)",
+        background: accentColor ? `${accentColor}18` : UI_COLORS.surface,
+        color: UI_COLORS.text,
       }}
     >
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
@@ -471,7 +472,7 @@ export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
             title={entry.image}
             style={{
               fontSize: "11px",
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.secondary,
               overflowWrap: "anywhere",
               marginBottom: themeDescription ? "2px" : 0,
             }}
@@ -482,7 +483,7 @@ export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
             <div
               style={{
                 fontSize: "12px",
-                color: COLORS.GRAY_D,
+                color: UI_COLORS.text,
                 overflowWrap: "anywhere",
               }}
             >

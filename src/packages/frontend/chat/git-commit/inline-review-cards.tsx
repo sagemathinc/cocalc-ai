@@ -5,7 +5,7 @@
 
 import { Button, Space, Typography } from "antd";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { GitReviewCommentV2 } from "../git-review-store";
 import type { CommentAnchor } from "./types";
 import {
@@ -78,12 +78,13 @@ export function InlineReviewCards({
                 key={comment.id}
                 style={{
                   margin: `0 8px 6px ${inset}px`,
-                  border: `1px solid ${COLORS.GRAY_LL}`,
-                  borderLeft: `4px solid ${COLORS.BLUE}`,
+                  border: `1px solid ${UI_COLORS.border}`,
+                  borderLeft: `4px solid ${UI_COLORS.primary}`,
                   borderRadius: 8,
                   padding: "10px 12px",
-                  background: COLORS.WHITE,
-                  boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                  background: UI_COLORS.surface,
+                  color: UI_COLORS.text,
+                  boxShadow: `0 1px 2px ${UI_COLORS.shadow}`,
                   fontFamily: commentFontFamily,
                 }}
               >
@@ -180,12 +181,13 @@ export function InlineReviewCards({
         <div
           style={{
             margin: `0 8px 8px ${inset}px`,
-            border: `1px solid ${COLORS.GRAY_LL}`,
-            borderLeft: `4px solid ${COLORS.BLUE}`,
+            border: `1px solid ${UI_COLORS.border}`,
+            borderLeft: `4px solid ${UI_COLORS.primary}`,
             borderRadius: 8,
             padding: "10px 12px",
-            background: COLORS.WHITE,
-            boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+            background: UI_COLORS.surface,
+            color: UI_COLORS.text,
+            boxShadow: `0 1px 2px ${UI_COLORS.shadow}`,
             fontFamily: commentFontFamily,
           }}
         >

@@ -5,6 +5,7 @@
 
 import { authBootstrapUrl } from "./urls";
 import type { AccountProjectListWindowRow } from "@cocalc/conat/hub/api/projects";
+import type { AppearancePreference } from "@cocalc/util/appearance";
 
 export interface ProjectWindowRequest {
   limit?: number;
@@ -22,6 +23,7 @@ export interface AuthBootstrap {
   home_bay_id?: string;
   home_bay_url?: string;
   jupyter_line_numbers?: boolean;
+  appearance_theme?: AppearancePreference;
   project_window?: AccountProjectListWindowRow[];
   project_window_has_more?: boolean;
 }

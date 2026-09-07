@@ -133,9 +133,8 @@ export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
       title={render_title()}
       trigger="click"
     >
-      {/* NOTE: weirdly darkreader breaks when we use the antd LogoutOutlined icon!? */}
       <Button style={style}>
-        <Icon name="sign-in" />{" "}
+        <Icon name="sign-out-alt" />{" "}
         {!narrow || everywhere ? render_body() : undefined}
       </Button>
     </Popover>

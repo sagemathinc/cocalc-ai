@@ -18,7 +18,11 @@ export function RecentDocumentActivityButton({ style }: Props) {
 
   return (
     <>
-      <Button style={style} onClick={() => setOpen(true)}>
+      <Button
+        aria-label="Recent Activity"
+        style={style}
+        onClick={() => setOpen(true)}
+      >
         <Icon name="history" /> Recent Activity
       </Button>
       <Modal

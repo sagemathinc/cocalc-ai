@@ -68,6 +68,7 @@ import {
   shouldFallbackToFirstVisibleGitCommit,
 } from "../git-commit-drawer";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 let latestMarkdownInputProps: any = null;
 const mockCopyTextToClipboard = jest.fn();
@@ -197,6 +198,22 @@ describe("git commit drawer merge commit formatting", () => {
     expect(container.textContent).not.toContain("window.attack()");
     expect(container.textContent).toContain("focus on <body>");
     expect(container.querySelector("body")).toBeNull();
+  });
+
+  it("uses appearance-aware surfaces for commit details", () => {
+    const { container } = render(
+      React.createElement(GitCommitDetailsPanel, {
+        summary: { message: "Dark mode", extraHeaderLines: [] },
+        commit: "abc1234",
+        isHeadSelected: false,
+        fontSize: 14,
+        headRefLabel: "Working tree",
+      }),
+    );
+
+    const panel = container.firstElementChild as HTMLElement;
+    expect(panel.style.background).toBe(UI_COLORS.surface);
+    expect(panel.style.color).toBe(UI_COLORS.text);
   });
 
   it("matches plain git show semantics instead of forcing rename detection", () => {

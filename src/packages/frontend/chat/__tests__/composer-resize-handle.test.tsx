@@ -41,6 +41,10 @@ jest.mock("@cocalc/frontend/feature", () => ({
   IS_MOBILE: false,
 }));
 
+jest.mock("@cocalc/frontend/keyboard/boundary", () => ({
+  KeyboardBoundary: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 jest.mock("@cocalc/frontend/misc", () => ({
   delete_local_storage: jest.fn(),
   get_local_storage: jest.fn(() => null),
@@ -144,6 +148,62 @@ describe("ChatRoomComposer resize handle", () => {
     });
 
     expect(container.querySelector('[style*="row-resize"]')).toBeNull();
+  });
+
+  it("shows goal controls for legacy Codex thread metadata", () => {
+    renderComposer({
+      selectedThread: {
+        key: "thread-legacy",
+        label: "Legacy Codex",
+        newestTime: 0,
+        messageCount: 1,
+        hasCustomName: false,
+        hasCustomAppearance: false,
+        readCount: 1,
+        unreadCount: 0,
+        isAI: true,
+        isAutomation: false,
+        isPinned: false,
+        isArchived: false,
+      },
+      actions: {
+        syncdb: {},
+        getThreadMetadata: () => ({
+          agent_kind: "none",
+          agent_model: "gpt-5.6",
+        }),
+        isCodexThread: () => true,
+      } as any,
+    });
+
+    expect(screen.getByRole("button", { name: "Set goal" })).not.toBeNull();
+  });
+
+  it("keeps the thread title clear of its accent line", () => {
+    renderComposer({
+      selectedThread: {
+        key: "thread-accent",
+        label: "hi",
+        displayLabel: "hi",
+        newestTime: 0,
+        messageCount: 1,
+        hasCustomName: true,
+        hasCustomAppearance: true,
+        readCount: 1,
+        unreadCount: 0,
+        isAI: false,
+        isAutomation: false,
+        isPinned: false,
+        isArchived: false,
+        threadColor: "#1677ff",
+      },
+      onEditThreadAppearance: jest.fn(),
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Edit Thread Appearance: hi" }).style
+        .paddingLeft,
+    ).toBe("12px");
   });
 
   it("shows a proactive Codex setup banner for unconfigured AI chats", () => {

@@ -55,7 +55,7 @@ import {
   is_valid_email_address as isValidEmailAddress,
   len,
 } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { prefetchSignedInShell } from "./prefetch-signed-in";
 
@@ -87,21 +87,25 @@ function onboardingIntentFromBrowser() {
 }
 
 const LABEL_STYLE: CSSProperties = {
-  color: COLORS.GRAY_D,
+  color: UI_COLORS.text,
   fontSize: "14px",
   fontWeight: 600,
 } as const;
 
 const TERMS_NOTICE_STYLE: CSSProperties = {
-  color: COLORS.GRAY_M,
+  color: UI_COLORS.secondary,
   fontSize: "13px",
   lineHeight: "18px",
 } as const;
 
 const INPUT_STYLE: CSSProperties = {
+  boxSizing: "border-box",
+  minWidth: 0,
+  background: UI_COLORS.surface,
+  color: UI_COLORS.text,
   width: "100%",
   borderRadius: "8px",
-  border: `1px solid ${COLORS.GRAY_LL}`,
+  border: `1px solid ${UI_COLORS.border}`,
   padding: "10px 12px",
   fontSize: "16px",
 } as const;
@@ -110,8 +114,8 @@ const BUTTON_STYLE: CSSProperties = {
   width: "100%",
   border: "none",
   borderRadius: "8px",
-  background: COLORS.BLUE_D,
-  color: "white",
+  background: UI_COLORS.primary,
+  color: UI_COLORS.onPrimary,
   fontSize: "16px",
   fontWeight: 600,
   padding: "11px 16px",
@@ -120,9 +124,9 @@ const BUTTON_STYLE: CSSProperties = {
 
 const SSO_BUTTON_STYLE: CSSProperties = {
   ...BUTTON_STYLE,
-  background: "white",
-  border: "1px solid #ccc",
-  color: COLORS.GRAY_D,
+  background: UI_COLORS.surface,
+  border: `1px solid ${UI_COLORS.controlBorder}`,
+  color: UI_COLORS.text,
   display: "block",
   opacity: 1,
   textAlign: "center",
@@ -138,7 +142,7 @@ const SSO_BUTTON_CONTENT_STYLE: CSSProperties = {
 
 const DIVIDER_STYLE: CSSProperties = {
   alignItems: "center",
-  color: COLORS.GRAY_M,
+  color: UI_COLORS.secondary,
   display: "flex",
   fontSize: "13px",
   gap: "12px",
@@ -146,7 +150,7 @@ const DIVIDER_STYLE: CSSProperties = {
 } as const;
 
 const DIVIDER_LINE_STYLE: CSSProperties = {
-  background: COLORS.GRAY_LL,
+  background: UI_COLORS.border,
   flex: "1 1 auto",
   height: "1px",
 } as const;
@@ -159,7 +163,7 @@ const LINK_ROW_STYLE: CSSProperties = {
 } as const;
 
 const LINK_STYLE: CSSProperties = {
-  color: COLORS.BLUE_D,
+  color: UI_COLORS.link,
   cursor: "pointer",
 } as const;
 
@@ -177,9 +181,9 @@ const METHOD_CHOOSER_STYLE: CSSProperties = {
 
 const METHOD_BUTTON_STYLE: CSSProperties = {
   borderRadius: "999px",
-  border: `1px solid ${COLORS.GRAY_LL}`,
-  background: "white",
-  color: COLORS.GRAY_D,
+  border: `1px solid ${UI_COLORS.border}`,
+  background: UI_COLORS.surface,
+  color: UI_COLORS.text,
   fontSize: "14px",
   fontWeight: 600,
   padding: "7px 12px",
@@ -188,14 +192,14 @@ const METHOD_BUTTON_STYLE: CSSProperties = {
 
 const SELECTED_METHOD_BUTTON_STYLE: CSSProperties = {
   ...METHOD_BUTTON_STYLE,
-  borderColor: COLORS.BLUE_D,
-  background: COLORS.BLUE_LLL,
-  color: COLORS.BLUE_DD,
+  borderColor: UI_COLORS.link,
+  background: UI_COLORS.selected,
+  color: UI_COLORS.link,
 } as const;
 
 const POLICY_STATUS_STYLE: CSSProperties = {
   minHeight: "20px",
-  color: COLORS.GRAY_M,
+  color: UI_COLORS.secondary,
   fontSize: "13px",
   lineHeight: "20px",
 } as const;
@@ -239,29 +243,29 @@ function Alert({
     kind === "error"
       ? {
           ...ALERT_STYLE,
-          background: "#fff2f0",
-          border: "1px solid #ffccc7",
-          color: "#a8071a",
+          background: UI_COLORS.dangerBg,
+          border: `1px solid ${UI_COLORS.danger}`,
+          color: UI_COLORS.danger,
         }
       : kind === "success"
         ? {
             ...ALERT_STYLE,
-            background: "#f6ffed",
-            border: "1px solid #b7eb8f",
-            color: "#237804",
+            background: UI_COLORS.successBg,
+            border: `1px solid ${UI_COLORS.success}`,
+            color: UI_COLORS.success,
           }
         : kind === "warning"
           ? {
               ...ALERT_STYLE,
-              background: COLORS.YELL_LLL,
-              border: `1px solid ${COLORS.YELL_LL}`,
-              color: COLORS.BRWN,
+              background: UI_COLORS.warningBg,
+              border: `1px solid ${UI_COLORS.warning}`,
+              color: UI_COLORS.warning,
             }
           : {
               ...ALERT_STYLE,
-              background: "#e6f4ff",
-              border: "1px solid #91caff",
-              color: "#0958d9",
+              background: UI_COLORS.infoBg,
+              border: `1px solid ${UI_COLORS.info}`,
+              color: UI_COLORS.info,
             };
   return (
     <div role={kind === "error" ? "alert" : undefined} style={style}>
@@ -679,7 +683,7 @@ function NewAccountDisplayNameStep({
       <div>
         <div
           style={{
-            color: COLORS.GRAY_D,
+            color: UI_COLORS.text,
             fontSize: "18px",
             fontWeight: 700,
             marginBottom: "6px",
@@ -1748,12 +1752,12 @@ export function PublicSignInForm({
             ) : undefined}
           </div>
           {factorMethod === "passkey" ? (
-            <div style={{ color: "#666", marginBottom: "8px" }}>
+            <div style={{ color: UI_COLORS.secondary, marginBottom: "8px" }}>
               Use your browser or device passkey prompt to finish signing in.
             </div>
           ) : (
             <>
-              <div style={{ color: "#666", marginBottom: "8px" }}>
+              <div style={{ color: UI_COLORS.secondary, marginBottom: "8px" }}>
                 {factorMethod === "recovery_code"
                   ? "Enter one of the recovery codes saved when your passkey was set up."
                   : !factorMethodsKnown || hasRecoveryCode
@@ -2052,7 +2056,7 @@ function PostSignupVerificationStep({
         </div>
         We sent a verification link to <strong>{email}</strong>.
       </Alert>
-      <div style={{ color: COLORS.GRAY_D, lineHeight: "22px" }}>
+      <div style={{ color: UI_COLORS.text, lineHeight: "22px" }}>
         Open the message and click <strong>Verify email address</strong>. This
         page will continue automatically. Check your spam folder if the message
         does not arrive.
@@ -2440,7 +2444,9 @@ export function PublicSignUpForm({
         {signupEmailDomainPolicy?.message ? (
           <div
             style={{
-              color: emailDomainPolicyViolation ? COLORS.FG_RED : COLORS.GRAY_M,
+              color: emailDomainPolicyViolation
+                ? UI_COLORS.danger
+                : UI_COLORS.secondary,
               fontSize: "13px",
               lineHeight: "18px",
             }}
@@ -2463,7 +2469,7 @@ export function PublicSignUpForm({
           onPressEnter={signUp}
         />
         {passwordTooShort ? (
-          <div style={{ ...TERMS_NOTICE_STYLE, color: COLORS.FG_RED }}>
+          <div style={{ ...TERMS_NOTICE_STYLE, color: UI_COLORS.danger }}>
             Password must be at least {MIN_PASSWORD_LENGTH} characters.
           </div>
         ) : null}
@@ -2482,7 +2488,7 @@ export function PublicSignUpForm({
           onPressEnter={signUp}
         />
         {confirmPassword && password !== confirmPassword ? (
-          <div style={{ ...TERMS_NOTICE_STYLE, color: COLORS.FG_RED }}>
+          <div style={{ ...TERMS_NOTICE_STYLE, color: UI_COLORS.danger }}>
             Passwords do not match.
           </div>
         ) : null}

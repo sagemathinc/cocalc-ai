@@ -7,7 +7,7 @@ import { Progress, Typography } from "antd";
 import type { CSSProperties, ReactElement } from "react";
 
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const { Text } = Typography;
 
@@ -19,8 +19,8 @@ export type UsageWindowMeter = {
 };
 
 const usageLimitStyle: CSSProperties = {
-  background: "white",
-  border: `1px solid ${COLORS.GRAY_LL}`,
+  background: UI_COLORS.surface,
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: 8,
   minWidth: 0,
   padding: 14,
@@ -63,8 +63,8 @@ export function UsageWindowMeters({
           }
           style={{
             alignItems: "center",
-            background: COLORS.GRAY_LLL,
-            border: `1px solid ${COLORS.GRAY_LL}`,
+            background: UI_COLORS.inset,
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 999,
             boxShadow: "0 1px 3px rgba(0, 0, 0, 0.06)",
             display: "inline-flex",
@@ -80,7 +80,7 @@ export function UsageWindowMeters({
         >
           <span
             style={{
-              background: updating ? COLORS.ANTD_LINK_BLUE : COLORS.GRAY_M,
+              background: updating ? UI_COLORS.info : UI_COLORS.secondary,
               borderRadius: "50%",
               display: "inline-block",
               height: 6,
@@ -142,7 +142,7 @@ export function UsageWindowMeters({
                 percent={window.remainingPercent}
                 showInfo={false}
                 size="small"
-                strokeColor={COLORS.ANTD_LINK_BLUE}
+                strokeColor={UI_COLORS.info}
                 style={{ margin: compact ? "3px 0 0" : "6px 0 2px" }}
               />
             </>

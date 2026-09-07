@@ -12,6 +12,7 @@ import {
 } from "@cocalc/frontend/control-plane-origin";
 import { deleteRememberMe } from "@cocalc/frontend/misc/remember-me";
 import { joinUrlPath } from "@cocalc/util/url-path";
+import type { AppearancePreference } from "@cocalc/util/appearance";
 
 export type WrongBayAuthResponse = {
   wrong_bay: true;
@@ -39,6 +40,7 @@ export type AuthBootstrapResponse = {
   display_name?: string;
   home_bay_id?: string;
   home_bay_url?: string;
+  appearance_theme?: AppearancePreference;
   impersonation?: {
     active: true;
     actor_account_id: string;

@@ -6,17 +6,29 @@
 import { Card } from "antd";
 import type { CardProps } from "antd";
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 type SettingsCardProps = Omit<CardProps, "size" | "styles" | "type">;
 
 const SETTINGS_CARD_STYLES: CardProps["styles"] = {
   header: {
     alignItems: "center",
-    backgroundColor: COLORS.GRAY_LLL,
+    backgroundColor: UI_COLORS.inset,
+    color: UI_COLORS.text,
   },
 };
 
 export function SettingsCard(props: SettingsCardProps): React.JSX.Element {
-  return <Card {...props} size="middle" styles={SETTINGS_CARD_STYLES} />;
+  return (
+    <Card
+      {...props}
+      title={
+        props.title == null ? undefined : (
+          <span style={{ color: UI_COLORS.text }}>{props.title}</span>
+        )
+      }
+      size="middle"
+      styles={SETTINGS_CARD_STYLES}
+    />
+  );
 }

@@ -107,7 +107,6 @@
     "csv-stringify": "^6.3.0",
     "d3-selection": "^3.0.0",
     "d3-zoom": "^3.0.0",
-    "darkreader": "4.9.117",
     "dayjs": "^1.11.11",
     "debug": "^4.4.0",
     "dog-names": "^2.1.0",

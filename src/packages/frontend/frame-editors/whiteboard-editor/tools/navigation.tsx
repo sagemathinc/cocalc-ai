@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 /*
 Map navigation panel.
 
@@ -225,7 +226,14 @@ export default function Navigation({
             maxScale={2}
           />
         )}
-        <div style={{ display: "flex", borderTop: "1px solid #ddd" }}>{v}</div>
+        <div
+          style={{
+            display: "flex",
+            borderTop: `1px solid ${UI_COLORS.border}`,
+          }}
+        >
+          {v}
+        </div>
       </div>
       {resize.x || resize.y ? (
         <div
@@ -236,7 +244,7 @@ export default function Navigation({
             width: `${width + resize.x}px`,
             height: `${BAR_HEIGHT + height + resize.y}px`,
             opacity: "0.5",
-            background: "lightblue",
+            background: UI_COLORS.selected,
             border: `${SELECTED_BORDER_WIDTH}px ${SELECTED_BORDER_TYPE} ${SELECTED_BORDER_COLOR}`,
             zIndex: MAX_ELEMENTS + 5,
           }}
@@ -257,7 +265,7 @@ function Tool({ tool, zoomSlider, navMap }) {
         style={{
           width,
           fontSize: "16px",
-          color: tool == "map" && navMap != "hide" ? "blue" : undefined,
+          color: tool == "map" && navMap != "hide" ? UI_COLORS.link : undefined,
         }}
       >
         {typeof icon == "string" ? (
@@ -380,8 +388,8 @@ export function Overview({
                 top: 0,
                 zIndex: 1011,
                 cursor: "nwse-resize",
-                background: "white",
-                color: "#888",
+                background: UI_COLORS.elevated,
+                color: UI_COLORS.secondary,
                 visibility:
                   resize == null || resize.x || resize.y ? "hidden" : undefined,
               }}

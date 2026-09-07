@@ -10,7 +10,7 @@ import { file_options } from "@cocalc/frontend/editor-tmp";
 import { labels } from "@cocalc/frontend/i18n";
 import { NEW_FILETYPE_ICONS } from "@cocalc/frontend/project/new/consts";
 import { capitalize } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export function TypeFilterLabel({ ext }: { ext: string }) {
   const intl = useIntl();
@@ -34,7 +34,7 @@ export function TypeFilterLabel({ ext }: { ext: string }) {
     <span style={{ whiteSpace: "nowrap" }}>
       <Icon name={iconName} style={{ width: 20, marginRight: 6 }} />
       {name ? `${name} ` : ""}
-      <span style={{ color: COLORS.GRAY }}>.{ext}</span>
+      <span style={{ color: UI_COLORS.secondary }}>.{ext}</span>
     </span>
   );
 }

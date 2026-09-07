@@ -12,7 +12,7 @@ import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { Icon, isIconName, Tooltip } from "@cocalc/frontend/components";
 import { latestRootfsUpgradeEntry } from "@cocalc/frontend/rootfs/catalog-ui";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { isManagedRootfsImageName } from "@cocalc/util/rootfs-images";
 import type { RootfsImageEntry } from "@cocalc/util/rootfs-images";
 
@@ -105,7 +105,7 @@ function RootfsThemeIcon({ entry }: { entry?: RootfsImageEntry }) {
         alignItems: "center",
         background: background || "transparent",
         borderRadius: 5,
-        color: color || COLORS.GRAY,
+        color: color || UI_COLORS.secondary,
         display: "inline-flex",
         flex: "0 0 auto",
         height: 18,
@@ -184,7 +184,7 @@ export function ProjectRootfsBadge({
         onClick={onClick}
         style={{
           alignItems: "center",
-          color: "#666",
+          color: UI_COLORS.secondary,
           cursor: onClick ? "pointer" : "default",
           display: "inline-flex",
           gap: 6,

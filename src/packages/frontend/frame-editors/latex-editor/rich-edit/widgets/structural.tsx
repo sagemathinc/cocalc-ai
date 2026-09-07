@@ -29,7 +29,7 @@ The wrapper around the badge contributes a thin vertical border so
 the chip reads as "metadata, not content".
 */
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { WidgetProps } from "../types";
 import { Widget } from "./common";
@@ -44,11 +44,11 @@ interface ChipDef {
 }
 
 const CHIP_DEFS: Record<string, ChipDef> = {
-  "\\newpage": { glyph: "↵", label: "new page", accent: COLORS.BS_BLUE_TEXT },
+  "\\newpage": { glyph: "↵", label: "new page", accent: UI_COLORS.link },
   "\\clearpage": {
     glyph: "↵",
     label: "clear page",
-    accent: COLORS.BS_BLUE_TEXT,
+    accent: UI_COLORS.link,
   },
   "\\pagebreak": { glyph: "↵", label: "page break" },
   "\\linebreak": { glyph: "↵", label: "line break" },
@@ -61,12 +61,12 @@ const CHIP_STYLE = {
   display: "inline-block",
   padding: "0 6px",
   borderRadius: 3,
-  background: COLORS.GRAY_LL,
-  color: COLORS.GRAY_D,
+  background: UI_COLORS.inset,
+  color: UI_COLORS.text,
   fontSize: "0.78em",
   fontFamily: "sans-serif",
   fontWeight: 500,
-  border: `1px solid ${COLORS.GRAY_L}`,
+  border: `1px solid ${UI_COLORS.border}`,
   letterSpacing: "0.02em",
   verticalAlign: "baseline",
 } as const;
@@ -81,7 +81,9 @@ export function StructuralCommand(props: WidgetProps) {
   if (def == null) {
     return (
       <Widget {...props}>
-        <span style={{ ...CHIP_STYLE, color: COLORS.GRAY_M }}>{cmdName}</span>
+        <span style={{ ...CHIP_STYLE, color: UI_COLORS.secondary }}>
+          {cmdName}
+        </span>
       </Widget>
     );
   }

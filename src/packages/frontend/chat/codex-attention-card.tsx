@@ -16,7 +16,7 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { isValidUUID } from "@cocalc/util/misc";
 import { appendUrlPath } from "@cocalc/util/url-path";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -283,11 +283,12 @@ export function CodexAttentionCard({
       data-codex-attention-id={record.attention_id}
       tabIndex={-1}
       style={{
-        border: `1px solid ${pending ? COLORS.YELL_D : COLORS.GRAY_L}`,
+        border: `1px solid ${pending ? UI_COLORS.warning : UI_COLORS.border}`,
         borderRadius: 8,
         padding: 12,
         width: "100%",
-        background: pending ? COLORS.YELL_LLL : undefined,
+        color: UI_COLORS.text,
+        background: pending ? UI_COLORS.warningBg : undefined,
       }}
     >
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>

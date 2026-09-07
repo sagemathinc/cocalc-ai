@@ -54,4 +54,40 @@ describe("project-host agent session tokens", () => {
       }),
     ).toThrow("invalid session_id");
   });
+
+  it("signs a restricted browser-session expiration with a new token version", () => {
+    const nowMs = 1_000_000;
+    const browserSessionExp = Math.floor(nowMs / 1000) + 3600;
+    const issued = issueProjectHostAuthToken({
+      host_id: hostId,
+      account_id: accountId,
+      private_key: privateKeyPem,
+      browser_session_exp_s: browserSessionExp,
+      now_ms: nowMs,
+    });
+
+    expect(
+      verifyProjectHostAuthToken({
+        token: issued.token,
+        host_id: hostId,
+        public_key: publicKeyPem,
+        now_ms: nowMs,
+      }),
+    ).toMatchObject({
+      v: "phat-v2",
+      browser_session_exp_s: browserSessionExp,
+    });
+  });
+
+  it("rejects invalid restricted browser-session expirations", () => {
+    expect(() =>
+      issueProjectHostAuthToken({
+        host_id: hostId,
+        account_id: accountId,
+        private_key: privateKeyPem,
+        browser_session_exp_s: 1000,
+        now_ms: 1_000_000,
+      }),
+    ).toThrow("invalid browser session expiration");
+  });
 });

@@ -26,7 +26,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
 import { useRecentFiles } from "@cocalc/frontend/projects/util";
 import { EDITOR_PREFIX, path_split, path_to_tab } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { file_tab_labels } from "../file-tab-labels";
 import { useProjectContext } from "../context";
 import { generatedWorkspaceChatLabel } from "../workspaces/chat-display";
@@ -404,7 +404,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              color: COLORS.GRAY,
+              color: UI_COLORS.secondary,
               fontSize: "12px",
             }}
           >
@@ -517,7 +517,11 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
             <>
               <div style={{ maxHeight: 320, overflowY: "auto" }}>
                 <div
-                  style={{ padding: "6px 8px", fontSize: 12, color: "#666" }}
+                  style={{
+                    padding: "6px 8px",
+                    fontSize: 12,
+                    color: UI_COLORS.secondary,
+                  }}
                 >
                   Open files
                 </div>
@@ -529,7 +533,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
                         padding: "8px 12px",
                         cursor: "pointer",
                         backgroundColor:
-                          path === activePath ? COLORS.GRAY_L : undefined,
+                          path === activePath ? UI_COLORS.hover : undefined,
                       }}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
@@ -546,7 +550,9 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
                     </div>
                   ))
                 ) : (
-                  <div style={{ padding: "8px 12px", color: "#888" }}>
+                  <div
+                    style={{ padding: "8px 12px", color: UI_COLORS.secondary }}
+                  >
                     No open files found
                   </div>
                 )}
@@ -554,7 +560,11 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
               <Divider style={{ margin: "6px 0" }} />
               <div style={{ maxHeight: 220, overflowY: "auto" }}>
                 <div
-                  style={{ padding: "6px 8px", fontSize: 12, color: "#666" }}
+                  style={{
+                    padding: "6px 8px",
+                    fontSize: 12,
+                    color: UI_COLORS.secondary,
+                  }}
                 >
                   {intl.formatMessage(labels.recent_files)}
                 </div>
@@ -570,11 +580,15 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
                     </div>
                   ))
                 ) : project_log_loading ? (
-                  <div style={{ padding: "8px 12px", color: "#888" }}>
+                  <div
+                    style={{ padding: "8px 12px", color: UI_COLORS.secondary }}
+                  >
                     Loading recent files...
                   </div>
                 ) : (
-                  <div style={{ padding: "8px 12px", color: "#888" }}>
+                  <div
+                    style={{ padding: "8px 12px", color: UI_COLORS.secondary }}
+                  >
                     No recent files yet
                   </div>
                 )}
@@ -612,7 +626,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
                 renderTabBar={renderTabBar}
                 tabBarStyle={{
                   minHeight: "36px",
-                  background: "#e8e8e8",
+                  background: UI_COLORS.border,
                   borderTop: "2px solid lightgrey",
                 }}
                 onEdit={onEdit}

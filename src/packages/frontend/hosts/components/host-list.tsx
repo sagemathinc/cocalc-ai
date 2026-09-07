@@ -1155,6 +1155,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               Sort by
             </Typography.Text>
             <Select
+              aria-label="Sort hosts by"
               size="small"
               value={sortField}
               options={sortOptions}
@@ -1170,6 +1171,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               <Switch
                 size="small"
                 checked={autoResort}
+                aria-label="Auto-resort"
                 onChange={setAutoResort}
               />
               {autoResort ? (
@@ -1188,6 +1190,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               <Switch
                 size="small"
                 checked={showParallelLimits}
+                aria-label="Parallel Limits"
                 onChange={setShowParallelLimits}
               />
               <Typography.Text style={{ whiteSpace: "nowrap" }}>
@@ -1200,6 +1203,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               <Switch
                 size="small"
                 checked={showRuntimeVersions}
+                aria-label="Runtime Versions"
                 onChange={setShowRuntimeVersions}
               />
               <Typography.Text style={{ whiteSpace: "nowrap" }}>
@@ -1212,6 +1216,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               <Switch
                 size="small"
                 checked={showAdmin}
+                aria-label="All (Admin)"
                 onChange={setShowAdmin}
               />
               <Typography.Text style={{ whiteSpace: "nowrap" }}>
@@ -1223,6 +1228,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             <Switch
               size="small"
               checked={showDeleted}
+              aria-label="Deleted"
               onChange={setShowDeleted}
             />
             <Typography.Text style={{ whiteSpace: "nowrap" }}>

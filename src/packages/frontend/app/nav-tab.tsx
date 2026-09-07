@@ -6,10 +6,10 @@
 import { CSS, React, useActions } from "@cocalc/frontend/app-framework";
 import { Icon, IconName, Tooltip } from "@cocalc/frontend/components";
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { TOP_BAR_ELEMENT_CLASS } from "./top-nav-consts";
 
-const ACTIVE_BG_COLOR = COLORS.TOP_BAR.ACTIVE;
+const ACTIVE_BG_COLOR = UI_COLORS.selected;
 
 interface Props {
   //close?: boolean;
@@ -86,7 +86,8 @@ export const NavTab: React.FC<Props> = React.memo((props: Props) => {
   const is_active = active_top_tab === name;
 
   const outer_style: CSS = {
-    background: "transparent",
+    backgroundColor: "transparent",
+    color: UI_COLORS.text,
     padding: 0,
     fontSize: "14px",
     cursor: "pointer",

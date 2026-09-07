@@ -83,6 +83,7 @@ import type { ProjectSecretsRuntimeCache } from "@cocalc/util/project-secrets";
 import { MIN_PROJECT_HOST_DISK_GB } from "@cocalc/util/project-host-limits";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import { getCurrentAuthSessionForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import centralLog from "@cocalc/database/postgres/central-log";
 import {
   recordServiceAdmissionDenialLocal as recordServiceAdmissionDenialCentralLog,
@@ -2527,14 +2528,36 @@ async function assertHostCredentialProjectAccess({
   }
 }
 
+async function restrictedBrowserSessionExpiration({
+  account_id,
+  session_hash,
+}: {
+  account_id: string;
+  session_hash?: string;
+}): Promise<number | undefined> {
+  if (!session_hash) return;
+  const session = await getCurrentAuthSessionForSessionHash({
+    account_id,
+    session_hash,
+  });
+  if (session.metadata?.testing_account !== true) return;
+  const expiresAtMs = new Date(session.expire ?? 0).valueOf();
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+    throw new Error("testing browser session has expired");
+  }
+  return Math.floor(expiresAtMs / 1000);
+}
+
 export async function issueProjectHostAuthToken({
   account_id,
+  session_hash,
   host_id,
   project_id,
   public_directory_share_id,
   ttl_seconds,
 }: {
   account_id?: string;
+  session_hash?: string;
   host_id: string;
   project_id?: string;
   public_directory_share_id?: string;
@@ -2545,6 +2568,10 @@ export async function issueProjectHostAuthToken({
   expires_at: number;
 }> {
   const owner = requireAccount(account_id);
+  const browser_session_exp_s = await restrictedBrowserSessionExpiration({
+    account_id: owner,
+    session_hash,
+  });
   const hostBay = await resolveHostBay(host_id);
   if (hostBay && hostBay.bay_id !== getConfiguredBayId()) {
     const request = {
@@ -2552,6 +2579,7 @@ export async function issueProjectHostAuthToken({
       host_id,
       project_id,
       ttl_seconds,
+      ...(browser_session_exp_s == null ? {} : { browser_session_exp_s }),
       ...(public_directory_share_id ? { public_directory_share_id } : {}),
     };
     return await getInterBayBridge()
@@ -2564,6 +2592,7 @@ export async function issueProjectHostAuthToken({
     project_id,
     public_directory_share_id,
     ttl_seconds,
+    browser_session_exp_s,
   });
 }
 
@@ -2574,6 +2603,7 @@ export async function issueProjectHostAuthTokenLocal({
   project_id,
   public_directory_share_id,
   ttl_seconds,
+  browser_session_exp_s,
 }: {
   account_id?: string;
   actor?: "account" | "hub";
@@ -2581,6 +2611,7 @@ export async function issueProjectHostAuthTokenLocal({
   project_id?: string;
   public_directory_share_id?: string;
   ttl_seconds?: number;
+  browser_session_exp_s?: number;
 }): Promise<{
   host_id: string;
   token: string;
@@ -2599,6 +2630,7 @@ export async function issueProjectHostAuthTokenLocal({
     project_id,
     public_directory_share_id,
     ttl_seconds,
+    browser_session_exp_s,
     loadHostForListing,
   });
 }

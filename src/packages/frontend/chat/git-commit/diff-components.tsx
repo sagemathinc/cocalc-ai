@@ -11,6 +11,7 @@ import { alert_message } from "@cocalc/frontend/alerts";
 import { getAntdNotificationInstance } from "@cocalc/frontend/app/antd-notification";
 import { copyTextToClipboard } from "@cocalc/frontend/components/copy-button";
 import { filenameMode } from "@cocalc/frontend/file-associations";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { COLORS } from "@cocalc/util/theme";
 import { memo } from "react";
 import { RENDERED_DIFF_LINES_INCREMENT } from "./diff-find";
@@ -31,10 +32,10 @@ import { hasExpandedTextSelectionWithin } from "./utils";
 import { highlightPrismLines, languageHintFromPath } from "../diff-prism";
 import type { GitReviewCommentV2 } from "../git-review-store";
 
-const DIFF_FILE_HEADER_BACKGROUND = COLORS.GRAY_LLL;
-const DIFF_FILE_HEADER_BORDER = COLORS.GRAY_LL;
-const DIFF_FILE_HEADER_TEXT = COLORS.GRAY_D;
-const DIFF_FILE_HEADER_SECONDARY = COLORS.GRAY_M;
+const DIFF_FILE_HEADER_BACKGROUND = UI_COLORS.inset;
+const DIFF_FILE_HEADER_BORDER = UI_COLORS.border;
+const DIFF_FILE_HEADER_TEXT = UI_COLORS.text;
+const DIFF_FILE_HEADER_SECONDARY = UI_COLORS.secondary;
 
 export const DiffBlock = memo(function DiffBlock({
   filePath,
@@ -141,7 +142,7 @@ export const DiffBlock = memo(function DiffBlock({
       data-git-diff-root="true"
       className="cocalc-slate-code-block"
       style={{
-        border: `1px solid ${COLORS.GRAY_L}`,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: 6,
         overflow: "hidden",
         fontFamily: "monospace",
@@ -454,7 +455,7 @@ export const DiffFileSection = memo(function DiffFileSection({
           boxShadow:
             activeFindMatchKind === "file"
               ? "0 0 0 2px rgba(250, 173, 20, 0.18)"
-              : "0 1px 3px rgba(0,0,0,0.05)",
+              : `0 1px 3px ${UI_COLORS.shadow}`,
         }}
       >
         <Button

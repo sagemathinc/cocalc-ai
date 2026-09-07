@@ -10,7 +10,7 @@ import { Icon } from "@cocalc/frontend/components";
 import { resolveProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 
 import { path_to_file } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export default function HomePageButton({ project_id, active, width }) {
   const actions = useActions({ project_id });
@@ -29,9 +29,9 @@ export default function HomePageButton({ project_id, active, width }) {
         border: "none",
         borderRadius: "0",
         fontSize: "24px",
-        color: active ? COLORS.ANTD_LINK_BLUE : COLORS.FILE_ICON,
+        color: active ? UI_COLORS.link : UI_COLORS.info,
         transitionDuration: "0s",
-        background: "#fafafa",
+        background: UI_COLORS.surface,
       }}
       onClick={() => {
         void resolveProjectHomeDirectory(project_id).then((home) => {

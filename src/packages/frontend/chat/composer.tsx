@@ -13,7 +13,6 @@ import { Alert, Button } from "antd";
 import { FormattedMessage } from "react-intl";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { COLORS } from "@cocalc/util/theme";
 import {
   delete_local_storage,
   get_local_storage,
@@ -34,6 +33,8 @@ import {
 } from "./composer-focus";
 import { AcpPromptModal } from "./acp-prompt-modal";
 import { isCodexPaymentSourceNeedsUserConfiguration } from "./codex-submit-preflight";
+import { isCodexModelName } from "@cocalc/util/ai/codex";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -117,7 +118,9 @@ export function ChatRoomComposer({
     ? actions?.getThreadMetadata?.(selectedThread.key)
     : undefined;
   const showGoal =
-    threadMetadata?.agent_kind === "acp" || threadMetadata?.acp_config != null;
+    threadMetadata?.agent_kind === "acp" ||
+    threadMetadata?.acp_config != null ||
+    isCodexModelName(`${threadMetadata?.agent_model ?? ""}`.trim());
   const themeLineColor = threadColor ?? threadAccentColor;
   const contextThread = useMemo(
     () => selectedThread ?? undefined,
@@ -402,7 +405,7 @@ export function ChatRoomComposer({
     width: "100%",
     height: isZenMode && isFullscreen ? "100%" : undefined,
     padding: isZenMode && isFullscreen ? "12px" : undefined,
-    background: isZenMode && isFullscreen ? "white" : undefined,
+    background: isZenMode && isFullscreen ? UI_COLORS.surface : undefined,
     boxSizing: "border-box",
   };
 
@@ -496,12 +499,12 @@ export function ChatRoomComposer({
                 minWidth: 0,
                 maxWidth: "100%",
                 gap: "8px",
-                color: COLORS.GRAY_M,
+                color: UI_COLORS.secondary,
                 fontSize: "12px",
                 borderLeft: themeLineColor
                   ? `3px solid ${themeLineColor}`
                   : undefined,
-                paddingLeft: themeLineColor ? 8 : 0,
+                paddingLeft: themeLineColor ? 12 : 0,
               }}
             >
               <ThreadBadge

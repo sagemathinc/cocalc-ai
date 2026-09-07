@@ -21,7 +21,7 @@ import { Icon, IconName, Loading } from "@cocalc/frontend/components";
 import { EditorState } from "@cocalc/frontend/frame-editors/frame-tree/types";
 import HelpMeFix from "@cocalc/frontend/frame-editors/ai/help-me-fix";
 import { capitalize, is_different, path_split } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Actions } from "./actions";
 import { latexBuildCommandString, resolveErrorFile } from "./agent-help";
 import { use_build_logs } from "./hooks";
@@ -52,15 +52,15 @@ export interface SpecDesc {
 export const SPEC: SpecDesc = {
   error: {
     icon: "bug",
-    color: "#a00",
+    color: UI_COLORS.danger,
   },
   typesetting: {
     icon: "exclamation-circle",
-    color: "rgb(66, 139, 202)",
+    color: UI_COLORS.info,
   },
   warning: {
     icon: "exclamation-triangle",
-    color: "#fdb600",
+    color: UI_COLORS.warning,
   },
 } as const;
 
@@ -226,7 +226,7 @@ export const ErrorsAndWarnings: React.FC<ErrorsAndWarningsProps> = React.memo(
             style={{
               margin: "5px",
               right: 0,
-              background: "white",
+              background: UI_COLORS.surface,
               paddingLeft: "5px",
             }}
           >
@@ -234,7 +234,7 @@ export const ErrorsAndWarnings: React.FC<ErrorsAndWarningsProps> = React.memo(
               text={status}
               style={{
                 fontSize: props.font_size,
-                color: COLORS.GRAY,
+                color: UI_COLORS.secondary,
               }}
             />
           </div>
@@ -328,7 +328,7 @@ export const ErrorsAndWarnings: React.FC<ErrorsAndWarningsProps> = React.memo(
         return;
       }
       return (
-        <div style={{ color: COLORS.GRAY }}>
+        <div style={{ color: UI_COLORS.secondary }}>
           Click the <Icon name="play-circle" /> Build button or hit shift+enter
           to run LaTeX.
         </div>

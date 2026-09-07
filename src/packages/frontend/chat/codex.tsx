@@ -68,6 +68,7 @@ import {
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { CodexSubagentConcurrencyButton } from "@cocalc/frontend/account/codex-subagent-concurrency";
 import type { ChatActions } from "./actions";
@@ -296,7 +297,7 @@ function MembershipUsageMeters({
 }
 
 const SectionTitle = ({ children }: { children: React.ReactNode }) => (
-  <Text strong style={{ color: COLORS.GRAY_D }}>
+  <Text strong style={{ color: UI_COLORS.text }}>
     {children}
   </Text>
 );
@@ -309,9 +310,9 @@ const gridTwoColStyle = {
   width: "100%",
 } as const;
 const sectionStyle: React.CSSProperties = {
-  border: `1px solid ${COLORS.GRAY_LL}`,
+  border: `1px solid ${UI_COLORS.border}`,
   borderRadius: 12,
-  background: "white",
+  background: UI_COLORS.surface,
   padding: 14,
 };
 type PillSegment =
@@ -327,7 +328,7 @@ const pillSegmentBaseStyle: React.CSSProperties = {
   background: "transparent",
   border: 0,
   borderRadius: 999,
-  color: COLORS.GRAY_M,
+  color: UI_COLORS.secondary,
   cursor: "pointer",
   display: "inline-flex",
   font: "inherit",
@@ -1121,8 +1122,9 @@ export function CodexConfigButton({
   const pillSegmentStyle = (segment: PillSegment): React.CSSProperties => ({
     ...pillSegmentBaseStyle,
     background:
-      hoveredPillSegment === segment ? COLORS.ANTD_BG_BLUE_L : "transparent",
-    color: hoveredPillSegment === segment ? COLORS.BS_BLUE_TEXT : COLORS.GRAY_M,
+      hoveredPillSegment === segment ? UI_COLORS.hover : "transparent",
+    color:
+      hoveredPillSegment === segment ? UI_COLORS.link : UI_COLORS.secondary,
     maxWidth: segment === "model" ? 170 : 120,
     overflow: "hidden",
     textOverflow: "ellipsis",
@@ -1155,10 +1157,10 @@ export function CodexConfigButton({
           <span
             style={{
               alignItems: "center",
-              background: "white",
-              border: `1px solid ${COLORS.GRAY_L}`,
+              background: UI_COLORS.surface,
+              border: `1px solid ${UI_COLORS.border}`,
               borderRadius: 999,
-              boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
+              boxShadow: `0 1px 5px ${UI_COLORS.shadow}`,
               display: "inline-flex",
               fontWeight: 600,
               gap: 2,
@@ -1177,8 +1179,8 @@ export function CodexConfigButton({
                   ...pillSegmentStyle("expand"),
                   color:
                     hoveredPillSegment === "expand"
-                      ? COLORS.BS_BLUE_TEXT
-                      : COLORS.GRAY_D,
+                      ? UI_COLORS.link
+                      : UI_COLORS.text,
                   fontWeight: 600,
                   paddingLeft: 3,
                   paddingRight: 3,
@@ -1196,8 +1198,8 @@ export function CodexConfigButton({
                 ...pillSegmentStyle("codex"),
                 color:
                   hoveredPillSegment === "codex"
-                    ? COLORS.BS_BLUE_TEXT
-                    : COLORS.GRAY_D,
+                    ? UI_COLORS.link
+                    : UI_COLORS.text,
                 fontWeight: 600,
               }}
             >
@@ -1210,10 +1212,10 @@ export function CodexConfigButton({
               onClick={() => setOpen(true)}
               style={{
                 alignItems: "center",
-                background: "white",
-                border: `1px solid ${COLORS.GRAY_L}`,
+                background: UI_COLORS.surface,
+                border: `1px solid ${UI_COLORS.border}`,
                 borderRadius: 999,
-                boxShadow: "0 1px 5px rgba(0,0,0,0.08)",
+                boxShadow: `0 1px 5px ${UI_COLORS.shadow}`,
                 display: "inline-flex",
                 fontWeight: 600,
                 gap: 6,
@@ -1238,7 +1240,7 @@ export function CodexConfigButton({
                 onClick={() => setOpen(true)}
                 style={{
                   ...pillSegmentBaseStyle,
-                  color: COLORS.GRAY_D,
+                  color: UI_COLORS.text,
                   fontWeight: 600,
                   paddingLeft: 0,
                 }}
@@ -1377,8 +1379,8 @@ export function CodexConfigButton({
                     ...pillSegmentStyle("expand"),
                     color:
                       hoveredPillSegment === "expand"
-                        ? COLORS.BS_BLUE_TEXT
-                        : COLORS.GRAY_D,
+                        ? UI_COLORS.link
+                        : UI_COLORS.text,
                     fontWeight: 600,
                     paddingLeft: 3,
                     paddingRight: 3,
@@ -1397,8 +1399,8 @@ export function CodexConfigButton({
                   style={{
                     background:
                       paymentSource?.source === "none"
-                        ? COLORS.ANTD_BG_RED_L
-                        : "white",
+                        ? UI_COLORS.dangerBg
+                        : UI_COLORS.surface,
                   }}
                 >
                   {sourceShortLabel}
@@ -1419,7 +1421,7 @@ export function CodexConfigButton({
           body: {
             maxHeight: "75vh",
             overflowY: "auto",
-            background: "white",
+            background: UI_COLORS.surface,
             paddingTop: 12,
           },
         }}
@@ -1428,20 +1430,20 @@ export function CodexConfigButton({
           <div
             style={{
               ...sectionStyle,
-              background: COLORS.ANTD_BG_BLUE_L,
-              borderColor: COLORS.BS_BLUE_BGRND,
+              background: UI_COLORS.infoBg,
+              borderColor: UI_COLORS.border,
               display: "flex",
               flexDirection: "column",
               gap: 12,
             }}
           >
             <div>
-              <Text strong style={{ color: COLORS.BS_BLUE_TEXT }}>
+              <Text strong style={{ color: UI_COLORS.info }}>
                 Codex configuration for this chat
               </Text>
               <div
                 style={{
-                  color: COLORS.GRAY_M,
+                  color: UI_COLORS.secondary,
                   fontSize: 12,
                   marginTop: 4,
                   lineHeight: 1.35,
@@ -1517,7 +1519,7 @@ export function CodexConfigButton({
                   <SectionTitle>Payment source</SectionTitle>
                   <div
                     style={{
-                      color: COLORS.GRAY_M,
+                      color: UI_COLORS.secondary,
                       fontSize: 12,
                       margin: "3px 0 10px",
                     }}
@@ -1583,7 +1585,7 @@ export function CodexConfigButton({
                 </div>
                 <div
                   style={{
-                    color: COLORS.GRAY_M,
+                    color: UI_COLORS.secondary,
                     fontSize: 12,
                     margin: "3px 0 10px",
                   }}
@@ -1746,7 +1748,7 @@ export function CodexConfigButton({
                   <>
                     <div
                       style={{
-                        color: COLORS.GRAY_M,
+                        color: UI_COLORS.secondary,
                         fontSize: 12,
                         margin: "3px 0 10px",
                       }}
@@ -1776,15 +1778,17 @@ export function CodexConfigButton({
                                 key={option.value}
                                 style={{
                                   border: `1px solid ${
-                                    selected ? COLORS.BLUE : COLORS.GRAY_L
+                                    selected
+                                      ? UI_COLORS.focus
+                                      : UI_COLORS.border
                                   }`,
                                   borderRadius: 10,
                                   padding: "10px 12px",
                                   background: selected
-                                    ? COLORS.ANTD_BG_BLUE_L
-                                    : "white",
+                                    ? UI_COLORS.selected
+                                    : UI_COLORS.surface,
                                   boxShadow: selected
-                                    ? `0 0 0 1px ${COLORS.BLUE} inset`
+                                    ? `0 0 0 1px ${UI_COLORS.focus} inset`
                                     : undefined,
                                   cursor: "pointer",
                                   minHeight: 88,
@@ -1799,8 +1803,8 @@ export function CodexConfigButton({
                                     <strong
                                       style={{
                                         color: option.warning
-                                          ? COLORS.FG_RED
-                                          : COLORS.GRAY_D,
+                                          ? UI_COLORS.danger
+                                          : UI_COLORS.text,
                                       }}
                                     >
                                       {option.label}
@@ -1809,8 +1813,8 @@ export function CodexConfigButton({
                                       style={{
                                         fontSize: 12,
                                         color: option.warning
-                                          ? COLORS.FG_RED
-                                          : COLORS.GRAY_M,
+                                          ? UI_COLORS.danger
+                                          : UI_COLORS.secondary,
                                         lineHeight: 1.35,
                                       }}
                                     >
@@ -1885,7 +1889,13 @@ function renderOptionWithDescription({
     <div style={{ lineHeight: "18px" }}>
       <div>{title}</div>
       {description ? (
-        <div style={{ fontSize: 11, color: "#888", lineHeight: "14px" }}>
+        <div
+          style={{
+            fontSize: 11,
+            color: UI_COLORS.secondary,
+            lineHeight: "14px",
+          }}
+        >
           {description}
         </div>
       ) : null}

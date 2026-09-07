@@ -9,7 +9,7 @@
   margin-top: 1em;
 }
 .cocalc-jupyter-rendered thead {
-  border-bottom: 1px solid #bdbdbd;
+  border-bottom: 1px solid var(--cocalc-ui-border);
   vertical-align: bottom;
 }
 .cocalc-jupyter-rendered tr,
@@ -27,10 +27,10 @@
   font-weight: bold;
 }
 .cocalc-jupyter-rendered tr:nth-child(odd) {
-  background: #f5f5f5;
+  background: var(--cocalc-ui-inset);
 }
 .cocalc-jupyter-rendered tr:hover {
-  background: rgba(66, 165, 245, 0.2);
+  background: var(--cocalc-ui-hover);
 }
 
 .cocalc-jupyter-rendered-md img {
@@ -53,7 +53,7 @@
 .cocalc-jupyter-usage-info {
   padding: 2px 2px 0px 2px;
   margin-right: 1em;
-  border: 1px solid var(--cocalc-col-gray-l);
+  border: 1px solid var(--cocalc-ui-controlBorder);
   transition-property: background-color, color;
   transition-timing-function: ease;
   transition-duration: 0.1s;
@@ -117,7 +117,7 @@
 }
 
 .cocalc-jupyter-menu .ant-dropdown-trigger:hover {
-  background-color: white;
+  background-color: var(--cocalc-ui-hover);
 }
 
 cocalc-lumino-adapter {
@@ -154,7 +154,7 @@ cocalc-lumino-adapter {
 }
 
 .mini-toc-entry:hover {
-  color: #999 !important;
+  color: var(--cocalc-ui-link) !important;
 }
 
 .studio-status-segmented .ant-segmented-item {
@@ -166,10 +166,10 @@ cocalc-lumino-adapter {
 @keyframes studio-section-run-blink {
   0%,
   100% {
-    background-color: #f6ffed;
+    background-color: var(--cocalc-ui-successBg);
   }
   50% {
-    background-color: #b7eb8f;
+    background-color: var(--cocalc-ui-success);
   }
 }
 .studio-section-running {

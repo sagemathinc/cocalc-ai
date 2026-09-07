@@ -8,6 +8,18 @@
   min-width: 0;
 }
 
+:root[data-cocalc-theme="dark"] .receivables-shell {
+  --receivables-ink: var(--cocalc-ui-text);
+  --receivables-muted: var(--cocalc-ui-secondary);
+  --receivables-line: var(--cocalc-ui-border);
+  --receivables-accent: var(--cocalc-ui-success);
+}
+
+:root[data-cocalc-theme="dark"] .receivables-metric-card.ant-card,
+:root[data-cocalc-theme="dark"] .receivables-filter-card.ant-card {
+  background: var(--cocalc-ui-surface);
+}
+
 .receivables-hero {
   background:
     radial-gradient(

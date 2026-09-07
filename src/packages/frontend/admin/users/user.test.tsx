@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
@@ -11,9 +12,11 @@ jest.mock("@cocalc/frontend/components", () => ({
 }));
 
 jest.mock("antd", () => {
-  const Card = ({ title, children }: any) => (
+  const Card = ({ title, children, styles }: any) => (
     <div>
-      <div>{title}</div>
+      <div data-testid="user-result-header" style={styles?.header}>
+        {title}
+      </div>
       <div>{children}</div>
     </div>
   );
@@ -84,6 +87,18 @@ jest.mock("@cocalc/frontend/purchases/managed-egress-history", () => ({
 const { UserResult } = require("./user");
 
 describe("UserResult admin tools", () => {
+  it("pairs semantic header text and background in collapsed and expanded states", () => {
+    render(
+      <UserResult first_name="Ada" last_name="Lovelace" account_id="acct-1" />,
+    );
+    const header = screen.getByTestId("user-result-header");
+    expect(header.style.background).toBe(UI_COLORS.inset);
+    expect(header.style.color).toBe(UI_COLORS.text);
+    fireEvent.click(screen.getByText(/Ada Lovelace/));
+    expect(screen.getByRole("button", { name: "Profile" })).toBeTruthy();
+    expect(header.style.background).toBe(UI_COLORS.inset);
+    expect(header.style.color).toBe(UI_COLORS.text);
+  });
   it("toggles details from the first row without toggling copy controls", () => {
     render(
       <UserResult

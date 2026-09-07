@@ -130,6 +130,40 @@ describe("/api/v2/auth/bootstrap", () => {
     );
   });
 
+  it.each([
+    [undefined, "light"],
+    [{ dark_mode: true }, "dark"],
+    [{ dark_mode: true, appearance_theme: "system" }, "system"],
+  ])(
+    "returns authoritative appearance without exposing other account settings",
+    async (other_settings, appearance_theme) => {
+      mockGetAccountId.mockResolvedValue("account-1");
+      mockGetClusterAccountById.mockResolvedValue({ home_bay_id: "bay-0" });
+      mockPoolQuery.mockResolvedValue({ rows: [{ other_settings }] });
+      const { req, res } = createMocks({
+        method: "POST",
+        url: "/api/v2/auth/bootstrap",
+      });
+      const { default: bootstrap } = await import("./bootstrap");
+      await bootstrap(req, res);
+      expect(res._getJSONData().appearance_theme).toBe(appearance_theme);
+      expect(res._getJSONData()).not.toHaveProperty("other_settings");
+    },
+  );
+
+  it("does not infer account appearance from a non-authoritative bay", async () => {
+    mockGetAccountId.mockResolvedValue("account-1");
+    mockGetClusterAccountById.mockResolvedValue({ home_bay_id: "bay-2" });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/bootstrap",
+    });
+    const { default: bootstrap } = await import("./bootstrap");
+    await bootstrap(req, res);
+    expect(mockPoolQuery).not.toHaveBeenCalled();
+    expect(res._getJSONData()).not.toHaveProperty("appearance_theme");
+  });
+
   it("includes a bounded project window on the authoritative home bay", async () => {
     mockGetAccountId.mockResolvedValue("account-1");
     mockGetClusterAccountById.mockResolvedValue({

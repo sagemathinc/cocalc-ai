@@ -10,6 +10,7 @@
 // do work properly via a hack in close_chat in project_actions.
 
 import { isChatPath } from "./paths";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Button } from "antd";
 import { debounce } from "lodash";
 import { useEffect, useMemo, useState } from "react";
@@ -34,8 +35,8 @@ const CHAT_INDICATOR_STYLE: React.CSSProperties = {
   fontSize: "15pt",
   paddingTop: "2px",
   cursor: "pointer",
-  background: "#e8e8e8",
-  borderTop: "2px solid lightgrey",
+  background: UI_COLORS.inset,
+  borderTop: `2px solid ${UI_COLORS.border}`,
 } as const;
 
 const USERS_VIEWING_STYLE: React.CSSProperties = {
@@ -184,7 +185,7 @@ function ChatButton({ project_id, path, chatState }) {
         danger={isNewChat}
         className={isNewChat ? "smc-chat-notification" : undefined}
         onClick={toggleChat}
-        style={{ background: chatState ? "white" : undefined }}
+        style={{ background: chatState ? UI_COLORS.surface : undefined }}
       >
         <Icon name="comment" />
         <HiddenXS>

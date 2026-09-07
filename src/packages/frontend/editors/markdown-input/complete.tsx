@@ -18,6 +18,7 @@ import ReactDOM from "react-dom";
 import type { MenuItems } from "@cocalc/frontend/components";
 import { strictMod } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export interface Item {
   label?: ReactNode;
@@ -193,7 +194,8 @@ const STYLE: CSS = {
   position: "absolute",
   zIndex: 1,
   padding: "3px",
-  background: "white",
+  background: UI_COLORS.elevated,
+  color: UI_COLORS.text,
   borderRadius: "4px",
   boxShadow: "0 1px 5px rgba(0,0,0,.2)",
   overflowY: "auto",

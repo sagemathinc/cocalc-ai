@@ -9,7 +9,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { currency, round3 } from "@cocalc/util/misc";
 import { useInterval } from "react-interval-hook";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
-import { getAmountStyle } from "@cocalc/util/db-schema/purchases";
+import { getAmountStyle } from "../amount-style";
 import { toDecimal } from "@cocalc/util/money";
 
 const MS_IN_HOUR = 1000 * 60 * 60;

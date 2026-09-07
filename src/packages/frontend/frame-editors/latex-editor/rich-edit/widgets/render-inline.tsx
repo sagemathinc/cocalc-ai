@@ -33,7 +33,7 @@ import {
 } from "react";
 
 import mathToHtml from "@cocalc/frontend/misc/math-to-html";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { FONT_SIZE_EM } from "../font-size";
 import { MathMacrosContext } from "../math-macros-context";
@@ -110,8 +110,8 @@ function renderDescriptor(d: WidgetDescriptor, key: number): ReactNode {
         <mark
           key={key}
           style={{
-            background: COLORS.YELL_LL,
-            color: COLORS.GRAY_DD,
+            background: UI_COLORS.warningBg,
+            color: UI_COLORS.text,
             padding: "0 2px",
           }}
         >

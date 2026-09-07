@@ -1,0 +1,3 @@
+:root[data-cocalc-theme="dark"] {
+  --membership-panel: var(--cocalc-ui-surface);
+}

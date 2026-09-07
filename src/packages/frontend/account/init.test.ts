@@ -26,7 +26,7 @@ jest.mock("@cocalc/frontend/page-routing", () => ({
   getInitialAccountPageState: jest.fn(() => null),
   parsePageTarget: jest.fn(() => ({})),
 }));
-jest.mock("./dark-mode", () => ({ init_dark_mode: jest.fn() }));
+jest.mock("./appearance", () => ({ initAccountAppearance: jest.fn() }));
 jest.mock("../client/password-reset", () => ({
   reset_password_key: jest.fn(() => undefined),
 }));

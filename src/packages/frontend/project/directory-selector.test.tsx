@@ -7,6 +7,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { redux } from "@cocalc/frontend/app-framework";
 import DirectorySelector from "./directory-selector";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const refresh = jest.fn();
 const mockFs = {
@@ -55,6 +56,17 @@ describe("DirectorySelector", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("keeps the selected folder label theme-aware", () => {
+    render(<DirectorySelector project_id="project-id" onSelect={jest.fn()} />);
+    const checkbox = screen.getByRole("checkbox", { name: /Home Folder/ });
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+    const label = screen.getByText(/Home Folder/);
+    expect(label.closest("span[style]")?.getAttribute("style")).toContain(
+      UI_COLORS.text,
+    );
   });
 
   it("keeps the new-folder dialog open until mkdir finishes", async () => {

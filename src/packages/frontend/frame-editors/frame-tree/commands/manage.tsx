@@ -264,11 +264,15 @@ export class ManageCommands {
       }
       const label = this.spec2display(spec, "name");
       const search = label.toLowerCase();
+      const unavailable = spec.unavailable_reason?.(this.props.actions);
       items.push({
         search,
+        disabled: () => !!unavailable,
+        title: unavailable,
         label: selected_type === type ? <b>{label}</b> : label,
         icon: spec.icon ? spec.icon : "file",
         onClick: () => {
+          if (spec.unavailable_reason?.(this.props.actions)) return;
           if (createNew) {
             this.props.actions.new_frame(type);
           } else {

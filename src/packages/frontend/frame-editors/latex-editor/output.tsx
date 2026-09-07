@@ -40,7 +40,7 @@ import { EditorState } from "@cocalc/frontend/frame-editors/frame-tree/types";
 import { project_api } from "@cocalc/frontend/frame-editors/generic/client";
 import { editor, labels } from "@cocalc/frontend/i18n";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { TITLE_BAR_BORDER } from "../frame-tree/style";
 import { Actions } from "./actions";
@@ -85,7 +85,8 @@ const LABEL_STYLE: CSS = {
 // while the user is looking at another tab of the output panel.
 const PROBLEMS_LABEL_ERROR_STYLE: CSS = {
   ...LABEL_STYLE,
-  backgroundColor: COLORS.ANTD_BG_RED_L,
+  backgroundColor: UI_COLORS.dangerBg,
+  color: UI_COLORS.danger,
   borderRadius: "4px",
 } as const;
 

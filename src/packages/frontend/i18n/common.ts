@@ -1154,12 +1154,13 @@ export const editor = defineMessages({
     defaultMessage: "PDF - Native",
   },
   toggle_pdf_dark_mode_title: {
-    id: "editor.toggle_pdf_dark_mode.title",
-    defaultMessage: "Toggle dark mode of PDF off, to see the original file",
+    id: "editor.pdf_invert_colors.title",
+    defaultMessage:
+      "Invert colors in this PDF view without changing the document",
   },
   toggle_pdf_dark_mode_label: {
-    id: "editor.toggle_pdf_dark_mode.label",
-    defaultMessage: "Toggle PDF Dark Mode",
+    id: "editor.pdf_invert_colors.label",
+    defaultMessage: "Invert page colors",
   },
   latex_source_code_label_name: {
     id: "editor.latex.source_code.name",

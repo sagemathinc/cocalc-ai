@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   Alert,
   Button,
@@ -1645,10 +1646,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
           style={{
             width: "100%",
             boxSizing: "border-box",
-            border: "1px solid #e8e8e8",
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 8,
             padding: isFlyout ? 8 : 10,
-            background: "#fff",
+            background: UI_COLORS.surface,
+            color: UI_COLORS.text,
             borderLeft: color ? `4px solid ${color}` : undefined,
             position: "relative",
             overflow: "hidden",
@@ -1665,7 +1667,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                 height: 72,
                 borderRadius: 10,
                 overflow: "hidden",
-                border: "1px solid #ddd",
+                border: `1px solid ${UI_COLORS.border}`,
                 boxShadow: "0 1px 8px rgba(0,0,0,0.1)",
               }}
             >
@@ -1768,7 +1770,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
                   {updatedAt ? (
                     <span
                       style={{
-                        color: "#9a9a9a",
+                        color: UI_COLORS.secondary,
                         fontSize: 12,
                         whiteSpace: "nowrap",
                         flexShrink: 0,
@@ -1787,7 +1789,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
               ) : updatedAt ? (
                 <span
                   style={{
-                    color: "#9a9a9a",
+                    color: UI_COLORS.secondary,
                     fontSize: 12,
                     whiteSpace: "nowrap",
                     flexShrink: 0,
@@ -1825,10 +1827,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         <div
           style={{
             width: "100%",
-            border: "1px solid #e8e8e8",
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 8,
             padding: isFlyout ? 8 : 10,
-            background: "#fff",
+            background: UI_COLORS.surface,
+            color: UI_COLORS.text,
           }}
         >
           <div
@@ -2198,10 +2201,11 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         ) : null}
         <div
           style={{
-            border: "1px solid #eee",
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 8,
             overflow: "hidden",
-            background: "white",
+            background: UI_COLORS.surface,
+            color: UI_COLORS.text,
             flex: 1,
             minHeight: 0,
             height: isFlyout ? undefined : "min(78vh, 860px)",

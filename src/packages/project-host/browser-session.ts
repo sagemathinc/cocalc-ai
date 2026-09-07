@@ -20,6 +20,7 @@ const BROWSER_SESSION_TTL_SECONDS = Math.max(
     30 * 24 * 60 * 60,
   ),
 );
+const MIN_BROWSER_SESSION_TTL_SECONDS = 1;
 
 function parseCookies(header: string | undefined): Record<string, string> {
   if (!header) return {};
@@ -137,7 +138,7 @@ export function createProjectHostBrowserSessionToken({
   ttl_seconds?: number;
 }): string {
   const ttl = Math.max(
-    60,
+    MIN_BROWSER_SESSION_TTL_SECONDS,
     Math.min(BROWSER_SESSION_TTL_SECONDS, Math.floor(ttl_seconds)),
   );
   const payload = JSON.stringify({
@@ -216,7 +217,7 @@ export function buildProjectHostBrowserSessionCookie({
   max_age_seconds?: number;
 }): string {
   const maxAge = Math.max(
-    60,
+    MIN_BROWSER_SESSION_TTL_SECONDS,
     Math.min(BROWSER_SESSION_TTL_SECONDS, Math.floor(max_age_seconds)),
   );
   const attrs = [
@@ -276,16 +277,33 @@ export function issueProjectHostBrowserSessionFromBearer({
   if (revokedBeforeMs != null && claims.iat * 1000 <= revokedBeforeMs) {
     throw new Error("session revoked");
   }
+  const restrictedTtl = restrictedBrowserSessionTtlSeconds(
+    claims.browser_session_exp_s,
+  );
   appendSetCookie(
     res,
     buildProjectHostBrowserSessionCookie({
       req,
       sessionToken: createProjectHostBrowserSessionToken({
         account_id: claims.sub,
+        ...(restrictedTtl == null ? {} : { ttl_seconds: restrictedTtl }),
       }),
+      ...(restrictedTtl == null ? {} : { max_age_seconds: restrictedTtl }),
     }),
   );
   return { account_id: claims.sub, issued_at_s: claims.iat };
+}
+
+export function restrictedBrowserSessionTtlSeconds(
+  expires_at_s: number | undefined,
+  now_s = Math.floor(Date.now() / 1000),
+): number | undefined {
+  if (expires_at_s == null) return;
+  const ttl = expires_at_s - now_s;
+  if (!Number.isSafeInteger(ttl) || ttl <= 0) {
+    throw new Error("browser session authorization expired");
+  }
+  return ttl;
 }
 
 export function clearProjectHostBrowserSessionCookie({

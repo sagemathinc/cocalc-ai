@@ -32,7 +32,7 @@ import {
 } from "@cocalc/frontend/purchases/managed-egress-recent-events";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { humanSize } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const { Text } = Typography;
 
@@ -308,7 +308,7 @@ function HistoryLine({
   return (
     <div
       style={{
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: "8px",
         marginBottom: "12px",
         padding: "14px",
@@ -339,7 +339,7 @@ function HistoryLine({
           <polyline
             fill="none"
             points={polyline}
-            stroke={COLORS.BLUE_D}
+            stroke={UI_COLORS.link}
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeWidth="3"
@@ -351,7 +351,7 @@ function HistoryLine({
                 x2={hoveredPoint.x}
                 y1={0}
                 y2={height}
-                stroke={COLORS.BLUE_D}
+                stroke={UI_COLORS.link}
                 strokeOpacity="0.25"
                 strokeWidth="1"
                 strokeDasharray="3 3"
@@ -360,8 +360,8 @@ function HistoryLine({
                 cx={hoveredPoint.x}
                 cy={hoveredPoint.y}
                 r="4"
-                fill={COLORS.BLUE_D}
-                stroke="white"
+                fill={UI_COLORS.link}
+                stroke={UI_COLORS.surface}
                 strokeWidth="1.5"
               />
             </>
@@ -370,11 +370,11 @@ function HistoryLine({
         {hoveredPoint && hoveredHistoryPoint && hoverPlacement ? (
           <div
             style={{
-              background: "white",
-              border: `1px solid ${COLORS.GRAY_LL}`,
+              background: UI_COLORS.elevated,
+              border: `1px solid ${UI_COLORS.border}`,
               borderRadius: "8px",
-              boxShadow: "0 6px 18px rgba(15, 23, 42, 0.16)",
-              color: COLORS.GRAY_D,
+              boxShadow: `0 6px 18px ${UI_COLORS.shadow}`,
+              color: UI_COLORS.text,
               left: hoverPlacement.left,
               maxWidth: "360px",
               minWidth: "280px",
@@ -411,7 +411,7 @@ function HistoryLine({
               {new Date(hoveredHistoryPoint.end).toLocaleString()}
             </div>
             {hoverCategories.length > 0 ? (
-              <div style={{ color: COLORS.GRAY_M, fontSize: "12px" }}>
+              <div style={{ color: UI_COLORS.secondary, fontSize: "12px" }}>
                 {hoverCategories.map((entry) => (
                   <div key={entry.category}>
                     {formatManagedEgressCategory(entry.category)}:{" "}
@@ -425,7 +425,7 @@ function HistoryLine({
       </div>
       <div
         style={{
-          color: COLORS.GRAY_M,
+          color: UI_COLORS.secondary,
           display: "flex",
           fontSize: "12px",
           justifyContent: "space-between",
@@ -453,7 +453,9 @@ function EgressSummaryCard({
       <Text strong>{label}</Text>
       <div style={{ fontSize: "20px", marginTop: "4px" }}>{value}</div>
       {detail ? (
-        <div style={{ color: COLORS.GRAY_M, marginTop: "4px" }}>{detail}</div>
+        <div style={{ color: UI_COLORS.secondary, marginTop: "4px" }}>
+          {detail}
+        </div>
       ) : null}
     </div>
   );
@@ -566,7 +568,7 @@ export function ManagedEgressCompactButton({
               {secondary ? (
                 <div
                   style={{
-                    color: COLORS.GRAY_D,
+                    color: UI_COLORS.text,
                     fontSize: "12px",
                     lineHeight: 1.35,
                     marginTop: "2px",
@@ -856,7 +858,7 @@ export function ManagedEgressSparkline({
         <polyline
           fill="none"
           points={polyline}
-          stroke={COLORS.BLUE_D}
+          stroke={UI_COLORS.link}
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeWidth="2.5"
@@ -1098,7 +1100,7 @@ export function ManagedEgressHistoryPanel({
           marginBottom: "16px",
         }}
       >
-        <div style={{ color: COLORS.GRAY_M, maxWidth: "520px" }}>
+        <div style={{ color: UI_COLORS.secondary, maxWidth: "520px" }}>
           Managed egress includes metered outbound traffic attributed to this{" "}
           {project_id ? "project" : "account"}, including shared-host downloads,
           proxy traffic, interactive sessions, SSH, and raw outbound network
@@ -1368,7 +1370,7 @@ export function ManagedEgressAdminHistoryModal({
           marginBottom: "16px",
         }}
       >
-        <div style={{ color: COLORS.GRAY_M, maxWidth: "620px" }}>
+        <div style={{ color: UI_COLORS.secondary, maxWidth: "620px" }}>
           Managed egress across all accounts, including shared-host downloads,
           proxy traffic, interactive sessions, SSH, and raw outbound network
           usage on supported hosts.

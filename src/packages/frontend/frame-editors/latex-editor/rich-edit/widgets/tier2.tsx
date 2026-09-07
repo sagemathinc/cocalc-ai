@@ -31,7 +31,7 @@ What's intentionally not here:
    amend after this one.
 */
 
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import { WidgetProps } from "../types";
 import { EmptyPlaceholder, Widget } from "./common";
@@ -51,12 +51,12 @@ const REF_CHIP_STYLE = {
   display: "inline-block",
   padding: "0 6px",
   borderRadius: 10,
-  background: COLORS.GRAY_LL,
-  color: COLORS.GRAY_D,
+  background: UI_COLORS.inset,
+  color: UI_COLORS.text,
   fontSize: "0.85em",
   fontFamily: "sans-serif",
   fontWeight: 500,
-  border: `1px solid ${COLORS.GRAY_L}`,
+  border: `1px solid ${UI_COLORS.border}`,
   verticalAlign: "baseline",
 } as const;
 
@@ -66,7 +66,7 @@ export function Footnote(props: WidgetProps) {
     <Widget {...props}>
       <sup
         style={{
-          color: COLORS.BS_BLUE_TEXT,
+          color: UI_COLORS.link,
           fontWeight: 600,
           fontSize: "0.75em",
           marginLeft: 1,
@@ -114,7 +114,7 @@ export function Caption(props: WidgetProps) {
         <em
           style={{
             fontStyle: "italic",
-            color: COLORS.GRAY_D,
+            color: UI_COLORS.text,
           }}
         >
           <span
@@ -123,7 +123,7 @@ export function Caption(props: WidgetProps) {
               marginRight: 4,
               fontStyle: "normal",
               fontSize: "0.85em",
-              color: COLORS.GRAY,
+              color: UI_COLORS.secondary,
             }}
           >
             Caption:
@@ -157,12 +157,9 @@ export function Hl(props: WidgetProps) {
       ) : (
         <mark
           style={{
-            // COLORS.YELL_LL is the palette's soft yellow — visually
-            // close to soul's default highlight and the right place
-            // to centralize this so palette/theme changes flow
-            // through.
-            background: COLORS.YELL_LL,
-            color: COLORS.GRAY_DD,
+            // Keep the default highlight readable in both appearances.
+            background: UI_COLORS.warningBg,
+            color: UI_COLORS.text,
             padding: "0 2px",
             borderRadius: 1,
           }}
@@ -203,18 +200,18 @@ const PROSE_LABEL_STYLE = {
 
 const PROSE_BEGIN_STYLE_THEOREM = {
   ...PROSE_LABEL_STYLE,
-  color: COLORS.BS_BLUE_TEXT,
+  color: UI_COLORS.link,
 } as const;
 
 const PROSE_BEGIN_STYLE_ABSTRACT = {
   ...PROSE_LABEL_STYLE,
-  color: COLORS.GRAY_D,
+  color: UI_COLORS.text,
   fontStyle: "italic",
 } as const;
 
 const PROSE_END_STYLE = {
   ...PROSE_LABEL_STYLE,
-  color: COLORS.GRAY,
+  color: UI_COLORS.secondary,
   fontWeight: 500,
 } as const;
 
@@ -254,13 +251,13 @@ export function CodeListingEnv(props: WidgetProps) {
         style={{
           fontFamily: "monospace",
           fontSize: "0.95em",
-          background: COLORS.GRAY_LL,
+          background: UI_COLORS.inset,
           padding: "6px 10px",
           borderRadius: 3,
           margin: 0,
           whiteSpace: "pre",
           overflowX: "auto",
-          borderLeft: `3px solid ${COLORS.GRAY}`,
+          borderLeft: `3px solid ${UI_COLORS.border}`,
         }}
         title={`${envName} env — ${props.descriptor.source.length} chars`}
       >

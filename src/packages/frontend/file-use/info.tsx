@@ -13,6 +13,7 @@ import { open_file_use_entry } from "./util";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { CSS } from "../app-framework";
 import type { RecentDocumentActivityEntry } from "./types";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const MAX_USERS = 5;
 const TRUNCATE_LENGTH = 50;
@@ -20,8 +21,8 @@ const TRUNCATE_LENGTH = 50;
 const rowStyle: CSS = {
   cursor: "pointer",
   width: "100%",
-  color: "#666",
-  background: "#fefefe",
+  color: UI_COLORS.text,
+  background: UI_COLORS.surface,
 };
 
 interface Props {
@@ -44,7 +45,9 @@ export function FileUseInfo({ info, account_id, user_map, cursor }: Props) {
     return (
       <span>
         <span style={{ fontWeight: 600 }}>{name}</span>
-        <span style={{ color: "#999" }}>{ext === "" ? "" : `.${ext}`}</span>
+        <span style={{ color: UI_COLORS.secondary }}>
+          {ext === "" ? "" : `.${ext}`}
+        </span>
       </span>
     );
   }
@@ -68,7 +71,10 @@ export function FileUseInfo({ info, account_id, user_map, cursor }: Props) {
 
   const style = misc.copy(rowStyle);
   if (cursor) {
-    misc.merge(style, { background: "#08c", color: "white" });
+    misc.merge(style, {
+      background: UI_COLORS.selected,
+      color: UI_COLORS.text,
+    });
   }
 
   return (
@@ -81,7 +87,8 @@ export function FileUseInfo({ info, account_id, user_map, cursor }: Props) {
           {renderPath()} in{" "}
           <ProjectTitle
             style={{
-              background: "white",
+              background: UI_COLORS.elevated,
+              color: UI_COLORS.text,
               padding: "0px 5px",
               borderRadius: "3px",
             }}

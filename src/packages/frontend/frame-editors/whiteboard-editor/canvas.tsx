@@ -1436,6 +1436,9 @@ export default function Canvas({
       className={"smc-vfill"}
       ref={canvasRef}
       style={{
+        // Authored ink, text, and grid colors require a stable paper surface.
+        background: "white",
+        color: "black",
         ...style,
         touchAction:
           typeof selectedTool == "string" &&

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CodexGoalControl } from "../codex-goal";
 import type { CodexGoalSnapshot } from "@cocalc/util/ai/codex-goal";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: { getActions: () => ({ erase_active_key_handler: jest.fn() }) },
@@ -31,11 +32,12 @@ afterAll(() => {
 it("renders the stored goal without calling the runtime or saving anything", () => {
   const onChange = jest.fn();
   render(<CodexGoalControl snapshot={snapshot} onChange={onChange} />);
-  expect(
-    screen.getByRole("button", {
-      name: "Goal: Finish the implementation (active)",
-    }),
-  ).toBeTruthy();
+  const trigger = screen.getByRole("button", {
+    name: "Goal: Finish the implementation (active)",
+  });
+  expect(trigger).toBeTruthy();
+  expect(trigger.style.color).toBe(UI_COLORS.text);
+  expect(screen.getByText("(active)").style.color).toBe(UI_COLORS.secondary);
   expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
   expect(onChange).not.toHaveBeenCalled();
 });
@@ -136,6 +138,19 @@ it("shows crash-window commands as awaiting confirmation and allows an explicit 
     }),
   );
   expect(screen.getByRole("button", { name: "Save goal" })).toBeTruthy();
+});
+
+it("announces a failed initial goal change from the trigger", () => {
+  render(
+    <CodexGoalControl
+      request={{ id: "failed", action: "set", objective: "First goal" }}
+      ack={{ id: "failed", state: "error", error: "runtime unavailable" }}
+      onChange={jest.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Set goal (change failed)" }),
+  ).toBeTruthy();
 });
 
 it("rejects invalid budgets accessibly and clears only on an explicit action", async () => {

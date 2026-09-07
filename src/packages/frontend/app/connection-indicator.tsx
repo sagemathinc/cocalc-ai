@@ -15,6 +15,7 @@ import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   FONT_SIZE_ICONS_NORMAL,
   PageStyle,
@@ -31,7 +32,7 @@ interface Props {
 const BASE_STYLE: CSS = {
   fontSize: FONT_SIZE_ICONS_NORMAL,
   display: "inline",
-  color: COLORS.GRAY_M,
+  color: UI_COLORS.text,
 } as const;
 
 export const ConnectionIndicator: React.FC<Props> = React.memo(
@@ -54,7 +55,7 @@ export const ConnectionIndicator: React.FC<Props> = React.memo(
       flex: "0 0 auto",
       display: "flex",
       alignItems: "center",
-      color: COLORS.GRAY_M,
+      color: UI_COLORS.text,
       cursor: "pointer",
       height: `${height}px`,
       padding: `${topPaddingIcons} ${sidePaddingIcons}`,

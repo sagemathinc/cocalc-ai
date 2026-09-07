@@ -60,6 +60,7 @@ import {
 import { pathMatchesRoot } from "@cocalc/frontend/project/workspaces/state";
 import { path_split, path_to_tab, tab_to_path } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type {
   WorkspaceCreateInput,
   WorkspaceRecord,
@@ -266,7 +267,7 @@ function iconFor(record?: WorkspaceRecord | null): IconName {
 }
 
 const WORKSPACE_MEDIA_SIZE = 64;
-const PROCESS_PANEL_BG = COLORS.GRAY_LLL;
+const PROCESS_PANEL_BG = UI_COLORS.surface;
 const WORKSPACE_CARD_SUMMARY_ROW_HEIGHT = 24;
 
 type WorkspaceSummaryRow = {
@@ -364,14 +365,14 @@ function buildWorkspaceSummaryRow(opts: {
   if (fileActivityLabel != null) {
     return {
       label: fileActivityLabel,
-      color: COLORS.GRAY_D,
+      color: UI_COLORS.secondary,
       timestamp: record.last_used_at,
       tooltip: fileActivityLabel,
     };
   }
   return {
     label: "Idle",
-    color: COLORS.GRAY_D,
+    color: UI_COLORS.secondary,
     timestamp: record.last_used_at,
     tooltip: record.last_used_at
       ? "No live Codex or file activity"
@@ -428,7 +429,7 @@ function WorkspaceProcessSparkline({
           display: "flex",
           gap: 8,
           fontSize: 11,
-          color: COLORS.GRAY_D,
+          color: UI_COLORS.secondary,
           whiteSpace: "nowrap",
         }}
       >
@@ -1055,7 +1056,8 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
         size="small"
         style={{
           borderLeft: `4px solid ${record.theme.color ?? "#d9d9d9"}`,
-          background: selected ? "#f6ffed" : undefined,
+          background: selected ? UI_COLORS.successBg : UI_COLORS.surface,
+          color: UI_COLORS.text,
           cursor: "pointer",
         }}
         styles={{ body: { padding: isFlyout ? 10 : 12 } }}
@@ -1083,7 +1085,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                background: record.theme.accent_color ?? "#f5f5f5",
+                background: record.theme.accent_color ?? UI_COLORS.surface,
                 color: record.theme.color ?? undefined,
                 flex: "0 0 auto",
                 fontSize: 28,
@@ -1146,7 +1148,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                   display: "flex",
                   alignItems: "center",
                   gap: 4,
-                  color: COLORS.GRAY,
+                  color: UI_COLORS.secondary,
                   flex: "0 0 auto",
                 }}
               >
@@ -1245,7 +1247,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                     alignItems: "center",
                     gap: 2,
                     flex: "0 0 auto",
-                    color: COLORS.GRAY,
+                    color: UI_COLORS.secondary,
                     fontSize: 12,
                     whiteSpace: "nowrap",
                   }}
@@ -1262,7 +1264,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                       size="small"
                       style={{
                         paddingInline: 4,
-                        color: COLORS.GRAY,
+                        color: UI_COLORS.secondary,
                         height: 20,
                       }}
                       icon={<Icon name="times" />}
@@ -1427,7 +1429,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                 <div style={{ fontWeight: 600, marginBottom: 6 }}>
                   How to use workspaces
                 </div>
-                <div style={{ color: COLORS.GRAY_D, lineHeight: 1.35 }}>
+                <div style={{ color: UI_COLORS.secondary, lineHeight: 1.35 }}>
                   Workspaces show tabs from a project folder. They do not close
                   files, move files, or change permissions.
                 </div>
@@ -1749,7 +1751,7 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
             style={{
               maxHeight: 420,
               overflow: "auto",
-              border: `1px solid ${COLORS.GRAY_L}`,
+              border: `1px solid ${UI_COLORS.border}`,
               borderRadius: 8,
             }}
           >
@@ -1774,8 +1776,8 @@ export function WorkspacesPanel({ project_id, layout = "page" }: Props) {
                       gap: 10,
                       padding: "10px 12px",
                       cursor: "pointer",
-                      background: checked ? COLORS.BLUE_LL : undefined,
-                      borderBottom: `1px solid ${COLORS.GRAY_LL}`,
+                      background: checked ? UI_COLORS.selected : undefined,
+                      borderBottom: `1px solid ${UI_COLORS.border}`,
                     }}
                   >
                     <Checkbox

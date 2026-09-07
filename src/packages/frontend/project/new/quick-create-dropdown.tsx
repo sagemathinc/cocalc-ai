@@ -9,7 +9,7 @@ import {
   DropdownMenu,
   type MenuItems,
 } from "@cocalc/frontend/components/dropdown-menu";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { React } from "@cocalc/frontend/app-framework";
 import { getQuickCreateSpec, isQuickCreateAvailable } from "./launcher-catalog";
 
@@ -70,7 +70,7 @@ export function QuickCreateDropdown({
         key: "__quick_create__",
         disabled: true,
         label: (
-          <span style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
+          <span style={{ color: UI_COLORS.text, fontWeight: 600 }}>
             Quick Create
           </span>
         ),
@@ -82,7 +82,7 @@ export function QuickCreateDropdown({
           label: (
             <span style={{ whiteSpace: "nowrap" }}>
               <Icon name={spec.icon} /> {spec.label}{" "}
-              <span style={{ color: COLORS.GRAY_D }}>({spec.ext})</span>
+              <span style={{ color: UI_COLORS.secondary }}>({spec.ext})</span>
             </span>
           ),
         });

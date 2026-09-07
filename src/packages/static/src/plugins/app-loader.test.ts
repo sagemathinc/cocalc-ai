@@ -21,6 +21,19 @@ test("identifies each generated shell independently", () => {
   );
 });
 
+test.each(["app", "public", "public-viewer", "scratchpad"])(
+  "%s applies native appearance before body content",
+  (entry) => {
+    const html = renderAppTemplate(entry);
+    expect(html.split('id="cocalc-appearance-tokens"')).toHaveLength(2);
+    expect(html.indexOf("data-cocalc-theme")).toBeLessThan(
+      html.indexOf("</head>"),
+    );
+    expect(html).toContain("prefers-color-scheme: dark");
+    expect(html).not.toContain("darkreader");
+  },
+);
+
 test("renders the independent ultralite shell", () => {
   const html = renderAppTemplate("ultralite");
   expect(html).toContain('id="cocalc-ultralite-root"');

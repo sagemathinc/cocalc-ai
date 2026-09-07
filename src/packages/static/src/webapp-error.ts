@@ -177,14 +177,6 @@ function isWhitelisted({ error }): boolean {
       return true;
     }
 
-    if (stack.includes("modifySheet")) {
-      // darkreader causes errors sometimes when editing PDF files previewed using PDFjs, and often when
-      // trying to mess with MathJax. The error on both Firefox and Chrome includes "modifySheet" in the
-      // stacktrace, since that's the function that causes the problem, and fortunately the name isn't
-      // minified out, so that is what we whitelist.
-      // Whitelisting this is fine, since darkreader is cosmetic.
-      return true;
-    }
     if (stack.includes("codemirror/addon/edit/closetag")) {
       // This closetag codemirror addon sometimes crashes; it's harmless, but scary.  This will probably
       // get automatically fixed when we upgrade to codemirror 6.

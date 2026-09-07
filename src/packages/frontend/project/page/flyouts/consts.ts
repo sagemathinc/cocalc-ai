@@ -4,6 +4,7 @@
  */
 
 import { CSS } from "@cocalc/frontend/app-framework";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { FILE_RECENCY_BORDER_WIDTH_PX } from "@cocalc/frontend/project/file-recency";
 
 export const DEFAULT_EXT = "ipynb";
@@ -14,7 +15,7 @@ export const FLYOUT_EXTRA2_WIDTH_PX = Math.floor(FLYOUT_DEFAULT_WIDTH_PX * 1.4);
 
 // use this in styles for padding or margins
 export const FLYOUT_PADDING = "5px";
-export const FLYOUT_BODY_BG_COLOR = "rgba(255, 255, 255, 0.72)";
+export const FLYOUT_BODY_BG_COLOR = UI_COLORS.surface;
 
 // a non-standard filetype for a folder
 export const ACTIVE_FOLDER_TYPE = "_folder_";

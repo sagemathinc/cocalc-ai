@@ -28,7 +28,7 @@ import dayjs from "dayjs";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   memo,
   type ComponentProps,
@@ -56,8 +56,10 @@ import {
 } from "./utils";
 import type { GitReviewCommentV2 } from "../git-review-store";
 
-const CARD_BORDER_COLOR = "#d9d9d9";
-const CARD_SHADOW = "0 1px 2px rgba(0,0,0,0.06)";
+const CARD_BORDER_COLOR = UI_COLORS.border;
+const CARD_BACKGROUND = UI_COLORS.surface;
+const CARD_INSET_BACKGROUND = UI_COLORS.inset;
+const CARD_SHADOW = `0 1px 2px ${UI_COLORS.shadow}`;
 export const GIT_DIFF_LIST_FOOTER_SPACER_HEIGHT = 72;
 const EMPTY_GIT_REVIEW_COMMENTS: GitReviewCommentV2[] = [];
 
@@ -161,12 +163,12 @@ export function GitCommitDrawerTitle({
   const reviewComplete =
     recentCommitCount > 0 && reviewedRecentCommitCount >= recentCommitCount;
   const reviewProgressColor = reviewComplete
-    ? COLORS.ANTD_GREEN
+    ? UI_COLORS.success
     : reviewPercent >= 80
-      ? COLORS.ANTD_GREEN
+      ? UI_COLORS.success
       : reviewPercent >= 40
-        ? COLORS.ANTD_ORANGE
-        : COLORS.ANTD_RED;
+        ? UI_COLORS.warning
+        : UI_COLORS.danger;
   const progressPopover = (
     <Space vertical size="small" style={{ width: 280 }}>
       <Typography.Text strong>Recent commit review scope</Typography.Text>
@@ -516,7 +518,8 @@ export function GitRepoBootstrapPanel({
         borderRadius: 8,
         padding: 12,
         marginBottom: 12,
-        background: "#fff",
+        background: CARD_BACKGROUND,
+        color: UI_COLORS.text,
         boxShadow: CARD_SHADOW,
         display: "flex",
         flexDirection: "column",
@@ -584,10 +587,11 @@ export function GitHeadCommitPanel({
       style={{
         border: `1px solid ${CARD_BORDER_COLOR}`,
         borderRadius: 8,
-        borderLeft: `4px solid ${COLORS.BLUE}`,
+        borderLeft: `4px solid ${UI_COLORS.primary}`,
         padding: 12,
         marginBottom: 12,
-        background: "#fff",
+        background: CARD_BACKGROUND,
+        color: UI_COLORS.text,
         boxShadow: CARD_SHADOW,
         display: "flex",
         flexDirection: "column",
@@ -656,7 +660,7 @@ export function GitHeadCommitPanel({
                 alignItems: "center",
                 justifyContent: "space-between",
                 gap: 8,
-                border: `1px solid ${COLORS.GRAY_LL}`,
+                border: `1px solid ${UI_COLORS.border}`,
                 borderRadius: 6,
                 padding: "6px 8px",
               }}
@@ -804,10 +808,11 @@ export function GitReviewPanel({
       style={{
         border: `1px solid ${CARD_BORDER_COLOR}`,
         borderRadius: 8,
-        borderLeft: `4px solid ${COLORS.BLUE}`,
+        borderLeft: `4px solid ${UI_COLORS.primary}`,
         padding: 12,
         marginBottom: 12,
-        background: "#fff",
+        background: CARD_BACKGROUND,
+        color: UI_COLORS.text,
         boxShadow: CARD_SHADOW,
       }}
     >
@@ -842,7 +847,7 @@ export function GitReviewPanel({
         >
           <span style={{ fontWeight: 600 }}>Reviewed</span>
         </Checkbox>
-        <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+        <div style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
           <Space size={8} align="center">
             {resolvedInlineCount > 0 ? (
               <>
@@ -888,10 +893,10 @@ export function GitReviewPanel({
       ) : (
         <div
           style={{
-            border: `1px solid ${COLORS.GRAY_LL}`,
+            border: `1px solid ${UI_COLORS.border}`,
             borderRadius: 6,
             padding: "8px 10px",
-            background: "#fff",
+            background: CARD_INSET_BACKGROUND,
             minHeight: 40,
           }}
         >
@@ -922,7 +927,7 @@ export function GitReviewPanel({
           flexWrap: "wrap",
         }}
       >
-        <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+        <div style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
           {reviewError || (reviewLoading ? "Loading review state..." : "")}
           {!reviewError && !reviewLoading && inlineCommentCount > 0
             ? ` · ${inlineCommentCount} inline comments`
@@ -946,9 +951,9 @@ export function GitReviewPanel({
       <div
         style={{
           marginTop: 8,
-          border: `1px solid ${COLORS.GRAY_LL}`,
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: 6,
-          background: "#fff",
+          background: CARD_INSET_BACKGROUND,
           padding: "8px 10px",
           display: "flex",
           alignItems: "center",
@@ -1028,9 +1033,10 @@ export function GitCommitDetailsPanel({
       style={{
         border: `1px solid ${CARD_BORDER_COLOR}`,
         borderRadius: 8,
-        borderLeft: `4px solid ${COLORS.BLUE}`,
+        borderLeft: `4px solid ${UI_COLORS.primary}`,
         padding: "10px 12px",
-        background: "#fff",
+        background: CARD_BACKGROUND,
+        color: UI_COLORS.text,
         boxShadow: CARD_SHADOW,
         display: "flex",
         flexDirection: "column",
@@ -1078,7 +1084,7 @@ export function GitCommitDetailsPanel({
       {summary.message ? (
         <div
           style={{
-            borderTop: `1px solid ${COLORS.GRAY_LL}`,
+            borderTop: `1px solid ${UI_COLORS.border}`,
             paddingTop: 10,
             display: "flex",
             flexDirection: "column",
@@ -1147,7 +1153,8 @@ export function GitChangedFilesPanel({
         padding: "10px 12px",
         border: `1px solid ${CARD_BORDER_COLOR}`,
         borderRadius: 10,
-        background: "white",
+        background: CARD_BACKGROUND,
+        color: UI_COLORS.text,
         boxShadow: CARD_SHADOW,
       }}
     >

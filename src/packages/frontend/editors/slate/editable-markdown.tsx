@@ -6,6 +6,7 @@
 // Component that allows WYSIWYG editing of markdown.
 
 import { delay } from "awaiting";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Map } from "immutable";
 import { debounce, isEqual, throttle } from "lodash";
 import {
@@ -2832,6 +2833,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       ? {
           minHeight: "100%",
           height: "100%",
+          background: UI_COLORS.surface,
+          color: UI_COLORS.text,
         }
       : undefined;
   const fillEditor = !noVfill && height !== "auto";
@@ -2859,10 +2862,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
               right: 8,
               fontSize: 12,
               padding: "2px 8px",
-              background: "rgba(255, 251, 230, 0.95)",
-              border: "1px solid rgba(255, 229, 143, 0.9)",
+              background: UI_COLORS.warningBg,
+              border: `1px solid ${UI_COLORS.border}`,
               borderRadius: 4,
-              color: "#8c6d1f",
+              color: UI_COLORS.warning,
               cursor: "pointer",
               zIndex: 2,
             }}
@@ -2902,7 +2905,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
                   position: "relative", // CRITICAL!!! Without this, editor will sometimes scroll the entire frame off the screen.  Do NOT delete position:'relative'.  5+ hours of work to figure this out!  Note that this isn't needed when using windowing above.
                   minWidth: "80%",
                   padding: "15px",
-                  background: "white",
+                  background: UI_COLORS.surface,
+                  color: UI_COLORS.text,
                   overflowX: "hidden",
                   overflowY:
                     height == "auto"
@@ -2972,7 +2976,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         className={noVfill || height === "auto" ? undefined : "smc-vfill"}
         style={{
           overflow: noVfill || height === "auto" ? undefined : "hidden",
-          backgroundColor: "white",
+          backgroundColor: UI_COLORS.surface,
+          color: UI_COLORS.text,
           ...style,
           height,
           minHeight: height == "auto" ? autoMinHeight : undefined,

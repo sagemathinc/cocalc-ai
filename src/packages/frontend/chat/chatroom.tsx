@@ -26,7 +26,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { NodeDesc } from "../frame-editors/frame-tree/types";
 import { EditorComponentProps } from "../frame-editors/frame-tree/types";
 import type { ChatActions } from "./actions";
@@ -91,6 +91,7 @@ import {
   buildAutomationDraft,
   describeAutomationSchedule,
   formatAutomationPausedReason,
+  getAutomationBannerAppearance,
   hasAutomationConfigContent,
   normalizeAutomationConfigForSave,
   shouldShowAutomationNextRun,
@@ -2490,6 +2491,8 @@ export function ChatPanel({
       next_run_at_ms: selectedThreadAutomationState.next_run_at_ms,
     });
   const automationIsRunning = automationStatus === "running";
+  const automationBannerAppearance =
+    getAutomationBannerAppearance(automationStatus);
   const automationActionInFlight = automationActionBusy !== "";
   const automationTitle =
     selectedThreadAutomationConfig?.title?.trim() || "Automation";
@@ -2531,9 +2534,9 @@ export function ChatPanel({
             loading={automationActionBusy === "acknowledge"}
             onClick={() => void handleAutomationAcknowledge()}
             style={{
-              borderColor: COLORS.BG_WARNING,
-              color: COLORS.YELL_D,
-              background: COLORS.YELL_LLL,
+              borderColor: UI_COLORS.warning,
+              color: UI_COLORS.warning,
+              background: UI_COLORS.warningBg,
             }}
           >
             {selectedThreadAutomationState.unacknowledged_runs} unacknowledged
@@ -2591,19 +2594,9 @@ export function ChatPanel({
       style={{
         margin: "8px 8px 0 8px",
         padding: "6px 8px",
-        border: `1px solid ${
-          automationStatus === "error"
-            ? COLORS.ANTD_RED
-            : automationStatus === "paused"
-              ? COLORS.BG_WARNING
-              : COLORS.BLUE_LLL
-        }`,
-        background:
-          automationStatus === "error"
-            ? COLORS.ANTD_BG_RED_L
-            : automationStatus === "paused"
-              ? COLORS.YELL_LLL
-              : COLORS.BLUE_LLLL,
+        border: `1px solid ${automationBannerAppearance.borderColor}`,
+        background: automationBannerAppearance.background,
+        color: UI_COLORS.text,
         borderRadius: 4,
       }}
     >

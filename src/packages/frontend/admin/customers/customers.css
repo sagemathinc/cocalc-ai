@@ -10,6 +10,26 @@
   min-width: 0;
 }
 
+:root[data-cocalc-theme="dark"] .crm-shell {
+  --crm-ink: var(--cocalc-ui-text);
+  --crm-muted: var(--cocalc-ui-secondary);
+  --crm-surface: var(--cocalc-ui-surface);
+  --crm-line: var(--cocalc-ui-border);
+  --crm-accent: var(--cocalc-ui-success);
+  --crm-accent-soft: var(--cocalc-ui-successBg);
+}
+
+:root[data-cocalc-theme="dark"] .crm-filter-panel,
+:root[data-cocalc-theme="dark"] .crm-metric-card.ant-card,
+:root[data-cocalc-theme="dark"] .crm-empty-panel {
+  background: var(--cocalc-ui-surface);
+  border-color: var(--cocalc-ui-border);
+}
+
+:root[data-cocalc-theme="dark"] .crm-activity-item::before {
+  border-color: var(--cocalc-ui-surface);
+}
+
 .crm-hero {
   background:
     radial-gradient(

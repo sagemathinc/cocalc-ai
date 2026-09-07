@@ -6,7 +6,7 @@
 import type { ReactNode } from "react";
 
 import { Icon } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export function RuntimePanel({
   children,
@@ -22,11 +22,12 @@ export function RuntimePanel({
   return (
     <div
       style={{
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: 12,
         boxSizing: "border-box",
         padding: 14,
-        background: "white",
+        background: UI_COLORS.surface,
+        color: UI_COLORS.text,
         maxWidth: "100%",
         minWidth: 0,
         width: "100%",
@@ -45,9 +46,9 @@ export function RuntimePanel({
         <div
           style={{
             alignItems: "center",
-            background: COLORS.ANTD_BG_BLUE_L,
+            background: UI_COLORS.infoBg,
             borderRadius: 9,
-            color: COLORS.ANTD_LINK_BLUE,
+            color: UI_COLORS.info,
             display: "flex",
             flex: "0 0 auto",
             height: 34,
@@ -59,7 +60,9 @@ export function RuntimePanel({
         </div>
         <div style={{ flex: "1 1 auto", minWidth: 0 }}>
           <div style={{ fontWeight: 700 }}>{title}</div>
-          <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{subtitle}</div>
+          <div style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
+            {subtitle}
+          </div>
         </div>
       </div>
       {children}
@@ -80,7 +83,7 @@ export function RuntimeAction({
     <div
       style={{
         alignItems: "center",
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: 10,
         boxSizing: "border-box",
         display: "flex",
@@ -95,7 +98,7 @@ export function RuntimeAction({
         <div style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{title}</div>
         <div
           style={{
-            color: COLORS.GRAY_M,
+            color: UI_COLORS.secondary,
             fontSize: 12,
             overflowWrap: "anywhere",
           }}

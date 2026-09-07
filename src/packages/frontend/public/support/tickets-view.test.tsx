@@ -89,21 +89,23 @@ describe("SupportTicketsView", () => {
   it("uses public color tokens for ticket alert states", () => {
     render(<SupportTicketsView config={{ zendesk: false }} />);
 
-    expect(screen.getByText("Support tickets are not configured.")).toHaveStyle(
-      {
-        background: PUBLIC_COLORS.errorTint,
-        border: `1px solid ${PUBLIC_COLORS.errorBorder}`,
-        color: PUBLIC_COLORS.error,
-      },
-    );
+    const error = screen.getByText("Support tickets are not configured.");
+    expect(error).toHaveStyle({
+      background: PUBLIC_COLORS.errorTint,
+      color: PUBLIC_COLORS.error,
+    });
+    expect(error.style.borderWidth).toBe("1px");
+    expect(error.style.borderStyle).toBe("solid");
+    expect(error.style.borderColor).toBe(PUBLIC_COLORS.errorBorder);
 
     mockApi.mockReturnValue(new Promise(() => {}));
     render(<SupportTicketsView config={{ zendesk: true }} />);
 
-    expect(screen.getByText("Loading support tickets...")).toHaveStyle({
+    const loading = screen.getByText("Loading support tickets...");
+    expect(loading).toHaveStyle({
       background: PUBLIC_COLORS.infoTint,
-      border: `1px solid ${PUBLIC_COLORS.infoBorder}`,
       color: PUBLIC_COLORS.info,
     });
+    expect(loading.style.borderColor).toBe(PUBLIC_COLORS.infoBorder);
   });
 });

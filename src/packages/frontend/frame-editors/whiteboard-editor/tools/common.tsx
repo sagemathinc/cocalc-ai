@@ -1,12 +1,12 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { CSSProperties } from "react";
 import { Button, Popconfirm } from "antd";
 
 import { Tooltip } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
 
-export const SELECTED = "#337ab7";
+export const SELECTED = UI_COLORS.primary;
 // Foreground for controls rendered on top of SELECTED.
-export const SELECTED_FG = COLORS.WHITE;
+export const SELECTED_FG = UI_COLORS.onPrimary;
 
 export const WHITEBOARD_COMPACT_BUTTON_STYLE: CSSProperties = {
   minWidth: 0,
@@ -31,7 +31,7 @@ export function ResetButton({ onClick }) {
           type="text"
           style={{
             ...WHITEBOARD_COMPACT_BUTTON_STYLE,
-            color: "#666",
+            color: UI_COLORS.secondary,
             margin: "auto",
             padding: 0,
             fontSize: "12px",
