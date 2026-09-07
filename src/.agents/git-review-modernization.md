@@ -597,6 +597,21 @@ turning the experimental modal into a second complete Git browser.
 
 ### Remaining targeted investigations
 
+Tree expansion persistence (2026-09-07): changed-file navigation now saves
+expanded directories per account/repository/review scope, including comparison
+targets. Restore all-collapsed state explicitly (Trees' open initialization
+otherwise treats an empty expansion array as open). Ignore temporary search
+expansion and flush pending user changes before filtering or unmounting.
+Storage failures do not disable navigation. Focused tests cover target isolation,
+filtering, cleanup, and invalid/unavailable storage. The real Chromium tree test
+collapses by keyboard, reloads, and expands by keyboard; it passes with
+`TREE_ONLY=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`.
+That mode skips the preceding activity/document/pool scenarios, not the tree or
+subsequent preview checks. The full browser suite currently fails intermittently
+at the equal-document `old version` visibility assertion after layout/reflow;
+investigate this before declaring TimeTravel acceptance complete. Semantic diff
+scroll restoration remains pending.
+
 | Investigation                           | Evidence required before the affected feature replaces existing behavior                                                                                                                                                                                                                                                                                                                   |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Real Slate annotation lifecycle         | Use the actual editor, upload service, and review store. Paste rich content and an image; edit, undo, scroll the editor offscreen/back, change layout/font size, switch files/commits, and reopen. Check focus, selection, upload completion, draft persistence, and undo separately. Test two simultaneous drafts. The standalone stub cannot satisfy this gate.                          |

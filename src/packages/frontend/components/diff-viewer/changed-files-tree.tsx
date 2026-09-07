@@ -5,11 +5,17 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import { changedFileLabel, prepareChangedFiles } from "./changed-files-model";
 import type { ChangedFileEntry } from "./changed-files-model";
+import {
+  readTreeExpansion,
+  watchTreeExpansion,
+  treeDirectoryPaths,
+} from "./tree-expansion";
 
 export interface ChangedFilesTreeProps {
   files: readonly ChangedFileEntry[];
   activeId?: string;
   onSelect: (id: string) => void;
+  expansionScope?: string;
 }
 
 export default function ChangedFilesTree(props: ChangedFilesTreeProps) {
@@ -18,10 +24,16 @@ export default function ChangedFilesTree(props: ChangedFilesTreeProps) {
   return <Tree {...props} />;
 }
 
-function Tree({ files, activeId, onSelect }: ChangedFilesTreeProps) {
+function Tree({
+  files,
+  activeId,
+  onSelect,
+  expansionScope,
+}: ChangedFilesTreeProps) {
   const { resolved } = useAppearance();
   const [query, setQuery] = useState("");
   const updating = useRef(false);
+  const saveExpansion = useRef<() => void>(() => {});
   const latest = useRef({
     files,
     onSelect,
@@ -55,7 +67,7 @@ function Tree({ files, activeId, onSelect }: ChangedFilesTreeProps) {
   };
   const { model } = useFileTree({
     paths: [],
-    initialExpansion: "open",
+    initialExpansion: "closed",
     flattenEmptyDirectories: true,
     dragAndDrop: false,
     renaming: false,
@@ -72,11 +84,23 @@ function Tree({ files, activeId, onSelect }: ChangedFilesTreeProps) {
       // End the old search session before replacing paths. Otherwise clearing
       // it restores expansion from the previous review and hides new folders.
       model.setSearch(null);
-      model.resetPaths(JSON.parse(signature));
+      model.resetPaths(JSON.parse(signature), {
+        // With initialExpansion=open, Trees treats an explicit [] as open too.
+        initialExpandedPaths:
+          readTreeExpansion(expansionScope) ??
+          treeDirectoryPaths(JSON.parse(signature)),
+      });
     } finally {
       updating.current = false;
     }
-  }, [model, signature]);
+    const persistence = watchTreeExpansion(
+      model,
+      JSON.parse(signature),
+      expansionScope,
+    );
+    saveExpansion.current = persistence.flush;
+    return persistence.dispose;
+  }, [model, signature, expansionScope]);
   useEffect(() => {
     const statuses: GitStatusEntry[] = files.flatMap((file) =>
       file.status ? [{ path: file.path, status: file.status }] : [],
@@ -86,8 +110,9 @@ function Tree({ files, activeId, onSelect }: ChangedFilesTreeProps) {
     model.setComposition(model.getComposition());
   }, [model, files]);
   useEffect(() => {
+    saveExpansion.current();
     model.setSearch(query || null);
-  }, [model, query, signature]);
+  }, [model, query, signature, expansionScope]);
   useEffect(() => {
     updating.current = true;
     try {

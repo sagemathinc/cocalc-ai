@@ -54,7 +54,7 @@ const built = await build({
         window.setPoolConsumers = setConsumers;
         if (location.pathname === '/pool') return <>{Array.from({length:consumers},(_,i)=><DiffHighlightingProvider key={i}><PoolProbe/></DiffHighlightingProvider>)}</>;
         window.treeSetFiles = setFiles;
-        if (location.pathname === '/tree') return <><ChangedFilesTree files={files} activeId={selected} onSelect={setSelected}/><output aria-label="Selected file">{selected}</output></>;
+        if (location.pathname === '/tree') return <><ChangedFilesTree expansionScope={JSON.stringify(files.map(f=>f.path))} files={files} activeId={selected} onSelect={setSelected}/><output aria-label="Selected file">{selected}</output></>;
         window.previewSetFontSize = setFontSize;
         if (location.pathname === '/copy') return <DiffPreviewButton fontSize={14} getSource={() => (${JSON.stringify({ kind: "documents", path: "operators.ts", before: "+before;\n-before;\n", after: "+after;\n-after;\n", label: "Literal operators" })})} />;
         return <DiffPreviewButton fontSize={fontSize} getSource={() => ({kind:'patch',label:'Browser fixture',patch:${JSON.stringify(patch)}})} />;
@@ -149,116 +149,138 @@ try {
   const errors = [];
   page.setDefaultTimeout(10000);
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`http://127.0.0.1:${server.address().port}/activity`);
-  await page
-    .getByRole("combobox", { name: "Activity diff renderer" })
-    .selectOption("pierre");
-  const activityRegion = page.getByRole("region", {
-    name: "activity.ts: recorded activity change (not a Git revision)",
-  });
-  await expect(
-    activityRegion.getByText("new version", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("note")).toContainText(
-    "omitted context is unavailable",
-  );
-  await page.evaluate(() =>
-    window.changeDocumentRevision("next streamed value"),
-  );
-  await expect(
-    activityRegion.getByText("next streamed value", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    activityRegion.getByText("new version", { exact: true }),
-  ).toHaveCount(0);
-  await page
-    .getByRole("combobox", { name: "Activity diff renderer" })
-    .selectOption("classic");
-  await expect(page.getByText("Classic activity")).toBeVisible();
-  await page.goto(`http://127.0.0.1:${server.address().port}/documents`);
-  const documentRegion = page.getByRole("region", {
-    name: "Selected historical versions",
-  });
-  await expect(documentRegion).toBeVisible();
-  await expect(
-    documentRegion.getByText("new version", { exact: true }),
-  ).toBeVisible();
-  await documentRegion.focus();
-  await page.keyboard.press("Space");
-  await expect
-    .poll(() => documentRegion.evaluate((element) => element.scrollTop))
-    .toBeGreaterThan(100);
-  await page.keyboard.press("Home");
-  await page.evaluate(() =>
-    window.changeDocumentRevision("changed historical version"),
-  );
-  await expect(
-    documentRegion.getByText("changed historical version", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    documentRegion.getByText("new version", { exact: true }),
-  ).toHaveCount(0);
-  const documentCode = documentRegion.locator("pre[data-diff-type]").first();
-  await page.evaluate(() => window.previewSetFontSize(20));
-  await expect
-    .poll(() =>
-      documentCode.evaluate((element) => getComputedStyle(element).fontSize),
-    )
-    .toBe("20px");
-  await page.emulateMedia({ colorScheme: "light" });
-  await page.evaluate(() => window.chooseAppearance("dark"));
-  await expect
-    .poll(() =>
-      documentCode.evaluate(
-        (element) => getComputedStyle(element).backgroundColor,
-      ),
-    )
-    .toBe("rgb(36, 41, 46)");
-  await page.emulateMedia({ colorScheme: "dark" });
-  await page.evaluate(() => window.chooseAppearance("light"));
-  await expect
-    .poll(() =>
-      documentCode.evaluate(
-        (element) => getComputedStyle(element).backgroundColor,
-      ),
-    )
-    .toBe("rgb(255, 255, 255)");
-  await page.evaluate(() => window.chooseAppearance("system"));
-  await page.emulateMedia({ colorScheme: "light" });
-  await page.getByRole("checkbox", { name: "Side by side" }).check();
-  await expect(
-    documentRegion.locator('[data-diff-type="split"]').first(),
-  ).toBeVisible();
-  for (const width of [1200, 600, 320]) {
-    await page.setViewportSize({ width, height: 900 });
+  if (!process.env.TREE_ONLY) {
+    await page.goto(`http://127.0.0.1:${server.address().port}/activity`);
+    await page
+      .getByRole("combobox", { name: "Activity diff renderer" })
+      .selectOption("pierre");
+    const activityRegion = page.getByRole("region", {
+      name: "activity.ts: recorded activity change (not a Git revision)",
+    });
+    await expect(
+      activityRegion.getByText("new version", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("note")).toContainText(
+      "omitted context is unavailable",
+    );
+    await page.evaluate(() =>
+      window.changeDocumentRevision("next streamed value"),
+    );
+    await expect(
+      activityRegion.getByText("next streamed value", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      activityRegion.getByText("new version", { exact: true }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("combobox", { name: "Activity diff renderer" })
+      .selectOption("classic");
+    await expect(page.getByText("Classic activity")).toBeVisible();
+    await page.goto(`http://127.0.0.1:${server.address().port}/documents`);
+    const documentRegion = page.getByRole("region", {
+      name: "Selected historical versions",
+    });
+    await expect(documentRegion).toBeVisible();
+    await expect(
+      documentRegion.getByText("new version", { exact: true }),
+    ).toBeVisible();
+    await documentRegion.focus();
+    await page.keyboard.press("Space");
+    await expect
+      .poll(() => documentRegion.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(100);
+    await page.keyboard.press("Home");
+    await page.evaluate(() =>
+      window.changeDocumentRevision("changed historical version"),
+    );
+    await expect(
+      documentRegion.getByText("changed historical version", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      documentRegion.getByText("new version", { exact: true }),
+    ).toHaveCount(0);
+    const documentCode = documentRegion.locator("pre[data-diff-type]").first();
+    await page.evaluate(() => window.previewSetFontSize(20));
     await expect
       .poll(() =>
-        page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+        documentCode.evaluate((element) => getComputedStyle(element).fontSize),
       )
-      .toBe(true);
+      .toBe("20px");
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.evaluate(() => window.chooseAppearance("dark"));
+    await expect
+      .poll(() =>
+        documentCode.evaluate(
+          (element) => getComputedStyle(element).backgroundColor,
+        ),
+      )
+      .toBe("rgb(36, 41, 46)");
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.evaluate(() => window.chooseAppearance("light"));
+    await expect
+      .poll(() =>
+        documentCode.evaluate(
+          (element) => getComputedStyle(element).backgroundColor,
+        ),
+      )
+      .toBe("rgb(255, 255, 255)");
+    await page.evaluate(() => window.chooseAppearance("system"));
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.getByRole("checkbox", { name: "Side by side" }).check();
+    await expect(
+      documentRegion.locator('[data-diff-type="split"]').first(),
+    ).toBeVisible();
+    for (const width of [1200, 600, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        )
+        .toBe(true);
+    }
+    await page.getByRole("checkbox", { name: "Side by side" }).uncheck();
+    await page.evaluate(() => window.changeDocumentRevision("old version"));
+    await expect(
+      documentRegion.getByText("old version", { exact: true }),
+    ).toBeVisible();
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.goto(`http://127.0.0.1:${server.address().port}/pool`);
+    await expect(page.getByLabel("Worker pool status").first()).toHaveText(
+      "initialized",
+    );
+    await expect.poll(() => page.workers().length).toBe(2);
+    await page.evaluate(() => window.setPoolConsumers(1));
+    await expect(page.getByLabel("Worker pool status")).toHaveCount(1);
+    expect(page.workers().length).toBe(2);
+    await page.evaluate(() => window.setPoolConsumers(0));
+    await expect.poll(() => page.workers().length).toBe(0);
+    await page.evaluate(() => window.setPoolConsumers(2));
+    await expect(page.getByLabel("Worker pool status").first()).toHaveText(
+      "initialized",
+    );
+    await expect.poll(() => page.workers().length).toBe(2);
   }
-  await page.getByRole("checkbox", { name: "Side by side" }).uncheck();
-  await page.evaluate(() => window.changeDocumentRevision("old version"));
-  await expect(
-    documentRegion.getByText("old version", { exact: true }),
-  ).toBeVisible();
-  await page.setViewportSize({ width: 1200, height: 900 });
-  await page.goto(`http://127.0.0.1:${server.address().port}/pool`);
-  await expect(page.getByLabel("Worker pool status").first()).toHaveText(
-    "initialized",
-  );
-  await expect.poll(() => page.workers().length).toBe(2);
-  await page.evaluate(() => window.setPoolConsumers(1));
-  await expect(page.getByLabel("Worker pool status")).toHaveCount(1);
-  expect(page.workers().length).toBe(2);
-  await page.evaluate(() => window.setPoolConsumers(0));
-  await expect.poll(() => page.workers().length).toBe(0);
-  await page.evaluate(() => window.setPoolConsumers(2));
-  await expect(page.getByLabel("Worker pool status").first()).toHaveText(
-    "initialized",
-  );
-  await expect.poll(() => page.workers().length).toBe(2);
   await page.goto(`http://127.0.0.1:${server.address().port}/tree`);
+  const folder = page.getByRole("treeitem", { name: /^src/ });
+  await folder.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(folder).toHaveAttribute("aria-expanded", "false");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        localStorage.getItem(
+          'cocalc:review-tree-expansion:v1:["src/a.ts","src/b.ts"]',
+        ),
+      ),
+    )
+    .toBe("[]");
+  await page.reload();
+  await expect(folder).toHaveAttribute("aria-expanded", "false");
+  await folder.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(folder).toHaveAttribute("aria-expanded", "true");
   const b = page.getByRole("treeitem", { name: /b.ts/ });
   await expect(b).toBeVisible();
   await b.click();

@@ -473,6 +473,7 @@ export function TargetReviewPane({
         </span>
       </div>
       <ChangedFilesLayout
+        expansionScope={JSON.stringify([accountId, scope])}
         files={data.files.map((file, index) => ({
           id: String(index),
           path: file.path,

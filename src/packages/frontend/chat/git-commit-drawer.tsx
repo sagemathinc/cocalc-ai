@@ -3550,6 +3550,13 @@ export function GitCommitDrawer({
                 />
                 <ChangedFilesLayout
                   key={reviewEditorScope}
+                  expansionScope={JSON.stringify([
+                    accountId,
+                    projectId,
+                    originDiscovery?.repository.commonDirectory ?? originCwd,
+                    cwd,
+                    reviewStateCommit ?? currentReviewCommit,
+                  ])}
                   files={navigationFiles}
                   activeId={
                     activeNavigationFile?.scope === scrollStorageId
