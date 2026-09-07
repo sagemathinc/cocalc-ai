@@ -1535,7 +1535,7 @@ async function ensureContainer({
 
   args.push("--rootfs", rootfs);
   // Infrastructure startup must not source project-controlled shell profiles.
-  args.push("/usr/bin/sleep", "infinity");
+  args.push("/bin/sh", "-c", "PATH=/usr/bin:/bin exec sleep infinity");
 
   logger.debug("codex project container: podman", {
     projectId,
