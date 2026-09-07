@@ -31,6 +31,10 @@ const largePatch = Array.from({ length: 80 }, (_, file) => {
     ).join("")
   );
 }).join("");
+const stressPatches = {
+  huge: `diff --git a/huge.ts b/huge.ts\n--- a/huge.ts\n+++ b/huge.ts\n@@ -1,19000 +1,19000 @@\n-old first\n+new first\n${Array.from({ length: 18998 }, (_, i) => ` const n${i} = ${i};\n`).join("")}-old last\n+new last\n`,
+  minified: `diff --git a/bundle.js b/bundle.js\n--- a/bundle.js\n+++ b/bundle.js\n@@ -1,2 +1,2 @@\n-${"var x=1;".repeat(16000)}\n+${"var x=2;".repeat(16000)}\n-old last\n+new last\n`,
+};
 const built = await build({
   absWorkingDir: frontend,
   stdin: {
@@ -74,6 +78,7 @@ const built = await build({
         window.previewSetFontSize = setFontSize;
         if (location.pathname === '/copy') return <DiffPreviewButton fontSize={14} getSource={() => (${JSON.stringify({ kind: "documents", path: "operators.ts", before: "+before;\n-before;\n", after: "+after;\n-after;\n", label: "Literal operators" })})} />;
         if (location.pathname === '/large') return <DiffPreviewButton fontSize={14} getSource={() => ({kind:'patch',label:'Large review fixture',patch:${JSON.stringify(largePatch)}})} />;
+        if (location.pathname === '/stress') return <DiffPreviewButton fontSize={14} getSource={() => ({kind:'patch',label:'Stress fixture',patch:(${JSON.stringify(stressPatches)})[new URLSearchParams(location.search).get('case')]})} />;
         return <DiffPreviewButton fontSize={fontSize} getSource={() => ({kind:'patch',label:'Browser fixture',patch:${JSON.stringify(patch)}})} />;
       }
       createRoot(document.getElementById('root')).render(<Harness />);`,
@@ -166,6 +171,54 @@ try {
   const errors = [];
   page.setDefaultTimeout(10000);
   page.on("pageerror", (error) => errors.push(error.message));
+  if (process.env.STRESS) {
+    for (const [name, source] of Object.entries(stressPatches)) {
+      await page.goto(
+        `http://127.0.0.1:${server.address().port}/stress?case=${name}`,
+      );
+      const start = performance.now();
+      await page.getByRole("button", { name: "Preview with Pierre" }).click();
+      const viewport = page.getByRole("region", { name: "Diff preview" });
+      await expect(
+        page.locator("diffs-container [data-line]").first(),
+      ).toBeVisible();
+      const openMs = performance.now() - start;
+      await viewport.focus();
+      await page.keyboard.press("End");
+      await expect(
+        page
+          .locator("diffs-container [data-line]")
+          .filter({ hasText: /^\s*new last\s*$/ })
+          .first(),
+      ).toBeVisible();
+      const rows = await page.locator("diffs-container [data-line]").count();
+      assert.ok(rows < 2000, "single-file stress input keeps rows bounded");
+      assert.ok(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+        "long source stays inside the viewer, not the page",
+      );
+      await viewport.focus();
+      await page.keyboard.press("Home");
+      await expect(
+        page.locator("diffs-container [data-line]").first(),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect.poll(() => page.workers().length).toBe(0);
+      console.log(
+        "STRESS",
+        JSON.stringify({
+          name,
+          bytes: Buffer.byteLength(source),
+          patchLines: source.split("\n").length,
+          openMs,
+          rows,
+        }),
+      );
+    }
+  }
   if (process.env.BENCHMARK) {
     await page.goto(`http://127.0.0.1:${server.address().port}/large`);
     const cdp = await page.context().newCDPSession(page);

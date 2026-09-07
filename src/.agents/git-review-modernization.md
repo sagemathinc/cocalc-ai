@@ -17,13 +17,32 @@ not a current checklist. The objective is not complete. Current release work:
 | Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
 | TimeTravel | Shared document rendering and arbitrary Git revision viewing are implemented. Verify Git, patchflow, snapshot and backup text comparisons plus rich-viewer/restore behavior end to end; the standalone document fixture is not source-specific acceptance. |
 | Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live agent dispatch and originating-context links still need end-to-end confirmation. |
-| Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying and an 18,001-line benchmark. Record production bundle-size deltas and complete the full-app appearance/editor and large-file cases; measured main-thread heap excludes worker heaps. |
+| Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Record production bundle-size deltas and complete full-app appearance/editor acceptance; investigate intermittent native-copy harness failure. Measured main-thread heap excludes worker heaps. |
 | Default and cleanup | Classic is still the default and rollback path. Do not delete it or the experiment until the compatibility gates pass and maintainer testing supports the switch. |
 
 Browser access: the forwarded CDP port currently resets. Local fresh-auth
 bootstrap succeeded, but automatic browser account login is explicitly disabled
 inside this collaborative project. Do not bypass that safeguard; use a restored
 forward or another supported signed-in session for live acceptance.
+
+### Single-file stress evidence (2026-09-07)
+
+Run `STRESS=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`
+from the repository root. This adds two real Chromium/Pierre fixtures before
+the existing browser suite: one 19,000-line file (414,859-byte patch) and two
+128,000-character minified changed lines (256,107-byte patch). Both remain
+within the existing Git transport limits. They verify End/Home navigation,
+visible final content, bounded mounted rows, page-width containment, and worker
+termination after closing. Two runs opened the huge file in about 1.03 seconds
+with 36 rows mounted at the end; minified input opened in 0.93 seconds with
+four rows. These are development modal-open measurements, not production
+highlight-completion or worker-memory measurements.
+
+The first run subsequently failed the existing native clipboard assertion
+(empty clipboard); the second full run passed unchanged. Preserve this as an
+intermittent acceptance issue rather than treating the rerun as proof of
+reliable native selection. The standalone harness still stubs Slate and app
+services and does not replace signed-in drawer acceptance.
 
 ## Objective
 
