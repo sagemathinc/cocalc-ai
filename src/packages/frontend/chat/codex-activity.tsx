@@ -1128,9 +1128,11 @@ function createEventEntry({
       detail:
         event.ack?.error ??
         (event.ack
-          ? event.ack.state === "applying"
-            ? "Applying"
-            : "Applied"
+          ? event.ack.state === "cancelled"
+            ? "Cancelled by Stop"
+            : event.ack.state === "applying"
+              ? "Applying"
+              : "Applied"
           : goal
             ? `${goal.objective}\n${goal.status.replaceAll("_", " ")} · ${goal.tokensUsed.toLocaleString()} tokens used`
             : "No goal"),
