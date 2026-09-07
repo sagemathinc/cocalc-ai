@@ -111,40 +111,41 @@ function createCodexGoalsDb(codexHome: string): string {
       updated_at_ms INTEGER NOT NULL
     )
   `);
-  db.prepare(
+  const insert = db.prepare(
     `INSERT INTO thread_goals(
-      thread_id,
-      goal_id,
-      objective,
-      status,
-      token_budget,
-      tokens_used,
-      time_used_seconds,
-      created_at_ms,
-      updated_at_ms
+      thread_id, goal_id, objective, status, token_budget, tokens_used,
+      time_used_seconds, created_at_ms, updated_at_ms
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    "thr-old-goal",
-    "goal-1",
-    "Old hidden objective",
-    "active",
-    null,
-    10,
-    5,
-    1,
-    2,
   );
+  for (const [index, status] of [
+    "active",
+    "active",
+    "paused",
+    "blocked",
+    "usage_limited",
+    "budget_limited",
+    "complete",
+  ].entries()) {
+    insert.run(
+      index === 0 ? "thr-goal-1" : `thr-other-${index}`,
+      `goal-${index}`,
+      `Keep objective ${index}`,
+      status,
+      index === 0 ? null : 10_000,
+      10 + index,
+      5 + index,
+      1,
+      2,
+    );
+  }
   db.close();
   return dbPath;
 }
 
-function countCodexGoals(dbPath: string): number {
+function readCodexGoals(dbPath: string) {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const row = db
-      .prepare("SELECT COUNT(*) AS count FROM thread_goals")
-      .get() as { count?: number };
-    return Number(row?.count ?? 0);
+    return db.prepare("SELECT * FROM thread_goals ORDER BY thread_id").all();
   } finally {
     db.close();
   }
@@ -777,177 +778,212 @@ describe("CodexAppServerAgent", () => {
     );
   });
 
-  it("clears persisted Codex goals before normal chat turns", async () => {
-    const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-root-"));
-    const codexHome = path.join(rootHostPath, ".codex");
-    const goalsDbPath = createCodexGoalsDb(codexHome);
-    const appServerCalls: Array<{ method: string; params: any }> = [];
-    const proc = new FakeCodexAppServerProc((fake, message) => {
-      appServerCalls.push({ method: message.method, params: message.params });
-      switch (message.method) {
-        case "initialize":
-          fake.sendResponse(message.id, { ok: true });
-          break;
-        case "thread/resume":
-          fake.sendResponse(message.id, {
-            thread: { id: "thr-goal-1" },
-          });
-          break;
-        case "turn/start":
-          fake.sendResponse(message.id, { turn: { id: "turn-goal-1" } });
-          setImmediate(() => {
-            fake.sendNotification("item/agentMessage/delta", {
-              threadId: "thr-goal-1",
-              turnId: "turn-goal-1",
-              itemId: "msg-goal-1",
-              delta: "Fresh response",
-            });
-            fake.sendNotification("turn/completed", {
-              turn: { id: "turn-goal-1", status: "completed" },
-            });
-          });
-          break;
-        default:
-          if (typeof message.id === "number") {
-            fake.sendResponse(message.id, {});
-          }
-      }
-    });
-
-    setCodexProjectSpawner({
-      spawnCodexExec: async () => {
-        throw new Error("unexpected codex exec spawn");
-      },
-      spawnCodexAppServer: async () => ({
-        proc: proc as any,
-        cmd: "fake-codex",
-        args: ["app-server"],
-        cwd: "/tmp/project",
-        containerPathMap: {
-          rootHostPath,
+  it.each([false, true])(
+    "streams native goal continuations without extra turn/start requests (already completed: %s)",
+    async (fast) => {
+      const calls: string[] = [];
+      const payloads: any[] = [];
+      let goalReads = 0;
+      setCodexProjectSpawner({
+        spawnCodexExec: async () => {
+          throw Error("unexpected exec");
         },
-      }),
-    });
-
-    try {
+        spawnCodexAppServer: async () => ({
+          proc: new FakeCodexAppServerProc((fake, message) => {
+            calls.push(message.method);
+            if (message.method === "thread/resume") {
+              fake.sendResponse(message.id, {
+                thread: { id: "thr-native-goal" },
+              });
+            } else if (message.method === "turn/start") {
+              fake.sendResponse(message.id, { turn: { id: "turn-one" } });
+              setImmediate(() => {
+                fake.sendNotification("thread/tokenUsage/updated", {
+                  turnId: "turn-one",
+                  tokenUsage: {
+                    last: {
+                      inputTokens: 10,
+                      outputTokens: 20,
+                      totalTokens: 30,
+                    },
+                  },
+                });
+                fake.sendNotification("turn/completed", {
+                  threadId: "thr-native-goal",
+                  turn: { id: "turn-one", status: "completed" },
+                });
+              });
+            } else if (message.method === "thread/goal/get") {
+              goalReads++;
+              const continueGoal = () => {
+                fake.sendNotification("turn/started", {
+                  threadId: "thr-native-goal",
+                  turn: { id: "turn-two", status: "inProgress" },
+                });
+                fake.sendNotification("item/completed", {
+                  turnId: "turn-two",
+                  item: {
+                    id: "reply-two",
+                    type: "agentMessage",
+                    text: "Goal finished",
+                  },
+                });
+                fake.sendNotification("thread/tokenUsage/updated", {
+                  turnId: "turn-two",
+                  tokenUsage: {
+                    last: { inputTokens: 5, outputTokens: 15, totalTokens: 20 },
+                  },
+                });
+                fake.sendNotification("turn/completed", {
+                  threadId: "thr-native-goal",
+                  turn: { id: "turn-two", status: "completed" },
+                });
+              };
+              if (fast && goalReads === 2) continueGoal();
+              fake.sendResponse(message.id, {
+                goal: {
+                  objective: "Finish native goal",
+                  status: goalReads < (fast ? 2 : 3) ? "active" : "complete",
+                  tokensUsed: 100,
+                },
+              });
+              if (!fast && goalReads === 2) setImmediate(continueGoal);
+            } else if (typeof message.id === "number")
+              fake.sendResponse(message.id, {});
+          }) as any,
+          cmd: "fake-codex",
+          args: ["app-server"],
+          cwd: "/tmp/project",
+        }),
+      });
       const agent = new CodexAppServerAgent();
       await agent.evaluate({
         project_id: "00000000-0000-4000-8000-000000000000",
         account_id: "00000000-0000-4000-8000-000000000001",
-        session_id: "chat-thread-goal",
-        prompt: "hi",
-        stream: async () => {},
-        config: {
-          workingDirectory: "/tmp/project",
-        } as any,
+        session_id: "thr-native-goal",
+        prompt: "continue",
+        stream: async (payload) => {
+          if (payload) payloads.push(payload);
+        },
+        config: { workingDirectory: "/tmp/project" } as any,
         chat: {
           project_id: "00000000-0000-4000-8000-000000000000",
           path: "/tmp/project/test.chat",
-          message_date: "2026-06-06T00:00:01.000Z",
-          sender_id: "openai-codex-agent",
-          thread_id: "thread-goal-1",
-          message_id: "assistant-goal-1",
-          parent_message_id: "user-goal-1",
+          message_date: "2026-09-07T00:00:00.000Z",
+          sender_id: "codex",
+          thread_id: "chat-thread",
+          message_id: "reply",
         },
       });
+      expect(calls.filter((method) => method === "turn/start")).toHaveLength(1);
+      expect(payloads).toContainEqual(
+        expect.objectContaining({
+          type: "summary",
+          finalResponse: "Goal finished",
+          usage: expect.objectContaining({
+            total_tokens: 50,
+            input_tokens: 15,
+            output_tokens: 35,
+          }),
+        }),
+      );
+      expect(
+        payloads.filter((p) => p.event?.type === "goal").at(-1).event.snapshot
+          .goal.status,
+      ).toBe("complete");
+    },
+  );
 
-      expect(countCodexGoals(goalsDbPath)).toBe(0);
-      expect(appServerCalls.map((call) => call.method)).toEqual(
-        expect.arrayContaining(["thread/resume", "turn/start"]),
-      );
-      expect(appServerCalls.map((call) => call.method)).not.toContain(
-        "thread/goal/get",
-      );
-      expect(appServerCalls.map((call) => call.method)).not.toContain(
-        "thread/goal/clear",
-      );
-    } finally {
-      rmSync(rootHostPath, { recursive: true, force: true });
-    }
-  });
+  it.each(["chat", "automation"] as const)(
+    "preserves all persisted Codex goals across successive %s turns",
+    async (kind) => {
+      const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-root-"));
+      const codexHome = path.join(rootHostPath, ".codex");
+      const goalsDbPath = createCodexGoalsDb(codexHome);
+      const before = readCodexGoals(goalsDbPath);
+      const appServerCalls: string[] = [];
+      const goalsAtTurnStart: ReturnType<typeof readCodexGoals>[] = [];
+      let turnNumber = 0;
 
-  it("clears persisted Codex goals before automation turns", async () => {
-    const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-root-"));
-    const codexHome = path.join(rootHostPath, ".codex");
-    const goalsDbPath = createCodexGoalsDb(codexHome);
-    const appServerCalls: Array<{ method: string; params: any }> = [];
-    const proc = new FakeCodexAppServerProc((fake, message) => {
-      appServerCalls.push({ method: message.method, params: message.params });
-      switch (message.method) {
-        case "initialize":
-          fake.sendResponse(message.id, { ok: true });
-          break;
-        case "thread/resume":
-          fake.sendResponse(message.id, {
-            thread: { id: "thr-automation-goal-1" },
+      setCodexProjectSpawner({
+        spawnCodexExec: async () => {
+          throw new Error("unexpected codex exec spawn");
+        },
+        spawnCodexAppServer: async () => ({
+          proc: new FakeCodexAppServerProc((fake, message) => {
+            appServerCalls.push(message.method);
+            switch (message.method) {
+              case "initialize":
+                fake.sendResponse(message.id, { ok: true });
+                break;
+              case "thread/resume":
+                fake.sendResponse(message.id, { thread: { id: "thr-goal-1" } });
+                break;
+              case "turn/start": {
+                goalsAtTurnStart.push(readCodexGoals(goalsDbPath));
+                const turnId = `turn-goal-${++turnNumber}`;
+                fake.sendResponse(message.id, { turn: { id: turnId } });
+                setImmediate(() => {
+                  fake.sendNotification("turn/completed", {
+                    threadId: "thr-goal-1",
+                    turn: { id: turnId, status: "completed" },
+                  });
+                });
+                break;
+              }
+              default:
+                if (typeof message.id === "number")
+                  fake.sendResponse(message.id, {});
+            }
+          }) as any,
+          cmd: "fake-codex",
+          args: ["app-server"],
+          cwd: "/tmp/project",
+          containerPathMap: { rootHostPath },
+        }),
+      });
+
+      try {
+        const agent = new CodexAppServerAgent();
+        for (const prompt of ["continue", "Here is additional context"]) {
+          await agent.evaluate({
+            project_id: "00000000-0000-4000-8000-000000000000",
+            account_id: "00000000-0000-4000-8000-000000000001",
+            session_id: "thr-goal-1",
+            prompt,
+            stream: async () => {},
+            config: { workingDirectory: "/tmp/project" } as any,
+            chat: {
+              project_id: "00000000-0000-4000-8000-000000000000",
+              path: "/tmp/project/test.chat",
+              message_date: "2026-06-06T00:00:01.000Z",
+              sender_id: "openai-codex-agent",
+              thread_id: "thread-goal-1",
+              message_id: "assistant-goal-1",
+              parent_message_id: "user-goal-1",
+              ...(kind === "automation"
+                ? { automation_id: "automation-goal-1" }
+                : {}),
+            },
           });
-          break;
-        case "turn/start":
-          fake.sendResponse(message.id, {
-            turn: { id: "turn-automation-goal-1" },
-          });
-          setImmediate(() => {
-            fake.sendNotification("turn/completed", {
-              turn: { id: "turn-automation-goal-1", status: "completed" },
-            });
-          });
-          break;
-        default:
-          if (typeof message.id === "number") {
-            fake.sendResponse(message.id, {});
-          }
+          expect(readCodexGoals(goalsDbPath)).toEqual(before);
+        }
+        expect(goalsAtTurnStart).toEqual([before, before]);
+        expect(
+          appServerCalls.filter((method) => method === "turn/start"),
+        ).toHaveLength(2);
+        expect(appServerCalls).toContain("thread/resume");
+        expect(
+          appServerCalls.filter(
+            (method) =>
+              method === "thread/goal/set" || method === "thread/goal/clear",
+          ),
+        ).toEqual([]);
+      } finally {
+        rmSync(rootHostPath, { recursive: true, force: true });
       }
-    });
-
-    setCodexProjectSpawner({
-      spawnCodexExec: async () => {
-        throw new Error("unexpected codex exec spawn");
-      },
-      spawnCodexAppServer: async () => ({
-        proc: proc as any,
-        cmd: "fake-codex",
-        args: ["app-server"],
-        cwd: "/tmp/project",
-        containerPathMap: {
-          rootHostPath,
-        },
-      }),
-    });
-
-    try {
-      const agent = new CodexAppServerAgent();
-      await agent.evaluate({
-        project_id: "00000000-0000-4000-8000-000000000000",
-        account_id: "00000000-0000-4000-8000-000000000001",
-        session_id: "automation-thread-goal",
-        prompt: "continue automation",
-        stream: async () => {},
-        config: {
-          workingDirectory: "/tmp/project",
-        } as any,
-        chat: {
-          project_id: "00000000-0000-4000-8000-000000000000",
-          path: "/tmp/project/test.chat",
-          message_date: "2026-06-06T00:00:01.000Z",
-          sender_id: "openai-codex-agent",
-          thread_id: "thread-goal-1",
-          message_id: "assistant-goal-1",
-          parent_message_id: "user-goal-1",
-          automation_id: "automation-goal-1",
-        },
-      });
-
-      expect(countCodexGoals(goalsDbPath)).toBe(0);
-      expect(appServerCalls.map((call) => call.method)).not.toContain(
-        "thread/goal/get",
-      );
-      expect(appServerCalls.map((call) => call.method)).not.toContain(
-        "thread/goal/clear",
-      );
-    } finally {
-      rmSync(rootHostPath, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("passes Fast mode for a dynamically advertised model to app-server", async () => {
     const threadStartRequests: any[] = [];

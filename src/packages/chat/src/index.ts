@@ -2,6 +2,11 @@ import type {
   CodexCompletionNotificationOverride,
   CodexThreadConfig,
 } from "./acp";
+import type {
+  CodexGoalSnapshot,
+  CodexGoalCommand,
+  CodexGoalAck,
+} from "@cocalc/util/ai/codex-goal";
 
 export const CHAT_SCHEMA_V2 = 2;
 export const CHAT_THREAD_META_ROW_DATE = "1970-01-01T00:00:00.000Z";
@@ -299,6 +304,9 @@ export interface ChatThreadResolvedMeta {
 }
 
 export interface ChatThreadConfigRecord {
+  acp_goal?: CodexGoalSnapshot;
+  acp_goal_request?: CodexGoalCommand;
+  acp_goal_ack?: CodexGoalAck;
   event: "chat-thread-config";
   sender_id: string;
   date: string;
@@ -329,6 +337,9 @@ export interface ChatThreadConfigRecord {
 }
 
 export interface BuildThreadConfigRecordOptions {
+  acp_goal?: CodexGoalSnapshot;
+  acp_goal_request?: CodexGoalCommand;
+  acp_goal_ack?: CodexGoalAck;
   thread_id: string;
   updated_by: string;
   updated_at?: Date | string;
@@ -383,6 +394,9 @@ export function buildThreadConfigRecord(
     agent_model: options.agent_model,
     agent_mode: options.agent_mode,
     acp_config: options.acp_config,
+    acp_goal: options.acp_goal,
+    acp_goal_request: options.acp_goal_request,
+    acp_goal_ack: options.acp_goal_ack,
     codex_completion_notification: options.codex_completion_notification,
     automation_config: options.automation_config,
     automation_state: options.automation_state,

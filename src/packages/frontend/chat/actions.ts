@@ -28,6 +28,15 @@ import {
   type LanguageModel,
 } from "@cocalc/util/db-schema/ai-models";
 import { history_path, isValidUUID, uuid } from "@cocalc/util/misc";
+import {
+  normalizeCodexGoalSnapshot,
+  validateCodexGoalCommand,
+} from "@cocalc/util/ai/codex-goal";
+import type {
+  CodexGoalSnapshot,
+  CodexGoalCommand,
+  CodexGoalAck,
+} from "@cocalc/util/ai/codex-goal";
 import { messageToMarkdown } from "./message-to-markdown";
 import { getSortedDates } from "./sorted-dates";
 import { getUserName } from "./user-name";
@@ -204,6 +213,9 @@ export interface PreparedChatSendIdentity {
 }
 
 export interface ThreadMetadataSnapshot {
+  acp_goal?: CodexGoalSnapshot;
+  acp_goal_request?: CodexGoalCommand;
+  acp_goal_ack?: CodexGoalAck;
   thread_date?: string;
   name?: string;
   anchor?: ChatThreadAnchor;
@@ -2064,6 +2076,22 @@ export class ChatActions extends Actions<ChatState> {
     return true;
   };
 
+  setCodexGoal = async (
+    threadKey: string,
+    change: Omit<CodexGoalCommand, "id" | "sessionId">,
+  ): Promise<void> => {
+    const metadata = this.getThreadMetadata(threadKey);
+    const command: CodexGoalCommand = {
+      ...change,
+      id: uuid(),
+      sessionId: metadata.acp_config?.sessionId || metadata.acp_goal?.sessionId,
+    };
+    validateCodexGoalCommand(command);
+    if (!this.setThreadConfigRecord(threadKey, { acp_goal_request: command }))
+      throw Error("Chat is not ready to save a goal change");
+    await this.syncdb!.save();
+  };
+
   getThreadMetadata = (
     threadKey: string,
     opts?: { threadId?: string },
@@ -2158,6 +2186,9 @@ export class ChatActions extends Actions<ChatState> {
     );
     return {
       thread_date: this.getThreadRootDateIso(normalizedThreadId),
+      acp_goal: normalizeCodexGoalSnapshot(field<any>(cfg, "acp_goal")),
+      acp_goal_request: field<CodexGoalCommand>(cfg, "acp_goal_request"),
+      acp_goal_ack: field<CodexGoalAck>(cfg, "acp_goal_ack"),
       name: readString("name"),
       anchor: parseThreadAnchor(field<any>(cfg, "anchor")),
       resolved: parseThreadResolved(field<any>(cfg, "resolved")),

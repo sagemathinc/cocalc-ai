@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
+import { CodexGoalSync } from "./codex-goal";
 import { Readable } from "node:stream";
 import getLogger from "@cocalc/backend/logger";
 import { argsJoin } from "@cocalc/util/args";
@@ -149,10 +150,6 @@ function normalizeDiffLines(text: string): string[] {
     lines.pop();
   }
   return lines;
-}
-
-function shouldClearActiveGoalBeforeTurn(request: AcpEvaluateRequest): boolean {
-  return !!request.chat;
 }
 
 function formatDiffGutter(
@@ -841,17 +838,19 @@ export class AppServerClient {
     );
   }
 
+  takePendingMessage(
+    predicate: (message: RpcNotification) => boolean,
+  ): RpcNotification | undefined {
+    const index = this.notifications.findIndex(predicate);
+    if (index >= 0) return this.notifications.splice(index, 1)[0];
+  }
+
   waitForMessage(
     predicate: (message: RpcNotification) => boolean,
     timeoutMs = REQUEST_TIMEOUT_MS,
   ): Promise<RpcNotification> {
-    const existingIndex = this.notifications.findIndex((message) =>
-      predicate(message),
-    );
-    if (existingIndex >= 0) {
-      const [existing] = this.notifications.splice(existingIndex, 1);
-      return Promise.resolve(existing);
-    }
+    const existing = this.takePendingMessage(predicate);
+    if (existing) return Promise.resolve(existing);
     if (this.exited) {
       return Promise.reject(
         this.exitError ??
@@ -1462,52 +1461,6 @@ function getCodexHomeHostPath(
     return path.join(cwd, ".codex");
   }
   return undefined;
-}
-
-function clearPersistedCodexGoalsBeforeTurn({
-  spawned,
-  cwd,
-}: {
-  spawned: SpawnedCodexAppServer;
-  cwd: string;
-}): void {
-  const codexHome = getCodexHomeHostPath(spawned, cwd);
-  if (!codexHome) return;
-  const goalsDbPath = path.join(codexHome, "goals_1.sqlite");
-  if (!existsSync(goalsDbPath)) return;
-  let db: DatabaseSync | undefined;
-  try {
-    db = new DatabaseSync(goalsDbPath);
-    const table = db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'thread_goals'",
-      )
-      .get() as { name?: string } | undefined;
-    if (!table?.name) return;
-    const result = db.prepare("DELETE FROM thread_goals").run();
-    const deleted = Number(result.changes ?? 0);
-    if (deleted > 0) {
-      try {
-        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      } catch (err) {
-        logger.debug("codex app-server: goal DB checkpoint failed", {
-          codexHome,
-          err: `${err}`,
-        });
-      }
-      logger.info("codex app-server: cleared persisted Codex goals", {
-        codexHome,
-        deleted,
-      });
-    }
-  } catch (err) {
-    logger.warn("codex app-server: failed to clear persisted Codex goals", {
-      codexHome,
-      err: `${err}`,
-    });
-  } finally {
-    db?.close();
-  }
 }
 
 function toUsageFromTokenCount(info: any): AcpStreamUsage | undefined {
@@ -2753,15 +2706,32 @@ export class CodexAppServerAgent implements AcpAgent {
         ...(spawned.runtimeEnv ?? {}),
       }).filter(([, value]) => typeof value === "string" && !!`${value}`),
     ) as Record<string, string>;
-    if (shouldClearActiveGoalBeforeTurn(request)) {
-      clearPersistedCodexGoalsBeforeTurn({ spawned, cwd });
-    }
+    // Goal lifecycle belongs to Codex and explicit user actions. Starting a
+    // chat or automation turn must not clear this or other threads' goals.
     const errors: string[] = [];
     let lastErrorNotification: any | undefined;
     let lastFailedTurnCompletion: any | undefined;
     let finalResponse = "";
     let latestUsage: AcpStreamUsage | undefined;
+    let completedGoalUsage: AcpStreamUsage | undefined;
+    const cumulativeUsage = (
+      usage?: AcpStreamUsage,
+    ): AcpStreamUsage | undefined => {
+      if (!completedGoalUsage) return usage;
+      const result = { ...completedGoalUsage, ...usage };
+      for (const key of [
+        "input_tokens",
+        "cached_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+      ] as const) {
+        result[key] = (completedGoalUsage[key] ?? 0) + (usage?.[key] ?? 0);
+      }
+      return result;
+    };
     let persistedTurnInfo: PersistedTurnInfo | undefined;
+    let goalSync: CodexGoalSync | undefined;
     let currentThreadId = session.sessionId;
     let runningEntry: RunningTurn | undefined;
     let turnId: string | undefined;
@@ -2862,6 +2832,14 @@ export class CodexAppServerAgent implements AcpAgent {
         proc: spawned.proc,
         client,
         stop: async () => {
+          try {
+            await goalSync?.pauseForStop();
+          } catch (err) {
+            logger.warn("codex app-server: failed to pause goal on stop", {
+              threadId: currentThreadId,
+              err: String(err),
+            });
+          }
           if (turnId) {
             try {
               await client.request("turn/interrupt", {
@@ -2994,6 +2972,17 @@ export class CodexAppServerAgent implements AcpAgent {
         threadId: actualThreadId,
       });
 
+      if (request.chat) {
+        goalSync = new CodexGoalSync({
+          sessionId: actualThreadId,
+          request: (method, params, timeout) =>
+            client.request(method, params, timeout),
+          readPending: request.readPendingGoal,
+          emit: async (event) => {
+            await stream({ type: "event", event });
+          },
+        });
+      }
       const turnStart = await client.request("turn/start", {
         threadId: actualThreadId,
         cwd,
@@ -3017,6 +3006,9 @@ export class CodexAppServerAgent implements AcpAgent {
       if (runningEntry) {
         runningEntry.turnId = turnId;
       }
+      // goal/set(active) can start an idle turn. Attach only after the explicit
+      // turn/start, never between thread/resume and turn/start.
+      await goalSync?.start();
       client.setAttentionContext({
         projectId: request.chat?.project_id ?? request.project_id,
         accountId: request.account_id,
@@ -3533,6 +3525,10 @@ export class CodexAppServerAgent implements AcpAgent {
 
       const handleNotification = async (notification: RpcNotification) => {
         switch (notification.method) {
+          case "thread/goal/updated":
+          case "thread/goal/cleared":
+            goalSync?.changed(notification.params?.threadId);
+            break;
           case "turn/started":
             await stream({ type: "status", state: "running" });
             break;
@@ -3624,7 +3620,7 @@ export class CodexAppServerAgent implements AcpAgent {
               };
               await stream({
                 type: "usage",
-                usage: latestUsage,
+                usage: cumulativeUsage(latestUsage)!,
               });
             }
             break;
@@ -3646,19 +3642,56 @@ export class CodexAppServerAgent implements AcpAgent {
       const pendingNotificationLoop = (async () => {
         let reconciliationFailures = 0;
         let lastReconciliationNoticeAt = 0;
+        let awaitingGoalContinuation = false;
+        const adoptContinuation = async (nextTurnId: string) => {
+          completedGoalUsage = cumulativeUsage(latestUsage);
+          latestUsage = undefined;
+          turnId = nextTurnId;
+          if (runningEntry) runningEntry.turnId = turnId;
+          awaitingGoalContinuation = false;
+          finalResponse = "";
+          latestTurnDiffText = "";
+          emittedFileWrites.clear();
+          emittedFileWritePaths.clear();
+          client.setAttentionContext({
+            projectId: request.chat?.project_id ?? request.project_id,
+            accountId: request.account_id,
+            chat: request.chat,
+            threadId: actualThreadId,
+            turnId,
+            stream,
+          });
+          // Stop may arrive between the old completion and the new start.
+          if (runningEntry?.interrupted) await runningEntry.stop();
+        };
         while (true) {
           let notification: RpcNotification;
           try {
-            notification = await client.waitForMessage((message) => {
-              const params = message.params ?? {};
-              if (message.method === "turn/completed") {
-                return params?.turn?.id === turnId;
-              }
-              if (message.method === "turn/started") {
-                return params?.turn?.id === turnId;
-              }
-              return params?.turnId === turnId;
-            }, getTurnNotificationIdleTimeoutMs());
+            notification = await client.waitForMessage(
+              (message) => {
+                const params = message.params ?? {};
+                if (
+                  message.method === "thread/goal/updated" ||
+                  message.method === "thread/goal/cleared"
+                )
+                  return params.threadId === actualThreadId;
+                if (message.method === "turn/completed") {
+                  return params?.turn?.id === turnId;
+                }
+                if (message.method === "turn/started") {
+                  if (awaitingGoalContinuation)
+                    return (
+                      params.threadId === actualThreadId &&
+                      params?.turn?.id !== turnId
+                    );
+                  return params?.turn?.id === turnId;
+                }
+                return params?.turnId === turnId;
+              },
+              awaitingGoalContinuation
+                ? 5000
+                : getTurnNotificationIdleTimeoutMs(),
+            );
           } catch (err) {
             // Reconciliation can recover a dropped notification from a live
             // app-server. It cannot recover a process that has already exited;
@@ -3673,6 +3706,22 @@ export class CodexAppServerAgent implements AcpAgent {
               const turns = Array.isArray(result?.thread?.turns)
                 ? result.thread.turns
                 : [];
+              if (awaitingGoalContinuation) {
+                const nextTurn = turns.find(
+                  (candidate) =>
+                    candidate?.status === "inProgress" &&
+                    candidate.id !== turnId,
+                );
+                if (nextTurn) {
+                  // Recover a missed native continuation notification.
+                  await adoptContinuation(nextTurn.id);
+                  await stream({ type: "status", state: "running" });
+                  continue;
+                }
+                if (runningEntry?.interrupted || !(await goalSync?.isActive()))
+                  break;
+                continue;
+              }
               const reconciledTurn = turns.find(
                 (candidate) => candidate?.id === turnId,
               );
@@ -3724,6 +3773,12 @@ export class CodexAppServerAgent implements AcpAgent {
               });
             }
           }
+          if (
+            awaitingGoalContinuation &&
+            notification.method === "turn/started"
+          ) {
+            await adoptContinuation(notification.params.turn.id);
+          }
           if (notification.method === "turn/completed") {
             const status =
               `${notification.params?.turn?.status ?? ""}`.toLowerCase();
@@ -3736,6 +3791,30 @@ export class CodexAppServerAgent implements AcpAgent {
             }
             if (status === "interrupted" && runningEntry) {
               runningEntry.interrupted = true;
+            }
+            if (
+              status === "completed" &&
+              goalSync &&
+              !runningEntry?.interrupted
+            ) {
+              const active = await goalSync.isActive();
+              // A fast native continuation can finish before goal/get returns.
+              // Consume its buffered start even if the goal is now complete.
+              const next = client.takePendingMessage(
+                (message) =>
+                  message.method === "turn/started" &&
+                  message.params?.threadId === actualThreadId &&
+                  message.params?.turn?.id !== turnId,
+              );
+              if (next || active) {
+                await emitMissingTurnDiffEvents();
+                awaitingGoalContinuation = true;
+                if (next) {
+                  await adoptContinuation(next.params.turn.id);
+                  await handleNotification(next);
+                }
+                continue;
+              }
             }
             break;
           }
@@ -3761,6 +3840,7 @@ export class CodexAppServerAgent implements AcpAgent {
       if (!latestUsage) {
         latestUsage = persistedTurnInfo?.usage;
       }
+      latestUsage = cumulativeUsage(latestUsage);
       if (persistedTurnInfo?.compacted) {
         await stream({
           type: "event",
@@ -3810,6 +3890,8 @@ export class CodexAppServerAgent implements AcpAgent {
         }
       }
 
+      await goalSync?.finish();
+      goalSync = undefined;
       await stream({
         type: "summary",
         finalResponse,
@@ -3933,6 +4015,11 @@ export class CodexAppServerAgent implements AcpAgent {
       }
       throw new Error(userFacingPrimaryError);
     } finally {
+      await goalSync?.finish().catch((error) => {
+        logger.debug("goal snapshot finalization failed", {
+          error: String(error),
+        });
+      });
       this.running.delete(currentThreadId);
       if (fundedTurn) {
         try {

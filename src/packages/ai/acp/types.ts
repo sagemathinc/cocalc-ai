@@ -5,6 +5,7 @@ import type {
   AcpChatContext,
 } from "@cocalc/conat/ai/acp/types";
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
+import type { CodexGoalCommand } from "@cocalc/util/ai/codex-goal";
 
 export type AcpStreamUsage = SharedAcpStreamUsage;
 export type AcpStreamEvent = SharedAcpStreamEvent;
@@ -35,6 +36,8 @@ export type AcpStreamHandler = (
 ) => Promise<void>;
 
 export interface AcpEvaluateRequest {
+  // Internal project-local chat replica accessor, never a wire-supplied callback.
+  readPendingGoal?: () => CodexGoalCommand | undefined;
   project_id: string;
   account_id: string;
   prompt: string;

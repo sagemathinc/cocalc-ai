@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { CodexGoalCommand } from "@cocalc/util/ai/codex-goal";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
@@ -2820,11 +2821,29 @@ export class ChatStreamWriter {
 
   async handle(payload?: AcpStreamPayload | null): Promise<void> {
     await this.ready;
-    if (this.closed) return;
+    if (this.closed) {
+      if (payload?.type === "event" && payload.event.type === "goal")
+        throw Error("Chat closed before goal state could be saved");
+      return;
+    }
     this.lastActivityAt = Date.now();
     if (payload == null) {
       this.dispose();
       return;
+    }
+    if (
+      payload.type === "event" &&
+      payload.event.type === "goal" &&
+      !this.metadata.automation_id
+    ) {
+      const { snapshot, ack } = payload.event;
+      await this.patchThreadConfig(
+        {
+          ...(snapshot ? { acp_goal: snapshot } : {}),
+          ...(ack ? { acp_goal_ack: ack } : {}),
+        },
+        true,
+      );
     }
     const message: AcpStreamMessage = {
       ...(payload as AcpStreamMessage),
@@ -4394,9 +4413,14 @@ export class ChatStreamWriter {
   // never mutates chat message rows.
   private async patchThreadConfig(
     patch: Record<string, unknown>,
+    required = false,
   ): Promise<void> {
     await this.ready;
-    if (this.closed || !this.syncdb) return;
+    if (this.closed || !this.syncdb) {
+      if (required)
+        throw Error("Chat closed before goal change could be saved");
+      return;
+    }
     try {
       const threadId = this.resolvedThreadId();
       if (!threadId) {
@@ -4404,6 +4428,8 @@ export class ChatStreamWriter {
           chatKey: this.chatKey,
           message_id: this.metadata.message_id,
         });
+        if (required)
+          throw Error("Missing chat thread identity for goal change");
         return;
       }
       const threadCfgCurrent = preferredThreadConfigRow(this.syncdb, threadId);
@@ -4424,6 +4450,7 @@ export class ChatStreamWriter {
       this.observePatchflowVersions("thread-config:save");
     } catch (err) {
       logger.debug("patchThreadConfig failed", err);
+      if (required) throw err;
     }
   }
 
@@ -4456,6 +4483,19 @@ export class ChatStreamWriter {
       },
     });
   }
+
+  public readPendingGoal = (): CodexGoalCommand | undefined => {
+    if (this.closed || !this.syncdb || this.metadata.automation_id) return;
+    const threadId = this.resolvedThreadId();
+    if (!threadId) return;
+    const row = preferredThreadConfigRow(this.syncdb, threadId);
+    const command = this.toPlainRecord(
+      this.recordField(row, "acp_goal_request"),
+    ) as unknown as CodexGoalCommand;
+    const ack = this.toPlainRecord(this.recordField(row, "acp_goal_ack"));
+    if (!command?.id || command.id === ack?.id) return;
+    return command;
+  };
 
   public getLatestSummaryText(): string | undefined {
     const latest = getLatestSummaryText(this.events);
@@ -7611,6 +7651,8 @@ async function executeAcpRequest({
       try {
         await chatWriter.handle(payload);
       } catch (err) {
+        if (payload?.type === "event" && payload.event.type === "goal")
+          throw err;
         logger.warn("chat writer handle failed", err);
       }
       if (payload == null) {
@@ -7634,6 +7676,7 @@ async function executeAcpRequest({
     try {
       await currentAgent.evaluate({
         ...request,
+        readPendingGoal: chatWriter?.readPendingGoal,
         prompt,
         local_images,
         runtime_env: runtimeEnv,

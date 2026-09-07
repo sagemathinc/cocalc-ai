@@ -71,6 +71,9 @@ describe("chat helpers", () => {
       agent_model: "gpt-5.3-codex",
       agent_mode: "interactive",
       acp_config: { model: "gpt-5.3-codex", sessionId: "session-1" },
+      acp_goal: { sessionId: "session-1", observedAt: 1, goal: null },
+      acp_goal_request: { id: "edit", action: "clear" },
+      acp_goal_ack: { id: "edit", state: "applied" },
     });
     expect(cfg.event).toBe("chat-thread-config");
     expect(cfg.sender_id).toBe(threadConfigSenderId("thread-1"));
@@ -85,6 +88,13 @@ describe("chat helpers", () => {
     expect(cfg.agent_model).toBe("gpt-5.3-codex");
     expect(cfg.agent_mode).toBe("interactive");
     expect(cfg.acp_config?.model).toBe("gpt-5.3-codex");
+    expect(cfg.acp_goal).toEqual({
+      sessionId: "session-1",
+      observedAt: 1,
+      goal: null,
+    });
+    expect(cfg.acp_goal_request?.id).toBe("edit");
+    expect(cfg.acp_goal_ack?.state).toBe("applied");
   });
 
   test("buildChatMessageRecordV2 includes explicit message/thread ids", () => {

@@ -13,6 +13,51 @@ jest.mock("@cocalc/frontend/components/time-ago", () => ({
 }));
 
 describe("CodexActivity terminal rows", () => {
+  it("renders historical goal snapshots rather than the current thread goal", () => {
+    render(
+      <CodexActivity
+        expanded
+        events={[
+          {
+            type: "event",
+            seq: 1,
+            time: 1000,
+            event: {
+              type: "goal",
+              phase: "start",
+              snapshot: {
+                sessionId: "session",
+                observedAt: 1000,
+                goal: {
+                  objective: "Original objective",
+                  status: "active",
+                  tokensUsed: 12,
+                  tokenBudget: null,
+                  timeUsedSeconds: 1,
+                  updatedAt: 1,
+                },
+              },
+            },
+          },
+          {
+            type: "event",
+            seq: 2,
+            time: 2000,
+            event: {
+              type: "goal",
+              phase: "end",
+              snapshot: { sessionId: "session", observedAt: 2000, goal: null },
+            },
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText("Goal at turn start")).toBeTruthy();
+    expect(screen.getByText(/Original objective/)).toBeTruthy();
+    expect(screen.getByText("Goal at turn end")).toBeTruthy();
+    expect(screen.getByText("No goal")).toBeTruthy();
+  });
+
   it("reconciles descendants that stopped after the manager finished", () => {
     const events = [
       {
