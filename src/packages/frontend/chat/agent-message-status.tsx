@@ -17,7 +17,7 @@ import { Tooltip } from "@cocalc/frontend/components/tip";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import type { InlineCodeLink } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import CodexLogPanel from "./codex-log-panel";
 import {
   reconcileSubagentEvents,
@@ -81,34 +81,34 @@ function renderSteerStatus(state: AttachedSteerState) {
     case "sending":
       return {
         label: "Sending guidance",
-        borderColor: COLORS.BLUE_LLL,
-        background: COLORS.BLUE_LLLL,
-        pillBackground: COLORS.BLUE_LLL,
-        pillColor: COLORS.BLUE_DDD,
+        borderColor: UI_COLORS.infoBg,
+        background: UI_COLORS.infoBg,
+        pillBackground: UI_COLORS.infoBg,
+        pillColor: UI_COLORS.info,
       };
     case "queued":
       return {
         label: "Guidance queued",
-        borderColor: COLORS.YELL_LL,
-        background: COLORS.YELL_LLL,
-        pillBackground: COLORS.YELL_LL,
-        pillColor: COLORS.BRWN,
+        borderColor: UI_COLORS.warningBg,
+        background: UI_COLORS.warningBg,
+        pillBackground: UI_COLORS.warningBg,
+        pillColor: UI_COLORS.warning,
       };
     case "not-sent":
       return {
         label: "Guidance not sent",
-        borderColor: COLORS.ANTD_BG_RED_M,
-        background: COLORS.ANTD_BG_RED_L,
-        pillBackground: COLORS.ANTD_BG_RED_M,
-        pillColor: "white",
+        borderColor: UI_COLORS.dangerBg,
+        background: UI_COLORS.dangerBg,
+        pillBackground: UI_COLORS.dangerBg,
+        pillColor: UI_COLORS.danger,
       };
     default:
       return {
         label: "Guidance sent",
-        borderColor: COLORS.BLUE_LLL,
-        background: COLORS.BLUE_LLLL,
-        pillBackground: COLORS.BLUE_LLL,
-        pillColor: COLORS.BLUE_DDD,
+        borderColor: UI_COLORS.infoBg,
+        background: UI_COLORS.infoBg,
+        pillBackground: UI_COLORS.infoBg,
+        pillColor: UI_COLORS.info,
       };
   }
 }
@@ -123,6 +123,7 @@ export function SteerGuidanceCard({ steer }: { steer: AttachedSteerMessage }) {
         padding: "8px 10px 10px",
         borderRadius: 10,
         background: status.background,
+        color: UI_COLORS.text,
         border: `1px solid ${status.borderColor}`,
       }}
     >
@@ -151,7 +152,7 @@ export function SteerGuidanceCard({ steer }: { steer: AttachedSteerMessage }) {
         className="cocalc-steer-guidance-content"
         style={{
           fontSize: 13,
-          color: COLORS.GRAY_D,
+          color: UI_COLORS.secondary,
           minWidth: 0,
           overflowWrap: "anywhere",
         }}
@@ -160,7 +161,7 @@ export function SteerGuidanceCard({ steer }: { steer: AttachedSteerMessage }) {
           value={steer.text}
           style={{
             fontSize: 13,
-            color: COLORS.GRAY_D,
+            color: UI_COLORS.secondary,
             overflowWrap: "anywhere",
           }}
         />
@@ -336,8 +337,8 @@ export function AgentActivityChip({
     [generating, lastActivityAtMs, durationLabel],
   );
   const lastActivityColor = lastActivityInfo.stale
-    ? COLORS.ORANGE_WARN
-    : COLORS.GRAY_D;
+    ? UI_COLORS.warning
+    : UI_COLORS.secondary;
   const liveStatusIssue =
     generating && (liveStatus === "reconnecting" || liveStatus === "error");
   const liveStatusTitle = useMemo(() => {
@@ -364,24 +365,24 @@ export function AgentActivityChip({
   }, [runStartMs, lastActivityAtMs, generating, liveStatus, liveStatusIssue]);
   const palette = generating
     ? {
-        background: COLORS.YELL_LLL,
-        border: COLORS.YELL_LL,
-        text: COLORS.BRWN,
+        background: UI_COLORS.warningBg,
+        border: UI_COLORS.warning,
+        text: UI_COLORS.warning,
         accent: liveStatusIssue
           ? liveStatus === "error"
-            ? COLORS.FG_RED
-            : COLORS.ORANGE_WARN
-          : COLORS.BRWN,
+            ? UI_COLORS.danger
+            : UI_COLORS.warning
+          : UI_COLORS.warning,
       }
     : {
-        background: COLORS.GRAY_LLL,
-        border: COLORS.GRAY_LL,
-        text: COLORS.GRAY_D,
+        background: UI_COLORS.inset,
+        border: UI_COLORS.border,
+        text: UI_COLORS.secondary,
         accent: liveStatusIssue
           ? liveStatus === "error"
-            ? COLORS.FG_RED
-            : COLORS.ORANGE_WARN
-          : COLORS.GRAY_D,
+            ? UI_COLORS.danger
+            : UI_COLORS.warning
+          : UI_COLORS.secondary,
       };
 
   return (
@@ -435,7 +436,9 @@ export function AgentActivityChip({
           : `Worked for ${durationLabel}`}
       </span>
       {activeSubagents > 0 ? (
-        <span style={{ color: COLORS.BRWN, fontSize: 12, fontWeight: 600 }}>
+        <span
+          style={{ color: UI_COLORS.warning, fontSize: 12, fontWeight: 600 }}
+        >
           · {activeSubagents} subagent{activeSubagents === 1 ? "" : "s"} working
         </span>
       ) : null}
@@ -477,7 +480,7 @@ export function AgentActivityChip({
           <span
             style={{
               color:
-                liveStatus === "error" ? COLORS.FG_RED : COLORS.ORANGE_WARN,
+                liveStatus === "error" ? UI_COLORS.danger : UI_COLORS.warning,
               fontSize: 12,
               fontWeight: 500,
             }}
@@ -783,7 +786,7 @@ export function AgentMessageStatus({
           role="status"
           style={{
             marginBottom: 8,
-            color: COLORS.ORANGE_WARN,
+            color: UI_COLORS.warning,
             fontWeight: 600,
           }}
         >

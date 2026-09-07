@@ -11,6 +11,7 @@ Headings of the task list:
   - Changed
 */
 
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Row, Col } from "../../antd-bootstrap";
 import { React } from "../../app-framework";
 import { Icon, Gap } from "../../components";
@@ -79,10 +80,10 @@ export const Headings: React.FC<HeadingsProps> = React.memo(
       // sort by that.
       return (
         <Row style={{ borderBottom: "1px solid lightgray", marginLeft: "8px" }}>
-          <Col xs={1} style={{ color: "#666" }}>
+          <Col xs={1} style={{ color: UI_COLORS.secondary }}>
             Drag
           </Col>
-          <Col xs={7} style={{ color: "#666" }}>
+          <Col xs={7} style={{ color: UI_COLORS.secondary }}>
             Description
           </Col>
           <Col xs={1}>
@@ -105,7 +106,7 @@ export const Headings: React.FC<HeadingsProps> = React.memo(
           </Col>
           <Col
             xs={1}
-            style={{ color: "#666", textAlign: "center" }}
+            style={{ color: UI_COLORS.secondary, textAlign: "center" }}
             className={"visible-sm-inline visible-md-inline visible-lg-inline"}
           >
             Done

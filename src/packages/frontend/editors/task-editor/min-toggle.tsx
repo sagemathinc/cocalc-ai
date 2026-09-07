@@ -7,11 +7,16 @@
 Toggle to minimize display of a task (just show first part or everything)
 */
 
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { CSS, React } from "../../app-framework";
 import { Icon } from "../../components";
 import { TaskActions } from "./actions";
 
-const STYLE: CSS = { fontSize: "17pt", color: "#888", float: "right" } as const;
+const STYLE: CSS = {
+  fontSize: "17pt",
+  color: UI_COLORS.muted,
+  float: "right",
+} as const;
 
 interface Props {
   actions?: TaskActions;

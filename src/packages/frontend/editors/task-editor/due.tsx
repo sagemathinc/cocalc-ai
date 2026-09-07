@@ -9,6 +9,7 @@ Task due date
   - allows for changing it
 */
 
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { React, CSS } from "../../app-framework";
 import { DateTimePicker, Icon, Gap, TimeAgo } from "../../components";
 import { TaskActions } from "./actions";
@@ -16,11 +17,11 @@ import { TaskActions } from "./actions";
 const STYLE: CSS = {
   zIndex: 1,
   position: "absolute",
-  border: "1px solid lightgrey",
-  background: "white",
+  border: `1px solid ${UI_COLORS.border}`,
+  background: UI_COLORS.surface,
   borderRadius: "4px",
   margin: "-20px 0 0 -150px", // we use a negative margin to adjust absolute position of calendar popover (hackish)
-  boxShadow: "0 6px 12px rgba(0,0,0,.175)",
+  boxShadow: `0 6px 12px ${UI_COLORS.shadow}`,
 } as const;
 
 interface Props {
@@ -79,7 +80,7 @@ export const DueDate: React.FC<Props> = React.memo(
         return;
       }
       return (
-        <span style={{ color: "#888" }}>
+        <span style={{ color: UI_COLORS.muted }}>
           <Gap />
           <Icon
             name="times"
@@ -98,7 +99,11 @@ export const DueDate: React.FC<Props> = React.memo(
       if (due_date) {
         const date = new Date(due_date);
         if (date <= new Date() && !is_done) {
-          style = { color: "white", backgroundColor: "red", padding: "3px" };
+          style = {
+            color: UI_COLORS.danger,
+            backgroundColor: UI_COLORS.dangerBg,
+            padding: "3px",
+          };
         }
         elt = <TimeAgo date={new Date(due_date)} />;
       } else {

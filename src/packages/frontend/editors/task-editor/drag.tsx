@@ -7,6 +7,7 @@
 Drag tasks handle (and other support)
 */
 
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Icon, Tip } from "../../components";
 import { DragHandle as SortableDragHandle } from "@cocalc/frontend/components/sortable-list";
 
@@ -40,10 +41,10 @@ interface Props {
 export const DragHandle: React.FC<Props> = ({ id, sortable }) => {
   let color, Handle;
   if (sortable) {
-    color = "#888";
+    color = UI_COLORS.muted;
     Handle = EnabledDragHandle;
   } else {
-    color = "#eee";
+    color = UI_COLORS.border;
     Handle = DisabledDragHandle;
   }
   return (

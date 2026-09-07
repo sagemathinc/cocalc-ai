@@ -204,6 +204,9 @@ describe("ActionBar", () => {
 
     expect(screen.getByText("Open")).toBeInTheDocument();
     expect(screen.getByText(/2 of 2 .* selected/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/2 of 2 .* selected/).parentElement?.style.color,
+    ).toBe("var(--cocalc-ui-secondary)");
     expect(mockFileActionsDropdown.mock.calls.at(-1)?.[0]).toEqual(
       expect.objectContaining({
         label: "Actions",
