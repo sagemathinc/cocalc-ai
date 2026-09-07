@@ -12,7 +12,7 @@ not a current checklist. The objective is not complete. Current release work:
 | Requirement | Current evidence and remaining work |
 | --- | --- |
 | Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Live detached-worktree unique/ambiguous/absent cases, moved-ref pinning, and exact working-copy file opening in both renderers passed (details below). Actual agent dispatch remains a separate acceptance case. |
-| Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Conflicting aliases now offer an explicit active-record choice without changing either record; changed alternatives reopen the conflict. Existing keys remain intact rather than being physically rewritten. Live multi-window acceptance is pending. |
+| Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Live independent/same-ID comment recovery and draft-alias choice checks passed. Conflicting aliases offer an explicit active-record choice without changing either record; changed alternatives reopen the conflict. Existing keys remain intact rather than being physically rewritten. Network reconnect and note-field conflict cases remain separate from the completed reload checks. |
 | Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Live renderer roundtrip and drawer close/reopen preserve the source position within a few wrapped lines (details below). Native partial-text selection across virtual windows remains a browser acceptance case. |
 | Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
 | TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Both rename sides and deleted-file viewing passed in Classic/Pierre. |
@@ -49,6 +49,17 @@ rollback-window decision proceed. The current lack of a signed-in test session
 would not be evidence that these checks pass.
 
 ### Restored live-session checks
+
+Alias-choice live follow-up: `alias-choice-live.browser-test.mjs` seeds guarded,
+account-scoped full-hash and 12-character draft aliases for a disposable commit.
+Native Enter on Use selected review selects the full-hash note; it remains
+selected after reload. Both draft strings remain byte-for-byte identical.
+Changing only the unselected draft and reloading reopens the conflict; choosing
+that alias displays its changed note while preserving both strings. This passed
+on `1563e4d67b27586fa00ffe4efb57b9d68662fb8a`. Cleanup removed only its known
+unchanged fixture drafts; the tiny account choice metadata remains. The live
+fixture exercises draft aliases and durable choice metadata, complementing the
+store tests for persisted-record aliases; it does not mutate user review keys.
 
 Same-comment recovery follow-up: without a common-ancestor snapshot, timestamps
 cannot safely decide between differing same-ID bodies. Recovery now leaves the
