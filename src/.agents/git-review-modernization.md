@@ -204,6 +204,22 @@ not evidence of a missing backup fixture or a renderer failure. Failure
 diagnostics include available version counts. Archive restoration and live
 patchflow comparison remain separate acceptance items.
 
+Live patchflow/restore follow-up: the package.json fixture has only one patchflow
+version (confirmed by the live store), so comparison is correctly disabled.
+Created `/home/user/scratch/git-review-timetravel-20260907-a4e319.md` in the same
+browser project through the live text API, with Alpha/Beta/Gamma Markdown
+versions. `REVIEW_HISTORY_SOURCE=TimeTravel` passed comparison through Pierre and
+Classic on this fixture.
+
+`timetravel-restore-live.browser-test.mjs` only accepts explicitly named scratch
+fixtures and checks their expected text before mutating. It selected rich Beta
+Markdown, activated Restore with the keyboard, verified Beta and a new version
+ID through the live text API, then read the previous Gamma version successfully
+through the history API. Cleanup returned the fixture to Gamma with a guarded
+live write; the file and history remain as reusable test evidence. This passed
+with frontend lint. Git/snapshot/backup restoration uses the separate external
+document branch and is not proved by this patchflow restore test.
+
 ### Single-file stress evidence (2026-09-07)
 
 Run `STRESS=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`
