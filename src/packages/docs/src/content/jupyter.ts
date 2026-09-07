@@ -296,6 +296,33 @@ For shared courses or many projects, prefer a runtime image when everyone should
 start with the same system-wide environment. Use a custom kernel when one
 project or one notebook needs an isolated Python environment.
 
+## Ask Agent to install a kernel
+
+The kernel selector offers agent-assisted installation when it is allowed in
+this project. Use this when you know the language or environment you need but
+want help with installation and registration.
+
+1. Open the notebook's kernel selector.
+2. Open **Install kernels** or **Install**, depending on the selector layout.
+   If no kernels are installed, the installation choices appear with that
+   explanation.
+3. Click **Agent** beside a suggested kernel, or in the **Ask Agent** row
+   for another kernel.
+4. In **Install Jupyter Kernel with Agent**, edit the request to include the
+   language, version, and packages you need. Select a recent agent session or
+   **New agent thread**.
+5. Choose whether to enable **Automatically submit to Agent**, then **Send**.
+   If unchecked,
+   review and send the prepared request from the agent chat.
+6. After installation succeeds, refresh the kernel list, select the new kernel,
+   and run a small example.
+
+The agent is asked to inspect the project environment, install the requested
+kernel, and register its kernelspec. Installation can download packages and
+modify the project environment. The control depends on the project's kernel installation
+policy, and success depends on packages and permissions; follow
+any reported blocker in the chat.
+
 ## Create a Python kernel with uv
 
 Open a terminal in the project and install \`uv\` if it is not already
