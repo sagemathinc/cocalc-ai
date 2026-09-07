@@ -88,7 +88,7 @@ import {
   UxLatencyTrace,
 } from "@cocalc/frontend/monitoring/ux-latency-trace";
 import { clean } from "./clean";
-import { KNITR_EXTS } from "./constants";
+import { ALLOWED_DEP_EXTENSIONS, KNITR_EXTS } from "./constants";
 import { count_words } from "./count_words";
 import { update_gutters } from "./gutters";
 import { IProcessedLatexLog } from "./latex-log-parser";
@@ -114,11 +114,8 @@ import {
 } from "./document-build";
 
 const SYNCTEX_SOURCE_EXTS: ReadonlySet<string> = new Set([
-  "tex",
+  ...ALLOWED_DEP_EXTENSIONS,
   "latex",
-  "sty",
-  "cls",
-  ...KNITR_EXTS,
 ]);
 
 interface LatexEditorState extends CodeEditorState {

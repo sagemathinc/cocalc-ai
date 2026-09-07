@@ -1465,20 +1465,36 @@ describe("Synctex PDF-to-source navigation", () => {
     return actions;
   }
 
-  it.each(["tex", "TEX", "latex", "sty", "cls", "Rnw", "rtex"])(
-    "navigates to a %s source file",
-    async (ext) => {
-      const input = `/project/chapter.${ext}`;
-      jest
-        .spyOn(synctex, "pdf_to_tex")
-        .mockResolvedValue({ Input: input, Line: 42 });
-      const actions = createActions();
-      await actions.synctex_pdf_to_tex(1, 10, 20);
-      expect(actions.goto_line_in_file).toHaveBeenCalledWith(42, input);
-      expect(actions.set_status).toHaveBeenLastCalledWith("");
-      expect(actions.set_error).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    "tex",
+    "TEX",
+    "latex",
+    "sty",
+    "cls",
+    "Rnw",
+    "rtex",
+    "tikz",
+    "def",
+    "cfg",
+    "pgf",
+    "bib",
+    "bst",
+    "bbx",
+    "cbx",
+    "lbx",
+    "md",
+    "txt",
+  ])("navigates to a %s source file", async (ext) => {
+    const input = `/project/chapter.${ext}`;
+    jest
+      .spyOn(synctex, "pdf_to_tex")
+      .mockResolvedValue({ Input: input, Line: 42 });
+    const actions = createActions();
+    await actions.synctex_pdf_to_tex(1, 10, 20);
+    expect(actions.goto_line_in_file).toHaveBeenCalledWith(42, input);
+    expect(actions.set_status).toHaveBeenLastCalledWith("");
+    expect(actions.set_error).not.toHaveBeenCalled();
+  });
 
   it.each(["figure.pdf", "image.png", "main.aux", "main.log", "README"])(
     "ignores %s and releases automatic sync for the next request",
