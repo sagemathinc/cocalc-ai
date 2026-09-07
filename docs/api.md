@@ -1,6 +1,6 @@
 # CoCalc Agentic Browser API
 
-This document captures the current architecture and roadmap for agentic browser automation in CoCalc, aimed at both humans and new Codex sessions continuing development.
+This document describes the agentic browser API architecture and how to discover the capabilities of a running CoCalc instance.
 
 ## Goals
 
@@ -41,34 +41,34 @@ sequenceDiagram
 
 ## Browser API Status
 
-| Area | Status | Notes |
-|---|---|---|
-| Session discovery | Implemented | Browser heartbeat + `browser session list/use/clear`. |
-| File tab control | Implemented | `listOpenFiles`, `openFiles`, `closeFiles`. |
-| Exec API discoverability | Implemented | `browser exec-api` returns TS declaration. |
-| Script input modes | Implemented | inline, `--file`, `--stdin`. |
-| Async/LRO exec | Implemented | `start/get/wait/cancel` + timeout/polling. |
-| Notifications | Implemented | `api.notify.*`. |
-| FS API | Implemented | Node-like methods + `find/fd/ripgrep/dust`. |
-| Bash API | Implemented | blocking + async job lifecycle. |
-| Notebook API | MVP implemented | list/run/set cells. |
-| Timetravel providers | Implemented | `patchflow/snapshots/backups/git` list/get primitives. |
-| Syncdoc lifecycle | Improved | refcounted direct syncdoc access, no tab dependency. |
-| Terminal API | MVP implemented | list/openSplit/spawn/write/history/state/cwd/resize/destroy. |
-| Extensions API | MVP implemented | session-scoped `api.extensions` with hello-world editor demo. |
+| Area                     | Status          | Notes                                                         |
+| ------------------------ | --------------- | ------------------------------------------------------------- |
+| Session discovery        | Implemented     | Browser heartbeat + `browser session list/use/clear`.         |
+| File tab control         | Implemented     | `listOpenFiles`, `openFiles`, `closeFiles`.                   |
+| Exec API discoverability | Implemented     | `browser exec-api` returns TS declaration.                    |
+| Script input modes       | Implemented     | inline, `--file`, `--stdin`.                                  |
+| Async/LRO exec           | Implemented     | `start/get/wait/cancel` + timeout/polling.                    |
+| Notifications            | Implemented     | `api.notify.*`.                                               |
+| FS API                   | Implemented     | Node-like methods + `find/fd/ripgrep/dust`.                   |
+| Bash API                 | Implemented     | blocking + async job lifecycle.                               |
+| Notebook API             | MVP implemented | list/run/set cells.                                           |
+| Timetravel providers     | Implemented     | `patchflow/snapshots/backups/git` list/get primitives.        |
+| Syncdoc lifecycle        | Improved        | refcounted direct syncdoc access, no tab dependency.          |
+| Terminal API             | MVP implemented | list/openSplit/spawn/write/history/state/cwd/resize/destroy.  |
+| Extensions API           | MVP implemented | session-scoped `api.extensions` with hello-world editor demo. |
 
 ## Capability Shape (Launchpad vs Lite)
 
-| Capability | Launchpad | Lite |
-|---|---|---|
-| browser sessions | yes | yes |
-| exec-api/exec LRO | yes | yes |
-| fs + safe search commands | yes | yes |
-| bash execution | yes | yes |
-| timetravel.patchflow | yes | yes |
-| timetravel.snapshots | yes | usually no |
-| timetravel.backups | yes | usually no |
-| timetravel.git | yes | optional |
+| Capability                | Launchpad | Lite       |
+| ------------------------- | --------- | ---------- |
+| browser sessions          | yes       | yes        |
+| exec-api/exec LRO         | yes       | yes        |
+| fs + safe search commands | yes       | yes        |
+| bash execution            | yes       | yes        |
+| timetravel.patchflow      | yes       | yes        |
+| timetravel.snapshots      | yes       | usually no |
+| timetravel.backups        | yes       | usually no |
+| timetravel.git            | yes       | optional   |
 
 Rule: keep one API surface and expose runtime capability checks so scripts can branch cleanly.
 
@@ -102,30 +102,34 @@ Notes:
 - Common pattern: gather raw data with exec, classify/summarize in the LLM, then run another exec to materialize reports/edits/UI changes.
 - Optimize for minimum round-trips, not strictly one round-trip.
 
-## Near-Term Roadmap
+## Discover The Current Surface
 
-### Phase A
+The terminal and session-scoped extension APIs are implemented; they are not
+pending roadmap items. `api.extensions` currently exposes `list`,
+`installHelloWorld`, and `uninstall`. This is a small session extension surface,
+not a general package marketplace.
 
-- Harden docs and examples (this file + exec-api snippets).
-- Add `api.terminal` MVP (list/open split/spawn/write/read/resize/destroy).
-- Add extension runtime MVP (`api.extensions`) with dynamic hello-world editor registration.
-- Ensure lite-mode parity for browser subcommands and capability reporting.
-- Extend notebook edits (insert/delete/move and kernel/session helpers).
+Read `cocalc browser exec-api` from the running instance before writing a script.
+The declaration describes that instance's supported methods and argument shapes.
+For example, the browser notebook surface provides `listCells`, `runCells`, and
+`setCells`. For broader live notebook operations, including insertion, movement
+and deletion, inspect `cocalc project jupyter -h` and
+`cocalc project jupyter exec-api` instead.
 
-### Phase B
+Choose the backend document API when the operation does not need a browser.
+Use browser exec for visible tabs, splits, selection and other session context.
+Check `api.timetravel.providers()` before choosing a history source; provider
+availability depends on the project and deployment.
 
-- Add higher-level timetravel helpers: restore/search/summarize.
-- Add richer UI interactions (`confirm`, optional modal prompts).
-- Add chatroom/course helper APIs.
+The earlier phased roadmap mixed implemented capabilities with proposals.
+Future work must be checked against current source before being described as
+available. See [browser debugging](browser-debugging.md) for session targeting
+and [the CoCalc skill](../src/packages/cli/skills/cocalc/SKILL.md) for the backend
+and browser decision order.
 
-### Phase C
+## Terminal API
 
-- Extension/plugin runtime API expansion (manifest/bundle install, panels/actions, capability gating).
-- Optional exec event streaming for progress and approvals.
-
-## Terminal MVP Target
-
-A practical MVP should enable workflows like:
+The implemented terminal API supports workflows such as:
 
 - Open file + split frame + terminal next to it.
 - Spawn/attach to terminal session by stable session path.
@@ -133,7 +137,7 @@ A practical MVP should enable workflows like:
 - Resize and destroy sessions.
 - Enumerate terminal frames currently visible/open in browser editors.
 
-Proposed minimum API shape:
+Supported terminal API shape:
 
 ```ts
 api.terminal.listOpen(): Promise<TerminalFrameInfo[]>;
