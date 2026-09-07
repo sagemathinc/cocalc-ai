@@ -42,8 +42,9 @@ function normalizeThreadKey(value?: string | null): string | undefined {
 }
 
 function normalizeWorkingDirectory(value?: string): string | undefined {
-  const trimmed = `${value ?? ""}`.trim();
-  return trimmed || undefined;
+  // Directory names may contain trailing spaces. Do not silently redirect a
+  // request by normalizing a literal filesystem path or resolving symlinks here.
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function normalizeOptionalString(value?: string): string | undefined {
@@ -59,10 +60,13 @@ function threadSupportsCodex(
   } | null,
 ): boolean {
   if (!metadata) return false;
-  if (metadata.agent_kind === "acp" || metadata.acp_config != null) {
+  if (
+    field(metadata, "agent_kind") === "acp" ||
+    field(metadata, "acp_config") != null
+  ) {
     return true;
   }
-  return isCodexModelName(`${metadata.agent_model ?? ""}`.trim());
+  return isCodexModelName(`${field(metadata, "agent_model") ?? ""}`.trim());
 }
 
 function latestMessageIdInThread(
@@ -119,7 +123,18 @@ export function sendGitCommitAgentTurn({
   const metadata = threadId
     ? actions.getThreadMetadata?.(threadId, { threadId })
     : undefined;
-  if (threadId && threadSupportsCodex(metadata as any)) {
+  const requestedDirectory = normalizeWorkingDirectory(workingDirectory);
+  const effectiveConfig = threadId
+    ? (actions.getCodexConfig?.(threadId) ?? field(metadata, "acp_config"))
+    : undefined;
+  const threadDirectory = normalizeWorkingDirectory(
+    field<string>(effectiveConfig, "workingDirectory"),
+  );
+  // An absent effective directory is not evidence that the thread uses this
+  // worktree. A fresh thread is safer than changing an existing session's cwd.
+  const directoryMatches =
+    requestedDirectory == null || requestedDirectory === threadDirectory;
+  if (threadId && threadSupportsCodex(metadata as any) && directoryMatches) {
     const timestamp = actions.sendChat({
       extraInput: trimmed,
       reply_thread_id: threadId,

@@ -563,6 +563,19 @@ feedback, stale navigation results, and ambiguity. A live unique-worktree
 fixture in the browser project remains an acceptance check; local worktrees in
 the development checkout are not assumed to exist in that separate project.
 
+Agent directory routing (2026-09-07): `sendGitCommitAgentTurn` no longer discards
+the requested working directory when a Codex thread already exists. It reuses
+that thread only if the effective configuration matches the requested literal
+directory (or no directory was requested). A different or unknown directory
+creates a fresh thread with the requested cwd and never mutates the original
+session, whether idle or running. Immutable configuration and metadata are
+normalized through field access; directory whitespace is preserved. Tests
+cover matching/mismatching/unknown directories, effective config overriding
+stale metadata, and literal path preservation. Cross-worktree drawer writes
+remain disabled until request-time repository/worktree validation and the
+explicit routing UI are integrated; this helper fix alone does not satisfy
+that full release gate.
+
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the
 delivery order at the end of this section describes independently reviewable
@@ -797,9 +810,10 @@ silently while the user is composing review feedback.
 
 Name both actions: "View at this revision" and "Edit in this worktree".
 Review/commit agent requests carry the repository, selected worktree, commit or
-comparison, and paths explicitly. Existing thread routing currently ignores a
-requested working directory; resolve that mismatch before enabling cross-
-worktree mutations. Do not silently repurpose a running agent's worktree.
+comparison, and paths explicitly. The thread helper now routes directory
+mismatches to a new thread; request-time worktree validation and explicit
+routing controls must still precede cross-worktree mutations. Do not silently
+repurpose a running agent's worktree.
 
 ## Phase 2: comparisons and TimeTravel
 

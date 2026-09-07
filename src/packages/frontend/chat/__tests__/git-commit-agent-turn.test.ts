@@ -5,6 +5,7 @@
 
 import { sendGitCommitAgentTurn } from "../git-commit-agent-turn";
 import { getDefaultNewThreadSetup } from "../chatroom-thread-panel";
+import { fromJS } from "immutable";
 
 function createActions({
   metadata,
@@ -33,7 +34,7 @@ describe("sendGitCommitAgentTurn", () => {
       prompt: "Set up this repository.",
       targetThreadKey: "thread-1",
       defaultNewThreadSetup: getDefaultNewThreadSetup(),
-      workingDirectory: "/home/user/project",
+      workingDirectory: "/home/user/src",
     });
 
     expect(result).toEqual({
@@ -47,6 +48,67 @@ describe("sendGitCommitAgentTurn", () => {
       parent_message_id: "last-message",
       preserveSelectedThread: true,
     });
+  });
+
+  it.each(["/different/worktree", undefined, "/home/user/project "])(
+    "does not retarget a thread with directory %s",
+    (directory) => {
+      const actions = createActions({
+        metadata: {
+          agent_kind: "acp",
+          acp_config: { workingDirectory: directory },
+        },
+      });
+      const result = sendGitCommitAgentTurn({
+        actions,
+        prompt: "Fix review feedback",
+        targetThreadKey: "busy-thread",
+        defaultNewThreadSetup: getDefaultNewThreadSetup(),
+        workingDirectory: "/home/user/project",
+      });
+      expect(result.mode).toBe("created");
+      const sent = actions.sendChat.mock.calls[0][0];
+      expect(sent.reply_thread_id).toBeUndefined();
+      expect(sent.threadAgent.codexConfig.workingDirectory).toBe(
+        "/home/user/project",
+      );
+      expect(actions.getMessagesInThread).not.toHaveBeenCalled();
+    },
+  );
+
+  it("uses effective immutable configuration rather than stale thread metadata", () => {
+    const actions = createActions({
+      metadata: fromJS({
+        agent_kind: "acp",
+        acp_config: { workingDirectory: "/stale" },
+      }) as any,
+    });
+    actions.getCodexConfig = jest.fn(() =>
+      fromJS({ workingDirectory: "/matching " }),
+    );
+    const result = sendGitCommitAgentTurn({
+      actions,
+      prompt: "Review",
+      targetThreadKey: "thread-1",
+      defaultNewThreadSetup: getDefaultNewThreadSetup(),
+      workingDirectory: "/matching ",
+    });
+    expect(result.mode).toBe("existing");
+    expect(actions.getCodexConfig).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("preserves literal requested directories when creating a new thread", () => {
+    const actions = createActions();
+    sendGitCommitAgentTurn({
+      actions,
+      prompt: "Review",
+      defaultNewThreadSetup: getDefaultNewThreadSetup(),
+      workingDirectory: "/literal directory ",
+    });
+    expect(
+      actions.sendChat.mock.calls[0][0].threadAgent.codexConfig
+        .workingDirectory,
+    ).toBe("/literal directory ");
   });
 
   it("creates a new Codex thread when the source thread is human", () => {
