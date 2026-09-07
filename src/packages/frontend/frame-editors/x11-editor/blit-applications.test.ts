@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import {
   mkdtempSync,
   mkdirSync,
@@ -12,6 +13,7 @@ import {
   writeFileSync,
   readFileSync,
   rmSync,
+  copyFileSync,
 } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
@@ -66,9 +68,24 @@ describe("Chromium singleton recovery", () => {
   it("recognizes the previous hostname of this project after restart", () => {
     expect(run("project-test-project", 2147483647)).toBeUndefined();
   });
-  it("does not unlock a live process", () => {
-    expect(run(hostname(), process.pid)).toBeDefined();
-  });
+  it.each(["sleep", "chromium"])(
+    "checks the executable of a live %s process",
+    async (name) => {
+      const executable = join(home, name);
+      copyFileSync("/bin/sleep", executable);
+      const child = spawn(executable, ["30"]);
+      await once(child, "spawn");
+      try {
+        const lock = run(hostname(), child.pid!);
+        if (name === "chromium") expect(lock).toBeDefined();
+        else expect(lock).toBeUndefined();
+      } finally {
+        const exited = once(child, "exit");
+        child.kill();
+        await exited;
+      }
+    },
+  );
   it("does not unlock a profile from an unrelated host", () => {
     expect(run("another-host", 2147483647)).toBeDefined();
   });

@@ -278,9 +278,19 @@ if [[ "$target" =~ ^(.+)-([0-9]+)$ ]]; then
   lock_host="\${BASH_REMATCH[1]}"
   lock_pid="\${BASH_REMATCH[2]}"
   project_host="project-\${COCALC_PROJECT_ID:-unknown}"
+  owner_absent=false
+  if [ ! -e "/proc/$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
+    owner_absent=true
+  elif owner_exe="$(readlink "/proc/$lock_pid/exe" 2>/dev/null)"; then
+    # PIDs are reused after restart. A known non-browser executable cannot
+    # own Chromium's profile lock. Preserve unreadable or browser owners.
+    case "\${owner_exe##*/}" in
+      chrome*|chromium*) ;;
+      *) owner_absent=true ;;
+    esac
+  fi
   if { [ "$lock_host" = "$(hostname)" ] || [ "$lock_host" = "$project_host" ]; } &&
-     [ ! -e "/proc/$lock_pid" ] &&
-     ! kill -0 "$lock_pid" 2>/dev/null &&
+     [ "$owner_absent" = true ] &&
      [ ! -e "$profile/SingletonSocket" ] &&
      [ "$(readlink "$lock" 2>/dev/null || true)" = "$target" ]; then
     # Unlink only Chromium's singleton symlinks, never their targets or profile data.
