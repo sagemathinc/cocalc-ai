@@ -40,6 +40,27 @@ For terminal-native agents such as Claude Code or opencode, install and run them
 inside a normal project terminal. CoCalc provides the durable Linux environment;
 those tools provide their own agent interface.
 
+## Choose model, reasoning, and speed
+
+Click **Codex** in a thread's chat controls to open **Codex settings**. These
+settings apply to the selected thread; the compact chat controls show the
+same model and reasoning level.
+
+1. Under **Model and session**, select a **Model**.
+2. Choose a **Reasoning level** from the options supported by that model.
+   Recheck it after changing models, because the available levels and default
+   can change.
+3. Choose **Standard** or **Fast** under **Speed**, then click **Save**.
+
+Fast is available only for supported models and uses more Codex credits.
+Choose it when lower latency is worth the higher usage; Standard is the
+default. Changing to a model without Fast support returns speed to Standard.
+
+Membership-funded turns use the model, reasoning, and speed selected by
+CoCalc, so those controls are constrained. Connect and select a personal
+ChatGPT plan or OpenAI API key when you need other available model settings.
+These choices configure future turns rather than rewriting earlier replies.
+
 ## Give better tasks
 
 Name files, describe the desired outcome, and ask Codex to validate changes.
