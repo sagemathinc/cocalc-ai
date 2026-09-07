@@ -1031,6 +1031,12 @@ export function GitCommitDrawer({
     if (!node) return;
     let frame: number | undefined;
     const restore = () => {
+      // A child renderer may have claimed restoration using source coordinates.
+      if (
+        pendingScrollRestoreRef.current == null &&
+        pendingContextAnchorRef.current == null
+      )
+        return;
       if (anchor) {
         restoringScrollRef.current = true;
         if (restoreGitDiffScrollAnchor(node, anchor)) {
@@ -3618,6 +3624,10 @@ export function GitCommitDrawer({
                 >
                   <ReviewDiffPanel
                     navigationRef={pierreNavigationRef}
+                    onClaimScrollRestoration={() => {
+                      pendingScrollRestoreRef.current = null;
+                      pendingContextAnchorRef.current = null;
+                    }}
                     scrollScope={JSON.stringify([
                       accountId,
                       projectId,

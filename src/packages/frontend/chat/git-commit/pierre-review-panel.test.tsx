@@ -63,6 +63,23 @@ test("renderer handoff takes precedence over an older persisted anchor", () => {
   );
 });
 
+test("does not restore a persisted line into mutable working changes", () => {
+  mockScrollTo.mockClear();
+  writeScrollAnchor({
+    location: {
+      targetId: "working",
+      fileId: JSON.stringify(["a.ts", "a.ts"]),
+      side: "old",
+      line: 1,
+    },
+    offset: 0,
+  });
+  render(
+    <PierreReviewPanel {...props()} scrollScope="working" isHeadSelected />,
+  );
+  expect(mockScrollTo).not.toHaveBeenCalled();
+});
+
 let mockTheme = "light";
 let mockRecycle = false;
 const mockScrollTo = jest.fn();

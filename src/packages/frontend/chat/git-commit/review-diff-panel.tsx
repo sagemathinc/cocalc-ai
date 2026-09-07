@@ -8,7 +8,11 @@ import type { MutableRefObject } from "react";
 import { GitDiffFilesPanel } from "./drawer-sections";
 import type { GitDiffFilesPanelProps } from "./drawer-sections";
 import type { DiffScrollAnchor } from "@cocalc/frontend/components/diff-viewer/review-model";
-import { capturePierreScrollAnchor } from "@cocalc/frontend/components/diff-viewer/scroll-anchor";
+import {
+  capturePierreScrollAnchor,
+  readScrollAnchor,
+  writeScrollAnchor,
+} from "@cocalc/frontend/components/diff-viewer/scroll-anchor";
 import { reviewFileHeaderHeight } from "@cocalc/frontend/components/diff-viewer/review-file-header";
 import { buildLegacyFileLocations } from "./legacy-locations";
 import {
@@ -35,31 +39,54 @@ export type ReviewDiffPanelProps = GitDiffFilesPanelProps & {
   commentingDisabled?: boolean;
   scrollScope?: string;
   initialScrollAnchor?: DiffScrollAnchor;
+  onClaimScrollRestoration?: () => void;
 };
 
 export function ReviewDiffPanel(props: ReviewDiffPanelProps) {
   const [renderer, setRenderer] = useState("legacy");
-  const [handoff, setHandoff] = useState<DiffScrollAnchor>();
+  const [handoff, setHandoff] = useState<{
+    scope?: string;
+    anchor?: DiffScrollAnchor;
+  }>();
+  const savedAnchor = useMemo(
+    () =>
+      props.scrollScope && !props.isHeadSelected
+        ? readScrollAnchor(props.scrollScope)
+        : undefined,
+    [props.scrollScope, props.isHeadSelected],
+  );
+  const anchor =
+    handoff && handoff.scope === props.scrollScope
+      ? handoff.anchor
+      : savedAnchor;
   const pending = useRef(false);
+  const handledAnchor = useRef<DiffScrollAnchor | undefined>(undefined);
   const locations = useMemo(
     () => buildLegacyFileLocations(props.files),
     [props.files],
   );
   useEffect(() => {
-    if (renderer !== "legacy" || !pending.current || !handoff) return;
+    if (renderer !== "legacy") return;
+    if (anchor !== handledAnchor.current) {
+      handledAnchor.current = anchor;
+      pending.current = !!anchor;
+    }
+    if (!pending.current || !anchor) return;
     if (
-      handoff.location.targetId !== props.scrollScope ||
+      anchor.location.targetId !== props.scrollScope ||
       props.activeDiffFindMatch
     ) {
       pending.current = false;
       return;
     }
-    const target = classicScrollTarget(locations, handoff);
+    if (!locations.length || !props.drawerScrollParent) return;
+    const target = classicScrollTarget(locations, anchor);
     const viewport = props.drawerScrollParent;
     if (!target || !viewport) {
       pending.current = false;
       return;
     }
+    props.onClaimScrollRestoration?.();
     const sectionId = buildGitReviewFileSectionId(
       props.files[target.fileIndex].path,
       target.fileIndex,
@@ -96,7 +123,7 @@ export function ReviewDiffPanel(props: ReviewDiffPanelProps) {
           row.getBoundingClientRect().top -
           viewport.getBoundingClientRect().top -
           headerHeight -
-          handoff.offset;
+          anchor.offset;
         pending.current = false;
       } else if (++attempts < 120) frame = requestAnimationFrame(restore);
       else pending.current = false;
@@ -113,7 +140,39 @@ export function ReviewDiffPanel(props: ReviewDiffPanelProps) {
       for (const event of ["wheel", "pointerdown", "keydown"])
         viewport.removeEventListener(event, cancel);
     };
-  }, [renderer, handoff, locations, props]);
+  }, [renderer, anchor, locations, props]);
+  useEffect(() => {
+    const scope = props.scrollScope;
+    const viewport = props.drawerScrollParent;
+    if (renderer !== "legacy" || !scope || !viewport || props.isHeadSelected)
+      return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let latest: DiffScrollAnchor | undefined;
+    const save = () => {
+      clearTimeout(timer);
+      if (latest) writeScrollAnchor(latest);
+      latest = undefined;
+    };
+    const capture = () => {
+      if (pending.current) return;
+      const next = captureClassicScrollAnchor(viewport, scope, locations);
+      if (!next) return;
+      latest = next;
+      clearTimeout(timer);
+      timer = setTimeout(save, 150);
+    };
+    viewport.addEventListener("scroll", capture, { passive: true });
+    return () => {
+      viewport.removeEventListener("scroll", capture);
+      save();
+    };
+  }, [
+    renderer,
+    props.scrollScope,
+    props.drawerScrollParent,
+    props.isHeadSelected,
+    locations,
+  ]);
   const switchRenderer = (next: string) => {
     const scope = props.scrollScope;
     const viewport =
@@ -130,7 +189,7 @@ export function ReviewDiffPanel(props: ReviewDiffPanelProps) {
             )
           : captureClassicScrollAnchor(viewport, scope, locations)
         : undefined;
-    setHandoff(anchor);
+    setHandoff({ scope, anchor });
     pending.current = !!anchor;
     setRenderer(next);
   };
@@ -150,7 +209,7 @@ export function ReviewDiffPanel(props: ReviewDiffPanelProps) {
       </label>
       {renderer === "pierre" ? (
         <Suspense fallback={<div role="status">Loading diff renderer...</div>}>
-          <PierreReviewPanel {...props} initialScrollAnchor={handoff} />
+          <PierreReviewPanel {...props} initialScrollAnchor={anchor} />
         </Suspense>
       ) : (
         <GitDiffFilesPanel {...props} />

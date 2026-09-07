@@ -674,8 +674,9 @@ another revision. Writes are debounced and flushed on teardown; active search
 navigation takes precedence. Focused tests verify old-side capture, invalid
 storage, restoration, and missing-line rejection. The full Chromium suite also
 verifies capture from real scrolled Pierre output. A live drawer close/reopen
-matrix across split/wrap/font changes remains an acceptance check; Classic's
-existing pixel-based restoration has not yet been replaced by the shared anchor.
+matrix across split/wrap/font changes remains an acceptance check. Classic now
+uses the same persisted anchor as described below, retaining legacy pixels only
+when a semantic position is unavailable.
 
 Renderer-switch handoff (2026-09-07): the renderer selector now captures a
 semantic file/side/line/offset before unmounting Classic or Pierre. Classic rows
@@ -687,8 +688,18 @@ header. Delayed restoration is bounded and cancelled by viewport interaction;
 changed target scopes and active search never inherit the old position.
 Focused tests cover coordinate capture, ambiguous/missing targets, handoff
 precedence, selector focus and edit-time disabling. This is the switch seam;
-Classic's existing close/reopen persistence and live two-renderer layout
-acceptance remain separate checks.
+live two-renderer layout acceptance remains a separate check.
+
+Classic close/reopen (2026-09-07): Classic now debounces semantic anchor writes
+and flushes the last captured position on unmount under the same target scope
+used by Pierre. A valid restored row explicitly claims restoration from the
+outer drawer; queued pixel restoration checks that claim rather than racing
+the child renderer. Old pixel state remains a fallback when no valid semantic
+anchor exists. Tests cover close-time persistence, scope isolation, restoration
+ownership and active-search precedence. Neither renderer reuses persisted
+coordinates for uncommitted working changes: those need a generation identity
+before durable semantic restoration is safe. Immediate renderer handoff is
+still supported. Full live close/reopen and layout-change testing is pending.
 
 Equal-document rendering fix (2026-09-07): the full browser suite exposed a
 genuine empty viewport when changing a comparison to identical contents. DOM

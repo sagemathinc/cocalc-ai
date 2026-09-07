@@ -70,10 +70,10 @@ function ReviewContent(props: ReviewDiffPanelProps) {
     () =>
       props.initialScrollAnchor?.location.targetId === props.scrollScope
         ? props.initialScrollAnchor
-        : props.scrollScope
+        : props.scrollScope && !props.isHeadSelected
           ? readScrollAnchor(props.scrollScope)
           : undefined,
-    [props.scrollScope, props.initialScrollAnchor],
+    [props.scrollScope, props.initialScrollAnchor, props.isHeadSelected],
   );
   const restoredScope = useRef<string | undefined>(undefined);
   const pendingAnchor = useRef<DiffScrollAnchor | undefined>(undefined);
@@ -397,6 +397,7 @@ function ReviewContent(props: ReviewDiffPanelProps) {
           if (!node) return;
           if (
             props.scrollScope &&
+            !props.isHeadSelected &&
             restoredScope.current === props.scrollScope
           ) {
             const anchor = capturePierreScrollAnchor(
