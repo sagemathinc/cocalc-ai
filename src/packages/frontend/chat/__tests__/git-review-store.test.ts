@@ -19,6 +19,7 @@ import { resolveGitReviewSaveState } from "../git-commit/review-state";
 const stores = new Map<string, Map<string, any>>();
 const sequences = new WeakMap<Map<string, any>, Map<string, number>>();
 const flushMock = jest.fn(async () => undefined);
+let writeFailure: "before" | "after" | undefined;
 
 function getStore(accountId: string, name: string): Map<string, any> {
   const key = `${accountId}:${name}`;
@@ -48,6 +49,8 @@ const akvMock = jest.fn(({ account_id, name }: any) => {
       value: any,
       options?: { previousSeq?: number },
     ) => {
+      if (writeFailure === "before")
+        throw Error("connection lost before write");
       const previous = store.has(key) ? (seqs.get(key) ?? 1) : 0;
       if (
         options?.previousSeq !== undefined &&
@@ -56,6 +59,8 @@ const akvMock = jest.fn(({ account_id, name }: any) => {
         throw Error("sequence mismatch");
       store.set(key, value);
       seqs.set(key, previous + 1);
+      if (writeFailure === "after")
+        throw Error("connection lost before acknowledgement");
       return { seq: previous + 1, time: Date.now() };
     },
     keys: async () => [...store.keys()],
@@ -104,6 +109,7 @@ describe("git review import/export", () => {
     } = require("@cocalc/frontend/conat/account-dkv");
     resetSharedAccountDkvCacheForTests?.();
     stores.clear();
+    writeFailure = undefined;
     akvMock.mockClear();
     dkvMock.mockClear();
     flushMock.mockReset().mockResolvedValue(undefined);
@@ -167,6 +173,63 @@ describe("git review import/export", () => {
     expect(bundle.records[0].storageSequence).toBeUndefined();
     await saveReviewRecord({ ...saved, note: "first window again" });
   });
+
+  it.each(["before", "after"] as const)(
+    "recovers a disconnected write failing %s storage without losing or duplicating comments",
+    async (failure) => {
+      const options = {
+        accountId: `disconnected-${failure}`,
+        commitSha: "b".repeat(40),
+        resolveCommit: async () => "b".repeat(40),
+      };
+      const base = (await loadReviewRecord(options))!;
+      const comment = {
+        id: "local",
+        file_path: "a.ts",
+        side: "new" as const,
+        line: 1,
+        body_md: "Keep this comment ![image](/blobs/test.png)",
+        status: "draft" as const,
+        created_at: 1,
+        updated_at: 1,
+      };
+      saveReviewDraft(
+        options.commitSha,
+        { reviewed: false, note: "", comments: { local: comment } },
+        options.accountId,
+      );
+      const draft = loadReviewDraft(options.commitSha, options.accountId)!;
+      const payload = { ...base, comments: draft.comments };
+      writeFailure = failure;
+      await expect(saveReviewRecord(payload)).rejects.toThrow(
+        "connection lost",
+      );
+      expect(loadReviewDraft(options.commitSha, options.accountId)).toEqual(
+        draft,
+      );
+      writeFailure = undefined;
+      if (failure === "after") {
+        // Retrying the old sequence must not overwrite an acknowledged-by-storage write.
+        await expect(saveReviewRecord(payload)).rejects.toThrow(
+          "another window",
+        );
+        expect(loadReviewDraft(options.commitSha, options.accountId)).toEqual(
+          draft,
+        );
+      }
+      const recovered = (await loadReviewRecord(options))!;
+      expect(recovered.comments).toEqual(draft.comments);
+      await saveReviewRecord(recovered, {
+        clearDraftThroughRevision: draft.revision,
+      });
+      expect(
+        loadReviewDraft(options.commitSha, options.accountId),
+      ).toBeUndefined();
+      expect((await loadReviewRecord(options))!.comments).toEqual(
+        draft.comments,
+      );
+    },
+  );
 
   it("preserves independent remote comments when recovering and resaving a stale draft", async () => {
     const options = {

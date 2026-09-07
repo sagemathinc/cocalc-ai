@@ -51,6 +51,15 @@ would not be evidence that these checks pass.
 
 ### Restored live-session checks
 
+Disconnect storage follow-up: focused tests inject failure before a conditional
+write and after storage commits but before its acknowledgement arrives. Both
+retain the exact local draft, including image Markdown. An old-sequence retry
+after a lost acknowledgement is rejected; reload and resave retain exactly one
+comment and clear the acknowledged draft. All 31 store tests, frontend typecheck
+and lint pass. These are simulated transport failures at the store boundary,
+not live browser reconnect evidence. The latest continuation independently
+rechecked port 9222; `/json/version` still timed out after five seconds.
+
 Upload-in-flight follow-up: `REVIEW_IMAGE=1 REVIEW_UPLOAD_DELAY_MS=3000` in the
 real Slate smoke script pauses the actual `/blobs?project_id=...` POST with CDP
 Fetch interception in its isolated target. The request was confirmed paused;
