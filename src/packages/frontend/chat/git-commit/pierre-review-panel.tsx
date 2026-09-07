@@ -67,8 +67,13 @@ function ReviewContent(props: ReviewDiffPanelProps) {
   const viewer = useRef<CodeViewHandle<string, undefined>>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const savedAnchor = useMemo(
-    () => (props.scrollScope ? readScrollAnchor(props.scrollScope) : undefined),
-    [props.scrollScope],
+    () =>
+      props.initialScrollAnchor?.location.targetId === props.scrollScope
+        ? props.initialScrollAnchor
+        : props.scrollScope
+          ? readScrollAnchor(props.scrollScope)
+          : undefined,
+    [props.scrollScope, props.initialScrollAnchor],
   );
   const restoredScope = useRef<string | undefined>(undefined);
   const pendingAnchor = useRef<DiffScrollAnchor | undefined>(undefined);

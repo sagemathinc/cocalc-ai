@@ -677,6 +677,19 @@ verifies capture from real scrolled Pierre output. A live drawer close/reopen
 matrix across split/wrap/font changes remains an acceptance check; Classic's
 existing pixel-based restoration has not yet been replaced by the shared anchor.
 
+Renderer-switch handoff (2026-09-07): the renderer selector now captures a
+semantic file/side/line/offset before unmounting Classic or Pierre. Classic rows
+expose their parsed source coordinates; header/metadata rows are excluded.
+Pierre prefers this handoff over older persisted view state. Switching back
+validates a unique patch row, expands Classic's line limit if necessary, and
+uses Virtuoso file navigation before positioning that row below the sticky
+header. Delayed restoration is bounded and cancelled by viewport interaction;
+changed target scopes and active search never inherit the old position.
+Focused tests cover coordinate capture, ambiguous/missing targets, handoff
+precedence, selector focus and edit-time disabling. This is the switch seam;
+Classic's existing close/reopen persistence and live two-renderer layout
+acceptance remain separate checks.
+
 Equal-document rendering fix (2026-09-07): the full browser suite exposed a
 genuine empty viewport when changing a comparison to identical contents. DOM
 inspection showed no rendered code and only a 44-pixel item at scrollTop zero;

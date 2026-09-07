@@ -42,6 +42,27 @@ test("restores a semantic old-side anchor, but refuses a line missing from the p
   expect(mockScrollTo).not.toHaveBeenCalled();
 });
 
+test("renderer handoff takes precedence over an older persisted anchor", () => {
+  mockScrollTo.mockClear();
+  const location = {
+    targetId: "handoff",
+    fileId: JSON.stringify(["a.ts", "a.ts"]),
+    side: "new" as const,
+    line: 1,
+  };
+  writeScrollAnchor({ location: { ...location, side: "old" }, offset: 0 });
+  render(
+    <PierreReviewPanel
+      {...props()}
+      scrollScope="handoff"
+      initialScrollAnchor={{ location, offset: 4 }}
+    />,
+  );
+  expect(mockScrollTo).toHaveBeenCalledWith(
+    expect.objectContaining({ side: "additions", lineNumber: 1, offset: 4 }),
+  );
+});
+
 let mockTheme = "light";
 let mockRecycle = false;
 const mockScrollTo = jest.fn();

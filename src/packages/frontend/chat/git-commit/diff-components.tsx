@@ -196,6 +196,12 @@ export const DiffBlock = memo(function DiffBlock({
               }}
               data-git-anchor-id={anchorId || undefined}
               data-git-hunk-hash={meta.hunkHash || undefined}
+              data-review-old-line={
+                meta.commentable ? meta.oldLineNumber : undefined
+              }
+              data-review-new-line={
+                meta.commentable ? meta.newLineNumber : undefined
+              }
             >
               <div
                 style={{
