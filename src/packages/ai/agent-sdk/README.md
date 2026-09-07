@@ -86,9 +86,9 @@ flowchart TD
 ## Responsibility Boundaries
 
 - Planner/model:
-  chooses *what* to do.
+  chooses _what_ to do.
 - `agent-sdk` executor:
-  controls *whether* it can run and *how* it runs safely.
+  controls _whether_ it can run and _how_ it runs safely.
 - Adapter handlers:
   implement the minimal call into concrete CoCalc APIs.
 
@@ -122,11 +122,28 @@ const result = await executor.execute({
 
 ## Current Status
 
-- Core contracts and executor are implemented.
-- Initial tests cover:
-  - read actions
-  - confirmation gating for risky actions
-  - argument validation failures
-  - idempotent replay behavior
+The core executor and real adapter-backed capabilities are implemented.
+[`runtime.ts`](./runtime.ts) exports `createAgentSdkBridge`,
+`createPlusAgentSdkBridge`, and `createLaunchpadAgentSdkBridge`. Each bridge
+registers the [basic capability pack](./packs/basic.ts) and exposes `manifest()`,
+`buildContext()`, and `execute()`.
 
-Next step is adding real adapter-backed capabilities over existing hub/project/ui APIs.
+The basic pack supports hub ping/customization reads and project creation;
+project listings and text writes; filesystem reads, writes, renames and moves;
+and application status/start/stop. Inspect the manifest for action names,
+argument schemas and policy metadata. An action still needs the corresponding
+adapter: registration alone does not establish availability in a deployment.
+
+Plus uses a fixed project client and optional filesystem client. Launchpad
+resolves project/filesystem clients from the action target or default project;
+the server integration checks collaborator access when resolving those clients.
+
+The hub integrations expose `agent.manifest`, `agent.execute` and `agent.plan`.
+The Lite integration additionally implements the bounded, multi-step
+`agent.run` loop; the Launchpad handler currently returns a failed result saying
+`agent.run` is not implemented. Project creation in Lite is also unsupported.
+These differences must not be presented as uniform product support.
+
+Policy, audit sinks and idempotency stores are configurable executor concerns.
+The default bridge does not install durable audit or idempotency storage;
+supply those explicitly when the integration requires them.
