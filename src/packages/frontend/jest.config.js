@@ -4,6 +4,9 @@ module.exports = {
   // Each ts-jest/JSDOM worker can retain substantial module state. The default
   // of CPU count minus one exceeds common CoCalc project memory limits.
   maxWorkers: 4,
+  // Recycle workers between suites instead of accumulating module state across
+  // the entire frontend run. Use an absolute limit for container environments.
+  workerIdleMemoryLimit: "512MB",
   transform: {
     "^.+\\.tsx?$": ["ts-jest", { tsconfig: "<rootDir>/tsconfig.test.json" }],
   },
