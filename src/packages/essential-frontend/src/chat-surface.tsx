@@ -17,6 +17,7 @@ import type { AccountProjectListWindowRow } from "@cocalc/conat/hub/api/projects
 import {
   DEFAULT_CODEX_MODEL_NAME,
   DEFAULT_CODEX_MODELS,
+  DEFAULT_CODEX_MODEL_INFO,
   resolveCodexServiceTier,
   type CodexPaymentSourcePreference,
 } from "@cocalc/util/ai/codex";
@@ -184,8 +185,8 @@ export function AgentList({
         projectHostClient: lease.client,
         selected_thread_id: threadId,
       });
-      const model = DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
-      const reasoning = DEFAULT_CODEX_MODELS[0]?.reasoning?.find(
+      const model = DEFAULT_CODEX_MODEL_NAME;
+      const reasoning = DEFAULT_CODEX_MODEL_INFO.reasoning?.find(
         ({ default: isDefault }) => isDefault,
       )?.id;
       await client.createCodexThread({
@@ -458,7 +459,6 @@ export function Chat({
   const configuredModel =
     selectedThread?.acp_config?.model ??
     selectedThread?.agent_model ??
-    DEFAULT_CODEX_MODELS[0]?.name ??
     DEFAULT_CODEX_MODEL_NAME;
   const configuredPayment = selectedThread?.acp_config?.paymentSource ?? "auto";
   const sitePolicy =
@@ -468,7 +468,7 @@ export function Chat({
   const displayedModel = sitePolicy?.model ?? configuredModel;
   const modelInfo =
     DEFAULT_CODEX_MODELS.find(({ name }) => name === displayedModel) ??
-    DEFAULT_CODEX_MODELS[0];
+    DEFAULT_CODEX_MODEL_INFO;
   const configuredReasoning =
     sitePolicy?.reasoning ??
     selectedThread?.acp_config?.reasoning ??

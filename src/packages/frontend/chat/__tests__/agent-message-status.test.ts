@@ -171,51 +171,27 @@ describe("AgentMessageStatus", () => {
     expect(screen.getByText("0:04 ago")).toBeTruthy();
   });
 
-  it("shows the completion-notification mute toggle while Codex runs", () => {
-    const onNotifyOnTurnFinishChange = jest.fn();
-    render(
-      React.createElement(AgentMessageStatus, {
-        show: true,
-        generating: true,
-        durationLabel: "0:10",
-        date: 1000,
-        logRefs: {},
-        activityContext: {} as any,
-        notifyOnTurnFinish: false,
-        onNotifyOnTurnFinishChange,
-      }),
-    );
+  it.each([true, false])(
+    "does not expose notification settings in turn status (running: %s)",
+    (generating) => {
+      render(
+        React.createElement(AgentMessageStatus, {
+          show: true,
+          generating,
+          durationLabel: "0:10",
+          date: 1000,
+          logRefs: {},
+          activityContext: {} as any,
+        }),
+      );
 
-    const checkbox = screen.getByRole("checkbox", {
-      name: "Mute completion notifications for this thread",
-    });
-    expect((checkbox as HTMLInputElement).checked).toBe(true);
-    fireEvent.click(checkbox);
-
-    expect(screen.getByText(/Running/)).toBeTruthy();
-    expect(onNotifyOnTurnFinishChange).toHaveBeenCalledWith(true);
-  });
-
-  it("hides the notify toggle once the turn is no longer running", () => {
-    render(
-      React.createElement(AgentMessageStatus, {
-        show: true,
-        generating: false,
-        durationLabel: "0:10",
-        date: 1000,
-        logRefs: {},
-        activityContext: {} as any,
-        notifyOnTurnFinish: false,
-        onNotifyOnTurnFinishChange: jest.fn(),
-      }),
-    );
-
-    expect(
-      screen.queryByRole("checkbox", {
-        name: "Mute completion notifications for this thread",
-      }),
-    ).toBeNull();
-  });
+      expect(
+        screen.queryByRole("checkbox", {
+          name: "Mute completion notifications for this thread",
+        }),
+      ).toBeNull();
+    },
+  );
 
   it("renders an interrupt button when a handler is provided", () => {
     const onInterrupt = jest.fn();

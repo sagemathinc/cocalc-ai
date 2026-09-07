@@ -264,6 +264,11 @@ describe("CodexConfigButton", () => {
   });
 
   it("offers Astra before discovery and respects account availability afterward", () => {
+    expect(codexModelOptionsForCatalog()[0].value).toBe("gpt-6-astra");
+    expect(
+      codexModelOptionsForCatalog().find(({ default: isDefault }) => isDefault)
+        ?.value,
+    ).toBe("gpt-5.6-sol");
     const initial = codexModelOptionsForCatalog().find(
       ({ value }) => value === "gpt-6-astra",
     );

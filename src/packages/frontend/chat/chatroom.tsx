@@ -1250,19 +1250,6 @@ export function ChatPanel({
   );
   const selectedThreadResolved = selectedThreadMetadata?.resolved;
   const effectiveReadOnly = readOnly || selectedThreadResolved != null;
-  const notifyOnSelectedTurnFinish = useMemo(
-    () =>
-      threadNotifyOnTurnFinishEnabled(
-        selectedThreadMetadata?.acp_config,
-        selectedThreadMetadata?.codex_completion_notification,
-        accountCompletionNotificationDefault,
-      ),
-    [
-      accountCompletionNotificationDefault,
-      selectedThreadMetadata?.acp_config,
-      selectedThreadMetadata?.codex_completion_notification,
-    ],
-  );
   useEffect(() => {
     if (!selectedThreadId || !account_id) return;
     return registerDirectlyWatchedCodexThread({
@@ -1546,16 +1533,6 @@ export function ChatPanel({
         ? (actions.getMessagesInThread(selectedThreadLookupKey) ?? [])
         : [],
     [actions, selectedThreadLookupKey, messages],
-  );
-  const setNotifyOnSelectedTurnFinish = useCallback(
-    (checked: boolean) => {
-      if (!selectedThreadKey || !selectedThreadId) return;
-      actions.setCodexCompletionNotificationOverride(
-        selectedThreadKey,
-        checked ? "on" : "off",
-      );
-    },
-    [actions, selectedThreadId, selectedThreadKey],
   );
   const hasRunningAcpTurn = useMemo(() => {
     return hasActiveAcpTurnForComposer({
@@ -2718,8 +2695,6 @@ export function ChatPanel({
         shortcutEnabled={isVisible && tabIsVisible}
         isVisible={isVisible && tabIsVisible}
         onOpenGitBrowser={openGitBrowserFromMessage}
-        notifyOnTurnFinish={notifyOnSelectedTurnFinish}
-        onNotifyOnTurnFinishChange={setNotifyOnSelectedTurnFinish}
         hideTopControls={hideTopControls}
         hideCompactThreadHeader={hideCompactThreadHeader}
         allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}
@@ -2884,6 +2859,9 @@ export function ChatPanel({
         <>
           <ChatRoomModals
             actions={actions}
+            accountCompletionNotificationDefault={
+              accountCompletionNotificationDefault
+            }
             path={path}
             selectedThreadKey={selectedThreadKey}
             selectedThreadLabel={selectedThread?.label}

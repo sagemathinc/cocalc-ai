@@ -223,7 +223,7 @@ describe("ChatPanel ACP thread behavior", () => {
     );
   });
 
-  it("migrates and persists the thread completion-notification override", async () => {
+  it("does not expose completion-notification controls through the running thread panel", async () => {
     currentAcpState = immutable.Map({
       "thread:t1": "running",
     });
@@ -261,9 +261,7 @@ describe("ChatPanel ACP thread behavior", () => {
       />,
     );
 
-    await waitFor(() =>
-      expect(lastThreadPanelProps?.notifyOnTurnFinish).toBe(true),
-    );
+    await waitFor(() => expect(lastThreadPanelProps).toBeDefined());
 
     currentAcpState = immutable.Map();
     rerender(
@@ -277,13 +275,7 @@ describe("ChatPanel ACP thread behavior", () => {
       />,
     );
 
-    await act(async () => {
-      lastThreadPanelProps?.onNotifyOnTurnFinishChange?.(false);
-    });
-
-    expect(setCodexCompletionNotificationOverride).toHaveBeenCalledWith(
-      "t1",
-      "off",
-    );
+    expect(lastThreadPanelProps?.onNotifyOnTurnFinishChange).toBeUndefined();
+    expect(setCodexCompletionNotificationOverride).not.toHaveBeenCalled();
   });
 });

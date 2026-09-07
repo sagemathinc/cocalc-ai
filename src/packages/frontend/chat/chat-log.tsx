@@ -472,8 +472,6 @@ interface Props {
   activityJumpDate?: string;
   activityJumpToken?: number;
   activityJumpAttentionId?: string;
-  notifyOnTurnFinish?: boolean;
-  onNotifyOnTurnFinishChange?: (checked: boolean) => void;
   onOpenGitBrowser?: (request: {
     threadKey: string;
     cwdOverride?: string;
@@ -508,8 +506,6 @@ export function ChatLog({
   activityJumpDate,
   activityJumpToken,
   activityJumpAttentionId,
-  notifyOnTurnFinish = false,
-  onNotifyOnTurnFinishChange,
   onOpenGitBrowser,
   suppressInlineCodexStatusDate,
   readOnly = false,
@@ -732,9 +728,6 @@ export function ChatLog({
             activityJumpDate,
             activityJumpToken,
             activityJumpAttentionId,
-            notifyOnTurnFinish,
-            onNotifyOnTurnFinishChange,
-            selectedThread,
             anyOverlayOpen,
             onOpenGitBrowser,
             suppressInlineCodexStatusDate,
@@ -882,9 +875,6 @@ export function MessageList({
   activityJumpDate,
   activityJumpToken,
   activityJumpAttentionId,
-  notifyOnTurnFinish,
-  onNotifyOnTurnFinishChange,
-  selectedThread,
   anyOverlayOpen = false,
   onOpenGitBrowser,
   suppressInlineCodexStatusDate,
@@ -923,9 +913,6 @@ export function MessageList({
   activityJumpDate?: string;
   activityJumpToken?: number;
   activityJumpAttentionId?: string;
-  notifyOnTurnFinish?: boolean;
-  onNotifyOnTurnFinishChange?: (checked: boolean) => void;
-  selectedThread?: string;
   anyOverlayOpen?: boolean;
   onOpenGitBrowser?: (request: {
     threadKey: string;
@@ -960,8 +947,6 @@ export function MessageList({
   const blockScrollInput = anyOverlayOpen === true;
   const showNewestMessagesButton =
     sortedDates.length > 0 && (!atBottom || manualScroll);
-  const canNotifyForRunningTurn =
-    selectedThread != null && onNotifyOnTurnFinishChange != null;
   const [
     expandedCodexActivityByMessageId,
     setExpandedCodexActivityByMessageId,
@@ -1476,12 +1461,6 @@ export function MessageList({
             }
             focusAttentionId={
               activityJumpDate === date ? activityJumpAttentionId : undefined
-            }
-            notifyOnTurnFinish={
-              canNotifyForRunningTurn ? notifyOnTurnFinish : undefined
-            }
-            onNotifyOnTurnFinishChange={
-              canNotifyForRunningTurn ? onNotifyOnTurnFinishChange : undefined
             }
             onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
             suppressInlineCodexStatus={suppressInlineCodexStatusDate === date}

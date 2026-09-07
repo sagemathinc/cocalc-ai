@@ -244,12 +244,6 @@ const FAST_SERVICE_TIER: CodexServiceTierInfo = {
 
 export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
   {
-    name: DEFAULT_CODEX_MODEL_NAME,
-    description: "Latest frontier agentic coding model.",
-    reasoning: GPT_5_6_SOL_REASONING_LEVELS,
-    serviceTiers: [FAST_SERVICE_TIER],
-  },
-  {
     name: "gpt-6-astra",
     description: "Frontier model for complex, demanding work.",
     reasoning: GPT_5_6_REASONING_LEVELS,
@@ -259,6 +253,12 @@ export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
         description: "2x speed with higher Codex credit usage.",
       },
     ],
+  },
+  {
+    name: DEFAULT_CODEX_MODEL_NAME,
+    description: "Frontier agentic coding model.",
+    reasoning: GPT_5_6_SOL_REASONING_LEVELS,
+    serviceTiers: [FAST_SERVICE_TIER],
   },
   {
     name: "gpt-5.6-terra",
@@ -297,6 +297,11 @@ export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
     reasoning: GPT_5_2_REASONING_LEVELS,
   },
 ];
+
+// Display order is independent of the default for new or unconfigured chats.
+export const DEFAULT_CODEX_MODEL_INFO = DEFAULT_CODEX_MODELS.find(
+  ({ name }) => name === DEFAULT_CODEX_MODEL_NAME,
+)!;
 
 const CODEX_MODEL_NAME_SET = new Set(
   DEFAULT_CODEX_MODELS.map((model) => model.name.toLowerCase()),

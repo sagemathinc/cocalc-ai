@@ -126,8 +126,7 @@ const SETUP_CARD_STYLE: React.CSSProperties = {
   background: "#fcfcfc",
 } as const;
 
-const DEFAULT_CODEX_MODEL =
-  DEFAULT_CODEX_MODELS[0]?.name ?? DEFAULT_CODEX_MODEL_NAME;
+const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODEL_NAME;
 const ARCHIVED_SEARCH_LIMIT = 20;
 const ARCHIVED_HISTORY_LIMIT = 50;
 const ARCHIVED_INLINE_PREVIEW_LIMIT = 6;
@@ -498,8 +497,6 @@ interface ChatRoomThreadPanelProps {
   attentionRecords?: readonly AcpAttentionRecord[];
   shortcutEnabled?: boolean;
   isVisible?: boolean;
-  notifyOnTurnFinish?: boolean;
-  onNotifyOnTurnFinishChange?: (checked: boolean) => void;
   hideTopControls?: boolean;
   hideCompactThreadHeader?: boolean;
   allowSidebarToggle?: boolean;
@@ -549,8 +546,6 @@ export function ChatRoomThreadPanel({
   attentionRecords = [],
   shortcutEnabled = true,
   isVisible = true,
-  notifyOnTurnFinish = false,
-  onNotifyOnTurnFinishChange,
   hideTopControls = false,
   hideCompactThreadHeader = false,
   allowSidebarToggle = false,
@@ -2221,8 +2216,6 @@ export function ChatRoomThreadPanel({
               activeDescendantThreadIds={
                 selectedRunningCodexActivity.activeDescendantThreadIds
               }
-              notifyOnTurnFinish={notifyOnTurnFinish}
-              onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
               openDrawerToken={
                 activityJumpDate === `${selectedRunningCodexDate}`
                   ? activityJumpToken
@@ -2966,8 +2959,6 @@ export function ChatRoomThreadPanel({
           activityJumpDate={activityJumpDate}
           activityJumpToken={activityJumpToken}
           activityJumpAttentionId={activityJumpAttentionId}
-          notifyOnTurnFinish={notifyOnTurnFinish}
-          onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
           onOpenGitBrowser={readOnly ? undefined : onOpenGitBrowser}
           suppressInlineCodexStatusDate={
             selectedRunningCodexDate != null

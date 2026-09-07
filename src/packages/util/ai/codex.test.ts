@@ -1,6 +1,7 @@
 import {
   codexServiceTierForAppServer,
   DEFAULT_CODEX_MODELS,
+  DEFAULT_CODEX_MODEL_INFO,
   isCodexModelName,
   resolveCodexServiceTier,
 } from "./codex";
@@ -8,8 +9,8 @@ import {
 describe("DEFAULT_CODEX_MODELS", () => {
   it("includes Astra while preserving the existing default model", () => {
     expect(DEFAULT_CODEX_MODELS.map((model) => model.name)).toEqual([
-      "gpt-5.6-sol",
       "gpt-6-astra",
+      "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
@@ -49,7 +50,7 @@ describe("DEFAULT_CODEX_MODELS", () => {
   });
 
   it("defaults gpt-5.6-sol to low reasoning", () => {
-    expect(DEFAULT_CODEX_MODELS[0]).toMatchObject({
+    expect(DEFAULT_CODEX_MODEL_INFO).toMatchObject({
       name: "gpt-5.6-sol",
       reasoning: expect.arrayContaining([
         expect.objectContaining({ id: "low", default: true }),
