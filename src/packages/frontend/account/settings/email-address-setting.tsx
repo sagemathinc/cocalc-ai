@@ -11,6 +11,7 @@ import { ErrorDisplay, LabeledRow, Saving } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { withTimeout } from "@cocalc/util/async-utils";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import {
   isFreshAuthRequiredError,
@@ -49,6 +50,7 @@ export const EmailAddressSetting = ({
 
   function cancel_editing() {
     setState("view");
+    set_email_address(email_address0 ?? "");
     setPassword("");
   }
 
@@ -64,11 +66,12 @@ export const EmailAddressSetting = ({
     setState("saving");
     setMessage("");
     try {
-      const result = await webapp_client.account_client.change_email(
-        email_address,
-        password,
+      const result = await withTimeout(
+        webapp_client.account_client.change_email(email_address, password),
+        30_000,
       );
       const changedEmail = result.email_address ?? email_address;
+      set_email_address(changedEmail);
       if (result.already_verified) {
         setMessage(
           `Email address changed to ${changedEmail}. This address was already verified, so no new verification email was needed.`,
@@ -90,7 +93,11 @@ export const EmailAddressSetting = ({
         throw error;
       }
       setState("edit");
-      setError(`Error -- ${error}`);
+      setError(
+        error instanceof Error && error.message === "timeout"
+          ? "The request timed out. Your email may have changed. Reload account settings to check before retrying."
+          : `Error -- ${error}`,
+      );
       return;
     }
     setState("view");
@@ -145,7 +152,9 @@ export const EmailAddressSetting = ({
           />
           <Input
             autoFocus
+            disabled={state === "saving"}
             placeholder="user@example.com"
+            value={email_address}
             onChange={(e) => {
               set_email_address(e.target.value);
             }}
@@ -154,6 +163,7 @@ export const EmailAddressSetting = ({
         </div>
         {password_label}
         <Input.Password
+          disabled={state === "saving"}
           value={password}
           placeholder={password_label}
           onChange={(e) => {
@@ -169,9 +179,11 @@ export const EmailAddressSetting = ({
           }}
         />
         <Space style={{ marginTop: "15px" }}>
-          <Button onClick={cancel_editing}>Cancel</Button>
+          <Button onClick={cancel_editing} disabled={state === "saving"}>
+            Cancel
+          </Button>
           <Button
-            disabled={!is_submittable()}
+            disabled={state === "saving" || !is_submittable()}
             onClick={save_editing}
             type="primary"
           >
