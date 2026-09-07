@@ -13,7 +13,7 @@ not a current checklist. The objective is not complete. Current release work:
 | --- | --- |
 | Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Live detached-worktree unique/ambiguous/absent cases and moved-ref pinning passed (details below). Working-copy file access and actual agent dispatch remain separate acceptance cases. |
 | Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Conflicting aliases now offer an explicit active-record choice without changing either record; changed alternatives reopen the conflict. Existing keys remain intact rather than being physically rewritten. Live multi-window acceptance is pending. |
-| Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Verify actual drawer close/reopen and renderer switching. Native partial-text selection across virtual windows remains a browser acceptance case. |
+| Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Live renderer roundtrip and drawer close/reopen preserve the source position within a few wrapped lines (details below). Native partial-text selection across virtual windows remains a browser acceptance case. |
 | Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
 | TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Renamed/deleted Git file viewing remains a separate acceptance case. |
 | Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live agent dispatch and originating-context links still need end-to-end confirmation. |
@@ -49,6 +49,18 @@ rollback-window decision proceed. The current lack of a signed-in test session
 would not be evidence that these checks pass.
 
 ### Restored live-session checks
+
+Semantic scroll follow-up: `git/review-scroll-live.browser-test.mjs` switches
+Pierre -> Classic -> Pierre and closes/reopens the actual drawer, checking the
+first visible file/source line after layout settles. This exposed a real
+Classic restoration race: Virtuoso retries file alignment after measuring newly
+mounted items, overwriting a source-row scroll performed on the first frame.
+Restoration now waits for `scrollIntoView` completion when materialization is
+needed, retains user-input cancellation, and ignores late callbacks after
+cleanup. Unrelated parent rerenders no longer restart the effect. Focused tests
+cover delayed completion, cancellation, and rerendering during materialization.
+Live checks passed on the fixture below; they allow three source lines of
+wrapping/header variation, not arbitrary pixel or file movement.
 
 The real application smoke script passed on the maintainer-provided `x.chat`
 in project `1ce4fe78-19c7-40a8-a598-947975744cd9` at commit

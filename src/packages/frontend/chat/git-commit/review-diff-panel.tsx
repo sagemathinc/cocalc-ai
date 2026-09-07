@@ -3,7 +3,15 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { MutableRefObject } from "react";
 import { GitDiffFilesPanel } from "./drawer-sections";
 import type { GitDiffFilesPanelProps } from "./drawer-sections";
@@ -88,6 +96,12 @@ function ReviewDiffContent(props: ReviewDiffPanelProps) {
     () => buildLegacyFileLocations(props.files),
     [props.files],
   );
+  const claimScrollRestoration = useEffectEvent(() =>
+    props.onClaimScrollRestoration?.(),
+  );
+  const showMoreLines = useEffectEvent((sectionId: string) =>
+    props.onShowMoreLines(sectionId),
+  );
   useEffect(() => {
     if (renderer !== "legacy") return;
     if (anchor !== handledAnchor.current) {
@@ -109,7 +123,7 @@ function ReviewDiffContent(props: ReviewDiffPanelProps) {
       pending.current = false;
       return;
     }
-    props.onClaimScrollRestoration?.();
+    claimScrollRestoration();
     const sectionId = buildGitReviewFileSectionId(
       props.files[target.fileIndex].path,
       target.fileIndex,
@@ -118,18 +132,14 @@ function ReviewDiffContent(props: ReviewDiffPanelProps) {
       target.rowIndex >=
       getRenderedDiffLineLimit(props.visibleDiffLinesByFile[sectionId])
     ) {
-      props.onShowMoreLines(sectionId);
+      showMoreLines(sectionId);
       return;
     }
-    props.virtuosoRef.current?.scrollToIndex({
-      index: target.fileIndex,
-      align: "start",
-      behavior: "auto",
-    });
     let frame: number;
+    let cancelled = false;
     let attempts = 0;
     const restore = () => {
-      if (!pending.current) return;
+      if (cancelled || !pending.current) return;
       const row = viewport.querySelector<HTMLElement>(`#${target.elementId}`);
       if (row && row.getBoundingClientRect().height > 0) {
         const header = row
@@ -152,18 +162,41 @@ function ReviewDiffContent(props: ReviewDiffPanelProps) {
       else pending.current = false;
     };
     const cancel = () => {
+      cancelled = true;
       pending.current = false;
       cancelAnimationFrame(frame);
     };
     for (const event of ["wheel", "pointerdown", "keydown"])
       viewport.addEventListener(event, cancel);
-    frame = requestAnimationFrame(restore);
+    if (!viewport.querySelector(`#${target.elementId}`)) {
+      // Virtuoso retries file alignment as measurements arrive. Restore the
+      // source row only after those retries, not on the first mounted frame.
+      props.virtuosoRef.current?.scrollIntoView({
+        index: target.fileIndex,
+        align: "start",
+        behavior: "auto",
+        done: () => {
+          if (!cancelled) frame = requestAnimationFrame(restore);
+        },
+      });
+    } else frame = requestAnimationFrame(restore);
     return () => {
+      cancelled = true;
       cancelAnimationFrame(frame);
       for (const event of ["wheel", "pointerdown", "keydown"])
         viewport.removeEventListener(event, cancel);
     };
-  }, [renderer, anchor, locations, props]);
+  }, [
+    renderer,
+    anchor,
+    locations,
+    props.scrollScope,
+    props.activeDiffFindMatch,
+    props.drawerScrollParent,
+    props.files,
+    props.visibleDiffLinesByFile,
+    props.virtuosoRef,
+  ]);
   useEffect(() => {
     const scope = props.scrollScope;
     const viewport = props.drawerScrollParent;

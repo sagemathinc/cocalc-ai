@@ -1,8 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ReviewDiffPanel } from "./review-diff-panel";
 import type { ReviewDiffPanelProps } from "./review-diff-panel";
 import { captureClassicScrollAnchor } from "./renderer-scroll";
+import { classicScrollTarget } from "./renderer-scroll";
+import { buildLegacyFileLocations } from "./legacy-locations";
 import { useWorkingScrollGeneration } from "./working-scroll-generation";
 jest.mock("./working-scroll-generation", () => ({
   useWorkingScrollGeneration: jest.fn(),
@@ -33,6 +35,53 @@ jest.mock("./pierre-review-panel", () => ({
     </output>
   ),
 }));
+
+test.each([false, true])(
+  "waits for virtualizer completion and respects cancellation=%s",
+  (cancel) => {
+    jest.useFakeTimers();
+    const files = [{ path: "a.ts", lines: ["@@ -1 +1 @@", "-old", "+new"] }];
+    const locations = buildLegacyFileLocations(files);
+    const anchor = {
+      location: {
+        targetId: "restore",
+        fileId: locations[0].fileId,
+        side: "new" as const,
+        line: 1,
+      },
+      offset: 0,
+    };
+    writeScrollAnchor(anchor);
+    const viewport = document.createElement("div");
+    const scrollIntoView = jest.fn();
+    const props = {
+      files,
+      scrollScope: "restore",
+      drawerScrollParent: viewport,
+      visibleDiffLinesByFile: {},
+      virtuosoRef: { current: { scrollIntoView } },
+    } as unknown as ReviewDiffPanelProps;
+    const view = render(<ReviewDiffPanel {...props} />);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    const row = document.createElement("div");
+    row.id = classicScrollTarget(locations, anchor)!.elementId;
+    row.getBoundingClientRect = () => ({ top: 300, height: 20 }) as DOMRect;
+    viewport.append(row);
+    view.rerender(
+      <ReviewDiffPanel {...props} onClaimScrollRestoration={() => {}} />,
+    );
+    act(() => jest.advanceTimersByTime(50));
+    expect(viewport.scrollTop).toBe(0);
+    if (cancel) fireEvent.wheel(viewport);
+    act(() => {
+      scrollIntoView.mock.calls[0][0].done();
+      jest.advanceTimersByTime(50);
+    });
+    expect(viewport.scrollTop).toBe(cancel ? 0 : 300);
+    view.unmount();
+    jest.useRealTimers();
+  },
+);
 
 test("renderer control passes captured coordinates without losing focus and disables switching during editing", async () => {
   const anchor = {
@@ -165,21 +214,22 @@ test("Classic claims valid semantic restoration instead of competing with drawer
     offset: 0,
   });
   const claim = jest.fn();
-  const scrollToIndex = jest.fn();
+  const scrollIntoView = jest.fn();
   const props = {
     files: [{ path: "a.ts", lines: ["@@ -1 +1 @@", "-old", "+new"] }],
     drawerScrollParent: document.createElement("div"),
     scrollScope: "restore-classic",
     visibleDiffLinesByFile: {},
-    virtuosoRef: { current: { scrollToIndex } },
+    virtuosoRef: { current: { scrollIntoView } },
     onClaimScrollRestoration: claim,
   } as unknown as ReviewDiffPanelProps;
   const view = render(<ReviewDiffPanel {...props} />);
   expect(claim).toHaveBeenCalled();
-  expect(scrollToIndex).toHaveBeenCalledWith({
+  expect(scrollIntoView).toHaveBeenCalledWith({
     index: 0,
     align: "start",
     behavior: "auto",
+    done: expect.any(Function),
   });
   view.unmount();
   claim.mockClear();
