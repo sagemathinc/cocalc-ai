@@ -365,6 +365,7 @@ Current support:
   - `cocalc export board <path>`
   - `cocalc export slides <path>`
 - Import:
+  - `cocalc import chat <bundle-or-dir>`
   - `cocalc import tasks <bundle-or-dir>`
 
 Use export/import when:
@@ -390,18 +391,35 @@ cocalc import tasks /tmp/tasks-export/<root>
 
 Prefer backend `api.tasks` for small targeted edits. Prefer export/import for bigger restructures.
 
-### Chat Export
+### Chat Export / Import
 
-Chat is export-only right now.
+Chat bundles can be imported into a `.chat` file. Export reads the source chat
+and archived SQLite history locally; import writes the destination `.chat` file
+locally. Run in the environment containing those files. `--project-id` supplies
+project context for asset uploads and Codex session forking; it does not make a
+local destination path remote.
 
-Use:
+```bash
+cocalc export chat ./notes.chat --scope all-threads \
+  --include-blobs --out ./notes-export.zip
+cocalc import chat ./notes-export.zip --target ./imported.chat \
+  --project-id "$COCALC_PROJECT_ID"
+```
 
-- `messages.jsonl` as the canonical machine-readable source
-- `transcript.md` as the human-readable view
-- `--scope current-thread|all-non-archived-threads|all-threads`
-- `--include-blobs` when the archive should be self-contained
+Use `messages.jsonl` for machine-readable messages and `transcript.md` for the
+human-readable view. To export one thread, use `--scope current-thread` with
+`--thread-id`. Other scopes are `all-non-archived-threads` and `all-threads`.
 
-Do not plan on importing chats back.
+Import appends independent threads with fresh thread/message IDs, preserves
+existing threads, and rebinds bundled assets to the target server. Repeating an
+import creates another independent copy. Chat import has no `--dry-run` option;
+choose a separate destination file when checking a bundle.
+
+Add `--include-codex-context` to export resumable context when available. Restoring
+it requires a local Codex session store and access to the target project's Codex
+app-server; import installs a seed and forks a fresh session. Inspect returned
+`warnings` and `codex_context_count` before claiming that context was restored.
+A transcript alone is not resumable Codex context.
 
 ### Board And Slides Export
 
