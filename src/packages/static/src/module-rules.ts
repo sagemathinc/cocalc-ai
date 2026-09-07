@@ -70,6 +70,20 @@ export default function moduleRules(): Configuration["module"] {
       },
       {
         test: /\.css$/i,
+        include: /essential-frontend\//,
+        enforce: "pre",
+        use:
+          process.env.NODE_ENV === "production"
+            ? [
+                {
+                  loader: "builtin:lightningcss-loader",
+                  options: { minify: true },
+                },
+              ]
+            : [],
+      },
+      {
+        test: /\.css$/i,
         use: [
           "style-loader",
           {
