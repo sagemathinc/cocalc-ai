@@ -6,6 +6,21 @@ export function activityDiffSource(
   path: string,
 ): DiffPreviewSource {
   const source = diff.source;
+  if (source?.kind === "observed-documents") {
+    if (
+      typeof source.before !== "string" ||
+      typeof source.after !== "string" ||
+      source.before.length + source.after.length > 4 * 1024 * 1024
+    )
+      throw Error("Invalid or oversized recorded documents. Use Classic.");
+    return {
+      kind: "documents",
+      path,
+      label: `${path}: recorded read/write observations (not a Git revision)`,
+      before: source.before,
+      after: source.after,
+    };
+  }
   if (!source || typeof source.text !== "string")
     throw Error(
       "This older activity entry has no lossless patch source. Use Classic.",

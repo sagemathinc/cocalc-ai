@@ -597,6 +597,18 @@ turning the experimental modal into a second complete Git browser.
 
 ### Remaining targeted investigations
 
+Legacy activity producer (2026-09-07): the ACP handler now attaches bounded
+complete read/write observations to its diff events. The read baseline is the
+complete adapter result before optional line slicing, and it is cleared when a
+new turn stream begins. The pair is not claimed to be an atomic filesystem
+snapshot: an external edit may have occurred since the read. Complete inputs
+are included only up to 256 KiB combined UTF-8 size; larger entries retain
+Classic display rows without an invented source. The frontend preserves exact
+newlines, labels the observation provenance, and feeds the pair to the shared
+read-only Pierre renderer. Producer tests cover slicing, turn reset and byte
+bounds; adapter tests and the full Chromium suite cover the new source kind.
+Previously stored events without lossless input remain Classic-only.
+
 Comparison agent submission (2026-09-07): saved, single-head comparison reviews
 now expose an explicit working-directory opt-in and Send saved review to agent.
 Submission requires no active editor or unsaved changes, reloads saved review

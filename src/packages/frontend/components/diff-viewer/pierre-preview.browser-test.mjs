@@ -46,9 +46,11 @@ const built = await build({
       function Harness() {
         const [fontSize, setFontSize] = React.useState(14);
         const [revision, setRevision] = React.useState('new version');
+        const [observed, setObserved] = React.useState(false);
+        window.useObservedActivity = () => setObserved(true);
         window.changeDocumentRevision = setRevision;
         window.previewSetFontSize = setFontSize;
-        if (location.pathname === '/activity') return <ActivityDiff diff={{lines:[],types:[],gutters:[],chunkBoundaries:[],source:{kind:'unified',text:'@@ -10 +20 @@\\n-old activity\\n+'+revision+'\\n@@ -90 +100 @@\\n-last\\n+end\\n'}}} path='activity.ts' fontSize={14}><div>Classic activity</div></ActivityDiff>;
+        if (location.pathname === '/activity') return <ActivityDiff diff={{lines:[],types:[],gutters:[],chunkBoundaries:[],source:observed ? {kind:'observed-documents',before:'observed before\\r\\nlast',after:revision+'\\n'} : {kind:'unified',text:'@@ -10 +20 @@\\n-old activity\\n+'+revision+'\\n@@ -90 +100 @@\\n-last\\n+end\\n'}}} path='activity.ts' fontSize={14}><div>Classic activity</div></ActivityDiff>;
         if (location.pathname === '/documents') return <div style={{display:'flex',height:600,minWidth:0}}><DocumentDiff before={'old version\\n'+Array.from({length:5000},(_,i)=>'const n'+i+' = '+i+';\\n').join('')} after={revision+'\\n'+Array.from({length:5000},(_,i)=>'const n'+i+' = '+i+';\\n').join('')} path='history.ts' label='Selected historical versions' fontSize={fontSize}/></div>;
         const [files, setFiles] = React.useState([{id:'a',path:'src/a.ts',status:'added'}, {id:'b',path:'src/b.ts',status:'modified',commentCount:2}]);
         const [selected, setSelected] = React.useState('');
@@ -174,6 +176,17 @@ try {
     await expect(
       activityRegion.getByText("new version", { exact: true }),
     ).toHaveCount(0);
+    await page.evaluate(() => window.useObservedActivity());
+    await expect(page.getByRole("note")).toContainText(
+      "not an atomic filesystem snapshot",
+    );
+    await expect(
+      page
+        .getByRole("region", {
+          name: "activity.ts: recorded read/write observations (not a Git revision)",
+        })
+        .getByText("observed before", { exact: true }),
+    ).toBeVisible();
     await page
       .getByRole("combobox", { name: "Activity diff renderer" })
       .selectOption("classic");

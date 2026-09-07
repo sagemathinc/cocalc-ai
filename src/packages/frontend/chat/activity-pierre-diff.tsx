@@ -39,8 +39,10 @@ export default function ActivityPierreDiff({
       }}
     >
       <div role="note">
-        Recorded activity only; omitted context is unavailable. File links open
-        the current working copy, not this historical patch.
+        {diff.source?.kind === "observed-documents"
+          ? "Recorded read/write observations, not an atomic filesystem snapshot. "
+          : "Recorded activity only; omitted context is unavailable. "}
+        File links open the current working copy, not this historical content.
       </div>
       <ReadOnlyDiff source={parsed.source} fontSize={fontSize} />
     </div>

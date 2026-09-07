@@ -7,6 +7,22 @@ const empty: LineDiffResult = {
   gutters: [],
   chunkBoundaries: [],
 };
+test("observed document pairs preserve exact content without claiming Git provenance", () => {
+  const source = activityDiffSource(
+    {
+      ...empty,
+      source: { kind: "observed-documents", before: "a\r\nlast", after: "b\n" },
+    },
+    " a.ts ",
+  );
+  expect(source).toEqual({
+    kind: "documents",
+    path: " a.ts ",
+    before: "a\r\nlast",
+    after: "b\n",
+    label: " a.ts : recorded read/write observations (not a Git revision)",
+  });
+});
 test("preserves sparse coordinates, literal operators and final-newline evidence", () => {
   const text =
     "@@ -0,0 +1,1 @@\n++literal\n@@ -90,1 +91,1 @@\n-old\n+new\n\\ No newline at end of file\n";
