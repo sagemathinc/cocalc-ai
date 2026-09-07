@@ -1928,6 +1928,7 @@ export function GitCommitDrawer({
           setReviewDirty(completion.reviewDirty);
           setReviewError("");
         }
+        return true;
       } catch (err) {
         if (activeReviewCommitRef.current === normalizedCommit) {
           setReviewError(`${err ?? "Unable to save review state."}`);
@@ -1936,6 +1937,7 @@ export function GitCommitDrawer({
             setReviewStorageResolved(false);
           }
         }
+        return false;
       } finally {
         if (activeReviewCommitRef.current === normalizedCommit) {
           setReviewSaving(false);
@@ -3583,11 +3585,18 @@ export function GitCommitDrawer({
             }}
             onSaveReviewNote={(nextNote) => {
               if (!currentReviewCommit) return;
-              setReviewNote(nextNote);
               setReviewNoteDraft(nextNote);
               setReviewDirty(true);
-              setReviewNoteEditing(false);
-              void saveReview({ note: nextNote, reviewed });
+              const savingCommit = currentReviewCommit;
+              void saveReview({ note: nextNote, reviewed }).then((saved) => {
+                if (
+                  saved &&
+                  activeReviewCommitRef.current === savingCommit &&
+                  reviewNoteDraftRef.current === nextNote
+                ) {
+                  setReviewNoteEditing(false);
+                }
+              });
             }}
             actionableInlineCommentCount={actionableInlineComments.length}
             reviewSubmitBusy={reviewSubmitBusy}

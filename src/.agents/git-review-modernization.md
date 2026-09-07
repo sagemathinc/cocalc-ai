@@ -105,6 +105,23 @@ merging. Full-app concurrent-save/reconnect acceptance is still required,
 including the user recovery flow. Deploy the persistence-service change with
 the frontend before testing creation; a frontend-only rebuild is insufficient.
 
+Live two-window follow-up: the hub/bays and host managed components were
+upgraded successfully (host operation `049c1d26-4f20-4e76-8311-d25b57a68005`).
+The host step initially inherited stale token-file environment overrides;
+rerunning only that step with fresh hub environment and without those overrides
+succeeded. Post-upgrade Slate image/undo/theme smoke passed.
+
+`review-concurrency-live.browser-test.mjs <chat-url> <full-hash>` now opens two
+isolated real-app targets, requires an initially empty private note, saves the
+first window, rejects the stale second save, and verifies its Slate draft is
+retained. It restores the empty note and confirms it after reload. This passed
+against the deployed account persistence service. It found that the note UI
+closed optimistically before a failed save; the editor now closes only after a
+successful save, provided the commit and draft still match. The script has a
+`REVIEW_CLEANUP=1` mode for a failed run's explicitly identified smoke note.
+No agent turn was dispatched. Concurrent comment merging, reconnect scenarios,
+and stale-draft reconciliation remain distinct from this save-rejection check.
+
 ### Single-file stress evidence (2026-09-07)
 
 Run `STRESS=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`
