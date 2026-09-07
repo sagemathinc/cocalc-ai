@@ -16,6 +16,7 @@ import {
   heartbeatAcpSession,
   listAcpSessions,
   publishActiveAcpSessions,
+  publishPendingAcpSessions,
   setAcpSessionPublisher,
   upsertAcpSession,
   upsertAcpSessionFromRequest,
@@ -68,10 +69,91 @@ beforeEach(() => {
 });
 
 afterAll(() => {
+  setAcpSessionPublisher(undefined);
   closeAcpDatabase();
 });
 
 describe("acp session registry", () => {
+  it("automatically retries a lost final update without another heartbeat", async () => {
+    jest.useFakeTimers();
+    try {
+      const request = makeRequest();
+      const publish = jest
+        .fn()
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValue(undefined);
+      setAcpSessionPublisher(publish);
+      upsertAcpSessionFromRequest({
+        request,
+        state: "completed",
+        op_id: request.chat.message_id,
+      });
+      await jest.advanceTimersByTimeAsync(10_000);
+      expect(publish).toHaveBeenCalledTimes(2);
+      expect(publishPendingAcpSessions()).toBe(0);
+      await jest.advanceTimersByTimeAsync(10_000);
+      expect(publish).toHaveBeenCalledTimes(2);
+    } finally {
+      setAcpSessionPublisher(undefined);
+      jest.useRealTimers();
+    }
+  });
+  it("replays a failed terminal publication after replacing the publisher", async () => {
+    const request = makeRequest();
+    const failing = jest.fn(async () => {
+      throw new Error("hub offline");
+    });
+    setAcpSessionPublisher(failing);
+    upsertAcpSessionFromRequest({
+      request,
+      state: "completed",
+      op_id: request.chat.message_id,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(failing).toHaveBeenCalledTimes(1);
+    setAcpSessionPublisher(undefined);
+    const recovered = jest.fn(async () => {});
+    setAcpSessionPublisher(recovered);
+    expect(publishPendingAcpSessions()).toBe(1);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(recovered).toHaveBeenCalledWith(
+      expect.objectContaining({ state: "completed", terminal: 1 }),
+    );
+    expect(publishPendingAcpSessions()).toBe(0);
+  });
+
+  it("does not let a running publication acknowledge a newer terminal update", async () => {
+    const request = makeRequest();
+    let finish!: () => void;
+    const publish = jest
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+      )
+      .mockResolvedValue(undefined);
+    setAcpSessionPublisher(publish);
+    upsertAcpSessionFromRequest({
+      request,
+      state: "running",
+      op_id: request.chat.message_id,
+    });
+    upsertAcpSessionFromRequest({
+      request,
+      state: "completed",
+      op_id: request.chat.message_id,
+    });
+    expect(publish).toHaveBeenCalledTimes(1);
+    finish();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(publish.mock.calls.map(([row]) => row.state)).toEqual([
+      "running",
+      "completed",
+    ]);
+    expect(publishPendingAcpSessions()).toBe(0);
+  });
   it("stores account-visible metadata for a request", () => {
     const request = makeRequest();
     const row = upsertAcpSessionFromRequest({
@@ -209,6 +291,7 @@ describe("acp session registry", () => {
       op_id: completedRequest.chat.message_id,
       session_id: completedRequest.session_id,
     });
+    await new Promise((resolve) => setImmediate(resolve));
     published.length = 0;
 
     expect(publishActiveAcpSessions()).toBe(1);
