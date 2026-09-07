@@ -71,6 +71,28 @@ the deployment and account support.
 If device authorization is running, keep the authorization panel visible until
 the browser confirms that the account is connected.
 
+## Choose the payment source for a thread
+
+Connecting credentials makes them available. On hosted CoCalc, each thread
+can choose how its future turns are funded.
+
+1. In the thread, click **Codex** to open **Codex settings**.
+2. Choose a payment source and click **Save**. **ChatGPT Plan**, **Project
+   OpenAI API key**, and **Account OpenAI API key** appear when configured.
+   **CoCalc Membership** is available only when the site and account provide
+   an included allowance.
+3. Check the payment label in the chat controls before submitting work.
+
+**Automatic** prefers your ChatGPT plan, then the project API key, account API
+key, and membership allowance. You can continue an established session using
+ChatGPT or a personal API key without losing its context. Switching an
+established personal session to membership funding is disabled: start a new
+chat for the membership's constrained model profile. Returning from an
+explicit source to Automatic is also disabled after a session starts.
+
+In Lite, configure a ChatGPT plan or an OpenAI API key in account AI settings;
+if both are configured, Lite uses the ChatGPT plan.
+
 ## Use project secrets for keys
 
 For code that calls OpenAI directly from a notebook, script, or terminal, store
