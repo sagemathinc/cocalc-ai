@@ -117,7 +117,7 @@ export function enqueueAcpSteer({
               claim_token = CASE WHEN state = 'error' THEN NULL ELSE claim_token END,
               error = CASE WHEN state = 'error' THEN NULL ELSE error END,
               handled_at = CASE WHEN state = 'error' THEN NULL ELSE handled_at END,
-              updated_at = ?
+              updated_at = CASE WHEN state = 'processing' THEN updated_at ELSE ? END
         WHERE id = ?`,
     ).run(
       JSON.stringify(mergedCandidateIds),

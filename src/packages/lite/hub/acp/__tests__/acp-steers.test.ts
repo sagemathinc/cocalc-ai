@@ -190,4 +190,28 @@ describe("acp steer queue", () => {
       }),
     ).toMatchObject({ state: "handled", claim_token: null });
   });
+
+  it("does not extend a processing lease when delivery is re-enqueued", () => {
+    const request = makeRequest();
+    const row = enqueueAcpSteer({ request });
+    const claimedAt = 1_000_000;
+    const claimToken = claimAcpSteer({ id: row.id, now: claimedAt });
+    expect(claimToken).toEqual(expect.any(String));
+
+    enqueueAcpSteer({ request, candidate_ids: ["thread-1"] });
+
+    const stored = getAcpSteer({
+      project_id: row.project_id,
+      path: row.path,
+      user_message_id: row.user_message_id,
+    });
+    expect(stored).toMatchObject({
+      state: "processing",
+      claim_token: claimToken,
+      updated_at: claimedAt,
+    });
+    expect(
+      listPendingAcpSteers(50, claimedAt + ACP_STEER_CLAIM_LEASE_MS),
+    ).toHaveLength(1);
+  });
 });
