@@ -68,7 +68,12 @@ import { ReviewDiffPanel } from "./git-commit/review-diff-panel";
 import { GitHistoryControls } from "./git-commit/history-controls";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
-import type { GitHistorySelection } from "@cocalc/frontend/git/history-selection";
+import { currentHistorySelection } from "@cocalc/frontend/git/history-selection";
+import type { GitReviewHistoryRoute } from "@cocalc/frontend/git/review-route";
+import type {
+  GitHistorySelection,
+  PinnedHistorySelection,
+} from "@cocalc/frontend/git/history-selection";
 import type { ReviewDiffNavigation } from "./git-commit/review-diff-panel";
 import {
   commentAnchorKey,
@@ -263,11 +268,16 @@ interface GitCommitDrawerProps {
   projectId?: string;
   sourcePath?: string;
   cwdOverride?: string;
+  initialHistory?: GitReviewHistoryRoute;
   commitHash?: string;
   commitSelectionRequestToken?: number;
   open: boolean;
   onClose: () => void;
-  onSelectedCommitChange?: (commit: string) => void;
+  onSelectedCommitChange?: (
+    commit: string,
+    workingDirectory: string,
+    history?: GitReviewHistoryRoute,
+  ) => void;
   fontSize?: number;
   onRequestAgentTurn?: (
     prompt: string,
@@ -448,6 +458,7 @@ export function GitCommitDrawer({
   projectId,
   sourcePath,
   cwdOverride,
+  initialHistory,
   commitHash,
   commitSelectionRequestToken = 0,
   open,
@@ -544,9 +555,6 @@ export function GitCommitDrawer({
     requestTokenChanged: hasPendingCommitSelectionRequest,
   });
   const isHeadSelected = isHeadCommit(commit);
-  useEffect(() => {
-    if (open && commit) onSelectedCommitChange?.(commit);
-  }, [open, commit, onSelectedCommitChange]);
   const effectiveFontSize =
     onIncreaseFontSize != null || onDecreaseFontSize != null
       ? fontSize
@@ -647,18 +655,49 @@ export function GitCommitDrawer({
     scope: string;
     discovery: RepositoryDiscovery;
   }>();
-  const [historySelection, setHistorySelection] = useState<{
-    scope: string;
-    selection: GitHistorySelection;
-    tip: string;
-  }>();
+  const [historySelection, setHistorySelection] =
+    useState<PinnedHistorySelection>();
+  const restoredHistory = useMemo<PinnedHistorySelection | undefined>(
+    () =>
+      initialHistory
+        ? {
+            scope: repositoryScope,
+            requestToken: commitSelectionRequestToken,
+            tip: initialHistory.tip,
+            selection: {
+              worktree: originCwd,
+              ref: initialHistory.ref,
+              firstParent: initialHistory.firstParent,
+            },
+          }
+        : undefined,
+    [initialHistory, repositoryScope, commitSelectionRequestToken, originCwd],
+  );
   const selectedHistory =
-    historySelection?.scope === repositoryScope ? historySelection : undefined;
+    currentHistorySelection(
+      historySelection,
+      repositoryScope,
+      commitSelectionRequestToken,
+    ) ?? restoredHistory;
   const originDiscovery =
     repositoryDiscovery?.scope === repositoryScope
       ? repositoryDiscovery.discovery
       : undefined;
   const cwd = selectedHistory?.selection.worktree ?? originCwd;
+  useEffect(() => {
+    if (open && commit)
+      onSelectedCommitChange?.(
+        commit,
+        cwd,
+        selectedHistory
+          ? {
+              tip: selectedHistory.tip,
+              ref: selectedHistory.selection.ref,
+              firstParent: selectedHistory.selection.firstParent,
+            }
+          : undefined,
+      );
+  }, [open, commit, cwd, selectedHistory, onSelectedCommitChange]);
   const crossWorktree = Boolean(
     selectedHistory &&
     selectedHistory.selection.worktree !== originDiscovery?.repository.locator,
@@ -3159,7 +3198,12 @@ export function GitCommitDrawer({
               setData(undefined);
               setLoadedCommit(undefined);
               setRepoRoot(discovery.repository.locator);
-              setHistorySelection({ scope: repositoryScope, selection, tip });
+              setHistorySelection({
+                scope: repositoryScope,
+                requestToken: commitSelectionRequestToken,
+                selection,
+                tip,
+              });
               setSelectedCommit(tip);
             }}
           />

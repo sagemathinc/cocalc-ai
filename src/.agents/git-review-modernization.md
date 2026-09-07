@@ -410,14 +410,22 @@ unchanged checkout/index state, explicit application, and stale responses.
 Frontend typecheck and lint pass. A live test correctly rejected a worktree
 present only on the development machine, not in the browser project's separate
 checkout; successful live cross-worktree validation remains pending.
+Review URLs now retain the selected locator independently of the originating
+agent thread, and explicit history selections retain their pinned tip, ref label,
+and ancestry mode through reload. New commit-link request tokens invalidate the
+previous worktree selection even within the same repository. Deleted ref labels
+remain visible for pinned history; only explicit Refresh resolves them again.
+The live lite1b ref-selection/reload smoke passes against its own `main` ref,
+along with 82 focused tests, frontend typecheck/lint, and a static dev build.
+Run the live smoke with `REVIEW_HISTORY_REF=refs/heads/main` and the existing
+`git/pierre-review-live.browser-test.mjs <chat-url> <commit>` harness.
 
 Still pending: remaining Slate lifecycle checks and native diff clipboard tests;
 semantic scroll restoration and remaining renderer parity; comparison controls;
 historical source integration in the new renderer; comparison persistence and canonical-key
 migration; validated agent routing; activity adaptation; release acceptance and
 default/cleanup. Discovery/history use the service; patch loading still uses the
-legacy path. Incoming-commit containment routing and URL worktree context remain
-pending.
+legacy path. Incoming-commit containment routing remains pending.
 
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the

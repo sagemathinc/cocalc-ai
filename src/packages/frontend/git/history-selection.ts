@@ -7,6 +7,23 @@ export interface GitHistorySelection {
   firstParent: boolean;
 }
 
+export interface PinnedHistorySelection {
+  scope: string;
+  requestToken?: number;
+  selection: GitHistorySelection;
+  tip: string;
+}
+
+export function currentHistorySelection(
+  pinned: PinnedHistorySelection | undefined,
+  scope: string,
+  requestToken?: number,
+): PinnedHistorySelection | undefined {
+  return pinned?.scope === scope && pinned.requestToken === requestToken
+    ? pinned
+    : undefined;
+}
+
 /** Validate a registered locator before replacing the visible history context. */
 export async function resolveHistorySelection(
   reader: GitReadService,

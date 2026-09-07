@@ -41,6 +41,7 @@ import {
   readGitReviewRoute,
   writeGitReviewRoute,
   type GitReviewRoute,
+  type GitReviewHistoryRoute,
 } from "@cocalc/frontend/git/review-route";
 import type { ChatRoomModalHandlers } from "./chatroom-modals";
 import { ChatRoomModals } from "./chatroom-modals";
@@ -932,6 +933,8 @@ export function ChatPanel({
     () => buildAutomationDraft(),
   );
   const [gitBrowserOpen, setGitBrowserOpen] = useState<boolean>(false);
+  const [gitBrowserHistory, setGitBrowserHistory] =
+    useState<GitReviewHistoryRoute>();
   const [gitBrowserCwd, setGitBrowserCwd] = useState<string | undefined>(
     undefined,
   );
@@ -969,6 +972,7 @@ export function ChatPanel({
       if (lastAppliedGitRouteRef.current === key) return;
       lastAppliedGitRouteRef.current = key;
       setGitBrowserCwd(route?.cwd);
+      setGitBrowserHistory(route?.history);
       setGitBrowserCommitHash(route?.commit);
       setGitBrowserThreadKey(undefined);
       setGitBrowserCommitSelectionRequestToken((current) => current + 1);
@@ -984,10 +988,15 @@ export function ChatPanel({
   }, [project_id, path, readOnly, isVisible, tabIsVisible]);
 
   const syncGitBrowserSelection = useCallback(
-    (commit: string) => {
-      updateGitBrowserRoute({ commit, cwd: gitBrowserCwd });
+    (
+      commit: string,
+      workingDirectory: string,
+      history?: GitReviewHistoryRoute,
+    ) => {
+      // Update the shareable read context, not the originating agent context.
+      updateGitBrowserRoute({ commit, cwd: workingDirectory, history });
     },
-    [updateGitBrowserRoute, gitBrowserCwd],
+    [updateGitBrowserRoute],
   );
   const [activityJumpDate, setActivityJumpDate] = useState<string | undefined>(
     undefined,
@@ -2279,6 +2288,7 @@ export function ChatPanel({
           ? codexConfig.workingDirectory.trim()
           : undefined;
       setGitBrowserCwd(wd);
+      setGitBrowserHistory(undefined);
       setGitBrowserThreadKey(threadKey);
       setGitBrowserCommitHash(undefined);
       setGitBrowserCommitSelectionRequestToken((current) => current + 1);
@@ -2314,6 +2324,7 @@ export function ChatPanel({
     }) => {
       const normalizedThreadKey = `${threadKey ?? ""}`.trim();
       if (!normalizedThreadKey) return;
+      setGitBrowserHistory(undefined);
       setGitBrowserCwd(
         typeof cwdOverride === "string" && cwdOverride.trim()
           ? cwdOverride.trim()
@@ -2938,6 +2949,7 @@ export function ChatPanel({
             projectId={project_id}
             sourcePath={path}
             cwdOverride={gitBrowserCwd}
+            initialHistory={gitBrowserHistory}
             commitHash={gitBrowserCommitHash}
             commitSelectionRequestToken={gitBrowserCommitSelectionRequestToken}
             open={gitBrowserOpen}

@@ -5,12 +5,25 @@
 
 import { parseCommitHash } from "@cocalc/frontend/chat/git-commit/commit-selection";
 
-export const GIT_REVIEW_ROUTE_PARAMS = ["git-hash", "git-cwd"] as const;
+export const GIT_REVIEW_ROUTE_PARAMS = [
+  "git-hash",
+  "git-cwd",
+  "git-tip",
+  "git-ref",
+  "git-ancestry",
+] as const;
 export const APP_NAVIGATION_EVENT = "cocalc:app-navigation";
 
 export interface GitReviewRoute {
   commit: string;
   cwd?: string;
+  history?: GitReviewHistoryRoute;
+}
+
+export interface GitReviewHistoryRoute {
+  tip: string;
+  ref: string;
+  firstParent: boolean;
 }
 
 let lastBrowserLocation: URL | undefined;
@@ -47,7 +60,27 @@ export function readGitReviewRoute(url: URL): GitReviewRoute | undefined {
   // or arbitrary revision expressions. Repository resolution remains separate.
   if (!commit) return;
   if (cwd != null && (!cwd || cwd.length > 8192 || cwd.includes("\0"))) return;
-  return { commit, cwd };
+  const tip = url.searchParams.get("git-tip");
+  if (tip == null) return { commit, cwd };
+  const ref = url.searchParams.get("git-ref") ?? "HEAD";
+  const ancestry = url.searchParams.get("git-ancestry") ?? "first-parent";
+  if (
+    !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(tip) ||
+    !ref ||
+    ref.length > 8192 ||
+    ref.includes("\0") ||
+    !["first-parent", "all"].includes(ancestry)
+  )
+    return;
+  return {
+    commit,
+    cwd,
+    history: {
+      tip: tip.toLowerCase(),
+      ref,
+      firstParent: ancestry === "first-parent",
+    },
+  };
 }
 
 export function setGitReviewRoute(url: URL, route?: GitReviewRoute): URL {
@@ -56,6 +89,14 @@ export function setGitReviewRoute(url: URL, route?: GitReviewRoute): URL {
   if (route) {
     next.searchParams.set("git-hash", route.commit);
     if (route.cwd != null) next.searchParams.set("git-cwd", route.cwd);
+    if (route.history) {
+      next.searchParams.set("git-tip", route.history.tip);
+      next.searchParams.set("git-ref", route.history.ref);
+      next.searchParams.set(
+        "git-ancestry",
+        route.history.firstParent ? "first-parent" : "all",
+      );
+    }
   }
   return next;
 }

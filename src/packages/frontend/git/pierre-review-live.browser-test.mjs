@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 
 const [chat, commit] = process.argv.slice(2);
 const historyWorktree = process.argv[4];
+const historyRef = process.env.REVIEW_HISTORY_REF;
 if (!chat || !/^[a-f0-9]{7,64}$/i.test(commit ?? ""))
   throw Error("Supply an isolated chat URL and a commit in its repository.");
 const endpoint = process.env.CDP_URL ?? "http://localhost:9222";
@@ -86,7 +87,30 @@ try {
   appearance = await evaluate(
     `document.querySelector('select[aria-label="Appearance"]').value`,
   );
-  if (historyWorktree) {
+  if (historyRef) {
+    await until(`!!document.querySelector('select[aria-label="History ref"]')`);
+    await select("History ref", historyRef);
+    assert.equal(
+      await evaluate(`new URL(location.href).searchParams.get('git-hash')`),
+      commit,
+    );
+    await click(button("Browse / Refresh"));
+    await until(
+      `new URL(location.href).searchParams.get('git-ref') === ${JSON.stringify(historyRef)}`,
+    );
+    const route = await evaluate(`location.href`);
+    const tip = new URL(route).searchParams.get("git-tip");
+    assert.match(tip, /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
+    assert.equal(new URL(route).searchParams.get("git-hash"), tip);
+    await send("Page.reload");
+    await until(
+      `document.querySelector('select[aria-label="History ref"]')?.value === ${JSON.stringify(historyRef)}`,
+    );
+    assert.equal(await evaluate(`location.href`), route);
+    console.log(
+      "PASS: explicit ref browsing pins history and restores its context on reload.",
+    );
+  } else if (historyWorktree) {
     const git = (...args) =>
       execFileSync("git", ["-C", historyWorktree, ...args], {
         encoding: "utf8",
@@ -115,6 +139,18 @@ try {
     );
     await until(
       `document.querySelector('select[aria-label="Review working copy"]').value === ${JSON.stringify(historyWorktree)}`,
+    );
+    assert.equal(
+      await evaluate(`new URL(location.href).searchParams.get('git-cwd')`),
+      historyWorktree,
+    );
+    await send("Page.reload");
+    await until(
+      `document.querySelector('select[aria-label="Review working copy"]')?.value === ${JSON.stringify(historyWorktree)}`,
+    );
+    assert.equal(
+      await evaluate(`new URL(location.href).searchParams.get('git-hash')`),
+      expected,
     );
     assert.equal(git("rev-parse", "HEAD").trim(), expected);
     assert.equal(git("status", "--porcelain=v1"), before);

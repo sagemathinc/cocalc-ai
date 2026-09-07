@@ -11,6 +11,29 @@ import {
 const chat = "/projects/project-id/files/home/user/a%20b.chat";
 const href = `http://localhost${chat}?test=1&git-hash=ABC1234&git-cwd=%2Fwork%2Fa%20b#thread`;
 
+test("worktree history reload preserves pinned tips independently of the selected commit", () => {
+  const route = {
+    commit: "abc1234",
+    cwd: "/work/feature",
+    history: {
+      tip: "b".repeat(40),
+      ref: "refs/heads/feature",
+      firstParent: false,
+    },
+  };
+  const url = setGitReviewRoute(new URL(href), route);
+  expect(readGitReviewRoute(url)).toEqual(route);
+  expect(setGitReviewRoute(url).search).toBe("?test=1");
+  for (const tip of ["HEAD", "abc1234", "--help", "b".repeat(41)]) {
+    url.searchParams.set("git-tip", tip);
+    expect(readGitReviewRoute(url)).toBeUndefined();
+  }
+  url.searchParams.set("git-tip", "b".repeat(64));
+  expect(readGitReviewRoute(url)?.history?.tip).toHaveLength(64);
+  url.searchParams.set("git-ancestry", "unexpected");
+  expect(readGitReviewRoute(url)).toBeUndefined();
+});
+
 test("routes belong to one project/file, including encoded filenames and app prefixes", () => {
   const url = new URL(href);
   expect(ownsGitReviewRoute(url, "project-id", "/home/user/a b.chat")).toBe(

@@ -102,6 +102,12 @@ export function GitHistoryControls({
             }
           >
             <option value="HEAD">Selected worktree HEAD</option>
+            {draft.ref !== "HEAD" &&
+              !origin.refs.some((ref) => ref.name === draft.ref) && (
+                <option value={draft.ref}>
+                  {draft.ref} (saved ref; no longer listed)
+                </option>
+              )}
             {origin.refs.map((ref) => (
               <option key={ref.name} value={ref.name}>
                 {ref.name.replace(/^refs\//, "")}
