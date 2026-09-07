@@ -9,6 +9,7 @@ import type {
   AcpAutomationState,
 } from "@cocalc/conat/ai/acp/types";
 import { Tooltip } from "@cocalc/frontend/components/tip";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const DEFAULT_LOCAL_TIME = "05:00";
 const DEFAULT_INTERVAL_MINUTES = 120;
@@ -20,6 +21,28 @@ const DEFAULT_RANGE_END_LOCAL_TIME = "20:00";
 const DEFAULT_PAUSE_AFTER_RUNS = 7;
 const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_COMMAND_MAX_OUTPUT_BYTES = 250_000;
+
+export function getAutomationBannerAppearance(status: string): {
+  borderColor: string;
+  background: string;
+} {
+  if (status === "error") {
+    return {
+      borderColor: UI_COLORS.danger,
+      background: UI_COLORS.dangerBg,
+    };
+  }
+  if (status === "paused") {
+    return {
+      borderColor: UI_COLORS.warning,
+      background: UI_COLORS.warningBg,
+    };
+  }
+  return {
+    borderColor: UI_COLORS.info,
+    background: UI_COLORS.infoBg,
+  };
+}
 
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6] as const;
 const DAY_SHORT_LABELS = ["S", "M", "T", "W", "T", "F", "S"] as const;

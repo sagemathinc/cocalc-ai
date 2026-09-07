@@ -504,7 +504,7 @@ export function ChatRoomComposer({
                 borderLeft: themeLineColor
                   ? `3px solid ${themeLineColor}`
                   : undefined,
-                paddingLeft: themeLineColor ? 8 : 0,
+                paddingLeft: themeLineColor ? 12 : 0,
               }}
             >
               <ThreadBadge
