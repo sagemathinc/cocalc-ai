@@ -698,9 +698,17 @@ export function ProjectsNav(props: ProjectsNavProps) {
           value={activeProjectId}
           showSearch
           optionLabelProp="label"
+          labelRender={({ label }) => (searchValue ? null : label)}
           filterOption={false}
           searchValue={searchValue}
           onSearch={setSearchValue}
+          onInputKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setDropdownOpen(false);
+              setSearchValue("");
+            }
+          }}
           onClear={() => setSearchValue("")}
           allowClear
           options={groupedOptions}
