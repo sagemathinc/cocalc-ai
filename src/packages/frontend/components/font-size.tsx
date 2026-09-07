@@ -31,6 +31,7 @@ export default function FontSizeMenu({ onClick, style }: Props) {
 
   return (
     <DropdownMenu
+      ariaLabel="Font size"
       style={style}
       button={true}
       title={<Icon name={"text-height"} />}

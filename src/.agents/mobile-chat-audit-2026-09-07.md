@@ -27,6 +27,9 @@ has not been made discoverable as part of this work.
   including the Chats drawer's destroy-on-close path. Six focused layout tests
   pass after this follow-up.
 - Composer formatting trigger and Rich Text/Markdown controls are all 24px tall.
+- Open Chats, Tools, and Text formatting panels each pass a focused axe scan
+  (WCAG 2 A/AA and 2.1 AA tags) in Chrome. The scan found unnamed font-size,
+  heading, and text-color buttons; labels were added and the scan rerun clean.
 - Focused tests cover draft continuity, viewport changes, focus-isolation
   ownership/cleanup, mobile composer expansion, steer/queue callbacks, settings
   summary, and keyboard formatting/upload access.
@@ -36,8 +39,9 @@ has not been made discoverable as part of this work.
 
 ## Remaining Acceptance Checks
 
-- Broader overlay accessibility: the closed conversation passed its focused axe
-  scan, not every nested menu, settings form, or activity dialog.
+- Broader overlay accessibility: the conversation and three primary panels
+  passed focused axe scans, not every nested menu, settings form, or activity
+  dialog.
 - Long-running Codex approval/stop/steer/queue interactions on the actual phone
   need explicit end-to-end coverage beyond callback tests and ordinary usage.
 - iPad keyboard/split-view and phone rotation/keyboard dismissal combinations

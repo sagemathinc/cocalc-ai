@@ -12,6 +12,9 @@ it("names formatting controls and exposes the active mark to keyboard users", as
   const editor = {} as any;
   render(<MarksBar editor={editor} marks={{ bold: true }} />);
   const bold = screen.getByRole("button", { name: /^Bold/ });
+  for (const name of ["Font size", "Heading", "Text color"]) {
+    expect(screen.getByRole("button", { name, exact: true })).toBeTruthy();
+  }
   expect(bold.getAttribute("aria-pressed")).toBe("true");
   expect(
     screen
