@@ -11,7 +11,7 @@ not a current checklist. The objective is not complete. Current release work:
 
 | Requirement | Current evidence and remaining work |
 | --- | --- |
-| Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Validate the live drawer on unique/ambiguous/no-worktree commits and moved refs; do not infer that from helper tests. |
+| Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Live detached-worktree unique/ambiguous/absent cases and moved-ref pinning passed (details below). Working-copy file access and actual agent dispatch remain separate acceptance cases. |
 | Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Conflicting aliases now offer an explicit active-record choice without changing either record; changed alternatives reopen the conflict. Existing keys remain intact rather than being physically rewritten. Live multi-window acceptance is pending. |
 | Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Verify actual drawer close/reopen and renderer switching. Native partial-text selection across virtual windows remains a browser acceptance case. |
 | Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
@@ -139,6 +139,22 @@ unrelated query parameter, with no page errors. The readiness locator now uses
 the current Diff renderer selector rather than the experiment's preview button.
 This checks URL/drawer lifecycle, not semantic scroll restoration or agent
 working-directory dispatch.
+
+Live worktree follow-up: `worktree-live.browser-test.mjs <chat-url> <repo-path>`
+uses project-scoped CLI execution to create a test-only commit and disposable
+detached `--no-checkout` worktrees in the actual browser project's repository.
+One matching tree was automatically selected and pinned in the URL. Adding a
+second produced the explicit ambiguity notice instead of selecting either;
+removing both produced the historical-only notice with the commit still open.
+A disposable ref moved after browsing stayed pinned across reload and adopted
+its new tip only after explicit Browse / Refresh. The full live test passed.
+
+Cleanup removes only its own worktrees and temporary ref (with expected-tip
+checking), then verifies the original worktree list is unchanged. User branches,
+index and checkout are not modified; unreachable test commit objects remain for
+normal Git garbage collection. No review or agent turn is submitted. Because
+these worktrees deliberately have no checked-out files, this proves discovery,
+selection and pinning, not working-copy file opening or agent execution.
 
 ### Single-file stress evidence (2026-09-07)
 
