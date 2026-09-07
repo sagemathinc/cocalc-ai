@@ -50,6 +50,20 @@ would not be evidence that these checks pass.
 
 ### Restored live-session checks
 
+Independent-comment recovery follow-up: a focused regression proved that a
+newer local draft replaced the entire persisted comment map on reload, dropping
+independently created remote comments. Recovery and subsequent save-state
+resolution now union IDs, retaining local precedence for IDs present in the
+draft. The test covers load, save-state construction, resave and fresh load.
+The expanded live two-window check passed on disposable commit
+`70a21fd8c63075aa4b393b8bd5c5a52fe90246db`: stale save retained the editor,
+retry retained its ID, reload showed both comments, and resave followed by
+another reload retained both after local recovery storage was cleared. Ninety-
+seven focused tests, frontend typecheck/lint and the development build passed.
+This verifies independent additions with a newer draft, not conflicting edits
+to the same comment or older-draft timestamp behavior; those and explicit alias
+choices remain distinct recovery cases.
+
 Inline conflict follow-up: the real two-window test reproduced an editor-loss
 bug. `saveReview` returned false on stale-write rejection, but inline creation
 and editing discarded that result and closed the editor anyway. The boolean

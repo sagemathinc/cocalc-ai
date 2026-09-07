@@ -532,10 +532,8 @@ export function mergeRecordWithDraft(
     ...normalizedRecord,
     reviewed: draft.reviewed,
     note: draft.note,
-    comments:
-      Object.keys(draftComments).length > 0
-        ? draftComments
-        : normalizedRecord.comments,
+    // A stale window's snapshot may not contain independently added comments.
+    comments: { ...normalizedRecord.comments, ...draftComments },
     updated_at: draft.updated_at,
     revision: Math.max(normalizedRecord.revision, draft.revision),
   };

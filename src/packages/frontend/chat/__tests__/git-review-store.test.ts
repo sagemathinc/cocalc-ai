@@ -13,6 +13,7 @@ import {
   chooseReviewAlias,
   GitReviewAliasConflict,
 } from "../git-review-store";
+import { resolveGitReviewSaveState } from "../git-commit/review-state";
 
 const stores = new Map<string, Map<string, any>>();
 const sequences = new WeakMap<Map<string, any>, Map<string, number>>();
@@ -164,6 +165,48 @@ describe("git review import/export", () => {
     expect(bundle.records[0].note).toBe("first window");
     expect(bundle.records[0].storageSequence).toBeUndefined();
     await saveReviewRecord({ ...saved, note: "first window again" });
+  });
+
+  it("preserves independent remote comments when recovering and resaving a stale draft", async () => {
+    const options = {
+      accountId: "inline-recovery",
+      commitSha: "c".repeat(40),
+      resolveCommit: async () => "c".repeat(40),
+    };
+    const comment = (id: string) => ({
+      id,
+      file_path: "a.ts",
+      side: "new" as const,
+      line: 1,
+      body_md: id,
+      status: "draft" as const,
+      created_at: 1,
+      updated_at: 1,
+    });
+    const base = (await loadReviewRecord(options))!;
+    await saveReviewRecord({
+      ...base,
+      comments: { remote: comment("remote") },
+    });
+    saveReviewDraft(
+      options.commitSha,
+      { reviewed: false, note: "", comments: { local: comment("local") } },
+      options.accountId,
+    );
+    const recovered = (await loadReviewRecord(options))!;
+    expect(Object.keys(recovered.comments).sort()).toEqual(["local", "remote"]);
+    const state = resolveGitReviewSaveState({
+      draft: loadReviewDraft(options.commitSha, options.accountId),
+      reviewed: false,
+      reviewNote: "",
+      reviewNoteDraft: "",
+      reviewComments: recovered.comments,
+    });
+    expect(Object.keys(state.comments).sort()).toEqual(["local", "remote"]);
+    await saveReviewRecord({ ...recovered, ...state });
+    expect(
+      Object.keys((await loadReviewRecord(options))!.comments).sort(),
+    ).toEqual(["local", "remote"]);
   });
 
   it("retains a deleted key's sequence when recreating a review", async () => {

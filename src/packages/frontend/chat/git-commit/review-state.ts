@@ -37,11 +37,7 @@ export function resolveGitReviewSaveState({
   return {
     reviewed: next.reviewed ?? draft?.reviewed ?? reviewed,
     note: next.note ?? draft?.note ?? reviewNoteDraft ?? reviewNote,
-    comments:
-      next.comments ??
-      (draftComments && Object.keys(draftComments).length > 0
-        ? draftComments
-        : (reviewComments ?? {})),
+    comments: next.comments ?? { ...reviewComments, ...draftComments },
   };
 }
 

@@ -101,8 +101,38 @@ try {
     "Retry must not insert another comment identity",
   );
   await expect(editor).toBeVisible();
+  await second.reload({ waitUntil: "domcontentloaded" });
+  for (const text of [
+    "Inline acceptance first window",
+    "Inline acceptance stale second window",
+  ])
+    await expect(second.getByText(text, { exact: true }).first()).toBeVisible({
+      timeout: 60000,
+    });
+  await second.getByRole("checkbox", { name: "Reviewed", exact: true }).check();
+  await expect
+    .poll(() =>
+      second.evaluate(
+        (hash) =>
+          !Object.keys(localStorage).some(
+            (key) =>
+              key.startsWith("cocalc:git-review:draft:v2:account:") &&
+              key.endsWith(`:commit:${hash}`),
+          ),
+        hash,
+      ),
+    )
+    .toBe(true);
+  await second.reload({ waitUntil: "domcontentloaded" });
+  for (const text of [
+    "Inline acceptance first window",
+    "Inline acceptance stale second window",
+  ])
+    await expect(second.getByText(text, { exact: true }).first()).toBeVisible({
+      timeout: 60000,
+    });
   console.log(
-    "Passed: stale inline save rejected with real Slate editor and text retained; retry preserves comment identity.",
+    "Passed: stale inline save retained editor and identity; reload and resave preserved both independent comments after the recovery draft was cleared.",
   );
 } finally {
   for (const page of pages) await page.close();
