@@ -168,6 +168,21 @@ and immediate invalidation. All 22 TimeTravel tests passed. This is targeted
 race-regression coverage, not a substitute for the source-specific live restore
 acceptance still listed above.
 
+Live TimeTravel initialization follow-up: opening the registered `.time-travel`
+route for the plan file remained on Loading indefinitely. Inspection showed Git
+versions were available but no main editor actions/sync document existed.
+TimeTravel's background source open was lazy, while its initializer waited for
+that editor forever. TimeTravel now requests `wait_for_ready: true`, and that
+explicit readiness request initializes background editor Redux without bringing
+the tab forward. Ordinary lazy background opens still do not hydrate.
+
+The added readiness assertion failed before the fix and passed afterward;
+63 focused open-file/TimeTravel tests, frontend lint and the development build
+passed. Reloading the same live page then displayed TimeTravel controls and its
+revision log. This removes an acceptance blocker, but is not source-specific
+comparison/restore evidence. The isolated browser target was closed; no restore
+was performed.
+
 ### Single-file stress evidence (2026-09-07)
 
 Run `STRESS=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`
