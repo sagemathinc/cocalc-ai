@@ -109,6 +109,19 @@ export function TargetReviewPane({
   const activeMatch = matches.length
     ? matches[matchIndex % matches.length]
     : undefined;
+  const matchCounts = new Map<number, number>();
+  const matchedLines = new Map<number, Set<number>>();
+  for (const match of matches) {
+    matchCounts.set(
+      match.fileIndex,
+      (matchCounts.get(match.fileIndex) ?? 0) + 1,
+    );
+    if (match.lineIndex != null) {
+      const lines = matchedLines.get(match.fileIndex) ?? new Set<number>();
+      lines.add(match.lineIndex);
+      matchedLines.set(match.fileIndex, lines);
+    }
+  }
   const moveMatch = (delta: number) =>
     setMatchIndex((index) =>
       matches.length ? (index + delta + matches.length) % matches.length : 0,
@@ -715,8 +728,8 @@ export function TargetReviewPane({
           onUpdateComment={(id, text) => updateComment(id, { body_md: text })}
           onResolveComment={(id) => updateComment(id, { status: "resolved" })}
           onReopenComment={(id) => updateComment(id, { status: "draft" })}
-          diffFindMatchCounts={new Map()}
-          diffFindMatchedLineIndexes={new Map()}
+          diffFindMatchCounts={matchCounts}
+          diffFindMatchedLineIndexes={matchedLines}
           activeDiffFindMatch={activeMatch}
         />
       </ChangedFilesLayout>

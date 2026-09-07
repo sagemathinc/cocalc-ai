@@ -146,6 +146,15 @@ both modes, not merely the React options.
 
 ## Implementation readiness
 
+Search highlighting follow-up (2026-09-07): Pierre now marks all matching loaded
+code rows, including both coordinates of context lines, using a semantic warning
+outline without replacing syntax colors or modifying copied text. Its public
+post-render callback reapplies marks after virtualization; query changes clear
+obsolete marks. Comparison reviews now supply the same match maps as commit
+reviews. Focused tests cover coordinate mapping and comparison wiring, and real
+Chromium verifies marking/clearing against Pierre shadow rows. This is row-level
+highlighting, not substring highlighting or search of omitted historical content.
+
 ### CoCalc appearance integration
 
 Pierre and Trees must follow CoCalc's resolved appearance, not independently

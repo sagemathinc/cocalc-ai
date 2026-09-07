@@ -72,16 +72,14 @@ const props = {
 beforeEach(() => {
   localStorage.clear();
   jest.clearAllMocks();
-  jest
-    .mocked(validateAgentWorktree)
-    .mockResolvedValue({
-      projectId: "p",
-      commonDirectory: "/repo/.git",
-      workingDirectory: "/repo",
-      expectedHead: "b".repeat(40),
-      reviewedCommit: "b".repeat(40),
-      expectedBranch: "refs/heads/main",
-    });
+  jest.mocked(validateAgentWorktree).mockResolvedValue({
+    projectId: "p",
+    commonDirectory: "/repo/.git",
+    workingDirectory: "/repo",
+    expectedHead: "b".repeat(40),
+    reviewedCommit: "b".repeat(40),
+    expectedBranch: "refs/heads/main",
+  });
   let id = 0;
   Object.defineProperty(crypto, "randomUUID", {
     configurable: true,
@@ -306,6 +304,10 @@ test("comparison search has keyboard focus and navigates filename and line match
   await user.type(search, "needle");
   expect(mockViewerProps.activeDiffFindMatch.kind).toBe("file");
   expect(screen.getByText("1 of 3 matches")).toBeInTheDocument();
+  expect(mockViewerProps.diffFindMatchCounts.get(0)).toBe(3);
+  expect(mockViewerProps.diffFindMatchedLineIndexes.get(0)).toEqual(
+    new Set([1, 2]),
+  );
   await user.keyboard("{Enter}");
   expect(mockViewerProps.activeDiffFindMatch.lineIndex).toBe(1);
   await user.keyboard("{Shift>}{Enter}{/Shift}");

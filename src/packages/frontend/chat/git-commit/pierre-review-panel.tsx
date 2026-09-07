@@ -36,6 +36,11 @@ import {
 } from "./legacy-locations";
 import type { ReviewDiffPanelProps } from "./review-diff-panel";
 import {
+  highlightPierreSearch,
+  pierreSearchLines,
+  PIERRE_SEARCH_CSS,
+} from "./pierre-search";
+import {
   capturePierreScrollAnchor,
   readScrollAnchor,
   writeScrollAnchor,
@@ -85,6 +90,19 @@ function ReviewContent(props: ReviewDiffPanelProps) {
     null,
   );
   const locations = useMemo(() => buildLegacyFileLocations(files), [files]);
+  const searchLines = useMemo(
+    () => pierreSearchLines(locations, props.diffFindMatchedLineIndexes),
+    [locations, props.diffFindMatchedLineIndexes],
+  );
+  useEffect(() => {
+    for (const host of viewport.current?.querySelectorAll<HTMLElement>(
+      "diffs-container",
+    ) ?? []) {
+      const id = host.querySelector<HTMLElement>("[data-review-file-id]")
+        ?.dataset.reviewFileId;
+      highlightPierreSearch(host, id ? searchLines.get(id) : undefined);
+    }
+  }, [searchLines]);
   const comments = useMemo(
     () => Array.from(props.inlineCommentsByFile.values()).flat(),
     [props.inlineCommentsByFile],
@@ -339,6 +357,15 @@ function ReviewContent(props: ReviewDiffPanelProps) {
         selectedLines={selection}
         onSelectedLinesChange={setSelection}
         options={{
+          unsafeCSS: PIERRE_SEARCH_CSS,
+          onPostRender: (node, _instance, phase, context) => {
+            highlightPierreSearch(
+              node,
+              phase === "unmount"
+                ? undefined
+                : searchLines.get(context.item.id),
+            );
+          },
           diffStyle: split ? "split" : "unified",
           lineDiffType: "word",
           enableLineSelection: true,

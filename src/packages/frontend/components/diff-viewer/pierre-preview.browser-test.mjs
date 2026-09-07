@@ -33,6 +33,8 @@ const built = await build({
       import ChangedFilesTree from './components/diff-viewer/changed-files-tree';
       import { capturePierreScrollAnchor } from './components/diff-viewer/scroll-anchor';
       window.captureTestAnchor = (viewport) => capturePierreScrollAnchor(viewport, 'browser-anchor', 44);
+      import { highlightPierreSearch } from './chat/git-commit/pierre-search';
+      window.highlightTestSearch = highlightPierreSearch;
       import { DiffHighlightingProvider } from './components/diff-viewer/highlighting-provider';
       import { useWorkerPool } from '@pierre/diffs/react';
       import { getBrowserAppearanceStore } from '@cocalc/util/appearance-browser';
@@ -216,6 +218,32 @@ try {
     expect(captured?.location.fileId).toBe("history.ts");
     expect(captured?.location.line).toBeGreaterThan(1);
     expect(Number.isFinite(captured?.offset)).toBe(true);
+    const highlighted = await documentRegion.evaluate((node) => {
+      const host = node.querySelector("diffs-container");
+      const row = host.shadowRoot.querySelector("[data-line]");
+      const text = row.textContent;
+      const side =
+        row.dataset.lineType === "change-deletion" ||
+        row.closest("[data-deletions]")
+          ? "old"
+          : "new";
+      window.highlightTestSearch(
+        host,
+        new Set([`${side}:${row.dataset.line}`]),
+      );
+      const marked = row.hasAttribute("data-cocalc-find-match");
+      window.highlightTestSearch(host);
+      return {
+        marked,
+        cleared: !row.hasAttribute("data-cocalc-find-match"),
+        unchanged: text === row.textContent,
+      };
+    });
+    expect(highlighted).toEqual({
+      marked: true,
+      cleared: true,
+      unchanged: true,
+    });
     await page.keyboard.press("Home");
     await page.evaluate(() =>
       window.changeDocumentRevision("changed historical version"),
