@@ -82,6 +82,28 @@ virtual environment; see [Custom Jupyter kernels with uv](/docs/jupyter/custom-k
 For a shared software stack across many projects, use a runtime image instead of
 hand-configuring each notebook.
 
+## Use Agent on a code cell
+
+When AI tools are allowed in the project and the notebook is editable, open
+the **Agent** dropdown on a code cell. In Studio, hover over the code column to reveal the cell controls.
+
+Choose one action: **Ask** for a question, **Explain** for a walkthrough,
+**Fix Bugs**, **Modify**, or **Improve** for changes, **Document** for code
+documentation, or **Translate** for another programming language.
+
+1. Enter a question for **Ask** or instructions for **Modify**. For **Fix Bugs**,
+   **Improve**, and **Document**, an optional note can focus the request.
+2. For **Translate**, check the target programming language. Choosing this
+   action does not itself switch the notebook kernel.
+3. Check **Recent agent sessions** when shown, then choose **Send**. If
+   **Automatically submit to Agent** is unchecked, send the prepared draft
+   from the agent chat. Follow the request there and review the result.
+
+The request identifies the notebook, cell ID, and kernel. It instructs the
+agent to read that cell and its outputs from the live notebook. The agent can
+inspect surrounding cells when needed. State constraints such as preserving
+the function signature or avoiding package changes in your request.
+
 ## Agents and notebooks
 
 Agents should treat the live notebook state as the source of truth. Use
