@@ -54,6 +54,26 @@ both whole-line and partial-line assertions. No production copy handler was
 changed, and this does not yet cover selection across recycled virtual windows
 or explain the original intermittent failure.
 
+### Production packaging evidence (2026-09-07)
+
+`pnpm analyze` in `src/packages/static` passed at `979a8358e2`, producing
+`dist-prod-measure/chunk-stats.json`. The main lazy Diffs chunk measured
+471,646 bytes raw / 120,202 gzip / 107,302 Brotli; the Trees chunk measured
+241,440 / 68,356 / 65,631 bytes respectively. The shared Pierre theming chunk
+was 161,900 / 52,890 / 51,371 bytes, and the named highlighting-worker chunk
+was 48,085 / 16,484 / 15,941 bytes. These are whole emitted chunks, not
+package-exclusive byte counts or total cold-viewer transfer: shared dependencies,
+language/theme chunks and application adapters also contribute.
+
+Added explicit `@pierre/diffs/` and `@pierre/trees/` prohibitions to the existing
+app/load/embed and signed-in startup-route module guards. The real production
+stats passed all guards (931 chunks, two preexisting grandfathered matches).
+Injecting either library into the app chunk in memory correctly failed the
+guard. This protects lazy loading without relying on source-level import
+inspection alone. An equivalent before/after production build is still needed
+for the requested initial/lazy bundle-size *delta*; these absolute measurements
+must not be presented as that delta.
+
 ## Objective
 
 Make reading and discussing agent-produced code reliable across branches,
