@@ -296,10 +296,10 @@ export default function LatexEditorFeaturePage({
           title="Rich text editing, real LaTeX"
         >
           <Paragraph>
-            By default you edit your document as <strong>rich text</strong>:
-            formulas and formatted text render as they appear in the final
-            document, while you are still editing the LaTeX file itself. Switch
-            between rich text and the classic source view at any time.
+            You can edit your document as <strong>rich text</strong>: formulas
+            and formatted text render as they appear in the final document,
+            while you are still editing the LaTeX file itself. Switch between
+            rich text and the classic source view at any time.
           </Paragraph>
           <Paragraph>
             Editing stays direct: put the cursor in a line and that line shows
@@ -325,7 +325,8 @@ export default function LatexEditorFeaturePage({
           title="Edit formulas with the AI agent"
         >
           <Paragraph>
-            From any formula in the editor you can call the project's AI agent.{" "}
+            In an editable Rich Text pane, Shift-click a rendered math formula,
+            or focus it and press Shift+Enter, to open the agent edit dialog.{" "}
             <strong>Describe the change in plain language</strong>, like "turn
             this into the integral from 0 to 1 and calculate it step by step".
           </Paragraph>
