@@ -183,6 +183,16 @@ revision log. This removes an acceptance blocker, but is not source-specific
 comparison/restore evidence. The isolated browser target was closed; no restore
 was performed.
 
+Live Git TimeTravel comparison follow-up: `timetravel-live.browser-test.mjs`
+passed against `src/packages/frontend/package.json` in the browser project's
+repository. It opens the registered TimeTravel route, selects Git history and
+Compare Changes, renders actual document changes through Pierre, then switches
+back to Classic. Restore is absent while comparing, and no page errors occurred.
+It closes only its own target and never invokes Restore or writes file content.
+The harness uses Ant Design's visible option rows/radio labels because its
+accessibility proxy options and radio inputs are hidden. This proves the live
+Git-source renderer integration, not snapshot/backup loading or restore behavior.
+
 ### Single-file stress evidence (2026-09-07)
 
 Run `STRESS=1 node src/packages/frontend/components/diff-viewer/pierre-preview.browser-test.mjs`
