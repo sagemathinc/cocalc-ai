@@ -665,6 +665,8 @@ export function GitCommitDrawer({
     CommentAnchor | undefined
   >(undefined);
   const [activeInlineDraftBody, setActiveInlineDraftBody] = useState("");
+  const inlineDraftCommentIdRef = useRef<string | undefined>(undefined);
+  const inlineEditorGenerationRef = useRef(0);
   const [activeInlineEditId, setActiveInlineEditId] = useState<
     string | undefined
   >(undefined);
@@ -941,6 +943,8 @@ export function GitCommitDrawer({
   }, [open, commit, contextLines, reloadCounter]);
 
   useEffect(() => {
+    inlineEditorGenerationRef.current += 1;
+    inlineDraftCommentIdRef.current = undefined;
     if (!open) return;
     setActiveInlineDraft(undefined);
     setActiveInlineDraftBody("");
@@ -2019,7 +2023,7 @@ export function GitCommitDrawer({
         },
         accountId,
       );
-      await saveReview({
+      return await saveReview({
         comments: next,
         reviewed: resolved.reviewed,
         note: resolved.note,
@@ -2039,12 +2043,11 @@ export function GitCommitDrawer({
   );
 
   const createInlineComment = useCallback(
-    async (anchor: CommentAnchor, body: string) => {
+    async (anchor: CommentAnchor, body: string, id: string) => {
       const trimmed = `${body ?? ""}`.trim();
       if (!trimmed) return;
       const now = Date.now();
-      await mutateInlineComments((comments) => {
-        const id = makeCommentId();
+      return await mutateInlineComments((comments) => {
         comments[id] = {
           id,
           file_path: anchor.filePath,
@@ -2055,9 +2058,9 @@ export function GitCommitDrawer({
           snippet: anchor.snippet,
           body_md: trimmed,
           status: "draft",
-          created_at: now,
+          created_at: comments[id]?.created_at ?? now,
           updated_at: now,
-          local_revision: 1,
+          local_revision: (comments[id]?.local_revision ?? 0) + 1,
         };
         return comments;
       });
@@ -2070,7 +2073,7 @@ export function GitCommitDrawer({
       const trimmed = `${body ?? ""}`.trim();
       if (!id || !trimmed) return;
       const now = Date.now();
-      await mutateInlineComments((comments) => {
+      return await mutateInlineComments((comments) => {
         const existing = comments[id];
         if (!existing) return comments;
         comments[id] = {
@@ -2155,6 +2158,10 @@ export function GitCommitDrawer({
 
   const openInlineDraft = useCallback(
     (anchor: CommentAnchor) => {
+      inlineEditorGenerationRef.current += 1;
+      if (activeDraftAnchorId !== commentAnchorKey(anchor)) {
+        inlineDraftCommentIdRef.current = undefined;
+      }
       setActiveInlineEditId(undefined);
       setActiveInlineEditBody("");
       setActiveInlineDraft(anchor);
@@ -2166,11 +2173,15 @@ export function GitCommitDrawer({
   );
 
   const cancelInlineDraft = useCallback(() => {
+    inlineEditorGenerationRef.current += 1;
+    inlineDraftCommentIdRef.current = undefined;
     setActiveInlineDraft(undefined);
     setActiveInlineDraftBody("");
   }, []);
 
   const openInlineEdit = useCallback((comment: GitReviewCommentV2) => {
+    inlineEditorGenerationRef.current += 1;
+    inlineDraftCommentIdRef.current = undefined;
     setActiveInlineDraft(undefined);
     setActiveInlineDraftBody("");
     setActiveInlineEditId(comment.id);
@@ -2178,6 +2189,7 @@ export function GitCommitDrawer({
   }, []);
 
   const cancelInlineEdit = useCallback(() => {
+    inlineEditorGenerationRef.current += 1;
     setActiveInlineEditId(undefined);
     setActiveInlineEditBody("");
   }, []);
@@ -2187,11 +2199,18 @@ export function GitCommitDrawer({
       const trimmed = `${value ?? ""}`.trim();
       if (!trimmed) return;
       const key = `create:${commentAnchorKey(anchor)}`;
+      const generation = inlineEditorGenerationRef.current;
+      // A rejected save already has a durable local draft. Retry that identity,
+      // rather than inserting a duplicate comment into the recovery snapshot.
+      const id = (inlineDraftCommentIdRef.current ??= makeCommentId());
       setInlineCommentPendingKey(key);
       try {
-        await createInlineComment(anchor, trimmed);
-        setActiveInlineDraft(undefined);
-        setActiveInlineDraftBody("");
+        const saved = await createInlineComment(anchor, trimmed, id);
+        if (saved && generation === inlineEditorGenerationRef.current) {
+          inlineDraftCommentIdRef.current = undefined;
+          setActiveInlineDraft(undefined);
+          setActiveInlineDraftBody("");
+        }
       } finally {
         if (
           shouldClearGitInlinePendingKey({
@@ -2213,10 +2232,13 @@ export function GitCommitDrawer({
       if (!trimmed) return;
       setInlineCommentPendingKey(`edit:${id}`);
       const pendingKey = `edit:${id}`;
+      const generation = inlineEditorGenerationRef.current;
       try {
-        await updateInlineComment(id, trimmed);
-        setActiveInlineEditId(undefined);
-        setActiveInlineEditBody("");
+        const saved = await updateInlineComment(id, trimmed);
+        if (saved && generation === inlineEditorGenerationRef.current) {
+          setActiveInlineEditId(undefined);
+          setActiveInlineEditBody("");
+        }
       } finally {
         if (
           shouldClearGitInlinePendingKey({

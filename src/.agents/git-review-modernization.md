@@ -50,6 +50,21 @@ would not be evidence that these checks pass.
 
 ### Restored live-session checks
 
+Inline conflict follow-up: the real two-window test reproduced an editor-loss
+bug. `saveReview` returned false on stale-write rejection, but inline creation
+and editing discarded that result and closed the editor anyway. The boolean
+now reaches the submit handlers; they close only on success and only if the
+same editor generation is still active. Creation retries reuse their comment
+ID, preserving the local recovery entry rather than duplicating it.
+`inline-concurrency-live.browser-test.mjs` failed before the fix when the error
+was visible but the Slate editor had disappeared. After the fix it passed on
+disposable commit `5514715c29062271765dd81648eacf9bfc04232a`: real editor/text
+retained, repeated rejection did not create a second ID. Eighty focused tests,
+frontend typecheck/lint, and the development build passed. Fixture comments and
+local drafts remain for inspection. Reload/reconciliation is still a distinct
+gate: inspect how independent remote comments combine with the retained draft,
+rather than counting conflict rejection as proof that both are recoverable.
+
 Agent dispatch follow-up: `REVIEW_AGENT=1 worktree-live.browser-test.mjs` uses
 the chat thread's Git button (a direct review URL intentionally has no agent
 binding), selects the disposable worktree, checks explicit consent, saves a real
