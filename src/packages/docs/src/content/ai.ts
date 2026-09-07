@@ -207,6 +207,32 @@ For code that calls OpenAI directly from a notebook, script, or terminal, store
 the API key as a project secret such as \`OPENAI_API_KEY\`. Do not paste keys
 into notebooks, chat messages, shell history, or committed files.
 
+## Inspect and stop Codex sessions
+
+Open account **AI** settings and choose **View Codex sessions**. The panel
+groups recent turn records by session and shows each session's latest state,
+model, payment source, and update time. Use **Open chat**, when available, to
+return to its chat file. Some records omit details you cannot access.
+
+The list requests up to 50 recent records; an account stop request handles up
+to 100 matching records. These are bounded operations, not an exhaustive
+inventory or an instant guarantee that all account activity has ended.
+
+1. Click **Refresh** to update the list.
+2. Use a row's **Stop all** control to request interruption of that session,
+   or **Stop all active or uncertain** for the account-level stop action.
+3. Read the result and refresh again if interruption could not be confirmed.
+
+An **uncertain** state, stale heartbeat, or failed interrupt can mean CoCalc
+cannot yet establish whether AI activity has ended. The panel keeps those
+records visible as possible ongoing resource use. It can also report active
+descendant threads or background commands, with a warning that usage may
+continue.
+
+Treat an interruption request as pending until the status confirms its
+outcome. A finished manager response alone does not establish that all of
+its reported descendant work has ended.
+
 ## Why this matters in CoCalc
 
 AI access is both account-level and project-contextual. The account connection
