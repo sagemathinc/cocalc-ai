@@ -16,11 +16,7 @@ import {
   type AppearancePreference,
 } from "@cocalc/util/appearance";
 import type { AuthBootstrap } from "./api";
-import {
-  essentialThemeStyle,
-  type EssentialThemePreference,
-  type ResolvedEssentialTheme,
-} from "./theme";
+import type { EssentialThemePreference, ResolvedEssentialTheme } from "./theme";
 
 interface EssentialThemeContextValue {
   preference: EssentialThemePreference;
@@ -90,11 +86,7 @@ export function EssentialThemeProvider({
     <EssentialThemeContext.Provider
       value={{ preference, resolved, setPreference: store.choose }}
     >
-      <div
-        className="ul-app"
-        data-ul-theme={resolved}
-        style={essentialThemeStyle(resolved)}
-      >
+      <div className="ul-app" data-ul-theme={resolved}>
         {saveError ? (
           <p className="ul-error" role="alert">
             {saveError}
