@@ -680,6 +680,8 @@ export function ChatPanel({
   const focusRootRef = useRef<HTMLDivElement>(null);
   useChatFocusIsolation(focusRootRef, focused && messages != null);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const mobileChatsTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileToolsTriggerRef = useRef<HTMLButtonElement>(null);
   const [mobileToolsPortal, setMobileToolsPortal] =
     useState<HTMLDivElement | null>(null);
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
@@ -2880,6 +2882,7 @@ export function ChatPanel({
               <Button
                 type="text"
                 aria-label="Open chats"
+                ref={mobileChatsTriggerRef}
                 aria-haspopup="dialog"
                 icon={<Icon name="bars" />}
                 onClick={() => setSidebarVisible(true)}
@@ -2921,6 +2924,7 @@ export function ChatPanel({
           <Button
             type="text"
             aria-label="Chat tools"
+            ref={mobileToolsTriggerRef}
             aria-haspopup="dialog"
             icon={<Icon name="ellipsis" />}
             onClick={() => setMobileToolsOpen(true)}
@@ -2930,6 +2934,13 @@ export function ChatPanel({
       <Drawer
         title="Chat tools"
         open={narrow && mobileToolsOpen}
+        afterOpenChange={(open) => {
+          if (!open)
+            requestAnimationFrame(() => {
+              if (document.activeElement === document.body)
+                mobileToolsTriggerRef.current?.focus({ preventScroll: true });
+            });
+        }}
         forceRender
         placement="right"
         size="min(360px, 100vw)"
@@ -2957,6 +2968,13 @@ export function ChatPanel({
         totalUnread={totalUnread}
         hideSidebar={hideSidebar || (!narrow && sidebarHidden)}
         hideCompactNavigation={narrow}
+        onSidebarClosed={() => {
+          if (narrow)
+            requestAnimationFrame(() => {
+              if (document.activeElement === document.body)
+                mobileChatsTriggerRef.current?.focus({ preventScroll: true });
+            });
+        }}
         sidebarContent={
           <ChatRoomSidebarContent
             actions={actions}

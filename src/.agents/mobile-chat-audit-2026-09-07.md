@@ -1,0 +1,63 @@
+# Full Frontend Phone Chat Audit
+
+Scope: make the existing full-featured Codex chat usable on iPhone 17 Pro,
+preserving desktop/iPad workflows. Essential frontend is not a substitute and
+has not been made discoverable as part of this work.
+
+## Verified
+
+- User tested on iPhone and confirmed all reported layout/composer issues fixed.
+- User independently confirmed Upload files works on the phone.
+- Chrome at 320 and 402 CSS pixels: full-width input, send actions above it,
+  reduced avatar-free message gutter, compact header, model/reasoning summary.
+- Header model/reasoning summary opens the existing complete settings dialog;
+  uses effective policy-aware settings rather than a separate configuration.
+- Chrome widths 320, 402, 440, 767, 834, 1194, 1440: responsive layout switches
+  without remounting the conversation. Desktop send actions remain beside input.
+- Unsent text survives Rich Text to Markdown and back, leaving focused chat,
+  closing the project flyout, and returning to focused chat.
+- Human test message sent and reloaded in a dedicated audit chat. No audit AI
+  runs, purchases, infrastructure changes, or outreach were initiated.
+- Rich Text Insert menu opens the native file chooser. A text attachment was
+  uploaded and inserted as a link without losing the draft; a 96x64 PNG was
+  uploaded, decoded, and visibly rendered in the input. Audit drafts cleared.
+- Formatting popup fits 320px, with 44px formatting buttons. Its trigger is a
+  separate button, not an editing-mode radio choice. Escape/Close restore focus.
+- Chats and Tools header drawers restore focus after Escape in the live browser,
+  including the Chats drawer's destroy-on-close path. Six focused layout tests
+  pass after this follow-up.
+- Composer formatting trigger and Rich Text/Markdown controls are all 24px tall.
+- Focused tests cover draft continuity, viewport changes, focus-isolation
+  ownership/cleanup, mobile composer expansion, steer/queue callbacks, settings
+  summary, and keyboard formatting/upload access.
+- Full static builds and frontend lint passed throughout the implementation.
+  Latest broad check before the drawer-focus follow-up: 81 chat suites,
+  689 tests passed; Markdown-input contracts also passed separately.
+
+## Remaining Acceptance Checks
+
+- Broader overlay accessibility: the closed conversation passed its focused axe
+  scan, not every nested menu, settings form, or activity dialog.
+- Long-running Codex approval/stop/steer/queue interactions on the actual phone
+  need explicit end-to-end coverage beyond callback tests and ordinary usage.
+- iPad keyboard/split-view and phone rotation/keyboard dismissal combinations
+  need explicit device coverage; desktop width emulation is not equivalent.
+- Desktop Safari automation was reachable but its isolated session was not
+  signed in. Real iPhone user feedback provides device evidence, not a claim of
+  comprehensive automated Safari coverage.
+- Changes are on the feature branch and local dev site; production rollout is
+  separate. Do not treat a local build as proof of production deployment.
+
+## Navigation Observation
+
+Leaving focused chat restores existing project navigation, including any open
+flyout. A restored flyout can cover the chat's focus button; closing its visible
+X makes the button reachable and preserves the draft. This is not a chat trap,
+but the general project shell still needs a separate responsive-layout pass.
+
+## Evidence Location
+
+Private browser screenshots/scripts are under `src/.local/mobile-chat` and
+`/tmp/mobile-*.png` in the development workspace. These can contain account or
+conversation data and are deliberately not committed. Test fixtures use the
+dedicated `mobile-layout-audit-20260907.chat`, not the user's active conversation.

@@ -29,6 +29,7 @@ interface ChatRoomLayoutProps {
   newChatSelected: boolean;
   hideSidebar?: boolean;
   hideCompactNavigation?: boolean;
+  onSidebarClosed?: () => void;
 }
 
 export function ChatRoomLayout({
@@ -44,6 +45,7 @@ export function ChatRoomLayout({
   newChatSelected,
   hideSidebar = false,
   hideCompactNavigation = false,
+  onSidebarClosed,
 }: ChatRoomLayoutProps) {
   const compact = variant === "compact";
   const newChatRef = useRef<HTMLButtonElement>(null);
@@ -61,6 +63,7 @@ export function ChatRoomLayout({
         title="Chats"
         afterOpenChange={(open) => {
           if (open) newChatRef.current?.focus({ preventScroll: true });
+          else onSidebarClosed?.();
         }}
         size="min(360px, 100vw)"
         extra={

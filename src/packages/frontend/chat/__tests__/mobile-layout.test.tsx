@@ -207,3 +207,49 @@ it("opens Chats by keyboard, dismisses with Escape, and restores focus", async (
   );
   await waitFor(() => expect(document.activeElement).toBe(trigger));
 });
+
+it("restores a custom phone trigger after the drawer is destroyed", async () => {
+  const user = userEvent.setup();
+  function Harness() {
+    const [open, setOpen] = useState(false);
+    const trigger = useRef<HTMLButtonElement>(null);
+    return (
+      <>
+        <button
+          ref={trigger}
+          onClick={() => {
+            trigger.current?.blur();
+            setOpen(true);
+          }}
+        >
+          Open chats
+        </button>
+        <ChatRoomLayout
+          variant="compact"
+          hideCompactNavigation
+          sidebarWidth={250}
+          setSidebarWidth={() => {}}
+          sidebarVisible={open}
+          setSidebarVisible={setOpen}
+          onSidebarClosed={() => trigger.current?.focus()}
+          totalUnread={0}
+          sidebarContent={<button>Test thread</button>}
+          chatContent={<input aria-label="Draft" />}
+          onNewChat={() => {}}
+          newChatSelected={false}
+        />
+      </>
+    );
+  }
+  render(<Harness />);
+  const trigger = screen.getByRole("button", { name: "Open chats" });
+  await user.click(trigger);
+  await screen.findByRole("dialog", { name: "Chats" });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "New Chat" })).toBe(
+      document.activeElement,
+    ),
+  );
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+});
