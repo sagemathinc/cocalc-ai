@@ -308,7 +308,9 @@ inside the repository.
 
 ## Set up and commit from a Codex thread
 
-Open the Codex thread's menu and choose **Git browser**. Check the displayed
+Open the Codex thread's menu and choose **Git browser**. On phones, open
+**Chat tools** using the ellipsis button, then choose **Thread actions**
+to open the thread menu. Check the displayed
 repository path before using its actions. If the folder is not a repository,
 **Initialize Git Repo** creates one. **Ask Agent to Set Up Repo** asks the thread's
 agent to initialize it, choose a \`.gitignore\`, stage appropriate source files,

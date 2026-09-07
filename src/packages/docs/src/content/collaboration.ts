@@ -77,6 +77,9 @@ can show a green check. Choose it and confirm **Resolve** to mark the discussion
 done and remove its source marker. All discussions attached to that marker are
 resolved together.
 
+On phones, open **Chat tools** and choose the green check,
+**Resolve this discussion**, when offered. Confirm with **Resolve**.
+
 The messages remain available as read-only history. Open **Archived…** in the
 chat sidebar and choose **Open** beside the resolved discussion. Its notice
 identifies who resolved it and when; replying and unarchiving are unavailable.

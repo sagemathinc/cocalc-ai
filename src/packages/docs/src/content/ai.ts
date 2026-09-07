@@ -10,6 +10,22 @@ Codex chat is the integrated agent interface in CoCalc-ai. A project chat thread
 can include humans and Codex, and Codex can use project-aware tools to inspect
 files, run commands, work with notebooks, and make changes.
 
+## Open Codex
+
+1. Open the project.
+2. Open the Agents or chat area.
+3. Start a Codex thread.
+4. Ask a concrete task, including relevant files and constraints.
+
+For terminal-native agents such as Claude Code or opencode, install and run them
+inside a normal project terminal. CoCalc provides the durable Linux environment;
+those tools provide their own agent interface.
+
+For credentials and payment sources, see [Connect AI access](/app-docs/ai/connect-credentials).
+
+On phones, open **Chat tools** using the ellipsis button, then choose
+**Thread actions** to open the thread menu.
+
 ## Understand Codex access
 
 New chats created through the hosted CoCalc UI use full project access:
@@ -19,7 +35,8 @@ still be created through other supported interfaces. A working directory
 selects where commands start; it is not a permission boundary.
 
 1. Open the project whose files and software Codex should work with.
-2. Click **Codex** in the chat controls to open **Codex settings**.
+2. Open **Codex settings** using the **Codex** control. On phones, tap the
+   button showing the model and reasoning level in the chat header.
 3. Read the **Access** notice and include the files, intended changes, and
    constraints in your request.
 
@@ -28,13 +45,6 @@ write**, or **Full access**. These configure the Codex command sandbox. Read
 only still permits network access. Workspace write permits workspace and
 temporary-directory writes; Full access removes that command-sandbox file
 restriction. Select the mode appropriate for the task and click **Save**.
-
-## Open Codex
-
-1. Open the project.
-2. Open the Agents or chat area.
-3. Start a Codex thread.
-4. Ask a concrete task, including relevant files and constraints.
 
 ## Set defaults for new chats
 
@@ -56,36 +66,10 @@ Review the selected thread's settings before starting a task, especially if
 you changed its payment source. Membership-funded turns use the settings
 selected by CoCalc even when your account defaults request another model.
 
-## Fork a chat to explore another approach
-
-Use a fork when you want a new conversation that starts from an existing
-Codex session's context.
-
-1. Open the source chat's thread menu and choose **Fork chat…**.
-2. Enter the **New chat name** and click **Fork**.
-3. Continue in the new chat with the alternative task or approach.
-
-CoCalc creates a new chat linked to the original. For a Codex chat with an
-existing session, it forks the agent session and carries its context and
-configuration into the new one. The visible new chat starts empty: earlier
-messages are not copied into it. A link points back to the source discussion.
-Without an existing Codex session ID, configuration and linkage can be copied,
-but there is no model-session context to fork.
-
-The fork is a conversation/session fork within the same project. It does
-not create a separate copy of project files or a Git worktree. Changes made
-from either chat therefore concern the shared project environment. Use
-separate directories or an explicitly prepared repository checkout when
-your experiment requires separate file state, and verify the new thread's
-working directory before asking it to edit files.
-
-For terminal-native agents such as Claude Code or opencode, install and run them
-inside a normal project terminal. CoCalc provides the durable Linux environment;
-those tools provide their own agent interface.
-
 ## Choose model, reasoning, and speed
 
-Click **Codex** in a thread's chat controls to open **Codex settings**. These
+Open **Codex settings** using the **Codex** control. On phones, tap the
+button showing the model and reasoning level in the chat header. These
 settings apply to the selected thread; the compact chat controls show the
 same model and reasoning level.
 
@@ -104,45 +88,27 @@ CoCalc, so those controls are constrained. Connect and select a personal
 ChatGPT plan or OpenAI API key when you need other available model settings.
 These choices configure future turns rather than rewriting earlier replies.
 
-## Guide a running turn or queue a follow-up
+## Refresh the models available to your ChatGPT account
 
-While Codex is working, the composer offers **Steer** and **Queue**.
+When a thread uses your **ChatGPT Plan**, CoCalc can check which models that
+account currently supports.
 
-Use **Steer** to send guidance to the running turn. For example, if Codex is
-editing a notebook and you notice the wrong dataset, write "Use the August
-data in data/august.csv" and click **Steer**. CoCalc requests steering of the
-active turn. If the turn ends at that boundary, the request can become queued
-instead; check its displayed status to see how it was accepted.
+1. Open **Codex settings** using the **Codex** control. On phones, tap the
+   button showing the model and reasoning level in the chat header.
+2. Under **Model and session**, click **Refresh models** and wait for the
+   check to finish.
+3. If **Model unavailable for this ChatGPT account** appears, choose an
+   enabled model. CoCalc keeps the previous selection visible instead of
+   silently replacing it.
+4. Recheck **Reasoning level** and **Speed**, then click **Save** before
+   starting the next turn.
 
-Use **Queue** for a separate follow-up that should run after the current
-turn, such as "After this finishes, summarize the changed cells." Type the
-message and click **Queue**. It appears with a queued label while it waits.
+Refreshing checks availability; it does not grant access to additional
+models. A model list can contain cached or built-in choices when a live
+check has not succeeded.
 
-Steering supplies an instruction; it does not undo changes already made.
-Inspect the response and project state to confirm how Codex applied the
-guidance. When no Codex turn is running, the composer uses **Send** for a
-normal message instead.
-
-## Set the parallel subagent preference
-
-Codex can use worker agents alongside the manager handling your request.
-The **Parallel subagents** button in **Codex settings** opens the same
-preference as **Maximum concurrent subagents** in account **AI** settings.
-
-1. Open either control.
-2. Choose **Automatic (currently 3)** or a number from 1 through 16.
-3. Allow the setting to take effect when the Codex session is next loaded.
-
-The number describes worker agents in addition to the manager. It is an
-account preference used to configure sessions, not a request to immediately
-create that many workers, and not a displayed total for every session on
-the account.
-
-Higher values can consume your Codex or API allowance much faster. Start
-with a value appropriate for the work and inspect session activity if you
-are unsure what remains running. Changing the preference does not by itself
-stop existing workers; use the session's stop controls when you need to
-interrupt ongoing work.
+**Refresh models** is specific to ChatGPT-funded threads. API-key and
+membership funding do not use this account-model refresh control.
 
 ## Set the working directory and keep session context
 
@@ -169,24 +135,80 @@ conversation reset: CoCalc can recover the live session ID from the thread.
 Start a new Codex chat when you need fresh conversation context. Workspace
 selection does not change project permissions.
 
-## Inspect a generated agent prompt
+## Set the parallel subagent preference
 
-Some CoCalc workflows prepare an agent prompt alongside your composer
-message. When that prompt is present and you have input, the composer
-shows **Agent Prompt**.
+Codex can use worker agents alongside the manager handling your request.
+The **Parallel subagents** button in **Codex settings** opens the same
+preference as **Maximum concurrent subagents** in account **AI** settings.
 
-1. Click **Agent Prompt** to open **Full agent prompt**.
-2. Read the prepared text and edit any task details that need correction.
-3. Choose **Copy** to copy the draft, **Save** to keep your changes in the
-   composer, or **Cancel** to close without applying those edits.
-4. Return to the composer and submit the request when ready.
+1. Open either control.
+2. Choose **Automatic (currently 3)** or a number from 1 through 16.
+3. Allow the setting to take effect when the Codex session is next loaded.
 
-Saving this dialog updates the prepared prompt; it does not submit a new
-turn by itself. Use it to review the context supplied for that submission,
-especially file paths or task-specific instructions generated by the
-workflow. The button is conditional, so an ordinary chat may not show it.
-It is an editor for this prepared prompt, not a viewer for every instruction
-inside the agent runtime or a way to revise an already-running request.
+The number describes worker agents in addition to the manager. It is an
+account preference used to configure sessions, not a request to immediately
+create that many workers, and not a displayed total for every session on
+the account.
+
+Higher values can consume your Codex or API allowance much faster. Start
+with a value appropriate for the work and inspect session activity if you
+are unsure what remains running. Changing the preference does not by itself
+stop existing workers; use the session's stop controls when you need to
+interrupt ongoing work.
+
+## Fork a chat to explore another approach
+
+Use a fork when you want a new conversation that starts from an existing
+Codex session's context.
+
+1. Open the source chat's thread menu and choose **Fork chat…**.
+2. Enter the **New chat name** and click **Fork**.
+3. Continue in the new chat with the alternative task or approach.
+
+CoCalc creates a new chat linked to the original. For a Codex chat with an
+existing session, it forks the agent session and carries its context and
+configuration into the new one. The visible new chat starts empty: earlier
+messages are not copied into it. A link points back to the source discussion.
+Without an existing Codex session ID, configuration and linkage can be copied,
+but there is no model-session context to fork.
+
+The fork is a conversation/session fork within the same project. It does
+not create a separate copy of project files or a Git worktree. Changes made
+from either chat therefore concern the shared project environment. Use
+separate directories or an explicitly prepared repository checkout when
+your experiment requires separate file state, and verify the new thread's
+working directory before asking it to edit files.
+
+## Give better tasks
+
+Name files, describe the desired outcome, and ask Codex to validate changes.
+For live notebooks, ask Codex to use the live notebook APIs. For UI actions,
+docs action ids such as \`settings.environment.secrets\` let agents open the
+right panel directly.
+
+## Point an editor request at the right content
+
+An editor's **Agent** button can attach context from the current frame to your
+request. Make the intended target clear before opening the popup.
+
+1. In a text editor, select the passage or code you want to discuss or change.
+2. If nothing is selected, put the cursor near the relevant text and describe
+   the location in your request.
+3. Open **Agent** and state the desired result and any constraints.
+4. Follow the request in the agent chat and review changes in the document.
+
+Supported editors choose the current selection or a narrower cell or page
+context when available, falling back to document content. Text-editor
+requests can include the file path, source-line range, and cursor location;
+line precision depends on the editor.
+Selected context guides the request; it does not restrict the agent's project
+access. Long excerpts may be shortened; the agent is instructed to inspect current
+live content before editing.
+
+When a terminal frame provides a live session ID, the request identifies that
+session. The agent can inspect and write to it, so describe whether you want an
+explanation or a command executed. The terminal's file path alone does not
+identify the running shell.
 
 ## Choose where an editor request goes
 
@@ -210,12 +232,43 @@ shared by popups using that control. Check both controls when moving between
 unrelated tasks. Error-repair dialogs have their own explicit confirmation and
 may not offer the checkbox.
 
-## Give better tasks
+## Inspect a generated agent prompt
 
-Name files, describe the desired outcome, and ask Codex to validate changes.
-For live notebooks, ask Codex to use the live notebook APIs. For UI actions,
-docs action ids such as \`settings.environment.secrets\` let agents open the
-right panel directly.
+Some CoCalc workflows prepare an agent prompt alongside your composer
+message. When that prompt is present and you have input, the composer
+shows **Agent Prompt**.
+
+1. Click **Agent Prompt** to open **Full agent prompt**.
+2. Read the prepared text and edit any task details that need correction.
+3. Choose **Copy** to copy the draft, **Save** to keep your changes in the
+   composer, or **Cancel** to close without applying those edits.
+4. Return to the composer and submit the request when ready.
+
+Saving this dialog updates the prepared prompt; it does not submit a new
+turn by itself. Use it to review the context supplied for that submission,
+especially file paths or task-specific instructions generated by the
+workflow. The button is conditional, so an ordinary chat may not show it.
+It is an editor for this prepared prompt, not a viewer for every instruction
+inside the agent runtime or a way to revise an already-running request.
+
+## Guide a running turn or queue a follow-up
+
+While Codex is working, the composer offers **Steer** and **Queue**.
+
+Use **Steer** to send guidance to the running turn. For example, if Codex is
+editing a notebook and you notice the wrong dataset, write "Use the August
+data in data/august.csv" and click **Steer**. CoCalc requests steering of the
+active turn. If the turn ends at that boundary, the request can become queued
+instead; check its displayed status to see how it was accepted.
+
+Use **Queue** for a separate follow-up that should run after the current
+turn, such as "After this finishes, summarize the changed cells." Type the
+message and click **Queue**. It appears with a queued label while it waits.
+
+Steering supplies an instruction; it does not undo changes already made.
+Inspect the response and project state to confirm how Codex applied the
+guidance. When no Codex turn is running, the composer uses **Send** for a
+normal message instead.
 
 ## Manage a queued or unsent message
 
@@ -239,6 +292,82 @@ or updating the selected API key. Read the
 reported error instead of assuming that every failed request is an allowance
 problem. Retrying is an explicit submission, so verify the message text
 before sending it again.
+
+## Set and manage a Codex goal
+
+A goal gives a Codex chat thread an objective to keep working toward across
+automatic continuations.
+
+1. In the Codex thread's composer, click **Set goal**.
+2. Describe the outcome in **What should Codex accomplish?**
+3. Optionally expand **Budget and usage** and enter a positive whole number in
+   **Token budget (optional)**. Leave it blank for no goal token budget.
+4. Click **Save goal**. If the thread is idle, send a message to start its next
+   turn.
+
+Click **Goal: ...** to edit the objective or budget and inspect the reported
+tokens used and elapsed minutes. Changes apply during a running turn or when
+the next requested turn starts; they can remain **pending** until then.
+Opening the goal dialog does not start Codex. A failed change is shown in the
+control and its error appears when you reopen the dialog.
+
+Use **Pause** to prevent automatic continuation while allowing the current turn
+to finish. **Stop** also interrupts the current turn and requests that its active
+goal be paused. Use **Resume** to reactivate an unfinished goal; if the thread is
+idle, start another turn for the change to apply. Editing a paused goal's text
+or budget alone does not resume it.
+
+Choose **Clear goal** in the dialog to remove the goal. Use **Stop** as well if
+you need to interrupt work already running.
+
+## Answer questions from Codex
+
+When Codex needs your input, an orange badge can mark the conversation in the
+chat list. Open that conversation to see its pending requests above the messages.
+
+For a **Waiting for authorization** card, follow **Complete a Codex authorization request**
+in [Connect AI access](/app-docs/ai/connect-credentials).
+
+1. Read the request's status. A blocking question pauses the current turn.
+   For an asynchronous question, Codex may continue working while it waits;
+   your response is added to the conversation as a user message.
+2. Answer every question. Choose a suggested answer, or use the text field
+   when one is offered.
+3. Choose **Send response** and check the status. **Response submitted** means
+   your response is saved and is waiting for Codex to accept it. Follow the
+   conversation to see what happens next.
+
+Choose **Decline** to tell Codex you will not answer the question.
+**Acknowledge** suppresses a pending email notification, while **Snooze 5 minutes**
+delays it when email delivery is enabled. Both leave the question open; a
+paused turn still needs a response.
+
+If a disconnected request offers **Continue with this answer**, use it to
+submit the saved response again. If the request card is no longer available,
+send your answer in the conversation.
+
+In **CoCalc Lite**, requests are available within the project. Cross-device
+inbox and email delivery are unavailable.
+
+## Open and reuse a generated image
+
+When the Codex runtime provides image generation, its result can appear as a
+**Generated image** entry in the turn's activity. These controls describe a
+returned image; they do not mean every model or account has image generation.
+
+1. Find the **Generated image** entry for the request.
+2. Read any displayed status and revised prompt to identify the result.
+3. If **Open image** is available, use it to open the stored image in another
+   browser tab.
+4. Choose **Copy** beside that link to copy an image reference for reuse in
+   Markdown. Paste it into your intended document or conversation and check the
+   result there.
+
+When an uploaded image link is unavailable but the runtime reports a saved
+path, the activity entry shows that path instead. Use the path to locate the saved
+file when accessible. A failed, declined, or cancelled status is not a
+completed image. If no usable image link or file is available, continue the
+conversation with the agent rather than assuming the output was saved.
 
 ## Get a notification when a turn finishes
 
@@ -268,8 +397,8 @@ or browser alert when you are directly watching that thread.
 In CoCalc, successful completion uses **Codex turn finished**; an error uses
 **Codex turn ended with an error**. Browser notifications use the generic title
 **Codex finished**; open CoCalc to inspect the outcome. A completion notice does
-not establish that every background command or descendant agent has stopped. Inspect the account's
-Codex sessions panel when you need to confirm remaining activity.
+not establish that every background command or descendant agent has stopped. To check remaining activity, see **Inspect and stop Codex sessions** in
+[Connect AI access](/app-docs/ai/connect-credentials).
 
 ## Schedule Codex work in a thread
 
@@ -345,129 +474,11 @@ the count; sending a new request to Codex in that thread also clears it.
 Acknowledging does not itself mean resuming: use **Resume** when you want
 a paused schedule to continue, and confirm the next-run display afterward.
 
-## Point an editor request at the right content
-
-An editor's **Agent** button can attach context from the current frame to your
-request. Make the intended target clear before opening the popup.
-
-1. In a text editor, select the passage or code you want to discuss or change.
-2. If nothing is selected, put the cursor near the relevant text and describe
-   the location in your request.
-3. Open **Agent** and state the desired result and any constraints.
-4. Follow the request in the agent chat and review changes in the document.
-
-Supported editors choose the current selection or a narrower cell or page
-context when available, falling back to document content. Text-editor
-requests can include the file path, source-line range, and cursor location;
-line precision depends on the editor.
-Selected context guides the request; it does not restrict the agent's project
-access. Long excerpts may be shortened; the agent is instructed to inspect current
-live content before editing.
-
-When a terminal frame provides a live session ID, the request identifies that
-session. The agent can inspect and write to it, so describe whether you want an
-explanation or a command executed. The terminal's file path alone does not
-identify the running shell.
-
-## Set and manage a Codex goal
-
-A goal gives a Codex chat thread an objective to keep working toward across
-automatic continuations.
-
-1. In the Codex thread's composer, click **Set goal**.
-2. Describe the outcome in **What should Codex accomplish?**
-3. Optionally expand **Budget and usage** and enter a positive whole number in
-   **Token budget (optional)**. Leave it blank for no goal token budget.
-4. Click **Save goal**. If the thread is idle, send a message to start its next
-   turn.
-
-Click **Goal: ...** to edit the objective or budget and inspect the reported
-tokens used and elapsed minutes. Changes apply during a running turn or when
-the next requested turn starts; they can remain **pending** until then.
-Opening the goal dialog does not start Codex. A failed change is shown in the
-control and its error appears when you reopen the dialog.
-
-Use **Pause** to prevent automatic continuation while allowing the current turn
-to finish. **Stop** also interrupts the current turn and requests that its active
-goal be paused. Use **Resume** to reactivate an unfinished goal; if the thread is
-idle, start another turn for the change to apply. Editing a paused goal's text
-or budget alone does not resume it.
-
-Choose **Clear goal** in the dialog to remove the goal. Use **Stop** as well if
-you need to interrupt work already running.
-
-## Answer questions from Codex
-
-When Codex needs your input, an orange badge can mark the conversation in the
-chat list. Open that conversation to see its pending requests above the messages.
-
-1. Read the request's status. A blocking question pauses the current turn.
-   For an asynchronous question, Codex may continue working while it waits;
-   your response is added to the conversation as a user message.
-2. Answer every question. Choose a suggested answer, or use the text field
-   when one is offered.
-3. Choose **Send response** and check the status. **Response submitted** means
-   your response is saved and is waiting for Codex to accept it. Follow the
-   conversation to see what happens next.
-
-Choose **Decline** to tell Codex you will not answer the question.
-**Acknowledge** suppresses a pending email notification, while **Snooze 5 minutes**
-delays it when email delivery is enabled. Both leave the question open; a
-paused turn still needs a response.
-
-If a disconnected request offers **Continue with this answer**, use it to
-submit the saved response again. If the request card is no longer available,
-send your answer in the conversation.
-
-In **CoCalc Lite**, requests are available within the project. Cross-device
-inbox and email delivery are unavailable.
-
-## Refresh the models available to your ChatGPT account
-
-When a thread uses your **ChatGPT Plan**, CoCalc can check which models that
-account currently supports.
-
-1. Click **Codex** in the thread controls to open **Codex settings**.
-2. Under **Model and session**, click **Refresh models** and wait for the
-   check to finish.
-3. If **Model unavailable for this ChatGPT account** appears, choose an
-   enabled model. CoCalc keeps the previous selection visible instead of
-   silently replacing it.
-4. Recheck **Reasoning level** and **Speed**, then click **Save** before
-   starting the next turn.
-
-Refreshing checks availability; it does not grant access to additional
-models. A model list can contain cached or built-in choices when a live
-check has not succeeded.
-
-**Refresh models** is specific to ChatGPT-funded threads. API-key and
-membership funding do not use this account-model refresh control.
-
 ## Why this matters in CoCalc
 
 CoCalc is both a collaborative workspace and an agent sandbox. Humans can review
 what Codex changes, keep terminals and notebooks running, use TimeTravel, and
 share the same project state with collaborators.
-
-## Open and reuse a generated image
-
-When the Codex runtime provides image generation, its result can appear as a
-**Generated image** entry in the turn's activity. These controls describe a
-returned image; they do not mean every model or account has image generation.
-
-1. Find the **Generated image** entry for the request.
-2. Read any displayed status and revised prompt to identify the result.
-3. If **Open image** is available, use it to open the stored image in another
-   browser tab.
-4. Choose **Copy** beside that link to copy an image reference for reuse in
-   Markdown. Paste it into your intended document or conversation and check the
-   result there.
-
-When an uploaded image link is unavailable but the runtime reports a saved
-path, the activity entry shows that path instead. Use the path to locate the saved
-file when accessible. A failed, declined, or cancelled status is not a
-completed image. If no usable image link or file is available, continue the
-conversation with the agent rather than assuming the output was saved.
 `;
 
 export const AI_CREDENTIALS_BODY = String.raw`
@@ -492,7 +503,8 @@ the browser confirms that the account is connected.
 Connecting credentials makes them available. On hosted CoCalc, each thread
 can choose how its future turns are funded.
 
-1. In the thread, click **Codex** to open **Codex settings**.
+1. Open **Codex settings** using the **Codex** control. On phones, tap the
+   button showing the model and reasoning level in the chat header.
 2. Choose a payment source and click **Save**. **ChatGPT Plan**, **Project
    OpenAI API key**, and **Account OpenAI API key** appear when configured.
    **CoCalc Membership** is available only when the site and account provide
@@ -534,6 +546,34 @@ AI Settings** or usage link and check the thread's selected payment source.
 Membership-funded access depends on the deployment and account; connecting
 a personal plan does not increase the membership allowance itself.
 
+For unavailable-model messages, see **Refresh the models available to your ChatGPT account**
+in the [Codex chat guide](/app-docs/ai/codex-chat).
+
+## Complete a Codex authorization request
+
+On sites that enable this workflow, a sensitive CoCalc CLI action can show
+**Codex needs fresh account authorization** in the chat, with the status
+**Waiting for authorization**.
+
+1. Keep the originating CoCalc browser tab open and choose **Approve in
+   CoCalc** on the card.
+2. In the authorization page, check the account shown. Follow any instruction
+   to sign in with that account.
+3. Use an available verification method and choose **Approve CLI Elevation**.
+   Complete password or second-factor verification on that page.
+4. Return to the chat and inspect the result. The waiting integrated CLI
+   command retries automatically after approval, so check its state before
+   requesting another attempt.
+
+**Acknowledge** and **Snooze 5 minutes** manage the notification; they do not
+authorize the action. An ordinary chat reply or question response also does
+not complete this verification. Keep passwords and verification codes out
+of chat.
+
+If the request is canceled or expired, inspect the command's reported state
+before asking Codex to try again. This card is conditional on site support;
+it is not available for every command or deployment.
+
 ## Use project secrets for keys
 
 For code that calls OpenAI directly from a notebook, script, or terminal, store
@@ -565,31 +605,6 @@ continue.
 Treat an interruption request as pending until the status confirms its
 outcome. A finished manager response alone does not establish that all of
 its reported descendant work has ended.
-
-## Complete a Codex authorization request
-
-On sites that enable this workflow, a sensitive CoCalc CLI action can show
-**Codex needs fresh account authorization** in the chat, with the status
-**Waiting for authorization**.
-
-1. Keep the originating CoCalc browser tab open and choose **Approve in
-   CoCalc** on the card.
-2. In the authorization page, check the account shown. Follow any instruction
-   to sign in with that account.
-3. Use an available verification method and choose **Approve CLI Elevation**.
-   Complete password or second-factor verification on that page.
-4. Return to the chat and inspect the result. The waiting integrated CLI
-   command retries automatically after approval, so check its state before
-   requesting another attempt.
-
-**Acknowledge** and **Snooze 5 minutes** manage the notification; they do not
-authorize the action. An ordinary chat reply or question response also does
-not complete this verification. Keep passwords and verification codes out
-of chat.
-
-If the request is canceled or expired, inspect the command's reported state
-before asking Codex to try again. This card is conditional on site support;
-it is not available for every command or deployment.
 
 ## Why this matters in CoCalc
 

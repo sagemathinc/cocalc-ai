@@ -65,28 +65,6 @@ CoCalc notebooks are designed for shared and long-running work:
 5. Large notebooks and large outputs are handled with CoCalc-specific rendering.
 6. Side chat, agents, terminals, and project files live next to the notebook.
 
-## Improve a Markdown cell with Agent
-
-An editable Markdown cell has its own **Agent** dropdown when project policy
-allows AI tools.
-Use it for the explanatory text and mathematics that accompany a computation.
-
-Choose one action: **Ask** for a question, **Document** for an explanation,
-**Proofread** to improve the writing, **Add Formulas** for mathematical content,
-or **Translate** for another language.
-
-1. Enter a question for **Ask**, or optionally describe what **Document**
-   should emphasize. For **Translate**, check the target-language field.
-2. Check **Recent agent sessions** when shown, then choose **Send**. If
-   **Automatically submit to Agent** is unchecked, send the prepared draft
-   from the agent chat. Follow the request there and review the result.
-
-The agent is directed to the selected cell in the live notebook. After it
-responds, inspect the rendered Markdown and any changed mathematics. For a
-specific requirement, use **Ask** or the optional **Document** instructions;
-for example, request an explanation suitable for readers encountering the
-method for the first time.
-
 ## Choose a notebook view
 
 A notebook frame can use the classic cell-oriented layout or the content-first
@@ -103,6 +81,15 @@ virtual environment; see [Custom Jupyter kernels with uv](/docs/jupyter/custom-k
 
 For a shared software stack across many projects, use a runtime image instead of
 hand-configuring each notebook.
+
+## Agents and notebooks
+
+Agents should treat the live notebook state as the source of truth. Use
+\`cocalc project jupyter\` or the browser-session notebook APIs for durable
+notebook inspection and execution instead of editing \`.ipynb\` JSON directly.
+
+For shared popup controls, see **Choose where an editor request goes** in the
+[Codex chat guide](/app-docs/ai/codex-chat).
 
 ## Use Agent on a code cell
 
@@ -126,17 +113,27 @@ agent to read that cell and its outputs from the live notebook. The agent can
 inspect surrounding cells when needed. State constraints such as preserving
 the function signature or avoiding package changes in your request.
 
-## Agents and notebooks
+## Improve a Markdown cell with Agent
 
-Agents should treat the live notebook state as the source of truth. Use
-\`cocalc project jupyter\` or the browser-session notebook APIs for durable
-notebook inspection and execution instead of editing \`.ipynb\` JSON directly.
+An editable Markdown cell has its own **Agent** dropdown when project policy
+allows AI tools.
+Use it for the explanatory text and mathematics that accompany a computation.
 
-## Troubleshooting
+Choose one action: **Ask** for a question, **Document** for an explanation,
+**Proofread** to improve the writing, **Add Formulas** for mathematical content,
+or **Translate** for another language.
 
-If a kernel stops, restarts, or the project runs out of memory, check the
-resource indicators and restart only the affected kernel when possible. For
-memory-specific failures, see [Troubleshoot project memory](/docs/troubleshooting/memory).
+1. Enter a question for **Ask**, or optionally describe what **Document**
+   should emphasize. For **Translate**, check the target-language field.
+2. Check **Recent agent sessions** when shown, then choose **Send**. If
+   **Automatically submit to Agent** is unchecked, send the prepared draft
+   from the agent chat. Follow the request there and review the result.
+
+The agent is directed to the selected cell in the live notebook. After it
+responds, inspect the rendered Markdown and any changed mathematics. For a
+specific requirement, use **Ask** or the optional **Document** instructions;
+for example, request an explanation suitable for readers encountering the
+method for the first time.
 
 ## Send a notebook error to Agent
 
@@ -158,6 +155,12 @@ instead of relying solely on the attached error text.
 
 This shortcut submits a repair request. Include additional constraints or
 corrections in the agent conversation if the failure needs more context.
+
+## Troubleshooting
+
+If a kernel stops, restarts, or the project runs out of memory, check the
+resource indicators and restart only the affected kernel when possible. For
+memory-specific failures, see [Troubleshoot project memory](/docs/troubleshooting/memory).
 `;
 
 export const JUPYTER_STUDIO_BODY = String.raw`
