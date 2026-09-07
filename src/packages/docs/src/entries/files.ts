@@ -186,7 +186,7 @@ export const FILES_ENTRIES: DocsEntry[] = [
       "/public/docs/latex-15ab38f8.webp",
       "A LaTeX paper with formulas, references, and a compiled PDF",
     ),
-    lastReviewed: "2026-05-25",
+    lastReviewed: "2026-09-07",
     slug: "latex/build-papers",
     status: "ready",
     summary:
@@ -211,7 +211,7 @@ export const FILES_ENTRIES: DocsEntry[] = [
       "/public/docs/python-93480a33.webp",
       "A reproducible report combining prose, code chunks, plots, and output",
     ),
-    lastReviewed: "2026-05-25",
+    lastReviewed: "2026-09-07",
     slug: "editors/r-markdown",
     status: "ready",
     summary:
@@ -260,7 +260,7 @@ export const FILES_ENTRIES: DocsEntry[] = [
       "/public/docs/git-a53df3e8.webp",
       "Git branch history beside project files",
     ),
-    lastReviewed: "2026-05-24",
+    lastReviewed: "2026-09-07",
     slug: "files/git",
     status: "ready",
     summary:

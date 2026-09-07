@@ -13,6 +13,7 @@ import {
   CODEX_GOALS_BODY,
   CODEX_AUTOMATION_BODY,
   CODEX_NOTIFICATIONS_BODY,
+  EDITOR_AGENT_BODY,
 } from "../content";
 
 export const AI_ENTRIES: DocsEntry[] = [
@@ -149,5 +150,23 @@ export const AI_ENTRIES: DocsEntry[] = [
     summary:
       "Choose completion notifications and inspect or stop ongoing Codex sessions.",
     title: "Notifications and session activity",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: EDITOR_AGENT_BODY.trim(),
+    category: "AI",
+    id: "ai.editor-agent",
+    image: docsIcon(
+      "/public/docs/codex-chat-3008e11e.webp",
+      "Codex working in a CoCalc project",
+    ),
+    lastReviewed: "2026-09-07",
+    noActionReason:
+      "This workflow uses controls in an existing chat or account; start from the linked Open Codex chat guide.",
+    slug: "ai/editor-agent",
+    status: "ready",
+    summary:
+      "Supply document context, select a conversation, review prepared prompts, and reuse generated images.",
+    title: "Use Agent from an editor",
   },
 ];

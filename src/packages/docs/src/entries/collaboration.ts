@@ -26,7 +26,7 @@ export const COLLABORATION_ENTRIES: DocsEntry[] = [
       "/public/docs/collaborators-8ce1955f.webp",
       "A project chat conversation beside shared project files",
     ),
-    lastReviewed: "2026-05-25",
+    lastReviewed: "2026-09-07",
     slug: "collaboration/chat",
     status: "ready",
     summary:

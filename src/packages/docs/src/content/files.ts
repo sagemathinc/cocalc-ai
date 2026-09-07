@@ -114,12 +114,55 @@ and reproducible builds.
 Keep figures, bibliography files, generated data, and scripts in the same
 project so collaborators and agents can inspect the complete paper workflow.
 
+## Edit a formula with Agent
+
+In the LaTeX editor's **Rich Text** mode, rendered formulas have an agent
+editing shortcut. Use it to request a change to one formula while keeping the
+surrounding document in view.
+
+1. Switch the editor to **Rich Text** and find the rendered formula.
+2. Hold **Shift** and click the formula, or focus it and press **Shift+Enter**.
+3. In **Edit formula with Agent**, check the formula preview and describe the
+   change. For example: "Replace the finite sum with an integral, keeping the
+   same variable names."
+4. Choose **Edit with Agent** to send the request to the agent chat.
+5. Review the changed source and rebuild the document to check its PDF output.
+
+The request includes the formula's current source and location. If the formula
+belongs to an included file, that file is identified as the edit target. The
+agent is instructed to edit the live document, preserve the existing formula
+delimiters and style, and verify its work. The shortcut requires an editable
+formula; read-only source does not open the edit request.
+
 ## Troubleshooting
 
 If the PDF does not build, start with the first meaningful LaTeX error rather
 than later follow-up errors. Clean auxiliary files when stale build state is
 suspect. For large documents, isolate failing sections in a small test file
 before changing the full paper.
+
+## Ask Agent about a LaTeX build error
+
+For shared session-selection controls, see
+[Use Agent from an editor](/docs/ai/editor-agent).
+
+An error entry with a source line can offer **Fix with Agent...** and
+**Ask Agent for a Hint...**, depending on the AI access allowed in the project.
+
+1. Build the document and find the first useful error in the errors panel.
+2. Choose **Fix with Agent...** to request a repair, or **Ask Agent for a
+   Hint...** to request debugging guidance.
+3. Review the displayed error context and choose the recent agent session
+   when the selector is shown.
+4. Confirm with **Send to Agent** for a repair, or **Ask Agent** for a hint.
+5. Follow the response in the agent chat. Review any edits and rebuild the PDF
+   to check the result.
+
+The repair request identifies the document, the reported error file and line,
+the error message, and the configured build command. This helps the agent
+locate an error in an included file and reproduce the build. It is instructed
+to use the live document when available. Warnings and errors without a source
+line do not receive this particular error-row shortcut.
 `;
 
 export const R_MARKDOWN_BODY = String.raw`
@@ -140,6 +183,26 @@ analysis that should render to HTML, PDF, or other formats.
 Run chunks incrementally while developing. If a full render fails, rerun the
 failing chunk in a fresh session and check package availability in the project
 environment.
+
+## Ask Agent to repair a render failure
+
+A failed R Markdown render can offer **Fix with Agent...** below the error
+output when AI help is available. Use that control to carry the render failure
+into an agent conversation.
+
+1. Render the document and inspect the error output in the build log.
+2. Choose **Fix with Agent...**. If you want debugging guidance first and the
+   option is available, choose **Ask Agent for a Hint...**.
+3. Review the error context in the confirmation and select a recent agent
+   session when shown.
+4. Confirm with **Send to Agent** or **Ask Agent**, then follow the request in
+   the agent chat.
+5. Inspect any changed source and render the document again to check the result.
+
+The request includes the render error and build command. When the log identifies
+a source-line range, that range is also supplied. The agent is directed to read
+the live document before editing. Ordinary informational output from a
+successful render does not trigger this failed-build shortcut.
 
 ## Reproducibility
 
@@ -245,6 +308,33 @@ tools, or a clean release record.
 
 Store deploy keys and access tokens using project secrets or SSH keys, not
 inside the repository.
+
+## Set up and commit from a Codex thread
+
+Open the Codex thread's menu and choose **Git browser**. On phones, open
+**Chat tools** using the ellipsis button, then choose **Thread actions**
+to open the thread menu. Check the displayed
+repository path before using its actions. If the folder is not a repository,
+**Initialize Git Repo** creates one. **Ask Agent to Set Up Repo** asks the thread's
+agent to initialize it, choose a \`.gitignore\`, stage appropriate source files,
+make the first commit, and summarize inclusions and exclusions.
+
+In the commit selector, choose **HEAD** (**Uncommitted changes (git diff HEAD)**)
+to open **Commit changes**, then inspect **Uncommitted files**:
+
+1. **Commit** with a message runs \`git commit -a\` directly with that message.
+2. **Commit** with an empty message asks the agent to create the commit.
+3. **Commit with AI Summary** asks the agent to commit and write the message;
+   if you supplied text, the prompt requests that text as the first line.
+
+These actions include all tracked changes, not only the file currently shown.
+Untracked files are excluded. Use **Add** beside an untracked file when it should
+be included, or **Ignore** when it belongs in \`.gitignore\`; review the resulting
+file list before committing. Agent actions need an available Codex thread.
+
+After an agent request, inspect its response and the resulting commit in the
+Git browser. Sending the request is not proof that a commit succeeded. Review
+commits and use TimeTravel for file-level recovery as described below.
 
 ## Git and TimeTravel
 

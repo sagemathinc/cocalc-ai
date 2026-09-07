@@ -11,6 +11,7 @@ const guides = {
   "ai/codex-goals": "Snooze 5 minutes",
   "ai/codex-automation": "unacknowledged",
   "ai/codex-notifications": "Stop all active or uncertain",
+  "ai/editor-agent": "Automatically submit to Agent",
 };
 
 test("agent guides are registered, linked from the introduction, and searchable", () => {
@@ -57,4 +58,19 @@ test("agent guides keep distinct headings and valid internal links", () => {
     }
   }
   assert.equal(verifyDocsStatic().ok, true);
+});
+
+test("editor recipes remain in their task guides", () => {
+  for (const [slug, phrase] of [
+    ["jupyter/use-jupyter", "Use Agent on a code cell"],
+    ["jupyter/use-jupyter", "Improve a Markdown cell"],
+    ["jupyter/use-jupyter", "Send a notebook error"],
+    ["jupyter/custom-kernels", "Ask Agent to install a kernel"],
+    ["latex/build-papers", "Edit a formula with Agent"],
+    ["editors/r-markdown", "Ask Agent to repair a render failure"],
+    ["files/git", "Set up and commit from a Codex thread"],
+    ["collaboration/chat", "Resolve a LaTeX marker discussion"],
+  ]) {
+    assert.ok(getDocsEntry(slug)?.body.includes(phrase), `${slug}: ${phrase}`);
+  }
 });

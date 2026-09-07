@@ -57,7 +57,7 @@ export const JUPYTER_ENTRIES: DocsEntry[] = [
       "/public/docs/use-jupyter-bcc9b49c.webp",
       "A collaborative Jupyter notebook with output and a running kernel",
     ),
-    lastReviewed: "2026-05-24",
+    lastReviewed: "2026-09-07",
     slug: "jupyter/use-jupyter",
     status: "ready",
     summary:
@@ -89,7 +89,7 @@ export const JUPYTER_ENTRIES: DocsEntry[] = [
       "/public/docs/custom-jupyter-kernels-58a40bde.webp",
       "A custom Jupyter kernel connected to an isolated Python environment",
     ),
-    lastReviewed: "2026-05-24",
+    lastReviewed: "2026-09-07",
     noActionReason:
       "Kernel setup is a terminal-plus-notebook workflow with project-specific package commands.",
     slug: "jupyter/custom-kernels",
