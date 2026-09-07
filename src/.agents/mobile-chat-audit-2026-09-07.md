@@ -53,6 +53,14 @@ has not been made discoverable as part of this work.
 - Full static builds and frontend lint passed throughout the implementation.
   Latest broad check before the drawer-focus follow-up: 81 chat suites,
   689 tests passed; Markdown-input contracts also passed separately.
+- Expanded Codex message output fits the phone viewport and passes a focused
+  axe scan. Its trigger is now named "Focus this message". Escape and the Close
+  button return focus to the source message (or its trigger if still mounted),
+  rather than dropping focus onto the body. The reusable Playwright check is
+  `src/scripts/accessibility/chat-message-focus.mjs`: call
+  `checkMessageFocus(page)` with a visible message action bar. This check opens
+  with Enter and exercises both close paths without sending or editing.
+  The live check, 22 focused message tests, lint, and full build passed.
 
 ## Remaining Acceptance Checks
 

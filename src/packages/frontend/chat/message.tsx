@@ -522,6 +522,23 @@ export default function Message({
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [showTouchActions, setShowTouchActions] = useState<boolean>(false);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
+  const messageRowRef = useRef<HTMLDivElement>(null);
+  const zenTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const openZenMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
+    zenTriggerRef.current = event.currentTarget;
+    setShowZenMessage(true);
+  };
+  const closeZenMessage = () => {
+    setShowZenMessage(false);
+    requestAnimationFrame(() => {
+      if (document.activeElement !== document.body) return;
+      // Hover-only actions can unmount while the drawer is open.
+      const target = zenTriggerRef.current?.isConnected
+        ? zenTriggerRef.current
+        : messageRowRef.current;
+      target?.focus({ preventScroll: true });
+    });
+  };
   const [showAcpPromptModal, setShowAcpPromptModal] = useState<boolean>(false);
   const [openActivityDrawerToken, setOpenActivityDrawerToken] = useState<
     number | undefined
@@ -1633,7 +1650,9 @@ export default function Message({
           size="small"
           type="text"
           style={getFocusMessageButtonStyle()}
-          onClick={() => setShowZenMessage(true)}
+          aria-label="Focus this message"
+          aria-haspopup="dialog"
+          onClick={openZenMessage}
         >
           <Icon name="expand-arrows" />
         </Button>
@@ -1729,7 +1748,9 @@ export default function Message({
           size="small"
           type="text"
           style={getFocusMessageButtonStyle()}
-          onClick={() => setShowZenMessage(true)}
+          aria-label="Focus this message"
+          aria-haspopup="dialog"
+          onClick={openZenMessage}
         >
           <Icon name="expand-arrows" />
         </Button>
@@ -2375,7 +2396,7 @@ export default function Message({
       <Drawer
         title={senderName}
         open={showZenMessage}
-        onClose={() => setShowZenMessage(false)}
+        onClose={closeZenMessage}
         placement="right"
         width="100vw"
         destroyOnHidden
@@ -2935,6 +2956,8 @@ export default function Message({
 
   return (
     <Row
+      ref={messageRowRef}
+      tabIndex={-1}
       style={getStyle()}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
