@@ -18,7 +18,7 @@ import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { labels } from "@cocalc/frontend/i18n";
 import { type ProjectActions } from "@cocalc/frontend/project_store";
 import * as misc from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { DirectoryListingEntry } from "@cocalc/util/types";
 import {
   ACTION_BUTTONS_DIR,
@@ -41,7 +41,7 @@ import {
 
 const ROW_INFO_STYLE = {
   alignItems: "center",
-  color: COLORS.TAB,
+  color: UI_COLORS.secondary,
   display: "inline-flex",
   height: "32px",
   margin: "0 3px",

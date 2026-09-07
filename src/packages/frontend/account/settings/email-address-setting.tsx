@@ -49,6 +49,7 @@ export const EmailAddressSetting = ({
 
   function cancel_editing() {
     setState("view");
+    set_email_address(email_address0 ?? "");
     setPassword("");
   }
 
@@ -69,6 +70,7 @@ export const EmailAddressSetting = ({
         password,
       );
       const changedEmail = result.email_address ?? email_address;
+      set_email_address(changedEmail);
       if (result.already_verified) {
         setMessage(
           `Email address changed to ${changedEmail}. This address was already verified, so no new verification email was needed.`,
@@ -145,7 +147,9 @@ export const EmailAddressSetting = ({
           />
           <Input
             autoFocus
+            disabled={state === "saving"}
             placeholder="user@example.com"
+            value={email_address}
             onChange={(e) => {
               set_email_address(e.target.value);
             }}
@@ -154,6 +158,7 @@ export const EmailAddressSetting = ({
         </div>
         {password_label}
         <Input.Password
+          disabled={state === "saving"}
           value={password}
           placeholder={password_label}
           onChange={(e) => {
@@ -169,9 +174,11 @@ export const EmailAddressSetting = ({
           }}
         />
         <Space style={{ marginTop: "15px" }}>
-          <Button onClick={cancel_editing}>Cancel</Button>
+          <Button onClick={cancel_editing} disabled={state === "saving"}>
+            Cancel
+          </Button>
           <Button
-            disabled={!is_submittable()}
+            disabled={state === "saving" || !is_submittable()}
             onClick={save_editing}
             type="primary"
           >

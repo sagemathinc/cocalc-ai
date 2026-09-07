@@ -122,6 +122,7 @@ function getModeOptions(): ModeOption[] {
 }
 
 export interface CodexConfigButtonProps {
+  compact?: boolean | "summary";
   threadKey: string;
   chatPath: string;
   projectId?: string;
@@ -305,7 +306,7 @@ const SectionTitle = ({ children }: { children: React.ReactNode }) => (
 const formItemStyle = { marginBottom: 12 } as const;
 const gridTwoColStyle = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
   gap: 12,
   width: "100%",
 } as const;
@@ -491,6 +492,7 @@ export function CodexPaymentCredentialsModal({
 }
 
 export function CodexConfigButton({
+  compact = false,
   threadKey,
   chatPath,
   projectId,
@@ -1153,7 +1155,31 @@ export function CodexConfigButton({
           maxWidth: "min(760px, calc(100vw - 32px))",
         }}
       >
-        {controlsCollapsed ? (
+        {compact ? (
+          <Button
+            className={
+              compact === "summary" ? "cocalc-chat-model-summary" : undefined
+            }
+            aria-label={
+              compact === "summary"
+                ? `Codex settings: ${displayedModel} ${displayedReasoning}`
+                : "Codex settings"
+            }
+            aria-haspopup="dialog"
+            title={
+              compact === "summary"
+                ? `${displayedModel} ${displayedReasoning}`
+                : undefined
+            }
+            icon={compact === "summary" ? undefined : <Icon name="sliders" />}
+            type={compact === "summary" ? "text" : "default"}
+            onClick={() => setOpen(true)}
+          >
+            {compact === "summary"
+              ? `${displayedModel} ${displayedReasoning}`
+              : "Codex settings"}
+          </Button>
+        ) : controlsCollapsed ? (
           <span
             style={{
               alignItems: "center",
@@ -1530,6 +1556,7 @@ export function CodexConfigButton({
                   </div>
                   <Form.Item name="paymentSource" style={{ marginBottom: 0 }}>
                     <Select
+                      aria-label="Payment source"
                       style={{ width: "100%" }}
                       options={paymentSourceOptions}
                       optionRender={(option) =>

@@ -35,6 +35,7 @@ import { AcpPromptModal } from "./acp-prompt-modal";
 import { isCodexPaymentSourceNeedsUserConfiguration } from "./codex-submit-preflight";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { useChatVisualViewport } from "./use-chat-viewport";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -67,6 +68,7 @@ export interface ChatRoomComposerProps {
   codexPaymentSource?: CodexPaymentSourceInfo;
   codexPaymentSourceLoading?: boolean;
   onOpenCodexPaymentConfig?: () => void;
+  mobile?: boolean;
 }
 
 export { findChatComposerFocusTarget, refocusChatComposerInput };
@@ -99,7 +101,9 @@ export function ChatRoomComposer({
   codexPaymentSource,
   codexPaymentSourceLoading = false,
   onOpenCodexPaymentConfig,
+  mobile = false,
 }: ChatRoomComposerProps) {
+  const visualViewport = useChatVisualViewport(mobile);
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
   const ZEN_MAX_VH = 1.0;
@@ -217,12 +221,25 @@ export function ChatRoomComposer({
 
   const defaultMaxHeight = useMemo(
     () =>
-      Math.max(MIN_DRAG_HEIGHT, Math.round(viewportHeight * DEFAULT_MAX_VH)),
-    [viewportHeight],
+      Math.max(
+        MIN_DRAG_HEIGHT,
+        Math.round(
+          (mobile && visualViewport.height
+            ? visualViewport.height
+            : viewportHeight) * DEFAULT_MAX_VH,
+        ),
+      ),
+    [viewportHeight, mobile, visualViewport.height],
   );
   const zenHeight = useMemo(
-    () => Math.max(MIN_DRAG_HEIGHT, Math.round(viewportHeight * ZEN_MAX_VH)),
-    [viewportHeight],
+    () =>
+      Math.max(
+        MIN_DRAG_HEIGHT,
+        mobile && visualViewport.height
+          ? visualViewport.height - 160
+          : Math.round(viewportHeight * ZEN_MAX_VH),
+      ),
+    [viewportHeight, mobile, visualViewport.height],
   );
   const maxDragHeight = useMemo(
     () => Math.max(MIN_DRAG_HEIGHT, Math.round(viewportHeight * DRAG_MAX_VH)),
@@ -306,14 +323,14 @@ export function ChatRoomComposer({
     ? `${zenHeight}px`
     : collapseWhenIdle
       ? `${IDLE_COLLAPSED_HEIGHT}px`
-      : manualHeightPx != null
+      : !mobile && manualHeightPx != null
         ? `${manualHeightPx}px`
         : INPUT_HEIGHT;
   const autoGrowMaxHeight = collapseWhenIdle
     ? IDLE_COLLAPSED_HEIGHT
     : isZenMode
       ? zenHeight
-      : Math.max(defaultMaxHeight, manualHeightPx ?? 0);
+      : Math.max(defaultMaxHeight, mobile ? 0 : (manualHeightPx ?? 0));
 
   const toggleZenMode = useCallback(async () => {
     if (isZenMode) {
@@ -329,14 +346,14 @@ export function ChatRoomComposer({
     }
     setIsZenMode(true);
     const el = zenContainerRef.current;
-    if (el?.requestFullscreen) {
+    if (!mobile && el?.requestFullscreen) {
       try {
         await el.requestFullscreen();
       } catch {
         // ignore and fall back to in-page zen
       }
     }
-  }, [isZenMode]);
+  }, [isZenMode, mobile]);
 
   const handleSend = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
@@ -400,6 +417,7 @@ export function ChatRoomComposer({
 
   const composerStyle: CSSProperties = {
     display: "flex",
+    flexDirection: mobile ? "column" : "row",
     marginBottom: isZenMode && isFullscreen ? 0 : "5px",
     overflow: "hidden",
     width: "100%",
@@ -407,6 +425,19 @@ export function ChatRoomComposer({
     padding: isZenMode && isFullscreen ? "12px" : undefined,
     background: isZenMode && isFullscreen ? UI_COLORS.surface : undefined,
     boxSizing: "border-box",
+    ...(mobile && isZenMode
+      ? {
+          position: "fixed",
+          top: visualViewport.top,
+          left: visualViewport.left,
+          width: visualViewport.width || "100%",
+          height: visualViewport.height || "100dvh",
+          zIndex: 950,
+          padding: "8px",
+          background: UI_COLORS.surface,
+          justifyContent: "flex-end",
+        }
+      : {}),
   };
 
   return (
@@ -417,8 +448,10 @@ export function ChatRoomComposer({
     >
       <div
         style={{
-          flex: "1",
-          padding: "0px 5px 0px 2px",
+          flex: mobile ? "0 1 auto" : "1",
+          order: mobile ? 1 : undefined,
+          width: mobile ? "100%" : undefined,
+          padding: mobile ? 0 : "0px 5px 0px 2px",
           // Critical flexbox quirk: without minWidth: 0, long unbroken input text
           // forces this flex item to grow instead of shrinking, so the send/toolbar
           // buttons get pushed off-screen. Allow the item to shrink (and text to wrap)
@@ -426,7 +459,7 @@ export function ChatRoomComposer({
           minWidth: 0,
         }}
       >
-        {!IS_MOBILE && hasInput && (
+        {!IS_MOBILE && !mobile && hasInput && (
           <Tooltip
             title={
               isZenMode
@@ -553,8 +586,8 @@ export function ChatRoomComposer({
             onControlReady={(control) =>
               onComposerReady?.(control, inputContainerRef.current)
             }
-            fontSize={fontSize}
-            autoFocus
+            fontSize={mobile ? Math.max(16, fontSize) : fontSize}
+            autoFocus={!mobile}
             isFocused={isInputFocused}
             cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
             input={input}
@@ -604,14 +637,19 @@ export function ChatRoomComposer({
         </div>
       </div>
       <div
+        data-testid="chat-composer-actions"
         style={{
           display: "flex",
-          flexDirection: "column",
+          flexDirection: mobile ? "row" : "column",
+          flexWrap: mobile ? "wrap" : undefined,
+          justifyContent: mobile ? "flex-end" : undefined,
+          gap: mobile ? 6 : undefined,
+          flexShrink: 0,
           padding: "0",
-          marginBottom: "0",
+          marginBottom: mobile && hasInput ? 4 : 0,
         }}
       >
-        <div style={{ flex: 1 }} />
+        {!mobile && <div style={{ flex: 1 }} />}
         {hasInput && (
           <>
             {hasAcpPrompt ? (
@@ -669,7 +707,7 @@ export function ChatRoomComposer({
             )}
             {hasRunningCodexTurn ? (
               <>
-                <div style={{ height: "5px" }} />
+                {!mobile && <div style={{ height: "5px" }} />}
                 <Tooltip
                   title={
                     <FormattedMessage

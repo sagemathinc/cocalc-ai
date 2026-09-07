@@ -10,6 +10,7 @@ Task description:
  - allows for changing it
 */
 
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Button, Popconfirm, Space } from "antd";
 import { React } from "../../app-framework";
 import { Icon, Tooltip } from "../../components";
@@ -138,7 +139,7 @@ export const Description: React.FC<Props> = React.memo(
             position: "absolute",
             right: "25px",
             bottom: "-10px",
-            background: "white",
+            background: UI_COLORS.surface,
             zIndex: 1,
           }}
         >

@@ -7,6 +7,7 @@
 Rendered view of the description of a single task
 */
 
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { React } from "../../app-framework";
 import { header_part } from "./desc-rendering";
 import { TaskActions } from "./actions";
@@ -39,7 +40,9 @@ export const DescriptionRendered: React.FC<Props> = React.memo(
     function render_content() {
       let value = desc;
       if (!value.trim()) {
-        return <span style={{ color: "#666" }}>Description...</span>;
+        return (
+          <span style={{ color: UI_COLORS.secondary }}>Description...</span>
+        );
       }
       let show_more_link: boolean;
       if (hideBody) {

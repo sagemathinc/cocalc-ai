@@ -53,10 +53,29 @@ export default function InsertMenu({ editor }: Props) {
 
   return (
     <DropdownMenu
+      ariaLabel="Insert"
       button={true}
       title={<Icon name={"plus-circle"} />}
       style={BUTTON_STYLE}
-      items={items}
+      items={[
+        ...(editor.openFilePicker
+          ? [
+              {
+                key: "upload",
+                label: (
+                  <>
+                    <div style={{ display: "inline-block", width: "24px" }}>
+                      <Icon name="upload" />
+                    </div>{" "}
+                    Upload files...
+                  </>
+                ),
+                onClick: () => editor.openFilePicker?.(),
+              },
+            ]
+          : []),
+        ...items,
+      ]}
     />
   );
 }
