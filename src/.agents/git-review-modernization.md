@@ -60,6 +60,17 @@ Missing live test evidence does not establish that these checks pass.
 
 ### Restored live-session checks
 
+Activity diffs now render Pierre directly with no renderer selector. Removed
+the Classic activity row renderer and its Prism dependency from the activity
+module. Old/malformed entries that cannot supply trustworthy source coordinates
+show an explicit warning and a keyboard-accessible raw-data disclosure, retaining
+their recorded fields without inventing a file or offering another renderer.
+This supersedes earlier notes about Classic-only old events. The focused activity
+and source tests passed 51 cases, including literal text preservation and
+keyboard disclosure; frontend typecheck, lint and development build passed.
+Reconnect and worktree-agent browser entry points now wait for Pierre directly;
+only syntax checks were rerun for those two harness changes in this step.
+
 Deleted the now-unused Classic `DiffBlock`/`DiffFileSection` implementation,
 its test-only drawer exports and implementation-specific tests. Deleted the
 experimental Pierre preview, trigger and prototype-only tests/harness; reusable

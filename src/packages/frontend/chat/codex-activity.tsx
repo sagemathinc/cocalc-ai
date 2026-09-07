@@ -31,11 +31,6 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { AttachedSteerMessage } from "./agent-message-status";
 import { formatCodexErrorForDisplay } from "./codex-error-presentation";
 import { lite } from "@cocalc/frontend/lite";
-import {
-  buildPrismLineMetasFromPlain,
-  highlightPrismLines,
-  languageHintFromPath,
-} from "./diff-prism";
 import { CodexVmApprovalPrompt } from "./codex-vm-approval";
 import { ActivityDiff } from "./activity-diff";
 
@@ -745,13 +740,7 @@ function ActivityRow({
             diff={entry.diff}
             path={entry.path ?? "activity.txt"}
             fontSize={fontSize}
-          >
-            <DiffPreview
-              diff={entry.diff}
-              fontSize={fontSize}
-              languageHint={languageHintFromPath(entry.path)}
-            />
-          </ActivityDiff>
+          />
         </div>
       );
     case "config":
@@ -1507,84 +1496,6 @@ export function parsePathLineTarget(
     path: parsed.path,
     line: explicitLine ?? parsed.line ?? lineFromHash,
   };
-}
-
-function DiffPreview({
-  diff,
-  fontSize,
-  languageHint,
-}: {
-  diff: LineDiffResult;
-  fontSize: number;
-  languageHint: string;
-}) {
-  const lines = diff?.lines ?? [];
-  const codeFontSize = Math.max(11, fontSize - 1);
-  const chunkEnds = new Set(diff.chunkBoundaries ?? []);
-  const lineMetas = useMemo(() => buildPrismLineMetasFromPlain(lines), [lines]);
-  const highlightedByLine = useMemo(
-    () => highlightPrismLines(lineMetas, languageHint),
-    [lineMetas, languageHint],
-  );
-  if (lines.length === 0) {
-    // ?'s for old input
-    return (
-      <Text type="secondary" style={{ fontSize: Math.max(11, fontSize - 2) }}>
-        No changes detected.
-      </Text>
-    );
-  }
-  return (
-    <div
-      className="cocalc-slate-code-block"
-      style={{
-        marginTop: 6,
-        fontFamily: "monospace",
-        fontSize: codeFontSize,
-        border: `1px solid ${UI_COLORS.border}`,
-        borderRadius: 6,
-        overflow: "hidden",
-      }}
-    >
-      {lines.map((_line, i) => {
-        const op = diff.types[i] ?? 0;
-        const gutter = diff.gutters[i] ?? "";
-        const background =
-          op === -1
-            ? UI_COLORS.dangerBg
-            : op === 1
-              ? UI_COLORS.successBg
-              : "transparent";
-        const color = op === 0 ? UI_COLORS.secondary : "inherit";
-        const borderTop = chunkEnds.has(i)
-          ? `1px solid ${UI_COLORS.border}`
-          : "none";
-        const html = highlightedByLine[i] ?? "";
-        return (
-          <div
-            key={i}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "auto 1fr",
-              gap: 8,
-              padding: "2px 8px",
-              background,
-              color,
-              borderTop,
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            <span style={{ color: UI_COLORS.secondary }}>{gutter}</span>
-            <span
-              dangerouslySetInnerHTML={{
-                __html: html.length > 0 ? html : "&nbsp;",
-              }}
-            />
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 function resolvePath(

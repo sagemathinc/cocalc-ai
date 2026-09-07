@@ -1,8 +1,9 @@
-import { Alert } from "antd";
-import { useMemo } from "react";
+import { Alert, Button } from "antd";
+import { useId, useMemo, useState } from "react";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { ReadOnlyDiff } from "@cocalc/frontend/components/diff-viewer/document-diff";
 import { activityDiffSource } from "./activity-diff-source";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export default function ActivityPierreDiff({
   diff,
@@ -13,6 +14,8 @@ export default function ActivityPierreDiff({
   path: string;
   fontSize: number;
 }) {
+  const [showRecordedData, setShowRecordedData] = useState(false);
+  const recordedDataId = useId();
   const parsed = useMemo(() => {
     try {
       return { source: activityDiffSource(diff, path), error: "" };
@@ -22,11 +25,38 @@ export default function ActivityPierreDiff({
   }, [diff, path]);
   if (!parsed.source)
     return (
-      <Alert
-        type="warning"
-        title="Pierre cannot display this entry"
-        description={parsed.error}
-      />
+      <div>
+        <Alert
+          type="warning"
+          title="A reliable diff is unavailable for this activity entry"
+          description={parsed.error}
+        />
+        <Button
+          type="link"
+          aria-expanded={showRecordedData}
+          aria-controls={recordedDataId}
+          onClick={() => setShowRecordedData((show) => !show)}
+        >
+          Recorded diff data
+        </Button>
+        <div id={recordedDataId} hidden={!showRecordedData}>
+          {showRecordedData && (
+            <pre
+              style={{
+                maxHeight: "60vh",
+                overflow: "auto",
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                color: UI_COLORS.text,
+                background: UI_COLORS.inset,
+                fontSize,
+              }}
+            >
+              {JSON.stringify(diff, null, 2)}
+            </pre>
+          )}
+        </div>
+      </div>
     );
   return (
     <div

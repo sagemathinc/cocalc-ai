@@ -60,9 +60,9 @@ export async function checkWorktreeAgent({
   await expect(
     page.getByText("Loading review state...", { exact: true }),
   ).toHaveCount(0);
-  await page
-    .getByRole("combobox", { name: "Diff renderer", exact: true })
-    .selectOption("pierre");
+  await expect(
+    page.getByRole("region", { name: "Git diff", exact: true }),
+  ).toBeVisible({ timeout: 60000 });
   await page
     .getByRole("combobox", { name: "Changed files", exact: true })
     .selectOption({ index: 1 });

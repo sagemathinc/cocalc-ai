@@ -83,9 +83,9 @@ async function open(interruptible = false) {
 async function draft(page, text) {
   await page.bringToFront();
   // Select through the real Pierre gutter and edit through the real Slate instance.
-  await page
-    .getByRole("combobox", { name: "Diff renderer", exact: true })
-    .selectOption("pierre");
+  await expect(
+    page.getByRole("region", { name: "Git diff", exact: true }),
+  ).toBeVisible({ timeout: 60000 });
   await page
     .getByRole("combobox", { name: "Changed files", exact: true })
     .selectOption({ index: 1 });
