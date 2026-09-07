@@ -44,6 +44,16 @@ intermittent acceptance issue rather than treating the rerun as proof of
 reliable native selection. The standalone harness still stubs Slate and app
 services and does not replace signed-in drawer acceptance.
 
+Native-copy follow-up: the harness now accepts `COPY_CYCLES=N` to repeat fresh
+preview openings and native clipboard checks on both panes, and records the
+selection seen by the copy event for failure diagnostics. Twenty cycles with
+the tree/preview suite and thirty cycles after the stress/full suite passed
+without reproducing the earlier empty clipboard. Added partial-line source
+selection across syntax-token text nodes; ten full-suite cycles passed with
+both whole-line and partial-line assertions. No production copy handler was
+changed, and this does not yet cover selection across recycled virtual windows
+or explain the original intermittent failure.
+
 ## Objective
 
 Make reading and discussing agent-produced code reliable across branches,

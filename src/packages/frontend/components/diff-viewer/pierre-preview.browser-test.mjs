@@ -559,35 +559,80 @@ try {
     .fill("file-09999.ts");
   await page.getByRole("treeitem", { name: /file-09999.ts/ }).click();
   await expect(page.getByLabel("Selected file")).toHaveText("9999");
-  await page.goto(`http://127.0.0.1:${server.address().port}/copy`);
-  await page.getByRole("button", { name: "Preview with Pierre" }).click();
-  await page.getByRole("checkbox", { name: "Side by side" }).check();
-  for (const [side, expected] of [
-    ["deletions", "+before;\n-before;"],
-    ["additions", "+after;\n-after;"],
-  ]) {
-    const content = page.locator(
-      `diffs-container code[data-${side}] [data-content]`,
-    );
-    await expect(content).toBeVisible();
-    await page.getByRole("region", { name: "Diff preview" }).focus();
-    await content.evaluate((node) => {
-      const lines = node.querySelectorAll("[data-line]");
-      const first = lines[0],
-        last = lines[lines.length - 1];
-      const range = document.createRange();
-      range.setStart(first, 0);
-      range.setEnd(last, last.childNodes.length);
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
+  for (let cycle = 0; cycle < Number(process.env.COPY_CYCLES || 1); cycle++) {
+    await page.goto(`http://127.0.0.1:${server.address().port}/copy`);
+    await page.evaluate(() => {
+      window.copyEvents = [];
+      document.addEventListener(
+        "copy",
+        () => {
+          window.copyEvents.push({
+            selection: window.getSelection()?.toString(),
+            time: performance.now(),
+          });
+        },
+        true,
+      );
     });
-    await page.keyboard.press("Control+c");
-    assert.equal(
-      (await page.evaluate(() => navigator.clipboard.readText())).trimEnd(),
-      expected,
-      `${side}: native copying preserves literal operators without diff markers or gutters`,
-    );
+    await page.getByRole("button", { name: "Preview with Pierre" }).click();
+    await page.getByRole("checkbox", { name: "Side by side" }).check();
+    for (const [side, expected] of [
+      ["deletions", "+before;\n-before;"],
+      ["additions", "+after;\n-after;"],
+    ]) {
+      const content = page.locator(
+        `diffs-container code[data-${side}] [data-content]`,
+      );
+      await expect(content).toBeVisible();
+      await page.getByRole("region", { name: "Diff preview" }).focus();
+      await content.evaluate((node) => {
+        const lines = node.querySelectorAll("[data-line]");
+        const first = lines[0],
+          last = lines[lines.length - 1];
+        const range = document.createRange();
+        range.setStart(first, 0);
+        range.setEnd(last, last.childNodes.length);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      });
+      await page.keyboard.press("Control+c");
+      const copied = (
+        await page.evaluate(() => navigator.clipboard.readText())
+      ).trimEnd();
+      assert.equal(
+        copied,
+        expected,
+        `${side}, cycle ${cycle}: native copying preserves literal operators without diff markers or gutters; ${JSON.stringify(await page.evaluate(() => ({ events: window.copyEvents, selection: window.getSelection()?.toString() })))}`,
+      );
+      // Select within source text nodes, not the line container: syntax
+      // highlighting can split one source line into several token spans.
+      await content.evaluate((node) => {
+        const line = node.querySelector("[data-line]");
+        const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        const range = document.createRange();
+        const boundary = (offset) => {
+          for (const text of nodes) {
+            if (offset <= text.textContent.length) return [text, offset];
+            offset -= text.textContent.length;
+          }
+          throw new Error("Partial-copy offset not present in rendered source");
+        };
+        range.setStart(...boundary(1));
+        range.setEnd(...boundary(line.textContent.length - 1));
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      });
+      await page.keyboard.press("Control+c");
+      assert.equal(
+        await page.evaluate(() => navigator.clipboard.readText()),
+        expected.split("\n")[0].slice(1, -1),
+        `${side}, cycle ${cycle}: partial copying contains exactly the selected source characters`,
+      );
+    }
   }
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.getByRole("button", { name: "Preview with Pierre" }).click();
