@@ -78,7 +78,9 @@ export function CodexGoalControl({
           onClick={show}
           title={label ?? "Set goal"}
           aria-label={
-            label ? `Goal: ${label}${status ? ` (${status})` : ""}` : "Set goal"
+            label
+              ? `Goal: ${label}${status ? ` (${status})` : ""}`
+              : `Set goal${status ? ` (${status})` : ""}`
           }
           style={{
             background: "none",

@@ -138,6 +138,19 @@ it("shows crash-window commands as awaiting confirmation and allows an explicit 
   expect(screen.getByRole("button", { name: "Save goal" })).toBeTruthy();
 });
 
+it("announces a failed initial goal change from the trigger", () => {
+  render(
+    <CodexGoalControl
+      request={{ id: "failed", action: "set", objective: "First goal" }}
+      ack={{ id: "failed", state: "error", error: "runtime unavailable" }}
+      onChange={jest.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Set goal (change failed)" }),
+  ).toBeTruthy();
+});
+
 it("rejects invalid budgets accessibly and clears only on an explicit action", async () => {
   const onChange = jest.fn(async () => {});
   render(<CodexGoalControl snapshot={snapshot} onChange={onChange} />);

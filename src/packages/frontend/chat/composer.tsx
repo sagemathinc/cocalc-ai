@@ -34,6 +34,7 @@ import {
 } from "./composer-focus";
 import { AcpPromptModal } from "./acp-prompt-modal";
 import { isCodexPaymentSourceNeedsUserConfiguration } from "./codex-submit-preflight";
+import { isCodexModelName } from "@cocalc/util/ai/codex";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -117,7 +118,9 @@ export function ChatRoomComposer({
     ? actions?.getThreadMetadata?.(selectedThread.key)
     : undefined;
   const showGoal =
-    threadMetadata?.agent_kind === "acp" || threadMetadata?.acp_config != null;
+    threadMetadata?.agent_kind === "acp" ||
+    threadMetadata?.acp_config != null ||
+    isCodexModelName(`${threadMetadata?.agent_model ?? ""}`.trim());
   const themeLineColor = threadColor ?? threadAccentColor;
   const contextThread = useMemo(
     () => selectedThread ?? undefined,
