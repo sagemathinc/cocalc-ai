@@ -25,6 +25,19 @@
   white-space: nowrap;
 }
 
+.cocalc-chat-mobile-header .cocalc-chat-model-summary {
+  width: auto;
+  max-width: 156px;
+  padding: 0 4px;
+  font-size: 12px;
+}
+
+.cocalc-chat-model-summary > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cocalc-chat-narrow [data-testid="chat-composer"] {
   flex-shrink: 0;
   padding: 4px;
@@ -32,6 +45,11 @@
 
 .cocalc-chat-narrow [data-testid="chat-composer"] .ant-btn {
   min-height: 36px;
+}
+
+.cocalc-chat-narrow [data-markdown-mode-switch] .ant-btn {
+  min-height: 24px;
+  height: 24px;
 }
 
 .cocalc-chat-narrow pre {

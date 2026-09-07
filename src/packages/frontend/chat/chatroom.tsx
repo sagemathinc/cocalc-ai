@@ -139,7 +139,7 @@ import {
   resolveCodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import { getLiveCodexUsageStatus } from "@cocalc/frontend/account/codex-usage";
-import { CodexPaymentCredentialsModal } from "./codex";
+import { CodexConfigButton, CodexPaymentCredentialsModal } from "./codex";
 import { showLocalCodexTurnCompletionToast } from "@cocalc/frontend/notifications/codex-turn-toast";
 import {
   codexConnectionNeedsAttentionAfterSubmit,
@@ -2900,6 +2900,23 @@ export function ChatPanel({
                 "New chat",
             )}
           </span>
+          {!effectiveReadOnly &&
+            selectedThreadKey &&
+            selectedThreadId &&
+            (threadSupportsCodexAutomation(selectedThreadMetadata) ||
+              actions?.getCodexConfig?.(selectedThreadId) != null) && (
+              <CodexConfigButton
+                compact="summary"
+                threadKey={selectedThreadKey}
+                chatPath={path}
+                projectId={project_id}
+                actions={actions}
+                threadConfig={selectedThreadMetadata?.acp_config ?? null}
+                paymentSource={codexPaymentSource}
+                paymentSourceLoading={codexPaymentSourceLoading}
+                refreshPaymentSource={refreshCodexPaymentSource}
+              />
+            )}
           {focusButton}
           <Button
             type="text"

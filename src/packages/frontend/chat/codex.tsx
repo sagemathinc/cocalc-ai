@@ -122,7 +122,7 @@ function getModeOptions(): ModeOption[] {
 }
 
 export interface CodexConfigButtonProps {
-  compact?: boolean;
+  compact?: boolean | "summary";
   threadKey: string;
   chatPath: string;
   projectId?: string;
@@ -1156,8 +1156,28 @@ export function CodexConfigButton({
         }}
       >
         {compact ? (
-          <Button icon={<Icon name="sliders" />} onClick={() => setOpen(true)}>
-            Codex settings
+          <Button
+            className={
+              compact === "summary" ? "cocalc-chat-model-summary" : undefined
+            }
+            aria-label={
+              compact === "summary"
+                ? `Codex settings: ${displayedModel} ${displayedReasoning}`
+                : "Codex settings"
+            }
+            aria-haspopup="dialog"
+            title={
+              compact === "summary"
+                ? `${displayedModel} ${displayedReasoning}`
+                : undefined
+            }
+            icon={compact === "summary" ? undefined : <Icon name="sliders" />}
+            type={compact === "summary" ? "text" : "default"}
+            onClick={() => setOpen(true)}
+          >
+            {compact === "summary"
+              ? `${displayedModel} ${displayedReasoning}`
+              : "Codex settings"}
           </Button>
         ) : controlsCollapsed ? (
           <span

@@ -62,8 +62,14 @@ export default function InsertMenu({ editor }: Props) {
           ? [
               {
                 key: "upload",
-                label: "Upload files...",
-                icon: <Icon name="upload" />,
+                label: (
+                  <>
+                    <div style={{ display: "inline-block", width: "24px" }}>
+                      <Icon name="upload" />
+                    </div>{" "}
+                    Upload files...
+                  </>
+                ),
                 onClick: () => editor.openFilePicker?.(),
               },
             ]

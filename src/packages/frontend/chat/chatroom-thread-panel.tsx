@@ -2111,19 +2111,6 @@ export function ChatRoomThreadPanel({
       }}
     >
       {topRightControlsPrefix}
-      {mobile && shouldShowCodexConfig && (
-        <CodexConfigButton
-          compact
-          threadKey={selectedThreadKey}
-          chatPath={path ?? ""}
-          projectId={project_id}
-          actions={actions}
-          threadConfig={selectedThreadMeta?.acp_config ?? null}
-          paymentSource={codexPaymentSource}
-          paymentSourceLoading={codexPaymentSourceLoading}
-          refreshPaymentSource={refreshCodexPaymentSource}
-        />
-      )}
       {mobile && (
         <>
           <ThreadAnchorButton

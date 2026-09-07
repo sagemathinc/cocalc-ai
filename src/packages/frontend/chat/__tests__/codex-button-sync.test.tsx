@@ -41,8 +41,10 @@ jest.mock("antd", () => {
         {children}
       </div>
     ),
-    Button: ({ children, onClick }: any) => (
-      <button onClick={onClick}>{children}</button>
+    Button: ({ children, onClick, "aria-label": ariaLabel }: any) => (
+      <button onClick={onClick} aria-label={ariaLabel}>
+        {children}
+      </button>
     ),
     Divider: () => <div />,
     Dropdown: ({ children, menu, onOpenChange }: any) => {
@@ -199,6 +201,31 @@ describe("CodexConfigButton", () => {
     getCodexUsageStatus.mockResolvedValue({ available: true });
     projectToolsVersion = "tools-v1";
     window.localStorage.clear();
+  });
+
+  it("shows model and thinking level in the phone summary and opens settings", async () => {
+    render(
+      <CodexConfigButton
+        compact="summary"
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        threadConfig={{ model: "gpt-6-astra", reasoning: "medium" }}
+        actions={
+          { getCodexConfig: () => undefined, setCodexConfig: jest.fn() } as any
+        }
+      />,
+    );
+    const button = await screen.findByRole("button", {
+      name: /Codex settings: gpt-6-astra medium/i,
+    });
+    expect(button.textContent?.toLowerCase()).toBe("gpt-6-astra medium");
+    fireEvent.click(button);
+    expect(
+      await screen.findByText(
+        /These settings apply to the selected Codex thread/,
+      ),
+    ).toBeTruthy();
   });
 
   it("uses the authenticated catalog and preserves only the selected unavailable model", () => {
