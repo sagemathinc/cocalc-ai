@@ -1,4 +1,5 @@
 // Use a disposable commit: this leaves two private acceptance comments/drafts.
+// REVIEW_RECONNECT=1 interrupts only the second tab's real WebSocket transport.
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
@@ -11,9 +12,64 @@ const browser = await chromium.connectOverCDP(
   process.env.CDP_URL ?? "http://localhost:9222",
 );
 const pages = [];
-async function open() {
+let transport;
+async function open(interruptible = false) {
   const page = await browser.contexts()[0].newPage();
   pages.push(page);
+  if (interruptible) {
+    let offline = false;
+    let admitted = 0;
+    let rejected = 0;
+    const sockets = new Set();
+    await page.routeWebSocket("**/*", (socket) => {
+      if (offline) {
+        rejected++;
+        void socket.close({
+          code: 1012,
+          reason: "Review reconnect acceptance",
+        });
+        return;
+      }
+      // Forward actual traffic unchanged; no synthetic service responses.
+      const server = socket.connectToServer();
+      admitted++;
+      const pair = { socket, server };
+      sockets.add(pair);
+      socket.onClose((code, reason) => {
+        sockets.delete(pair);
+        void server.close({ code, reason });
+      });
+      server.onClose((code, reason) => {
+        sockets.delete(pair);
+        void socket.close({ code, reason });
+      });
+    });
+    transport = {
+      get admitted() {
+        return admitted;
+      },
+      get rejected() {
+        return rejected;
+      },
+      async disconnect() {
+        assert(sockets.size > 0, "No live WebSockets to interrupt");
+        offline = true;
+        for (const { socket, server } of [...sockets]) {
+          await socket.close({
+            code: 1012,
+            reason: "Review reconnect acceptance",
+          });
+          await server.close({
+            code: 1012,
+            reason: "Review reconnect acceptance",
+          });
+        }
+      },
+      reconnect() {
+        offline = false;
+      },
+    };
+  }
   await page.bringToFront();
   await page.goto(url.href, { waitUntil: "domcontentloaded" });
   await expect(
@@ -58,49 +114,93 @@ async function draft(page, text) {
     });
     fiber.memoizedProps.editor.insertText(text);
   }, text);
+  const warning = page.getByRole("button", {
+    name: "Dismiss stale frontend build warning",
+  });
+  if (await warning.isVisible()) await warning.click();
   return editor;
 }
 try {
   const first = await open();
-  const second = await open();
+  const second = await open(process.env.REVIEW_RECONNECT === "1");
   await draft(first, "Inline acceptance first window");
   await first.getByRole("button", { name: "Add comment", exact: true }).click();
   await expect(
     first.locator('[aria-label="Active inline comment"]'),
   ).toHaveCount(0);
   const editor = await draft(second, "Inline acceptance stale second window");
+  if (transport) await transport.disconnect();
   await second
     .getByRole("button", { name: "Add comment", exact: true })
     .click();
-  await expect(
-    second.getByText(/another window may have changed it/),
-  ).toBeVisible({ timeout: 30000 });
-  await expect(editor).toBeVisible();
-  await expect(editor).toContainText("Inline acceptance stale second window");
-  const draftIds = () =>
-    second.evaluate((hash) => {
-      const key = Object.keys(localStorage).find(
-        (key) =>
-          key.startsWith("cocalc:git-review:draft:v2:account:") &&
-          key.endsWith(`:commit:${hash}`),
-      );
-      if (!key) throw Error("Recovery draft missing");
-      return Object.keys(JSON.parse(localStorage.getItem(key)).comments).sort();
-    }, hash);
-  const ids = await draftIds();
-  assert(ids.length > 0);
-  await second
-    .getByRole("button", { name: "Add comment", exact: true })
-    .click();
-  await expect(
-    second.getByText(/another window may have changed it/),
-  ).toBeVisible();
-  assert.deepEqual(
-    await draftIds(),
-    ids,
-    "Retry must not insert another comment identity",
-  );
-  await expect(editor).toBeVisible();
+  if (transport) {
+    await expect
+      .poll(() => transport.rejected, { timeout: 30000 })
+      .toBeGreaterThan(0);
+    await expect(editor).toBeVisible();
+    await expect(editor).toContainText("Inline acceptance stale second window");
+    const before = transport.admitted;
+    transport.reconnect();
+    await expect
+      .poll(() => transport.admitted, { timeout: 30000 })
+      .toBeGreaterThan(before);
+  }
+  if (transport) {
+    await expect
+      .poll(
+        async () => {
+          const add = second.getByRole("button", {
+            name: "Add comment",
+            exact: true,
+          });
+          return (
+            (await add.count()) === 0 ||
+            ((await add.isEnabled()) &&
+              !(await add.getAttribute("class"))?.includes("ant-btn-loading"))
+          );
+        },
+        {
+          timeout: 90000,
+          message: "Save must settle after transport reconnects",
+        },
+      )
+      .toBe(true);
+    console.log(
+      "Reconnected save settled; verifying recovered persisted content.",
+    );
+  } else {
+    await expect(
+      second.getByText(/another window may have changed it/),
+    ).toBeVisible({ timeout: 30000 });
+    await expect(editor).toBeVisible();
+    await expect(editor).toContainText("Inline acceptance stale second window");
+    const draftIds = () =>
+      second.evaluate((hash) => {
+        const key = Object.keys(localStorage).find(
+          (key) =>
+            key.startsWith("cocalc:git-review:draft:v2:account:") &&
+            key.endsWith(`:commit:${hash}`),
+        );
+        if (!key) throw Error("Recovery draft missing");
+        return Object.keys(
+          JSON.parse(localStorage.getItem(key)).comments,
+        ).sort();
+      }, hash);
+    const ids = await draftIds();
+    assert(ids.length > 0);
+    await second
+      .getByRole("button", { name: "Add comment", exact: true })
+      .click();
+    await expect(
+      second.getByText(/another window may have changed it/),
+    ).toBeVisible();
+    assert.deepEqual(
+      await draftIds(),
+      ids,
+      "Retry must not insert another comment identity",
+    );
+    await expect(editor).toBeVisible();
+  }
   await second.reload({ waitUntil: "domcontentloaded" });
   for (const text of [
     "Inline acceptance first window",
@@ -132,8 +232,14 @@ try {
       timeout: 60000,
     });
   console.log(
-    "Passed: stale inline save retained editor and identity; reload and resave preserved both independent comments after the recovery draft was cleared.",
+    transport
+      ? "Passed: reload and resave preserved both independent comments after the recovery draft was cleared."
+      : "Passed: stale inline save retained editor and identity; reload and resave preserved both independent comments after the recovery draft was cleared.",
   );
+  if (transport)
+    console.log(
+      "Passed: real tab WebSockets disconnected, reconnect attempts rejected, editor retained, then actual transport reconnected and both comments survived resave/reload.",
+    );
   if (process.env.REVIEW_EDIT_CONFLICT === "1") {
     await first.reload({ waitUntil: "domcontentloaded" });
     async function edit(page, body) {
@@ -190,6 +296,7 @@ try {
     );
   }
 } finally {
+  transport?.reconnect();
   for (const page of pages) await page.close();
 }
 process.exit(0);

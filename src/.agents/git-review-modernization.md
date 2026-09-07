@@ -51,6 +51,19 @@ would not be evidence that these checks pass.
 
 ### Restored live-session checks
 
+Live reconnect recovery passed with `REVIEW_RECONNECT=1` in
+`inline-concurrency-live.browser-test.mjs` on disposable commit
+`4c4402247549c991c3edb1f9ddb7a0b73c3e20b5`. Only the second tab's WebSockets
+were routed, forwarding real server traffic unchanged. Existing sockets were
+closed, at least one retry was rejected, and the real Slate editor retained its
+text. After reopening transport the save settled; reload and resave retained
+both independently authored comments, including another reload after the
+local recovery draft was cleared. This verifies tab transport loss/reconnect,
+not a hub restart or whole-machine network partition. The first attempt hit
+the development warning overlay; a later attempt's fixed stale-error assertion
+was inappropriate for the reconnect outcome. The final test instead requires
+settled saving and exact durable content. Small disposable fixtures remain.
+
 Live private-note recovery passed with `REVIEW_NOTE_RECOVERY=1` in
 `review-concurrency-live.browser-test.mjs` on disposable commit
 `dc94e484ef3665b80c47f89b3942d80c5cd52d92`. Two real application tabs loaded
