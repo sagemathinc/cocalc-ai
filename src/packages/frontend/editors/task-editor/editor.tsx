@@ -7,6 +7,7 @@
 Top-level react component for task list
 */
 
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Button } from "antd";
 import { fromJS } from "immutable";
 import { useEffect } from "react";
@@ -82,7 +83,7 @@ export function TaskEditor({
           fontSize: "40px",
           textAlign: "center",
           padding: "15px",
-          color: "#999",
+          color: UI_COLORS.muted,
         }}
       >
         <Loading />
@@ -140,7 +141,7 @@ export function TaskEditor({
             fontSize: "24px",
             textAlign: "center",
             padding: "15px",
-            color: "#999",
+            color: UI_COLORS.muted,
           }}
         >
           No visible tasks.

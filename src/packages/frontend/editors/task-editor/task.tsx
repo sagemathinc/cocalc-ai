@@ -7,6 +7,7 @@
 A single task
 */
 
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { CSSProperties } from "react";
 import { Grid, Row, Col } from "../../antd-bootstrap";
 import { MinToggle } from "./min-toggle";
@@ -19,10 +20,6 @@ import { header_part } from "./desc-rendering";
 import { TaskMap } from "./types";
 import { TaskActions } from "./actions";
 import { avatar_fontcolor } from "@cocalc/frontend/account/avatar/font-color";
-import {
-  CODE_FOCUSED_COLOR,
-  FOCUSED_COLOR,
-} from "@cocalc/frontend/editors/slate/util";
 
 interface Props {
   actions?: TaskActions;
@@ -56,25 +53,25 @@ export default function Task({
   const style = {
     margin: "2px 5px",
     paddingTop: "5px",
-    background: "white",
+    background: UI_COLORS.surface,
+    color: UI_COLORS.text,
     borderRadius: "8px",
   } as CSSProperties;
   if (editing_desc) {
-    style.border = `2px solid ${CODE_FOCUSED_COLOR}`;
-    style.borderLeft = `10px solid ${CODE_FOCUSED_COLOR}`;
+    style.border = `2px solid ${UI_COLORS.success}`;
+    style.borderLeft = `10px solid ${UI_COLORS.success}`;
   } else if (is_current) {
-    style.border = `2px solid ${FOCUSED_COLOR}`;
-    style.borderLeft = `10px solid ${FOCUSED_COLOR}`;
+    style.border = `2px solid ${UI_COLORS.focus}`;
+    style.borderLeft = `10px solid ${UI_COLORS.focus}`;
   } else {
-    style.border = "2px solid #ddd";
-    style.borderTop = "2px solid #eeejj";
-    style.borderLeft = `10px solid #ddd`;
+    style.border = `2px solid ${UI_COLORS.border}`;
+    style.borderLeft = `10px solid ${UI_COLORS.border}`;
   }
   if (task.get("deleted")) {
-    style.background = "#d9534f";
-    style.color = "#fff";
+    style.background = UI_COLORS.dangerBg;
+    style.color = UI_COLORS.danger;
   } else if (task.get("done")) {
-    style.color = "#888";
+    style.color = UI_COLORS.muted;
   }
   if (font_size != null) {
     style.fontSize = `${font_size}px`;
@@ -140,7 +137,7 @@ export default function Task({
         </Col>
         <Col sm={1}>
           {" "}
-          <span style={{ fontSize: "10pt", color: "#666" }}>
+          <span style={{ fontSize: "10pt", color: UI_COLORS.secondary }}>
             <DueDate
               actions={actions}
               read_only={read_only}
@@ -152,7 +149,7 @@ export default function Task({
           </span>
         </Col>
         <Col sm={1}>
-          <span style={{ fontSize: "10pt", color: "#666" }}>
+          <span style={{ fontSize: "10pt", color: UI_COLORS.secondary }}>
             <Changed last_edited={task.get("last_edited")} />
           </span>
         </Col>
