@@ -1,22 +1,38 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TargetReviewPane } from "./target-review-pane";
-import { loadTargetReview, saveTargetReview } from "../git-target-review-store";
+import {
+  loadTargetReview,
+  saveTargetReview,
+  importTargetReview,
+  exportTargetReview,
+} from "../git-target-review-store";
 import type { ImmutableReviewTarget } from "@cocalc/frontend/components/diff-viewer/review-model";
 
 jest.mock("@cocalc/frontend/git/project-read-service", () => ({
   projectGitReader: {},
 }));
+let mockViewerProps: any;
 jest.mock("@cocalc/frontend/git/read-target-diff", () => ({
-  readTargetDiff: async () => ({ files: [], linesTruncated: false }),
+  readTargetDiff: async () => ({
+    files: [
+      { path: "needle.ts", lines: ["@@ -1 +1 @@", "-needle", "+needle"] },
+    ],
+    linesTruncated: false,
+  }),
 }));
 jest.mock("../git-target-review-store", () => ({
   loadTargetReview: jest.fn(),
   saveTargetReview: jest.fn(),
+  importTargetReview: jest.fn().mockResolvedValue(1),
+  exportTargetReview: jest.fn((revisions) => ({ revisions })),
 }));
 jest.mock("./pierre-review-panel", () => ({
   __esModule: true,
-  default: () => <div>Diff</div>,
+  default: (props: any) => {
+    mockViewerProps = props;
+    return <div>Diff</div>;
+  },
 }));
 jest.mock(
   "@cocalc/frontend/components/diff-viewer/changed-files-layout",
@@ -157,4 +173,96 @@ test("local recovery remains available when account review loading fails", async
   expect(
     screen.getByRole("textbox", { name: "Comparison review note" }),
   ).toHaveValue("retained offline");
+});
+
+test("comparison search has keyboard focus and navigates filename and line matches", async () => {
+  const user = userEvent.setup();
+  render(<TargetReviewPane {...props} />);
+  const note = await screen.findByRole("textbox", {
+    name: "Comparison review note",
+  });
+  note.focus();
+  await user.keyboard("{Control>}f{/Control}");
+  const search = screen.getByRole("textbox", { name: "Search loaded diff" });
+  expect(search).toHaveFocus();
+  await user.type(search, "needle");
+  expect(mockViewerProps.activeDiffFindMatch.kind).toBe("file");
+  expect(screen.getByText("1 of 3 matches")).toBeInTheDocument();
+  await user.keyboard("{Enter}");
+  expect(mockViewerProps.activeDiffFindMatch.lineIndex).toBe(1);
+  await user.keyboard("{Shift>}{Enter}{/Shift}");
+  expect(mockViewerProps.activeDiffFindMatch.kind).toBe("file");
+});
+
+test("archive import targets this comparison and is disabled while editing", async () => {
+  const user = userEvent.setup();
+  render(<TargetReviewPane {...props} />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Import review archive" }),
+    ).toBeEnabled(),
+  );
+  const file = new File(["{}"], "review.json", { type: "application/json" });
+  Object.defineProperty(file, "text", { value: async () => "{}" });
+  await user.upload(screen.getByLabelText("Review archive file"), file);
+  await waitFor(() =>
+    expect(importTargetReview).toHaveBeenCalledWith({
+      accountId: "a",
+      target,
+      payload: {},
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Comparison review note" }),
+    ).toBeEnabled(),
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Comparison review note" }),
+    "unsaved",
+  );
+  expect(
+    screen.getByRole("button", { name: "Import review archive" }),
+  ).toBeDisabled();
+});
+
+test("export includes all saved revisions, not just the visible head", async () => {
+  const user = userEvent.setup();
+  const revisions = ["old", "new"].map((id) => ({
+    version: 1 as const,
+    accountId: "a",
+    target,
+    id,
+    parents: id === "new" ? ["old"] : [],
+    updatedAt: 1,
+    body: { reviewed: false, note: id, comments: {} },
+  }));
+  jest
+    .mocked(loadTargetReview)
+    .mockResolvedValue({ revisions, heads: [revisions[1]] });
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: jest.fn(() => "blob:test"),
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: jest.fn(),
+  });
+  const click = jest
+    .spyOn(HTMLAnchorElement.prototype, "click")
+    .mockImplementation(() => {});
+  render(<TargetReviewPane {...props} />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Export saved versions" }),
+    ).toBeEnabled(),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Export saved versions" }),
+  );
+  await waitFor(() =>
+    expect(exportTargetReview).toHaveBeenCalledWith(revisions),
+  );
+  expect(click).toHaveBeenCalledTimes(1);
+  click.mockRestore();
 });

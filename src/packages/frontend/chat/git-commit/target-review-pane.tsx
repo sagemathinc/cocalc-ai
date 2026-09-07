@@ -8,7 +8,13 @@ import { reviewTargetKey } from "@cocalc/frontend/components/diff-viewer/review-
 import { ChangedFilesLayout } from "@cocalc/frontend/components/diff-viewer/changed-files-layout";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
-import { loadTargetReview, saveTargetReview } from "../git-target-review-store";
+import {
+  loadTargetReview,
+  saveTargetReview,
+  exportTargetReview,
+  importTargetReview,
+} from "../git-target-review-store";
+import { buildGitDiffFindMatches } from "./diff-find";
 import type {
   TargetReviewBody,
   TargetReviewRevision,
@@ -72,6 +78,21 @@ export function TargetReviewPane({
   const [activeFile, setActiveFile] = useState(0);
   const navigationRef = useRef<ReviewDiffNavigation | null>(null);
   const unusedRef = useRef(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const importInput = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState("");
+  const [matchIndex, setMatchIndex] = useState(0);
+  const matches = useMemo(
+    () => buildGitDiffFindMatches({ data, query }),
+    [data, query],
+  );
+  const activeMatch = matches.length
+    ? matches[matchIndex % matches.length]
+    : undefined;
+  const moveMatch = (delta: number) =>
+    setMatchIndex((index) =>
+      matches.length ? (index + delta + matches.length) % matches.length : 0,
+    );
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -196,6 +217,47 @@ export function TargetReviewPane({
       ]);
     return result;
   }, [draft.body.comments]);
+  const transfer = async (file?: File) => {
+    if (saving.current) return;
+    if (file && (dirty || current.current.editor)) {
+      setError(
+        "Finish and save the current edits before importing an archive.",
+      );
+      return;
+    }
+    saving.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      if (file) {
+        if (file.size > 10_000_000) throw Error("Review archive exceeds 10 MB");
+        await importTargetReview({
+          accountId,
+          target,
+          payload: JSON.parse(await file.text()),
+        });
+        setHeads((await loadTargetReview({ accountId, target })).heads);
+      } else {
+        const saved = await loadTargetReview({ accountId, target });
+        const url = URL.createObjectURL(
+          new Blob(
+            [JSON.stringify(exportTargetReview(saved.revisions), null, 2)],
+            { type: "application/json" },
+          ),
+        );
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = "git-comparison-review.json";
+        anchor.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      saving.current = false;
+      setBusy(false);
+    }
+  };
   if (!data) return <div role="status">{error || "Loading comparison..."}</div>;
   const editor = draft.editor;
   return (
@@ -204,6 +266,16 @@ export function TargetReviewPane({
       onKeyDown={(event) => {
         const native = event.nativeEvent;
         if (event.defaultPrevented || native.isComposing) return;
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          !event.altKey &&
+          event.key.toLowerCase() === "f"
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          searchInput.current?.focus();
+          return;
+        }
         const path = getEventPath(native);
         const viewport = navigationRef.current?.viewport();
         if (
@@ -325,6 +397,30 @@ export function TargetReviewPane({
       >
         Save review
       </Button>{" "}
+      <Button
+        disabled={!ready || busy || Boolean(editor)}
+        onClick={() => void transfer()}
+      >
+        Export saved versions
+      </Button>{" "}
+      <Button
+        disabled={!ready || busy || dirty || Boolean(editor)}
+        onClick={() => importInput.current?.click()}
+      >
+        Import review archive
+      </Button>
+      <input
+        ref={importInput}
+        type="file"
+        accept="application/json,.json"
+        aria-label="Review archive file"
+        style={{ display: "none" }}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) void transfer(file);
+        }}
+      />
       {dirty && (
         <Button
           disabled={!localStored || busy || Boolean(editor)}
@@ -344,6 +440,38 @@ export function TargetReviewPane({
       {!data.files.length && (
         <Alert type="info" title="No changes between these pinned endpoints" />
       )}
+      <div
+        style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0" }}
+      >
+        <label>
+          Search loaded diff{" "}
+          <input
+            ref={searchInput}
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setMatchIndex(0);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                moveMatch(event.shiftKey ? -1 : 1);
+              }
+            }}
+          />
+        </label>
+        <Button disabled={!matches.length} onClick={() => moveMatch(-1)}>
+          Previous match
+        </Button>
+        <Button disabled={!matches.length} onClick={() => moveMatch(1)}>
+          Next match
+        </Button>
+        <span role="status">
+          {query
+            ? `${activeMatch ? (matchIndex % matches.length) + 1 : 0} of ${matches.length} matches`
+            : "Search includes filenames and loaded patch lines, not omitted context."}
+        </span>
+      </div>
       <ChangedFilesLayout
         files={data.files.map((file, index) => ({
           id: String(index),
@@ -440,6 +568,7 @@ export function TargetReviewPane({
           onReopenComment={(id) => updateComment(id, { status: "draft" })}
           diffFindMatchCounts={new Map()}
           diffFindMatchedLineIndexes={new Map()}
+          activeDiffFindMatch={activeMatch}
         />
       </ChangedFilesLayout>
     </section>

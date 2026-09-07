@@ -95,15 +95,36 @@ try {
       `(()=>{const section=document.querySelector('[aria-label="Compare revisions"]');const select=section.querySelector('select');select.value='trees';select.dispatchEvent(new Event('change',{bubbles:true}));})()`,
     );
     await evaluate(
-      `(()=>{const section=document.querySelector('[aria-label="Compare revisions"]');for(const label of section.querySelectorAll('label')) {const input=label.querySelector('input');if(!input)continue;Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(commit)});input.dispatchEvent(new Event('input',{bubbles:true}));}})()`,
+      `(()=>{const section=document.querySelector('[aria-label="Compare revisions"]');for(const label of section.querySelectorAll('label')) {const input=label.querySelector('input');if(!input)continue;const value=label.textContent.includes('Base ref')?${JSON.stringify(process.env.REVIEW_COMPARE_BASE ?? commit)}:${JSON.stringify(commit)};Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);input.dispatchEvent(new Event('input',{bubbles:true}));}})()`,
     );
     await click(button("Compare / Refresh"));
     await until(
       `!!document.querySelector('[aria-label="Comparison review note"]') && !document.querySelector('[aria-label="Comparison review note"]').disabled`,
     );
-    await until(
-      `document.querySelector('[aria-label="Comparison review"]').innerText.includes('No changes between these pinned endpoints')`,
-    );
+    if (process.env.REVIEW_COMPARE_BASE) {
+      await until(
+        `!!document.querySelector('[aria-label="Comparison review"] diffs-container')`,
+      );
+      await evaluate(
+        `document.querySelector('[aria-label="Comparison review"]').dispatchEvent(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true}))`,
+      );
+      assert.equal(
+        await evaluate(
+          `document.activeElement?.closest('label')?.textContent.trim()`,
+        ),
+        "Search loaded diff",
+      );
+      await evaluate(
+        `(()=>{const input=document.activeElement;Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'+');input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+      );
+      await until(
+        `/1 of [1-9][0-9]* matches/.test(document.querySelector('[aria-label="Comparison review"]').innerText)`,
+      );
+      await click(button("Next match"));
+    } else
+      await until(
+        `document.querySelector('[aria-label="Comparison review"]').innerText.includes('No changes between these pinned endpoints')`,
+      );
     await evaluate(
       `(()=>{const input=document.querySelector('[aria-label="Comparison review note"]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Comparison local draft smoke');input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
     );
@@ -114,7 +135,7 @@ try {
       `(()=>{for(const key of Object.keys(localStorage))if(key.startsWith('cocalc:git-target-draft:v1:')&&!${JSON.stringify(beforeKeys)}.includes(key))localStorage.removeItem(key);})()`,
     );
     console.log(
-      "PASS: live comparison controls, empty pinned trees, account review loading, and local-draft close without remote review writes.",
+      "PASS: live comparison controls, pinned trees, account review loading, optional diff search, and local-draft close without remote review writes.",
     );
   } else if (historyRef) {
     await until(`!!document.querySelector('select[aria-label="History ref"]')`);

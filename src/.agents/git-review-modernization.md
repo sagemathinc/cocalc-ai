@@ -465,6 +465,16 @@ remote writes (`REVIEW_COMPARE=1` with the existing live harness). Full comparis
 URL routing, export/import controls, search parity, agent submission, and live
 nonempty comment-save/reconnect acceptance remain pending.
 
+Comparison navigation/archive integration (2026-09-07): the pane now searches
+filenames and loaded patch lines using the shared search index, with scoped
+Ctrl/Cmd-F, Enter/Shift-Enter, previous/next controls, and Pierre source-location
+navigation. The scope label makes omitted context explicit. Export downloads
+all saved revisions (not unsaved local drafts); import validates the current
+target through the snapshot store and never silently replaces the visible body.
+Import is disabled while editing, and archives over 10 MB are rejected before
+parsing. Keyboard/search and archive-transfer tests cover these controls. Full
+all-match highlighting and comparison URL routing remain pending.
+
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the
 delivery order at the end of this section describes independently reviewable
