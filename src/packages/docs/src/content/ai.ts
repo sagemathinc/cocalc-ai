@@ -81,6 +81,25 @@ CoCalc, so those controls are constrained. Connect and select a personal
 ChatGPT plan or OpenAI API key when you need other available model settings.
 These choices configure future turns rather than rewriting earlier replies.
 
+## Guide a running turn or queue a follow-up
+
+While Codex is working, the composer offers **Steer** and **Queue**.
+
+Use **Steer** to send guidance to the running turn. For example, if Codex is
+editing a notebook and you notice the wrong dataset, write "Use the August
+data in data/august.csv" and click **Steer**. CoCalc requests steering of the
+active turn. If the turn ends at that boundary, the request can become queued
+instead; check its displayed status to see how it was accepted.
+
+Use **Queue** for a separate follow-up that should run after the current
+turn, such as "After this finishes, summarize the changed cells." Type the
+message and click **Queue**. It appears with a queued label while it waits.
+
+Steering supplies an instruction; it does not undo changes already made.
+Inspect the response and project state to confirm how Codex applied the
+guidance. When no Codex turn is running, the composer uses **Send** for a
+normal message instead.
+
 ## Give better tasks
 
 Name files, describe the desired outcome, and ask Codex to validate changes.
