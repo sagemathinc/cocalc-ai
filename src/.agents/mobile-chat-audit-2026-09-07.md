@@ -40,6 +40,13 @@ has not been made discoverable as part of this work.
 - Open Chats, Tools, and Text formatting panels each pass a focused axe scan
   (WCAG 2 A/AA and 2.1 AA tags) in Chrome. The scan found unnamed font-size,
   heading, and text-color buttons; labels were added and the scan rerun clean.
+- Full Codex settings dialog checked at 402px and 320px without saving changes.
+  Added the missing payment-source accessible name; its focused axe scan now
+  passes. Usage windows fit available width instead of squeezing percentages
+  into half-width cards, and model/session grids shrink below their preferred
+  column width. No container overflow remains in these checks (text inputs
+  retain normal internal scrolling). Screenshots confirm readable usage values.
+  Both affected test suites passed: 43 tests; frontend lint and full build passed.
 - Focused tests cover draft continuity, viewport changes, focus-isolation
   ownership/cleanup, mobile composer expansion, steer/queue callbacks, settings
   summary, and keyboard formatting/upload access.
@@ -49,9 +56,9 @@ has not been made discoverable as part of this work.
 
 ## Remaining Acceptance Checks
 
-- Broader overlay accessibility: the conversation and three primary panels
-  passed focused axe scans, not every nested menu, settings form, or activity
-  dialog.
+- Broader overlay accessibility: the conversation, three primary panels, and
+  Codex settings passed focused axe scans, not every nested menu, credentials
+  form, or activity dialog.
 - Long-running Codex approval/stop/steer/queue interactions on the actual phone
   need explicit end-to-end coverage beyond callback tests and ordinary usage.
 - iPad keyboard/split-view still needs explicit device coverage; desktop width

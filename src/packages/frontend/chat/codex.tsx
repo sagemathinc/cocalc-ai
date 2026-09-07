@@ -306,7 +306,7 @@ const SectionTitle = ({ children }: { children: React.ReactNode }) => (
 const formItemStyle = { marginBottom: 12 } as const;
 const gridTwoColStyle = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
   gap: 12,
   width: "100%",
 } as const;
@@ -1556,6 +1556,7 @@ export function CodexConfigButton({
                   </div>
                   <Form.Item name="paymentSource" style={{ marginBottom: 0 }}>
                     <Select
+                      aria-label="Payment source"
                       style={{ width: "100%" }}
                       options={paymentSourceOptions}
                       optionRender={(option) =>

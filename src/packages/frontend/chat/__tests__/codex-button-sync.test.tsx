@@ -85,11 +85,22 @@ jest.mock("antd", () => {
       <div aria-label={ariaLabel} />
     ),
     Radio,
-    Select: ({ onChange, placeholder, value }: any) => {
+    Select: ({
+      onChange,
+      placeholder,
+      value,
+      "aria-label": ariaLabel,
+    }: any) => {
       if (placeholder === "e.g., gpt-5.6-sol") {
         mockModelSelectOnChange = onChange;
       }
-      return <div>{String(value ?? "")}</div>;
+      return ariaLabel ? (
+        <select aria-label={ariaLabel} defaultValue="">
+          <option value="">{String(value ?? "")}</option>
+        </select>
+      ) : (
+        <div>{String(value ?? "")}</div>
+      );
     },
     Space: ({ children }: any) => <div>{children}</div>,
     Tag: ({ children }: any) => <span>{children}</span>,
@@ -225,6 +236,9 @@ describe("CodexConfigButton", () => {
       await screen.findByText(
         /These settings apply to the selected Codex thread/,
       ),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("combobox", { name: "Payment source" }),
     ).toBeTruthy();
   });
 
