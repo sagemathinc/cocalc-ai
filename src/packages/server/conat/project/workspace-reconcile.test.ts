@@ -1,10 +1,12 @@
 import {
   reconcileWorkspaceProjectStates,
   startWorkspaceProjectReconciliation,
+  saveWorkspaceProjectState,
 } from "./workspace-reconcile";
 
 const mockQuery = jest.fn();
 const mockState = jest.fn();
+const mockSave = jest.fn();
 let mockWorkspace = true;
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -17,7 +19,10 @@ jest.mock("@cocalc/server/launchpad/project-runtime", () => ({
   isWorkspaceProjectRuntime: () => mockWorkspace,
 }));
 jest.mock("@cocalc/server/projects/control", () => ({
-  getProject: (id: string) => ({ state: () => mockState(id) }),
+  getProject: (id: string) => ({
+    state: () => mockState(id),
+    saveStateToDatabase: mockSave,
+  }),
 }));
 
 beforeEach(() => {
@@ -29,6 +34,29 @@ beforeEach(() => {
   mockState.mockResolvedValue({ state: "opened" });
 });
 afterEach(() => jest.useRealTimers());
+
+it("does not republish unchanged workspace states or refresh their timestamps", async () => {
+  mockQuery.mockResolvedValue({ rows: [{ state: "running" }] });
+  await saveWorkspaceProjectState("live-record", "running");
+  await saveWorkspaceProjectState("live-record", "running");
+  expect(mockSave).not.toHaveBeenCalled();
+});
+
+it("persists an observed transition using the existing projection-aware writer", async () => {
+  mockQuery.mockResolvedValue({ rows: [{ state: "running" }] });
+  await saveWorkspaceProjectState("missing-record", "opened");
+  expect(mockSave).toHaveBeenCalledWith({ state: "opened" });
+  expect(mockQuery).toHaveBeenCalledWith(
+    expect.stringContaining("COALESCE(owning_bay_id, $2)=$2"),
+    ["missing-record", "local-bay"],
+  );
+});
+
+it("does not save projects outside the local workspace scope", async () => {
+  mockQuery.mockResolvedValue({ rows: [] });
+  await saveWorkspaceProjectState("not-local", "opened");
+  expect(mockSave).not.toHaveBeenCalled();
+});
 
 it("checks database running projects even with no runtime record, scoped to this bay and no host", async () => {
   await reconcileWorkspaceProjectStates();

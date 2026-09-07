@@ -3,9 +3,26 @@ import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { isWorkspaceProjectRuntime } from "@cocalc/server/launchpad/project-runtime";
 import { getProject } from "@cocalc/server/projects/control";
+import type { ProjectState } from "@cocalc/util/db-schema/projects";
 
 const logger = getLogger("server:conat:project:workspace-reconcile");
 const INTERVAL_MS = 10_000;
+
+export async function saveWorkspaceProjectState(
+  project_id: string,
+  state: ProjectState["state"],
+): Promise<void> {
+  const { rows } = await getPool().query(
+    `SELECT state->>'state' AS state FROM projects
+     WHERE project_id=$1 AND host_id IS NULL AND deleted IS NOT TRUE
+       AND COALESCE(owning_bay_id, $2)=$2`,
+    [project_id, getConfiguredBayId()],
+  );
+  // A health probe is not a state transition. Preserve state.time and avoid
+  // publishing identical project/account projection events on every tick.
+  if (rows.length === 0 || rows[0].state === state) return;
+  await getProject(project_id).saveStateToDatabase({ state });
+}
 
 export async function reconcileWorkspaceProjectStates(
   isClosed: () => boolean = () => false,

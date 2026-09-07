@@ -14,7 +14,10 @@ import { getProject } from "@cocalc/server/projects/control";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 import { isWorkspaceProjectRuntime } from "@cocalc/server/launchpad/project-runtime";
-import { startWorkspaceProjectReconciliation } from "./workspace-reconcile";
+import {
+  saveWorkspaceProjectState,
+  startWorkspaceProjectReconciliation,
+} from "./workspace-reconcile";
 
 const logger = getLogger("server:conat:project:load-balancer");
 
@@ -84,6 +87,10 @@ async function getConfig({ project_id }): Promise<Configuration> {
 
 async function setProjectState({ project_id, state }) {
   try {
+    if (isWorkspaceProjectRuntime()) {
+      await saveWorkspaceProjectState(project_id, state);
+      return;
+    }
     const p = await getProject(project_id);
     await p.saveStateToDatabase({ state });
   } catch {}
