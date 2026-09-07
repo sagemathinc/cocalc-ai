@@ -60,6 +60,22 @@ Missing live test evidence does not establish that these checks pass.
 
 ### Restored live-session checks
 
+The real-agent retry created thread `2638a887-a81f-4db3-92b5-2a3e86bd69a6`
+with directory `/tmp/cocalc-review-worktrees-tAjlSl/first`, then terminated at
+the connected account's OpenAI usage limit (reset September 13, 2:51 PM).
+No command execution was verified. The fixture was cleaned up after that
+terminal error. Do not repeatedly submit against the same known quota limit.
+
+Originating-context inspection found message commit links still used current
+thread settings. They now prefer a config event from that turn and fetch its
+archived log on explicit opening when the preview omits config. Reads use the
+existing project Conat connection, not a new hub proxy or app-server startup.
+Transport errors remain visible instead of silently redirecting; stale click
+results are ignored. Old entries with no recorded config retain the existing
+fallback hint. Nineteen focused context tests pass, including immutable values,
+literal paths, omitted-preview config and transport failure. Live link opening
+with changed thread settings remains an explicit acceptance case.
+
 Selector-free browser acceptance passed for semantic drawer close/reopen,
 both renamed-file sides and a deleted file, and the disposable-worktree matrix.
 The scroll harness now intersects candidate rows with the actual browser

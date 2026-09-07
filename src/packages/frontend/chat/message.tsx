@@ -37,6 +37,7 @@ import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdo
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
+import { resolveGitTurnDirectory } from "./git-turn-context";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
@@ -526,6 +527,14 @@ export default function Message({
   const [isActivityDrawerOpen, setIsActivityDrawerOpen] = useState(false);
   const [openCommitHash, setOpenCommitHash] = useState<string | undefined>(
     undefined,
+  );
+  const [openCommitCwd, setOpenCommitCwd] = useState<string | undefined>();
+  const gitOpenRequest = useRef(0);
+  useEffect(
+    () => () => {
+      gitOpenRequest.current++;
+    },
+    [project_id, date],
   );
   const [openCommitSelectionRequestToken, setOpenCommitSelectionRequestToken] =
     useState(0);
@@ -1109,7 +1118,9 @@ export default function Message({
   }, [actions, threadLookup]);
 
   const activityBasePath = useMemo(
-    () => threadCodexConfig?.workingDirectory,
+    () =>
+      (threadCodexConfig as any)?.get?.("workingDirectory") ??
+      threadCodexConfig?.workingDirectory,
     [threadCodexConfig],
   );
 
@@ -1480,19 +1491,42 @@ export default function Message({
     );
   }
 
-  function openGitBrowserFromMessage() {
-    const request = resolveMessageGitBrowserRequest({
-      messageThreadId,
-      date,
-      activityBasePath,
-      renderedMessageValue,
-    });
-    if (onOpenGitBrowser) {
-      onOpenGitBrowser(request);
-      return;
+  async function openGitBrowserFromMessage(commitHash?: string) {
+    const requestId = ++gitOpenRequest.current;
+    try {
+      const cwdOverride = await resolveGitTurnDirectory({
+        events: codexPreviewLog.events,
+        fallback: activityBasePath,
+        loadEvents:
+          project_id && logStore && logKey
+            ? async () => {
+                const cn = await webapp_client.conat_client.projectConat({
+                  project_id,
+                  caller: "message.openGitBrowserFromMessage",
+                });
+                const kv = cn.sync.akv<any[]>({ project_id, name: logStore });
+                return await kv.get(logKey);
+              }
+            : undefined,
+      });
+      if (gitOpenRequest.current !== requestId) return;
+      const request = resolveMessageGitBrowserRequest({
+        messageThreadId,
+        date,
+        activityBasePath: cwdOverride,
+        renderedMessageValue,
+        commitHash,
+      });
+      if (onOpenGitBrowser) onOpenGitBrowser(request);
+      else {
+        setOpenCommitCwd(cwdOverride);
+        setOpenCommitHash(request.commitHash);
+        setOpenCommitSelectionRequestToken((current) => current + 1);
+      }
+    } catch (error) {
+      if (gitOpenRequest.current === requestId)
+        antdMessage.error(`Unable to load the turn's Git context: ${error}`);
     }
-    setOpenCommitHash(request.commitHash);
-    setOpenCommitSelectionRequestToken((current) => current + 1);
   }
 
   function renderHeaderActions() {
@@ -1610,7 +1644,7 @@ export default function Message({
             size="small"
             type="text"
             style={{ color: UI_COLORS.muted }}
-            onClick={openGitBrowserFromMessage}
+            onClick={() => void openGitBrowserFromMessage()}
             icon={<Icon name="git" />}
           />
         </Tooltip>,
@@ -1739,7 +1773,7 @@ export default function Message({
             size="small"
             type="text"
             style={{ color: UI_COLORS.muted }}
-            onClick={openGitBrowserFromMessage}
+            onClick={() => void openGitBrowserFromMessage()}
             icon={<Icon name="git" />}
           />
         </Tooltip>,
@@ -2107,20 +2141,7 @@ export default function Message({
       if (!hash) return;
       e.preventDefault();
       e.stopPropagation();
-      if (onOpenGitBrowser) {
-        onOpenGitBrowser(
-          resolveMessageGitBrowserRequest({
-            messageThreadId,
-            date,
-            activityBasePath,
-            renderedMessageValue,
-            commitHash: hash,
-          }),
-        );
-        return;
-      }
-      setOpenCommitHash(hash);
-      setOpenCommitSelectionRequestToken((current) => current + 1);
+      void openGitBrowserFromMessage(hash);
     };
     const retainedSessionId = field<string>(message, "acp_thread_id");
     const stopRetainedWork = async () => {
@@ -2353,20 +2374,7 @@ export default function Message({
       if (!hash) return;
       e.preventDefault();
       e.stopPropagation();
-      if (onOpenGitBrowser) {
-        onOpenGitBrowser(
-          resolveMessageGitBrowserRequest({
-            messageThreadId,
-            date,
-            activityBasePath,
-            renderedMessageValue,
-            commitHash: hash,
-          }),
-        );
-        return;
-      }
-      setOpenCommitHash(hash);
-      setOpenCommitSelectionRequestToken((current) => current + 1);
+      void openGitBrowserFromMessage(hash);
     };
     return (
       <Drawer
@@ -2963,7 +2971,7 @@ export default function Message({
         <GitCommitDrawer
           projectId={project_id}
           sourcePath={path}
-          cwdOverride={activityBasePath}
+          cwdOverride={openCommitCwd}
           commitHash={openCommitHash}
           commitSelectionRequestToken={openCommitSelectionRequestToken}
           open={openCommitHash != null}
