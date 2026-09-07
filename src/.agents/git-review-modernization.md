@@ -11,7 +11,7 @@ not a current checklist. The objective is not complete. Current release work:
 
 | Requirement | Current evidence and remaining work |
 | --- | --- |
-| Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Live detached-worktree unique/ambiguous/absent cases and moved-ref pinning passed (details below). Working-copy file access and actual agent dispatch remain separate acceptance cases. |
+| Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Live detached-worktree unique/ambiguous/absent cases, moved-ref pinning, and exact working-copy file opening in both renderers passed (details below). Actual agent dispatch remains a separate acceptance case. |
 | Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Conflicting aliases now offer an explicit active-record choice without changing either record; changed alternatives reopen the conflict. Existing keys remain intact rather than being physically rewritten. Live multi-window acceptance is pending. |
 | Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Live renderer roundtrip and drawer close/reopen preserve the source position within a few wrapped lines (details below). Native partial-text selection across virtual windows remains a browser acceptance case. |
 | Rich comments | Active editors live outside recyclable rows; mocked session tests and prior real image-rendering tests exist. Actual upload-in-flight, undo/focus, multiple-editor, reconnect and concurrent-window cases still need live validation. |
@@ -49,6 +49,16 @@ rollback-window decision proceed. The current lack of a signed-in test session
 would not be evidence that these checks pass.
 
 ### Restored live-session checks
+
+Working-copy opening follow-up: `worktree-live.browser-test.mjs` now populates
+one text file in its disposable detached worktree and adds a working change.
+The intentionally unpopulated files are marked skip-worktree in that temporary
+index, avoiding an unrelated huge deletion diff. In working-copy mode, both
+Classic and Pierre's Open action navigated to the exact selected worktree path,
+not the original checkout. Historical commit mode intentionally offers the
+pinned revision viewer instead of Open. Unique/ambiguous/absent selection and
+moved-ref checks also passed in this run; cleanup restored the original worktree
+list. This does not establish actual agent dispatch or editor content fidelity.
 
 Historical side-opening follow-up: commit and comparison review now expose
 "View before this change" when both pinned sources exist (under Pierre's More

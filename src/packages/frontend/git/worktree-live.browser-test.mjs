@@ -42,7 +42,7 @@ let refTip;
 let page;
 try {
   const commit = remote(
-    "git -c user.name=CoCalcReviewSmoke -c user.email=review-smoke@example.invalid commit-tree HEAD^{tree} -p HEAD -m 'Disposable worktree review acceptance'",
+    "git -c user.name=CoCalcReviewSmoke -c user.email=review-smoke@example.invalid commit-tree HEAD^{tree} -p HEAD^ -m 'Disposable worktree review acceptance'",
   );
   assert(/^[a-f0-9]{40,64}$/.test(commit));
   remote(
@@ -64,14 +64,18 @@ try {
     process.env.CDP_URL ?? "http://localhost:9222",
   );
   const errors = [];
-  async function open() {
+  async function open(working = false) {
     await page?.close();
     page = await browser.contexts()[0].newPage();
     page.on("pageerror", (error) => errors.push(error.message));
     const target = new URL(url);
     for (const key of [...target.searchParams.keys()])
       if (key.startsWith("git-")) target.searchParams.delete(key);
-    target.searchParams.set("git-hash", commit);
+    target.searchParams.set("git-hash", working ? "HEAD" : commit);
+    if (working) {
+      target.searchParams.set("git-cwd", first);
+      target.searchParams.set("git-tip", commit);
+    }
     await page.goto(target.href, { waitUntil: "domcontentloaded" });
     await expect(
       page.getByRole("combobox", { name: "Review working copy", exact: true }),
@@ -86,6 +90,53 @@ try {
     .poll(() => new URL(page.url()).searchParams.get("git-tip"))
     .toBe(commit);
   assert.equal(new URL(page.url()).searchParams.get("git-cwd"), first);
+  const file = remote(
+    `git diff-tree --no-commit-id --name-only -r --diff-filter=AM ${commit}`,
+  )
+    .split("\n")
+    .find((path) => /^[a-zA-Z0-9_./-]+\.(md|tsx?|json)$/.test(path));
+  assert(file, "Fixture must have a changed text file");
+  remote(
+    `git -C ${quote(first)} restore --source=${commit} --worktree -- ${quote(file)}`,
+  );
+  remote(`git -C ${quote(first)} read-tree ${commit}`);
+  remote(
+    `git -C ${quote(first)} ls-files -z | git -C ${quote(first)} update-index --skip-worktree -z --stdin`,
+  );
+  remote(
+    `git -C ${quote(first)} update-index --no-skip-worktree -- ${quote(file)}`,
+  );
+  remote(
+    `printf '\\nDisposable working-copy acceptance marker\\n' >> ${quote(`${first}/${file}`)}`,
+  );
+  await open(true);
+  await page
+    .getByRole("combobox", { name: "Changed files", exact: true })
+    .selectOption({ label: file });
+  const renderer = () =>
+    page.getByRole("combobox", { name: "Diff renderer", exact: true });
+  const previousRenderer = await renderer().inputValue();
+  try {
+    for (const mode of ["legacy", "pierre"]) {
+      await renderer().selectOption(mode);
+      await page
+        .getByRole("combobox", { name: "Changed files", exact: true })
+        .selectOption({ label: file });
+      const header =
+        mode === "legacy"
+          ? page.locator('[data-git-diff-section="true"]').filter({
+              has: page.getByRole("button", { name: file, exact: true }),
+            })
+          : page.locator(`[data-review-file-header=${JSON.stringify(file)}]`);
+      await header.getByRole("button", { name: "Open", exact: true }).click();
+      await expect
+        .poll(() => decodeURIComponent(new URL(page.url()).pathname))
+        .toBe(`/projects/${project}/files${first}/${file}`);
+      await open(true);
+    }
+  } finally {
+    await renderer().selectOption(previousRenderer);
+  }
   add(second);
   await open();
   await expect(
@@ -129,7 +180,7 @@ try {
     .toBe(parent);
   assert.deepEqual(errors, []);
   console.log(
-    "Passed: unique detached worktree auto-selection; ambiguous/absent notices; moved ref stays pinned across reload until explicit refresh. No agent turn submitted.",
+    "Passed: unique detached worktree auto-selection and exact working-file opening in both renderers; ambiguous/absent notices; moved ref stays pinned across reload until explicit refresh. No agent turn submitted.",
   );
 } finally {
   await page?.close();
