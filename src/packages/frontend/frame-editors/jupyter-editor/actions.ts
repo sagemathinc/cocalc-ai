@@ -232,7 +232,7 @@ export class JupyterEditorActions
   };
 
   public studioUnavailableReason(): string | undefined {
-    const cells = this.jupyter_actions?.store.get("cells");
+    const cells = this.jupyter_actions?.store?.get("cells");
     if (cells == null) return "Notebook metadata is still loading.";
     return hasNbgraderMetadata(cells) ? NBGRADER_CLASSIC_REASON : undefined;
   }

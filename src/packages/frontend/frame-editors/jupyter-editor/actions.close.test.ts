@@ -20,6 +20,36 @@ import { hasNbgraderMetadata } from "./nbgrader-layout";
 
 describe("nbgrader frame restrictions", () => {
   afterEach(() => jest.restoreAllMocks());
+  it.each([
+    undefined,
+    {},
+    { store: undefined },
+    { store: { get: () => undefined } },
+  ])(
+    "keeps Studio unavailable when notebook metadata is missing: %p",
+    (jupyter_actions) => {
+      expect(
+        JupyterEditorActions.prototype.studioUnavailableReason.call({
+          jupyter_actions,
+        } as any),
+      ).toBe("Notebook metadata is still loading.");
+    },
+  );
+
+  it("handles a store removed during teardown without relaxing nbgrader restrictions", () => {
+    const target = { jupyter_actions: { store: { get: jest.fn() } } } as any;
+    const reason = () =>
+      JupyterEditorActions.prototype.studioUnavailableReason.call(target);
+    target.jupyter_actions.store.get.mockReturnValue(fromJS({}));
+    expect(reason()).toBeUndefined();
+    target.jupyter_actions.store.get.mockReturnValue(
+      fromJS({ a: { metadata: { nbgrader: { points: 10 } } } }),
+    );
+    expect(reason()).toBeTruthy();
+    delete target.jupyter_actions.store;
+    expect(reason()).toBe("Notebook metadata is still loading.");
+  });
+
   it("guards new split frames and permits Studio on ordinary notebooks", () => {
     const base = jest
       .spyOn(BaseEditorActions.prototype, "new_frame")
