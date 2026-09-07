@@ -71,7 +71,10 @@ import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
 import { currentHistorySelection } from "@cocalc/frontend/git/history-selection";
 import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
-import type { GitReviewHistoryRoute } from "@cocalc/frontend/git/review-route";
+import type {
+  GitReviewHistoryRoute,
+  GitComparisonRoute,
+} from "@cocalc/frontend/git/review-route";
 import type {
   GitHistorySelection,
   PinnedHistorySelection,
@@ -271,6 +274,8 @@ interface GitCommitDrawerProps {
   sourcePath?: string;
   cwdOverride?: string;
   initialHistory?: GitReviewHistoryRoute;
+  initialComparison?: GitComparisonRoute;
+  onComparisonChange?: (route?: GitComparisonRoute) => void;
   commitHash?: string;
   commitSelectionRequestToken?: number;
   open: boolean;
@@ -461,6 +466,8 @@ export function GitCommitDrawer({
   sourcePath,
   cwdOverride,
   initialHistory,
+  initialComparison,
+  onComparisonChange,
   commitHash,
   commitSelectionRequestToken = 0,
   open,
@@ -477,6 +484,11 @@ export function GitCommitDrawer({
 }: GitCommitDrawerProps) {
   const accountId = useTypedRedux("account", "account_id");
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [comparisonLanding, setComparisonLanding] = useState(initialComparison);
+  useEffect(() => {
+    setComparisonOpen(!!initialComparison);
+    setComparisonLanding(initialComparison);
+  }, [initialComparison, commitSelectionRequestToken]);
   const editorTheme = useEffectiveEditorThemeForPath(projectId, sourcePath);
   const [localFontSize, setLocalFontSize] = useState(() =>
     clampGitReviewFontSize(fontSize),
@@ -3212,7 +3224,10 @@ export function GitCommitDrawer({
       >
         {originDiscovery && accountId && (
           <Button
-            onClick={() => setComparisonOpen(true)}
+            onClick={() => {
+              setComparisonLanding(undefined);
+              setComparisonOpen(true);
+            }}
             disabled={Boolean(
               activeInlineDraft ||
               activeInlineEditId ||
@@ -3524,11 +3539,17 @@ export function GitCommitDrawer({
       </div>
       {comparisonOpen && open && comparisonRepository && accountId && (
         <ComparisonModal
+          key={commitSelectionRequestToken}
+          initialComparison={comparisonLanding}
+          onTargetChange={onComparisonChange}
           repository={comparisonRepository}
           commit={commit ?? "HEAD"}
           accountId={accountId}
           fontSize={effectiveFontSize}
-          onClose={() => setComparisonOpen(false)}
+          onClose={() => {
+            setComparisonOpen(false);
+            onComparisonChange?.(undefined);
+          }}
           onView={(source) =>
             setHistoricalFile({ scope: scrollStorageId, request: { source } })
           }

@@ -101,6 +101,29 @@ try {
     await until(
       `!!document.querySelector('[aria-label="Comparison review note"]') && !document.querySelector('[aria-label="Comparison review note"]').disabled`,
     );
+    const pinnedRoute = await evaluate(
+      `new URL(location.href).searchParams.get('git-compare')`,
+    );
+    assert.equal(JSON.parse(pinnedRoute).mode, "trees");
+    assert.equal(JSON.parse(pinnedRoute).head, commit);
+    assert.equal(
+      JSON.parse(pinnedRoute).base,
+      process.env.REVIEW_COMPARE_BASE ?? commit,
+    );
+    const oldTimeOrigin = await evaluate("performance.timeOrigin");
+    await send("Page.reload");
+    await until(`performance.timeOrigin !== ${JSON.stringify(oldTimeOrigin)}`);
+    await until(
+      `!!document.querySelector('[aria-label="Comparison review note"]') && !document.querySelector('[aria-label="Comparison review note"]').disabled`,
+    );
+    assert.deepEqual(
+      JSON.parse(
+        await evaluate(
+          `new URL(location.href).searchParams.get('git-compare')`,
+        ),
+      ),
+      JSON.parse(pinnedRoute),
+    );
     if (process.env.REVIEW_COMPARE_BASE) {
       await until(
         `!!document.querySelector('[aria-label="Comparison review"] diffs-container')`,
@@ -131,6 +154,10 @@ try {
     await until(`!!${button("Keep local draft and close")}`);
     await click(button("Keep local draft and close"));
     await until(`!document.querySelector('[aria-label="Comparison review"]')`);
+    assert.equal(
+      await evaluate(`new URL(location.href).searchParams.has('git-compare')`),
+      false,
+    );
     await evaluate(
       `(()=>{for(const key of Object.keys(localStorage))if(key.startsWith('cocalc:git-target-draft:v1:')&&!${JSON.stringify(beforeKeys)}.includes(key))localStorage.removeItem(key);})()`,
     );

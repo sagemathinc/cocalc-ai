@@ -1,5 +1,11 @@
 import { Alert, Modal } from "antd";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
+import type { GitComparisonRoute } from "@cocalc/frontend/git/review-route";
+import {
+  comparisonRoute,
+  restoreComparisonRoute,
+} from "@cocalc/frontend/git/comparison-route";
+import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import type {
   ImmutableReviewTarget,
   RepositoryContext,
@@ -22,6 +28,8 @@ export function ComparisonModal({
   fontSize,
   onClose,
   onView,
+  initialComparison,
+  onTargetChange,
 }: {
   repository: RepositoryContext;
   commit: string;
@@ -29,10 +37,35 @@ export function ComparisonModal({
   fontSize: number;
   onClose: () => void;
   onView: (source: GitSource) => void;
+  initialComparison?: GitComparisonRoute;
+  onTargetChange?: (route: GitComparisonRoute) => void;
 }) {
   const [target, setTarget] = useState<ImmutableReviewTarget>();
   const [editing, setEditing] = useState(false);
   const [closeWarning, setCloseWarning] = useState(false);
+  const [restoring, setRestoring] = useState(!!initialComparison);
+  const [restoreError, setRestoreError] = useState("");
+  useEffect(() => {
+    if (!initialComparison) return;
+    let cancelled = false;
+    setRestoring(true);
+    setRestoreError("");
+    restoreComparisonRoute(projectGitReader, repository, initialComparison)
+      .then(
+        (next) => {
+          if (!cancelled) setTarget(next);
+        },
+        (error) => {
+          if (!cancelled) setRestoreError(String(error));
+        },
+      )
+      .finally(() => {
+        if (!cancelled) setRestoring(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repository, initialComparison]);
   return (
     <Modal
       open
@@ -57,11 +90,24 @@ export function ComparisonModal({
           />
         )}
         <ComparisonControls
+          initialComparison={initialComparison}
           repository={repository}
           commit={commit}
-          disabled={editing}
-          onApply={setTarget}
+          disabled={editing || restoring}
+          onApply={(next) => {
+            setTarget(next);
+            setRestoreError("");
+            onTargetChange?.(comparisonRoute(next));
+          }}
         />
+        {restoring && <div role="status">Restoring pinned comparison...</div>}
+        {restoreError && (
+          <Alert
+            type="error"
+            title="Cannot restore comparison"
+            description={restoreError}
+          />
+        )}
         {target && (
           <Suspense
             fallback={<div role="status">Loading comparison renderer...</div>}

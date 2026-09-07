@@ -5,24 +5,35 @@ import type {
   ImmutableReviewTarget,
 } from "@cocalc/frontend/components/diff-viewer/review-model";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
+import type { GitComparisonRoute } from "@cocalc/frontend/git/review-route";
 
 export function ComparisonControls({
   repository,
   commit,
   disabled,
   onApply,
+  initialComparison,
 }: {
   repository: RepositoryContext;
   commit: string;
   disabled: boolean;
   onApply: (target: ImmutableReviewTarget) => void;
+  initialComparison?: GitComparisonRoute;
 }) {
   const [mode, setMode] = useState<"merge-base" | "trees" | "parent">(
-    "merge-base",
+    initialComparison?.mode ?? "merge-base",
   );
-  const [base, setBase] = useState("");
-  const [head, setHead] = useState(commit);
-  const [parent, setParent] = useState(1);
+  const [base, setBase] = useState(
+    initialComparison && initialComparison.mode !== "parent"
+      ? initialComparison.base
+      : "",
+  );
+  const [head, setHead] = useState(initialComparison?.head ?? commit);
+  const [parent, setParent] = useState(
+    initialComparison?.mode === "parent"
+      ? initialComparison.parentIndex + 1
+      : 1,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const generation = useRef(0);

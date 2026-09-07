@@ -473,7 +473,7 @@ all saved revisions (not unsaved local drafts); import validates the current
 target through the snapshot store and never silently replaces the visible body.
 Import is disabled while editing, and archives over 10 MB are rejected before
 parsing. Keyboard/search and archive-transfer tests cover these controls. Full
-all-match highlighting and comparison URL routing remain pending.
+all-match highlighting remains pending; comparison URL routing is implemented below.
 
 View preference persistence (2026-09-07): shared device-local preferences now
 retain split/unified mode, wrapping, file-tree visibility, and tree width across
@@ -485,6 +485,21 @@ Focused tests cover keyboard changes, reopening, cross-tab updates, retained
 children, and storage failures. The real Pierre browser suite verifies split
 mode survives reload before running its unified-layout checks. Per-target tree
 expansion and semantic scroll restoration remain pending.
+
+Comparison links (2026-09-07): applying a comparison writes `git-compare` alongside
+the existing drawer/history route. It records the common Git directory, full
+head/base object IDs, and trees/merge-base mode or zero-based merge-parent index.
+Reload restores the modal and its controls automatically, revalidating the
+repository before resolving the immutable endpoints. Missing objects or a
+different repository produce an explicit error, never a working-copy fallback.
+Closing the comparison removes only its route state; unrelated query parameters,
+chat fragment, and underlying history selection survive. Explicitly opening a
+new comparison does not reuse a previously dismissed landing target.
+Focused parser/service/modal tests cover invalid routes, repository mismatch,
+parent numbering, and keyboard dismissal. A live nonempty comparison on lite1b
+passed reload, account review loading, scoped search, and local-draft close
+without remote review writes. Semantic scroll/selection links and full live
+comment-save/reconnect remain separate acceptance gates.
 
 The renderer choice is settled sufficiently to start. Do not spend another
 iteration comparing libraries. The phases below describe capabilities; the

@@ -42,6 +42,7 @@ import {
   writeGitReviewRoute,
   type GitReviewRoute,
   type GitReviewHistoryRoute,
+  type GitComparisonRoute,
 } from "@cocalc/frontend/git/review-route";
 import type { ChatRoomModalHandlers } from "./chatroom-modals";
 import { ChatRoomModals } from "./chatroom-modals";
@@ -935,6 +936,8 @@ export function ChatPanel({
   const [gitBrowserOpen, setGitBrowserOpen] = useState<boolean>(false);
   const [gitBrowserHistory, setGitBrowserHistory] =
     useState<GitReviewHistoryRoute>();
+  const [gitBrowserComparison, setGitBrowserComparison] =
+    useState<GitComparisonRoute>();
   const [gitBrowserCwd, setGitBrowserCwd] = useState<string | undefined>(
     undefined,
   );
@@ -973,6 +976,7 @@ export function ChatPanel({
       lastAppliedGitRouteRef.current = key;
       setGitBrowserCwd(route?.cwd);
       setGitBrowserHistory(route?.history);
+      setGitBrowserComparison(route?.comparison);
       setGitBrowserCommitHash(route?.commit);
       setGitBrowserThreadKey(undefined);
       setGitBrowserCommitSelectionRequestToken((current) => current + 1);
@@ -994,7 +998,22 @@ export function ChatPanel({
       history?: GitReviewHistoryRoute,
     ) => {
       // Update the shareable read context, not the originating agent context.
-      updateGitBrowserRoute({ commit, cwd: workingDirectory, history });
+      const comparison = readGitReviewRoute(
+        new URL(window.location.href),
+      )?.comparison;
+      updateGitBrowserRoute({
+        commit,
+        cwd: workingDirectory,
+        history,
+        ...(comparison ? { comparison } : {}),
+      });
+    },
+    [updateGitBrowserRoute],
+  );
+  const syncGitComparison = useCallback(
+    (comparison?: GitComparisonRoute) => {
+      const route = readGitReviewRoute(new URL(window.location.href));
+      if (route) updateGitBrowserRoute({ ...route, comparison });
     },
     [updateGitBrowserRoute],
   );
@@ -2289,6 +2308,7 @@ export function ChatPanel({
           : undefined;
       setGitBrowserCwd(wd);
       setGitBrowserHistory(undefined);
+      setGitBrowserComparison(undefined);
       setGitBrowserThreadKey(threadKey);
       setGitBrowserCommitHash(undefined);
       setGitBrowserCommitSelectionRequestToken((current) => current + 1);
@@ -2325,6 +2345,7 @@ export function ChatPanel({
       const normalizedThreadKey = `${threadKey ?? ""}`.trim();
       if (!normalizedThreadKey) return;
       setGitBrowserHistory(undefined);
+      setGitBrowserComparison(undefined);
       setGitBrowserCwd(
         typeof cwdOverride === "string" && cwdOverride.trim()
           ? cwdOverride.trim()
@@ -2950,6 +2971,8 @@ export function ChatPanel({
             sourcePath={path}
             cwdOverride={gitBrowserCwd}
             initialHistory={gitBrowserHistory}
+            initialComparison={gitBrowserComparison}
+            onComparisonChange={syncGitComparison}
             commitHash={gitBrowserCommitHash}
             commitSelectionRequestToken={gitBrowserCommitSelectionRequestToken}
             open={gitBrowserOpen}

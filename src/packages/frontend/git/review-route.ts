@@ -11,6 +11,7 @@ export const GIT_REVIEW_ROUTE_PARAMS = [
   "git-tip",
   "git-ref",
   "git-ancestry",
+  "git-compare",
 ] as const;
 export const APP_NAVIGATION_EVENT = "cocalc:app-navigation";
 
@@ -18,6 +19,52 @@ export interface GitReviewRoute {
   commit: string;
   cwd?: string;
   history?: GitReviewHistoryRoute;
+  comparison?: GitComparisonRoute;
+}
+
+export type GitComparisonRoute = {
+  commonDirectory: string;
+  head: string;
+} & (
+  | { mode: "parent"; parentIndex: number }
+  | { mode: "trees" | "merge-base"; base: string }
+);
+
+export function parseGitComparisonRoute(
+  raw: string,
+): GitComparisonRoute | undefined {
+  if (raw.length > 10000) return;
+  try {
+    const value = JSON.parse(raw);
+    if (
+      !value ||
+      typeof value.commonDirectory !== "string" ||
+      !value.commonDirectory ||
+      value.commonDirectory.length > 8192 ||
+      value.commonDirectory.includes("\0") ||
+      typeof value.head !== "string" ||
+      !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.head)
+    )
+      return;
+    const scope = { commonDirectory: value.commonDirectory, head: value.head };
+    if (
+      value.mode === "parent" &&
+      Number.isSafeInteger(value.parentIndex) &&
+      value.parentIndex >= 0
+    ) {
+      return { ...scope, mode: "parent", parentIndex: value.parentIndex };
+    }
+    if (
+      (value.mode === "trees" || value.mode === "merge-base") &&
+      typeof value.base === "string" &&
+      value.base.length === value.head.length &&
+      /^[a-f0-9]+$/.test(value.base)
+    ) {
+      return { ...scope, mode: value.mode, base: value.base };
+    }
+  } catch {
+    return;
+  }
 }
 
 export interface GitReviewHistoryRoute {
@@ -60,8 +107,13 @@ export function readGitReviewRoute(url: URL): GitReviewRoute | undefined {
   // or arbitrary revision expressions. Repository resolution remains separate.
   if (!commit) return;
   if (cwd != null && (!cwd || cwd.length > 8192 || cwd.includes("\0"))) return;
+  const rawComparison = url.searchParams.get("git-compare");
+  const comparison =
+    rawComparison == null ? undefined : parseGitComparisonRoute(rawComparison);
+  if (rawComparison != null && !comparison) return;
   const tip = url.searchParams.get("git-tip");
-  if (tip == null) return { commit, cwd };
+  if (tip == null)
+    return { commit, cwd, ...(comparison ? { comparison } : {}) };
   const ref = url.searchParams.get("git-ref") ?? "HEAD";
   const ancestry = url.searchParams.get("git-ancestry") ?? "first-parent";
   if (
@@ -75,6 +127,7 @@ export function readGitReviewRoute(url: URL): GitReviewRoute | undefined {
   return {
     commit,
     cwd,
+    ...(comparison ? { comparison } : {}),
     history: {
       tip: tip.toLowerCase(),
       ref,
@@ -89,6 +142,8 @@ export function setGitReviewRoute(url: URL, route?: GitReviewRoute): URL {
   if (route) {
     next.searchParams.set("git-hash", route.commit);
     if (route.cwd != null) next.searchParams.set("git-cwd", route.cwd);
+    if (route.comparison)
+      next.searchParams.set("git-compare", JSON.stringify(route.comparison));
     if (route.history) {
       next.searchParams.set("git-tip", route.history.tip);
       next.searchParams.set("git-ref", route.history.ref);
