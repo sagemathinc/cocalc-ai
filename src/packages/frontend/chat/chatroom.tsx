@@ -2824,6 +2824,18 @@ export function ChatPanel({
             hasActiveAcpTurn={hasRunningAcpTurn}
             threads={threads}
             selectedThread={selectedThread}
+            onEditThreadAppearance={
+              modalHandlers && selectedThread
+                ? () =>
+                    modalHandlers.openAppearanceModal(
+                      selectedThread.key,
+                      selectedThread.displayLabel ?? selectedThread.label,
+                      selectedThread.hasCustomName,
+                      selectedThread.threadColor,
+                      selectedThread.threadIcon,
+                    )
+                : undefined
+            }
             onComposerFocusChange={() => undefined}
             onComposerReady={onComposerReady}
             codexPaymentSource={codexPaymentSource}

@@ -250,6 +250,17 @@ export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
     serviceTiers: [FAST_SERVICE_TIER],
   },
   {
+    name: "gpt-6-astra",
+    description: "Frontier model for complex, demanding work.",
+    reasoning: GPT_5_6_REASONING_LEVELS,
+    serviceTiers: [
+      {
+        ...FAST_SERVICE_TIER,
+        description: "2x speed with higher Codex credit usage.",
+      },
+    ],
+  },
+  {
     name: "gpt-5.6-terra",
     description: "Balanced agentic coding model for everyday work.",
     reasoning: GPT_5_6_REASONING_LEVELS,

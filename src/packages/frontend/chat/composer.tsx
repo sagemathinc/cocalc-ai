@@ -13,6 +13,7 @@ import { Alert, Button } from "antd";
 import { FormattedMessage } from "react-intl";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
+import { COLORS } from "@cocalc/util/theme";
 import {
   delete_local_storage,
   get_local_storage,
@@ -56,6 +57,7 @@ export interface ChatRoomComposerProps {
   hasActiveAcpTurn?: boolean;
   threads: ThreadMeta[];
   selectedThread?: ThreadMeta | null;
+  onEditThreadAppearance?: () => void;
   onComposerFocusChange: (focused: boolean) => void;
   onComposerReady?: (
     control: ChatInputControl | null,
@@ -90,6 +92,7 @@ export function ChatRoomComposer({
   hasActiveAcpTurn = false,
   threads: _threads,
   selectedThread,
+  onEditThreadAppearance,
   onComposerFocusChange,
   onComposerReady,
   codexPaymentSource,
@@ -475,15 +478,25 @@ export function ChatRoomComposer({
             </div>
           )}
           {threadLabel && (
-            <div
+            <button
+              type="button"
+              aria-label={`Edit Thread Appearance: ${stripHtml(threadLabel)}`}
+              aria-haspopup="dialog"
+              disabled={!onEditThreadAppearance}
+              onClick={onEditThreadAppearance}
               style={{
+                background: "none",
+                border: 0,
+                padding: 0,
+                cursor: onEditThreadAppearance ? "pointer" : "default",
+                fontFamily: "inherit",
                 display: "flex",
                 alignItems: "center",
                 marginLeft: "auto",
                 minWidth: 0,
                 maxWidth: "100%",
                 gap: "8px",
-                color: "#666",
+                color: COLORS.GRAY_M,
                 fontSize: "12px",
                 borderLeft: themeLineColor
                   ? `3px solid ${themeLineColor}`
@@ -508,7 +521,7 @@ export function ChatRoomComposer({
               >
                 {stripHtml(threadLabel)}
               </span>
-            </div>
+            </button>
           )}
         </div>
         {showCodexPaymentSourceBanner && (

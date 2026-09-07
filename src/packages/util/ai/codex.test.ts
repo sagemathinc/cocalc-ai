@@ -6,9 +6,10 @@ import {
 } from "./codex";
 
 describe("DEFAULT_CODEX_MODELS", () => {
-  it("matches the current Codex CLI model list order", () => {
+  it("includes Astra while preserving the existing default model", () => {
     expect(DEFAULT_CODEX_MODELS.map((model) => model.name)).toEqual([
       "gpt-5.6-sol",
+      "gpt-6-astra",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
@@ -16,6 +17,27 @@ describe("DEFAULT_CODEX_MODELS", () => {
       "gpt-5.4-mini",
       "gpt-5.2",
     ]);
+  });
+
+  it("recognizes Astra and exposes its upstream reasoning and Fast mode", () => {
+    expect(isCodexModelName("gpt-6-astra")).toBe(true);
+    const astra = DEFAULT_CODEX_MODELS.find(
+      ({ name }) => name === "gpt-6-astra",
+    );
+    expect(astra?.reasoning?.map(({ id }) => id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "extra_high",
+      "max",
+      "ultra",
+    ]);
+    expect(
+      astra?.reasoning?.filter(({ default: selected }) => selected),
+    ).toEqual([expect.objectContaining({ id: "medium" })]);
+    expect(
+      resolveCodexServiceTier({ model: "gpt-6-astra", serviceTier: "fast" }),
+    ).toBe("fast");
   });
 
   it("recognizes gpt-5.6 models as codex model names", () => {

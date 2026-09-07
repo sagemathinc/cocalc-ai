@@ -2,6 +2,7 @@
 
 import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ChatRoomComposer } from "../composer";
 
 let lastChatInputProps: any;
@@ -84,8 +85,13 @@ describe("ChatRoomComposer resize handle", () => {
 
   it.each([false, true])(
     "shows the selected thread title without a custom appearance (AI: %s)",
-    (isAI) => {
+    async (isAI) => {
+      const user = userEvent.setup();
+      const onEditThreadAppearance = jest.fn();
+      const onSend = jest.fn();
       renderComposer({
+        onEditThreadAppearance,
+        on_send: onSend,
         selectedThread: {
           key: "thread-1",
           label: "Original title",
@@ -111,6 +117,18 @@ describe("ChatRoomComposer resize handle", () => {
       const title = screen.getByText("Goal UI smoke test");
       expect(title.getAttribute("title")).toBe("Goal UI smoke test");
       expect(title.parentElement?.style.marginLeft).toBe("auto");
+      const edit = screen.getByRole("button", {
+        name: "Edit Thread Appearance: Goal UI smoke test",
+      });
+      expect(edit.getAttribute("aria-haspopup")).toBe("dialog");
+      await user.click(edit);
+      expect(onEditThreadAppearance).toHaveBeenCalledTimes(1);
+      edit.focus();
+      await user.keyboard("{Enter}");
+      expect(onEditThreadAppearance).toHaveBeenCalledTimes(2);
+      await user.keyboard(" ");
+      expect(onEditThreadAppearance).toHaveBeenCalledTimes(3);
+      expect(onSend).not.toHaveBeenCalled();
       if (isAI) {
         expect(screen.getByRole("button", { name: "Set goal" })).not.toBeNull();
       }
