@@ -369,6 +369,33 @@ session. The agent can inspect and write to it, so describe whether you want an
 explanation or a command executed. The terminal's file path alone does not
 identify the running shell.
 
+## Set and manage a Codex goal
+
+A goal gives a Codex chat thread an objective to keep working toward across
+automatic continuations.
+
+1. In the Codex thread's composer, click **Set goal**.
+2. Describe the outcome in **What should Codex accomplish?**
+3. Optionally expand **Budget and usage** and enter a positive whole number in
+   **Token budget (optional)**. Leave it blank for no goal token budget.
+4. Click **Save goal**. If the thread is idle, send a message to start its next
+   turn.
+
+Click **Goal: ...** to edit the objective or budget and inspect the reported
+tokens used and elapsed minutes. Changes apply during a running turn or when
+the next requested turn starts; they can remain **pending** until then.
+Opening the goal dialog does not start Codex. A failed change is shown in the
+control and its error appears when you reopen the dialog.
+
+Use **Pause** to prevent automatic continuation while allowing the current turn
+to finish. **Stop** also interrupts the current turn and requests that its active
+goal be paused. Use **Resume** to reactivate an unfinished goal; if the thread is
+idle, start another turn for the change to apply. Editing a paused goal's text
+or budget alone does not resume it.
+
+Choose **Clear goal** in the dialog to remove the goal. Use **Stop** as well if
+you need to interrupt work already running.
+
 ## Why this matters in CoCalc
 
 CoCalc is both a collaborative workspace and an agent sandbox. Humans can review
