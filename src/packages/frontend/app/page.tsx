@@ -567,7 +567,13 @@ export const Page: React.FC = () => {
       >
         <ActiveContent />
       </CocalcErrorBoundary>
-      {!examMode && <QuickNavigation />}
+      {/* Embedded surfaces (kiosk and project embed) and the auth view hide
+          the top navigation and confine what may be shown; keep the global
+          shortcut off there too. Plain fullscreen keeps it. */}
+      {!examMode &&
+        !isAuthView &&
+        fullscreen !== "kiosk" &&
+        fullscreen !== "project" && <QuickNavigation />}
       {showPostSurfaceModals && !examMode ? (
         <PostSurfaceSlot scope="app.post-surface-modals">
           <PostSurfaceModals />
