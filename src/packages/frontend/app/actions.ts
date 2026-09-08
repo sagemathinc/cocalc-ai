@@ -22,6 +22,7 @@ import { getPageUrlPath } from "@cocalc/frontend/page-routing";
 import { disconnect_from_project } from "@cocalc/frontend/project/websocket/connect";
 import { session_manager } from "@cocalc/frontend/session";
 import { once } from "@cocalc/util/async-utils";
+import { is_valid_uuid_string } from "@cocalc/util/misc";
 import { PageState } from "./store";
 import { lite, project_id } from "@cocalc/frontend/lite";
 import {
@@ -132,6 +133,14 @@ export class PageActions extends Actions<PageState> {
       return;
     }
 
+    if (page_store.get("last_project_tab") === project_id) {
+      // Do not resurrect a closed selection if it is later reopened in the
+      // background. Keep global pages open while choosing a remaining context.
+      this.setState({
+        last_project_tab: open_projects.find((id) => id !== project_id),
+      });
+    }
+
     if (this.session_manager != null) {
       this.session_manager.close_project(project_id);
     } // remembers what files are open
@@ -194,7 +203,10 @@ export class PageActions extends Actions<PageState> {
     if (previousProjectNeedsRuntime || nextProjectNeedsRuntime) {
       await ensureProjectReduxRuntime();
     }
-    this.setState({ active_top_tab: key });
+    this.setState({
+      active_top_tab: key,
+      ...(is_valid_uuid_string(key) ? { last_project_tab: key } : {}),
+    });
 
     if (
       prev_key !== key &&

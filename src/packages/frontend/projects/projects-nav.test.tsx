@@ -18,6 +18,10 @@ const projectActions = {
 const mockEnsureProjectReduxRuntime = jest.fn(async () => undefined);
 const mockSetProjectBookmarked = jest.fn();
 let mockBookmarkedProjects: string[] = [];
+let mockActiveTopTab = "project-1";
+let mockLastProjectTab: string | undefined;
+let mockOpenProjectIds = ["project-1"];
+let mockProjectMap: any;
 
 jest.mock("antd", () => ({
   Button: ({ children, icon, onClick, ...props }: any) => (
@@ -69,17 +73,13 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     if (typeof store === "object" && key === "status") {
       return ImmutableMap({ alerts: List() });
     }
-    if (store === "page" && key === "active_top_tab") return "project-1";
+    if (store === "page" && key === "active_top_tab") return mockActiveTopTab;
+    if (store === "page" && key === "last_project_tab")
+      return mockLastProjectTab;
     if (store === "projects" && key === "open_projects")
-      return List(["project-1"]);
+      return List(mockOpenProjectIds);
     if (store === "projects" && key === "project_map") {
-      return ImmutableMap({
-        "project-1": ImmutableMap({
-          title: "Alpha",
-          description: "",
-          state: ImmutableMap({ state: "running" }),
-        }),
-      });
+      return mockProjectMap;
     }
     if (store === "projects" && key === "public_project_titles")
       return ImmutableMap();
@@ -164,6 +164,125 @@ describe("ProjectsNav", () => {
     mockEnsureProjectReduxRuntime.mockClear();
     mockSetProjectBookmarked.mockReset();
     mockBookmarkedProjects = [];
+    mockActiveTopTab = "project-1";
+    mockLastProjectTab = undefined;
+    mockOpenProjectIds = ["project-1"];
+    mockProjectMap = ImmutableMap({
+      "project-1": ImmutableMap({
+        title: "Alpha",
+        description: "",
+        state: ImmutableMap({ state: "running" }),
+      }),
+    });
+  });
+
+  describe("retained project context", () => {
+    beforeEach(() => {
+      window.localStorage.setItem("cocalc:projects-nav-mode", "dropdown");
+      mockOpenProjectIds = ["project-1", "project-2"];
+      mockActiveTopTab = "project-2";
+      mockLastProjectTab = "project-2";
+      mockProjectMap = ImmutableMap({
+        "project-1": ImmutableMap({ title: "Alpha", description: "" }),
+        "project-2": ImmutableMap({ title: "Beta", description: "" }),
+        "project-3": ImmutableMap({ title: "Gamma", description: "" }),
+      });
+    });
+
+    it.each(["account", "admin", "docs", "notifications", "projects"])(
+      "keeps the selected project and star target on %s",
+      (route) => {
+        const { rerender } = render(<ProjectsNav height={42} />);
+        expect(screen.getByText("Beta")).toBeVisible();
+        mockActiveTopTab = route;
+        rerender(<ProjectsNav height={42} />);
+        expect(
+          screen.getByRole("combobox", { name: "Switch project" }),
+        ).toBeInTheDocument();
+        expect(screen.getByText("Beta")).toBeVisible();
+        expect(screen.queryByText("Alpha")).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Star project" }));
+        expect(mockSetProjectBookmarked).toHaveBeenCalledWith(
+          "project-2",
+          true,
+        );
+        expect(pageActions.set_active_tab).not.toHaveBeenCalled();
+        expect(projectActions.open_project).not.toHaveBeenCalled();
+      },
+    );
+
+    it("retains context through navigation-bar remounts", () => {
+      mockActiveTopTab = "account";
+      const first = render(<ProjectsNav height={42} />);
+      expect(screen.getByText("Beta")).toBeVisible();
+      first.unmount();
+      render(<ProjectsNav height={36} />);
+      expect(screen.getByText("Beta")).toBeVisible();
+    });
+
+    it("does not change selection when tabs reorder or another project closes", () => {
+      mockActiveTopTab = "admin";
+      const { rerender } = render(<ProjectsNav height={42} />);
+      mockOpenProjectIds = ["project-3", "project-2", "project-1"];
+      rerender(<ProjectsNav height={42} />);
+      expect(screen.getByText("Beta")).toBeVisible();
+      mockOpenProjectIds = ["project-3", "project-2"];
+      rerender(<ProjectsNav height={42} />);
+      expect(screen.getByText("Beta")).toBeVisible();
+    });
+
+    it("prefers an explicitly active project over remembered context", () => {
+      mockActiveTopTab = "project-1";
+      render(<ProjectsNav height={42} />);
+      expect(screen.getByText("Alpha")).toBeVisible();
+      expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+    });
+
+    it("falls back safely when the remembered project is no longer open", () => {
+      mockActiveTopTab = "account";
+      mockLastProjectTab = "project-3";
+      render(<ProjectsNav height={42} />);
+      expect(screen.getByText("Alpha")).toBeVisible();
+      expect(screen.queryByText("Gamma")).not.toBeInTheDocument();
+    });
+
+    it("shows no selected project or adjacent star when no projects are open", () => {
+      mockActiveTopTab = "account";
+      mockOpenProjectIds = [];
+      render(<ProjectsNav height={42} />);
+      expect(screen.getByText("Switch project…")).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "Star project" }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("Beta")).not.toBeInTheDocument();
+    });
+
+    it("preserves keyboard focus and remembered label after search is dismissed", async () => {
+      mockActiveTopTab = "account";
+      const user = userEvent.setup();
+      render(<ProjectsNav height={42} />);
+      const input = screen.getByRole("combobox", { name: "Switch project" });
+      await user.type(input, "Al");
+      fireEvent.keyDown(input, { key: "Escape", code: "Escape", keyCode: 27 });
+      await waitFor(() => expect(input).toHaveValue(""));
+      expect(input).toHaveFocus();
+      expect(screen.getByText("Beta")).toBeVisible();
+      expect(projectActions.open_project).not.toHaveBeenCalled();
+    });
+
+    it("still opens an explicitly chosen project from Account", async () => {
+      mockActiveTopTab = "account";
+      const user = userEvent.setup();
+      render(<ProjectsNav height={42} />);
+      const input = screen.getByRole("combobox", { name: "Switch project" });
+      await user.type(input, "Al");
+      await user.click(await screen.findByText("Alpha"));
+      expect(projectActions.open_project).toHaveBeenCalledWith({
+        project_id: "project-1",
+        switch_to: true,
+      });
+      await waitFor(() => expect(input).toHaveValue(""));
+    });
   });
 
   it("opens the create-project modal from the native accessible add tab", async () => {
