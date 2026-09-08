@@ -1,8 +1,13 @@
 /** @jest-environment jsdom */
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  redux: { getActions: () => ({ erase_active_key_handler: jest.fn() }) },
+}));
 
 jest.mock(
   "./assets/cloudflare-api-token.png",
@@ -17,12 +22,28 @@ jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
 }));
 
+jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
+  ...jest.requireActual("@cocalc/frontend/auth/fresh-auth"),
+  FreshAuthModal: ({ open, onCancel, onSuccess }) =>
+    open ? (
+      <section aria-label="Security verification">
+        <button onClick={onCancel}>Cancel verification</button>
+        <button onClick={onSuccess}>Verify security action</button>
+      </section>
+    ) : null,
+}));
+
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
+    browser_id: "wizard-browser-session",
     conat_client: {
+      callHubApi: jest.fn(),
       hub: {
         system: {
           testR2Credentials: jest.fn(),
+          bootstrapCloudflareConfiguration: jest.fn(),
+          reconcileCloudflareBlobs: jest.fn(),
+          applyCloudflareTunnelSettings: jest.fn(),
           testCloudflareVisitorLocationHeaders: jest.fn(),
         },
       },
@@ -58,6 +79,566 @@ describe("CloudflareConfigWizard", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    (webapp_client.conat_client.callHubApi as jest.Mock).mockImplementation(
+      ({ name, args }) =>
+        webapp_client.conat_client.hub.system[name.replace("system.", "")](
+          ...args,
+        ),
+    );
+  });
+
+  const readyData = {
+    ...baseData,
+    r2_access_key_id: "access",
+    r2_bucket_prefix: "cocalc",
+  };
+  const readySecrets = {
+    project_hosts_cloudflare_tunnel_api_token: true,
+    r2_api_token: true,
+    r2_secret_access_key: true,
+  };
+  const bootstrapResult = {
+    account_id: baseData.project_hosts_cloudflare_tunnel_account_id,
+    account_name: "Selected account",
+    zone_id: "zone",
+    zone_name: "example.edu",
+    durable_token_id: "durable-id",
+    permissions: ["Workers Scripts Write", "DNS Write"],
+    bootstrap_token_id: "temporary-id",
+    bootstrap_token_invalidated: false,
+    tunnel_token: { ok: true },
+    visitor_location_headers: { ok: true },
+    r2: { ok: true },
+    notes: ["Discovery token revoked."],
+    values: {
+      ...readyData,
+      project_hosts_cloudflare_tunnel_api_token: "must-not-apply",
+      r2_api_token: "must-not-apply",
+    },
+  };
+
+  it("uses a five-minute timeout and resumes bootstrap only after fresh authentication", async () => {
+    const user = userEvent.setup();
+    const bootstrap = webapp_client.conat_client.hub.system
+      .bootstrapCloudflareConfiguration as jest.Mock;
+    bootstrap
+      .mockRejectedValueOnce(
+        Object.assign(new Error("fresh auth is required"), {
+          code: "fresh_auth_required",
+        }),
+      )
+      .mockResolvedValueOnce(bootstrapResult);
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    const input = screen.getByRole("textbox", {
+      name: "Temporary bootstrap token",
+    });
+    await user.type(input, "transient-bootstrap");
+    await user.click(
+      screen.getByRole("button", { name: "Bootstrap and save Cloudflare" }),
+    );
+    expect(input).toHaveValue("");
+    expect(bootstrap).toHaveBeenCalledTimes(1);
+    expect(webapp_client.conat_client.callHubApi).toHaveBeenCalledWith({
+      name: "system.bootstrapCloudflareConfiguration",
+      args: [
+        expect.objectContaining({
+          token: "transient-bootstrap",
+          browser_id: "wizard-browser-session",
+        }),
+      ],
+      timeout: 300000,
+    });
+    expect(
+      screen.queryByText("Cloudflare bootstrap did not complete"),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Verify security action" }),
+    );
+    expect(bootstrap).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByText("Durable Cloudflare configuration saved server-side"),
+    ).toBeInTheDocument();
+    expect(bootstrap.mock.calls[0][0].token).toBe("");
+  });
+
+  it("clears the transient bootstrap request on fresh-auth cancellation without retrying", async () => {
+    const user = userEvent.setup();
+    const bootstrap = webapp_client.conat_client.hub.system
+      .bootstrapCloudflareConfiguration as jest.Mock;
+    bootstrap.mockRejectedValueOnce({ code: "fresh_auth_required" });
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Temporary bootstrap token" }),
+      "temporary",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Bootstrap and save Cloudflare" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Cancel verification" }),
+    );
+    expect(bootstrap).toHaveBeenCalledTimes(1);
+    expect(bootstrap.mock.calls[0][0].token).toBe("");
+    expect(
+      screen.getByText("Cloudflare bootstrap verification cancelled"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not automatically retry ambiguous bootstrap transport errors", async () => {
+    const bootstrap = webapp_client.conat_client.hub.system
+      .bootstrapCloudflareConfiguration as jest.Mock;
+    bootstrap.mockRejectedValueOnce(new Error("timeout"));
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Temporary bootstrap token" }),
+      { target: { value: "temporary" } },
+    );
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Bootstrap and save Cloudflare" }),
+      ),
+    );
+    expect(bootstrap).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("button", { name: "Verify security action" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Cloudflare bootstrap did not complete"),
+    ).toBeInTheDocument();
+  });
+
+  it("prevents bootstrap from racing pending blob provisioning", async () => {
+    const reconcile = webapp_client.conat_client.hub.system
+      .reconcileCloudflareBlobs as jest.Mock;
+    let resolve!: (value: { ok: boolean }) => void;
+    reconcile.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    const input = screen.getByRole("textbox", {
+      name: "Temporary bootstrap token",
+    });
+    fireEvent.change(input, { target: { value: "temporary" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Provision or retry blob storage" }),
+    );
+    expect(input).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Bootstrap and save Cloudflare" }),
+    ).toBeDisabled();
+    await act(async () => resolve({ ok: true }));
+    expect(input).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Bootstrap and save Cloudflare" }),
+    ).toBeEnabled();
+  });
+
+  it("applies saved tunnel settings through fresh auth without exposing server details", async () => {
+    const user = userEvent.setup();
+    const applyTunnel = webapp_client.conat_client.hub.system
+      .applyCloudflareTunnelSettings as jest.Mock;
+    applyTunnel
+      .mockRejectedValueOnce({ code: "fresh_auth_required" })
+      .mockResolvedValueOnce({
+        running: true,
+        message: "private-server-details",
+      });
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    const button = screen.getByRole("button", {
+      name: "Apply saved tunnel settings",
+    });
+    await user.click(button);
+    expect(button).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Provision or retry blob storage" }),
+    ).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: "Verify security action" }),
+    );
+    expect(applyTunnel).toHaveBeenCalledTimes(2);
+    expect(webapp_client.conat_client.callHubApi).toHaveBeenLastCalledWith({
+      name: "system.applyCloudflareTunnelSettings",
+      args: [{ browser_id: webapp_client.browser_id }],
+      timeout: 300000,
+    });
+    expect(
+      screen.getByText("Saved tunnel settings applied; the tunnel is running."),
+    ).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("private-server-details");
+    fireEvent.change(screen.getByRole("textbox", { name: "Domain name" }), {
+      target: { value: "changed.example.edu" },
+    });
+    expect(button).toBeDisabled();
+  });
+
+  it("sanitizes tunnel errors and leaves the apply button retryable", async () => {
+    const applyTunnel = webapp_client.conat_client.hub.system
+      .applyCloudflareTunnelSettings as jest.Mock;
+    applyTunnel.mockRejectedValueOnce(new Error("private-token-details"));
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    const button = screen.getByRole("button", {
+      name: "Apply saved tunnel settings",
+    });
+    await act(async () => fireEvent.click(button));
+    expect(
+      screen.getByText(
+        "Could not apply saved tunnel settings. Check saved configuration and retry.",
+      ),
+    ).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("private-token-details");
+    expect(button).toBeEnabled();
+  });
+
+  it.each(["rejection", "legacy envelope"])(
+    "reconciles with a five-minute timeout after fresh authentication (%s)",
+    async (responseType) => {
+      const user = userEvent.setup();
+      const reconcile = webapp_client.conat_client.hub.system
+        .reconcileCloudflareBlobs as jest.Mock;
+      if (responseType === "rejection") {
+        reconcile.mockRejectedValueOnce({ code: "fresh_auth_required" });
+      } else {
+        reconcile.mockResolvedValueOnce({
+          error: "Error: fresh auth is required",
+        });
+      }
+      reconcile.mockResolvedValueOnce({ ok: true });
+      render(
+        <CloudflareConfigWizard
+          open
+          onClose={() => {}}
+          data={readyData}
+          isSet={readySecrets}
+          onApply={jest.fn()}
+        />,
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Provision or retry blob storage" }),
+      );
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      await user.click(
+        screen.getByRole("button", { name: "Verify security action" }),
+      );
+      expect(reconcile).toHaveBeenCalledTimes(2);
+      expect(webapp_client.conat_client.callHubApi).toHaveBeenLastCalledWith({
+        name: "system.reconcileCloudflareBlobs",
+        args: [{ browser_id: "wizard-browser-session" }],
+        timeout: 300000,
+      });
+      expect(
+        screen.getByText("Blob storage is healthy and active"),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("clears bootstrap input on submit and never applies returned tokens", async () => {
+    const onApply = jest.fn();
+    let resolve!: (value: typeof bootstrapResult) => void;
+    const bootstrap = webapp_client.conat_client.hub.system
+      .bootstrapCloudflareConfiguration as jest.Mock;
+    bootstrap.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={onApply}
+      />,
+    );
+    const input = screen.getByRole("textbox", {
+      name: "Temporary bootstrap token",
+    });
+    fireEvent.change(input, { target: { value: "one-time-secret" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Bootstrap and save Cloudflare" }),
+    );
+    expect(input).toHaveValue("");
+    expect(bootstrap).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: "one-time-secret",
+        domain: readyData.dns,
+      }),
+    );
+    await act(async () => resolve(bootstrapResult));
+    expect(onApply).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("status")[0]).toHaveTextContent("DNS Write");
+    expect(
+      screen.getByText(
+        "Delete the temporary bootstrap token manually in Cloudflare",
+      ),
+    ).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("must-not-apply");
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "R2 Access Key ID" }),
+      { target: { value: "new-access" } },
+    );
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Apply Settings" })),
+    );
+    expect(onApply).toHaveBeenCalledTimes(1);
+    expect(onApply.mock.calls[0][0]).not.toHaveProperty(
+      "project_hosts_cloudflare_tunnel_api_token",
+    );
+    expect(onApply.mock.calls[0][0]).not.toHaveProperty("r2_api_token");
+  });
+
+  it("clears failed bootstrap input without rendering raw RPC errors", async () => {
+    (
+      webapp_client.conat_client.hub.system
+        .bootstrapCloudflareConfiguration as jest.Mock
+    ).mockRejectedValue(new Error("sensitive-rpc-secret"));
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    const input = screen.getByRole("textbox", {
+      name: "Temporary bootstrap token",
+    });
+    fireEvent.change(input, { target: { value: "sensitive-rpc-secret" } });
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Bootstrap and save Cloudflare" }),
+      ),
+    );
+    expect(input).toHaveValue("");
+    expect(
+      screen.getByText("Cloudflare bootstrap did not complete"),
+    ).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("sensitive-rpc-secret");
+  });
+
+  it("reports validation and cleanup failures without claiming a successful save", async () => {
+    (
+      webapp_client.conat_client.hub.system
+        .bootstrapCloudflareConfiguration as jest.Mock
+    ).mockResolvedValue({
+      ...bootstrapResult,
+      tunnel_token: { ok: false, message: "Validation failed" },
+      notes: [
+        "Saving status is ambiguous; review saved settings. Delete discovery token discovery-id.",
+      ],
+      values: {},
+    });
+    const onApply = jest.fn();
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={onApply}
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Temporary bootstrap token" }),
+      { target: { value: "temporary" } },
+    );
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Bootstrap and save Cloudflare" }),
+      ),
+    );
+    expect(
+      screen.getByText("Cloudflare bootstrap needs attention"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Durable Cloudflare configuration saved server-side"),
+    ).not.toBeInTheDocument();
+    expect(document.body).toHaveTextContent(
+      "Delete discovery token discovery-id",
+    );
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it("supports keyboard secret visibility and manual fallback without retaining bootstrap input", async () => {
+    const user = userEvent.setup();
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    const input = screen.getByRole("textbox", {
+      name: "Temporary bootstrap token",
+    });
+    await user.type(input, "temporary");
+    input.focus();
+    await user.tab();
+    expect(
+      screen.getAllByRole("button", { name: "Show secret" })[0],
+    ).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: "Hide secret" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(input).toHaveFocus();
+    const manual = screen.getByRole("radio", { name: "Advanced manual setup" });
+    manual.focus();
+    await user.keyboard(" ");
+    expect(manual).toBeChecked();
+    expect(
+      screen.getByRole("textbox", { name: "Cloudflare API Token" }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("radio", { name: "Recommended bootstrap" }),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Temporary bootstrap token" }),
+    ).toHaveValue("");
+  });
+
+  it("clears bootstrap input when closed and restores focus on Escape", async () => {
+    const user = userEvent.setup();
+    const onClose = jest.fn();
+    const props = {
+      onClose,
+      data: readyData,
+      isSet: readySecrets,
+      onApply: jest.fn(),
+    };
+    const { rerender } = render(
+      <>
+        <button>Open configuration</button>
+        <CloudflareConfigWizard {...props} open={false} />
+      </>,
+    );
+    const trigger = screen.getByRole("button", { name: "Open configuration" });
+    trigger.focus();
+    rerender(
+      <>
+        <button>Open configuration</button>
+        <CloudflareConfigWizard {...props} open />
+      </>,
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Temporary bootstrap token" }),
+      "temporary",
+    );
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    rerender(
+      <>
+        <button>Open configuration</button>
+        <CloudflareConfigWizard {...props} open={false} />
+      </>,
+    );
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 300)));
+    expect(trigger).toHaveFocus();
+    rerender(
+      <>
+        <button>Open configuration</button>
+        <CloudflareConfigWizard {...props} open />
+      </>,
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Temporary bootstrap token" }),
+    ).toHaveValue("");
+  });
+
+  it("retries blob provisioning using saved credentials and activates only on success", async () => {
+    const reconcile = webapp_client.conat_client.hub.system
+      .reconcileCloudflareBlobs as jest.Mock;
+    reconcile
+      .mockResolvedValueOnce({ ok: false, message: "Health check pending" })
+      .mockResolvedValueOnce({
+        ok: true,
+        bucket: "cocalc-blobs",
+        worker: "blob-worker",
+        public_url: "https://blobs.example.edu",
+      });
+    const onApply = jest.fn();
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={onApply}
+      />,
+    );
+    const button = screen.getByRole("button", {
+      name: "Provision or retry blob storage",
+    });
+    await act(async () => fireEvent.click(button));
+    expect(
+      screen.queryByText("Blob storage is healthy and active"),
+    ).not.toBeInTheDocument();
+    expect(button).toBeEnabled();
+    await act(async () => fireEvent.click(button));
+    expect(reconcile).toHaveBeenNthCalledWith(1, {
+      browser_id: "wizard-browser-session",
+    });
+    expect(reconcile).toHaveBeenNthCalledWith(2, {
+      browser_id: "wizard-browser-session",
+    });
+    expect(
+      screen.getByText("Blob storage is healthy and active"),
+    ).toBeInTheDocument();
+    expect(onApply).not.toHaveBeenCalled();
   });
 
   it("explains that diagnostics use saved settings", () => {

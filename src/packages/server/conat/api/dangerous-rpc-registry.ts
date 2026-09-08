@@ -1395,6 +1395,21 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "Cloudflare tunnel/R2 configuration bootstrap with cloud token",
   },
+  "system.reconcileCloudflareBlobs": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin provisions Cloudflare blob bucket, Worker and hostname using saved credentials",
+  },
+  "system.bootstrapCloudflareConfigurationOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed implementation reached through authenticated inter-bay dispatch after entry-bay fresh auth",
+  },
+  "system.reconcileCloudflareBlobsOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed implementation reached through authenticated inter-bay dispatch after entry-bay fresh auth",
+  },
   "system.clearAccountEntitlementOverride": {
     decision: "fresh-auth-required",
     reason: "admin entitlement mutation",

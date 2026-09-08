@@ -7597,6 +7597,103 @@ export async function testCloudflareVisitorLocationHeaders({
   }
 }
 
+// Both provisioning paths mutate the same Cloudflare resources and settings.
+// Hold a dedicated seed Postgres session across provisioning and propagation.
+async function withCloudflareProvisioningLock<T>(
+  run: () => Promise<T>,
+): Promise<T> {
+  if (getConfiguredBayId() !== getConfiguredClusterSeedBayId()) {
+    throw Error("Cloudflare provisioning must run on the seed bay");
+  }
+  const client = await getPool().connect();
+  let locked = false;
+  try {
+    const { rows } = await client.query(
+      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+      ["cocalc:cloudflare-provisioning"],
+    );
+    locked = rows[0]?.locked === true;
+    if (!locked) {
+      throw Error(
+        "Cloudflare provisioning is already running; retry when it completes",
+      );
+    }
+    return await run();
+  } finally {
+    try {
+      if (locked) {
+        await client.query("SELECT pg_advisory_unlock(hashtext($1))", [
+          "cocalc:cloudflare-provisioning",
+        ]);
+      }
+    } finally {
+      // Never return a session with an uncertain advisory-lock state to the pool.
+      client.release(true);
+    }
+  }
+}
+
+// Private inter-bay entry: the entry bay has already authorized the operator.
+export async function bootstrapCloudflareConfigurationOnSeed({
+  account_id,
+  source_bay_id,
+  ...options
+}: import("@cocalc/conat/inter-bay/api").BayOpsCloudflareBootstrapRequest): Promise<CloudflareBootstrapResult> {
+  return await withCloudflareProvisioningLock(async () => {
+    const { resolveBlobStorageConfig } =
+      await import("@cocalc/server/blobs/config");
+    const previousBlobConfig = await resolveBlobStorageConfig();
+    const previousSettings = await getServerSettings();
+    let pinnedToPostgres = false;
+    const result = await bootstrapCloudflareConfiguration0({
+      ...options,
+      save: async (values) => {
+        const nextSettings = { ...previousSettings, ...values };
+        const nextAccount = `${nextSettings.r2_account_id ?? ""}`.trim();
+        const nextBucket =
+          `${nextSettings.blob_r2_bucket || (nextSettings.r2_bucket_prefix ? `${nextSettings.r2_bucket_prefix}-blobs` : "")}`.trim();
+        const sameBlobTarget =
+          previousBlobConfig.r2?.auth.endpoint ===
+            `https://${nextAccount}.r2.cloudflarestorage.com` &&
+          previousBlobConfig.r2?.auth.bucket === nextBucket &&
+          `${previousSettings.dns ?? ""}`.trim().toLowerCase() ===
+            `${nextSettings.dns ?? ""}`.trim().toLowerCase();
+        // Bootstrap must not redirect an active blob store to a new account,
+        // bucket, or domain before explicit blob reconciliation succeeds.
+        pinnedToPostgres =
+          previousBlobConfig.activeBackend === "postgres" || !sameBlobTarget;
+        await setSiteSettingsOnSeed({
+          account_id,
+          source_bay_id,
+          settings: Object.entries({
+            ...values,
+            ...(pinnedToPostgres ? { blob_storage_backend: "postgres" } : {}),
+          }).map(([name, value]) => ({ name, value })),
+        });
+      },
+    });
+    if (result.tunnel_token.ok) {
+      const previousTokenId =
+        `${previousSettings.cloudflare_automation_token_id ?? ""}`.trim();
+      if (
+        previousTokenId &&
+        result.durable_token_id &&
+        previousTokenId !== result.durable_token_id
+      ) {
+        result.notes.push(
+          `Previous automation token ${previousTokenId} remains active. Delete it in Cloudflare API Tokens when it is no longer used; it may be shared by other services.`,
+        );
+      }
+      if (pinnedToPostgres && previousBlobConfig.activeBackend === "r2") {
+        result.notes.push(
+          "The blob account, bucket, or domain changed. Blob storage is pinned to Postgres until blob reconciliation succeeds; existing R2 data has not been moved.",
+        );
+      }
+    }
+    return result;
+  });
+}
+
 export async function bootstrapCloudflareConfiguration({
   account_id,
   browser_id,
@@ -7606,7 +7703,6 @@ export async function bootstrapCloudflareConfiguration({
   tunnelPrefix,
   hostSuffix,
   r2BucketPrefix,
-  invalidateBootstrapToken,
 }: {
   account_id?: string;
   browser_id?: string | null;
@@ -7616,7 +7712,6 @@ export async function bootstrapCloudflareConfiguration({
   tunnelPrefix?: string;
   hostSuffix?: string;
   r2BucketPrefix?: string;
-  invalidateBootstrapToken?: boolean;
 }): Promise<CloudflareBootstrapResult> {
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
@@ -7627,14 +7722,72 @@ export async function bootstrapCloudflareConfiguration({
     session_hash,
     require_second_factor: true,
   });
-  return await bootstrapCloudflareConfiguration0({
+  const options = {
+    account_id,
     domain,
     token,
     tunnelPrefix,
     hostSuffix,
     r2BucketPrefix,
-    invalidateBootstrapToken,
+  };
+  const seedBayId = getConfiguredClusterSeedBayId();
+  const localBayId = getConfiguredBayId();
+  if (localBayId !== seedBayId) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 600_000 })
+      .bootstrapCloudflareConfiguration({
+        ...options,
+        source_bay_id: localBayId,
+      });
+  }
+  return await bootstrapCloudflareConfigurationOnSeed(options);
+}
+
+// Private inter-bay entry; do not re-check an entry-bay session against seed DB.
+export async function reconcileCloudflareBlobsOnSeed({
+  account_id,
+  source_bay_id,
+}: import("@cocalc/conat/inter-bay/api").BayOpsCloudflareReconcileRequest) {
+  return await withCloudflareProvisioningLock(async () => {
+    const { reconcileCloudflareBlobs: reconcile } =
+      await import("@cocalc/server/cloud/cloudflare-blob-reconcile");
+    return await reconcile(await getServerSettings(), async (values) => {
+      await setSiteSettingsOnSeed({
+        account_id,
+        source_bay_id,
+        settings: Object.entries(values).map(([name, value]) => ({
+          name,
+          value,
+        })),
+      });
+    });
   });
+}
+
+export async function reconcileCloudflareBlobs({
+  account_id,
+  browser_id,
+  session_hash,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+}) {
+  await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
+  const seedBayId = getConfiguredClusterSeedBayId();
+  const localBayId = getConfiguredBayId();
+  if (localBayId !== seedBayId) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 600_000 })
+      .reconcileCloudflareBlobs({ account_id, source_bay_id: localBayId });
+  }
+  return await reconcileCloudflareBlobsOnSeed({ account_id });
 }
 
 export async function applyCloudflareTunnelSettings({

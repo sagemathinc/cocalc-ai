@@ -15,6 +15,7 @@ type CloudflareCapability = {
 };
 
 export type CloudflareBootstrapResult = {
+  permissions: string[];
   account_id?: string;
   account_name?: string;
   zone_id?: string;
@@ -51,6 +52,7 @@ type CreatedToken = {
   id?: string;
   value?: string;
   r2Included?: boolean;
+  permissions?: string[];
 };
 
 type ManagedTransform = {
@@ -100,6 +102,7 @@ async function cloudflareRequest<T>(
       "Content-Type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(20_000),
   });
   let payload: CloudflareResponse<T> | undefined;
   try {
@@ -108,14 +111,10 @@ async function cloudflareRequest<T>(
     payload = undefined;
   }
   if (!response.ok || !payload?.success) {
-    const details =
-      payload?.errors
-        ?.map((err) => err.message)
-        .filter(Boolean)
-        .join(", ") ||
-      `${response.status} ${response.statusText}`.trim() ||
-      "unknown error";
-    throw new Error(`cloudflare api failed: ${details}`);
+    // Do not propagate provider messages: they may echo request secrets.
+    throw new Error(
+      `Cloudflare ${method} ${path.split("?")[0]} failed (HTTP ${response.status}). Check the token permissions and expiry.`,
+    );
   }
   return payload.result as T;
 }
@@ -178,17 +177,15 @@ function requirePermissionGroup(
   return group;
 }
 
-async function createDurableTunnelToken(opts: {
+async function createDurableAutomationToken(opts: {
   bootstrapToken: string;
   accountId: string;
   zoneId: string;
   zoneName: string;
+  siteDomain: string;
+  groups: PermissionGroup[];
 }): Promise<CreatedToken> {
-  const groups = await cloudflareRequest<PermissionGroup[]>(
-    opts.bootstrapToken,
-    "GET",
-    "user/tokens/permission_groups",
-  );
+  const groups = opts.groups;
   const accountScope = "com.cloudflare.api.account";
   const zoneScope = "com.cloudflare.api.account.zone";
   const accountGroups = [
@@ -197,10 +194,20 @@ async function createDurableTunnelToken(opts: {
       ["Cloudflare Tunnel Write", "Cloudflare Tunnel Edit"],
       accountScope,
     ),
+    requirePermissionGroup(
+      groups,
+      ["Workers Scripts Write", "Workers Scripts Edit"],
+      accountScope,
+    ),
   ];
   const zoneGroups = [
     requirePermissionGroup(groups, ["Zone Read"], zoneScope),
     requirePermissionGroup(groups, ["DNS Write", "DNS Edit"], zoneScope),
+    requirePermissionGroup(
+      groups,
+      ["Workers Routes Write", "Workers Routes Edit"],
+      zoneScope,
+    ),
     requirePermissionGroup(
       groups,
       [
@@ -217,7 +224,7 @@ async function createDurableTunnelToken(opts: {
       zoneScope,
     ),
   ];
-  const r2Group = findPermissionGroup(
+  const r2Group = requirePermissionGroup(
     groups,
     [
       "Workers R2 Storage Write",
@@ -243,7 +250,7 @@ async function createDurableTunnelToken(opts: {
     "POST",
     "user/tokens",
     {
-      name: `CoCalc Launchpad ${opts.zoneName}`,
+      name: `CoCalc automation ${opts.siteDomain}`,
       policies: [
         {
           effect: "allow",
@@ -262,7 +269,11 @@ async function createDurableTunnelToken(opts: {
       ],
     },
   );
-  return { ...created, r2Included: !!r2Group?.id };
+  return {
+    ...created,
+    r2Included: true,
+    permissions: [...accountGroups, ...zoneGroups].map((group) => group.name!),
+  };
 }
 
 function findVisitorLocationTransform(
@@ -352,129 +363,177 @@ export async function bootstrapCloudflareConfiguration(opts: {
   tunnelPrefix?: string;
   hostSuffix?: string;
   r2BucketPrefix?: string;
-  invalidateBootstrapToken?: boolean;
+  // Persistence stays server-side; no token secret is returned to the caller.
+  save: (values: Record<string, string>) => Promise<void>;
 }): Promise<CloudflareBootstrapResult> {
   const token = clean(opts.token);
   if (!token) throw new Error("Cloudflare bootstrap token is required");
   const domain = normalizeHostname(opts.domain);
-  if (!domain) throw new Error("Cloudflare external domain is required");
-
-  const notes: string[] = [];
-  const verified = await verifyToken(token);
-  const zone = await lookupZone(token, domain);
-  const zoneId = zone.id;
-  const zoneName = zone.name;
-  const accountId = zone.account?.id;
-  if (!zoneId || !zoneName || !accountId) {
-    throw new Error("Cloudflare zone lookup did not return account metadata");
+  if (!/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(domain)) {
+    throw new Error("Enter a valid Cloudflare external domain.");
   }
-
-  let durable: CreatedToken | undefined;
-  let tunnelToken: CloudflareCapability = {
-    ok: false,
-    message: "Durable token was not created.",
+  if (
+    opts.r2BucketPrefix &&
+    !/^[a-z0-9][a-z0-9-]{0,50}[a-z0-9]$/.test(opts.r2BucketPrefix)
+  ) {
+    throw new Error(
+      "Use 2-52 lowercase letters, numbers or hyphens for the bucket prefix.",
+    );
+  }
+  const notes: string[] = [];
+  const result: CloudflareBootstrapResult = {
+    permissions: [],
+    values: {},
+    notes,
+    tunnel_token: { ok: false },
+    visitor_location_headers: { ok: false },
+    r2: {
+      ok: false,
+      message:
+        "Save separate R2 S3 credentials, then provision and test image delivery.",
+    },
   };
+  let discovery: CreatedToken | undefined;
+  let durable: CreatedToken | undefined;
+  let saved = false;
+  let saveAttempted = false;
+  let stage = "verify the bootstrap token";
   try {
-    durable = await createDurableTunnelToken({
+    const verified = await verifyToken(token);
+    result.bootstrap_token_id = verified.id;
+    stage = "discover token permissions";
+    const groups = await cloudflareRequest<PermissionGroup[]>(
+      token,
+      "GET",
+      "user/tokens/permission_groups",
+    );
+    // The Create additional tokens template cannot list zones itself. Its
+    // short-lived child has only Zone Read, and is always removed below.
+    stage = "create a temporary zone discovery token";
+    const zoneRead = requirePermissionGroup(
+      groups,
+      ["Zone Read"],
+      "com.cloudflare.api.account.zone",
+    );
+    discovery = await cloudflareRequest<CreatedToken>(
+      token,
+      "POST",
+      "user/tokens",
+      {
+        name: "CoCalc temporary zone discovery",
+        expires_on: new Date(Date.now() + 10 * 60_000).toISOString(),
+        policies: [
+          {
+            effect: "allow",
+            resources: { "com.cloudflare.api.account.zone.*": "*" },
+            permission_groups: [{ id: zoneRead.id }],
+          },
+        ],
+      },
+    );
+    if (!discovery.value) throw new Error("Missing discovery token secret");
+    stage = "find the domain's Cloudflare zone";
+    const zone = await lookupZone(discovery.value, domain);
+    const zoneId = zone.id;
+    const zoneName = zone.name;
+    const accountId = zone.account?.id;
+    if (!zoneId || !zoneName || !accountId)
+      throw new Error("Missing zone metadata");
+    Object.assign(result, {
+      zone_id: zoneId,
+      zone_name: zoneName,
+      account_id: accountId,
+      account_name: zone.account?.name,
+    });
+    stage = "create the scoped automation token";
+    durable = await createDurableAutomationToken({
       bootstrapToken: token,
       accountId,
       zoneId,
       zoneName,
+      siteDomain: domain,
+      groups,
     });
-    if (durable.value) {
-      tunnelToken = {
-        ok: true,
-        message: "Created a durable Cloudflare token for CoCalc.",
-      };
-    } else {
-      tunnelToken = {
-        ok: false,
-        message: "Cloudflare created a token but did not return its secret.",
-      };
-    }
-  } catch (err) {
-    tunnelToken = {
-      ok: false,
-      message: `${err}`,
+    result.durable_token_id = durable.id;
+    result.permissions = durable.permissions ?? [];
+    if (!durable.value) throw new Error("Missing automation token secret");
+    const values: Record<string, string> = {
+      cloudflare_mode: "self",
+      project_hosts_cloudflare_tunnel_enabled: "yes",
+      project_hosts_cloudflare_tunnel_account_id: accountId,
+      r2_account_id: accountId,
+      cloudflare_automation_token_id: durable.id ?? "",
+      cloudflare_zone_id: zoneId,
+      cloudflare_zone_name: zoneName,
+      dns: domain,
+      ...(opts.tunnelPrefix
+        ? { project_hosts_cloudflare_tunnel_prefix: opts.tunnelPrefix }
+        : {}),
+      ...(opts.hostSuffix
+        ? { project_hosts_cloudflare_tunnel_host_suffix: opts.hostSuffix }
+        : {}),
+      ...(opts.r2BucketPrefix ? { r2_bucket_prefix: opts.r2BucketPrefix } : {}),
     };
-    notes.push(
-      "Could not create a narrower durable token automatically. Leave the bootstrap token active until you create/paste a Cloudflare API token manually.",
-    );
-  }
-
-  let visitorLocationHeaders: CloudflareBootstrapResult["visitor_location_headers"];
-  try {
-    visitorLocationHeaders = await enableVisitorLocationHeaders({
-      token,
-      zoneId,
+    stage = "save the automation token";
+    saveAttempted = true;
+    await opts.save({
+      ...values,
+      project_hosts_cloudflare_tunnel_api_token: durable.value,
+      r2_api_token: durable.value,
     });
-  } catch (err) {
-    visitorLocationHeaders = {
-      ok: false,
-      message: `${err}`,
+    saved = true;
+    result.values = values;
+    result.tunnel_token = {
+      ok: true,
+      message: "Scoped automation token saved on the server.",
     };
-  }
-
-  let invalidation: { invalidated: boolean; error?: string } | undefined =
-    undefined;
-  if (opts.invalidateBootstrapToken !== false && durable?.value) {
-    invalidation = await invalidateBootstrapToken({
-      token,
-      tokenId: verified.id,
-    });
-    if (!invalidation.invalidated) {
+  } catch {
+    // Neither provider nor database exceptions are safe to expose here.
+    result.tunnel_token = {
+      ok: false,
+      message: `Unable to ${stage}. Check permissions, domain and expiry; retry with a new bootstrap token.`,
+    };
+    if (saveAttempted && durable?.id) {
       notes.push(
-        "Cloudflare bootstrap token could not be invalidated automatically; delete it manually or rely on its TTL.",
+        `Saving may have partially completed. Check stored settings before deleting automation token ${durable.id}; it has not been revoked.`,
       );
     }
-  }
-
-  const values: Record<string, string> = {
-    cloudflare_mode: "self",
-    project_hosts_cloudflare_tunnel_enabled: "yes",
-    project_hosts_cloudflare_tunnel_account_id: accountId,
-    dns: domain,
-    r2_account_id: accountId,
-  };
-  if (durable?.value) {
-    values.project_hosts_cloudflare_tunnel_api_token = durable.value;
-    if (durable.r2Included) {
-      values.r2_api_token = durable.value;
+  } finally {
+    for (const child of [discovery, ...(!saveAttempted ? [durable] : [])]) {
+      if (!child?.id) continue;
+      const cleanup = await invalidateBootstrapToken({
+        token,
+        tokenId: child.id,
+      });
+      if (!cleanup.invalidated)
+        notes.push(
+          `Delete temporary or unsaved Cloudflare token ${child.id} manually in API Tokens.`,
+        );
+    }
+    const cleanup = await invalidateBootstrapToken({
+      token,
+      tokenId: result.bootstrap_token_id,
+    });
+    result.bootstrap_token_invalidated = cleanup.invalidated;
+    if (!cleanup.invalidated) {
+      result.bootstrap_token_invalidation_error =
+        "Delete the bootstrap token manually in Cloudflare API Tokens.";
+      notes.push(result.bootstrap_token_invalidation_error);
     }
   }
-  if (opts.tunnelPrefix) {
-    values.project_hosts_cloudflare_tunnel_prefix = opts.tunnelPrefix;
+  if (saved && durable?.value && result.zone_id) {
+    try {
+      result.visitor_location_headers = await enableVisitorLocationHeaders({
+        token: durable.value,
+        zoneId: result.zone_id,
+      });
+    } catch {
+      result.visitor_location_headers = {
+        ok: false,
+        message:
+          "Automation token saved; enabling visitor location headers failed. Retry configuration or enable them in Cloudflare.",
+      };
+    }
   }
-  if (opts.hostSuffix) {
-    values.project_hosts_cloudflare_tunnel_host_suffix = opts.hostSuffix;
-  }
-  if (opts.r2BucketPrefix) {
-    values.r2_bucket_prefix = opts.r2BucketPrefix;
-  }
-
-  return {
-    account_id: accountId,
-    account_name: zone.account?.name,
-    zone_id: zoneId,
-    zone_name: zoneName,
-    durable_token_id: durable?.id,
-    bootstrap_token_id: verified.id,
-    bootstrap_token_invalidated: invalidation?.invalidated,
-    bootstrap_token_invalidation_error: invalidation?.error,
-    tunnel_token: tunnelToken,
-    visitor_location_headers: visitorLocationHeaders,
-    r2:
-      durable?.value && durable.r2Included
-        ? {
-            ok: false,
-            message:
-              "R2 API token was filled from the durable Cloudflare token, but R2 S3 access key ID and secret still need to be created/pasted.",
-          }
-        : {
-            ok: false,
-            message: "R2 credentials still need to be created/pasted manually.",
-          },
-    values,
-    notes,
-  };
+  return result;
 }

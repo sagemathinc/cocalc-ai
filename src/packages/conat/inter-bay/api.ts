@@ -149,6 +149,7 @@ import type {
   LegacyMigrationRetryProjectRestoreResponse,
 } from "@cocalc/conat/hub/api/legacy-migration";
 import type {
+  System,
   AcpAdmissionDenialReport,
   ActiveUserMapBayReport,
   ActiveUserMapQuery,
@@ -2090,6 +2091,16 @@ export interface BayOpsSetSiteSettingsRequest {
   source_bay_id?: string | null;
 }
 
+export type BayOpsCloudflareBootstrapRequest = Omit<
+  Parameters<System["bootstrapCloudflareConfiguration"]>[0],
+  "browser_id" | "session_hash"
+> & { source_bay_id?: string | null };
+
+export interface BayOpsCloudflareReconcileRequest {
+  account_id?: string;
+  source_bay_id?: string | null;
+}
+
 export interface BayOpsGetSiteSettingsRequest {
   account_id?: string;
   names?: string[];
@@ -2875,6 +2886,8 @@ export type BayOpsMethod =
   | "set-webapp-crash-resolution"
   | "set-server-setting"
   | "set-site-settings"
+  | "bootstrap-cloudflare-configuration"
+  | "reconcile-cloudflare-blobs"
   | "get-site-settings"
   | "sync-site-settings"
   | "get-global-config-propagation-status"
@@ -4597,6 +4610,12 @@ export interface InterBayBayOpsApi {
   setSiteSettings: (
     opts: BayOpsSetSiteSettingsRequest,
   ) => Promise<SiteSettingsSyncResult>;
+  bootstrapCloudflareConfiguration: (
+    opts: BayOpsCloudflareBootstrapRequest,
+  ) => ReturnType<System["bootstrapCloudflareConfiguration"]>;
+  reconcileCloudflareBlobs: (
+    opts: BayOpsCloudflareReconcileRequest,
+  ) => ReturnType<System["reconcileCloudflareBlobs"]>;
   getSiteSettings: (
     opts: BayOpsGetSiteSettingsRequest,
   ) => Promise<SiteSettingsReadResult>;
@@ -10170,6 +10189,21 @@ export function createInterBayBayOpsClient({
     ...serviceClientOptions({ client, timeout }),
     subject: bayOpsSubject({ dest_bay, method: "set-site-settings" }),
   });
+  const bootstrapCloudflareClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "bootstrapCloudflareConfiguration">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "bootstrap-cloudflare-configuration",
+    }),
+  });
+  const reconcileCloudflareClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "reconcileCloudflareBlobs">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({ dest_bay, method: "reconcile-cloudflare-blobs" }),
+  });
   const getSiteSettingsClient = createServiceClient<
     Pick<InterBayBayOpsApi, "getSiteSettings">
   >({
@@ -10485,6 +10519,10 @@ export function createInterBayBayOpsClient({
       await setServerSettingClient.setServerSetting(opts),
     setSiteSettings: async (opts) =>
       await setSiteSettingsClient.setSiteSettings(opts),
+    bootstrapCloudflareConfiguration: async (opts) =>
+      await bootstrapCloudflareClient.bootstrapCloudflareConfiguration(opts),
+    reconcileCloudflareBlobs: async (opts) =>
+      await reconcileCloudflareClient.reconcileCloudflareBlobs(opts),
     getSiteSettings: async (opts) =>
       await getSiteSettingsClient.getSiteSettings(opts),
     syncSiteSettings: async (opts) =>
@@ -10599,6 +10637,32 @@ export function createInterBayBayOpsHandlers({
       }),
       impl: {
         setSiteSettings: async (opts) => await impl.setSiteSettings(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "bootstrapCloudflareConfiguration">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "bootstrap-cloudflare-configuration",
+      }),
+      impl: {
+        bootstrapCloudflareConfiguration: async (opts) =>
+          await impl.bootstrapCloudflareConfiguration(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "reconcileCloudflareBlobs">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "reconcile-cloudflare-blobs",
+      }),
+      impl: {
+        reconcileCloudflareBlobs: async (opts) =>
+          await impl.reconcileCloudflareBlobs(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getSiteSettings">>({

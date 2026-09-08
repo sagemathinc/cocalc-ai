@@ -18,7 +18,14 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+import CloudflareBootstrap from "./cloudflare-bootstrap";
+import { handleErrorMessage } from "@cocalc/conat/util";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import type {
   R2CredentialsTestResult,
   VisitorLocationHeaderTestResult,
@@ -172,7 +179,8 @@ function Screenshot({
   return (
     <div
       style={{
-        background: COLORS.ANTD_BG_BLUE_L,
+        background: UI_COLORS.surface,
+        color: UI_COLORS.text,
         display: "flex",
         justifyContent: "center",
         padding: 12,
@@ -190,6 +198,7 @@ export default function CloudflareConfigWizard({
   isSet,
   onApply,
 }: WizardProps) {
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const [savedData, setSavedData] = useState<Record<string, string>>(data);
   const [savedIsSet, setSavedIsSet] = useState<Record<string, boolean>>(isSet);
   const [accountId, setAccountId] = useState("");
@@ -215,9 +224,32 @@ export default function CloudflareConfigWizard({
   const [notice, setNotice] = useState("");
   const [applyError, setApplyError] = useState("");
   const [applying, setApplying] = useState(false);
+  const [setupPath, setSetupPath] = useState("bootstrap");
+  const [bootstrapToken, setBootstrapToken] = useState("");
+  const [bootstrapping, setBootstrapping] = useState(false);
+  const [provisioning, setProvisioning] = useState(false);
+  const [tunnelApplying, setTunnelApplying] = useState(false);
+  const [tunnelStatus, setTunnelStatus] = useState<{
+    running: boolean;
+    message: string;
+  }>();
+  const operationBusy =
+    applying || bootstrapping || provisioning || tunnelApplying;
+  const [blobResult, setBlobResult] = useState<{
+    ok: boolean;
+    bucket?: string;
+    worker?: string;
+    public_url?: string;
+    message?: string;
+  }>();
 
   useEffect(() => {
     if (!open) {
+      setBootstrapToken("");
+      setSetupPath("bootstrap");
+      setBootstrapping(false);
+      setBlobResult(undefined);
+      setTunnelStatus(undefined);
       setAccountId("");
       setApiToken("");
       setExternalDomain("");
@@ -380,6 +412,8 @@ export default function CloudflareConfigWizard({
   }
 
   function requestClose() {
+    if (operationBusy) return;
+    setBootstrapToken("");
     if (!hasUnsavedDraft) {
       onClose();
       return;
@@ -410,6 +444,75 @@ export default function CloudflareConfigWizard({
     }
   }
 
+  async function provisionBlobs() {
+    if (operationBusy || hasUnsavedDraft) return;
+    setProvisioning(true);
+    setBlobResult(undefined);
+    try {
+      const completed = await runFreshAuthAction(async () => {
+        setBlobResult(
+          handleErrorMessage(
+            await webapp_client.conat_client.callHubApi({
+              name: "system.reconcileCloudflareBlobs",
+              args: [{ browser_id: webapp_client.browser_id }],
+              timeout: 5 * 60_000,
+            }),
+          ),
+        );
+      });
+      if (!completed)
+        setBlobResult({
+          ok: false,
+          message:
+            "Security verification cancelled. Retry provisioning when ready.",
+        });
+    } catch {
+      setBlobResult({
+        ok: false,
+        message:
+          "Provisioning did not complete. Check saved credentials and retry; the previous working configuration is kept until health checks pass.",
+      });
+    } finally {
+      setProvisioning(false);
+    }
+  }
+
+  async function applySavedTunnelSettings() {
+    if (operationBusy || hasUnsavedDraft) return;
+    setTunnelApplying(true);
+    setTunnelStatus(undefined);
+    try {
+      const completed = await runFreshAuthAction(async () => {
+        const result = handleErrorMessage(
+          await webapp_client.conat_client.callHubApi({
+            name: "system.applyCloudflareTunnelSettings",
+            args: [{ browser_id: webapp_client.browser_id }],
+            timeout: 5 * 60_000,
+          }),
+        );
+        setTunnelStatus({
+          running: !!result.running,
+          message: result.running
+            ? "Saved tunnel settings applied; the tunnel is running."
+            : "Tunnel settings applied, but the tunnel is not running. Check saved configuration and retry.",
+        });
+      });
+      if (!completed)
+        setTunnelStatus({
+          running: false,
+          message: "Tunnel security verification cancelled. Retry when ready.",
+        });
+    } catch {
+      setTunnelStatus({
+        running: false,
+        message:
+          "Could not apply saved tunnel settings. Check saved configuration and retry.",
+      });
+    } finally {
+      setTunnelApplying(false);
+    }
+  }
+
   async function testVisitorLocationHeaders() {
     setLocationHeadersTesting(true);
     setLocationHeadersTestError("");
@@ -428,395 +531,588 @@ export default function CloudflareConfigWizard({
   }
 
   return (
-    <Modal
-      open={open}
-      onCancel={requestClose}
-      footer={[
-        <Button key="close" onClick={requestClose} disabled={applying}>
-          Close
-        </Button>,
-        <Button
-          key="apply"
-          type="primary"
-          icon={<Icon name="save" />}
-          onClick={applySettings}
-          disabled={applyDisabled}
-          loading={applying}
-          title={buttonDisabledReason}
-        >
-          Apply Settings
-        </Button>,
-      ]}
-      title="Cloudflare Configuration Wizard"
-      width={920}
-    >
-      <Form component="div">
-        <Space vertical style={{ width: "100%" }}>
-          <Alert
-            type="info"
-            showIcon
-            title="Configure Cloudflare Tunnel + R2 in one pass."
-            description="This wizard fills in the Cloudflare settings for Launchpad. Advanced users can edit fields manually."
-          />
-          <WizardStep title="Step 1 - Cloudflare mode">
-            <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)}>
-              <Space vertical>
-                <Radio value="none">No Cloudflare (self-hosted only)</Radio>
-                <Radio value="self">Use my own Cloudflare account</Radio>
-              </Space>
-            </Radio.Group>
-          </WizardStep>
-          {showSelfConfig && (
-            <>
-              <WizardStep title="Step 2 - External domain">
-                <Paragraph type="secondary">
-                  This domain must be under a DNS zone managed by Cloudflare in
-                  your account. It is used by the hub and project hosts.
-                </Paragraph>
-                <FormItem label="Domain name">
-                  <Input
-                    placeholder="cocalc.example.edu"
-                    value={externalDomain}
-                    onChange={(e) => setExternalDomain(e.target.value)}
-                  />
-                </FormItem>
-              </WizardStep>
-              <WizardStep title="Step 3 - Cloudflare account ID">
-                <Paragraph>
-                  Go to{" "}
-                  <Link
-                    href="https://dash.cloudflare.com/"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    https://dash.cloudflare.com/
-                  </Link>
-                  .
-                  <br />
-                  Use the left sidebar Quick search to find "account id".
-                  <br />
-                  Click the result to copy it and paste into the box below.
-                </Paragraph>
-                {invalidAccountId ? (
-                  <Alert
-                    type="warning"
-                    showIcon
-                    title="Account IDs are 32 lowercase hex characters."
-                  />
-                ) : null}
-                <FormItem label="Cloudflare Account ID">
-                  <Input
-                    placeholder="Cloudflare Account ID"
-                    value={accountId}
-                    onChange={(e) => setAccountId(e.target.value)}
-                  />
-                </FormItem>
-              </WizardStep>
-              <WizardStep title="Step 4 - Cloudflare API token">
-                <Paragraph>
-                  Go to{" "}
-                  <Link
-                    href="https://dash.cloudflare.com/profile/api-tokens"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    https://dash.cloudflare.com/profile/api-tokens
-                  </Link>
-                  .
-                  <br />
-                  Create an API Token with configuration matching the screenshot
-                  below.
-                  <br />
-                  Use your Cloudflare zone instead of cocalc.ai.
-                  <br />
-                  The zone permissions must include Zone Read, DNS Edit, Config
-                  Rules Edit, and Managed Headers Edit. The account permissions
-                  must include Cloudflare Tunnel Edit. Config Rules Edit is
-                  required for encrypted direct project-host routing.
-                  <br />
-                  Paste the token into the input box here.
-                </Paragraph>
-                <Screenshot
-                  src={cloudflareApiTokenImg}
-                  alt="Cloudflare API token configuration"
-                  maxWidth={760}
-                />
-                <FormItem label="Cloudflare API Token">
-                  <SecretSettingInput
-                    placeholder="Cloudflare API Token"
-                    value={apiToken}
-                    isSet={isSet?.project_hosts_cloudflare_tunnel_api_token}
-                    onChange={setApiToken}
-                  />
-                </FormItem>
-              </WizardStep>
-              <WizardStep title="Step 5 - Visitor Location Headers">
-                <Paragraph type="secondary">
-                  CoCalc can pick good default regions for users and sort host
-                  regions by distance.
-                </Paragraph>
-                <Paragraph>
-                  Go to{" "}
-                  <Link
-                    href={managedTransformsUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {managedTransformsUrl}
-                  </Link>
-                  .
-                  <br />
-                  If the link above does not work, search in Cloudflare for
-                  Managed Transforms and select your domain.
-                  <br />
-                  Enable: <Text strong>Add visitor location headers</Text>.
-                </Paragraph>
-                <Screenshot
-                  src={cloudflareManagedTransformImg}
-                  alt='Cloudflare managed transform "Add visitor location headers"'
-                  maxWidth={900}
-                />
-              </WizardStep>
-              <WizardStep title="Step 6 - R2 backups">
-                <Paragraph type="secondary">
-                  R2 is required for backups. Create a separate R2 API token
-                  with full Admin Read &amp; Write access so CoCalc can create
-                  and manage regional backup buckets and read and write backup
-                  objects.
-                </Paragraph>
-                <Paragraph>
-                  Go to{" "}
-                  <Link href={r2TokenUrl} target="_blank" rel="noreferrer">
-                    {r2TokenUrl}
-                  </Link>
-                  .
-                  <br />
-                  Choose <Text strong>Admin Read &amp; Write</Text>.
-                  <br />
-                  Once the token is created, fill in the fields below.
-                </Paragraph>
-                <FormItem label="R2 API Token">
-                  <SecretSettingInput
-                    placeholder="R2 API Token"
-                    value={r2ApiToken}
-                    isSet={isSet?.r2_api_token}
-                    onChange={setR2ApiToken}
-                  />
-                </FormItem>
-                <FormItem label="R2 Access Key ID">
-                  <Input
-                    placeholder="R2 Access Key ID"
-                    value={r2AccessKey}
-                    onChange={(e) => setR2AccessKey(e.target.value)}
-                  />
-                </FormItem>
-                <FormItem label="R2 Secret Access Key">
-                  <SecretSettingInput
-                    placeholder="R2 Secret Access Key"
-                    value={r2SecretKey}
-                    isSet={isSet?.r2_secret_access_key}
-                    onChange={setR2SecretKey}
-                  />
-                </FormItem>
-              </WizardStep>
-              <WizardStep title="Step 7 - Resource names">
-                <Paragraph type="secondary">
-                  These names are used for Cloudflare and backup resources
-                  created by CoCalc. The defaults are suitable for one CoCalc
-                  site in this Cloudflare account.
-                </Paragraph>
-                <FormItem label="R2 bucket prefix">
-                  <Input
-                    placeholder={DEFAULT_CLOUDFLARE_PREFIX}
-                    value={r2BucketPrefix}
-                    onChange={(e) => setR2BucketPrefix(e.target.value)}
-                  />
-                </FormItem>
-                <FormItem label="Tunnel name prefix">
-                  <Input
-                    placeholder={DEFAULT_CLOUDFLARE_PREFIX}
-                    value={tunnelPrefix}
-                    onChange={(e) => setTunnelPrefix(e.target.value)}
-                  />
-                </FormItem>
-                <FormItem label="Project-host hostname suffix">
-                  <Input
-                    placeholder={`Leave blank for default ${defaultHostSuffix}`}
-                    value={hostSuffix}
-                    onChange={(e) => setHostSuffix(e.target.value)}
-                  />
-                </FormItem>
-              </WizardStep>
-              <WizardStep title="Step 8 - Diagnostics">
-                <Alert
-                  type={hasUnsavedDraft ? "warning" : "info"}
-                  showIcon
-                  title={
-                    hasUnsavedDraft
-                      ? "Apply settings before testing."
-                      : "Settings saved. Test visitor location headers and R2 backup credentials."
-                  }
-                />
-                <Space vertical style={{ width: "100%" }}>
-                  <Space vertical style={{ width: "100%" }}>
-                    <Button
-                      onClick={testVisitorLocationHeaders}
-                      loading={locationHeadersTesting}
-                      disabled={hasUnsavedDraft}
-                    >
-                      Test Visitor Location Headers
-                    </Button>
-                    {locationHeadersTestError ? (
-                      <Alert
-                        type="error"
-                        showIcon
-                        title="Visitor location header test failed"
-                        description={locationHeadersTestError}
-                      />
-                    ) : null}
-                    {locationHeadersResult ? (
-                      <Alert
-                        type={locationHeadersResult.ok ? "success" : "warning"}
-                        showIcon
-                        title={
-                          locationHeadersResult.ok
-                            ? "Public domain location headers are present"
-                            : "Location headers are incomplete"
-                        }
-                        description={
-                          <Descriptions size="small" column={1}>
-                            {codeItem("Tested URL", locationHeadersResult.url)}
-                            {codeItem(
-                              "Country",
-                              locationHeadersResult.details.country,
-                            )}
-                            {codeItem(
-                              "Region",
-                              locationHeadersResult.details.region,
-                            )}
-                            {codeItem(
-                              "Region code",
-                              locationHeadersResult.details.regionCode,
-                            )}
-                            {codeItem(
-                              "City",
-                              locationHeadersResult.details.city,
-                            )}
-                            {codeItem(
-                              "Continent",
-                              locationHeadersResult.details.continent,
-                            )}
-                            {codeItem(
-                              "Timezone",
-                              locationHeadersResult.details.timezone,
-                            )}
-                            {codeItem(
-                              "Latitude",
-                              locationHeadersResult.details.latitude,
-                            )}
-                            {codeItem(
-                              "Longitude",
-                              locationHeadersResult.details.longitude,
-                            )}
-                            {locationHeadersResult.missing.length > 0 ? (
-                              codeItem(
-                                "Missing required fields",
-                                locationHeadersResult.missing.join(", "),
-                              )
-                            ) : (
-                              <Item label="Required fields">
-                                All required location fields are present.
-                              </Item>
-                            )}
-                          </Descriptions>
-                        }
-                      />
-                    ) : null}
-                  </Space>
-                  <Space vertical style={{ width: "100%" }}>
-                    <Button
-                      onClick={testSavedR2Credentials}
-                      loading={r2Testing}
-                      disabled={hasUnsavedDraft}
-                    >
-                      Test R2 Backup Credentials
-                    </Button>
-                    {r2TestError ? (
-                      <Alert
-                        type="error"
-                        showIcon
-                        title="R2 test failed"
-                        description={r2TestError}
-                      />
-                    ) : null}
-                    {r2TestResult ? (
-                      <Alert
-                        type={r2TestResult.ok ? "success" : "error"}
-                        showIcon
-                        title={
-                          r2TestResult.ok
-                            ? "R2 credentials look good"
-                            : "R2 credential test found problems"
-                        }
-                        description={
-                          <Descriptions size="small" column={1}>
-                            {codeItem("Account", r2TestResult.account_id)}
-                            {codeItem("Endpoint", r2TestResult.endpoint)}
-                            <Item label="Cloudflare API token">
-                              {r2TestResult.api_token.ok
-                                ? `OK (visible buckets: ${r2TestResult.api_token.bucket_count ?? 0})`
-                                : `Failed (${r2TestResult.api_token.error ?? "unknown error"})`}
-                            </Item>
-                            <Item label="R2 S3 keys">
-                              {r2TestResult.s3.ok
-                                ? `OK (visible buckets: ${r2TestResult.s3.bucket_count ?? 0})`
-                                : `Failed (${r2TestResult.s3.error ?? "unknown error"})`}
-                            </Item>
-                            {r2TestResult.bucket_prefix
-                              ? codeItem(
-                                  "Bucket prefix",
-                                  r2TestResult.bucket_prefix,
-                                )
-                              : null}
-                            {r2TestResult.bucket_prefix ? (
-                              <Item label="Matching buckets">
-                                {r2TestResult.matched_buckets.length > 0
-                                  ? r2TestResult.matched_buckets.join(", ")
-                                  : "(none yet)"}
-                              </Item>
-                            ) : null}
-                            {r2TestResult.notes?.length ? (
-                              <Item label="Notes">
-                                {r2TestResult.notes.join(" ")}
-                              </Item>
-                            ) : null}
-                          </Descriptions>
-                        }
-                      />
-                    ) : null}
-                  </Space>
+    <>
+      <FreshAuthModal {...freshAuthModalProps} />
+      <Modal
+        open={open}
+        onCancel={requestClose}
+        closable={!operationBusy}
+        keyboard={!operationBusy}
+        modalRender={(node) => (
+          <KeyboardBoundary boundary="cloudflare-config">
+            {node}
+          </KeyboardBoundary>
+        )}
+        footer={[
+          <Button key="close" onClick={requestClose} disabled={operationBusy}>
+            Close
+          </Button>,
+          <Button
+            key="apply"
+            type="primary"
+            icon={<Icon name="save" />}
+            onClick={applySettings}
+            disabled={applyDisabled || operationBusy}
+            loading={applying}
+            title={buttonDisabledReason}
+          >
+            Apply Settings
+          </Button>,
+        ]}
+        title="Cloudflare Configuration Wizard"
+        width={920}
+      >
+        <Form component="div" disabled={operationBusy}>
+          <Space vertical style={{ width: "100%" }}>
+            <Alert
+              type="info"
+              showIcon
+              title="Configure Cloudflare Tunnel + R2 in one pass."
+              description="This wizard fills in the Cloudflare settings for Launchpad. Advanced users can edit fields manually."
+            />
+            <WizardStep title="Step 1 - Cloudflare mode">
+              <Radio.Group
+                name="cloudflare-mode"
+                value={mode}
+                onChange={(e) => {
+                  setBootstrapToken("");
+                  setMode(e.target.value);
+                }}
+              >
+                <Space vertical>
+                  <Radio value="none">No Cloudflare (self-hosted only)</Radio>
+                  <Radio value="self">Use my own Cloudflare account</Radio>
                 </Space>
-              </WizardStep>
-            </>
-          )}
-          {applyDisabled && missing ? (
-            <Alert
-              type="warning"
-              showIcon
-              title={`Fill in required field: ${missing}`}
-            />
-          ) : null}
-          {notice ? <Alert type="success" showIcon title={notice} /> : null}
-          {applyError ? (
-            <Alert
-              type="error"
-              showIcon
-              title="Cloudflare settings were not saved"
-              description={applyError}
-            />
-          ) : null}
-        </Space>
-      </Form>
-    </Modal>
+              </Radio.Group>
+            </WizardStep>
+            {showSelfConfig && (
+              <>
+                <WizardStep title="Step 2 - External domain">
+                  <Paragraph type="secondary">
+                    This domain must be under a DNS zone managed by Cloudflare
+                    in your account. It is used by the hub and project hosts.
+                  </Paragraph>
+                  <FormItem label="Domain name" htmlFor="cf-domain">
+                    <Input
+                      id="cf-domain"
+                      placeholder="cocalc.example.edu"
+                      value={externalDomain}
+                      onChange={(e) => setExternalDomain(e.target.value)}
+                    />
+                  </FormItem>
+                </WizardStep>
+                <Radio.Group
+                  aria-label="Cloudflare setup path"
+                  name="cloudflare-setup-path"
+                  value={setupPath}
+                  onChange={(e) => {
+                    setBootstrapToken("");
+                    setSetupPath(e.target.value);
+                  }}
+                >
+                  <Space vertical>
+                    <Radio value="bootstrap">Recommended bootstrap</Radio>
+                    <Radio value="manual">Advanced manual setup</Radio>
+                  </Space>
+                </Radio.Group>
+                {setupPath === "bootstrap" && open && (
+                  <CloudflareBootstrap
+                    disabled={applying || provisioning || tunnelApplying}
+                    runFreshAuthAction={runFreshAuthAction}
+                    token={bootstrapToken}
+                    setToken={setBootstrapToken}
+                    domain={externalDomain}
+                    tunnelPrefix={tunnelPrefix}
+                    hostSuffix={hostSuffix}
+                    r2BucketPrefix={r2BucketPrefix}
+                    onBusy={setBootstrapping}
+                    onSaved={(result) => {
+                      // Only copy known non-secret settings. The server already saved
+                      // the durable tokens; never pass result.values to onApply.
+                      const values: Record<string, string> = {};
+                      for (const key of [
+                        "dns",
+                        "cloudflare_mode",
+                        "project_hosts_cloudflare_tunnel_enabled",
+                        "project_hosts_cloudflare_tunnel_account_id",
+                        "project_hosts_cloudflare_tunnel_prefix",
+                        "project_hosts_cloudflare_tunnel_host_suffix",
+                        "r2_account_id",
+                        "r2_bucket_prefix",
+                      ]) {
+                        if (typeof result.values[key] === "string")
+                          values[key] = result.values[key];
+                      }
+                      setSavedData((current) => ({ ...current, ...values }));
+                      setSavedIsSet((current) => ({
+                        ...current,
+                        project_hosts_cloudflare_tunnel_api_token: true,
+                        r2_api_token: true,
+                      }));
+                      setAccountId(
+                        values.project_hosts_cloudflare_tunnel_account_id ??
+                          result.account_id ??
+                          "",
+                      );
+                      setExternalDomain(values.dns ?? externalDomain);
+                      setTunnelPrefix(
+                        values.project_hosts_cloudflare_tunnel_prefix ??
+                          tunnelPrefix,
+                      );
+                      setHostSuffix(
+                        values.project_hosts_cloudflare_tunnel_host_suffix ??
+                          hostSuffix,
+                      );
+                      setR2BucketPrefix(
+                        values.r2_bucket_prefix ?? r2BucketPrefix,
+                      );
+                      setApiToken("");
+                      setR2ApiToken("");
+                      setBlobResult(undefined);
+                    }}
+                  />
+                )}
+                {setupPath === "manual" && (
+                  <>
+                    <WizardStep title="Step 3 - Cloudflare account ID">
+                      <Paragraph>
+                        Go to{" "}
+                        <Link
+                          href="https://dash.cloudflare.com/"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          https://dash.cloudflare.com/
+                        </Link>
+                        .
+                        <br />
+                        Use the left sidebar Quick search to find "account id".
+                        <br />
+                        Click the result to copy it and paste into the box
+                        below.
+                      </Paragraph>
+                      {invalidAccountId ? (
+                        <Alert
+                          type="warning"
+                          showIcon
+                          title="Account IDs are 32 lowercase hex characters."
+                        />
+                      ) : null}
+                      <FormItem
+                        label="Cloudflare Account ID"
+                        htmlFor="cf-account"
+                      >
+                        <Input
+                          id="cf-account"
+                          placeholder="Cloudflare Account ID"
+                          value={accountId}
+                          onChange={(e) => setAccountId(e.target.value)}
+                        />
+                      </FormItem>
+                    </WizardStep>
+                    <WizardStep title="Step 4 - Cloudflare API token">
+                      <Paragraph>
+                        Go to{" "}
+                        <Link
+                          href="https://dash.cloudflare.com/profile/api-tokens"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          https://dash.cloudflare.com/profile/api-tokens
+                        </Link>
+                        .
+                        <br />
+                        Create an API Token with configuration matching the
+                        screenshot below.
+                        <br />
+                        Use your Cloudflare zone instead of cocalc.ai.
+                        <br />
+                        The zone permissions must include Zone Read, DNS Edit,
+                        Config Rules Edit, and Managed Headers Edit. The account
+                        permissions must include Cloudflare Tunnel Edit. Config
+                        Rules Edit is required for encrypted direct project-host
+                        routing. Blob provisioning also requires Workers Scripts
+                        Write, Workers Routes Write, and R2 bucket
+                        administration for the selected account and zone. Do not
+                        grant durable tokens API-token-management permission.
+                        <br />
+                        Paste the token into the input box here.
+                      </Paragraph>
+                      <Screenshot
+                        src={cloudflareApiTokenImg}
+                        alt="Cloudflare API token configuration"
+                        maxWidth={760}
+                      />
+                      <FormItem label="Cloudflare API Token" htmlFor="cf-token">
+                        <SecretSettingInput
+                          id="cf-token"
+                          placeholder="Cloudflare API Token"
+                          value={apiToken}
+                          isSet={
+                            isSet?.project_hosts_cloudflare_tunnel_api_token
+                          }
+                          onChange={setApiToken}
+                        />
+                      </FormItem>
+                    </WizardStep>
+                    <WizardStep title="Step 5 - Visitor Location Headers">
+                      <Paragraph type="secondary">
+                        CoCalc can pick good default regions for users and sort
+                        host regions by distance.
+                      </Paragraph>
+                      <Paragraph>
+                        Go to{" "}
+                        <Link
+                          href={managedTransformsUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {managedTransformsUrl}
+                        </Link>
+                        .
+                        <br />
+                        If the link above does not work, search in Cloudflare
+                        for Managed Transforms and select your domain.
+                        <br />
+                        Enable: <Text strong>Add visitor location headers</Text>
+                        .
+                      </Paragraph>
+                      <Screenshot
+                        src={cloudflareManagedTransformImg}
+                        alt='Cloudflare managed transform "Add visitor location headers"'
+                        maxWidth={900}
+                      />
+                    </WizardStep>
+                  </>
+                )}
+                <WizardStep title="Step 6 - R2 backups">
+                  <Paragraph type="secondary">
+                    R2 S3 object credentials are separate from the Cloudflare
+                    REST automation token. Bootstrap saves the REST token, not
+                    these access keys. Create S3 credentials for object reads
+                    and writes in the required backup and blob buckets, then
+                    apply them here.
+                  </Paragraph>
+                  <Paragraph>
+                    Go to{" "}
+                    <Link href={r2TokenUrl} target="_blank" rel="noreferrer">
+                      {r2TokenUrl}
+                    </Link>
+                    .
+                    <br />
+                    Choose the narrowest object read/write scope covering the
+                    required buckets.
+                    <br />
+                    Once the token is created, fill in the fields below.
+                  </Paragraph>
+                  {setupPath === "manual" && (
+                    <FormItem label="R2 API Token" htmlFor="cf-r2-token">
+                      <SecretSettingInput
+                        id="cf-r2-token"
+                        placeholder="R2 API Token"
+                        value={r2ApiToken}
+                        isSet={savedIsSet.r2_api_token}
+                        onChange={setR2ApiToken}
+                      />
+                    </FormItem>
+                  )}
+                  <FormItem label="R2 Access Key ID" htmlFor="cf-access">
+                    <Input
+                      id="cf-access"
+                      placeholder="R2 Access Key ID"
+                      value={r2AccessKey}
+                      onChange={(e) => setR2AccessKey(e.target.value)}
+                    />
+                  </FormItem>
+                  <FormItem label="R2 Secret Access Key" htmlFor="cf-secret">
+                    <SecretSettingInput
+                      id="cf-secret"
+                      placeholder="R2 Secret Access Key"
+                      value={r2SecretKey}
+                      isSet={isSet?.r2_secret_access_key}
+                      onChange={setR2SecretKey}
+                    />
+                  </FormItem>
+                </WizardStep>
+                <WizardStep title="Step 7 - Resource names">
+                  <Paragraph type="secondary">
+                    These names are used for Cloudflare and backup resources
+                    created by CoCalc. The defaults are suitable for one CoCalc
+                    site in this Cloudflare account.
+                  </Paragraph>
+                  <FormItem label="R2 bucket prefix" htmlFor="cf-bucket-prefix">
+                    <Input
+                      id="cf-bucket-prefix"
+                      placeholder={DEFAULT_CLOUDFLARE_PREFIX}
+                      value={r2BucketPrefix}
+                      onChange={(e) => setR2BucketPrefix(e.target.value)}
+                    />
+                  </FormItem>
+                  <FormItem
+                    label="Tunnel name prefix"
+                    htmlFor="cf-tunnel-prefix"
+                  >
+                    <Input
+                      id="cf-tunnel-prefix"
+                      placeholder={DEFAULT_CLOUDFLARE_PREFIX}
+                      value={tunnelPrefix}
+                      onChange={(e) => setTunnelPrefix(e.target.value)}
+                    />
+                  </FormItem>
+                  <FormItem
+                    label="Project-host hostname suffix"
+                    htmlFor="cf-suffix"
+                  >
+                    <Input
+                      id="cf-suffix"
+                      placeholder={`Leave blank for default ${defaultHostSuffix}`}
+                      value={hostSuffix}
+                      onChange={(e) => setHostSuffix(e.target.value)}
+                    />
+                  </FormItem>
+                </WizardStep>
+                <WizardStep title="Step 8 - Diagnostics">
+                  <Paragraph>
+                    Create or update the tunnel and restart cloudflared using
+                    saved settings, without restarting the hub.
+                  </Paragraph>
+                  <Button
+                    onClick={applySavedTunnelSettings}
+                    loading={tunnelApplying}
+                    disabled={
+                      hasUnsavedDraft ||
+                      operationBusy ||
+                      !savedIsSet.project_hosts_cloudflare_tunnel_api_token
+                    }
+                  >
+                    Apply saved tunnel settings
+                  </Button>
+                  <div role="status" aria-live="polite">
+                    {tunnelApplying && (
+                      <Paragraph>Applying saved tunnel settings...</Paragraph>
+                    )}
+                    {tunnelStatus && (
+                      <Alert
+                        type={tunnelStatus.running ? "success" : "warning"}
+                        title={tunnelStatus.message}
+                      />
+                    )}
+                  </div>
+                  <Paragraph>
+                    Blob provisioning uses saved credentials and is safe to
+                    retry. It creates a private bucket and public-read Worker,
+                    and activates blob serving only after health checks pass.
+                    Apply any S3 credential changes first.
+                  </Paragraph>
+                  <Button
+                    onClick={provisionBlobs}
+                    loading={provisioning}
+                    disabled={hasUnsavedDraft || !!missing || operationBusy}
+                  >
+                    Provision or retry blob storage
+                  </Button>
+                  <div role="status" aria-live="polite">
+                    {provisioning && (
+                      <Paragraph>
+                        Provisioning blob storage and checking health...
+                      </Paragraph>
+                    )}
+                    {blobResult && (
+                      <Alert
+                        type={blobResult.ok ? "success" : "warning"}
+                        title={
+                          blobResult.ok
+                            ? "Blob storage is healthy and active"
+                            : "Blob storage needs attention; retry after correcting settings"
+                        }
+                        description={
+                          <>
+                            <Paragraph>{blobResult.message}</Paragraph>
+                            <Descriptions column={1} size="small">
+                              {codeItem("Bucket", blobResult.bucket)}
+                              {codeItem("Worker", blobResult.worker)}
+                              {codeItem("Public URL", blobResult.public_url)}
+                            </Descriptions>
+                          </>
+                        }
+                      />
+                    )}
+                  </div>
+                  <Alert
+                    type={hasUnsavedDraft ? "warning" : "info"}
+                    showIcon
+                    title={
+                      hasUnsavedDraft
+                        ? "Apply settings before testing."
+                        : "Settings saved. Test visitor location headers and R2 backup credentials."
+                    }
+                  />
+                  <Space vertical style={{ width: "100%" }}>
+                    <Space vertical style={{ width: "100%" }}>
+                      <Button
+                        onClick={testVisitorLocationHeaders}
+                        loading={locationHeadersTesting}
+                        disabled={hasUnsavedDraft}
+                      >
+                        Test Visitor Location Headers
+                      </Button>
+                      {locationHeadersTestError ? (
+                        <Alert
+                          type="error"
+                          showIcon
+                          title="Visitor location header test failed"
+                          description={locationHeadersTestError}
+                        />
+                      ) : null}
+                      {locationHeadersResult ? (
+                        <Alert
+                          type={
+                            locationHeadersResult.ok ? "success" : "warning"
+                          }
+                          showIcon
+                          title={
+                            locationHeadersResult.ok
+                              ? "Public domain location headers are present"
+                              : "Location headers are incomplete"
+                          }
+                          description={
+                            <Descriptions size="small" column={1}>
+                              {codeItem(
+                                "Tested URL",
+                                locationHeadersResult.url,
+                              )}
+                              {codeItem(
+                                "Country",
+                                locationHeadersResult.details.country,
+                              )}
+                              {codeItem(
+                                "Region",
+                                locationHeadersResult.details.region,
+                              )}
+                              {codeItem(
+                                "Region code",
+                                locationHeadersResult.details.regionCode,
+                              )}
+                              {codeItem(
+                                "City",
+                                locationHeadersResult.details.city,
+                              )}
+                              {codeItem(
+                                "Continent",
+                                locationHeadersResult.details.continent,
+                              )}
+                              {codeItem(
+                                "Timezone",
+                                locationHeadersResult.details.timezone,
+                              )}
+                              {codeItem(
+                                "Latitude",
+                                locationHeadersResult.details.latitude,
+                              )}
+                              {codeItem(
+                                "Longitude",
+                                locationHeadersResult.details.longitude,
+                              )}
+                              {locationHeadersResult.missing.length > 0 ? (
+                                codeItem(
+                                  "Missing required fields",
+                                  locationHeadersResult.missing.join(", "),
+                                )
+                              ) : (
+                                <Item label="Required fields">
+                                  All required location fields are present.
+                                </Item>
+                              )}
+                            </Descriptions>
+                          }
+                        />
+                      ) : null}
+                    </Space>
+                    <Space vertical style={{ width: "100%" }}>
+                      <Button
+                        onClick={testSavedR2Credentials}
+                        loading={r2Testing}
+                        disabled={hasUnsavedDraft}
+                      >
+                        Test R2 Backup Credentials
+                      </Button>
+                      {r2TestError ? (
+                        <Alert
+                          type="error"
+                          showIcon
+                          title="R2 test failed"
+                          description={r2TestError}
+                        />
+                      ) : null}
+                      {r2TestResult ? (
+                        <Alert
+                          type={r2TestResult.ok ? "success" : "error"}
+                          showIcon
+                          title={
+                            r2TestResult.ok
+                              ? "R2 credentials look good"
+                              : "R2 credential test found problems"
+                          }
+                          description={
+                            <Descriptions size="small" column={1}>
+                              {codeItem("Account", r2TestResult.account_id)}
+                              {codeItem("Endpoint", r2TestResult.endpoint)}
+                              <Item label="Cloudflare API token">
+                                {r2TestResult.api_token.ok
+                                  ? `OK (visible buckets: ${r2TestResult.api_token.bucket_count ?? 0})`
+                                  : `Failed (${r2TestResult.api_token.error ?? "unknown error"})`}
+                              </Item>
+                              <Item label="R2 S3 keys">
+                                {r2TestResult.s3.ok
+                                  ? `OK (visible buckets: ${r2TestResult.s3.bucket_count ?? 0})`
+                                  : `Failed (${r2TestResult.s3.error ?? "unknown error"})`}
+                              </Item>
+                              {r2TestResult.bucket_prefix
+                                ? codeItem(
+                                    "Bucket prefix",
+                                    r2TestResult.bucket_prefix,
+                                  )
+                                : null}
+                              {r2TestResult.bucket_prefix ? (
+                                <Item label="Matching buckets">
+                                  {r2TestResult.matched_buckets.length > 0
+                                    ? r2TestResult.matched_buckets.join(", ")
+                                    : "(none yet)"}
+                                </Item>
+                              ) : null}
+                              {r2TestResult.notes?.length ? (
+                                <Item label="Notes">
+                                  {r2TestResult.notes.join(" ")}
+                                </Item>
+                              ) : null}
+                            </Descriptions>
+                          }
+                        />
+                      ) : null}
+                    </Space>
+                  </Space>
+                </WizardStep>
+              </>
+            )}
+            {applyDisabled && missing ? (
+              <Alert
+                type="warning"
+                showIcon
+                title={`Fill in required field: ${missing}`}
+              />
+            ) : null}
+            {notice ? <Alert type="success" showIcon title={notice} /> : null}
+            {applyError ? (
+              <Alert
+                type="error"
+                showIcon
+                title="Cloudflare settings were not saved"
+                description={applyError}
+              />
+            ) : null}
+          </Space>
+        </Form>
+      </Modal>
+    </>
   );
 }

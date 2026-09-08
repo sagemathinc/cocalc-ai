@@ -4,12 +4,45 @@
  */
 
 import {
+  createInterBayBayOpsClient,
   createInterBayHostControlClient,
   createInterBayProjectControlClient,
 } from "./api";
 import { DataEncoding, encode } from "@cocalc/conat/core/codec";
 
 describe("inter-bay typed service transport", () => {
+  it.each([
+    ["bootstrapCloudflareConfiguration", "bootstrap-cloudflare-configuration"],
+    ["reconcileCloudflareBlobs", "reconcile-cloudflare-blobs"],
+  ] as const)(
+    "routes %s to seed with the provisioning timeout",
+    async (method, subject) => {
+      const fastRpcRequest = jest.fn(async () => ({
+        raw: encode({ encoding: DataEncoding.MsgPack, mesg: { ok: true } }),
+      }));
+      const request = jest.fn(async () => ({ data: { ok: true } }));
+      const client = createInterBayBayOpsClient({
+        client: { fastRpcRequest, request } as any,
+        dest_bay: "seed",
+        timeout: 600_000,
+      });
+      await expect(
+        client[method]({
+          account_id: "operator",
+          source_bay_id: "attached-a",
+          domain: "example.com",
+          token: "bootstrap-secret",
+        }),
+      ).resolves.toEqual({ ok: true });
+      expect(request).toHaveBeenCalledWith(
+        `bay.seed.rpc.bay-ops.${subject}`,
+        expect.anything(),
+        { timeout: 600_000, waitForInterest: true },
+      );
+      expect(fastRpcRequest).not.toHaveBeenCalled();
+    },
+  );
+
   it("uses fast-rpc for short project-control calls", async () => {
     const fastRpcRequest = jest.fn(async () => ({
       raw: encode({ encoding: DataEncoding.MsgPack, mesg: null }),

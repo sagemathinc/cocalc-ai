@@ -386,6 +386,31 @@ understand Cloudflare API permissions.
 
 #### Intended admin experience
 
+Implementation clarification (September 2026): use Cloudflare's **Create
+additional tokens** template with only **User / API Tokens / Edit**. This
+permission is unavailable in the custom-token builder. The template token
+cannot itself discover zones. CoCalc therefore creates a temporary Zone Read
+token across the user's zones (10-minute expiry), uses it only to find the
+matching domain/account, then deletes it. The durable automation token is
+scoped to that single account and zone. This temporary discovery scope must be
+explained in the wizard. See [Cloudflare's token creation documentation](https://developers.cloudflare.com/fundamentals/api/how-to/create-via-api/).
+
+The browser submits the bootstrap secret once and clears its input immediately.
+The server saves the durable secret through the existing encrypted site-setting
+path; RPC responses contain identifiers, permission names, and non-secret
+settings only. Provisioning is a separate retryable action using saved
+credentials. Operations execute on the seed bay and share a lock.
+
+If saving throws after it may have written some settings, keep the automation
+token active and report its ID for operator inspection. Revoking it in this
+ambiguous case could invalidate credentials already in use. Temporary token
+cleanup is still attempted. Expiry protects the read-only discovery token if
+the hub stops unexpectedly; the user must give the bootstrap token a short TTL.
+
+The legacy same-origin blob route checks Worker availability before redirecting,
+so PostgreSQL-only images remain accessible while backfill is pending. This
+adds a HEAD request for compatibility URLs; direct Worker URLs bypass the hub.
+
 1. The admin enters the external domain and CoCalc resource prefix.
 2. The wizard explains, in plain text, that the next Cloudflare token is a
    temporary bootstrap token, not the token CoCalc will keep.

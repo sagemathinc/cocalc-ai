@@ -378,6 +378,9 @@ export type SiteSettingsExtrasKeys =
   | "project_hosts_cloudflare_tunnel_enabled"
   | "project_hosts_cloudflare_tunnel_account_id"
   | "project_hosts_cloudflare_tunnel_api_token"
+  | "cloudflare_automation_token_id"
+  | "cloudflare_zone_id"
+  | "cloudflare_zone_name"
   | "project_hosts_cloudflare_tunnel_prefix"
   | "project_hosts_cloudflare_tunnel_host_suffix"
   | "software_license_token"
@@ -2087,6 +2090,33 @@ export const EXTRAS: SettingsExtras = {
     order: 20,
     required_when: [{ key: "cloudflare_mode", equals: "self" }],
     show: cloudflare_self_mode,
+    hidden: true,
+  },
+  cloudflare_automation_token_id: {
+    name: "Cloudflare Automation Token ID",
+    desc: "Non-secret ID of the durable Cloudflare automation token, for audit and rotation. The token secret is stored separately.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Cloud", "Cloudflare"],
+    group: "Cloudflare",
+    hidden: true,
+  },
+  cloudflare_zone_id: {
+    name: "Cloudflare Zone ID",
+    desc: "ID of the Cloudflare zone selected during bootstrap, for resource audit and reconciliation.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Cloud", "Cloudflare"],
+    group: "Cloudflare",
+    hidden: true,
+  },
+  cloudflare_zone_name: {
+    name: "Cloudflare Zone Name",
+    desc: "DNS name of the Cloudflare zone selected during bootstrap.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Cloud", "Cloudflare"],
+    group: "Cloudflare",
     hidden: true,
   },
   project_hosts_cloudflare_tunnel_api_token: {
