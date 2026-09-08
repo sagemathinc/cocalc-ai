@@ -19,7 +19,34 @@ while retaining correctness and personal review-data preservation checks.
 The dated progress notes below are chronological; an old "pending" statement is
 not a current checklist. The objective is not complete. Current release work:
 
-Remaining live acceptance gaps (September 8):
+Latest acceptance and residual observations (September 8):
+
+- Archived originating-context acceptance passed in three consecutive fresh
+  Chromium tabs with native keyboard activation, correct archived working
+  directory, synchronized URL, a rendered Pierre diff, and no page errors.
+  The synthetic fixture deliberately has a different current thread directory.
+  Its disposable registered worktree was removed after the checks. The harness
+  now waits for chat connection/hydration before testing the commit link, so an
+  application still showing Connecting is not misreported as Git navigation.
+  Evidence: `/tmp/cold-context-ready-{1,2,3}.log`. This closes the current
+  originating-context acceptance gap, without claiming a root cause for the
+  earlier unreproduced disappearance.
+- The latest 768px light/dark review and selectable-comparison run passed
+  (`/tmp/current-review-acceptance.log`), in addition to the two explicitly
+  filtered endpoint runs described below. Retain bounded diagnostics for the
+  earlier intermittent loading observation rather than asserting it was fixed.
+- Commit details now remembers expanded/collapsed state in localStorage.
+  Native keyboard toggling, commit switching, and reload pass in the live
+  browser; storage failure and commit remounts pass in component tests. All
+  remaining native Git review checkboxes now use Ant Design; 15 focused
+  history, comparison and worktree-consent tests and frontend lint pass.
+- Hosted run `34187801215` passed plan, checks, build, frontend tests and the
+  rest-package lane; its server lane was cancelled. The new head has a new run,
+  so this is useful prior-head evidence, not a claim of all-green current CI.
+- Current local Git review, shared diff, TimeTravel and Git service regression:
+  276 tests in 50 suites passed after the details/checkbox changes. Frontend
+  `pnpm tsc --build` also passed. Activity producer/renderer coverage is recorded
+  separately below and is not included in this 276-test count.
 
 - Message anchor navigation follow-up: `gotoFragment` now publishes the
   message target into frame data without rewriting URL parameters, and the

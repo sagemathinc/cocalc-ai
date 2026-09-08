@@ -44,6 +44,11 @@ try {
   });
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto(chat, { waitUntil: "domcontentloaded" });
+  // Distinguish application connection/hydration from commit-link navigation.
+  // Do not attribute a page still showing "Connecting..." to the Git drawer.
+  await page
+    .getByRole("button", { name: "New Chat", exact: true })
+    .waitFor({ timeout: 120000 });
   const link = page.locator(`a[href="cocalc-commit://${commit}"]`).first();
   await expect(link).toBeVisible({ timeout: 60000 });
   const warning = page.getByRole("button", {
