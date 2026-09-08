@@ -547,8 +547,9 @@ Codex sessions panel when you need to confirm remaining activity.
 ## Inspect and stop Codex sessions
 
 Open account **AI** settings and choose **View Codex sessions**. The panel
-groups recent turn records by session and shows each session's latest state,
-model, payment source, and update time. Use **Open chat**, when available, to
+groups recent turn records by session. Active or unconfirmed turns take
+precedence over completed turns in the status column; model, payment source,
+and update time come from the latest turn. Use **Open chat**, when available, to
 return to its chat file. Some records omit details you cannot access.
 
 The list and account stop request operate on a bounded set of recent records,
