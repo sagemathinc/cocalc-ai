@@ -1,3 +1,17 @@
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+export function cloudflaredProxyCommand({
+  cloudflared,
+  hostname,
+}: {
+  cloudflared: string;
+  hostname: string;
+}): string {
+  return `${shellQuote(cloudflared)} access ssh --hostname ${shellQuote(hostname)}`;
+}
+
 export function buildManagedProjectSshConfigLines({
   alias,
   hostName,
