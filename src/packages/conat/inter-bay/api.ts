@@ -4622,6 +4622,9 @@ export interface InterBayBayOpsApi {
     opts: BayOpsSiteFundedCodexStatusRequest,
   ) => Promise<SiteFundedCodexStatus>;
   commercialOrders: (opts: BayOpsCommercialOrdersRequest) => Promise<unknown>;
+  downloadCommercialQuoteInternal: (opts: {
+    token: string;
+  }) => Promise<{ filename: string; content_base64: string }>;
   ingestCrmOutreachZendeskEventInternal: (
     opts: BayOpsCrmOutreachZendeskEventRequest,
   ) => Promise<void>;
@@ -10399,7 +10402,10 @@ export function createInterBayBayOpsClient({
     }),
   });
   const commercialOrdersClient = createServiceClient<
-    Pick<InterBayBayOpsApi, "commercialOrders">
+    Pick<
+      InterBayBayOpsApi,
+      "commercialOrders" | "downloadCommercialQuoteInternal"
+    >
   >({
     ...serviceClientOptions({ client, timeout }),
     subject: bayOpsSubject({ dest_bay, method: "commercial-orders" }),
@@ -10507,6 +10513,8 @@ export function createInterBayBayOpsClient({
       await siteFundedCodexStatusClient.getSiteFundedCodexStatus(opts),
     commercialOrders: async (opts) =>
       await commercialOrdersClient.commercialOrders(opts),
+    downloadCommercialQuoteInternal: async (opts) =>
+      await commercialOrdersClient.downloadCommercialQuoteInternal(opts),
     ingestCrmOutreachZendeskEventInternal: async (opts) =>
       await crmOutreachZendeskEventClient.ingestCrmOutreachZendeskEventInternal(
         opts,
@@ -10937,12 +10945,19 @@ export function createInterBayBayOpsHandlers({
           await impl.getProjectRuntimeSlotReport(opts),
       },
     }),
-    createServiceHandler<Pick<InterBayBayOpsApi, "commercialOrders">>({
+    createServiceHandler<
+      Pick<
+        InterBayBayOpsApi,
+        "commercialOrders" | "downloadCommercialQuoteInternal"
+      >
+    >({
       ...options,
       service: "inter-bay-bay-ops",
       subject: bayOpsSubject({ dest_bay: bay_id, method: "commercial-orders" }),
       impl: {
         commercialOrders: async (opts) => await impl.commercialOrders(opts),
+        downloadCommercialQuoteInternal: async (opts) =>
+          await impl.downloadCommercialQuoteInternal(opts),
       },
     }),
     createServiceHandler<

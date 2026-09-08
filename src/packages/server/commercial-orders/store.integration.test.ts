@@ -468,6 +468,142 @@ describePglite("commercial order store", () => {
     });
   });
 
+  it("issues one-time links, rotates and revokes them without changing the quote", async () => {
+    const created = await store.createCommercialOrder(request());
+    const quoted = await store.issueCommercialQuote({
+      id: created.id,
+      account_id: actor,
+      expected_version: created.version,
+      reason: "prepare downloadable quote",
+      idempotency_key: randomUUID(),
+    });
+    const quote = quoted.quotes[0];
+    const linkRequest = {
+      id: quoted.id,
+      account_id: actor,
+      commercial_quote_id: quote.id,
+      expected_version: quoted.version,
+      idempotency_key: randomUUID(),
+      expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      reason: "share quote with customer",
+    };
+    const shared = await store.issueCommercialQuoteLink(linkRequest);
+    expect(shared.path).toMatch(
+      /^\/commercial\/quotes\/download#[a-f0-9]{64}$/,
+    );
+    const token = shared.path!.split("#")[1];
+    const flags = await import("./feature-flags");
+    const enabled = jest
+      .spyOn(flags, "assertCommercialReceivablesCapability")
+      .mockResolvedValue(undefined);
+    const { downloadPublicQuote } = await import("./public-quote");
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 25 }, () => downloadPublicQuote(token)),
+    );
+    expect(
+      attempts.filter(({ status }) => status === "fulfilled"),
+    ).toHaveLength(20);
+    await expect(downloadPublicQuote(token)).rejects.toMatchObject({
+      code: 404,
+    });
+    await pool.query(
+      "UPDATE commercial_quotes SET download_window_at=NOW()-INTERVAL '2 minutes' WHERE id=$1",
+      [quote.id],
+    );
+    await expect(downloadPublicQuote(token)).resolves.toHaveProperty(
+      "content_base64",
+    );
+    const stored = (
+      await pool.query(
+        "SELECT download_token_hash FROM commercial_quotes WHERE id=$1",
+        [quote.id],
+      )
+    ).rows[0];
+    expect(stored.download_token_hash).not.toBe(token);
+    expect(JSON.stringify(shared.order)).not.toContain(token);
+    expect(JSON.stringify(shared.order)).not.toContain(
+      stored.download_token_hash,
+    );
+    const replay = await store.issueCommercialQuoteLink(linkRequest);
+    expect(replay.path).toBeNull();
+    expect(replay.order.version).toBe(shared.order.version);
+    const rotated = await store.issueCommercialQuoteLink({
+      ...linkRequest,
+      expected_version: shared.order.version,
+      idempotency_key: randomUUID(),
+    });
+    expect(rotated.path).not.toBe(shared.path);
+    await expect(downloadPublicQuote(token)).rejects.toMatchObject({
+      code: 404,
+    });
+    const revoked = await store.revokeCommercialQuoteLink({
+      ...linkRequest,
+      expected_version: rotated.order.version,
+      idempotency_key: randomUUID(),
+    });
+    expect(revoked.quotes[0].status).toBe("issued");
+    await expect(
+      downloadPublicQuote(rotated.path!.split("#")[1]),
+    ).rejects.toMatchObject({ code: 404 });
+    expect(
+      (
+        await pool.query(
+          "SELECT download_token_hash FROM commercial_quotes WHERE id=$1",
+          [quote.id],
+        )
+      ).rows[0].download_token_hash,
+    ).toBeNull();
+    await expect(
+      store.issueCommercialQuoteLink({
+        ...linkRequest,
+        expected_version: revoked.version,
+        idempotency_key: randomUUID(),
+        expires_at: "2000-01-01",
+      }),
+    ).rejects.toThrow("expiration");
+    const fresh = await store.issueCommercialQuoteLink({
+      ...linkRequest,
+      expected_version: revoked.version,
+      idempotency_key: randomUUID(),
+    });
+    const freshToken = fresh.path!.split("#")[1];
+    await pool.query(
+      "UPDATE commercial_quotes SET download_expires_at=NOW()-INTERVAL '1 second' WHERE id=$1",
+      [quote.id],
+    );
+    await expect(downloadPublicQuote(freshToken)).rejects.toMatchObject({
+      code: 404,
+    });
+    await pool.query(
+      "UPDATE commercial_quotes SET download_expires_at=NOW()+INTERVAL '1 hour' WHERE id=$1",
+      [quote.id],
+    );
+    const voided = await store.voidCommercialQuote({
+      ...linkRequest,
+      expected_version: fresh.order.version,
+      idempotency_key: randomUUID(),
+    });
+    await expect(downloadPublicQuote(freshToken)).rejects.toMatchObject({
+      code: 404,
+    });
+    await expect(
+      store.issueCommercialQuoteLink({
+        ...linkRequest,
+        expected_version: voided.version,
+        idempotency_key: randomUUID(),
+      }),
+    ).rejects.toThrow("only retained");
+    const events = await pool.query(
+      "SELECT * FROM commercial_order_events WHERE commercial_order_id=$1",
+      [quoted.id],
+    );
+    expect(JSON.stringify(events.rows)).not.toContain(token);
+    expect(JSON.stringify(events.rows)).not.toContain(
+      stored.download_token_hash,
+    );
+    enabled.mockRestore();
+  });
+
   it("voids and reissues a manual invoice idempotently", async () => {
     const created = await store.createCommercialOrder(request());
     const approved = await store.approveCommercialOrder({

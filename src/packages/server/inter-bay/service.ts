@@ -775,6 +775,16 @@ async function startBayOpsService(): Promise<void> {
           : undefined,
       };
     },
+    downloadCommercialQuoteInternal: async ({ token }) => {
+      if (bay_id !== getConfiguredClusterSeedBayId()) {
+        throw Error(
+          "commercial quote documents are authoritative on the seed bay",
+        );
+      }
+      const { downloadPublicQuote } =
+        await import("@cocalc/server/commercial-orders/public-quote");
+      return await downloadPublicQuote(token);
+    },
     commercialOrders: async (opts) => {
       if (bay_id !== getConfiguredClusterSeedBayId()) {
         throw Error("commercial orders are authoritative on the seed bay");
