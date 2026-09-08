@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   Alert,
   Button,
@@ -415,7 +416,7 @@ export default function MoveInProgress({
           {childProgress ? (
             <div
               style={{
-                border: "1px solid var(--antd-border-color, #d9d9d9)",
+                border: `1px solid ${UI_COLORS.border}`,
                 borderRadius: "8px",
                 padding: "12px",
               }}
@@ -477,7 +478,11 @@ export default function MoveInProgress({
             />
           ) : null}
           <Timeline items={timelineItems} />
-          <Space size="small" wrap style={{ fontSize: "12px", color: "#666" }}>
+          <Space
+            size="small"
+            wrap
+            style={{ fontSize: "12px", color: UI_COLORS.secondary }}
+          >
             <span>
               Operation ID: <code>{moveLro.op_id}</code>
             </span>

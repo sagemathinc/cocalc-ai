@@ -3,6 +3,7 @@ import { search } from "../search";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import useSearchIndex from "@cocalc/frontend/frame-editors/generic/search/use-search-index";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 jest.mock("@cocalc/frontend/frame-editors/frame-tree/frame-context", () => ({
   useFrameContext: jest.fn(),
@@ -164,6 +165,12 @@ describe("chat search archived integration", () => {
       (await screen.findAllByText(/stored on backend/i)).length,
     ).toBeGreaterThan(0);
     expect(await screen.findByText("archived match")).toBeTruthy();
+    const result = screen.getByText("stored on backend").parentElement!;
+    expect(result.style.background).toBe(UI_COLORS.surface);
+    expect(result.style.color).toBe(UI_COLORS.text);
+    expect(screen.getByText("stored on backend").style.color).toBe(
+      UI_COLORS.secondary,
+    );
   });
 
   it("opens clicked backend hits through the chat actions", async () => {

@@ -11,7 +11,7 @@ import type { StartLroState } from "@cocalc/frontend/project/start-ops";
 import { useProjectActiveOperation } from "../use-project-active-op";
 import { useProjectStartStateReconcile } from "../use-project-start-state-reconcile";
 import { progressBarStatus } from "@cocalc/frontend/lro/utils";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   clampProgressPercent,
   formatProgressDetail,
@@ -308,10 +308,11 @@ export default function StartInProgress({
       style={{
         margin: "12px",
         padding: "14px 16px",
-        border: "1px solid #d6e4ff",
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: "8px",
-        background: "#f7fbff",
-        boxShadow: "0 1px 2px rgba(15, 23, 42, 0.06)",
+        background: UI_COLORS.surface,
+        color: UI_COLORS.text,
+        boxShadow: `0 1px 2px ${UI_COLORS.shadow}`,
       }}
     >
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
@@ -335,7 +336,7 @@ export default function StartInProgress({
               {phaseLabel}
             </Tag>
             {startTs != null ? (
-              <span style={{ color: COLORS.GRAY_M, fontSize: "12px" }}>
+              <span style={{ color: UI_COLORS.secondary, fontSize: "12px" }}>
                 Started <TimeAgo date={new Date(startTs)} />
               </span>
             ) : null}
@@ -350,14 +351,14 @@ export default function StartInProgress({
             Dismiss
           </Button>
         </div>
-        <div style={{ color: COLORS.GRAY_D, fontSize: "13px" }}>
+        <div style={{ color: UI_COLORS.text, fontSize: "13px" }}>
           {message}
           {detailText ? ` · ${detailText}` : ""}
         </div>
         {percent == null ? (
           <Space size="small" align="center">
             <Spin size="small" />
-            <span style={{ color: COLORS.GRAY_M, fontSize: "12px" }}>
+            <span style={{ color: UI_COLORS.secondary, fontSize: "12px" }}>
               Waiting for detailed startup progress…
             </span>
           </Space>

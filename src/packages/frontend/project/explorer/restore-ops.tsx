@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   Button,
   Popconfirm,
@@ -120,11 +121,12 @@ export default function RestoreOps({ project_id }: { project_id: string }) {
   return (
     <div
       style={{
-        border: "1px solid #ddd",
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: "4px",
         padding: "6px 8px",
         marginBottom: "8px",
-        background: "white",
+        background: UI_COLORS.surface,
+        color: UI_COLORS.text,
       }}
     >
       <div style={{ fontWeight: 600, fontSize: "12px", marginBottom: "6px" }}>
@@ -171,7 +173,9 @@ function RestoreOpRow({ op }: { op: RestoreLroState }) {
             style={{ width: "180px" }}
           />
         )}
-        <span style={{ fontSize: "11px", color: "#666" }}>{statusText}</span>
+        <span style={{ fontSize: "11px", color: UI_COLORS.secondary }}>
+          {statusText}
+        </span>
         <Popover
           trigger="click"
           open={detailsOpen}
@@ -228,7 +232,7 @@ function RestoreOpTimeline({ op }: { op: RestoreLroState }) {
       children: (
         <div>
           <div style={{ fontWeight: 600 }}>{entry.label}</div>
-          <div style={{ color: "#666", fontSize: "11px" }}>
+          <div style={{ color: UI_COLORS.secondary, fontSize: "11px" }}>
             {entry.description}
           </div>
         </div>
@@ -262,7 +266,9 @@ function RestoreOpTimeline({ op }: { op: RestoreLroState }) {
             {copied ? "Copied" : "Copy ID"}
           </Button>
         </Space>
-        <div style={{ fontSize: "12px", color: "#666" }}>{statusText}</div>
+        <div style={{ fontSize: "12px", color: UI_COLORS.secondary }}>
+          {statusText}
+        </div>
         <Space size="small" wrap style={{ fontSize: "12px" }}>
           {summary?.created_by ? (
             <span>

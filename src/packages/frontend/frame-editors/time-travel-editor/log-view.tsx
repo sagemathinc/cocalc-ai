@@ -39,7 +39,7 @@ export function LogView({
   const [hoveredTitleKey, setHoveredTitleKey] = useState<string | null>(null);
   const rows = buildRows({ actions, source, versions, firstVersion });
   return (
-    <div style={{ padding: "10px 15px", overflowY: "auto", height: "100%" }}>
+    <div style={{ padding: "10px 15px" }}>
       <div
         style={{
           color: UI_COLORS.secondary,
