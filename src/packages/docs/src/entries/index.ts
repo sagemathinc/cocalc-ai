@@ -125,6 +125,7 @@ const DOCS_ENTRY_IDS = [
   "teaching.create-assignment",
   "teaching.nbgrader",
   "ai.codex-chat",
+  "ai.codex-settings",
   "docs.browser",
   "docs.executable-actions",
   "docs.browser-automation",
