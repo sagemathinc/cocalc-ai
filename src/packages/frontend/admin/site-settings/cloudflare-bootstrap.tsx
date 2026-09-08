@@ -8,8 +8,6 @@ import type { FreshAuthActionRunner } from "@cocalc/frontend/auth/fresh-auth";
 
 function bootstrapTokenUrl(domain: string): string {
   // Template URL format: https://developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
-  // User API Tokens Edit is special: Cloudflare may require its built-in
-  // "Create additional tokens" template instead. Keep the UI fallback below.
   // Do not substitute account_api_tokens, which manages account-owned tokens.
   const params = new URLSearchParams({
     permissionGroupKeys: JSON.stringify([{ key: "api_tokens", type: "edit" }]),
@@ -104,47 +102,39 @@ export default function CloudflareBootstrap({
       <Typography.Title level={5}>
         Recommended - One-time bootstrap
       </Typography.Title>
-      <Alert
-        type="warning"
-        showIcon
-        title="This temporary token is powerful"
-        description="API Tokens Edit can create other tokens. Use a short expiration (15-60 minutes). CoCalc does not persist this bootstrap token; the browser clears it on submit or when you leave this setup. Only a narrower durable automation token is saved server-side, without API-token-management permission."
-      />
+      <Typography.Paragraph type="secondary">
+        Give CoCalc a temporary token to configure Cloudflare automatically.
+        CoCalc saves a narrower token for ongoing use, not this temporary one.
+      </Typography.Paragraph>
       <Typography.Paragraph>
+        Go to{" "}
         <Typography.Link
           href={bootstrapTokenUrl(domain)}
           target="_blank"
           rel="noreferrer"
+          style={{ overflowWrap: "anywhere" }}
         >
-          Create temporary bootstrap token in Cloudflare
+          https://dash.cloudflare.com/profile/api-tokens
         </Typography.Link>
-        . The link requests a prefilled name and permission. Before creating it,
-        confirm the only permission is <strong>User / API Tokens / Edit</strong>{" "}
-        and manually set an expiration 15-60 minutes from now. No DNS, Workers,
-        or R2 permissions need to be selected here; CoCalc configures those on
-        the narrower durable token. Paste the temporary token below. Site-admin
-        fresh authentication may be required.
+        .
+        <br />
+        Set the <strong>End Date</strong> to <strong>today</strong>.
+        <br />
+        Create the token with the prefilled permission, then paste it below.
       </Typography.Paragraph>
-      <details>
-        <summary>If Cloudflare does not prefill the token permission</summary>
-        <Typography.Paragraph>
-          Open{" "}
-          <Typography.Link
-            href="https://dash.cloudflare.com/profile/api-tokens"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Cloudflare API Tokens
-          </Typography.Link>
-          , select Create Token, then the{" "}
-          <strong>Create additional tokens</strong> template. This special user
-          permission may only be available through that template. Keep only{" "}
-          <strong>API Tokens Edit</strong> and set the short expiration before
-          creating the token. Do not use Account API Tokens Edit instead.
+      <details style={{ marginBottom: 16 }}>
+        <summary style={{ cursor: "pointer" }}>
+          Permissions, security, and token handling
+        </summary>
+        <Typography.Paragraph style={{ marginTop: 12 }}>
+          The prefilled permission is <strong>User / API Tokens / Edit</strong>.
+          It is powerful: it can create other tokens, including tokens with R2
+          access. CoCalc uses it only during setup and attempts to revoke it
+          afterward. Cloudflare's form uses dates, not a duration in minutes;
+          setting the End Date to today limits its lifetime if cleanup fails.
+          Site-admin fresh authentication may be required.
         </Typography.Paragraph>
-      </details>
-      <details>
-        <summary>What CoCalc will do with this token</summary>
+        <Typography.Text strong>What CoCalc does</Typography.Text>
         <ul>
           <li>
             Verify it and create an ephemeral Zone Read discovery token across
@@ -169,13 +159,13 @@ export default function CloudflareBootstrap({
             in the next step. This flow is auditable in the CoCalc source code.
           </li>
         </ul>
-      </details>
-      <details>
-        <summary>What CoCalc will not do</summary>
+        <Typography.Text strong>What CoCalc does not do</Typography.Text>
         <ul>
           <li>
             Persist the bootstrap token, return it to the browser, send it to
             project hosts or user projects, or use it for ongoing operations.
+            The browser clears the input on submit or when you leave setup; the
+            token remains only in memory while the setup request completes.
           </li>
           <li>
             Give the durable token API-token-management permission or
@@ -183,8 +173,9 @@ export default function CloudflareBootstrap({
             read-only discovery token can list zones to find the match.
           </li>
           <li>
-            Make the R2 bucket public or replace the separate R2 S3 object
-            credentials.
+            Make the R2 bucket public. This wizard currently requires separate
+            R2 S3 object credentials in the R2 step; creating those
+            automatically is possible but is not part of this setup yet.
           </li>
         </ul>
       </details>

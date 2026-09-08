@@ -123,7 +123,7 @@ describe("CloudflareConfigWizard", () => {
       { target: { value: "secret-never-in-a-link" } },
     );
     const link = screen.getByRole("link", {
-      name: "Create temporary bootstrap token in Cloudflare",
+      name: "https://dash.cloudflare.com/profile/api-tokens",
     });
     const url = new URL(link.getAttribute("href")!);
     expect(url.origin).toBe("https://dash.cloudflare.com");
@@ -137,7 +137,8 @@ describe("CloudflareConfigWizard", () => {
       name: "CoCalc temporary bootstrap - cocalc.example.edu",
     });
     expect(link).toHaveAttribute("rel", "noreferrer");
-    expect(document.body).toHaveTextContent("manually set an expiration");
+    expect(document.body).toHaveTextContent("Set the End Date to today");
+    expect(document.body).not.toHaveTextContent("15-60");
     fireEvent.change(screen.getByRole("textbox", { name: "Domain name" }), {
       target: { value: "example.edu&permissionGroupKeys=unexpected" },
     });
@@ -148,6 +149,40 @@ describe("CloudflareConfigWizard", () => {
     expect(updated.searchParams.get("name")).toBe(
       "CoCalc temporary bootstrap - example.edu&permissionGroupKeys=unexpected",
     );
+  });
+
+  it("keeps security details collapsed and keyboard accessible", async () => {
+    const user = userEvent.setup();
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    const summary = screen.getByText(
+      "Permissions, security, and token handling",
+    );
+    const details = summary.closest("details")!;
+    expect(details).not.toHaveAttribute("open");
+    expect(screen.queryByText(/If Cloudflare does not prefill/)).toBeNull();
+    screen
+      .getByRole("link", {
+        name: "https://dash.cloudflare.com/profile/api-tokens",
+      })
+      .focus();
+    await user.tab();
+    expect(summary).toHaveFocus();
+    // jsdom does not emulate native summary keyboard activation; exercise
+    // native disclosure toggling by click and keyboard reachability by Tab.
+    await user.click(summary);
+    expect(details).toHaveAttribute("open");
+    expect(details).toHaveTextContent("including tokens with R2 access");
+    await user.click(summary);
+    expect(details).not.toHaveAttribute("open");
+    expect(summary).toHaveFocus();
   });
 
   it("provides a text-only advanced fallback without screenshot instructions", () => {
@@ -594,7 +629,7 @@ describe("CloudflareConfigWizard", () => {
     );
     expect(input).toHaveFocus();
     const manual = screen.getByRole("radio", { name: "Advanced manual setup" });
-    manual.focus();
+    act(() => manual.focus());
     await user.keyboard(" ");
     expect(manual).toBeChecked();
     expect(
