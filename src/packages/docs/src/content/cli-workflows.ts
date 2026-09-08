@@ -218,8 +218,8 @@ If following times out or disconnects, inspect the retained run before submittin
 another one. Without an explicit ID, selection prefers a currently running run,
 then the most recently updated retained run; it may not be the run you started.
 
-\`--no-halt\` continues after cell errors. \`--allow-errors\` relaxes the following
-\`run\` command's error-exit rule. Neither means erroneous output succeeded.
+\`--allow-errors\` relaxes the following \`run\` command's error-exit rule. It does
+not make erroneous output successful or guarantee that later cells execute.
 Detached or noninteractive code should not depend on answering kernel input prompts.
 
 For JavaScript notebook scripts, inspect \`project jupyter exec --help\`. Consume

@@ -10,7 +10,7 @@ pages are `cli.getting-started`, `cli.authentication-and-targets`,
 After the normal repository dependency setup, build and verify the docs package:
 
 ```sh
-pnpm -C src/packages/docs verify
+pnpm -C src/packages/docs run verify
 ```
 
 When adding a page, add both its entry in
