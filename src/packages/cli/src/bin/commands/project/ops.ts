@@ -18,6 +18,7 @@ import type { LroStatus } from "../../core/lro";
 import type { ProjectCommandDeps } from "../project";
 import {
   buildManagedProjectSshConfigLines,
+  cloudflaredProxyCommand,
   managedProjectSshOptionArgs,
 } from "./ssh-config";
 
@@ -60,20 +61,6 @@ const PROJECT_LOG_RUNTIME_STATES = new Set([
   "starting",
   "restarting",
 ]);
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function cloudflaredProxyCommand({
-  cloudflared,
-  hostname,
-}: {
-  cloudflared: string;
-  hostname: string;
-}): string {
-  return `${shellQuote(cloudflared)} access ssh --hostname ${shellQuote(hostname)}`;
-}
 
 export function getMovePlacementFallbackTimeoutMs(
   summary: Pick<LroStatus, "status" | "timedOut">,

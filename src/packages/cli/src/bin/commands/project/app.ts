@@ -12,6 +12,7 @@ import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-h
 import type { ProjectCommandDeps } from "../project";
 import {
   buildManagedProjectSshConfigLines,
+  cloudflaredProxyCommand,
   managedProjectSshOptionArgs,
 } from "./ssh-config";
 
@@ -310,7 +311,10 @@ function ensureManagedProjectSshConfigEntry({
         "cloudflared is required for managed Cloudflare SSH forwarding",
       );
     }
-    proxyCommand = `${cloudflaredBinary} access ssh --hostname %h`;
+    proxyCommand = cloudflaredProxyCommand({
+      cloudflared: cloudflaredBinary,
+      hostname: "%h",
+    });
   }
   const lines = buildManagedProjectSshConfigLines({
     alias,
@@ -416,7 +420,10 @@ async function resolveAppForwardCommand(
     const cloudflared =
       `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() ||
       "cloudflared";
-    const proxyCommand = `${cloudflared} access ssh --hostname ${cloudflareHostname}`;
+    const proxyCommand = cloudflaredProxyCommand({
+      cloudflared,
+      hostname: cloudflareHostname,
+    });
     sshArgs.push("-o", `ProxyCommand=${proxyCommand}`);
     sshTarget = `${route.ssh_username}@${cloudflareHostname}`;
     sshServer = `${cloudflareHostname}:443`;
