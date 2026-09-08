@@ -113,16 +113,22 @@ import {
   snapshotParsedLog,
 } from "./document-build";
 
+import { getLogger } from "@cocalc/frontend/logger";
+import { getSummaryHomeDirectory, summarizeTexFiles } from "./file-summaries";
+
 const SYNCTEX_SOURCE_EXTS: ReadonlySet<string> = new Set([
   ...ALLOWED_DEP_EXTENSIONS,
   "latex",
 ]);
+const fileSummariesLogger = getLogger("latex-file-summaries");
 
 interface LatexEditorState extends CodeEditorState {
   build_logs: BuildLogs;
   sync: string;
   scroll_pdf_into_view: ScrollIntoViewMap;
   word_count: string;
+  file_summaries?: Record<string, string>;
+  file_summaries_loading?: boolean;
   zoom_page_width: string;
   zoom_page_height: string;
   build_command: string | List<string>;
@@ -1246,6 +1252,7 @@ export class Actions extends BaseActions<LatexEditorState> {
     this.setState({
       switch_to_files: Array.from(new Set(switch_to_files)).sort(),
     });
+    if (this.fileSummariesRequested) void this.updateFileSummaries();
     this.chat.scheduleDiskScans(true);
     // Dependency path resolution is asynchronous, so the build's other TOC
     // refreshes can run before switch_to_files contains the discovered
@@ -1253,7 +1260,79 @@ export class Actions extends BaseActions<LatexEditorState> {
     this.updateTableOfContents(true);
   }
 
+  private fileSummariesPromise?: Promise<void>;
+  private fileSummariesKey?: string;
+  private fileSummariesTime = 0;
+  private fileSummariesRevision = 0;
+  private fileSummariesRequested = false;
+
+  private fileSummaryInputs(): { files: string[]; key: string } {
+    const files: string[] = this.store.get("switch_to_files")?.toArray() ?? [];
+    return { files, key: JSON.stringify([this.fileSummariesRevision, files]) };
+  }
+
+  // Both Files surfaces share this request and the resulting Redux state.
+  public updateFileSummaries(force = false): Promise<void> {
+    if (this.isClosed()) return Promise.resolve();
+    this.fileSummariesRequested = true;
+    if (this.fileSummariesPromise != null) return this.fileSummariesPromise;
+    const { key } = this.fileSummaryInputs();
+    if (
+      !force &&
+      key === this.fileSummariesKey &&
+      Date.now() - this.fileSummariesTime < 60_000
+    ) {
+      return Promise.resolve();
+    }
+    this.fileSummariesPromise = this.loadFileSummaries().finally(() => {
+      this.fileSummariesPromise = undefined;
+    });
+    return this.fileSummariesPromise;
+  }
+
+  private async loadFileSummaries(): Promise<void> {
+    this.setState({ file_summaries_loading: true });
+    try {
+      // A build/discovery update during a request gets one follow-up pass.
+      // Never publish a result for an obsolete dependency list/build.
+      while (!this.isClosed()) {
+        const { files, key } = this.fileSummaryInputs();
+        let summaries: Record<string, string>;
+        try {
+          summaries =
+            files.length === 0
+              ? {}
+              : await summarizeTexFiles(
+                  files,
+                  this.project_id,
+                  this.path,
+                  await getSummaryHomeDirectory(this.project_id),
+                );
+        } catch (error) {
+          fileSummariesLogger.warn("Unable to summarize LaTeX files", error);
+          summaries = Object.fromEntries(
+            files.map((file) => [file, "LaTeX document"]),
+          );
+        }
+        if (this.isClosed()) return;
+        if (key !== this.fileSummaryInputs().key) continue;
+        this.fileSummariesKey = key;
+        this.fileSummariesTime = Date.now();
+        this.setState({ file_summaries: summaries });
+        return;
+      }
+    } finally {
+      if (!this.isClosed()) this.setState({ file_summaries_loading: false });
+    }
+  }
+
+  private invalidateFileSummaries(): void {
+    this.fileSummariesRevision = (this.fileSummariesRevision ?? 0) + 1;
+    if (this.fileSummariesRequested) void this.updateFileSummaries();
+  }
+
   private _update_pdf(time: number, force: boolean): void {
+    this.invalidateFileSummaries();
     const timestamp = this.make_timestamp(time, force);
     // forget currently cached pdf
     this._forget_pdf_document();

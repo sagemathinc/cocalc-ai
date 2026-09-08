@@ -12,9 +12,9 @@ import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { filenameIcon } from "@cocalc/frontend/file-associations";
 import { labels } from "@cocalc/frontend/i18n";
 import { path_split, plural } from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
-import { Actions } from "./actions";
+import type { Actions } from "./actions";
 import { OUTPUT_HEADER_STYLE } from "./util";
 
 interface FileListItem {
@@ -74,10 +74,14 @@ export function OutputFiles({
         display: "flex",
         flexDirection: "column",
         height: "100%",
+        minHeight: 0,
+        minWidth: 0,
+        background: UI_COLORS.surface,
+        color: UI_COLORS.text,
       }}
     >
       {/* Fixed header with buttons and file count */}
-      <div style={OUTPUT_HEADER_STYLE}>
+      <div style={{ ...OUTPUT_HEADER_STYLE, flexWrap: "wrap", gap: 8 }}>
         <Button
           type="primary"
           size="small"
@@ -87,7 +91,7 @@ export function OutputFiles({
           Open Main File
         </Button>
 
-        <span style={{ color: COLORS.GRAY_M, fontSize: uiFontSize }}>
+        <span style={{ color: UI_COLORS.secondary, fontSize: uiFontSize }}>
           {subFileCount} {plural(subFileCount, "subfile")}
         </span>
 
@@ -107,6 +111,7 @@ export function OutputFiles({
         style={{
           flex: 1,
           overflowY: "auto",
+          minHeight: 0,
           padding: "10px",
         }}
       >
@@ -114,37 +119,40 @@ export function OutputFiles({
           size="small"
           dataSource={listData}
           renderItem={(item: FileListItem) => (
-            <AntdList.Item
-              style={{
-                cursor: "pointer",
-              }}
-              onClick={() => actions.switch_to_file(item.path)}
-            >
+            <AntdList.Item>
               <AntdList.Item.Meta
                 avatar={
                   <Avatar
                     size="default"
                     style={{
                       backgroundColor: "transparent",
-                      color: COLORS.GRAY_D,
+                      color: UI_COLORS.text,
                     }}
                     icon={<Icon name={filenameIcon(item.path)} />}
                   />
                 }
                 title={
-                  <span
+                  <Button
+                    type="link"
+                    onClick={() => actions.switch_to_file(item.path)}
                     style={{
                       fontFamily: "monospace",
-                      fontSize: `${uiFontSize}px`,
+                      fontSize: uiFontSize,
+                      padding: 0,
+                      height: "auto",
+                      whiteSpace: "normal",
+                      textAlign: "left",
+                      overflowWrap: "anywhere",
+                      maxWidth: "100%",
                     }}
                   >
                     {item.displayPath}
-                  </span>
+                  </Button>
                 }
                 description={
                   <span
                     style={{
-                      color: COLORS.GRAY_M,
+                      color: UI_COLORS.secondary,
                       fontSize: uiFontSize - 2,
                     }}
                   >

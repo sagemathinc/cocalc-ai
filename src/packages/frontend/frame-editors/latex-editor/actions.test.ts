@@ -2,6 +2,7 @@ import { fromJS, List, Map } from "immutable";
 import * as CodeMirror from "codemirror";
 import { Actions } from "./actions";
 import * as synctex from "./synctex";
+import * as fileSummaries from "./file-summaries";
 import { EventEmitter } from "events";
 import { ChatMarkerManager } from "./chat-marker-manager";
 
@@ -1446,6 +1447,89 @@ describe("LaTeX fatal build error toast", () => {
     );
     actions.check_for_fatal_error();
     expect(actions.set_error).not.toHaveBeenCalled();
+  });
+});
+
+describe("shared LaTeX file summaries", () => {
+  afterEach(() => jest.restoreAllMocks());
+  function fixture() {
+    const actions = createActionsFixture();
+    actions.project_id = "project-1";
+    actions.path = "/project/main.tex";
+    actions.store = Map({
+      switch_to_files: List(["/project/main.tex", "/project/a.tex"]),
+    });
+    actions.setState = jest.fn((update) => {
+      actions.store = actions.store.merge(fromJS(update));
+    });
+    jest
+      .spyOn(fileSummaries, "getSummaryHomeDirectory")
+      .mockResolvedValue("/home/user");
+    return actions;
+  }
+  it("coalesces two mounted views and concurrent manual refreshes", async () => {
+    const actions = fixture();
+    let finish!: (result: Record<string, string>) => void;
+    const run = jest
+      .spyOn(fileSummaries, "summarizeTexFiles")
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+    const first = actions.updateFileSummaries();
+    expect(actions.updateFileSummaries()).toBe(first);
+    expect(actions.updateFileSummaries(true)).toBe(first);
+    await Promise.resolve();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(actions.store.get("file_summaries_loading")).toBe(true);
+    finish({ "/project/a.tex": "A" });
+    await first;
+    expect(actions.store.getIn(["file_summaries", "/project/a.tex"])).toBe("A");
+    expect(actions.store.get("file_summaries_loading")).toBe(false);
+    await actions.updateFileSummaries();
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+  it("discards stale results and refreshes after a build or discovery update", async () => {
+    const actions = fixture();
+    let finish!: (result: Record<string, string>) => void;
+    const run = jest
+      .spyOn(fileSummaries, "summarizeTexFiles")
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      )
+      .mockResolvedValue({ "/project/b.tex": "B" });
+    const pending = actions.updateFileSummaries();
+    await Promise.resolve();
+    actions.store = actions.store.set(
+      "switch_to_files",
+      List(["/project/main.tex", "/project/b.tex"]),
+    );
+    actions.invalidateFileSummaries();
+    finish({ "/project/a.tex": "obsolete" });
+    await pending;
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(actions.store.get("file_summaries").toJS()).toEqual({
+      "/project/b.tex": "B",
+    });
+    actions.invalidateFileSummaries();
+    await actions.updateFileSummaries();
+    expect(run).toHaveBeenCalledTimes(3);
+  });
+  it("clears loading on failure and permits a manual retry", async () => {
+    const actions = fixture();
+    jest
+      .spyOn(fileSummaries, "summarizeTexFiles")
+      .mockRejectedValueOnce(Error("offline"))
+      .mockResolvedValue({ "/project/a.tex": "A" });
+    await actions.updateFileSummaries();
+    expect(actions.store.get("file_summaries_loading")).toBe(false);
+    await actions.updateFileSummaries(true);
+    expect(actions.store.getIn(["file_summaries", "/project/a.tex"])).toBe("A");
   });
 });
 

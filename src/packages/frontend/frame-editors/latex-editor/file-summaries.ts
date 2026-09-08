@@ -10,10 +10,10 @@ Provides functionality to generate summaries of LaTeX files using a Python scrip
 
 // cSpell:ignore EOFPYTHON
 
-import { List } from "immutable";
-import { useCallback, useEffect, useState } from "react";
-
-import { exec } from "@cocalc/frontend/frame-editors/generic/client";
+import {
+  exec,
+  project_api,
+} from "@cocalc/frontend/frame-editors/generic/client";
 import { path_split } from "@cocalc/util/misc";
 
 const SUMMARIZE_TEX_FILES = `
@@ -146,128 +146,50 @@ if __name__ == "__main__":
     main()
 `;
 
-export interface TexSummaries {
-  fileSummaries: Record<string, string>;
-  summariesLoading: boolean;
-  refreshSummaries: () => void;
-}
-
-/**
- * Hook to generate and manage LaTeX file summaries
- */
-export function useTexSummaries(
-  switch_to_files: List<string>,
+export async function summarizeTexFiles(
+  files: string[],
   project_id: string,
   path: string,
-  homeDir: string | null,
-  reload?: number,
-): TexSummaries {
-  // File summaries state with caching (1 minute max)
-  const [fileSummaries, setFileSummaries] = useState<Record<string, string>>(
-    {},
+  homeDir: string,
+): Promise<Record<string, string>> {
+  const result = await exec({
+    command: "python3",
+    args: ["-c", SUMMARIZE_TEX_FILES, homeDir, ...files],
+    project_id,
+    path: path_split(path).head,
+    timeout: 30,
+  });
+  if (result.exit_code !== 0) {
+    throw Error(result.stderr || "File summary generation failed");
+  }
+  const summaries: unknown = JSON.parse(result.stdout);
+  if (
+    summaries == null ||
+    typeof summaries !== "object" ||
+    Array.isArray(summaries)
+  ) {
+    throw Error("Invalid file summary response");
+  }
+  return Object.fromEntries(
+    files.map((file) => [
+      file,
+      typeof summaries[file] === "string" ? summaries[file] : "LaTeX document",
+    ]),
   );
-  const [lastSummariesFetch, setLastSummariesFetch] = useState<number>(0);
-  const [summariesLoading, setSummariesLoading] = useState<boolean>(false);
+}
 
-  // Function to generate file summaries using Python script
-  const generateFileSummaries = useCallback(
-    async (forceRefresh: boolean = false) => {
-      if (!switch_to_files || switch_to_files.size === 0) return;
-
-      const now = Date.now();
-      const oneMinute = 60 * 1000;
-
-      // Only update if it's been more than 1 minute since last fetch (unless forced)
-      if (!forceRefresh && now - lastSummariesFetch < oneMinute) return;
-
-      setSummariesLoading(true);
-
-      try {
-        // Execute Python script with file list as arguments
-        const fileList = switch_to_files.toJS();
-
-        // Write Python script to temporary file to avoid command line escaping issues
-        const scriptPath = "/tmp/tex_summarizer.py";
-        await exec({
-          command: `cat > "${scriptPath}" << 'EOFPYTHON'\n${SUMMARIZE_TEX_FILES}\nEOFPYTHON`,
-          project_id,
-          path: path_split(path).head,
-          timeout: 5,
-        });
-
-        // Use the pre-fetched home directory
-        if (!homeDir) {
-          console.warn("Home directory not available yet");
-          return;
-        }
-
-        // switch_to_files may contain absolute or home-relative paths;
-        // pass home directory so the helper can resolve both.
-        const result = await exec({
-          command: "python3",
-          args: [scriptPath, homeDir, ...fileList],
-          project_id,
-          path: path_split(path).head, // Run from current file's directory
-          timeout: 30, // 30 second timeout
-        });
-
-        if (result.exit_code === 0 && result.stdout) {
-          try {
-            const summaries = JSON.parse(result.stdout);
-            setFileSummaries(summaries);
-          } catch (parseError) {
-            console.warn("Failed to parse summary results:", parseError);
-            // Fallback to basic summaries
-            const fallbackSummaries: Record<string, string> = {};
-            switch_to_files.forEach((filePath) => {
-              fallbackSummaries[filePath] = "LaTeX document";
-            });
-            setFileSummaries(fallbackSummaries);
-          }
-        } else {
-          console.warn(
-            "Summary generation failed:",
-            result.stderr ?? "Unknown error",
-          );
-          // Fallback to basic summaries
-          const fallbackSummaries: Record<string, string> = {};
-          switch_to_files.forEach((filePath) => {
-            fallbackSummaries[filePath] = "LaTeX document";
-          });
-          setFileSummaries(fallbackSummaries);
-        }
-      } catch (error) {
-        console.warn("Error generating summaries:", error);
-        // Fallback to basic summaries
-        const fallbackSummaries: Record<string, string> = {};
-        switch_to_files.forEach((filePath) => {
-          fallbackSummaries[filePath] = "LaTeX document";
-        });
-        setFileSummaries(fallbackSummaries);
-      } finally {
-        setLastSummariesFetch(now);
-        setSummariesLoading(false);
-      }
-    },
-    [switch_to_files, lastSummariesFetch, reload],
-  );
-
-  // Manual refresh function that bypasses the rate limiting
-  const refreshSummaries = useCallback(
-    () => generateFileSummaries(true),
-    [generateFileSummaries],
-  );
-
-  // Generate file summaries when files change
-  useEffect(() => {
-    if (switch_to_files && switch_to_files.size > 1) {
-      generateFileSummaries();
-    }
-  }, [switch_to_files, generateFileSummaries]);
-
-  return {
-    fileSummaries,
-    summariesLoading,
-    refreshSummaries,
-  };
+// Cache successful lookups across editor frames; retry failures.
+const homeDirectories = new Map<string, Promise<string>>();
+export function getSummaryHomeDirectory(project_id: string): Promise<string> {
+  let home = homeDirectories.get(project_id);
+  if (home == null) {
+    home = project_api(project_id)
+      .then((api) => api.getHomeDirectory())
+      .catch((error) => {
+        homeDirectories.delete(project_id);
+        throw error;
+      });
+    homeDirectories.set(project_id, home);
+  }
+  return home;
 }
