@@ -235,7 +235,7 @@ try {
     }),
   ).toBeVisible({ timeout: 60000 });
   assert.equal(new URL(page.url()).searchParams.get("git-hash"), commit);
-  await chooseHistory(page, "History ref", testRef);
+  await chooseHistory(page, "Branch / ref", testRef);
   await page
     .getByRole("button", { name: "Browse / Refresh", exact: true })
     .click();
@@ -246,8 +246,8 @@ try {
   remote(`git update-ref ${quote(testRef)} ${parent} ${commit}`);
   refTip = parent;
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(historySelect(page, "History ref")).toContainText(
-    testRef.replace(/^refs\//, ""),
+  await expect(historySelect(page, "Branch / ref")).toContainText(
+    testRef.replace(/^refs\/(heads|remotes)\//, ""),
     { timeout: 60000 },
   );
   assert.equal(new URL(page.url()).searchParams.get("git-tip"), commit);

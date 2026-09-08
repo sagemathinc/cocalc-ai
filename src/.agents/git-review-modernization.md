@@ -21,10 +21,28 @@ not a current checklist. The objective is not complete. Current release work:
 
 Remaining live acceptance gaps (September 8):
 
+- Message anchor navigation: loading `x.chat#chat=1788832135399` in a fresh
+  tab retained the previously selected feedback thread. Selecting the source
+  thread manually exposed the requested commit link. Fix this independently
+  of Git branch/worktree inference; do not count the message URL as accepted.
+
 - Intermittent cold originating-link behavior: the archived-directory fixture
   and subsequent route tests pass, but an earlier disappearance and transient
   missing URL were not reproduced with a demonstrated production root cause.
   Keep the bounded navigation diagnostics rather than claiming this fixed.
+
+Branch-first UX follow-up (September 8): message links carried a turn directory
+hint that incorrectly disabled unique-worktree lookup. Treat this as an origin
+hint, retaining explicit restored-history selection. Commit `01cab683` was
+confirmed by Git to exist only in `test-worktree`; clicking its message link
+now selects `/home/user/test-worktree` and `refs/heads/test-worktree` in live
+acceptance. Selected commits outside the loaded log use their loaded subject
+instead of a generic label. Branch selection immediately loads its pinned
+history and uses a matching checkout when available; branches without checkouts
+remain browsable. Comparison now offers a branch and two searchable commit
+selectors with older-history pagination, comparing exact trees. Raw refs,
+merge-base and parent selection remain under Advanced. Live commit selection
+and comparison passed after explicitly choosing the source chat thread.
 
 Cross-worktree execution verified (September 8): review feedback created thread
 `7ca2b76d-c919-4a75-8eee-919527a1a019`, Codex session

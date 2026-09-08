@@ -34,6 +34,9 @@ test("requires explicit base and pins the requested mode on keyboard activation"
       onApply={apply}
     />,
   );
+  await user.click(
+    screen.getByText("Advanced: refs, merge base, or merge parent"),
+  );
   expect(
     screen.getByRole("button", { name: "Compare / Refresh" }),
   ).toBeDisabled();
@@ -69,6 +72,9 @@ test("parent UI uses human numbering and rejects late results while editing", as
       disabled={false}
       onApply={apply}
     />,
+  );
+  await user.click(
+    screen.getByText("Advanced: refs, merge base, or merge parent"),
   );
   await user.selectOptions(
     screen.getByRole("combobox", { name: "Comparison" }),

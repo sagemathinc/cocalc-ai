@@ -38,7 +38,7 @@ export function GitHistoryControls({
       generation.current++;
     };
   }, [selection, origin, disabled]);
-  const browse = async () => {
+  const browse = async (choice = draft) => {
     const request = ++generation.current;
     setBusy(true);
     setError("");
@@ -46,10 +46,10 @@ export function GitHistoryControls({
       const result = await resolveHistorySelection(
         projectGitReader,
         origin,
-        draft,
+        choice,
       );
       if (request === generation.current)
-        onApply(draft, result.discovery, result.tip);
+        onApply(choice, result.discovery, result.tip);
     } catch (err) {
       if (request === generation.current) setError(String(err));
     } finally {
@@ -90,15 +90,27 @@ export function GitHistoryControls({
           />
         </div>
         <div>
-          <label htmlFor={`${id}-ref`}>History ref</label>{" "}
+          <label htmlFor={`${id}-ref`}>Branch / ref</label>{" "}
           <Select
             id={`${id}-ref`}
-            aria-label="History ref"
+            aria-label="Branch / ref"
             showSearch={{ optionFilterProp: "label" }}
             style={{ width: "min(24rem, 70vw)" }}
             disabled={disabled || busy}
             value={draft.ref}
-            onChange={(ref) => setDraft({ ...draft, ref })}
+            onChange={(ref) => {
+              const worktree = origin.worktrees.find(
+                (tree) =>
+                  tree.branch === ref && tree.prunable == null && !tree.bare,
+              );
+              const choice = {
+                ...draft,
+                ref,
+                worktree: worktree?.path ?? draft.worktree,
+              };
+              setDraft(choice);
+              void browse(choice);
+            }}
             options={[
               { value: "HEAD", label: "Selected worktree HEAD" },
               ...(draft.ref !== "HEAD" &&
@@ -112,7 +124,7 @@ export function GitHistoryControls({
                 : []),
               ...origin.refs.map((ref) => ({
                 value: ref.name,
-                label: ref.name.replace(/^refs\//, ""),
+                label: `${ref.name.replace(/^refs\/(heads|remotes)\//, "")}${origin.worktrees.some((tree) => tree.branch === ref.name) ? " (checked out)" : ""}`,
               })),
             ]}
           />

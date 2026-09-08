@@ -2972,6 +2972,7 @@ export default function Message({
           projectId={project_id}
           sourcePath={path}
           cwdOverride={openCommitCwd}
+          inferCommitWorktree
           commitHash={openCommitHash}
           commitSelectionRequestToken={openCommitSelectionRequestToken}
           open={openCommitHash != null}

@@ -6,6 +6,7 @@ import type {
 } from "@cocalc/frontend/components/diff-viewer/review-model";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import type { GitComparisonRoute } from "@cocalc/frontend/git/review-route";
+import { BranchComparison } from "./branch-comparison";
 
 export function ComparisonControls({
   repository,
@@ -71,71 +72,81 @@ export function ComparisonControls({
   };
   return (
     <section aria-label="Compare revisions">
-      <fieldset
-        disabled={disabled || busy}
-        style={{
-          border: 0,
-          padding: 0,
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
-        }}
-      >
-        <label>
-          Comparison{" "}
-          <select
-            value={mode}
-            onChange={(event) => setMode(event.target.value as typeof mode)}
-          >
-            <option value="merge-base">Branch contribution (merge base)</option>
-            <option value="trees">Two trees</option>
-            <option value="parent">Commit versus parent</option>
-          </select>
-        </label>
-        {mode !== "parent" ? (
-          <label>
-            Base ref{" "}
-            <input
-              value={base}
-              onChange={(event) => setBase(event.target.value)}
-              placeholder="Choose a base explicitly"
-            />
-          </label>
-        ) : (
-          <label>
-            Parent number{" "}
-            <input
-              type="number"
-              min={1}
-              value={parent}
-              onChange={(event) => setParent(Number(event.target.value))}
-            />
-          </label>
-        )}
-        <label>
-          Head ref{" "}
-          <input
-            value={head}
-            onChange={(event) => setHead(event.target.value)}
-          />
-        </label>
-        <Button
-          loading={busy}
-          disabled={disabled || !head || (mode !== "parent" && !base)}
-          onClick={() => void apply()}
+      <BranchComparison
+        repository={repository}
+        disabled={disabled}
+        onApply={onApply}
+      />
+      <details open={initialComparison != null}>
+        <summary>Advanced: refs, merge base, or merge parent</summary>
+        <fieldset
+          disabled={disabled || busy}
+          style={{
+            border: 0,
+            padding: 0,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+          }}
         >
-          Compare / Refresh
-        </Button>
-      </fieldset>
-      <p>
-        Endpoints are pinned when you compare. No branch is checked out. An
-        already merged branch may have an empty contribution; use its merge
-        commit and parent instead. Squash/rebase boundaries require original
-        endpoints.
-      </p>
-      {error && (
-        <Alert type="error" title="Comparison failed" description={error} />
-      )}
+          <label>
+            Comparison{" "}
+            <select
+              value={mode}
+              onChange={(event) => setMode(event.target.value as typeof mode)}
+            >
+              <option value="merge-base">
+                Branch contribution (merge base)
+              </option>
+              <option value="trees">Two trees</option>
+              <option value="parent">Commit versus parent</option>
+            </select>
+          </label>
+          {mode !== "parent" ? (
+            <label>
+              Base ref{" "}
+              <input
+                value={base}
+                onChange={(event) => setBase(event.target.value)}
+                placeholder="Choose a base explicitly"
+              />
+            </label>
+          ) : (
+            <label>
+              Parent number{" "}
+              <input
+                type="number"
+                min={1}
+                value={parent}
+                onChange={(event) => setParent(Number(event.target.value))}
+              />
+            </label>
+          )}
+          <label>
+            Head ref{" "}
+            <input
+              value={head}
+              onChange={(event) => setHead(event.target.value)}
+            />
+          </label>
+          <Button
+            loading={busy}
+            disabled={disabled || !head || (mode !== "parent" && !base)}
+            onClick={() => void apply()}
+          >
+            Compare / Refresh
+          </Button>
+        </fieldset>
+        <p>
+          Endpoints are pinned when you compare. No branch is checked out. An
+          already merged branch may have an empty contribution; use its merge
+          commit and parent instead. Squash/rebase boundaries require original
+          endpoints.
+        </p>
+        {error && (
+          <Alert type="error" title="Comparison failed" description={error} />
+        )}
+      </details>
     </section>
   );
 }

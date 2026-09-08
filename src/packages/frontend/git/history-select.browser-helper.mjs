@@ -7,7 +7,9 @@ export function historySelect(page, name) {
 export async function chooseHistory(page, name, value) {
   const input = page.getByRole("combobox", { name, exact: true });
   await input.fill(
-    value === "HEAD" ? "Selected worktree HEAD" : value.replace(/^refs\//, ""),
+    value === "HEAD"
+      ? "Selected worktree HEAD"
+      : value.replace(/^refs\/(heads|remotes)\//, ""),
   );
   await input.press("ArrowDown");
   await input.press("Enter");

@@ -248,6 +248,8 @@ export function GitCommitDrawerTitle({
             }}
           >
             <Select
+              aria-label="Commit"
+              showSearch={{ optionFilterProp: "search" }}
               size="small"
               value={commit}
               options={logOptions}

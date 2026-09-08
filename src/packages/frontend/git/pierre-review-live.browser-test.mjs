@@ -87,7 +87,7 @@ async function click(expression) {
     e.click();e.focus();})()`);
 }
 const selected = (label, value) =>
-  `document.querySelector('[role="combobox"][aria-label=${JSON.stringify(label)}]')?.closest('.ant-select')?.textContent.includes(${JSON.stringify(value.replace(/^refs\//, ""))})`;
+  `document.querySelector('[role="combobox"][aria-label=${JSON.stringify(label)}]')?.closest('.ant-select')?.textContent.includes(${JSON.stringify(value.replace(/^refs\/(heads|remotes)\//, ""))})`;
 async function select(label, value) {
   await evaluate(
     `document.querySelector('[role="combobox"][aria-label=${JSON.stringify(label)}]').focus()`,
@@ -96,7 +96,7 @@ async function select(label, value) {
     text:
       value === "HEAD"
         ? "Selected worktree HEAD"
-        : value.replace(/^refs\//, ""),
+        : value.replace(/^refs\/(heads|remotes)\//, ""),
   });
   for (const key of ["ArrowDown", "Enter"]) {
     await send("Input.dispatchKeyEvent", {
@@ -135,6 +135,9 @@ try {
     const beforeKeys = await evaluate(`Object.keys(localStorage)`);
     await click(button("Compare revisions..."));
     await until(`!!document.querySelector('[aria-label="Compare revisions"]')`);
+    await click(
+      `document.querySelector('[aria-label="Compare revisions"] summary')`,
+    );
     await evaluate(
       `(()=>{const section=document.querySelector('[aria-label="Compare revisions"]');const select=section.querySelector('select');select.value='trees';select.dispatchEvent(new Event('change',{bubbles:true}));})()`,
     );
@@ -210,14 +213,9 @@ try {
     );
   } else if (historyRef) {
     await until(
-      `!!document.querySelector('[role="combobox"][aria-label="History ref"]')`,
+      `!!document.querySelector('[role="combobox"][aria-label="Branch / ref"]')`,
     );
-    await select("History ref", historyRef);
-    assert.equal(
-      await evaluate(`new URL(location.href).searchParams.get('git-hash')`),
-      commit,
-    );
-    await click(button("Browse / Refresh"));
+    await select("Branch / ref", historyRef);
     await until(
       `new URL(location.href).searchParams.get('git-ref') === ${JSON.stringify(historyRef)}`,
     );
@@ -226,7 +224,7 @@ try {
     assert.match(tip, /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
     assert.equal(new URL(route).searchParams.get("git-hash"), tip);
     await send("Page.reload");
-    await until(selected("History ref", historyRef));
+    await until(selected("Branch / ref", historyRef));
     assert.equal(await evaluate(`location.href`), route);
     console.log(
       "PASS: explicit ref browsing pins history and restores its context on reload.",
@@ -243,11 +241,7 @@ try {
     );
     await select("Review working copy", historyWorktree);
     await until(selected("Review working copy", historyWorktree));
-    await select("History ref", "HEAD");
-    assert.equal(
-      await evaluate(`new URL(location.href).searchParams.get('git-hash')`),
-      commit,
-    );
+    await select("Branch / ref", "HEAD");
     await click(button("Browse / Refresh"));
     await until(
       `new URL(location.href).searchParams.get('git-hash') === ${JSON.stringify(expected)}`,

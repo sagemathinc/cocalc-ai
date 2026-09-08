@@ -2970,6 +2970,7 @@ export function ChatPanel({
             projectId={project_id}
             sourcePath={path}
             cwdOverride={gitBrowserCwd}
+            inferCommitWorktree={gitBrowserThreadKey != null}
             initialHistory={gitBrowserHistory}
             initialComparison={gitBrowserComparison}
             onComparisonChange={syncGitComparison}

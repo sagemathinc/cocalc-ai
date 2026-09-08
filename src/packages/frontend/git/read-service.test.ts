@@ -207,7 +207,7 @@ describe("read-only Git fixtures", () => {
     expect(unique).toMatchObject({
       kind: "unique",
       commit: mainTip,
-      selection: { worktree: main, ref: mergeTip },
+      selection: { worktree: main, ref: "refs/heads/main" },
       tip: mergeTip,
     });
     const tree = git(main, ["rev-parse", `${root}^{tree}`]).trim();

@@ -59,7 +59,7 @@ test("merge visibility changes immediately by keyboard without browsing a new re
   expect(onShowMergesChange).toHaveBeenLastCalledWith(false);
 });
 
-test("keyboard browsing applies the validated choice, not each draft change", async () => {
+test("keyboard branch selection immediately browses the branch's worktree", async () => {
   const user = userEvent.setup();
   const onApply = jest.fn();
   jest
@@ -82,17 +82,14 @@ test("keyboard browsing applies the validated choice, not each draft change", as
     { key: "Enter", keyCode: 13, which: 13 },
   );
   await user.type(
-    screen.getByRole("combobox", { name: "History ref" }),
-    "heads/feature",
+    screen.getByRole("combobox", { name: "Branch / ref" }),
+    "feature",
   );
-  fireEvent.keyDown(screen.getByRole("combobox", { name: "History ref" }), {
+  fireEvent.keyDown(screen.getByRole("combobox", { name: "Branch / ref" }), {
     key: "Enter",
     keyCode: 13,
     which: 13,
   });
-  expect(onApply).not.toHaveBeenCalled();
-  screen.getByRole("button", { name: "Browse / Refresh" }).focus();
-  await user.keyboard("{Enter}");
   await waitFor(() =>
     expect(onApply).toHaveBeenCalledWith(
       { worktree: "/feature", ref: "refs/heads/feature", firstParent: true },

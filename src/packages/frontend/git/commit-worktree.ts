@@ -27,7 +27,11 @@ export async function locateCommitWorktree(
       paths: matches.map((tree) => tree.path),
     };
   const tree = matches[0];
-  const selection = { worktree: tree.path, ref: tree.head!, firstParent: true };
+  const selection = {
+    worktree: tree.path,
+    ref: tree.branch || tree.head!,
+    firstParent: true,
+  };
   const selected = await resolveHistorySelection(reader, fresh, selection);
   const currentTree = selected.discovery.worktrees.find(
     (entry) => entry.path === tree.path,

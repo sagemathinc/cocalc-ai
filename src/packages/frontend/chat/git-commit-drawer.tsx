@@ -279,6 +279,7 @@ interface GitCommitDrawerProps {
   projectId?: string;
   sourcePath?: string;
   cwdOverride?: string;
+  inferCommitWorktree?: boolean;
   initialHistory?: GitReviewHistoryRoute;
   initialComparison?: GitComparisonRoute;
   onComparisonChange?: (route?: GitComparisonRoute) => void;
@@ -468,6 +469,7 @@ async function runGitCommand({
 }
 
 export function GitCommitDrawer({
+  inferCommitWorktree = false,
   projectId,
   sourcePath,
   cwdOverride,
@@ -723,7 +725,7 @@ export function GitCommitDrawer({
       open &&
       commitHash &&
       !isHeadCommit(commitHash) &&
-      !cwdOverride &&
+      (!cwdOverride || inferCommitWorktree) &&
       !initialHistory &&
       !selectedHistory &&
       commit === parseCommitHash(commitHash),
@@ -1412,17 +1414,24 @@ export function GitCommitDrawer({
     if (commit && !options.some((opt) => opt.value === commit)) {
       const fallback: GitLogEntry = {
         hash: commit,
-        subject: "selected commit",
+        subject:
+          currentData?.summary.message.trim().split("\n")[0] ||
+          "Loading commit title...",
       };
       options.unshift({
         value: commit,
         label: makeOptionLabel(fallback, true),
         plainLabel: makePlainLabel(fallback, true),
-        search: `${commit} selected commit`,
+        search: `${commit} ${fallback.subject}`,
       });
     }
     return options;
-  }, [visibleLogEntries, commit, reviewedByCommit]);
+  }, [
+    visibleLogEntries,
+    commit,
+    reviewedByCommit,
+    currentData?.summary.message,
+  ]);
 
   useEffect(() => {
     const nextScope =
