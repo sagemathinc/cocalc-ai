@@ -53,9 +53,15 @@ list spacing collapses.
   margin: 0 0 1em;
   padding: 0.45em 0.9em;
   border-left: 4px solid
-    var(--cocalc-slate-blockquote-border, rgba(0, 0, 0, 0.14));
+    var(
+      --cocalc-slate-blockquote-border,
+      var(--cocalc-ui-controlBorder, rgba(0, 0, 0, 0.14))
+    );
   border-radius: 0 10px 10px 0;
-  background: var(--cocalc-slate-blockquote-bg, rgba(0, 0, 0, 0.03));
+  background: var(
+    --cocalc-slate-blockquote-bg,
+    var(--cocalc-ui-hover, rgba(0, 0, 0, 0.03))
+  );
   color: var(--cocalc-slate-blockquote-fg, inherit);
 }
 
