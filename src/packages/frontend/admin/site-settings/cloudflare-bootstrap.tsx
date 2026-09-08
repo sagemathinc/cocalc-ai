@@ -6,6 +6,20 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import SecretSettingInput from "./secret-setting-input";
 import type { FreshAuthActionRunner } from "@cocalc/frontend/auth/fresh-auth";
 
+function bootstrapTokenUrl(domain: string): string {
+  // Template URL format: https://developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
+  // User API Tokens Edit is special: Cloudflare may require its built-in
+  // "Create additional tokens" template instead. Keep the UI fallback below.
+  // Do not substitute account_api_tokens, which manages account-owned tokens.
+  const params = new URLSearchParams({
+    permissionGroupKeys: JSON.stringify([{ key: "api_tokens", type: "edit" }]),
+    accountId: "*",
+    zoneId: "all",
+    name: `CoCalc temporary bootstrap${domain.trim() ? ` - ${domain.trim()}` : ""}`,
+  });
+  return `https://dash.cloudflare.com/profile/api-tokens?${params}`;
+}
+
 export default function CloudflareBootstrap({
   domain,
   tunnelPrefix,
@@ -97,19 +111,38 @@ export default function CloudflareBootstrap({
         description="API Tokens Edit can create other tokens. Use a short expiration (15-60 minutes). CoCalc does not persist this bootstrap token; the browser clears it on submit or when you leave this setup. Only a narrower durable automation token is saved server-side, without API-token-management permission."
       />
       <Typography.Paragraph>
-        In{" "}
         <Typography.Link
-          href="https://dash.cloudflare.com/profile/api-tokens"
+          href={bootstrapTokenUrl(domain)}
           target="_blank"
           rel="noreferrer"
         >
-          Cloudflare API Tokens
+          Create temporary bootstrap token in Cloudflare
         </Typography.Link>
-        , select Create Token, then the{" "}
-        <strong>Create additional tokens</strong> template. Keep only{" "}
-        <strong>API Tokens Edit</strong> and set a short TTL. Paste the
-        temporary token here. Site-admin fresh authentication may be required.
+        . The link requests a prefilled name and permission. Before creating it,
+        confirm the only permission is <strong>User / API Tokens / Edit</strong>{" "}
+        and manually set an expiration 15-60 minutes from now. No DNS, Workers,
+        or R2 permissions need to be selected here; CoCalc configures those on
+        the narrower durable token. Paste the temporary token below. Site-admin
+        fresh authentication may be required.
       </Typography.Paragraph>
+      <details>
+        <summary>If Cloudflare does not prefill the token permission</summary>
+        <Typography.Paragraph>
+          Open{" "}
+          <Typography.Link
+            href="https://dash.cloudflare.com/profile/api-tokens"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Cloudflare API Tokens
+          </Typography.Link>
+          , select Create Token, then the{" "}
+          <strong>Create additional tokens</strong> template. This special user
+          permission may only be available through that template. Keep only{" "}
+          <strong>API Tokens Edit</strong> and set the short expiration before
+          creating the token. Do not use Account API Tokens Edit instead.
+        </Typography.Paragraph>
+      </details>
       <details>
         <summary>What CoCalc will do with this token</summary>
         <ul>

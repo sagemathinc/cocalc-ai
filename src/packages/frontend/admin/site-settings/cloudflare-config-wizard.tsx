@@ -18,7 +18,6 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import CloudflareBootstrap from "./cloudflare-bootstrap";
 import { handleErrorMessage } from "@cocalc/conat/util";
@@ -30,8 +29,6 @@ import type {
   R2CredentialsTestResult,
   VisitorLocationHeaderTestResult,
 } from "@cocalc/conat/hub/api/system";
-import cloudflareApiTokenImg from "./assets/cloudflare-api-token.png";
-import cloudflareManagedTransformImg from "./assets/cloudflare-managed-transform-location-headers.png";
 import SecretSettingInput from "./secret-setting-input";
 
 const DEFAULT_CLOUDFLARE_PREFIX = "cocalc";
@@ -164,30 +161,6 @@ function WizardStep({
       <Title level={5}>{title}</Title>
       {children}
     </Space>
-  );
-}
-
-function Screenshot({
-  src,
-  alt,
-  maxWidth,
-}: {
-  src: string;
-  alt: string;
-  maxWidth: number;
-}) {
-  return (
-    <div
-      style={{
-        background: UI_COLORS.surface,
-        color: UI_COLORS.text,
-        display: "flex",
-        justifyContent: "center",
-        padding: 12,
-      }}
-    >
-      <img src={src} alt={alt} style={{ width: "100%", maxWidth }} />
-    </div>
   );
 }
 
@@ -722,27 +695,27 @@ export default function CloudflareConfigWizard({
                         </Link>
                         .
                         <br />
-                        Create an API Token with configuration matching the
-                        screenshot below.
-                        <br />
-                        Use your Cloudflare zone instead of cocalc.ai.
-                        <br />
-                        The zone permissions must include Zone Read, DNS Edit,
-                        Config Rules Edit, and Managed Headers Edit. The account
-                        permissions must include Cloudflare Tunnel Edit. Config
-                        Rules Edit is required for encrypted direct project-host
-                        routing. Blob provisioning also requires Workers Scripts
-                        Write, Workers Routes Write, and R2 bucket
-                        administration for the selected account and zone. Do not
-                        grant durable tokens API-token-management permission.
-                        <br />
-                        Paste the token into the input box here.
+                        Create a custom durable token with the permissions
+                        below, or switch to Recommended bootstrap to let CoCalc
+                        configure them automatically.
                       </Paragraph>
-                      <Screenshot
-                        src={cloudflareApiTokenImg}
-                        alt="Cloudflare API token configuration"
-                        maxWidth={760}
-                      />
+                      <ul>
+                        <li>
+                          Scope account permissions to your selected account:
+                          Cloudflare Tunnel Edit, Workers Scripts Edit, and
+                          Workers R2 Storage Edit.
+                        </li>
+                        <li>
+                          Scope zone permissions to your site's zone: Zone Read,
+                          DNS Edit, Workers Routes Edit, Config Rules Edit, and
+                          Managed Headers Edit.
+                        </li>
+                        <li>
+                          Do not grant API-token-management permission to this
+                          durable token. Paste it below; this token will be
+                          saved, unlike the temporary bootstrap token.
+                        </li>
+                      </ul>
                       <FormItem label="Cloudflare API Token" htmlFor="cf-token">
                         <SecretSettingInput
                           id="cf-token"
@@ -777,11 +750,6 @@ export default function CloudflareConfigWizard({
                         Enable: <Text strong>Add visitor location headers</Text>
                         .
                       </Paragraph>
-                      <Screenshot
-                        src={cloudflareManagedTransformImg}
-                        alt='Cloudflare managed transform "Add visitor location headers"'
-                        maxWidth={900}
-                      />
                     </WizardStep>
                   </>
                 )}

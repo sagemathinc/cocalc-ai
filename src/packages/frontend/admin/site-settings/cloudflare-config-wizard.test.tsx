@@ -9,15 +9,6 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: { getActions: () => ({ erase_active_key_handler: jest.fn() }) },
 }));
 
-jest.mock(
-  "./assets/cloudflare-api-token.png",
-  () => "cloudflare-api-token.png",
-);
-jest.mock(
-  "./assets/cloudflare-managed-transform-location-headers.png",
-  () => "cloudflare-managed-transform-location-headers.png",
-);
-
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
 }));
@@ -116,6 +107,72 @@ describe("CloudflareConfigWizard", () => {
       r2_api_token: "must-not-apply",
     },
   };
+
+  it("links to a single-permission user bootstrap template without leaking the token", () => {
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Temporary bootstrap token" }),
+      { target: { value: "secret-never-in-a-link" } },
+    );
+    const link = screen.getByRole("link", {
+      name: "Create temporary bootstrap token in Cloudflare",
+    });
+    const url = new URL(link.getAttribute("href")!);
+    expect(url.origin).toBe("https://dash.cloudflare.com");
+    expect(url.pathname).toBe("/profile/api-tokens");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      permissionGroupKeys: JSON.stringify([
+        { key: "api_tokens", type: "edit" },
+      ]),
+      accountId: "*",
+      zoneId: "all",
+      name: "CoCalc temporary bootstrap - cocalc.example.edu",
+    });
+    expect(link).toHaveAttribute("rel", "noreferrer");
+    expect(document.body).toHaveTextContent("manually set an expiration");
+    fireEvent.change(screen.getByRole("textbox", { name: "Domain name" }), {
+      target: { value: "example.edu&permissionGroupKeys=unexpected" },
+    });
+    const updated = new URL(link.getAttribute("href")!);
+    expect(updated.searchParams.getAll("permissionGroupKeys")).toEqual([
+      url.searchParams.get("permissionGroupKeys"),
+    ]);
+    expect(updated.searchParams.get("name")).toBe(
+      "CoCalc temporary bootstrap - example.edu&permissionGroupKeys=unexpected",
+    );
+  });
+
+  it("provides a text-only advanced fallback without screenshot instructions", () => {
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    expect(document.body).not.toHaveTextContent(/screenshot/i);
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Advanced manual setup" }),
+    );
+    expect(document.body).not.toHaveTextContent(/screenshot/i);
+    expect(document.querySelector("img")).toBeNull();
+    expect(document.body).toHaveTextContent(
+      "Scope account permissions to your selected account",
+    );
+    expect(document.body).toHaveTextContent(
+      "Scope zone permissions to your site's zone",
+    );
+  });
 
   it("uses a five-minute timeout and resumes bootstrap only after fresh authentication", async () => {
     const user = userEvent.setup();
