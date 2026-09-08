@@ -359,12 +359,14 @@ function routineSnapRevisionChanges(delta: HostIntrusionSnapshotDelta): {
     for (const value of delta.added[category] ?? []) {
       const signal = snapRevisionSignal(category, value);
       if (!signal) continue;
-      const match = removedByKey
-        .get(signal.key)
-        ?.find(([revision]) => revision !== signal.revision);
-      if (!match) continue;
+      const candidates = removedByKey.get(signal.key);
+      const matchIndex =
+        candidates?.findIndex(([revision]) => revision !== signal.revision) ??
+        -1;
+      if (!candidates || matchIndex < 0) continue;
+      const [[, removed]] = candidates.splice(matchIndex, 1);
       routine.added.add(value);
-      routine.removed.add(match[1]);
+      routine.removed.add(removed);
     }
   }
   return routine;

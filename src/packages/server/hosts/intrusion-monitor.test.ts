@@ -641,6 +641,28 @@ describe("project-host intrusion monitor normalization", () => {
       "new-hash",
     );
 
+    const unexpectedExtra = structuredClone(after);
+    unexpectedExtra.persistence.files.push({
+      ...unexpectedExtra.persistence.files[1],
+      path: "/etc/systemd/system/snap-snapd-27739.mount",
+      sha256: "extra-hash",
+    });
+    unexpectedExtra.services.enabled.push(
+      "snap-snapd-27739.mount enabled enabled",
+    );
+    const extraDelta = diffHostIntrusionSnapshots(
+      normalizeHostIntrusionSnapshot(before),
+      normalizeHostIntrusionSnapshot(unexpectedExtra),
+    );
+    expect(selectActionableHostIntrusionChanges(extraDelta)).toMatchObject({
+      added: {
+        "persistence.files": expect.arrayContaining([
+          expect.stringContaining("snap-snapd-27739.mount"),
+        ]),
+        "services.enabled": ["snap-snapd-27739.mount enabled enabled"],
+      },
+    });
+
     const tampered = structuredClone(before);
     tampered.persistence.files[1].sha256 = "tampered-hash";
     const tamperedDelta = diffHostIntrusionSnapshots(
