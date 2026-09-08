@@ -74,7 +74,7 @@ export function parseReviewPatchFiles(
       throw Error("A review file did not parse as exactly one diff.");
     if (parsed[0].name !== files[index].path)
       throw Error(
-        "Git filename interpretations differ; retain the original review renderer.",
+        "Git filename interpretations differ. This diff cannot be displayed reliably; inspect the recorded patch instead.",
       );
     return parsed[0];
   });
