@@ -140,6 +140,7 @@ const DOCS_ENTRY_IDS = [
   "ai.codex-goals",
   "ai.codex-automation",
   "ai.codex-notifications",
+  "ai.editor-agent",
   "docs.browser",
   "docs.executable-actions",
   "docs.browser-automation",
