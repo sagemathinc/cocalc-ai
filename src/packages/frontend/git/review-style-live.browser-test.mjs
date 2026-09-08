@@ -49,6 +49,9 @@ try {
       .poll(async () => (await header.boundingBox())?.y ?? 10000)
       .toBeLessThan(160);
     await page.screenshot({ path: `/tmp/git-reading-${mode}.png` });
+    const subject = page.locator(".git-review-title-subject");
+    await expect(subject).toBeInViewport();
+    await expect(subject).not.toHaveText("");
     // Home restores access to the setup controls, not just the first diff row.
     await header.click();
     await page.keyboard.press("Home");

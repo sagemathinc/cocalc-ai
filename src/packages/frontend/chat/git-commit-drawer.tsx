@@ -152,6 +152,7 @@ import {
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
 } from "./git-commit/drawer-scroll";
+import { GitReviewTitle } from "./git-commit/review-title";
 import {
   formatMergeCommitBodyMarkdown,
   hasExpandedTextSelectionWithin,
@@ -3422,7 +3423,17 @@ export function GitCommitDrawer({
   return (
     <Drawer
       className="git-review-drawer"
-      title="Git review"
+      title={
+        <GitReviewTitle
+          subject={
+            isHeadSelected
+              ? "Uncommitted changes"
+              : currentData?.summary.message ||
+                visibleLogEntries.find((entry) => entry.hash === commit)
+                  ?.subject
+          }
+        />
+      }
       placement="right"
       size={drawerSize}
       resizable={{

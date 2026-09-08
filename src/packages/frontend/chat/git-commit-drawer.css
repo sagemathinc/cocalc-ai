@@ -43,6 +43,24 @@
   font-size: 13px;
 }
 
+.git-review-title {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  min-width: 0;
+}
+
+.git-review-title > span {
+  flex-shrink: 0;
+}
+
+.git-review-title-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .git-review-context-field {
   display: flex;
   align-items: center;
