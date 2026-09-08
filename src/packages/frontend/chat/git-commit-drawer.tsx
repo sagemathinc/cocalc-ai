@@ -3452,6 +3452,7 @@ export function GitCommitDrawer({
       className="git-review-drawer"
       title={
         <GitReviewTitle
+          worktreeNotice={contextNotice}
           subject={
             isHeadSelected
               ? "Uncommitted changes"
@@ -3575,9 +3576,6 @@ export function GitCommitDrawer({
               setAgentWorktreeConsent(checked ? agentRoutingScope : undefined)
             }
           />
-        )}
-        {contextNotice && (
-          <Alert type="info" title={contextNotice.message} showIcon />
         )}
         {gitLogError ? (
           <Alert
