@@ -30,7 +30,23 @@ These counts describe distinct selected suites, not the entire monorepo.
 
 ## Release gates still being checked
 
-- Current-head hosted CI run `34188828947` is in progress. Do not substitute the
+September 8 packaging follow-up at `fcbb10d077`: fresh `pnpm analyze` passed
+with asset/entrypoint size warnings. The entry-module guards passed across 930
+named chunks (two grandfathered matches); Pierre and Trees remain excluded
+from guarded startup modules. Dependency consistency passed. Native Ctrl+C
+partial-source selection passed again in four real virtual-scroll windows.
+
+The broader startup-route budget command fails and must not be reported green.
+Running the same checker against the preserved `a447e89fab` baseline also fails
+app, projects and full-project budgets. Current gzip totals exceed that older
+baseline by approximately 1.6 KiB (app), 6.5 KiB (projects), 5.6 KiB (reduced
+project), and 17.0 KiB (full project). The reduced-project route crosses its
+budget by 3.2 KiB only in the current build. The checker itself is unchanged
+from origin/main. This establishes substantial preexisting overages but does
+not attribute every delta to Git review or justify increasing any budget.
+Investigate the reduced-route increment before closing this check.
+
+- Current-head hosted CI run `34189093152` is in progress. Do not substitute the
   preceding head's successful frontend/build lanes for current-head completion.
 - Finish the requirement-by-requirement source/evidence cross-check, including
   the plan's packaging, transport-limit and recovery details. Recorded live
