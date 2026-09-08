@@ -24,11 +24,9 @@ import {
   type MenuProps,
 } from "antd";
 import dayjs from "dayjs";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
-import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { type ComponentProps, type ReactNode, type RefObject } from "react";
+import { type ReactNode, type RefObject } from "react";
 import { buildGitReviewFileSectionId } from "./ids";
 import { ReviewNoteEditor } from "./review-editors";
 import { RecoveredNotes } from "./recovered-notes";
@@ -47,21 +45,13 @@ import {
   splitCommitMessage,
 } from "./utils";
 import type { GitReviewCommentV2 } from "../git-review-store";
+import { UntrustedStaticMarkdown } from "./untrusted-static-markdown";
 
 const CARD_BORDER_COLOR = UI_COLORS.border;
 const CARD_BACKGROUND = UI_COLORS.surface;
 const CARD_SHADOW = `0 1px 2px ${UI_COLORS.shadow}`;
 export const GIT_DIFF_LIST_FOOTER_SPACER_HEIGHT = 72;
 const EMPTY_GIT_REVIEW_COMMENTS: GitReviewCommentV2[] = [];
-
-function UntrustedStaticMarkdown(props: ComponentProps<typeof StaticMarkdown>) {
-  const fileContext = useFileContext();
-  return (
-    <FileContext.Provider value={{ ...fileContext, noSanitize: false }}>
-      <StaticMarkdown {...props} />
-    </FileContext.Provider>
-  );
-}
 
 type GitCommitDrawerTitleProps = {
   nonRepoError: string;
@@ -889,7 +879,7 @@ export function GitReviewPanel({
         />
       ) : reviewNote?.trim() ? (
         <div className="git-review-private-note">
-          <StaticMarkdown
+          <UntrustedStaticMarkdown
             value={reviewNote}
             style={{ fontSize: Math.max(13, fontSize) }}
             editorTheme={editorTheme}
