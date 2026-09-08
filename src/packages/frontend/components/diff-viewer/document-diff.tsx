@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert } from "antd";
+import { Alert, Checkbox } from "antd";
 import { useEffect, useMemo, useRef } from "react";
 import { CodeView } from "@pierre/diffs/react";
 import type { CodeViewItem } from "@pierre/diffs";
@@ -170,26 +170,22 @@ function DocumentDiffContent({
           flexShrink: 0,
         }}
       >
-        <label>
-          <input
-            type="checkbox"
-            checked={split}
-            onChange={(event) =>
-              setDiffViewPreference("split", event.target.checked)
-            }
-          />{" "}
+        <Checkbox
+          checked={split}
+          onChange={(event) =>
+            setDiffViewPreference("split", event.target.checked)
+          }
+        >
           Side by side
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={wrap}
-            onChange={(event) =>
-              setDiffViewPreference("wrap", event.target.checked)
-            }
-          />{" "}
+        </Checkbox>
+        <Checkbox
+          checked={wrap}
+          onChange={(event) =>
+            setDiffViewPreference("wrap", event.target.checked)
+          }
+        >
           Wrap lines
-        </label>
+        </Checkbox>
       </div>
       {identical && !parsed.error && (
         <div role="status">Identical versions</div>

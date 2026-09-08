@@ -3,7 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
-import { Alert, Button } from "antd";
+import { Alert, Button, Checkbox } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CodeView } from "@pierre/diffs/react";
 import type { CodeViewHandle } from "@pierre/diffs/react";
@@ -329,26 +329,22 @@ function ReviewContent(props: ReviewDiffPanelProps) {
           margin: "8px 0",
         }}
       >
-        <label>
-          <input
-            type="checkbox"
-            checked={split}
-            onChange={(event) =>
-              setDiffViewPreference("split", event.target.checked)
-            }
-          />{" "}
+        <Checkbox
+          checked={split}
+          onChange={(event) =>
+            setDiffViewPreference("split", event.target.checked)
+          }
+        >
           Side by side
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={wrap}
-            onChange={(event) =>
-              setDiffViewPreference("wrap", event.target.checked)
-            }
-          />{" "}
+        </Checkbox>
+        <Checkbox
+          checked={wrap}
+          onChange={(event) =>
+            setDiffViewPreference("wrap", event.target.checked)
+          }
+        >
           Wrap long lines
-        </label>
+        </Checkbox>
         <Button
           size="small"
           disabled={
