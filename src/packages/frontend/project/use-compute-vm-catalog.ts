@@ -25,5 +25,10 @@ export function useComputeVmCatalog() {
       setStatus("error");
     }
   }, []);
-  return { catalog, catalogLoading: status === "loading", loadCatalog };
+  return {
+    catalog,
+    catalogLoading: status === "loading",
+    catalogError: status === "error",
+    loadCatalog,
+  };
 }

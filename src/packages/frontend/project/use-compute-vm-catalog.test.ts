@@ -46,11 +46,13 @@ it("supports failure, retry, and retaining a cached catalog after refresh failur
   await act(async () => {
     await result.current.loadCatalog();
   });
+  expect(result.current.catalogError).toBe(false);
   expect(result.current.catalog).toBe(VM_PREVIEW_CATALOG);
   await act(async () => {
     await result.current.loadCatalog();
   });
   expect(result.current.catalogLoading).toBe(false);
+  expect(result.current.catalogError).toBe(true);
   expect(result.current.catalog).toBe(VM_PREVIEW_CATALOG);
 });
 

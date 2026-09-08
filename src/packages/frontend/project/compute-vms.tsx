@@ -2662,7 +2662,8 @@ export function ProjectComputeVms({
   const [rows, setRows] = useState<ComputeVm[]>([]);
   const [allRows, setAllRows] = useState<ComputeVm[]>([]);
   const [volumes, setVolumes] = useState<ComputeVolume[]>([]);
-  const { catalog, catalogLoading, loadCatalog } = useComputeVmCatalog();
+  const { catalog, catalogLoading, catalogError, loadCatalog } =
+    useComputeVmCatalog();
   const [agentGrants, setAgentGrants] = useState<ComputeAgentGrant[]>([]);
   const [projectAccess, setProjectAccess] = useState<ComputeVmProjectAccess[]>(
     [],
@@ -4220,6 +4221,26 @@ export function ProjectComputeVms({
           title="Managed compute action failed"
           description={error}
           onClose={() => setError(undefined)}
+          style={{ marginBottom: 12 }}
+        />
+      )}
+      {catalogError && (
+        <Alert
+          showIcon
+          type="warning"
+          title={
+            catalog
+              ? "Unable to refresh VM catalog"
+              : "Unable to load VM catalog"
+          }
+          description={
+            catalog
+              ? "Previously loaded machine choices and prices are still displayed. Retry to refresh them."
+              : "Machine choices and prices are unavailable. Some VM and volume controls need the catalog before they can be used."
+          }
+          action={
+            <Button onClick={() => void loadCatalog()}>Retry catalog</Button>
+          }
           style={{ marginBottom: 12 }}
         />
       )}
