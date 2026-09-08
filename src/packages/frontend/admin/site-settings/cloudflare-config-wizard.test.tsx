@@ -284,6 +284,13 @@ describe("CloudflareConfigWizard", () => {
       "https://developers.cloudflare.com/r2/get-started/",
     );
     expect(document.body).toHaveTextContent(
+      "left navigation panel (expand it if collapsed)",
+    );
+    expect(document.body).toHaveTextContent(
+      "Storage & databases > R2 Object Storage",
+    );
+    expect(document.body).not.toHaveTextContent("R2 > Overview");
+    expect(document.body).toHaveTextContent(
       "complete the subscription checkout",
     );
     expect(document.body).toHaveTextContent(

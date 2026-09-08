@@ -575,9 +575,10 @@ export default function CloudflareConfigWizard({
                     >
                       Cloudflare dashboard
                     </Typography.Link>{" "}
-                    and select the same account as your site's domain. Open{" "}
+                    and select the same account as your site's domain. In the
+                    left navigation panel (expand it if collapsed), open{" "}
                     <Text strong>
-                      Storage &amp; databases &gt; R2 &gt; Overview
+                      Storage &amp; databases &gt; R2 Object Storage
                     </Text>
                     . If R2 is not enabled, complete the subscription checkout,
                     adding payment details if prompted. For a new account, do
