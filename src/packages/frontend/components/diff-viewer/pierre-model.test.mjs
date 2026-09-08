@@ -8,6 +8,29 @@ import {
   parseReviewPatchFiles,
 } from "./pierre-model.ts";
 
+test("filename mismatch reports unavailable rendering without a removed fallback", () => {
+  assert.throws(
+    () =>
+      parseReviewPatchFiles(
+        [
+          {
+            path: "different.ts",
+            lines: [
+              "diff --git a/x.ts b/x.ts",
+              "--- a/x.ts",
+              "+++ b/x.ts",
+              "@@ -1 +1 @@",
+              "-old",
+              "+new",
+            ],
+          },
+        ],
+        false,
+      ),
+    /Git filename interpretations differ.*inspect the recorded patch/,
+  );
+});
+
 test("recorded activity retains multiple sparse hunks and literal filenames", () => {
   const [file] = parsePreviewSource(
     activityDiffSource(
