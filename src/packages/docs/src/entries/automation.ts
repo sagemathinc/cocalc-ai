@@ -14,6 +14,15 @@ import {
   CLI_SCRIPTING_BODY,
 } from "../content/cli";
 
+import {
+  CLI_TEXT_WORKFLOW_BODY,
+  CLI_NOTEBOOK_WORKFLOW_BODY,
+  CLI_BROWSER_WORKFLOW_BODY,
+  CLI_SCHEDULED_AGENTS_BODY,
+  CLI_WORKSPACES_BODY,
+  CLI_BUILDS_VERSIONS_BODY,
+} from "../content/cli-workflows";
+
 export const AUTOMATION_ENTRIES: DocsEntry[] = [
   {
     audiences: ["agents", "researchers", "teams"],
@@ -96,6 +105,102 @@ export const AUTOMATION_ENTRIES: DocsEntry[] = [
     summary:
       "Parse JSON, check remote exit codes, and recover operations and asynchronous execution jobs.",
     title: "Use the CLI in scripts",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: CLI_TEXT_WORKFLOW_BODY.trim(),
+    category: "CLI",
+    id: "cli.collaborative-text",
+    lastReviewed: "2026-09-08",
+    noActionReason:
+      "CLI workflow recipe; validate the documented command results rather than a single browser destination.",
+    searchKeywords:
+      "api.text collaborative text replace read saveToDisk expectedHash expectedLatestVersionId",
+    slug: "cli/collaborative-text",
+    status: "ready",
+    summary:
+      "Read, check, edit, and save live text with version and hash expectations.",
+    title: "Edit collaborative text with the CLI",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: CLI_NOTEBOOK_WORKFLOW_BODY.trim(),
+    category: "CLI",
+    id: "cli.notebook-workflows",
+    lastReviewed: "2026-09-08",
+    noActionReason:
+      "CLI workflow recipe; validate the documented command results rather than a single browser destination.",
+    searchKeywords:
+      "jupyter notebook cells insert outputs run detach live run_id save interrupt",
+    slug: "cli/notebook-workflows",
+    status: "ready",
+    summary:
+      "Insert and run live notebook cells, inspect outputs, and recover detached runs.",
+    title: "Run and save notebooks with the CLI",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: CLI_BROWSER_WORKFLOW_BODY.trim(),
+    category: "CLI",
+    id: "cli.browser-workflows",
+    lastReviewed: "2026-09-08",
+    noActionReason:
+      "CLI workflow recipe; validate the documented command results rather than a single browser destination.",
+    searchKeywords:
+      "browser target-resolve exec-api posture policy QuickJS batch exec_id logs uncaught",
+    slug: "cli/browser-workflows",
+    status: "ready",
+    summary:
+      "Resolve browser targets, inspect the supported API, verify UI actions, and recover asynchronous work.",
+    title: "Test browser workflows with the CLI",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: CLI_SCHEDULED_AGENTS_BODY.trim(),
+    category: "CLI",
+    id: "cli.scheduled-agents",
+    lastReviewed: "2026-09-08",
+    noActionReason:
+      "CLI workflow recipe; validate the documented command results rather than a single browser destination.",
+    searchKeywords:
+      "automation schedule daily upsert title disabled pause resume run-now acknowledge",
+    slug: "cli/scheduled-agents",
+    status: "ready",
+    summary:
+      "Create a disabled daily task, verify its configuration, and manage runs and updates.",
+    title: "Schedule agent tasks with the CLI",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: CLI_WORKSPACES_BODY.trim(),
+    category: "CLI",
+    id: "cli.workspaces-and-notices",
+    lastReviewed: "2026-09-08",
+    noActionReason:
+      "CLI workflow recipe; validate the documented command results rather than a single browser destination.",
+    searchKeywords:
+      "workspaces create update resolve message notify open-chat notice thread",
+    slug: "cli/workspaces-and-notices",
+    status: "ready",
+    summary:
+      "Create and update workspace records, leave durable notices, and distinguish messages from agent turns.",
+    title: "Manage workspaces and notices with the CLI",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: CLI_BUILDS_VERSIONS_BODY.trim(),
+    category: "CLI",
+    id: "cli.builds-and-versions",
+    lastReviewed: "2026-09-08",
+    noActionReason:
+      "CLI workflow recipe; validate the documented command results rather than a single browser destination.",
+    searchKeywords:
+      "build LaTeX Quarto R Markdown build_id build-timeout skill-context version update",
+    slug: "cli/builds-and-versions",
+    status: "ready",
+    summary:
+      "Run complete document builds and distinguish CLI, server, browser, and agent-skill versions.",
+    title: "Build documents and track CLI versions",
   },
   {
     audiences: ["agents", "researchers", "teams"],

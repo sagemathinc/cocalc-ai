@@ -31,6 +31,12 @@ for (const [query, id] of [
   ["auth bootstrap", "cli.authentication-and-targets"],
   ["exec-api", "cli.command-reference"],
   ["exit_code", "cli.scripting-and-results"],
+  ["api.text", "cli.collaborative-text"],
+  ["notebook detach", "cli.notebook-workflows"],
+  ["browser target-resolve", "cli.browser-workflows"],
+  ["automation upsert", "cli.scheduled-agents"],
+  ["workspace notices", "cli.workspaces-and-notices"],
+  ["build-timeout", "cli.builds-and-versions"],
 ]) {
   const entry = docs.getDocsEntry(id, access);
   assert(entry, id);
@@ -90,8 +96,30 @@ Recheck the implementation when changing these claims:
 | Browser target resolution and script API      | `src/packages/cli/src/bin/commands/browser.ts`                                          |
 | Codex streaming output exceptions             | `src/packages/cli/src/bin/commands/project/codex.ts`                                    |
 
-The remaining agent workflow guides should build on these foundations: live
-collaborative text edits, notebook execution/save/recovery, browser target and
-policy checks, scheduled agent tasks, workspaces, and versioned skill context.
-Each recipe needs its own command-specific result checks and executable
-acceptance evidence.
+## Workflow acceptance matrix
+
+The workflow guides add six public CLI entries. Validate the documented recipes
+against both command parsing and result semantics; verify live behavior only in
+an appropriate test project.
+
+| Guide               | Local source/fixture checks                                                                                                                   | Live acceptance                                                                                                        |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Collaborative text  | One match succeeds; zero/multiple matches and stale version/hash reject; disk-save failure can follow a live edit.                            | Edit a scratch document open in another browser; read back, verify disk state, and exercise a concurrent change.       |
+| Notebooks           | Run rejects cell errors unless allowed; live reports its error count; detach requests acknowledgment without following; client handles close. | Insert one cell, run, inspect output, save, and follow the retained run after a disconnect.                            |
+| Browser workflows   | Target errors and assertion failures remain nested; posture and exact target reach the handler.                                               | Discover the intended session, inspect the declaration, verify a stable UI action and an intentional failed assertion. |
+| Scheduled agents    | Required title, disabled draft, default enabling, daily/all-days normalization, and unacknowledged-run limit.                                 | Inspect the disabled draft, activate deliberately, review one result, pause, and confirm no duplicate scheduling.      |
+| Workspaces          | A message returns its durable ID; opening can fail after the persistence step.                                                                | Create a scratch record, send one notice, open it, verify no agent turn starts, and remove the record.                 |
+| Builds and versions | Completion exit codes and wait timeout without cancellation.                                                                                  | Build a saved supported document and inspect artifacts; distinguish local wait from project deadline.                  |
+
+Keep service boundaries explicit in fixture tests. A stubbed kernel or browser
+proves the CLI handler's contract, not the remote service's behavior. Source
+review is also required for statements such as workspace message non-dispatch,
+managed skill overrides, and automation session isolation.
+
+Workflow source entry points are `cli/src/api/text.ts`,
+`cli/src/bin/commands/project/jupyter.ts`, `cli/src/bin/core/project-jupyter.ts`,
+`cli/src/bin/commands/project/chat.ts`, `lite/hub/acp/automation-schedule.ts`,
+`lite/hub/acp/automation-request-config.ts`, `cli/src/bin/commands/workspaces.ts`,
+`cli/src/bin/core/workspace-chat.ts`, `conat/workspaces.ts`,
+`cli/src/bin/commands/project/document-build.ts`, and
+`project-host/codex/codex-project.ts`, all relative to `src/packages/`.

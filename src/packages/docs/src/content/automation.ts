@@ -22,6 +22,15 @@ project or agent credentials.
 4. [Use the CLI in scripts](/docs/cli/scripting-and-results):
    parse JSON, check remote results, and recover existing operations.
 
+## Practical workflows
+
+- [Edit collaborative text with the CLI](/docs/cli/collaborative-text)
+- [Run and save notebooks with the CLI](/docs/cli/notebook-workflows)
+- [Test browser workflows with the CLI](/docs/cli/browser-workflows)
+- [Schedule agent tasks with the CLI](/docs/cli/scheduled-agents)
+- [Manage workspaces and notices with the CLI](/docs/cli/workspaces-and-notices)
+- [Build documents and track CLI versions](/docs/cli/builds-and-versions)
+
 ## Read documentation from the CLI
 
 These commands read the docs bundled with the installed CLI and need no login:

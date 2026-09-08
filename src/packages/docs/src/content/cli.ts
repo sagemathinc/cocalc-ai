@@ -348,6 +348,15 @@ A browser declaration comes from a running session and can differ. If a command
 or method is missing, compare the installed CLI, server, and browser versions
 before treating the difference as an authentication failure.
 
+## Follow a complete recipe
+
+- [Edit collaborative text with the CLI](/docs/cli/collaborative-text)
+- [Run and save notebooks with the CLI](/docs/cli/notebook-workflows)
+- [Test browser workflows with the CLI](/docs/cli/browser-workflows)
+- [Schedule agent tasks with the CLI](/docs/cli/scheduled-agents)
+- [Manage workspaces and notices with the CLI](/docs/cli/workspaces-and-notices)
+- [Build documents and track CLI versions](/docs/cli/builds-and-versions)
+
 ## Before automating a workflow
 
 Complete the [quickstart](/docs/cli/getting-started), confirm
