@@ -4,6 +4,10 @@
  */
 
 import {
+  recordBackupAttempt,
+  getHostBackupAttempt,
+} from "@cocalc/server/project-backup/attempts";
+import {
   createInterBayAuthTokenHandlers,
   createInterBayAccountProjectFeedHandlers,
   createInterBayAccountNotificationFeedHandlers,
@@ -435,6 +439,8 @@ import {
   markProjectChanged as markProjectChangedLocal,
   recordProjectBackupIndexLocal,
   recordProjectBackupLocal,
+  recordProjectBackupOutcomeLocal,
+  getProjectBackupOutcomeLocal,
   resolveHostConnectionLocal,
   removeHostAccess,
   setHostOwnerSpendLimits,
@@ -1192,6 +1198,11 @@ async function startAccountLocalService(): Promise<void> {
       await resolveMembershipForAccount(account_id),
     getArchiveLifecycleStatuses: async ({ account_ids }) =>
       await getArchiveLifecycleAccountStatusesLocal({ account_ids }),
+    backupWarningAcknowledgements: async (opts) => {
+      const { backupAcknowledgementsLocal } =
+        await import("@cocalc/server/project-backup/acknowledgements");
+      return await backupAcknowledgementsLocal(opts);
+    },
     getMembershipDetails: async ({ account_id, refresh_usage_status }) =>
       await resolveMembershipDetailsForAccount(account_id, {
         refresh_usage_status,
@@ -2811,6 +2822,12 @@ async function startHostConnectionService(): Promise<void> {
         time,
         generation,
       }),
+    recordProjectBackupOutcome: async (opts) =>
+      await recordProjectBackupOutcomeLocal(opts),
+    recordProjectBackupAttempt: recordBackupAttempt,
+    getProjectBackupAttempt: getHostBackupAttempt,
+    getProjectBackupOutcome: async (opts) =>
+      await getProjectBackupOutcomeLocal(opts),
     markProjectChanged: async ({
       host_id,
       project_id,

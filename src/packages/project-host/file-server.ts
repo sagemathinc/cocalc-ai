@@ -3,8 +3,11 @@
 // without having to run that project.
 
 import { createHash, randomUUID } from "node:crypto";
+import { withBackupAttempt } from "./backup-attempt";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { ProjectBackupCoverage } from "./backup-coverage";
+import type { BackupCoverageRequest } from "./backup-coverage";
 import {
   chmod,
   lstat,
@@ -68,6 +71,7 @@ import {
 } from "@cocalc/file-server/btrfs/backup-index";
 import {
   beginRestoreStaging as beginRestoreStagingBtrfs,
+  validateRestoreStagingHandle,
   ensureRestoreStaging as ensureRestoreStagingBtrfs,
   finalizeRestoreStaging as finalizeRestoreStagingBtrfs,
   releaseRestoreStaging as releaseRestoreStagingBtrfs,
@@ -77,7 +81,6 @@ import {
   getSubvolumeIdentity,
   isBtrfsSubvolume,
 } from "@cocalc/file-server/btrfs/subvolume";
-import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { type SnapshotCounts } from "@cocalc/util/db-schema/projects";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
@@ -225,17 +228,28 @@ import {
 import {
   ProjectRusticUnsupportedError,
   projectRusticBackup,
+  projectRusticBackupWait,
   projectRusticRestore,
+  runManagedRustic,
 } from "./project-rustic";
+import { RusticJobCleanupError } from "@cocalc/file-server/btrfs/rustic-job-errors";
 import { isMissingRusticRepositoryError } from "./backup-index-errors";
 import {
   checkManagedBackupAllowedBestEffort,
   recordManagedBackupEgressBestEffort,
 } from "./backup-egress";
+import { parseCreatedBackupSnapshot } from "./backup-created";
+import type { BackupSnapshotRef } from "./backup-created";
 import {
-  newestBackupTimeForIds,
-  parseCreatedBackupSnapshot,
-} from "./backup-created";
+  managedRusticEvidenceEnabled,
+  managedRusticSupervisionEnabled,
+} from "@cocalc/backend/sandbox/managed-rustic";
+import {
+  acceptBackupProducerEvidence,
+  validateBackupOutcomeReceipt,
+} from "@cocalc/backend/backup-producer-evidence";
+import { backupReportHeaderSha256 } from "@cocalc/backend/backup-exclusion-report";
+import type { RusticBackupRunner } from "@cocalc/file-server/btrfs/subvolume-rustic";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import {
   BtrfsMutationDeferredError,
@@ -951,58 +965,17 @@ async function backupRootfsTreeToRustic({
     repo_toml: upload.repo_toml,
   });
   const progress = createLroRusticReporter(lro, "upload");
-  const progressHandler = progress
-    ? createRusticProgressHandler({ onProgress: progress })
-    : undefined;
-  let stderrBuffer = "";
-  const pushProgressChunk = (chunk?: string) => {
-    if (!progressHandler || !chunk) return;
-    stderrBuffer += chunk.replace(/\r/g, "\n");
-    const parts = stderrBuffer.split("\n");
-    stderrBuffer = parts.pop() ?? "";
-    for (const part of parts) {
-      const line = part.trim();
-      if (line) {
-        progressHandler(line);
-      }
-    }
-  };
-  const flushProgressChunk = () => {
-    if (!progressHandler) return;
-    const line = stderrBuffer.trim();
-    stderrBuffer = "";
-    if (line) {
-      progressHandler(line);
-    }
-  };
   const tagArgs = ["--tag", "rootfs-release"];
   const profileArg = repoProfile.endsWith(".toml")
     ? repoProfile.slice(0, -5)
     : repoProfile;
   const runBackup = async () =>
-    (await executeCode({
-      verbose: false,
-      err_on_exit: true,
-      timeout: 6 * 60 * 60,
-      command: "sudo",
-      args: [
-        "-n",
-        STORAGE_WRAPPER,
-        "rootfs-rustic-backup",
-        sourcePath,
-        profileArg,
-        backupHost,
-        ...tagArgs,
-      ],
-      env: progress ? { RUSTIC_PROGRESS_INTERVAL: "1s" } : undefined,
-      streamCB: (event) => {
-        if (event.type === "stderr" && typeof event.data === "string") {
-          pushProgressChunk(event.data);
-        } else if (event.type === "done") {
-          flushProgressChunk();
-        }
-      },
-    })) as { stdout: string };
+    await runManagedRustic({
+      timeoutMs: 6 * 60 * 60 * 1000,
+      command: "rootfs-rustic-backup",
+      args: [sourcePath, profileArg, backupHost, ...tagArgs],
+      onProgress: progress,
+    });
   const { stdout } = timings
     ? await timings.measure(timingPhase, runBackup)
     : await runBackup();
@@ -1938,6 +1911,103 @@ async function reportBackupSuccess(
     args: [{ project_id, time, generation }],
     timeout: 30000,
   });
+}
+
+function managedProjectBackupRunner(
+  project_id: string,
+  repoProfile: string,
+  parent?: string,
+): RusticBackupRunner {
+  return async ({ src, host, timeout, tags, progress }) =>
+    await withBackupAttempt({
+      enabled: managedRusticEvidenceEnabled(),
+      project_id,
+      record: async (update) => {
+        const client = getMasterConatClient();
+        const host_id = getLocalHostId();
+        if (!client || !host_id)
+          throw new Error(
+            "Owning-bay connection required for backup attempt reporting",
+          );
+        await callHub({
+          client,
+          host_id,
+          name: "hosts.recordProjectBackupAttempt",
+          args: [update],
+          timeout: 30000,
+        });
+      },
+      reportingFailed: (error) =>
+        logger.warn(
+          "backup attempt failure could not be recorded; status remains unconfirmed",
+          { project_id, error },
+        ),
+      run: async (confirm) =>
+        await projectRusticBackup({
+          src,
+          repoProfile,
+          host,
+          timeoutMs: timeout,
+          tags,
+          parent,
+          progress,
+          evidence: {
+            project_id,
+            required: managedRusticEvidenceEnabled(),
+            accept: async (producer) => {
+              const config = await getBackupIndexStoreConfig(project_id);
+              const client = getMasterConatClient();
+              const host_id = getLocalHostId();
+              if (
+                !config ||
+                config.kind !== "r2-object-store" ||
+                !client ||
+                !host_id
+              )
+                throw new Error(
+                  "Durable backup evidence storage and owning-bay connection are required",
+                );
+              await acceptBackupProducerEvidence({
+                evidence: producer,
+                auth: {
+                  endpoint: config.endpoint,
+                  bucket: config.bucket,
+                  accessKey: config.access_key_id,
+                  secretKey: config.secret_access_key,
+                },
+                timeout_ms: Math.min(timeout, 120000),
+                record: async (stored) => {
+                  const receipt = validateBackupOutcomeReceipt(
+                    {
+                      producer,
+                      bucket: config.bucket,
+                      object_key: stored.object_key,
+                      excluded_apparent_bytes:
+                        stored.inventory.excluded_apparent_bytes,
+                      sample: stored.inventory.sample,
+                    },
+                    project_id,
+                  );
+                  const result = await callHub({
+                    client,
+                    host_id,
+                    name: "hosts.recordProjectBackupOutcome",
+                    args: [{ project_id, receipt }],
+                    timeout: 30000,
+                  });
+                  if (
+                    result?.receipt_sha256 !== backupReportHeaderSha256(receipt)
+                  )
+                    throw new Error(
+                      "Owning bay did not confirm the backup evidence receipt",
+                    );
+                  await confirm(receipt.producer.binding.backup_id);
+                },
+              });
+            },
+          },
+        }),
+    });
 }
 
 async function getLatestKnownBackupId(
@@ -3467,6 +3537,7 @@ async function publishRootfsImage({
   let workdirPath: string | undefined;
   let stagedRootfsPath: string | undefined;
   let publishSucceeded = false;
+  let cleanupSafe = true;
   try {
     const currentImagePath = join(rootfsPath, "current-image.txt");
     const sourceImage = `${await readFile(currentImagePath, "utf8")}`.trim();
@@ -3695,14 +3766,31 @@ async function publishRootfsImage({
       upload_result: uploadResult,
       phase_timings_ms: timings.phase_timings_ms,
     };
+  } catch (err) {
+    if (err instanceof RusticJobCleanupError) {
+      cleanupSafe = false;
+      logger.warn(
+        "retaining RootFS publish staging until job termination is verified",
+        {
+          project_id,
+          mergedPath,
+          stagedRootfsPath,
+          source_snapshot: staged.path,
+          err: `${err}`,
+        },
+      );
+    }
+    throw err;
   } finally {
-    if (mergedPath) {
+    if (cleanupSafe && mergedPath) {
       await unmountOverlayForPublish(mergedPath);
     }
-    await removeDirectoryTree(workdirPath).catch(() => {});
-    await removeDirectoryTree(mergedPath).catch(() => {});
-    await deleteSubvolumeTree(stagedRootfsPath).catch(() => {});
-    await deleteSubvolumeTree(staged.path).catch(() => {});
+    if (cleanupSafe) {
+      await removeDirectoryTree(workdirPath).catch(() => {});
+      await removeDirectoryTree(mergedPath).catch(() => {});
+      await deleteSubvolumeTree(stagedRootfsPath).catch(() => {});
+      await deleteSubvolumeTree(staged.path).catch(() => {});
+    }
     if (createdSnapshot && publishSucceeded) {
       await deleteSnapshot({
         project_id,
@@ -3967,6 +4055,11 @@ async function backupProjectToExternalRepository({
           migration_id,
         });
         const snapshotPath = join(stagingRoot, "home");
+        await projectRusticBackupWait({
+          src: snapshotPath,
+          repoProfile: profilePath,
+          host: projectRusticSnapshotHost(destination_project_id),
+        });
         await withBtrfsMutationLock({
           mount: vol.filesystem.opts.mount,
           operation: "project-site-migration-snapshot-create",
@@ -3983,6 +4076,7 @@ async function backupProjectToExternalRepository({
             });
           },
         });
+        let cleanupSafe = true;
         try {
           await sudo({
             command: "rm",
@@ -3990,6 +4084,9 @@ async function backupProjectToExternalRepository({
               "-rf",
               join(snapshotPath, PROJECT_SITE_MIGRATION_ROOTFS_STATE_PATH),
             ],
+          });
+          await btrfs({
+            args: ["property", "set", "-ts", snapshotPath, "ro", "true"],
           });
           const backup = await projectRusticBackup({
             src: snapshotPath,
@@ -4004,18 +4101,30 @@ async function backupProjectToExternalRepository({
             id: backup.id,
             summary: backup.summary,
           };
+        } catch (error) {
+          if (error instanceof RusticJobCleanupError) cleanupSafe = false;
+          throw error;
         } finally {
-          try {
-            await withBtrfsMutationLock({
-              mount: vol.filesystem.opts.mount,
-              operation: "project-site-migration-snapshot-delete",
-              run: async () => {
-                await deleteProjectSiteMigrationSnapshot(snapshotPath);
+          if (cleanupSafe) {
+            try {
+              await withBtrfsMutationLock({
+                mount: vol.filesystem.opts.mount,
+                operation: "project-site-migration-snapshot-delete",
+                run: async () => {
+                  await deleteProjectSiteMigrationSnapshot(snapshotPath);
+                },
+              });
+            } finally {
+              await rm(stagingRoot, { recursive: true, force: true }).catch(
+                () => {},
+              );
+            }
+          } else {
+            logger.warn(
+              "site migration: retaining staging until Rustic exits",
+              {
+                snapshotPath,
               },
-            });
-          } finally {
-            await rm(stagingRoot, { recursive: true, force: true }).catch(
-              () => {},
             );
           }
         }
@@ -4121,16 +4230,11 @@ async function createBackup({
                 tags,
                 parent,
                 progress,
-                runner: async ({ src, host, timeout, tags, progress }) =>
-                  await projectRusticBackup({
-                    src,
-                    repoProfile: vol.fs.rusticRepo,
-                    host,
-                    timeoutMs: timeout,
-                    tags,
-                    parent,
-                    progress,
-                  }),
+                runner: managedProjectBackupRunner(
+                  project_id,
+                  vol.fs.rusticRepo,
+                  parent,
+                ),
               });
             } catch (err) {
               if (!(err instanceof ProjectRusticUnsupportedError)) {
@@ -4185,6 +4289,7 @@ async function createBackup({
               time: backupResult.time,
               id: backupResult.id,
               summary: backupResult.summary,
+              source: backupResult.source,
               generation,
             };
           } catch (err) {
@@ -4233,7 +4338,13 @@ async function createBackup({
   }
   const generation = result.generation;
   try {
-    await reportBackupSuccess(project_id, result.time, generation);
+    if (result.source) {
+      await reportBackupSuccess(
+        project_id,
+        result.source.captured_at,
+        result.source.generation,
+      );
+    }
   } catch (err) {
     logger.warn("backup success report failed", { project_id, err });
   }
@@ -4389,7 +4500,11 @@ async function beginRestoreStaging({
   home?: string;
   restore?: RestoreMode;
 }): Promise<RestoreStagingHandle | null> {
-  const resolvedHome = home ?? projectMountpoint(project_id);
+  if (!isValidUUID(project_id))
+    throw new Error("Invalid restore staging project");
+  const resolvedHome = projectMountpoint(project_id);
+  if (home != null && home !== resolvedHome)
+    throw new Error("Restore home does not match its project");
   return await beginRestoreStagingBtrfs({
     project_id,
     home: resolvedHome,
@@ -4402,6 +4517,7 @@ async function ensureRestoreStaging({
 }: {
   handle: RestoreStagingHandle;
 }): Promise<void> {
+  validateRestoreStagingHandle(handle, projectMountpoint(handle.project_id));
   await ensureRestoreStagingBtrfs(handle);
 }
 
@@ -4410,6 +4526,7 @@ async function finalizeRestoreStaging({
 }: {
   handle: RestoreStagingHandle;
 }): Promise<void> {
+  validateRestoreStagingHandle(handle, projectMountpoint(handle.project_id));
   await finalizeRestoreStagingBtrfs(handle);
   invalidateProjectFsServer(handle.project_id);
   void touchProjectLastEdited(handle.project_id, "restore-staging");
@@ -4422,7 +4539,20 @@ async function releaseRestoreStaging({
   handle: RestoreStagingHandle;
   cleanupStaging?: boolean;
 }): Promise<void> {
+  validateRestoreStagingHandle(handle, projectMountpoint(handle.project_id));
   await releaseRestoreStagingBtrfs(handle, { cleanupStaging });
+}
+
+async function cleanupProjectRestoreStaging(opts: {
+  project_id: string;
+  root?: string;
+}): Promise<void> {
+  if (!opts || !isValidUUID(opts.project_id))
+    throw new Error("Invalid restore staging project");
+  const root = path.dirname(projectMountpoint(opts.project_id));
+  if (opts.root != null && opts.root !== root)
+    throw new Error("Restore staging root does not match its project");
+  await cleanupRestoreStagingBtrfs({ root, project_id: opts.project_id });
 }
 
 async function cleanupRestoreStaging(opts?: { root?: string }): Promise<void> {
@@ -4534,13 +4664,21 @@ async function updateBackupsUnlocked({
       ? LEGACY_MIGRATION_INITIAL_BACKUP_OVERRIDE
       : undefined;
   const createdBackupIds = new Set<string>();
-  let newestCreatedBackupTime: Date | undefined;
-  const vol = await withBackupConfigRefreshOnMissingBucket({
+  let newestSource: BackupSnapshotRef["source"];
+  managedRusticEvidenceEnabled();
+  await withBackupConfigRefreshOnMissingBucket({
     project_id,
     op: "updateBackups",
     run: async () => {
       const refreshed = await getVolumeForBackup(project_id);
       await refreshed.rustic.update(counts, {
+        runner: managedRusticSupervisionEnabled()
+          ? managedProjectBackupRunner(
+              project_id,
+              refreshed.fs.rusticRepo,
+              await getLatestKnownBackupId(project_id),
+            )
+          : undefined,
         limit,
         tags:
           legacyInitialBackupOverride == null
@@ -4562,10 +4700,11 @@ async function updateBackupsUnlocked({
           if (!backup?.id) return;
           createdBackupIds.add(backup.id);
           if (
-            backup.time &&
-            (!newestCreatedBackupTime || backup.time > newestCreatedBackupTime)
+            backup.source &&
+            (!newestSource ||
+              backup.source.captured_at > newestSource.captured_at)
           ) {
-            newestCreatedBackupTime = backup.time;
+            newestSource = backup.source;
           }
           if (backup.summary) {
             await recordManagedBackupEgressBestEffort({
@@ -4585,26 +4724,16 @@ async function updateBackupsUnlocked({
       return refreshed;
     },
   });
-  let reportTime = newestCreatedBackupTime;
-  try {
-    const backups = await vol.rustic.snapshots();
-    reportTime = newestBackupTimeForIds({
-      backups,
-      backupIds: createdBackupIds,
-      fallback: reportTime,
-    });
-  } catch (err) {
-    logger.warn("backup snapshot refresh failed", { project_id, err });
-  }
   if (createdBackupIds.size > 0 && legacyInitialBackupOverride != null) {
     legacyProjectInitialBackupEgressExempt.delete(project_id);
   }
-  if (createdBackupIds.size > 0 && reportTime) {
+  if (createdBackupIds.size > 0 && newestSource) {
     try {
-      const generation = await getGeneration(
-        projectMountpoint(project_id),
-      ).catch(() => null);
-      await reportBackupSuccess(project_id, reportTime, generation);
+      await reportBackupSuccess(
+        project_id,
+        newestSource.captured_at,
+        newestSource.generation,
+      );
     } catch (err) {
       logger.warn("scheduled backup success report failed", {
         project_id,
@@ -4712,6 +4841,65 @@ export async function runScheduledBackupMaintenance({
         expectedLifecycleGeneration,
       }),
   });
+}
+
+let backupCoverage: ProjectBackupCoverage | undefined;
+
+function getBackupCoverageBrowser() {
+  if (!backupCoverage) {
+    backupCoverage = new ProjectBackupCoverage(
+      async ({ project_id, backup_id }) => {
+        const client = getMasterConatClient();
+        const host_id = getLocalHostId();
+        if (!client || !host_id)
+          throw new Error("Backup coverage requires the owning-bay connection");
+        return await callHub({
+          client,
+          host_id,
+          name: "hosts.getProjectBackupOutcome",
+          args: [{ project_id, backup_id, report_access: true }],
+          timeout: 30000,
+        });
+      },
+      () => {
+        // Unknown legacy coverage needs no cache. Actual report reads still
+        // require explicit, capacity-qualified limits; never assume defaults.
+        const settings = process.env.COCALC_BACKUP_REPORT_CACHE_LIMITS;
+        if (!settings)
+          throw new Error(
+            "Backup coverage browsing is not configured on this host",
+          );
+        return JSON.parse(settings);
+      },
+    );
+  }
+  return backupCoverage;
+}
+
+async function getBackupCoverage(opts: BackupCoverageRequest) {
+  return await getBackupCoverageBrowser().page(opts);
+}
+
+async function getBackupAttempt({ project_id }: { project_id: string }) {
+  const client = getMasterConatClient();
+  const host_id = getLocalHostId();
+  if (!client || !host_id)
+    throw new Error("Owning-bay connection required for backup attempt status");
+  return await callHub({
+    client,
+    host_id,
+    name: "hosts.getProjectBackupAttempt",
+    args: [{ project_id }],
+    timeout: 30000,
+  });
+}
+
+async function getBackupCoverageReportChunk(opts: {
+  project_id: string;
+  backup_id: string;
+  offset: number;
+}) {
+  return await getBackupCoverageBrowser().reportChunk(opts);
 }
 
 export async function getBackups({
@@ -5340,10 +5528,15 @@ export async function initFileServer({
     ensureRestoreStaging,
     finalizeRestoreStaging,
     releaseRestoreStaging,
-    cleanupRestoreStaging,
+    cleanupRestoreStaging: cleanupProjectRestoreStaging,
     deleteBackup: reuseInFlight(deleteBackup),
     updateBackups: reuseInFlight(updateBackups),
     getBackups: reuseInFlight(getBackups),
+    // Do not coalesce authorization: the bounded content cache shares only
+    // immutable report work, after each request checks current ownership.
+    getBackupCoverage,
+    getBackupAttempt,
+    getBackupCoverageReportChunk,
     getBackupFiles: reuseInFlight(getBackupFiles),
     findBackupFiles: reuseInFlight(findBackupFiles),
     getBackupFileText: reuseInFlight(getBackupFileText),
@@ -5632,6 +5825,14 @@ export async function writeManagedAuthorizedKeys(
 }
 
 export function closeFileServer() {
+  // Keep a failed-cleanup cache charged rather than replacing it with a new
+  // empty cache. A process restart requires separate crash reconciliation.
+  if (backupCoverage)
+    void backupCoverage
+      .close()
+      .catch((err) =>
+        logger.error("backup coverage cache cleanup failed", err),
+      );
   if (servers == null) {
     return;
   }

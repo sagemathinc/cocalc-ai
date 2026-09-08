@@ -1,0 +1,33 @@
+name: Backup Supervision
+
+on:
+  push:
+    branches: [cocalc/native-backup-supervision]
+  pull_request:
+    paths:
+      - src/packages/server/cloud/bootstrap/**
+      - .github/workflows/backup-supervision.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  supervision:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Unit and OS-lock regressions
+        working-directory: src/packages/server/cloud/bootstrap
+        run: |
+          python3 bootstrap.test.py
+          python3 rustic_job.test.py
+          python3 rustic_evidence.test.py
+      - name: Qualify full process-tree supervision on a disposable runner
+        working-directory: src/packages/server/cloud/bootstrap
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y btrfs-progs
+          sudo touch /run/cocalc-disposable-rustic-job-test
+          sudo env GITHUB_ACTIONS=true COCALC_DISPOSABLE_JOB_TEST=1 python3 rustic_job_systemd.py

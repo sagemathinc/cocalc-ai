@@ -4,6 +4,7 @@
  */
 
 import type { ProjectOnboardingIntent } from "@cocalc/util/accounts/onboarding-intent";
+import type { BackupAcknowledgementRequest } from "@cocalc/util/backup-acknowledgements";
 
 import { MAX_INTEREST_TIMEOUT, type Client } from "@cocalc/conat/core/client";
 import {
@@ -949,6 +950,7 @@ export interface AccountRehomeStateCopyRequest {
   account_project_index?: Record<string, unknown>[];
   account_collaborator_index?: Record<string, unknown>[];
   account_notification_index?: Record<string, unknown>[];
+  account_backup_warning_acknowledgements?: Record<string, unknown>[];
   remember_me?: Record<string, unknown>[];
   account_auth_sessions?: Record<string, unknown>[];
   account_auth_challenges?: Record<string, unknown>[];
@@ -2598,6 +2600,10 @@ export type HostConnectionMethod =
   | "release-seed-project-app-public-subdomains"
   | "get-seed-project-backup-shards"
   | "record-project-backup"
+  | "record-project-backup-outcome"
+  | "record-project-backup-attempt"
+  | "get-project-backup-attempt"
+  | "get-project-backup-outcome"
   | "mark-project-changed"
   | "record-project-backup-index"
   | "get-project-backup-indexes"
@@ -2748,6 +2754,7 @@ export type AccountLocalMethod =
   | "revoke-membership-grant"
   | "get-membership"
   | "get-archive-lifecycle-statuses"
+  | "backup-warning-acknowledgements"
   | "get-membership-details"
   | "get-account-usage-overview"
   | "record-site-funded-codex-usage"
@@ -3538,6 +3545,14 @@ export interface InterBayHostConnectionApi {
   recordProjectBackup: (
     opts: Parameters<Hosts["recordProjectBackup"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackup"]>>>;
+  recordProjectBackupOutcome: (
+    opts: Parameters<Hosts["recordProjectBackupOutcome"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackupOutcome"]>>>;
+  recordProjectBackupAttempt: Hosts["recordProjectBackupAttempt"];
+  getProjectBackupAttempt: Hosts["getProjectBackupAttempt"];
+  getProjectBackupOutcome: (
+    opts: Parameters<Hosts["getProjectBackupOutcome"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getProjectBackupOutcome"]>>>;
   markProjectChanged: (
     opts: Parameters<Hosts["markProjectChanged"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["markProjectChanged"]>>>;
@@ -3719,6 +3734,19 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "recordProjectBackup",
     method: "record-project-backup",
+  },
+  {
+    name: "recordProjectBackupOutcome",
+    method: "record-project-backup-outcome",
+  },
+  {
+    name: "recordProjectBackupAttempt",
+    method: "record-project-backup-attempt",
+  },
+  { name: "getProjectBackupAttempt", method: "get-project-backup-attempt" },
+  {
+    name: "getProjectBackupOutcome",
+    method: "get-project-backup-outcome",
   },
   {
     name: "markProjectChanged",
@@ -4236,6 +4264,9 @@ export interface InterBayAccountLocalApi {
   getArchiveLifecycleStatuses: (
     opts: AccountLocalGetArchiveLifecycleStatusesRequest,
   ) => Promise<AccountLocalArchiveLifecycleStatus[]>;
+  backupWarningAcknowledgements: (
+    opts: BackupAcknowledgementRequest,
+  ) => Promise<string[]>;
   getMembershipDetails: (
     opts: AccountLocalGetMembershipDetailsRequest,
   ) => Promise<MembershipDetails>;
@@ -6937,6 +6968,15 @@ export function createInterBayAccountLocalClient({
       method: "get-archive-lifecycle-statuses",
     }),
   });
+  const backupWarningAcknowledgementsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "backupWarningAcknowledgements">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "backup-warning-acknowledgements",
+    }),
+  });
   const getMembershipDetailsClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getMembershipDetails">
   >({
@@ -7920,6 +7960,10 @@ export function createInterBayAccountLocalClient({
       await getMembershipClient.getMembership(opts),
     getArchiveLifecycleStatuses: async (opts) =>
       await getArchiveLifecycleStatusesClient.getArchiveLifecycleStatuses(opts),
+    backupWarningAcknowledgements: async (opts) =>
+      await backupWarningAcknowledgementsClient.backupWarningAcknowledgements(
+        opts,
+      ),
     getMembershipDetails: async (opts) =>
       await getMembershipDetailsClient.getMembershipDetails(opts),
     getAccountUsageOverview: async (opts) =>
@@ -8750,6 +8794,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getArchiveLifecycleStatuses: async (opts) =>
           await impl.getArchiveLifecycleStatuses(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "backupWarningAcknowledgements">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "backup-warning-acknowledgements",
+      }),
+      impl: {
+        backupWarningAcknowledgements: async (opts) =>
+          await impl.backupWarningAcknowledgements(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "getMembershipDetails">>(

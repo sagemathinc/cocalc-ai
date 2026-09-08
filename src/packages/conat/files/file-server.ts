@@ -29,6 +29,7 @@ path, which can corrupt large chat logs if interrupted mid-write.
 */
 
 import { ConatError, type Client } from "@cocalc/conat/core/client";
+import type { BackupAttemptStatus } from "@cocalc/util/types/backup-attempt";
 import { type SnapshotCounts } from "@cocalc/util/consts/snapshots";
 import type { ProjectBackupIndexStoreConfig } from "@cocalc/conat/hub/api/hosts";
 import type {
@@ -401,7 +402,10 @@ export interface Fileserver {
     handle: RestoreStagingHandle;
     cleanupStaging?: boolean;
   }) => Promise<void>;
-  cleanupRestoreStaging: (opts?: { root?: string }) => Promise<void>;
+  cleanupRestoreStaging: (opts: {
+    project_id: string;
+    root?: string;
+  }) => Promise<void>;
   // delete the given backup
   deleteBackup: (opts: { project_id: string; id: string }) => Promise<void>;
   // Return list of id's and timestamps of all backups of this project.
@@ -418,6 +422,28 @@ export interface Fileserver {
       time: Date;
       summary: { [key: string]: string | number };
     }[]
+  >;
+
+  getBackupAttempt: (opts: {
+    project_id: string;
+  }) => Promise<BackupAttemptStatus | null>;
+  getBackupCoverageReportChunk: (opts: {
+    project_id: string;
+    backup_id: string;
+    offset: number;
+  }) => Promise<
+    import("@cocalc/util/types/backup-coverage").BackupCoverageReportChunk
+  >;
+
+  // Return list of files in the given backup for the given directory path
+  getBackupCoverage: (opts: {
+    project_id: string;
+    backup_id?: string;
+    cursor?: string | null;
+    acknowledgement_keys?: string[];
+    path_acknowledgement_keys?: string[];
+  }) => Promise<
+    import("@cocalc/util/types/backup-coverage").BackupCoveragePage | null
   >;
 
   // Return list of files in the given backup for the given directory path

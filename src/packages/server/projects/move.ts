@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { assertNoKnownBackupExclusions } from "@cocalc/server/project-backup/lifecycle-preflight";
 import { posix as pathPosix } from "node:path";
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
@@ -1596,6 +1597,10 @@ export async function moveProjectToHost(
   await assertPortableProjectRootfs({
     project_id: context.project_id,
     operation: "move",
+  });
+  await assertNoKnownBackupExclusions({
+    project_id: context.project_id,
+    expected_host_id: context.project_host_id ?? null,
   });
   await acquireProjectMoveGuard({
     project_id: context.project_id,

@@ -2926,10 +2926,13 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 bootstrap.RUNTIME_STORAGE_PATH_HELPER,
             )
             self.assertIn(
-                "project-rustic-backup|project-rustic-backup-maintenance)",
+                "project-rustic-backup|project-rustic-backup-maintenance|",
                 script,
             )
-            self.assertIn("project-rustic-restore)", script)
+            self.assertIn("project-rustic-restore|project-rustic-restore-supervised|project-rustic-restore-wait)", script)
+            self.assertIn("project-rustic-backup-maintenance-supervised|project-rustic-backup-wait)", script)
+            self.assertIn("rustic_command=(/usr/local/libexec/cocalc-rustic-job run)", script)
+            self.assertIn("rustic_command=(/usr/local/libexec/cocalc-rustic-job wait)", script)
             self.assertIn(
                 "rustic-project-backup",
                 bootstrap.RUNTIME_STORAGE_PATH_HELPER,
@@ -3255,7 +3258,7 @@ reserve_project_startup_io_capacity
             self.assertIn("attach_maintenance_worker", script)
             self.assertIn("btrfs|btrfs-maintenance)", script)
             self.assertIn(
-                "project-rustic-backup|project-rustic-backup-maintenance)",
+                "project-rustic-backup|project-rustic-backup-maintenance|",
                 script,
             )
             self.assertIn(
@@ -3282,9 +3285,11 @@ reserve_project_startup_io_capacity
                 script.index('counter drop comment "%s-deny"'),
             )
             self.assertIn(
-                '"maintenance_process_count": len(maintenance_processes.split())',
+                '"maintenance_process_count": len(set(maintenance_processes.split()))',
                 script,
             )
+            self.assertIn('"maintenance_cgroup": maintenance_cgroup', script)
+            self.assertIn('"${MAINTENANCE_CGROUP_DEFAULT}"/*/cgroup.procs', script)
             self.assertIn('result["capability"] = "validated"', script)
             self.assertIn(
                 'PROJECT_IO_CAPACITY_DEFAULT="/etc/cocalc/project-io-capacity.json"',
@@ -5612,7 +5617,9 @@ class BootstrapModesTest(unittest.TestCase):
             patch("reconcile_project_io_policy", lambda _cfg: None)
             patch("reconcile_host_service_cgroup", lambda _cfg: None)
             patch("ensure_cocalc_mount", lambda _cfg: None)
+            patch("setup_shared_scratch", lambda _cfg: None)
             patch("ensure_btrfs_data", lambda _cfg: None)
+            patch("reconcile_bees_runtime_policy", lambda _cfg: None)
             patch("ensure_subuids", lambda _cfg: None)
             patch("configure_podman", lambda _cfg: events.append("configure_podman"))
             patch("verify_runtime_user_contract", lambda _cfg: None)

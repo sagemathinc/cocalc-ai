@@ -51,6 +51,7 @@ import exec, {
   validate,
 } from "./exec";
 import { rustic as rusticPath } from "./install";
+import { assertLegacyRusticOperationAllowed } from "./managed-rustic";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { isAbsolute, join, relative } from "path";
 import { rusticRepo } from "@cocalc/backend/data";
@@ -78,6 +79,9 @@ export default async function rustic(
   args: string[],
   options: RusticOptions,
 ): Promise<ExecOutput> {
+  // Check before repository initialization, destination lookup or any process
+  // launch. Preview/path-copy callers must not bypass native recovery safety.
+  assertLegacyRusticOperationAllowed(args[0]);
   const {
     timeout,
     maxSize,
@@ -106,6 +110,7 @@ export default async function rustic(
       safety: [...common, args[0], ...sanitizedArgs],
       maxSize,
       timeout,
+      killProcessGroup: true,
       env,
       onStdoutLine,
       onStderrLine,
@@ -117,20 +122,22 @@ export default async function rustic(
     opts?: { initOnMissingRepo?: boolean },
   ) => {
     const output = await run(sanitizedArgs);
-    if (repo.endsWith(".toml") && output.code == 0) {
+    if (repo.endsWith(".toml") && output.code === 0 && !output.truncated) {
       initializedTomlRepos.add(repo);
     }
     if (
       !repo.endsWith(".toml") ||
       !opts?.initOnMissingRepo ||
-      output.code == 0 ||
+      output.code === 0 ||
+      output.code == null ||
+      output.truncated ||
       !isMissingTomlRepositoryError(output.stderr)
     ) {
       return output;
     }
     await initializeTomlRepo(repo, common);
     const retry = await run(sanitizedArgs);
-    if (retry.code == 0) {
+    if (retry.code === 0 && !retry.truncated) {
       initializedTomlRepos.add(repo);
     }
     return retry;
@@ -354,6 +361,7 @@ async function ensureInitializedWithCommon(repo: string, common: string[]) {
         cmd: rusticPath,
         safety: ["--no-progress", ...common, "init"],
         timeout: 30_000,
+        killProcessGroup: true,
       }),
     );
     logger.debug(
@@ -378,6 +386,7 @@ async function initializeTomlRepo(repo: string, common: string[]) {
         cmd: rusticPath,
         safety: ["--no-progress", ...common, "init"],
         timeout: 30_000,
+        killProcessGroup: true,
       }),
     );
     initializedTomlRepos.add(repo);
@@ -484,11 +493,14 @@ export async function getSnapshot({
   timeout?: number;
 }) {
   const common = getCommonArgs(repo);
-  const { stdout } = await exec({
-    cmd: rusticPath,
-    safety: [...common, "snapshots", "--json", id],
-    timeout,
-  });
+  const { stdout } = parseOutput(
+    await exec({
+      cmd: rusticPath,
+      safety: [...common, "snapshots", "--json", id],
+      timeout,
+      killProcessGroup: true,
+    }),
+  );
   if (!stdout) {
     throw Error(`no snapshot with id ${id}`);
   }

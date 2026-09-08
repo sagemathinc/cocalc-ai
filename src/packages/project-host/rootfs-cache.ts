@@ -16,7 +16,6 @@ import {
 } from "fs/promises";
 import { join } from "node:path";
 
-import { executeCode } from "@cocalc/backend/execute-code";
 import getLogger from "@cocalc/backend/logger";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import type {
@@ -25,10 +24,7 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import type { HostRootfsCacheEntry } from "@cocalc/conat/project-host/api";
 import { hubApi } from "@cocalc/lite/hub/api";
-import {
-  createRusticProgressHandler,
-  type RusticProgressUpdate,
-} from "@cocalc/file-server/btrfs/rustic-progress";
+import { RusticJobCleanupError } from "@cocalc/file-server/btrfs/rustic-job-errors";
 import { isBtrfsSubvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import {
@@ -52,10 +48,13 @@ import {
   type RootfsReleaseArtifactAccess,
   type RootfsUploadedArtifactResult,
 } from "@cocalc/util/rootfs-images";
-import type { ExecuteCodeStreamEvent } from "@cocalc/util/types/execute-code";
 
 import { getProjectsUsingRootfsImage, listProjects } from "./sqlite/projects";
 import { ensureRootfsRusticRepoProfile } from "./rootfs-rustic";
+import {
+  managedRusticSupervisionEnabled,
+  runManagedRustic,
+} from "./project-rustic";
 import {
   estimateManagedRootfsPullReservationBytes,
   withStorageReservation,
@@ -67,7 +66,6 @@ import {
 } from "./rootfs-runtime-contract";
 
 const logger = getLogger("project-host:rootfs-cache");
-const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
 type RootfsUsage = {
   project_ids: string[];
@@ -122,49 +120,6 @@ export async function withManagedRootfsPullInFlight<T>({
   }) as Promise<ManagedRootfsLocalCacheResult>;
   managedRootfsLocalPullInFlight.set(image, task);
   return (await task) as T;
-}
-
-function createRusticStreamHooks({
-  onProgress,
-  mapUpdate,
-}: {
-  onProgress?: (update: RootfsCachePullProgress) => void;
-  mapUpdate: (update: RusticProgressUpdate) => RootfsCachePullProgress;
-}): {
-  env?: Record<string, string>;
-  streamCB?: (event: ExecuteCodeStreamEvent) => void;
-} {
-  if (!onProgress) {
-    return {};
-  }
-  const progressHandler = createRusticProgressHandler({
-    onProgress: (update) => onProgress(mapUpdate(update)),
-  });
-  let stderrBuffer = "";
-  return {
-    env: { RUSTIC_PROGRESS_INTERVAL: "1s" },
-    streamCB: (event) => {
-      if (event.type === "stderr" && typeof event.data === "string") {
-        stderrBuffer += event.data.replace(/\r/g, "\n");
-        const parts = stderrBuffer.split("\n");
-        stderrBuffer = parts.pop() ?? "";
-        for (const part of parts) {
-          const line = part.trim();
-          if (line) {
-            progressHandler(line);
-          }
-        }
-        return;
-      }
-      if (event.type === "done") {
-        const line = stderrBuffer.trim();
-        stderrBuffer = "";
-        if (line) {
-          progressHandler(line);
-        }
-      }
-    },
-  };
 }
 
 function decodeInspectFileImage(name: string): string | undefined {
@@ -463,31 +418,21 @@ async function restoreManagedRootfsRustic({
   const profileArg = repoProfile.endsWith(".toml")
     ? repoProfile.slice(0, -5)
     : repoProfile;
-  await executeCode({
-    verbose: false,
-    err_on_exit: true,
-    timeout: 30 * 60 * 1000,
-    command: "sudo",
-    args: [
-      "-n",
-      STORAGE_WRAPPER,
-      "rootfs-rustic-restore",
-      profileArg,
-      access.snapshot_id,
-      destPath,
-      "--delete",
-    ],
-    ...createRusticStreamHooks({
-      onProgress,
-      mapUpdate: (update) => ({
-        message: update.message,
-        progress:
-          update.progress == null
-            ? undefined
-            : 12 + (update.progress * 70) / 100,
-        detail: update.detail,
-      }),
-    }),
+  await runManagedRustic({
+    timeoutMs: 30 * 60 * 1000,
+    command: "rootfs-rustic-restore",
+    args: [profileArg, access.snapshot_id, destPath, "--delete"],
+    onProgress: onProgress
+      ? (update) =>
+          onProgress({
+            message: update.message,
+            progress:
+              update.progress == null
+                ? undefined
+                : 12 + (update.progress * 70) / 100,
+            detail: update.detail,
+          })
+      : undefined,
   });
 }
 
@@ -509,15 +454,10 @@ async function backupManagedRootfsToRustic({
   const profileArg = repoProfile.endsWith(".toml")
     ? repoProfile.slice(0, -5)
     : repoProfile;
-  const { stdout } = await executeCode({
-    verbose: false,
-    err_on_exit: true,
-    timeout: 6 * 60 * 60,
-    command: "sudo",
+  const { stdout } = await runManagedRustic({
+    timeoutMs: 6 * 60 * 60 * 1000,
+    command: "rootfs-rustic-backup",
     args: [
-      "-n",
-      STORAGE_WRAPPER,
-      "rootfs-rustic-backup",
       sourcePath,
       profileArg,
       image,
@@ -526,17 +466,17 @@ async function backupManagedRootfsToRustic({
       "--tag",
       "rootfs-replica",
     ],
-    ...createRusticStreamHooks({
-      onProgress,
-      mapUpdate: (update) => ({
-        message: update.message,
-        progress:
-          update.progress == null
-            ? undefined
-            : 90 + (update.progress * 8) / 100,
-        detail: update.detail,
-      }),
-    }),
+    onProgress: onProgress
+      ? (update) =>
+          onProgress({
+            message: update.message,
+            progress:
+              update.progress == null
+                ? undefined
+                : 90 + (update.progress * 8) / 100,
+            detail: update.detail,
+          })
+      : undefined,
   });
   const parsed = JSON.parse(`${stdout ?? "{}"}`);
   const snapshot_id = `${parsed?.id ?? ""}`.trim();
@@ -667,6 +607,11 @@ function scheduleManagedRootfsReplication({
 
 async function findManagedRootfsRestoreTemps(): Promise<string[]> {
   if (!(await exists(IMAGE_CACHE))) {
+    return [];
+  }
+  if (managedRusticSupervisionEnabled()) {
+    // A timestamp or a lost in-memory promise is not proof that a root service
+    // exited. Unknown staging needs durable job-to-source reconciliation first.
     return [];
   }
   const candidates: Array<{ tempDir: string; mtimeMs: number }> = [];
@@ -890,6 +835,7 @@ async function downloadManagedRootfsArtifact({
             join(IMAGE_CACHE, ".managed-rootfs-rustic-restore-"),
           );
           const stagedRootfsPath = join(tempDir, "rootfs");
+          let cleanupSafe = true;
           try {
             reportPullProgress(onProgress, {
               message: "preparing RootFS cache",
@@ -1022,13 +968,27 @@ async function downloadManagedRootfsArtifact({
               content_key: access.content_key,
               total_elapsed_ms: Date.now() - started,
             });
+          } catch (err) {
+            if (err instanceof RusticJobCleanupError) {
+              cleanupSafe = false;
+              logger.warn(
+                "retaining RootFS restore staging until job termination is verified",
+                {
+                  temp_dir: tempDir,
+                  err: `${err}`,
+                },
+              );
+            }
+            throw err;
           } finally {
-            await deleteCachedRootfsPath(stagedRootfsPath).catch(() => {});
-            await rm(tempDir, {
-              recursive: true,
-              force: true,
-              maxRetries: 3,
-            }).catch(() => {});
+            if (cleanupSafe) {
+              await deleteCachedRootfsPath(stagedRootfsPath).catch(() => {});
+              await rm(tempDir, {
+                recursive: true,
+                force: true,
+                maxRetries: 3,
+              }).catch(() => {});
+            }
           }
         },
       );

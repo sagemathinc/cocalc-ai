@@ -4,6 +4,7 @@
  */
 
 import { projectSubject } from "@cocalc/conat/names";
+import type { BackupAttemptStatus } from "@cocalc/util/types/backup-attempt";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type {
   BackupFindPreview,
@@ -30,6 +31,20 @@ export interface BackupFileEntry {
 }
 
 interface Api {
+  getBackupAttempt: () => Promise<BackupAttemptStatus | null>;
+  getBackupCoverageReportChunk: (opts: {
+    backup_id: string;
+    offset: number;
+  }) => Promise<
+    import("@cocalc/util/types/backup-coverage").BackupCoverageReportChunk
+  >;
+  getBackupCoverage: (opts: {
+    backup_id?: string;
+    cursor?: string | null;
+    acknowledgement_keys?: string[];
+  }) => Promise<
+    import("@cocalc/util/types/backup-coverage").BackupCoveragePage | null
+  >;
   getBackups: (opts?: { indexed_only?: boolean }) => Promise<BackupSummary[]>;
   getBackupFiles: (opts: {
     id: string;
@@ -53,6 +68,58 @@ interface Api {
     path: string;
     max_bytes?: number;
   }) => Promise<FileTextPreview>;
+}
+
+export async function getBackupAttempt({
+  client,
+  project_id,
+}: {
+  client?: ConatClient;
+  project_id: string;
+}) {
+  return await requireExplicitConatClient(client)
+    .call<Api>(getSubject({ project_id }), {
+      timeout: BACKUP_SEARCH_TIMEOUT_MS,
+    })
+    .getBackupAttempt();
+}
+
+export async function getBackupCoverageReportChunk({
+  client,
+  project_id,
+  backup_id,
+  offset,
+}: {
+  client?: ConatClient;
+  project_id: string;
+  backup_id: string;
+  offset: number;
+}) {
+  return await requireExplicitConatClient(client)
+    .call<Api>(getSubject({ project_id }), {
+      timeout: BACKUP_SEARCH_TIMEOUT_MS,
+    })
+    .getBackupCoverageReportChunk({ backup_id, offset });
+}
+
+export async function getBackupCoverage({
+  client,
+  project_id,
+  backup_id,
+  cursor,
+  acknowledgement_keys,
+}: {
+  client?: ConatClient;
+  project_id: string;
+  backup_id?: string;
+  cursor?: string | null;
+  acknowledgement_keys?: string[];
+}) {
+  return await requireExplicitConatClient(client)
+    .call<Api>(getSubject({ project_id }), {
+      timeout: BACKUP_SEARCH_TIMEOUT_MS,
+    })
+    .getBackupCoverage({ backup_id, cursor, acknowledgement_keys });
 }
 
 function requireExplicitConatClient(client?: ConatClient): ConatClient {

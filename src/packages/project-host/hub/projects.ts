@@ -3873,7 +3873,7 @@ export async function cleanupRestoreStaging({
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
   }
-  await fileServer(project_id).cleanupRestoreStaging({ root });
+  await fileServer(project_id).cleanupRestoreStaging({ project_id, root });
 }
 
 export async function getBackups({

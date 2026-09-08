@@ -20,7 +20,7 @@ jest.mock("./install", () => ({
   rustic: "/mock/rustic",
 }));
 
-import rustic from "./rustic";
+import rustic, { getSnapshot } from "./rustic";
 
 function ok(stdout = "", stderr = ""): ExecOutput {
   return {
@@ -49,6 +49,65 @@ describe("rustic TOML fast path", () => {
     execMock.mockReset();
   });
 
+  test.each(["backup", "restore"])(
+    "managed %s rejects fallback before repo initialization or path lookup",
+    async (command) => {
+      const previous = process.env.COCALC_MANAGED_RUSTIC_SUPERVISION;
+      process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = "1";
+      const safeAbsPath = jest.fn();
+      try {
+        await expect(
+          rustic([command, "source", "destination"], {
+            repo: "/tmp/never-create-managed-fallback-repository",
+            safeAbsPath,
+          }),
+        ).rejects.toThrow("unsupervised fallback is disabled");
+        expect(execMock).not.toHaveBeenCalled();
+        expect(safeAbsPath).not.toHaveBeenCalled();
+      } finally {
+        if (previous == null)
+          delete process.env.COCALC_MANAGED_RUSTIC_SUPERVISION;
+        else process.env.COCALC_MANAGED_RUSTIC_SUPERVISION = previous;
+      }
+    },
+  );
+
+  test.each([
+    { code: 1, truncated: false },
+    { code: 0, truncated: true },
+    { code: null, truncated: false },
+  ])("snapshot metadata rejects incomplete execution: %j", async (state) => {
+    const id = "a".repeat(64);
+    execMock.mockResolvedValueOnce({
+      ...ok(snapshotsJson({ id, hostname: "project-1" })),
+      ...state,
+    });
+    await expect(
+      getSnapshot({ id, repo: "/tmp/incomplete-snapshot.toml" }),
+    ).rejects.toThrow();
+    expect(execMock).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([
+    { code: 1, truncated: true },
+    { code: null, truncated: false },
+  ])(
+    "interrupted backup does not retry repository initialization: %j",
+    async (state) => {
+      execMock.mockResolvedValueOnce({
+        ...fail("No repository config file found"),
+        ...state,
+      });
+      const result = await rustic(["backup", "--json", "a.txt"], {
+        repo: "/tmp/interrupted-init.toml",
+        host: "project-1",
+        safeAbsPath: async (path: string) => `/sandbox/${path}`,
+      });
+      expect(result).toMatchObject(state);
+      expect(execMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
   test("snapshots skip repoinfo preflight for TOML repos", async () => {
     execMock.mockResolvedValueOnce(ok("[]"));
 
@@ -58,6 +117,7 @@ describe("rustic TOML fast path", () => {
     });
 
     expect(execMock).toHaveBeenCalledTimes(1);
+    expect(execMock.mock.calls[0][0].killProcessGroup).toBe(true);
     expect(execMock.mock.calls[0][0].safety).toEqual([
       "-P",
       "/tmp/project-repo",

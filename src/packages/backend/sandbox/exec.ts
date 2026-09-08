@@ -28,6 +28,9 @@ export interface Options {
   maxSize?: number;
   // command is terminated after this many ms
   timeout?: number;
+  // Run in a separate POSIX process group and terminate descendants on timeout.
+  // Privileged children still require root-owned/cgroup supervision by the helper.
+  killProcessGroup?: boolean;
   // each command line option that is explicitly whitelisted
   // should be a key in the following whitelist map.
   // The value can be either:
@@ -66,6 +69,7 @@ export default async function exec({
   safety = [],
   maxSize = DEFAULT_MAX_SIZE,
   timeout = DEFAULT_TIMEOUT,
+  killProcessGroup = false,
   whitelist = {},
   cwd,
   username,
@@ -96,6 +100,7 @@ export default async function exec({
     //console.log(`${cmd} ${args.join(" ")}`, { cwd, env });
     const child = spawn(cmd, args, {
       stdio: ["ignore", "pipe", "pipe"],
+      detached: killProcessGroup && platform() !== "win32",
       // env as any because otherwise pnpm build with nextjs says " Property 'NODE_ENV' is
       // missing in type '{ [name: string]: string; }' but required in type 'ProcessEnv'"
       env: env as any,
@@ -104,25 +109,52 @@ export default async function exec({
     });
 
     let timeoutHandle: NodeJS.Timeout | null = null;
+    let killHandle: NodeJS.Timeout | null = null;
+    let closed = false;
+    let terminating = false;
+
+    const signal = (name: NodeJS.Signals) => {
+      if (closed) return;
+      if (killProcessGroup && platform() !== "win32" && child.pid != null) {
+        try {
+          process.kill(-child.pid, name);
+        } catch (err) {
+          if (err?.code !== "ESRCH") {
+            logger.warn("failed to signal command process group", {
+              pid: child.pid,
+              signal: name,
+              err: `${err}`,
+            });
+          }
+        }
+      } else if (child.exitCode === null && child.signalCode === null) {
+        child.kill(name);
+      }
+    };
+
+    const terminate = () => {
+      truncated = true;
+      if (terminating || closed) return;
+      terminating = true;
+      signal("SIGTERM");
+      // child.killed means a signal was sent, NOT that the process exited.
+      // A process-group leader may also exit while descendants keep pipes open.
+      killHandle = setTimeout(() => signal("SIGKILL"), 1000);
+    };
+
+    const clearTimers = () => {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      if (killHandle) clearTimeout(killHandle);
+    };
 
     if (timeout > 0) {
-      timeoutHandle = setTimeout(() => {
-        truncated = true;
-        child.kill("SIGTERM");
-        // Force kill after grace period
-        setTimeout(() => {
-          if (!child.killed) {
-            child.kill("SIGKILL");
-          }
-        }, 1000);
-      }, timeout);
+      timeoutHandle = setTimeout(terminate, timeout);
     }
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdoutSize += chunk.length;
       if (stdoutSize + stderrSize >= maxSize) {
-        truncated = true;
-        child.kill("SIGTERM");
+        terminate();
         return;
       }
       stdoutChunks.push(chunk);
@@ -138,8 +170,7 @@ export default async function exec({
     child.stderr.on("data", (chunk: Buffer) => {
       stderrSize += chunk.length;
       if (stdoutSize + stderrSize > maxSize) {
-        truncated = true;
-        child.kill("SIGTERM");
+        terminate();
         return;
       }
       stderrChunks.push(chunk);
@@ -153,16 +184,21 @@ export default async function exec({
     });
 
     child.on("error", (err) => {
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle);
+      // A spawn failure has no process to await. A signaling error must not
+      // release a job's lock while the process may still be running.
+      if (child.pid == null) {
+        closed = true;
+        clearTimers();
+        reject(err);
+      } else {
+        logger.warn("command process error", { pid: child.pid, err: `${err}` });
+        terminate();
       }
-      reject(err);
     });
 
     child.once("close", (code) => {
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle);
-      }
+      closed = true;
+      clearTimers();
       if (onStdoutLine && stdoutLineBuffer.trim()) {
         safeLineCallback(onStdoutLine, stdoutLineBuffer.trim());
       }
@@ -173,7 +209,7 @@ export default async function exec({
       resolve({
         stdout: Buffer.concat(stdoutChunks),
         stderr: Buffer.concat(stderrChunks),
-        code,
+        code: terminating ? code || 1 : code,
         truncated,
       });
     });
@@ -364,8 +400,13 @@ async function getUserIds(
 // take the output of exec and convert stdout, stderr to strings.  If code is nonzero,
 // instead throw an error with message stderr.
 export function parseOutput({ stdout, stderr, code, truncated }: ExecOutput) {
-  if (code) {
-    throw new Error(Buffer.from(stderr).toString());
+  if (code !== 0 || truncated) {
+    throw new Error(
+      Buffer.from(stderr).toString() ||
+        (truncated
+          ? "command exceeded its time or output limit"
+          : `command failed with exit code ${code}`),
+    );
   }
   return {
     stdout: Buffer.from(stdout).toString(),

@@ -8,6 +8,11 @@ let readdirMock: jest.Mock;
 jest.mock("node:fs/promises", () => ({
   readdir: (...args: any[]) => readdirMock(...args),
 }));
+let getGenerationMock: jest.Mock;
+
+jest.mock("./subvolume-snapshots", () => ({
+  getGeneration: (...args: any[]) => getGenerationMock(...args),
+}));
 
 jest.mock("./util", () => ({
   btrfs: (...args: any[]) => btrfsMock(...args),
@@ -35,6 +40,7 @@ import {
   withBtrfsMutationContext,
 } from "./operation-cache";
 import { TEMP_RUSTIC_SNAPSHOT_PREFIX } from "./snapshots";
+import { RusticJobCleanupError } from "./rustic-job-errors";
 
 describe("parseRusticSnapshotsOutput", () => {
   it("parses grouped rustic snapshot JSON", () => {
@@ -93,6 +99,7 @@ describe("SubvolumeRustic.backup", () => {
 
   beforeEach(() => {
     clearBtrfsOperationCachesForTest();
+    getGenerationMock = jest.fn(async () => 17);
     btrfsMock = jest.fn(async ({ args }) =>
       args?.[0] === "subvolume" && args?.[1] === "show"
         ? { stdout: "Generation: 42\n" }
@@ -119,6 +126,50 @@ describe("SubvolumeRustic.backup", () => {
       rustic: backupFsRusticMock,
     }));
   });
+
+  it("captures source freshness before snapshot and never samples live edits after backup", async () => {
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo" },
+    } as any);
+    const start = Date.now();
+    const runner = jest.fn(async () => {
+      getGenerationMock.mockResolvedValue(999);
+      return { id: "new", time: new Date(), summary: {} };
+    });
+    const result = await rustic.backup({ runner });
+    expect(result.source?.generation).toBe(17);
+    expect(result.source!.captured_at.getTime()).toBeGreaterThanOrEqual(start);
+    expect(result.source!.captured_at.getTime()).toBeLessThanOrEqual(
+      result.time.getTime(),
+    );
+    expect(getGenerationMock).toHaveBeenCalledTimes(1);
+    expect(getGenerationMock).toHaveBeenCalledWith("/mnt/test/project-1", {
+      cache: false,
+    });
+    expect(getGenerationMock.mock.invocationCallOrder[0]).toBeLessThan(
+      btrfsMock.mock.invocationCallOrder[0],
+    );
+    expect(btrfsMock.mock.invocationCallOrder[0]).toBeLessThan(
+      runner.mock.invocationCallOrder[0],
+    );
+  });
+
+  it.each([null, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "does not invent source generation from %s",
+    async (generation) => {
+      getGenerationMock.mockResolvedValue(generation);
+      const rustic = new SubvolumeRustic({
+        name: "project-1",
+        path: "/mnt/test/project-1",
+        filesystem: { opts: { mount: "/mnt/test" } },
+        fs: { rusticRepo: "/repo" },
+      } as any);
+      expect((await rustic.backup()).source?.generation).toBeNull();
+    },
+  );
 
   it("uses a larger output budget when listing rustic snapshots", async () => {
     rusticHostMock.mockResolvedValue({
@@ -455,6 +506,61 @@ describe("SubvolumeRustic.backup", () => {
     );
     expect(staleDeletes).toHaveLength(32);
   });
+  it.each([false, true])(
+    "only cleans a failed backup snapshot when termination is verified (%s)",
+    async (unsafe) => {
+      const rustic = new SubvolumeRustic({
+        name: "project-1",
+        path: "/mnt/test/project-1",
+        filesystem: { opts: { mount: "/mnt/test" } },
+        fs: { rusticRepo: "/repo", rustic: jest.fn() },
+      } as any);
+      const error = unsafe
+        ? new RusticJobCleanupError("unit is stopping")
+        : new Error("job failed");
+      await expect(
+        rustic.backup({
+          runner: async () => {
+            throw error;
+          },
+        }),
+      ).rejects.toBe(error);
+      const deletes = btrfsMock.mock.calls.filter(
+        ([opts]) => opts.args[1] === "delete",
+      );
+      expect(deletes).toHaveLength(unsafe ? 0 : 1);
+    },
+  );
+
+  it.each([false, true])(
+    "does not turn unhandled producer evidence into freshness (%s)",
+    async (useRunner) => {
+      const rustic = new SubvolumeRustic({
+        name: "project-1",
+        path: "/mnt/test/project-1",
+        filesystem: { opts: { mount: "/mnt/test" } },
+        fs: { rusticRepo: "/repo", rustic: jest.fn() },
+      } as any);
+      const result = {
+        id: "snapshot",
+        time: "2026-09-05T00:00:00.000Z",
+        summary: {},
+        cocalc_backup_evidence: { outcome: "partial_policy_exclusions" },
+      };
+      backupFsRusticMock.mockResolvedValue({
+        stdout: Buffer.from(JSON.stringify(result)),
+        stderr: Buffer.alloc(0),
+        code: 0,
+        truncated: false,
+      });
+      await expect(
+        rustic.backup(useRunner ? { runner: async () => result } : {}),
+      ).rejects.toThrow("durable host consumer");
+      expect(
+        btrfsMock.mock.calls.filter(([opts]) => opts.args[1] === "delete"),
+      ).toHaveLength(1);
+    },
+  );
 
   it("passes an explicit parent snapshot to rustic backup", async () => {
     const rustic = new SubvolumeRustic({
@@ -502,6 +608,25 @@ describe("SubvolumeRustic.backup", () => {
         ],
       }),
     );
+    expect(backupFsRusticMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards the managed runner through the rolling-snapshot create API", async () => {
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: { opts: { mount: "/mnt/test" } },
+      fs: { rusticRepo: "/repo", rustic: jest.fn() },
+    } as any);
+    const runner = jest.fn(async () => ({
+      id: "managed",
+      time: new Date("2026-09-05T00:00:00.000Z"),
+      summary: {},
+    }));
+    await expect(rustic.create("hourly", { runner })).resolves.toMatchObject({
+      id: "managed",
+    });
+    expect(runner).toHaveBeenCalledTimes(1);
     expect(backupFsRusticMock).not.toHaveBeenCalled();
   });
 

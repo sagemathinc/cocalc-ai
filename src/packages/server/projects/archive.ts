@@ -18,6 +18,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { createBackup } from "@cocalc/server/conat/api/project-backups";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import { assertNoKnownBackupExclusions } from "@cocalc/server/project-backup/lifecycle-preflight";
 import {
   attestReleasedLroDedupeSuccesses,
   listLrosByDedupe,
@@ -493,6 +494,11 @@ export async function archiveProjectStorage({
   const currentState = `${row.state?.state ?? ""}`.trim();
   if (currentState === "archived" && row.provisioned === false) return;
 
+  await assertNoKnownBackupExclusions({
+    project_id,
+    expected_host_id: row.host_id ?? null,
+  });
+
   const automatic = mode === "automatic";
   const reason = automatic ? providedReason : (providedReason ?? "manual");
   if (!reason) throw new Error("automatic archive reason is required");
@@ -538,9 +544,15 @@ export async function archiveProjectStorage({
         expectedArchiveGeneration = Number(finalBackup.generation);
         expectedArchiveBackupId = finalBackup.id;
       }
-    } else if (!hostDeprovisioned && row.last_backup == null) {
+    } else if (
+      !hostDeprovisioned &&
+      !isProjectArchiveBackupCurrent({
+        ...row,
+        active_published_path: false,
+      })
+    ) {
       throw new Error(
-        "project must have at least one backup before it can be archived",
+        "project must have a current backup before it can be archived; complete a new backup and try again",
       );
     }
 

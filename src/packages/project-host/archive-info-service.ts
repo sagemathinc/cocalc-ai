@@ -225,6 +225,35 @@ export async function initProjectArchiveInfoService(client: Client) {
     subject: PROJECT_ARCHIVE_INFO_SUBJECT,
   });
   return await client.service(PROJECT_ARCHIVE_INFO_SUBJECT, {
+    getBackupAttempt(this: { subject?: string }) {
+      return fileServerClient(
+        client,
+        BACKUP_SEARCH_TIMEOUT_MS,
+      ).getBackupAttempt({
+        project_id: extractProjectId(this?.subject),
+      });
+    },
+    getBackupCoverageReportChunk(
+      this: { subject?: string },
+      opts: { backup_id: string; offset: number },
+    ) {
+      return fileServerClient(
+        client,
+        BACKUP_SEARCH_TIMEOUT_MS,
+      ).getBackupCoverageReportChunk({
+        project_id: extractProjectId(this?.subject),
+        backup_id: opts?.backup_id,
+        offset: opts?.offset,
+      });
+    },
+    getBackupCoverage(opts?: {
+      backup_id?: string;
+      cursor?: string | null;
+      acknowledgement_keys?: string[];
+      path_acknowledgement_keys?: string[];
+    }) {
+      return handleProjectGetBackupCoverageRequest.call(this, opts, client);
+    },
     getBackups(opts?: { indexed_only?: boolean }) {
       return handleProjectGetBackupsRequest.call(this, opts, client);
     },
@@ -251,5 +280,27 @@ export async function initProjectArchiveInfoService(client: Client) {
     }) {
       return handleProjectGetSnapshotFileTextRequest.call(this, opts, client);
     },
+  });
+}
+
+export async function handleProjectGetBackupCoverageRequest(
+  this: { subject?: string },
+  opts?: {
+    backup_id?: string;
+    cursor?: string | null;
+    acknowledgement_keys?: string[];
+    path_acknowledgement_keys?: string[];
+  },
+  client?: Client,
+) {
+  return await fileServerClient(
+    requireClient(client),
+    BACKUP_SEARCH_TIMEOUT_MS,
+  ).getBackupCoverage({
+    project_id: extractProjectId(this?.subject),
+    backup_id: opts?.backup_id,
+    cursor: opts?.cursor,
+    acknowledgement_keys: opts?.acknowledgement_keys,
+    path_acknowledgement_keys: opts?.path_acknowledgement_keys,
   });
 }

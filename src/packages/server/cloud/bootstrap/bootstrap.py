@@ -4279,6 +4279,784 @@ def ensure_cocalc_mount(cfg: BootstrapConfig) -> None:
         run_best_effort(cfg, ["mount", "/mnt/cocalc"], "mount /mnt/cocalc")
 
 
+# Preserve the existing aggregate maintenance ceilings when moving to systemd.
+# Installing the slice does not start it or enable managed Rustic supervision.
+RUSTIC_MAINTENANCE_SLICE = """[Unit]
+Description=CoCalc aggregate maintenance resource budget
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
+CPUQuota=200%
+CPUWeight=10
+IOWeight=10
+MemoryHigh=4294967296
+MemoryMax=8589934592
+MemorySwapMax=0
+TasksMax=256
+"""
+
+
+RUSTIC_JOB_HELPER = r'''#!/usr/bin/python3 -I
+"""Root-owned Rustic job supervision. No project-owned Python/code is imported.
+
+Installation alone does not enable this helper. Callers must supply a root-owned
+policy and route job execution and cleanup barriers through it together.
+"""
+import errno
+import fcntl
+import hashlib
+import json
+import os
+import runpy
+import select
+import signal
+import stat
+import subprocess
+import sys
+import threading
+import time
+import uuid
+
+SELF = "/usr/local/libexec/cocalc-rustic-job"
+PATH_HELPER = "/usr/local/libexec/cocalc-runtime-storage-path-helper"
+POLICY = "/etc/cocalc/rustic-job-policy.json"
+LOCKS = "/run/cocalc-rustic-jobs"
+RETRY_STATE = "/var/lib/cocalc-rustic-jobs"
+CACHE_LOCK = "/run/lock/cocalc-privileged-rustic-cache.lock"
+MAINTENANCE_SLICE = "cocalcmaintenance.slice"
+MAINTENANCE_ROOT = "/sys/fs/cgroup/" + MAINTENANCE_SLICE
+LEGACY_MAINTENANCE_ROOT = "/sys/fs/cgroup/cocalc-maintenance"
+IO_HELPER = "/usr/local/libexec/cocalc-project-io-policy"
+IO_POLICY = "/etc/cocalc/project-io-policy.json"
+IO_OVERRIDE = "/etc/cocalc/project-io-policy.override.json"
+IO_CAPACITY = "/etc/cocalc/project-io-capacity.json"
+IO_PROPERTIES = {
+    "rbps": "IOReadBandwidthMax", "wbps": "IOWriteBandwidthMax",
+    "riops": "IOReadIOPSMax", "wiops": "IOWriteIOPSMax",
+}
+COMMANDS = {
+    "rustic-project-backup", "rustic-project-restore",
+    "rustic-rootfs-backup", "rustic-rootfs-restore",
+}
+ENV = {"HOME": "/root", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"}
+
+
+def require_root():
+    if os.geteuid() != 0:
+        raise PermissionError("Rustic job helper requires root")
+
+
+def trusted_regular(path, maximum=65536, required_uid=0):
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_mode & 0o022:
+            raise PermissionError("untrusted root-owned job configuration")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            content = stream.read(maximum + 1)
+        if len(content) > maximum:
+            raise ValueError("job configuration exceeds size limit")
+        return content
+    finally:
+        os.close(fd)
+
+
+def load_policy(path=POLICY):
+    policy = json.loads(trusted_regular(path))
+    bounds = {
+        "runtime_seconds": (1, 86400),
+        "kill_grace_seconds": (1, 60),
+        "memory_bytes": (64 * 1024**2, 64 * 1024**3),
+        "cpu_quota_percent": (1, 6400),
+        "io_weight": (1, 10000),
+        "max_jobs": (1, 16),
+        "tasks_max": (16, 4096),
+    }
+    if not isinstance(policy, dict) or type(policy.get("version")) is not int or policy["version"] != 1 or set(policy) - {"native", "retry"} != {"version", *bounds}:
+        raise ValueError("invalid Rustic job policy schema")
+    for key, (minimum, maximum) in bounds.items():
+        value = policy[key]
+        if type(value) is not int or not minimum <= value <= maximum:
+            raise ValueError(f"invalid Rustic job policy: {key}")
+    if "native" in policy:
+        native = policy["native"]
+        if not isinstance(native, dict) or set(native) - {"evidence"} != {"binary_sha256", "admission"}:
+            raise ValueError("invalid native Rustic policy")
+        digest = native["binary_sha256"]
+        if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValueError("native Rustic requires an exact binary SHA-256")
+        limits = native["admission"]
+        required = {"max-entries", "max-apparent-bytes", "max-file-bytes", "max-chunk-references",
+                    "max-metadata-bytes", "max-path-depth", "preflight-timeout-seconds"}
+        if not isinstance(limits, dict) or set(limits) != required:
+            raise ValueError("native Rustic requires every admission budget")
+        for name, value in limits.items():
+            if type(value) is not int or not 1 <= value <= 2**63 - 1:
+                raise ValueError(f"invalid native Rustic budget: {name}")
+        if limits["preflight-timeout-seconds"] > policy["runtime_seconds"]:
+            raise ValueError("Rustic preflight exceeds the job deadline")
+        if "evidence" in native:
+            evidence = native["evidence"]
+            if not isinstance(evidence, dict) or set(evidence) != {"policy_version", "exclude_larger_than_bytes", "max_report_bytes", "max_spool_bytes", "max_reports"}:
+                raise ValueError("invalid native backup evidence policy")
+            for name, value in evidence.items():
+                if type(value) is not int or not 1 <= value <= 2**63 - 1:
+                    raise ValueError("invalid native backup evidence budget: " + name)
+            if evidence["exclude_larger_than_bytes"] > limits["max-file-bytes"]:
+                raise ValueError("exclusion threshold exceeds retained-file admission")
+            if evidence["max_report_bytes"] > evidence["max_spool_bytes"] or evidence["max_reports"] > 100000:
+                raise ValueError("invalid backup report spool budgets")
+    if "retry" in policy:
+        retry = policy["retry"]
+        limits = {"base_seconds": (1, 86400), "max_seconds": (1, 30 * 86400),
+                  "review_after_failures": (1, 100)}
+        if not isinstance(retry, dict) or set(retry) != set(limits):
+            raise ValueError("invalid Rustic retry policy")
+        for name, (minimum, maximum) in limits.items():
+            if type(retry[name]) is not int or not minimum <= retry[name] <= maximum:
+                raise ValueError("invalid Rustic retry policy: " + name)
+        if retry["base_seconds"] > retry["max_seconds"]:
+            raise ValueError("Rustic retry base exceeds maximum")
+    return policy
+
+
+def path_api():
+    # The path helper is independently root-owned. -I ignores PYTHONPATH and cwd.
+    trusted_regular(PATH_HELPER, maximum=1024**2)
+    return runpy.run_path(PATH_HELPER, run_name="cocalc_rustic_path_api")
+
+
+def maintenance_rows():
+    trusted_regular(IO_HELPER, maximum=1024**2)
+    trusted_regular(IO_POLICY)
+    for path in (IO_OVERRIDE, IO_CAPACITY):
+        try:
+            trusted_regular(path)
+        except FileNotFoundError:
+            pass
+    def run(args):
+        result = subprocess.run([IO_HELPER, *args], env=ENV, check=True,
+                                capture_output=True, text=True, timeout=10)
+        if len(result.stdout) > 65536:
+            raise ValueError("maintenance device inventory exceeds limit")
+        return result.stdout
+    fields = run(["fields", IO_POLICY, IO_OVERRIDE, "standard"])
+    if fields.split("\t", 1)[0] != "enforce":
+        raise ValueError("supervised Rustic requires enforced maintenance I/O policy")
+    return parse_maintenance_rows(run([
+        "limits", IO_POLICY, IO_OVERRIDE, IO_CAPACITY, "maintenance", "standard",
+    ]))
+
+
+def parse_maintenance_rows(text):
+    result = {}
+    for line in text.splitlines():
+        fields = line.split("\t")
+        if len(fields) < 5:
+            raise ValueError("invalid maintenance device limits")
+        device, *limits = fields[:5]
+        numbers = device.split(":")
+        if len(numbers) != 2 or any(not part.isdecimal() or int(part) > 2**32 - 1 for part in numbers):
+            raise ValueError("invalid maintenance block device")
+        if device in result or any(not value.isdecimal() or not 1 <= int(value) <= 2**63 - 1 for value in limits):
+            raise ValueError("invalid or unlimited maintenance I/O budget")
+        result[device] = dict(zip(IO_PROPERTIES, map(int, limits)))
+        if len(result) > 64:
+            raise ValueError("too many maintenance block devices")
+    if not result:
+        raise ValueError("no maintenance block devices")
+    return result
+
+
+def cgroup_text(root, name):
+    with open(root + "/" + name, encoding="ascii") as stream:
+        return stream.read(65536).strip()
+
+
+def check_maintenance_cgroup(rows=None):
+    if rows is None:
+        rows = maintenance_rows()
+    for name, maximum in [("memory.max", 8 * 1024**3), ("pids.max", 256), ("memory.swap.max", 0)]:
+        value = cgroup_text(MAINTENANCE_ROOT, name)
+        if not value.isdecimal() or int(value) > maximum:
+            raise RuntimeError("aggregate maintenance budget is not enforced: " + name)
+    quota, period = cgroup_text(MAINTENANCE_ROOT, "cpu.max").split()
+    if not quota.isdecimal() or not period.isdecimal() or int(period) == 0 or int(quota) > 2 * int(period):
+        raise RuntimeError("aggregate maintenance CPU budget is not enforced")
+    actual = {}
+    for line in cgroup_text(MAINTENANCE_ROOT, "io.max").splitlines():
+        device, *fields = line.split()
+        actual[device] = dict(field.split("=", 1) for field in fields)
+    for device, limits in rows.items():
+        for metric, maximum in limits.items():
+            value = actual.get(device, {}).get(metric, "")
+            if not value.isdecimal() or not 1 <= int(value) <= maximum:
+                raise RuntimeError("aggregate maintenance I/O budget is not enforced: " + device + " " + metric)
+
+
+def maintenance_io_command(rows):
+    command = ["/usr/bin/busctl", "--system", "--timeout=10", "call",
+               "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+               "org.freedesktop.systemd1.Manager", "SetUnitProperties",
+               "sba(sv)", MAINTENANCE_SLICE, "true", str(len(IO_PROPERTIES))]
+    for metric, prop in IO_PROPERTIES.items():
+        # Replace each entire array, so removed/replaced disks leave no stale caps.
+        command.extend([prop, "a(st)", str(len(rows))])
+        for device, limits in rows.items():
+            command.extend(["/dev/block/" + device, str(limits[metric])])
+    return command
+
+
+def prepare_maintenance():
+    # Caller holds the wrapper's project-cgroup lock, also used by legacy attach.
+    # Never migrate a running backup or accidentally grant two aggregate budgets.
+    try:
+        events = dict(line.split() for line in cgroup_text(LEGACY_MAINTENANCE_ROOT, "cgroup.events").splitlines())
+        if events.get("populated") != "0":
+            raise BlockingIOError("legacy maintenance must drain before supervised jobs can start")
+    except FileNotFoundError:
+        pass
+    rows = maintenance_rows()
+    subprocess.run(["/usr/bin/systemctl", "--no-ask-password", "start", MAINTENANCE_SLICE],
+                   env=ENV, check=True, capture_output=True, timeout=10)
+    subprocess.run(maintenance_io_command(rows), env=ENV, check=True, capture_output=True, timeout=15)
+    check_maintenance_cgroup(rows)
+
+
+def attach_maintenance_parent():
+    # Attach only our invoking root wrapper, not a caller-supplied PID. systemd
+    # owns scopes and the slice; do not create manual children inside its tree.
+    check_maintenance_cgroup()
+    pid = os.getppid()
+    identity = process_identity(pid)
+    if identity is None or pid <= 1:
+        raise RuntimeError("maintenance wrapper exited before attachment")
+    scope = "cocalc-maintenance-" + uuid.uuid4().hex + ".scope"
+    subprocess.run([
+        "/usr/bin/busctl", "--system", "--timeout=10", "call",
+        "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager", "StartTransientUnit", "ssa(sv)a(sa(sv))",
+        scope, "fail", "2", "PIDs", "au", "1", str(pid), "Slice", "s", MAINTENANCE_SLICE, "0",
+    ], env=ENV, check=True, capture_output=True, timeout=15)
+    deadline = time.monotonic() + 5
+    while True:
+        if process_identity(pid) != identity:
+            raise RuntimeError("maintenance wrapper identity changed")
+        with open(f"/proc/{pid}/cgroup", encoding="ascii") as stream:
+            if "0::/" + MAINTENANCE_SLICE + "/" + scope in stream.read(65536).splitlines():
+                return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("maintenance wrapper was not attached to its scope")
+        time.sleep(.05)
+
+
+def job_key(argv, api):
+    if not argv or argv[0] not in COMMANDS or sum(len(arg) for arg in argv) > 16384:
+        raise ValueError("invalid Rustic job arguments")
+    _command, values = api["parse_rustic"](argv)
+    identity = [values["profile-root"], values["profile-path"]]
+    return hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
+
+
+def process_identity(pid):
+    try:
+        with open(f"/proc/{pid}/stat", encoding="ascii") as stream:
+            fields = stream.read(8192).rsplit(")", 1)[1].split()
+        if fields[0] in {"Z", "X"}:
+            return None
+        return int(fields[1]), int(fields[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def caller_chain():
+    result = []
+    pid = os.getpid()
+    while pid > 1:
+        identity = process_identity(pid)
+        if identity is None or len(result) >= 64:
+            raise RuntimeError("cannot establish caller process identity")
+        parent, start = identity
+        result.append([pid, start])
+        if parent >= pid and any(item[0] == parent for item in result):
+            raise RuntimeError("invalid caller ancestry")
+        pid = parent
+    return result
+
+
+def callers_alive(chain):
+    if not isinstance(chain, list) or not 1 <= len(chain) <= 64:
+        return False
+    for item in chain:
+        if (not isinstance(item, list) or len(item) != 2
+                or any(type(value) is not int or value <= 0 for value in item)):
+            return False
+        identity = process_identity(item[0])
+        if identity is None or identity[1] != item[1]:
+            return False
+    return True
+
+
+def open_lock_directory(path=LOCKS, required_uid=0, durable=False):
+    created = False
+    try:
+        os.mkdir(path, 0o700)
+        created = True
+    except FileExistsError:
+        pass
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    info = os.fstat(fd)
+    if info.st_uid != required_uid or info.st_mode & 0o077:
+        os.close(fd)
+        raise PermissionError("untrusted Rustic job lock directory")
+    if durable and created:
+        try:
+            parent = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fsync(parent)
+            finally:
+                os.close(parent)
+        except BaseException:
+            os.close(fd)
+            raise
+    return fd
+
+
+def take_lock(directory, name, shared=False, required_uid=0):
+    fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=directory)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_mode & 0o022:
+            raise PermissionError("untrusted Rustic job lock")
+        fcntl.flock(fd, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def read_unit(directory, name, required_uid=0):
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_mode & 0o022:
+            raise PermissionError("untrusted Rustic unit record")
+        unit = os.read(fd, 256).decode("ascii").strip()
+        identifier = unit.removeprefix("cocalc-rustic-").removesuffix(".service")
+        if len(identifier) != 32 or any(char not in "0123456789abcdef" for char in identifier) or unit != f"cocalc-rustic-{identifier}.service":
+            raise ValueError("invalid Rustic unit record")
+        return unit
+    finally:
+        os.close(fd)
+
+
+def record_unit(directory, name, unit):
+    temporary = f".unit-{uuid.uuid4().hex}"
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            stream.write(unit + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.rename(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+
+
+def retry_name(key, argv):
+    # A new staging path/tag must not reset failures. Recovery is independent
+    # of backup, but both still share the repository exclusion lock.
+    return key + (".backup.json" if argv[0].endswith("-backup") else ".restore.json")
+
+
+def read_retry(directory, name, required_uid=0):
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=directory)
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_mode & 0o077:
+            raise PermissionError("untrusted Rustic retry state")
+        data = os.read(fd, 4097)
+        if len(data) > 4096:
+            raise ValueError("Rustic retry state exceeds limit")
+        state = json.loads(data)
+        fields = {"version", "phase", "failures", "updated_at", "retry_at", "reason", "unit"}
+        if not isinstance(state, dict) or set(state) != fields or type(state["version"]) is not int or state["version"] != 1:
+            raise ValueError("invalid Rustic retry state")
+        if state["phase"] not in {"running", "failed", "complete"} or state["reason"] not in {
+                "started", "success", "job_failed", "job_interrupted", "operator_reset"}:
+            raise ValueError("invalid Rustic retry outcome")
+        for field in ("failures", "updated_at", "retry_at"):
+            if type(state[field]) is not int or not 0 <= state[field] <= 2**53 - 1:
+                raise ValueError("invalid Rustic retry counter")
+        unit = state["unit"]
+        if not isinstance(unit, str) or len(unit) != len("cocalc-rustic-" + "a" * 32 + ".service") or not unit.startswith("cocalc-rustic-") or not unit.endswith(".service") or any(c not in "0123456789abcdef" for c in unit[14:-8]):
+            raise ValueError("invalid Rustic retry unit")
+        return state
+    finally:
+        os.close(fd)
+
+
+def write_retry(directory, name, state):
+    temporary = ".retry-" + uuid.uuid4().hex
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            json.dump(state, stream, sort_keys=True, separators=(",", ":"))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.rename(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+        os.fsync(directory)
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+
+
+def failed_retry(state, retry, reason, now):
+    failures = min(state["failures"] + 1, 2**31 - 1)
+    delay = min(retry["max_seconds"], retry["base_seconds"] * 2 ** min(failures - 1, 32))
+    return {**state, "phase": "failed", "failures": failures, "reason": reason,
+            "updated_at": now, "retry_at": now + delay}
+
+
+def retry_admission(directory, name, retry):
+    state = read_retry(directory, name)
+    now = int(time.time())
+    if state is not None and state["phase"] == "running":
+        # This runs only with the launch lock held and predecessor proven gone.
+        # A crash/reboot without a committed success must count as a failure.
+        if unit_busy(state["unit"]):
+            raise BlockingIOError("Rustic retry predecessor remains active")
+        state = failed_retry(state, retry, "job_interrupted", now)
+        write_retry(directory, name, state)
+    if state is not None and state["phase"] == "failed":
+        if state["failures"] >= retry["review_after_failures"]:
+            raise RuntimeError("RUSTIC_OPERATOR_REVIEW_REQUIRED: " + state["reason"])
+        if now < state["retry_at"]:
+            raise BlockingIOError("RUSTIC_RETRY_DEFERRED: retry_at=" + str(state["retry_at"]))
+    return state
+
+
+def retry_control(argv, api, reset=False):
+    key = job_key(argv, api)
+    directory = open_lock_directory()
+    persistent = None
+    held = []
+    try:
+        persistent = open_lock_directory(RETRY_STATE, durable=True)
+        held.append(take_lock(directory, key + ".launch.lock"))
+        held.append(take_lock(directory, key + ".job.lock"))
+        name = retry_name(key, argv)
+        state = read_retry(persistent, name)
+        if reset and state is not None:
+            if unit_busy(read_unit(directory, key + ".unit")) or unit_busy(state["unit"]):
+                raise BlockingIOError("cannot reset an active Rustic job")
+            state = {**state, "phase": "complete", "failures": 0, "retry_at": 0,
+                     "updated_at": int(time.time()), "reason": "operator_reset"}
+            write_retry(persistent, name, state)
+        print(json.dumps({"schema_version": 1, "key": key, "state": state}))
+    finally:
+        for fd in reversed(held):
+            os.close(fd)
+        if persistent is not None:
+            os.close(persistent)
+        os.close(directory)
+
+
+def unit_busy(unit):
+    if unit is None:
+        return False
+    result = subprocess.run([
+        "/usr/bin/systemctl", "--no-ask-password", "show", unit,
+        "--property=LoadState,ActiveState,ControlGroup",
+    ], env=ENV, check=True, capture_output=True, text=True, timeout=5)
+    values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    if values.get("LoadState") not in {"loaded", "not-found"} or "ActiveState" not in values:
+        raise RuntimeError("cannot verify Rustic service termination")
+    if values["ActiveState"] not in {"inactive", "failed"}:
+        return True
+    group = values.get("ControlGroup", "")
+    if group:
+        if not group.startswith("/") or ".." in group.split("/") or group.rsplit("/", 1)[1] != unit:
+            raise RuntimeError("unexpected Rustic service control group")
+        try:
+            with open("/sys/fs/cgroup" + group + "/cgroup.events", encoding="ascii") as stream:
+                events = dict(line.split() for line in stream.read(4096).splitlines())
+            if events.get("populated") not in {"0", "1"}:
+                raise RuntimeError("cannot verify Rustic cgroup population")
+            return events["populated"] != "0"
+        except FileNotFoundError:
+            pass
+    return False
+
+
+def take_slot(directory, count, unit=None, prefix="slot"):
+    for slot in range(count):
+        try:
+            fd = take_lock(directory, f"{prefix}-{slot}.lock")
+        except BlockingIOError:
+            continue
+        try:
+            if unit is not None:
+                name = f"{prefix}-{slot}.unit"
+                if unit_busy(read_unit(directory, name)):
+                    os.close(fd)
+                    continue
+                record_unit(directory, name, unit)
+            return fd
+        except BaseException:
+            os.close(fd)
+            raise
+    raise BlockingIOError(errno.EAGAIN, "Rustic host job budget is occupied")
+
+
+def service_command(unit, argv, chain, policy):
+    return [
+        "/usr/bin/systemd-run", "--system", "--no-ask-password", "--quiet",
+        "--pipe", "--wait", "--collect", "--expand-environment=no",
+        f"--unit={unit}", "--service-type=exec",
+        f"--slice={MAINTENANCE_SLICE}",
+        "--property=KillMode=control-group", "--property=SendSIGKILL=yes",
+        "--property=OOMPolicy=kill", "--property=MemorySwapMax=0",
+        f"--property=RuntimeMaxSec={policy['runtime_seconds']}",
+        f"--property=TimeoutStopSec={policy['kill_grace_seconds']}",
+        f"--property=MemoryMax={policy['memory_bytes']}",
+        f"--property=CPUQuota={policy['cpu_quota_percent']}%",
+        f"--property=IOWeight={policy['io_weight']}",
+        f"--property=TasksMax={policy['tasks_max']}",
+        "/usr/bin/python3", "-I", SELF, "worker",
+        json.dumps(chain, separators=(",", ":")), *argv,
+    ]
+
+
+def check_cgroup(policy):
+    with open("/proc/self/cgroup", encoding="ascii") as stream:
+        lines = stream.read(65536).splitlines()
+    groups = [line[3:] for line in lines if line.startswith("0::/")]
+    if len(groups) != 1 or ".." in groups[0].split("/"):
+        raise RuntimeError("Rustic supervision requires cgroup v2")
+    group = groups[0]
+    if group.rsplit("/", 1)[0] != "/" + MAINTENANCE_SLICE:
+        raise RuntimeError("Rustic worker is outside the aggregate maintenance budget")
+    check_maintenance_cgroup()
+    if not group.rsplit("/", 1)[1].startswith("cocalc-rustic-") or not group.endswith(".service"):
+        raise RuntimeError("Rustic worker is not in its job service")
+    root = "/sys/fs/cgroup" + group
+    with open(root + "/memory.max", encoding="ascii") as stream:
+        memory = stream.read(128).strip()
+    if not memory.isdecimal() or int(memory) > policy["memory_bytes"]:
+        raise RuntimeError("Rustic memory controller is not enforcing its budget")
+    with open(root + "/cpu.max", encoding="ascii") as stream:
+        quota, period = stream.read(128).split()
+    if not quota.isdecimal() or not period.isdecimal() or int(period) == 0 or int(quota) * 100 > policy["cpu_quota_percent"] * int(period):
+        raise RuntimeError("Rustic CPU controller is not enforcing its budget")
+    with open(root + "/io.weight", encoding="ascii") as stream:
+        weight = stream.read(1024).splitlines()
+    if f"default {policy['io_weight']}" not in weight:
+        raise RuntimeError("Rustic I/O controller is not enforcing its weight")
+    return group.rsplit("/", 1)[1]
+
+
+def lease_valid(chain, timeout=5):
+    if not callers_alive(chain):
+        return False
+    readable, _, _ = select.select([0], [], [], timeout)
+    return bool(readable) and os.read(0, 64) != b"" and callers_alive(chain)
+
+
+def worker(argv, chain, api, policy):
+    unit = check_cgroup(policy)
+    if not lease_valid(chain):
+        raise RuntimeError("Rustic caller lease expired before job start")
+    directory = open_lock_directory()
+    locks = []
+    stop = threading.Event()
+    try:
+        key = job_key(argv, api)
+        locks.append(take_lock(directory, f"{key}.job.lock"))
+        locks.append(take_slot(directory, policy["max_jobs"], unit))
+        cache_dir = os.open("/run/lock", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            locks.append(take_lock(cache_dir, os.path.basename(CACHE_LOCK), shared=True))
+        finally:
+            os.close(cache_dir)
+
+        def watch():
+            while not stop.is_set():
+                try:
+                    alive = lease_valid(chain)
+                except Exception:
+                    alive = False
+                if not alive:
+                    # systemd terminates the entire cgroup. Rustic inherits the
+                    # locks, so caller death cannot unlock an active repository.
+                    if not stop.is_set():
+                        os._exit(124)
+                    return
+
+        threading.Thread(target=watch, daemon=True).start()
+        api["run_rustic"](argv, inherited_fds=tuple(locks), native=policy.get("native"))
+    finally:
+        stop.set()
+        for fd in reversed(locks):
+            os.close(fd)
+        os.close(directory)
+
+
+def barrier(argv, api, policy):
+    key = job_key(argv, api)
+    deadline = time.monotonic() + policy["kill_grace_seconds"] + 30
+    directory = open_lock_directory()
+    try:
+        while True:
+            held = []
+            try:
+                held.append(take_lock(directory, f"{key}.launch.lock"))
+                held.append(take_lock(directory, f"{key}.job.lock"))
+                # Descendants can close inherited lock descriptors. The unit
+                # remains authoritative until systemd has reaped the full tree.
+                if not unit_busy(read_unit(directory, f"{key}.unit")):
+                    return
+                raise BlockingIOError("Rustic unit is still stopping")
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Rustic job still owns its source; cleanup is unsafe")
+            finally:
+                for fd in reversed(held):
+                    os.close(fd)
+            time.sleep(0.2)
+    finally:
+        os.close(directory)
+
+
+def launch(argv, api, policy):
+    key = job_key(argv, api)
+    chain = caller_chain()
+    unit = f"cocalc-rustic-{uuid.uuid4().hex}.service"
+    directory = open_lock_directory()
+    lock = None
+    startup_slot = None
+    proc = None
+    persistent = None
+    retry = policy.get("retry")
+    retry_state = None
+    name = retry_name(key, argv)
+    try:
+        lock = take_lock(directory, f"{key}.launch.lock")
+        # Reject a surviving predecessor before asking systemd for another unit.
+        old = take_lock(directory, f"{key}.job.lock")
+        os.close(old)
+        if unit_busy(read_unit(directory, f"{key}.unit")):
+            raise BlockingIOError("Rustic predecessor unit is still stopping")
+        if retry is not None:
+            persistent = open_lock_directory(RETRY_STATE, durable=True)
+            retry_state = retry_admission(persistent, name, retry)
+        # Bound service creation too, not just workers after Python has started.
+        # Unit records retain this reservation if the launcher is killed.
+        startup_slot = take_slot(directory, policy["max_jobs"], unit, prefix="launch-slot")
+        prepared = subprocess.run(["/usr/local/sbin/cocalc-runtime-storage", "prepare-rustic-maintenance"],
+                                  env=ENV, capture_output=True, text=True, timeout=45)
+        if prepared.returncode:
+            raise RuntimeError("maintenance admission failed: " + prepared.stderr[-4096:])
+        record_unit(directory, f"{key}.unit", unit)
+        if retry is not None:
+            retry_state = {"version": 1, "phase": "running",
+                           "failures": (retry_state or {}).get("failures", 0),
+                           "updated_at": int(time.time()), "retry_at": 0,
+                           "reason": "started", "unit": unit}
+            write_retry(persistent, name, retry_state)
+        proc = subprocess.Popen(service_command(unit, argv, chain, policy), env=ENV,
+                                stdin=subprocess.PIPE, close_fds=True)
+        os.set_blocking(proc.stdin.fileno(), False)
+        deadline = time.monotonic() + policy["runtime_seconds"] + policy["kill_grace_seconds"] + 30
+        while proc.poll() is None:
+            if not callers_alive(chain) or time.monotonic() >= deadline:
+                raise TimeoutError("Rustic caller exited or job deadline expired")
+            try:
+                os.write(proc.stdin.fileno(), b".")
+            except BrokenPipeError:
+                # The worker may have completed before systemd-run reports exit.
+                pass
+            time.sleep(0.5)
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, ["supervised-rustic-job"])
+        if unit_busy(unit):
+            raise RuntimeError("Rustic service reported success with an active process tree")
+        if retry is not None:
+            write_retry(persistent, name, {**retry_state, "phase": "complete", "failures": 0,
+                        "updated_at": int(time.time()), "retry_at": 0, "reason": "success"})
+    except BaseException:
+        if retry is not None and retry_state is not None and retry_state["unit"] == unit:
+            # If killed before this write, the durable running record is instead
+            # recovered as interrupted. Never copy credential-bearing stderr here.
+            write_retry(persistent, name, failed_retry(retry_state, retry, "job_failed", int(time.time())))
+        raise
+    finally:
+        try:
+            if proc is not None:
+                proc.stdin.close()
+                if proc.poll() is None:
+                    # This launch owns this unique unit, never a predecessor's unit.
+                    subprocess.run(["/usr/bin/systemctl", "--no-ask-password", "stop", unit],
+                                   env=ENV, check=True, timeout=policy["kill_grace_seconds"] + 15)
+                    proc.wait(timeout=15)
+        finally:
+            if persistent is not None:
+                os.close(persistent)
+            if startup_slot is not None:
+                os.close(startup_slot)
+            if lock is not None:
+                os.close(lock)
+            os.close(directory)
+
+
+def main(argv):
+    require_root()
+    policy = load_policy()
+    if argv == ["prepare-maintenance"]:
+        prepare_maintenance()
+        return
+    if argv == ["attach-maintenance"]:
+        attach_maintenance_parent()
+        return
+    api = path_api()
+    if len(argv) > 2 and argv[0] == "worker":
+        if len(argv[1]) > 8192:
+            raise ValueError("caller identity is too large")
+        worker(argv[2:], json.loads(argv[1]), api, policy)
+    elif len(argv) > 1 and argv[0] == "wait":
+        barrier(argv[1:], api, policy)
+    elif len(argv) > 1 and argv[0] == "run":
+        launch(argv[1:], api, policy)
+    elif len(argv) > 1 and argv[0] in {"retry-status", "retry-reset"}:
+        retry_control(argv[1:], api, reset=argv[0] == "retry-reset")
+    else:
+        raise ValueError("expected run, worker, wait, retry-status or retry-reset")
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except (KeyboardInterrupt, Exception) as error:
+        print(f"Rustic job failed: {error}", file=sys.stderr)
+        sys.exit(1)
+'''
+
+
 RUNTIME_STORAGE_PATH_HELPER = r'''#!/usr/bin/python3
 """Root-owned, openat2-anchored path mutations for cocalc-runtime-storage.
 
@@ -4289,8 +5067,13 @@ installed below /usr/local with root ownership.
 
 import ctypes
 import errno
+import array
+import fcntl
+import hashlib
+import json
 import os
 import re
+import select
 import stat
 import subprocess
 import sys
@@ -4298,6 +5081,11 @@ import tempfile
 import time
 import tomllib
 import urllib.parse
+import struct
+import uuid
+import pwd
+import datetime
+import contextlib
 
 
 ALLOWED_ROOTS = {
@@ -4668,6 +5456,274 @@ def select_privileged_rustic_binary(candidates=None):
     fail("trusted privileged Rustic binary is unavailable")
 
 
+def open_pinned_rustic(path, expected_digest, required_uid=0):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_mode & 0o022 or info.st_size > 256 * 1024**2:
+            fail("untrusted native Rustic binary")
+        digest = hashlib.sha256()
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            for chunk in iter(lambda: stream.read(1024**2), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_digest:
+            fail("native Rustic binary does not match the approved SHA-256")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def verify_native_rustic(binary, env, pass_fds, require_evidence=False):
+    proc = subprocess.Popen([binary, "version", "--json"], env=env, pass_fds=pass_fds,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 10
+    data = bytearray()
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([proc.stdout], [], [], remaining)[0]:
+                raise TimeoutError("native Rustic capability check timed out")
+            part = os.read(proc.stdout.fileno(), 4096)
+            if not part:
+                break
+            data.extend(part)
+            if len(data) > 65536:
+                fail("native Rustic capability output is too large")
+        if proc.wait(timeout=max(0.01, deadline - time.monotonic())) != 0:
+            fail("native Rustic capability check failed")
+        document = json.loads(data)
+        if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
+            fail("unsupported native Rustic capability schema")
+        capabilities = document.get("capabilities", {})
+        for name in ("strict_backup", "strict_restore", "sparse_required_restore", "hole_aware_backup"):
+            if capabilities.get(name) is not True:
+                fail(f"native Rustic capability is missing: {name}")
+        for name in ("backup_inventory", "backup_admission", "strict_local_metadata"):
+            if type(capabilities.get(name)) is not int or capabilities[name] != 1:
+                fail(f"unsupported native Rustic capability: {name}")
+        if require_evidence and (type(capabilities.get("backup_exclusion_inventory")) is not int or capabilities["backup_exclusion_inventory"] != 1):
+            fail("native Rustic exclusion evidence capability is missing")
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        proc.stdout.close()
+
+
+def require_readonly_btrfs_source(datafd):
+    # linux/btrfs.h: _IOR(BTRFS_IOCTL_MAGIC=0x94, 25, __u64), identical on
+    # qualified Linux amd64/arm64; BTRFS_SUBVOL_RDONLY is (1ULL << 1).
+    fd = os.open(f"/proc/self/fd/{datafd}", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        flags = array.array("Q", [0])
+        fcntl.ioctl(fd, 0x80089419, flags, True)
+        if not flags[0] & 2:
+            fail("native project backup requires a read-only Btrfs snapshot")
+    finally:
+        os.close(fd)
+
+
+def btrfs_backup_identity(datafd):
+    # Linux btrfs_ioctl_get_subvol_info_args (504 bytes on amd64/arm64).
+    # Obtain the identity through the already-open source, not a re-resolved path.
+    fd = os.open(f"/proc/self/fd/{datafd}", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        info = bytearray(504)
+        fcntl.ioctl(fd, 0x81f8943c, info, True)
+        generation, flags = struct.unpack_from("=QQ", info, 280)
+        snapshot_uuid = uuid.UUID(bytes=bytes(info[296:312]))
+        parent_uuid = uuid.UUID(bytes=bytes(info[312:328]))
+        # GET_SUBVOL_INFO exposes BTRFS_ROOT_SUBVOL_RDONLY (bit 0), NOT
+        # BTRFS_SUBVOL_RDONLY (bit 1) used by SUBVOL_GETFLAGS/SETFLAGS.
+        if not flags & 1 or snapshot_uuid.int == 0:
+            fail("backup evidence requires an identified read-only Btrfs source")
+        return {"snapshot_uuid": str(snapshot_uuid),
+                "subvolume_uuid": str(parent_uuid) if parent_uuid.int else None,
+                "generation": str(generation)}
+    finally:
+        os.close(fd)
+
+
+def canonical_backup_json(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def bounded_rustic_capture(base, args, *, cwd, env, pass_fds, maximum, sink=None):
+    proc = subprocess.Popen([*base, *args], cwd=cwd, env=env, pass_fds=pass_fds,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+    digest = hashlib.sha256()
+    data = bytearray()
+    size = 0
+    try:
+        while True:
+            part = proc.stdout.read(65536)
+            if not part:
+                break
+            if len(part) > maximum - size:
+                fail("native Rustic output exceeds its byte budget")
+            size += len(part)
+            digest.update(part)
+            if sink is None:
+                data.extend(part)
+            else:
+                sink.write(part)
+        return proc.wait(), bytes(data), {"bytes": size, "sha256": digest.hexdigest()}
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        proc.stdout.close()
+
+
+def read_backup_inventory_envelope(stream):
+    # Full per-path validation is performed by the host report verifier before
+    # remote publication. Here require a complete, bounded producer envelope.
+    stream.seek(0)
+    first = None
+    last = None
+    count = 0
+    while True:
+        line = stream.readline(65537)
+        if not line:
+            break
+        if len(line) > 65536 or not line.endswith(b"\n"):
+            fail("invalid native backup inventory record")
+        row = json.loads(line)
+        if type(row) is not dict or type(row.get("schema_version")) is not int or row["schema_version"] != 1:
+            fail("invalid native backup inventory schema")
+        if first is None:
+            if row.get("type") != "header":
+                fail("missing native backup inventory header")
+            first = row
+        elif row.get("type") == "excluded" and last is None:
+            count += 1
+        elif row.get("type") == "complete" and last is None:
+            last = row
+        else:
+            fail("invalid native backup inventory order")
+    if first is None or last is None:
+        fail("incomplete native backup inventory")
+    reported = last.get("inventory", {}).get("excluded_files")
+    if type(reported) is not str or reported != str(count):
+        fail("inconsistent native backup inventory count")
+    return first, last["inventory"]
+
+
+def backup_report_directory(path, *, required_uid=0, reader_gid=None):
+    if reader_gid is None:
+        reader_gid = pwd.getpwnam("cocalc-host").pw_gid
+    try:
+        os.mkdir(path, 0o750)
+        os.chown(path, required_uid, reader_gid)
+    except FileExistsError:
+        pass
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != required_uid or info.st_gid != reader_gid or info.st_mode & 0o027:
+        fail("untrusted backup report directory")
+    return reader_gid
+
+
+REPORT_NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.ndjson")
+REPORT_SEAL = "user.cocalc_backup_report_sha256"
+
+
+@contextlib.contextmanager
+def locked_report_spool(path, required_uid=0):
+    directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    lock = None
+    try:
+        info = os.fstat(directory)
+        if info.st_uid != required_uid or info.st_mode & 0o027:
+            fail("untrusted backup report spool")
+        lock = os.open(".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=directory)
+        info = os.fstat(lock)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_nlink != 1 or info.st_mode & 0o077:
+            fail("untrusted backup report spool lock")
+        # No long-running work is allowed inside this critical section. Never
+        # wait indefinitely behind a failed operator process holding the lock.
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    fail("backup report spool lock timed out")
+                time.sleep(0.05)
+        yield directory
+    finally:
+        if lock is not None:
+            os.close(lock)
+        os.close(directory)
+
+
+def reserve_backup_report(path, evidence, required_uid=0):
+    with locked_report_spool(path, required_uid) as directory:
+        count = 0
+        size = 0
+        # Btrfs may bound readdir to entries present when the directory was
+        # opened. Reopen AFTER locking, or concurrent admissions can miss files
+        # created while this process waited for the lock.
+        scanfd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC, dir_fd=directory)
+        try:
+            with os.scandir(scanfd) as entries:
+                for entry in entries:
+                    if entry.name == ".lock":
+                        continue
+                    count += 1
+                    if count >= evidence["max_reports"]:
+                        fail("backup report spool count exhausted; durable release or operator reconciliation required")
+                    info = entry.stat(follow_symlinks=False)
+                    if not REPORT_NAME.fullmatch(entry.name) or not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_nlink != 1:
+                        fail("unexpected backup report spool entry")
+                    size += info.st_size
+                    if size > evidence["max_spool_bytes"]:
+                        fail("backup report spool byte budget exhausted")
+        finally:
+            os.close(scanfd)
+        reservation = evidence["max_report_bytes"]
+        if reservation > evidence["max_spool_bytes"] - size:
+            fail("backup report spool byte budget exhausted")
+        name = str(uuid.uuid4()) + ".ndjson"
+        fd = os.open(name, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+        try:
+            # Logical length reserves the full future report against other
+            # producers without allocating/writing that much physical storage.
+            # A killed producer retains its reservation and cannot fill the disk
+            # through an unlimited series of tiny orphan files.
+            os.ftruncate(fd, reservation)
+            os.fsync(fd)
+            os.fsync(directory)
+            return os.path.join(path, name), fd
+        except BaseException:
+            os.close(fd)
+            os.unlink(name, dir_fd=directory)
+            raise
+
+
+def release_backup_report(argv, path="/var/lib/cocalc-rustic-reports", required_uid=0):
+    if len(argv) != 3 or argv[0] != "rustic-report-release" or not REPORT_NAME.fullmatch(argv[1]) or not re.fullmatch("[0-9a-f]{64}", argv[2]):
+        fail("invalid backup report release")
+    with locked_report_spool(path, required_uid) as directory:
+        try:
+            fd = os.open(argv[1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+        except FileNotFoundError:
+            return
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != required_uid or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o440:
+                fail("backup report is not sealed for release")
+            # The root producer seals its own hash before publication. Checking
+            # it avoids an unbudgeted full-file hash in this privileged command.
+            if os.getxattr(fd, REPORT_SEAL) != argv[2].encode("ascii"):
+                fail("backup report release digest mismatch")
+            os.unlink(argv[1], dir_fd=directory)
+            os.fsync(directory)
+        finally:
+            os.close(fd)
+
+
 def run_rustic(
     argv,
     allowed_roots=ALLOWED_ROOTS,
@@ -4675,18 +5731,29 @@ def run_rustic(
     profile_run_dir="/run/cocalc-rustic-profiles",
     profile_run_dir_uid=0,
     allow_loopback_rest=ALLOW_LOOPBACK_RUSTIC_REST,
+    inherited_fds=(),
+    native=None,
+    report_run_dir="/var/lib/cocalc-rustic-reports",
+    report_run_dir_uid=0,
+    report_reader_gid=None,
 ):
     command, values = parse_rustic(argv)
     rootfd = open_root(values["root"], allowed_roots)
     profile_rootfd = open_root(values["profile-root"], allowed_roots)
     datafd = None
     profile_path = None
+    binaryfd = None
+    report_path = None
+    report_created = False
+    report_published = False
     try:
         datafd = openat2(
             rootfd,
             values["path"],
             O_PATH | os.O_DIRECTORY | os.O_CLOEXEC,
         )
+        if native is not None and command.endswith("backup"):
+            require_readonly_btrfs_source(datafd)
         profile_data = read_validated_rustic_profile(
             profile_rootfd,
             values["profile-path"],
@@ -4697,6 +5764,11 @@ def run_rustic(
         )
         profile_arg = profile_path[: -len(".toml")]
         rustic = select_privileged_rustic_binary(rustic_candidates)
+        if native is not None:
+            binaryfd = open_pinned_rustic(rustic, native["binary_sha256"])
+            # Execute the same inode that was hashed, even during a host upgrade.
+            rustic = f"/proc/self/fd/{binaryfd}"
+            inherited_fds = (*inherited_fds, binaryfd)
         base = [rustic, "-P", profile_arg]
         env = {
             "HOME": "/root",
@@ -4708,13 +5780,16 @@ def run_rustic(
             "SSL_CERT_DIR": "/etc/ssl/certs",
             "USER": "root",
         }
+        evidence = native.get("evidence") if native is not None and command == "rustic-project-backup" else None
+        if native is not None:
+            verify_native_rustic(rustic, env, inherited_fds, require_evidence=evidence is not None)
 
         def invoke(args, *, quiet=False):
             result = subprocess.run(
                 [*base, *args],
                 cwd=f"/proc/self/fd/{datafd}",
                 env=env,
-                pass_fds=(datafd,),
+                pass_fds=(datafd, *inherited_fds),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL if quiet else None,
                 stderr=subprocess.DEVNULL if quiet else None,
@@ -4736,7 +5811,52 @@ def run_rustic(
             raise subprocess.CalledProcessError(init_status or 1, base)
 
         if command.endswith("backup"):
+            proof = None
+            if evidence is not None:
+                source = btrfs_backup_identity(datafd)
+                if source["subvolume_uuid"] is None:
+                    fail("project backup evidence requires an actual snapshot parent")
+                # Inventory uses the repository's chunker configuration. A new
+                # project must initialize its repository before inventory, not
+                # only after the first backup command fails.
+                if invoke(["repoinfo"], quiet=True) != 0:
+                    if invoke(["--no-progress", "init"], quiet=True) != 0 and invoke(["repoinfo"], quiet=True) != 0:
+                        raise subprocess.CalledProcessError(1, base)
+                captured_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                reader_gid = backup_report_directory(report_run_dir, required_uid=report_run_dir_uid, reader_gid=report_reader_gid)
+                admission = [arg for name, value in native["admission"].items() for arg in [f"--{name}", str(value)]]
+                inventory_args = ["backup-inventory", "-x", "--exclusion-report", "--exclude-larger-than", str(evidence["exclude_larger_than_bytes"]),
+                                  "--max-report-bytes", str(evidence["max_report_bytes"]), *admission,
+                                  "--glob", "!.snapshots", "--glob", "!.snapshots/**", "."]
+                report_path, fd = reserve_backup_report(report_run_dir, evidence, report_run_dir_uid)
+                report_created = True
+                with os.fdopen(fd, "w+b") as stream:
+                    status, _, report = bounded_rustic_capture(base, inventory_args, cwd=f"/proc/self/fd/{datafd}", env=env,
+                                                              pass_fds=(datafd, *inherited_fds), maximum=evidence["max_report_bytes"], sink=stream)
+                    if status != 0:
+                        raise subprocess.CalledProcessError(status, base)
+                    stream.flush()
+                    stream.truncate(report["bytes"])
+                    header, inventory = read_backup_inventory_envelope(stream)
+                    report["header_sha256"] = hashlib.sha256(canonical_backup_json(header)).hexdigest()
+                    os.fsync(stream.fileno())
+                proof = {"schema_version": 1, "source": {**source, "captured_at": captured_at},
+                         "policy_sha256": hashlib.sha256(canonical_backup_json(native)).hexdigest(),
+                         "policy_version": evidence["policy_version"], "exclude_larger_than_bytes": str(evidence["exclude_larger_than_bytes"]),
+                         "binary_sha256": native["binary_sha256"], "report": report,
+                         "read_limits": {"max_bytes": evidence["max_report_bytes"],
+                                         "max_record_bytes": min(65536, evidence["max_report_bytes"]),
+                                         "max_entries": native["admission"]["max-entries"],
+                                         "max_path_depth": native["admission"]["max-path-depth"]},
+                         "report_path": report_path, "excluded_files": inventory["excluded_files"],
+                         "outcome": "complete" if inventory["excluded_files"] == "0" else "partial_policy_exclusions"}
             flags = ["backup"]
+            if native is not None:
+                flags.append("--strict")
+                for name, value in native["admission"].items():
+                    flags.extend([f"--{name}", str(value)])
+            if evidence is not None:
+                flags.extend(["--exclude-larger-than", str(evidence["exclude_larger_than_bytes"])])
             if command == "rustic-project-backup":
                 flags.append("-x")
             flags.extend(["--json", "--no-scan", "--host", values["host"]])
@@ -4749,21 +5869,53 @@ def run_rustic(
                     ["--glob", "!.snapshots", "--glob", "!.snapshots/**"]
                 )
             flags.append(".")
+            backup_output = None
+            def invoke_backup():
+                nonlocal backup_output
+                if proof is None:
+                    return invoke(flags)
+                status, backup_output, _ = bounded_rustic_capture(base, flags, cwd=f"/proc/self/fd/{datafd}", env=env,
+                                                                 pass_fds=(datafd, *inherited_fds), maximum=1048576)
+                return status
             if command == "rustic-rootfs-backup":
                 ensure_rootfs_repository()
-                status = invoke(flags)
+                status = invoke_backup()
             else:
-                status = invoke(flags)
+                status = invoke_backup()
                 if status != 0 and invoke(["repoinfo"], quiet=True) != 0:
                     if invoke(["init"], quiet=True) == 0 or invoke(
                         ["repoinfo"], quiet=True
                     ) == 0:
-                        status = invoke(flags)
+                        status = invoke_backup()
             if status != 0:
                 raise subprocess.CalledProcessError(status, base)
+            if proof is not None:
+                if btrfs_backup_identity(datafd) != source:
+                    fail("backup source identity changed during capture")
+                result = json.loads(backup_output)
+                if type(result) is not dict or type(result.get("id")) is not str or not re.fullmatch("[0-9a-f]{64}", result["id"]):
+                    fail("invalid native backup result")
+                report_fd = os.open(report_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                try:
+                    os.setxattr(report_fd, REPORT_SEAL, proof["report"]["sha256"].encode("ascii"))
+                    os.fchown(report_fd, report_run_dir_uid, reader_gid)
+                    os.fchmod(report_fd, 0o440)
+                    os.fsync(report_fd)
+                finally:
+                    os.close(report_fd)
+                directory_fd = os.open(report_run_dir, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+                result["cocalc_backup_evidence"] = proof
+                print(json.dumps(result, separators=(",", ":")), flush=True)
+                report_published = True
             return
 
         restore = ["restore"]
+        if native is not None:
+            restore.extend(["--strict", "--sparse", "by-content-required"])
         if values["delete"]:
             restore.append("--delete")
         restore.extend([values["snapshot"], f"/proc/self/fd/{datafd}"])
@@ -4771,6 +5923,10 @@ def run_rustic(
         if status != 0:
             raise subprocess.CalledProcessError(status, base)
     finally:
+        if report_created and not report_published:
+            os.unlink(report_path)
+        if binaryfd is not None:
+            os.close(binaryfd)
         if profile_path is not None:
             os.unlink(profile_path)
         if datafd is not None:
@@ -5033,6 +6189,8 @@ def parse_uint(value, name, maximum=(2**53 - 1)):
 
 
 def run(argv, allowed_roots=ALLOWED_ROOTS, rustic_candidates=None):
+    if argv and argv[0] == "rustic-report-release":
+        return release_backup_report(argv)
     if argv and argv[0] in RUSTIC_COMMANDS:
         return run_rustic(argv, allowed_roots, rustic_candidates)
     if argv and argv[0] in ANCHORED_COMMANDS:
@@ -5256,6 +6414,12 @@ BEES_CGROUP_MEMORY_HIGH_MIN="$((1 * 1024 * 1024 * 1024))"
 BEES_CGROUP_MEMORY_MAX_MIN="$((2 * 1024 * 1024 * 1024))"
 BEES_CGROUP_PIDS_MAX="64"
 MAINTENANCE_CGROUP_DEFAULT="/sys/fs/cgroup/cocalc-maintenance"
+RUSTIC_MAINTENANCE_CGROUP="/sys/fs/cgroup/cocalcmaintenance.slice"
+# Keep the new hierarchy after activation even if somebody removes its policy:
+# new work must fail closed, not obtain another budget in the old hierarchy.
+if [ -e /etc/cocalc/rustic-job-policy.json ] || [ -L /etc/cocalc/rustic-job-policy.json ] || [ -d "$RUSTIC_MAINTENANCE_CGROUP" ]; then
+  MAINTENANCE_CGROUP_DEFAULT="$RUSTIC_MAINTENANCE_CGROUP"
+fi
 MAINTENANCE_CGROUP_CPU_MAX="200000 100000"
 MAINTENANCE_CGROUP_CPU_WEIGHT="10"
 MAINTENANCE_CGROUP_IO_WEIGHT="10"
@@ -5854,6 +7018,10 @@ reconcile_project_pool_io_reservation() {
 
 configure_maintenance_cgroup() {
   local fields mode
+  if [ "$MAINTENANCE_CGROUP_DEFAULT" = "$RUSTIC_MAINTENANCE_CGROUP" ]; then
+    /usr/local/libexec/cocalc-rustic-job prepare-maintenance
+    return
+  fi
   enable_cgroup_controllers /sys/fs/cgroup
   mkdir -p "$MAINTENANCE_CGROUP_DEFAULT"
   [ -w "${MAINTENANCE_CGROUP_DEFAULT}/cpu.max" ] &&
@@ -7249,9 +8417,16 @@ attach_maintenance_worker() {
   local actual
   acquire_project_cgroup_lock
   configure_maintenance_cgroup
-  printf '%s\n' "$$" > "${MAINTENANCE_CGROUP_DEFAULT}/cgroup.procs"
+  if [ "$MAINTENANCE_CGROUP_DEFAULT" = "$RUSTIC_MAINTENANCE_CGROUP" ]; then
+    /usr/local/libexec/cocalc-rustic-job attach-maintenance
+  else
+    printf '%s\n' "$$" > "${MAINTENANCE_CGROUP_DEFAULT}/cgroup.procs"
+  fi
   actual="$(awk -F: '$1 == "0" {print $3}' "/proc/$$/cgroup" 2>/dev/null || true)"
-  if [ "$actual" != "${MAINTENANCE_CGROUP_DEFAULT#/sys/fs/cgroup}" ]; then
+  if [ "$MAINTENANCE_CGROUP_DEFAULT" = "$RUSTIC_MAINTENANCE_CGROUP" ]; then
+    [[ "$actual" =~ ^/cocalcmaintenance[.]slice/cocalc-maintenance-[0-9a-f]{32}[.]scope$ ]] ||
+      deny "maintenance-worker-scope-mismatch" "${actual:-missing}"
+  elif [ "$actual" != "${MAINTENANCE_CGROUP_DEFAULT#/sys/fs/cgroup}" ]; then
     deny "maintenance-worker-cgroup-mismatch" "${actual:-missing}"
   fi
   release_project_lock
@@ -7697,6 +8872,14 @@ case "$cmd" in
       verify_io_max "$(project_cgroup "$1")" "$io_class" "$io_class"
     fi
     ;;
+  prepare-rustic-maintenance)
+    [ "$#" -eq 0 ] || deny "rustic-maintenance-arguments-invalid" "$#"
+    [ "$MAINTENANCE_CGROUP_DEFAULT" = "$RUSTIC_MAINTENANCE_CGROUP" ] ||
+      deny "rustic-maintenance-policy-missing" "supervision disabled"
+    acquire_project_cgroup_lock
+    configure_maintenance_cgroup
+    release_project_lock
+    ;;
   verify-project-io-policy)
     if [ "$#" -ne 0 ]; then
       echo "usage: cocalc-runtime-storage verify-project-io-policy" >&2
@@ -7736,12 +8919,13 @@ case "$cmd" in
     maintenance_io_max="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/io.max" 2>/dev/null || true)"
     maintenance_pressure="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/io.pressure" 2>/dev/null || true)"
     maintenance_io_weight="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/io.weight" 2>/dev/null || true)"
-    maintenance_processes="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/cgroup.procs" 2>/dev/null || true)"
+    # A systemd slice is an inner node: its direct process list is always empty.
+    maintenance_processes="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/cgroup.procs" "${MAINTENANCE_CGROUP_DEFAULT}"/*/cgroup.procs 2>/dev/null || true)"
     maintenance_cpu_max="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/cpu.max" 2>/dev/null || true)"
     maintenance_memory_high="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/memory.high" 2>/dev/null || true)"
     maintenance_memory_max="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/memory.max" 2>/dev/null || true)"
     maintenance_pids_max="$(cat "${MAINTENANCE_CGROUP_DEFAULT}/pids.max" 2>/dev/null || true)"
-    /usr/bin/python3 - "$policy_status" "$pool_io_max" "$pool_io_weight" "$pool_pressure" "$legacy_processes" "$maintenance_io_max" "$maintenance_io_weight" "$maintenance_pressure" "$maintenance_processes" "$maintenance_cpu_max" "$maintenance_memory_high" "$maintenance_memory_max" "$maintenance_pids_max" "$pool_scope" "$startup_runtime_active_count" "$pressure_protection_enabled" <<'PY'
+    /usr/bin/python3 - "$policy_status" "$pool_io_max" "$pool_io_weight" "$pool_pressure" "$legacy_processes" "$maintenance_io_max" "$maintenance_io_weight" "$maintenance_pressure" "$maintenance_processes" "$maintenance_cpu_max" "$maintenance_memory_high" "$maintenance_memory_max" "$maintenance_pids_max" "$pool_scope" "$startup_runtime_active_count" "$pressure_protection_enabled" "$MAINTENANCE_CGROUP_DEFAULT" <<'PY'
 import json
 import sys
 
@@ -7762,6 +8946,7 @@ import sys
     pool_scope,
     startup_runtime_active_count,
     pressure_protection_enabled,
+    maintenance_cgroup,
 ) = sys.argv[1:]
 result = json.loads(status_json)
 discovery_error = result.pop("discovery_error", None)
@@ -7805,10 +8990,10 @@ result.update({
     "startup_runtime_active_count": int(startup_runtime_active_count),
     "pressure_protection_enabled": pressure_protection_enabled == "true",
     "legacy_process_count": len(legacy.split()),
-    "maintenance_cgroup": "/sys/fs/cgroup/cocalc-maintenance",
+    "maintenance_cgroup": maintenance_cgroup,
     "maintenance_io_max": maintenance_io_max.strip(),
     "maintenance_io_weight": maintenance_io_weight.strip(),
-    "maintenance_process_count": len(maintenance_processes.split()),
+    "maintenance_process_count": len(set(maintenance_processes.split())),
     "maintenance_cpu_max": maintenance_cpu_max.strip(),
     "maintenance_memory_high": maintenance_memory_high.strip(),
     "maintenance_memory_max": maintenance_memory_max.strip(),
@@ -8701,7 +9886,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     printf '%s\n' "$normalize_result"
     exit 0
     ;;
-  rootfs-rustic-backup)
+  rootfs-rustic-backup|rootfs-rustic-backup-supervised|rootfs-rustic-backup-wait)
     if [ "$#" -lt 3 ]; then
       echo "usage: cocalc-runtime-storage rootfs-rustic-backup <src> <repo-profile> <host> [rustic args...]" >&2
       exit 2
@@ -8729,8 +9914,15 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     source_root="$ALLOWED_PATH_ROOT"
     source_rel="$ALLOWED_PATH_REL"
     set_rustic_profile_parts "$repo_profile"
-    prepare_privileged_rustic_cache
-    exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+    if [ "$cmd" != "rootfs-rustic-backup-wait" ]; then
+      prepare_privileged_rustic_cache
+    fi
+    rustic_command=(/usr/local/libexec/cocalc-runtime-storage-path-helper)
+    case "$cmd" in
+      *-supervised) rustic_command=(/usr/local/libexec/cocalc-rustic-job run) ;;
+      *-wait) rustic_command=(/usr/local/libexec/cocalc-rustic-job wait) ;;
+    esac
+    exec "${rustic_command[@]}" \
       rustic-rootfs-backup \
       --root "$source_root" \
       --path "$source_rel" \
@@ -8739,7 +9931,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       --host "$host_name" \
       "${tag_args[@]}"
     ;;
-  rootfs-rustic-restore)
+  rootfs-rustic-restore|rootfs-rustic-restore-supervised|rootfs-rustic-restore-wait)
     if [ "$#" -lt 3 ]; then
       echo "usage: cocalc-runtime-storage rootfs-rustic-restore <repo-profile> <snapshot> <dest> [rustic args...]" >&2
       exit 2
@@ -8759,8 +9951,15 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     dest_root="$ALLOWED_PATH_ROOT"
     dest_rel="$ALLOWED_PATH_REL"
     set_rustic_profile_parts "$repo_profile"
-    prepare_privileged_rustic_cache
-    exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+    if [ "$cmd" != "rootfs-rustic-restore-wait" ]; then
+      prepare_privileged_rustic_cache
+    fi
+    rustic_command=(/usr/local/libexec/cocalc-runtime-storage-path-helper)
+    case "$cmd" in
+      *-supervised) rustic_command=(/usr/local/libexec/cocalc-rustic-job run) ;;
+      *-wait) rustic_command=(/usr/local/libexec/cocalc-rustic-job wait) ;;
+    esac
+    exec "${rustic_command[@]}" \
       rustic-rootfs-restore \
       --root "$dest_root" \
       --path "$dest_rel" \
@@ -8769,7 +9968,11 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       --snapshot "$snapshot" \
       "${delete_args[@]}"
     ;;
-  project-rustic-backup|project-rustic-backup-maintenance)
+  rustic-report-release)
+    if [ "$#" -ne 2 ]; then deny "rustic-report-release-bad-args" "expected report name and digest"; fi
+    exec /usr/local/libexec/cocalc-runtime-storage-path-helper rustic-report-release "$@"
+    ;;
+  project-rustic-backup|project-rustic-backup-maintenance|project-rustic-backup-supervised|project-rustic-backup-maintenance-supervised|project-rustic-backup-wait)
     if [ "$#" -lt 3 ]; then
       echo "usage: cocalc-runtime-storage project-rustic-backup <src> <repo-profile> <host> [--tag <tag>] [--parent <snapshot>]..." >&2
       exit 2
@@ -8815,11 +10018,18 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     source_root="$ALLOWED_PATH_ROOT"
     source_rel="$ALLOWED_PATH_REL"
     set_rustic_profile_parts "$repo_profile"
+    rustic_command=(/usr/local/libexec/cocalc-runtime-storage-path-helper)
+    case "$cmd" in
+      *-supervised) rustic_command=(/usr/local/libexec/cocalc-rustic-job run) ;;
+      *-wait) rustic_command=(/usr/local/libexec/cocalc-rustic-job wait) ;;
+    esac
     if [ "$cmd" = "project-rustic-backup-maintenance" ]; then
       attach_maintenance_worker
     fi
-    prepare_privileged_rustic_cache
-    exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+    if [ "$cmd" != "project-rustic-backup-wait" ]; then
+      prepare_privileged_rustic_cache
+    fi
+    exec "${rustic_command[@]}" \
       rustic-project-backup \
       --root "$source_root" \
       --path "$source_rel" \
@@ -8829,7 +10039,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       "${tag_args[@]}" \
       "${parent_args[@]}"
     ;;
-  project-rustic-restore)
+  project-rustic-restore|project-rustic-restore-supervised|project-rustic-restore-wait)
     if [ "$#" -ne 3 ]; then
       echo "usage: cocalc-runtime-storage project-rustic-restore <repo-profile> <snapshot> <dest>" >&2
       exit 2
@@ -8846,8 +10056,15 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     dest_root="$ALLOWED_PATH_ROOT"
     dest_rel="$ALLOWED_PATH_REL"
     set_rustic_profile_parts "$repo_profile"
-    prepare_privileged_rustic_cache
-    exec /usr/local/libexec/cocalc-runtime-storage-path-helper \
+    rustic_command=(/usr/local/libexec/cocalc-runtime-storage-path-helper)
+    case "$cmd" in
+      *-supervised) rustic_command=(/usr/local/libexec/cocalc-rustic-job run) ;;
+      *-wait) rustic_command=(/usr/local/libexec/cocalc-rustic-job wait) ;;
+    esac
+    if [ "$cmd" != "project-rustic-restore-wait" ]; then
+      prepare_privileged_rustic_cache
+    fi
+    exec "${rustic_command[@]}" \
       rustic-project-restore \
       --root "$dest_root" \
       --path "$dest_rel" \
@@ -9311,6 +10528,7 @@ esac
     )
     wrappers = {
         "/usr/local/libexec/cocalc-runtime-storage-path-helper": storage_path_helper,
+        "/usr/local/libexec/cocalc-rustic-job": RUSTIC_JOB_HELPER,
         "/usr/local/libexec/cocalc-project-io-policy": PROJECT_IO_POLICY_HELPER,
         "/usr/local/sbin/cocalc-runtime-storage": storage_wrapper,
         "/usr/local/sbin/cocalc-mount-data": mount_wrapper,
@@ -9322,6 +10540,11 @@ esac
         text_write_atomic(p, content, default_mode=0o755)
         os.chown(p, 0, 0)
         p.chmod(0o755)
+
+    maintenance_slice = Path("/etc/systemd/system/cocalcmaintenance.slice")
+    text_write_atomic(maintenance_slice, RUSTIC_MAINTENANCE_SLICE, default_mode=0o644)
+    os.chown(maintenance_slice, 0, 0)
+    maintenance_slice.chmod(0o644)
 
     write_project_io_configuration(cfg)
 

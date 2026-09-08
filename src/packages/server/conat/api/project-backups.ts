@@ -559,6 +559,7 @@ export async function cleanupRestoreStaging({
   await (
     await projectClient(project_id, account_id)
   ).cleanupRestoreStaging({
+    project_id,
     root,
   });
 }

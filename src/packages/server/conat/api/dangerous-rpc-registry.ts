@@ -612,6 +612,21 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,
   },
+  "hosts.recordProjectBackupOutcome": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "Host-authenticated immutable backup evidence recording, fenced to project placement and owning bay; does not authorize deletion or advance live-source freshness.",
+  },
+  "hosts.recordProjectBackupAttempt": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "Host-authenticated bounded backup attempt telemetry, fenced to project ownership/placement. Cannot authorize deletion or advance source freshness.",
+  },
+  "hosts.recordProjectBackupOutcomeLocal": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "Internal owning-bay host evidence receiver with the same placement and immutable-receipt fences; not an account mutation or deletion authorization.",
+  },
   "hosts.recordProjectBackupIndex": {
     decision: "fresh-auth-not-required",
     reason: TELEMETRY_ONLY,

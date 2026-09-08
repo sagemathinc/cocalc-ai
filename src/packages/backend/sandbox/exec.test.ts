@@ -4,10 +4,11 @@ Test the exec command.
 
 import exec, {
   parseAndValidateOptions,
+  parseOutput,
   selectPlatformOptions,
   validate,
 } from "./exec";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,6 +31,127 @@ describe("exec works", () => {
     expect(truncated).toBe(false);
     expect(stdout.toString()).toEqual("a.txt\n");
     expect(stderr.toString()).toEqual("");
+  });
+});
+
+describe("exec bounded process lifetime", () => {
+  const posixTest = process.platform === "win32" ? it.skip : it;
+
+  posixTest(
+    "escalates when SIGTERM is ignored",
+    async () => {
+      const output = await exec({
+        cmd: process.execPath,
+        prefixArgs: [
+          "-e",
+          `
+        process.on('SIGTERM', () => {});
+        console.log('ready');
+        setTimeout(() => process.exit(99), 10000);
+      `,
+        ],
+        killProcessGroup: true,
+        timeout: 1000,
+      });
+      expect(output.stdout.toString()).toContain("ready");
+      expect(output.truncated).toBe(true);
+      expect(output.code).not.toBe(0);
+      expect(() => parseOutput(output)).toThrow();
+    },
+    15000,
+  );
+
+  posixTest(
+    "kills pipe-holding descendants even after the leader exits",
+    async () => {
+      let descendant = 0;
+      const childScript = `
+      process.on('SIGTERM', () => {});
+      console.log(process.pid);
+      setTimeout(() => process.exit(99), 10000);
+    `;
+      const output = await exec({
+        cmd: process.execPath,
+        prefixArgs: [
+          "-e",
+          `
+        require('node:child_process').spawn(process.execPath,
+          ['-e', ${JSON.stringify(childScript)}], {stdio: 'inherit'});
+      `,
+        ],
+        onStdoutLine: (line) => {
+          descendant = Number(line);
+        },
+        killProcessGroup: true,
+        timeout: 1000,
+      });
+      expect(descendant).toBeGreaterThan(0);
+      expect(output.truncated).toBe(true);
+      expect(output.code).not.toBe(0);
+      if (process.platform === "linux") {
+        const status = await readFile(`/proc/${descendant}/stat`, "utf8").catch(
+          (err) => {
+            if (err.code === "ENOENT") return "";
+            throw err;
+          },
+        );
+        // An adopted child may briefly await init's reap, but must not be running.
+        expect(status === "" || /\) Z /.test(status)).toBe(true);
+      }
+    },
+    15000,
+  );
+
+  posixTest(
+    "output overflow escalates even with timeout disabled",
+    async () => {
+      const output = await exec({
+        cmd: process.execPath,
+        prefixArgs: [
+          "-e",
+          `
+        process.on('SIGTERM', () => {});
+        setInterval(() => process.stdout.write('x'.repeat(4096)), 10);
+        setTimeout(() => process.exit(99), 10000);
+      `,
+        ],
+        killProcessGroup: true,
+        timeout: 0,
+        maxSize: 128,
+      });
+      expect(output.truncated).toBe(true);
+      expect(output.code).not.toBe(0);
+      expect(output.stdout.length).toBeLessThanOrEqual(128);
+    },
+    15000,
+  );
+
+  it("rejects spawn errors without waiting for a timeout", async () => {
+    await expect(
+      exec({ cmd: join(tempDir, "does-not-exist") }),
+    ).rejects.toThrow();
+  });
+
+  it.each([null, 1, 99])("does not parse exit code %s as success", (code) => {
+    expect(() =>
+      parseOutput({
+        stdout: Buffer.from("looks successful"),
+        stderr: Buffer.alloc(0),
+        code,
+        truncated: false,
+      }),
+    ).toThrow();
+  });
+
+  it("does not parse truncated output with exit zero as success", () => {
+    expect(() =>
+      parseOutput({
+        stdout: Buffer.from("{}"),
+        stderr: Buffer.alloc(0),
+        code: 0,
+        truncated: true,
+      }),
+    ).toThrow("limit");
   });
 });
 

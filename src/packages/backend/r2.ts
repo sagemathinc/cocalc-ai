@@ -8,7 +8,9 @@ import { execFile as execFileCb } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import https from "node:https";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 
 const REQUEST_MAX_ATTEMPTS = 4;
@@ -23,6 +25,58 @@ export interface R2ObjectStoreAuth {
   secretKey: string;
   bucket: string;
   region?: string;
+}
+
+export interface SignedR2ObjectDownload {
+  url: string;
+  headers: Record<string, string>;
+}
+
+// Accept only a pre-authorized exact GET, never redirects or caller-controlled
+// request overrides. The caller must obtain this capability from its owning bay.
+function captureSignedDownload(
+  download: SignedR2ObjectDownload,
+): SignedR2Request {
+  if (
+    !download ||
+    typeof download.url !== "string" ||
+    download.url.length > 32768
+  )
+    throw new Error("Invalid signed object download");
+  const parsed = new URL(download.url);
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.hash ||
+    parsed.search
+  )
+    throw new Error("Invalid signed object download URL");
+  const headers: Record<string, string> = {};
+  const expected = ["authorization", "x-amz-date", "x-amz-content-sha256"];
+  if (
+    !download.headers ||
+    Object.keys(download.headers).length !== expected.length
+  )
+    throw new Error("Invalid signed object download headers");
+  for (const name of expected) {
+    const value = download.headers[name];
+    if (
+      typeof value !== "string" ||
+      !value ||
+      value.length > 16384 ||
+      /[\r\n]/.test(value)
+    )
+      throw new Error("Invalid signed object download headers");
+    headers[name] = value;
+  }
+  return {
+    parsed,
+    url: parsed.href,
+    canonicalUri: parsed.pathname,
+    canonicalQuery: "",
+    headers,
+  };
 }
 
 export type R2RequestMethod = "GET" | "PUT" | "POST" | "DELETE";
@@ -49,8 +103,8 @@ type RetryableError = Error & {
   statusCode?: number;
 };
 
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function delay(ms: number, signal?: AbortSignal) {
+  return sleep(ms, undefined, { signal });
 }
 
 async function retryOperation<T>({
@@ -59,14 +113,17 @@ async function retryOperation<T>({
   baseDelayMs,
   isRetryable,
   fn,
+  signal,
 }: {
   label: string;
   maxAttempts: number;
   baseDelayMs: number;
   isRetryable: (err: unknown) => boolean;
   fn: (attempt: number) => Promise<T>;
+  signal?: AbortSignal;
 }): Promise<T> {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    signal?.throwIfAborted();
     try {
       return await fn(attempt);
     } catch (err) {
@@ -74,7 +131,7 @@ async function retryOperation<T>({
         throw err;
       }
       const waitMs = baseDelayMs * attempt;
-      await delay(waitMs);
+      await delay(waitMs, signal);
     }
   }
   throw new Error(`unreachable retry state for ${label}`);
@@ -256,14 +313,19 @@ async function sendRequest({
   body,
   createBodyStream,
   label,
+  signal,
+  maxResponseBytes,
 }: {
   method: R2RequestMethod;
   signed: SignedR2Request;
   body?: Buffer;
   createBodyStream?: () => NodeJS.ReadableStream;
   label: string;
+  signal?: AbortSignal;
+  maxResponseBytes?: number;
 }): Promise<RequestResponse> {
   for (let attempt = 1; attempt <= REQUEST_MAX_ATTEMPTS; attempt += 1) {
+    signal?.throwIfAborted();
     const family = attempt >= 2 ? 4 : undefined;
     try {
       return await new Promise((resolve, reject) => {
@@ -278,12 +340,26 @@ async function sendRequest({
               : signed.canonicalUri,
             headers: signed.headers,
             family,
+            signal,
           },
           (res) => {
             const chunks: Buffer[] = [];
-            res.on("data", (chunk) =>
-              chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-            );
+            let responseBytes = 0;
+            res.on("error", reject);
+            res.on("data", (chunk) => {
+              const buffer = Buffer.from(chunk);
+              if (
+                buffer.length >
+                (maxResponseBytes ?? Number.MAX_SAFE_INTEGER) - responseBytes
+              ) {
+                const error = new Error("R2 response exceeds byte limit");
+                res.destroy(error);
+                reject(error);
+                return;
+              }
+              responseBytes += buffer.length;
+              chunks.push(buffer);
+            });
             res.on("end", () => {
               resolve({
                 statusCode: res.statusCode ?? 0,
@@ -312,7 +388,7 @@ async function sendRequest({
         throw err;
       }
       const waitMs = REQUEST_RETRY_BASE_DELAY_MS * attempt;
-      await delay(waitMs);
+      await delay(waitMs, signal);
     }
   }
   throw new Error(`unreachable request state for ${label}`);
@@ -394,6 +470,7 @@ export async function putR2ObjectFromFile({
   cacheControl,
   payloadSha256,
   contentLength,
+  signal,
 }: {
   auth: R2ObjectStoreAuth;
   key: string;
@@ -402,13 +479,16 @@ export async function putR2ObjectFromFile({
   cacheControl?: string;
   payloadSha256: string;
   contentLength?: number;
+  signal?: AbortSignal;
 }): Promise<void> {
   await retryOperation({
+    signal,
     label: `R2 PUT ${key}`,
     maxAttempts: OBJECT_IO_MAX_ATTEMPTS,
     baseDelayMs: OBJECT_IO_RETRY_BASE_DELAY_MS,
     isRetryable: isRetryableObjectIoError,
     fn: async () => {
+      signal?.throwIfAborted();
       const bytes = contentLength ?? (await stat(filePath)).size;
       const signed = signR2Request({
         auth,
@@ -422,7 +502,7 @@ export async function putR2ObjectFromFile({
         },
       });
 
-      if (shouldUseCurlForUpload(filePath)) {
+      if (!signal && shouldUseCurlForUpload(filePath)) {
         const args = [
           "--fail-with-body",
           "--silent",
@@ -458,6 +538,8 @@ export async function putR2ObjectFromFile({
         signed,
         createBodyStream: () => createReadStream(filePath),
         label: `R2 PUT ${key}`,
+        signal,
+        maxResponseBytes: 64 * 1024,
       });
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw createHttpStatusError(response.statusCode, response.body);
@@ -468,30 +550,49 @@ export async function putR2ObjectFromFile({
 
 export async function getR2ObjectToFile({
   auth,
+  download,
   key,
   outputPath,
+  maxBytes,
+  signal,
 }: {
-  auth: R2ObjectStoreAuth;
+  auth?: R2ObjectStoreAuth;
+  download?: SignedR2ObjectDownload;
   key: string;
   outputPath: string;
+  maxBytes?: number;
+  signal?: AbortSignal;
 }): Promise<{ sha256: string; bytes: number }> {
+  if (maxBytes != null && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) {
+    throw new Error("Invalid R2 download byte limit");
+  }
+  if ((auth == null) === (download == null))
+    throw new Error("Exactly one object download credential is required");
+  const authorized =
+    download == null ? undefined : captureSignedDownload(download);
+  const authSnapshot = auth == null ? undefined : { ...auth };
   return await retryOperation({
+    signal,
     label: `R2 GET ${key}`,
     maxAttempts: OBJECT_IO_MAX_ATTEMPTS,
     baseDelayMs: OBJECT_IO_RETRY_BASE_DELAY_MS,
     isRetryable: isRetryableObjectIoError,
     fn: async () => {
+      signal?.throwIfAborted();
       for (
         let requestAttempt = 1;
         requestAttempt <= REQUEST_MAX_ATTEMPTS;
         requestAttempt += 1
       ) {
-        const signed = signR2Request({
-          auth,
-          method: "GET",
-          key,
-          payloadSha256: sha256Hex(""),
-        });
+        signal?.throwIfAborted();
+        const signed =
+          authorized ??
+          signR2Request({
+            auth: authSnapshot!,
+            method: "GET",
+            key,
+            payloadSha256: sha256Hex(""),
+          });
         const hash = createHash("sha256");
         let bytes = 0;
         const family = requestAttempt >= 2 ? 4 : undefined;
@@ -508,16 +609,27 @@ export async function getR2ObjectToFile({
                 path: signed.canonicalUri,
                 headers: signed.headers,
                 family,
+                signal,
               },
               (res) => {
                 const statusCode = res.statusCode ?? 0;
                 if (statusCode < 200 || statusCode >= 300) {
                   const chunks: Buffer[] = [];
-                  res.on("data", (chunk) =>
-                    chunks.push(
-                      Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
-                    ),
-                  );
+                  let errorBytes = 0;
+                  res.on("error", reject);
+                  res.on("data", (chunk) => {
+                    const buffer = Buffer.from(chunk);
+                    errorBytes += buffer.length;
+                    if (errorBytes > 64 * 1024) {
+                      const error = new Error(
+                        "R2 error response exceeds byte limit",
+                      );
+                      res.destroy(error);
+                      reject(error);
+                      return;
+                    }
+                    chunks.push(buffer);
+                  });
                   res.on("end", () =>
                     reject(
                       createHttpStatusError(statusCode, Buffer.concat(chunks)),
@@ -525,17 +637,28 @@ export async function getR2ObjectToFile({
                   );
                   return;
                 }
-                res.on("data", (chunk) => {
-                  const buffer = Buffer.isBuffer(chunk)
-                    ? chunk
-                    : Buffer.from(chunk);
-                  hash.update(buffer);
-                  bytes += buffer.length;
+                // Enforce the streamed size before writing, regardless of the
+                // advertised Content-Length (including chunked responses).
+                const bounded = new Transform({
+                  transform(chunk, _encoding, callback) {
+                    const buffer = Buffer.from(chunk);
+                    if (
+                      buffer.length >
+                      (maxBytes ?? Number.MAX_SAFE_INTEGER) - bytes
+                    ) {
+                      callback(new Error("R2 download exceeds byte limit"));
+                      return;
+                    }
+                    hash.update(buffer);
+                    bytes += buffer.length;
+                    callback(null, buffer);
+                  },
                 });
                 const output = createWriteStream(outputPath);
-                output.on("error", reject);
-                res.on("error", reject);
-                pipeline(res, output).then(() => resolve(), reject);
+                pipeline(res, bounded, output, { signal }).then(
+                  () => resolve(),
+                  reject,
+                );
               },
             );
             req.on("error", reject);
@@ -550,7 +673,7 @@ export async function getR2ObjectToFile({
             throw err;
           }
           const waitMs = REQUEST_RETRY_BASE_DELAY_MS * requestAttempt;
-          await delay(waitMs);
+          await delay(waitMs, signal);
         }
       }
       throw new Error(`unreachable request state for R2 GET ${key}`);

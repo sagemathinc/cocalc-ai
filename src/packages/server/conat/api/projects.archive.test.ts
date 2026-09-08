@@ -63,6 +63,16 @@ jest.mock("@cocalc/server/lro/wait", () => ({
   waitForDurableLroCompletion: (...args: any[]) =>
     waitForDurableLroCompletionMock(...args),
 }));
+const mockBackupExclusionPreflight: jest.Mock = jest.fn(async () => undefined);
+
+jest.mock("@cocalc/server/project-backup/lifecycle-preflight", () => ({
+  assertNoKnownBackupExclusions: (...args: any[]) =>
+    mockBackupExclusionPreflight(...args),
+}));
+
+beforeEach(() =>
+  mockBackupExclusionPreflight.mockReset().mockResolvedValue(undefined),
+);
 
 jest.mock("@cocalc/server/projects/archive-lifecycle-db", () => ({
   __esModule: true,
@@ -392,9 +402,37 @@ describe("projects.archiveProject", () => {
         project_id: "proj-1",
       }),
     ).rejects.toThrow(
-      "project must have at least one backup before it can be archived",
+      "project must have a current backup before it can be archived",
     );
 
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    expect(poolConnectQueryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE projects"),
+      expect.anything(),
+    );
+  });
+
+  it("rejects a known stale manual archive before stopping or deleting project data", async () => {
+    poolQueryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          host_id: "host-1",
+          backup_repo_id: "repo-1",
+          provisioned: true,
+          state: { state: "running" },
+          host_status: "running",
+          last_backup: new Date("2026-06-15T04:32:34.102Z"),
+          last_changed: new Date("2026-06-15T04:33:00Z"),
+          last_changed_generation: 12,
+          last_backup_generation: 11,
+        },
+      ],
+    });
+    const { archiveProject } = await import("./projects");
+    await expect(
+      archiveProject({ account_id: "owner-1", project_id: "proj-1" }),
+    ).rejects.toThrow("current backup");
+    expect(interBayStopMock).not.toHaveBeenCalled();
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
     expect(poolConnectQueryMock).not.toHaveBeenCalledWith(
       expect.stringContaining("UPDATE projects"),
@@ -462,6 +500,38 @@ describe("projects.archiveProject", () => {
       expect.anything(),
     );
   });
+
+  it.each(["manual", "automatic"] as const)(
+    "rejects %s archives with exclusions before a stop, job creation, or deletion",
+    async (mode) => {
+      poolQueryMock.mockResolvedValueOnce({
+        rows: [
+          {
+            project_id: "proj-1",
+            host_id: "host-1",
+            provisioned: true,
+            state: { state: "running" },
+          },
+        ],
+      });
+      mockBackupExclusionPreflight.mockRejectedValue(
+        new Error("backup excludes files"),
+      );
+      const { archiveProjectStorage } =
+        await import("@cocalc/server/projects/archive");
+      await expect(
+        archiveProjectStorage({ project_id: "proj-1", mode }),
+      ).rejects.toThrow("backup excludes files");
+      expect(mockBackupExclusionPreflight).toHaveBeenCalledWith({
+        project_id: "proj-1",
+        expected_host_id: "host-1",
+      });
+      expect(interBayStopMock).not.toHaveBeenCalled();
+      expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+      expect(createProjectArchiveLifecycleJobMock).not.toHaveBeenCalled();
+      expect(poolConnectQueryMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("automatic archive never stops and requires its current claim", async () => {
     const jobId = "77777777-7777-4777-8777-777777777777";

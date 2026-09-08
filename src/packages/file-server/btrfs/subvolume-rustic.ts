@@ -40,6 +40,8 @@ import {
   type RusticProgressUpdate,
 } from "./rustic-progress";
 import { btrfs, sudo } from "./util";
+import { RusticJobCleanupError } from "./rustic-job-errors";
+import { getGeneration } from "./subvolume-snapshots";
 import {
   invalidateBtrfsQgroupShowRaw,
   invalidateBtrfsSubvolumeShow,
@@ -80,6 +82,7 @@ interface Snapshot {
   id: string;
   time: Date;
   summary: { [key: string]: string | number };
+  source?: { captured_at: Date; generation: number | null };
 }
 
 interface CreatedSnapshot extends Snapshot {
@@ -343,8 +346,21 @@ export class SubvolumeRustic {
       glob,
     ]);
     const tempSnapshot = makeTempRusticSnapshotName();
+    // This is a conservative lower bound on the state included in the snapshot.
+    // Never sample the live generation AFTER backup: concurrent edits would be
+    // reported as protected even though Rustic never saw them. This freshness
+    // hint does not replace the final lifecycle source/placement fence.
+    const captured_at = new Date();
+    const observedGeneration = await getGeneration(this.subvolume.path, {
+      cache: false,
+    }).catch(() => null);
+    const generation =
+      Number.isSafeInteger(observedGeneration) && observedGeneration! >= 0
+        ? observedGeneration
+        : null;
     const { snapshotPath, generation: snapshotGeneration } =
       await this.createTempBackupSnapshot(tempSnapshot);
+    let cleanupSafe = true;
     try {
       logger.debug(
         `backup: created ${tempSnapshot} at ${snapshotPath} to get a consistent backup`,
@@ -388,23 +404,46 @@ export class SubvolumeRustic {
             ).stdout,
           );
       const { time, id, summary } = backupResult;
+      if (
+        Object.prototype.hasOwnProperty.call(
+          backupResult,
+          "cocalc_backup_evidence",
+        )
+      ) {
+        throw new Error(
+          "Protected backup evidence requires its durable host consumer; completeness was not recorded",
+        );
+      }
       const backupTime = time instanceof Date ? time : new Date(time);
       return {
         time: backupTime,
         id,
         summary,
         snapshotGeneration,
+        source: { captured_at, generation },
       };
+    } catch (error) {
+      if (error instanceof RusticJobCleanupError) cleanupSafe = false;
+      throw error;
     } finally {
       this.snapshotsCache = null;
-      logger.debug(`backup: deleting temporary ${tempSnapshot}`);
-      try {
-        await this.deleteTempBackupSnapshot(snapshotPath, { mandatory: true });
-      } catch (err) {
-        logger.warn("backup: unable to delete temporary snapshot", {
-          snapshotPath,
-          err: `${err}`,
-        });
+      if (cleanupSafe) {
+        logger.debug(`backup: deleting temporary ${tempSnapshot}`);
+        try {
+          await this.deleteTempBackupSnapshot(snapshotPath, { mandatory: true });
+        } catch (err) {
+          logger.warn("backup: unable to delete temporary snapshot", {
+            snapshotPath,
+            err: `${err}`,
+          });
+        }
+      } else {
+        logger.warn(
+          "backup: retaining snapshot until worker termination is verified",
+          {
+            snapshotPath,
+          },
+        );
       }
     }
   };
@@ -564,15 +603,17 @@ export class SubvolumeRustic {
       tags,
       progress,
       existingSnapshotNames: _existingSnapshotNames,
+      runner,
     }: {
       timeout?: number;
       limit?: number;
       tags?: string[];
       progress?: (update: RusticProgressUpdate) => void;
       existingSnapshotNames?: string[];
+      runner?: RusticBackupRunner;
     } = {},
   ) => {
-    return await this.backup({ limit, timeout, tags, progress });
+    return await this.backup({ limit, timeout, tags, progress, runner });
   };
 
   readdir = async (): Promise<string[]> => {

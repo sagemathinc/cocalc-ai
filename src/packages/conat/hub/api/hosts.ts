@@ -4,6 +4,10 @@ import {
   authFirstRequireHost,
   authFirstRequireHostWithAccountTarget,
 } from "./util";
+import type {
+  BackupAttemptUpdate,
+  BackupAttemptStatus,
+} from "@cocalc/util/types/backup-attempt";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import type {
   HostManagedComponentRolloutResponse,
@@ -1804,6 +1808,10 @@ export const hosts = {
   recordServiceAdmissionDenial: authFirstRequireHostWithAccountTarget,
   recordServiceAdmissionNearLimit: authFirstRequireHostWithAccountTarget,
   recordProjectBackup: authFirstRequireHost,
+  recordProjectBackupOutcome: authFirstRequireHost,
+  recordProjectBackupAttempt: authFirstRequireHost,
+  getProjectBackupAttempt: authFirstRequireHost,
+  getProjectBackupOutcome: authFirstRequireHost,
   recordProjectBackupIndex: authFirstRequireHost,
   getProjectBackupIndexes: authFirstRequireHost,
   syncProjectBackupIndexes: authFirstRequireHost,
@@ -2154,6 +2162,26 @@ export interface Hosts {
     time: Date;
     generation?: number | null;
   }) => Promise<void>;
+  recordProjectBackupAttempt: (opts: BackupAttemptUpdate) => Promise<void>;
+  getProjectBackupAttempt: (opts: {
+    host_id?: string;
+    project_id: string;
+  }) => Promise<BackupAttemptStatus | null>;
+  recordProjectBackupOutcome: (opts: {
+    host_id?: string;
+    project_id: string;
+    receipt: import("@cocalc/util/types/backup-evidence").BackupOutcomeReceipt;
+  }) => Promise<{ receipt_sha256: string }>;
+  getProjectBackupOutcome: (opts: {
+    host_id?: string;
+    project_id: string;
+    backup_id?: string;
+    report_access?: boolean;
+  }) => Promise<{
+    receipt: import("@cocalc/util/types/backup-evidence").BackupOutcomeReceipt;
+    bucket_id: string;
+    report_download?: { url: string; headers: Record<string, string> };
+  } | null>;
   recordProjectBackupIndex: (opts: {
     host_id?: string;
     project_id: string;

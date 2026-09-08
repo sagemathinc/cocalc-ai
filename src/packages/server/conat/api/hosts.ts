@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { BackupAttemptUpdate } from "@cocalc/util/types/backup-attempt";
 import { delay } from "awaiting";
 import type {
   Host,
@@ -1909,6 +1910,111 @@ export async function recordProjectBackup({
     time,
     generation,
   });
+}
+
+export async function recordProjectBackupAttempt(
+  opts: BackupAttemptUpdate,
+): Promise<void> {
+  if (!opts.host_id || !opts.project_id)
+    throw new Error("Backup attempt requires host and project identity");
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (!ownership)
+    throw new Error("Backup attempt project ownership is unknown");
+  if (ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .recordProjectBackupAttempt(opts);
+  }
+  const { recordBackupAttempt } =
+    await import("@cocalc/server/project-backup/attempts");
+  await recordBackupAttempt(opts);
+}
+
+export async function getProjectBackupAttempt(opts: {
+  host_id?: string;
+  project_id: string;
+}) {
+  if (!opts.host_id || !opts.project_id)
+    throw new Error("Backup attempt requires host and project identity");
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (!ownership)
+    throw new Error("Backup attempt project ownership is unknown");
+  if (ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .getProjectBackupAttempt(opts);
+  }
+  const { getHostBackupAttempt } =
+    await import("@cocalc/server/project-backup/attempts");
+  return await getHostBackupAttempt(opts);
+}
+
+export async function recordProjectBackupOutcome(
+  opts: Parameters<
+    import("@cocalc/conat/hub/api/hosts").Hosts["recordProjectBackupOutcome"]
+  >[0],
+): Promise<{ receipt_sha256: string }> {
+  if (!opts.host_id || !opts.project_id)
+    throw new Error("Backup outcome requires host and project identity");
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .recordProjectBackupOutcome(opts);
+  }
+  return await recordProjectBackupOutcomeLocal(opts);
+}
+
+export async function recordProjectBackupOutcomeLocal(
+  opts: Parameters<
+    import("@cocalc/conat/hub/api/hosts").Hosts["recordProjectBackupOutcome"]
+  >[0],
+): Promise<{ receipt_sha256: string }> {
+  const { recordBackupOutcome } =
+    await import("@cocalc/server/project-backup/outcomes");
+  const { getHostBackupEvidenceStore } =
+    await import("@cocalc/server/project-backup");
+  const bucket = await getHostBackupEvidenceStore({
+    host_id: opts.host_id,
+    project_id: opts.project_id,
+  });
+  return await recordBackupOutcome({ ...opts, bucket });
+}
+
+export async function getProjectBackupOutcome(
+  opts: Parameters<
+    import("@cocalc/conat/hub/api/hosts").Hosts["getProjectBackupOutcome"]
+  >[0],
+) {
+  if (!opts.host_id || !opts.project_id)
+    throw new Error("Backup outcome requires host and project identity");
+  const ownership = await resolveProjectBay(opts.project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .getProjectBackupOutcome(opts);
+  }
+  return await getProjectBackupOutcomeLocal(opts);
+}
+
+export async function getProjectBackupOutcomeLocal(
+  opts: Parameters<
+    import("@cocalc/conat/hub/api/hosts").Hosts["getProjectBackupOutcome"]
+  >[0],
+) {
+  if (
+    opts.report_access !== undefined &&
+    typeof opts.report_access !== "boolean"
+  )
+    throw new Error("Invalid backup report access option");
+  if (opts.report_access) {
+    const { getHostBackupReportAccess } =
+      await import("@cocalc/server/project-backup");
+    return await getHostBackupReportAccess(opts);
+  }
+  const { getHostBackupOutcome } =
+    await import("@cocalc/server/project-backup/outcomes");
+  return await getHostBackupOutcome(opts);
 }
 
 export async function recordProjectBackupLocal({
