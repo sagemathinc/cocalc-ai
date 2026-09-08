@@ -22,12 +22,10 @@ not a current checklist. The objective is not complete. Current release work:
 Remaining live acceptance gaps (September 8):
 
 - Actual agent command execution in the selected worktree: persisted dispatch
-  context was verified, but the connected account rejected execution at its
-  usage limit. Do not repeatedly resubmit without changed quota/account state.
-- Activity diffs in a completed real turn: component and producer checks pass,
-  but the supplied `x.chat` test threads contain computation/time queries, an
-  empty human thread, and quota-failed review turns. A suitable existing turn
-  was requested from the maintainer; no replacement agent run was submitted.
+  context was verified, but the earlier cross-worktree attempt hit its usage
+  limit. The maintainer's newer successful execution below establishes changed
+  execution availability, but is rooted in the main working copy rather than
+  a separately selected worktree. Cross-worktree execution remains to verify.
 - Intermittent cold originating-link behavior: the archived-directory fixture
   and subsequent route tests pass, but an earlier disappearance and transient
   missing URL were not reproduced with a demonstrated production root cause.
@@ -37,7 +35,18 @@ The standard live route suite was rerun against the current deployed build and
 passed deep-link opening, selection, reload, Escape, Back/Forward, preservation
 of unrelated parameters and absence of page errors. This does not substitute
 for the cold originating-link case above. The remaining scope is still the
-complete acceptance matrix below, not just these three live checks.
+complete acceptance matrix below, not just these live checks.
+
+Maintainer live acceptance (September 8): session
+`01a07973-b604-7a00-b1d0-ec91e82a0520` in `x.chat`, thread
+`e4dfbb94-1595-46d2-9f83-cd78f96eacbd`, message
+`092d4110-2001-4c7a-bcaf-8f7de421a0e6`. The typed activity API confirms
+persisted config cwd `/home/user/cocalc-ai`, an added-file source for `primes.pl`,
+a sparse two-hunk unified source for `primes.py`, and terminal completion with
+exit code 0 (Python/Perl outputs compared successfully). The maintainer confirms
+the activity file diffs render nicely, the checkboxes work, and dark mode works.
+This closes the missing completed activity-diff visual fixture gate. It does
+not establish cross-worktree dispatch or a fix for intermittent cold links.
 
 | Requirement | Current evidence and remaining work |
 | --- | --- |
