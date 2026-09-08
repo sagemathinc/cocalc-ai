@@ -30,6 +30,18 @@ backend:
 - Keep model names server-configurable and capability-reported. Do not bake a
   model list into the frontend.
 
+Site-funded speech uses the site's OpenAI API key and consumes the same rolling
+AI allowance as Luna Medium. CoCalc's accounting conversion is 100 AI usage
+units per US dollar. Project and account OpenAI keys remain valid alternative
+credential sources, but they do not consume the site-funded allowance.
+
+At prices checked on 2026-09-08, `gpt-transcribe` costs $0.0045 per input minute
+(0.45 AI usage units), while `gpt-4o-mini-tts` costs $0.60 per million input
+text tokens and $12 per million output audio tokens. OpenAI's approximate TTS
+pricing works out to roughly $0.015 per generated minute (about 1.5 AI usage
+units) under the standard audio-token estimate; actual TTS cost varies with the
+generated audio and speaking speed.
+
 OpenAI's current transcription guide recommends `gpt-transcribe` for new
 general-purpose transcription. It accepts files up to 25 MB in `mp3`, `mp4`,
 `mpeg`, `mpga`, `m4a`, `wav`, and `webm` formats. The Speech API supports
@@ -258,10 +270,23 @@ binary data and already falls back from its fast-RPC path when a request is too
 large. Keep each request comfortably bounded anyway. Do not put recordings in
 the project filesystem or durable blob store.
 
-Before implementation, verify request cancellation and the practical browser
-Conat payload ceiling with a 10 MB test. If cancellation cannot reach an active
-provider request, use short server timeouts and record that limitation; do not
-pretend client cancellation refunds an already-started request.
+Conat core automatically chunks and reassembles messages larger than the
+server's per-packet payload. Typed services use fast RPC only up to 4 MiB and
+fall back to ordinary request transport for larger requests or responses. The
+real Conat service integration suite covers 10 MB payloads in both directions
+and includes a 10 MiB `Uint8Array` round trip. Retain a browser-path 10 MiB
+regression test when the speech API is added; custom application-level upload
+chunking is not needed.
+
+Conat request cancellation is different: `Client.request` currently has a
+timeout but no `AbortSignal`, and abandoning a client promise does not cancel
+an active service handler or provider request. Give each speech operation an
+idempotency/request ID and add an explicit authenticated cancel method. The
+home-bay service should retain a bounded map from active request IDs to provider
+`AbortController`s. Cancel, route changes, and component unmount call the cancel
+method; server timeout aborts the same controller. Cancellation is best effort:
+once provider work has started it may still be billable, and the UI and usage
+accounting must not imply otherwise.
 
 ### Credential And Funding Rules
 
@@ -274,25 +299,27 @@ Create a speech-capability resolver that reports both availability and source:
 1. Project OpenAI API key, when a project context exists and policy allows it.
 2. Account OpenAI API key.
 3. Site OpenAI API key only when site-funded speech is explicitly enabled and
-   the account passes the applicable membership/allowance policy.
+   the account passes the normal rolling 5-hour and 7-day AI allowance policy
+   plus the site's global spending guard.
 4. Otherwise unavailable, with a setup action linking to AI settings.
 
 The resolver must be shared by capability reporting and execution so the UI
 cannot advertise a path the backend later rejects. Update `last_used` through
 the existing routed secret helpers. Never expose a provider key to the browser.
 
-Site-funded speech needs its own bounded policy and accounting. Existing
-site-funded Codex reservations are turn-oriented and should not be silently
-repurposed. Record exact provider cost, model, operation (`transcription` or
-`speech`), duration or character/token basis, project, and provider request ID.
-Extend the AI usage schema with media-specific dimensions instead of putting
-audio or full transcripts into log fields. Decide before rollout whether this
-cost consumes an existing AI allowance or a separately configured speech
-allowance.
+Site-funded speech consumes the existing AI allowance; do not create a separate
+speech balance. Existing site-funded Codex reservations are turn-oriented and
+should not be silently repurposed. Before starting provider work, perform the
+same per-account and global admission checks, with a conservative reservation
+derived from maximum recording duration or bounded TTS text. Reconcile that
+reservation after completion or failure.
 
-This funding decision is the only product decision that should block a broad
-production rollout. It does not block development with project/account keys or
-an explicitly enabled development site key.
+Record provider-reported cost/usage when available. Otherwise calculate from
+the documented model rate and measured input or generated-audio duration, and
+reconcile against provider billing aggregates. Record model, operation
+(`transcription` or `speech`), duration or character/token basis, project, and
+provider request ID. Extend the AI usage schema with media-specific dimensions
+instead of putting audio or full transcripts into log fields.
 
 ### Provider Calls
 
@@ -440,7 +467,8 @@ only the returned transcript/audio metadata.
 ### Phase 0: Capability And Funding Foundation
 
 - Add the speech capability resolver and separate input/output feature flags.
-- Decide and implement site-funded accounting semantics.
+- Reuse the normal AI allowance and global spending guard for site-funded
+  speech, with bounded reservations and usage reconciliation.
 - Add typed binary transport contract tests and provider fakes.
 
 ### Phase 1: Dictation
