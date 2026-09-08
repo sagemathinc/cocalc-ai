@@ -410,7 +410,7 @@ function ReviewContent(props: ReviewDiffPanelProps) {
         onSelectedLinesChange={setSelection}
         options={options}
         style={{
-          height: "60vh",
+          height: "calc(100dvh - 100px)",
           minHeight: 200,
           overflow: "auto",
           width: "100%",

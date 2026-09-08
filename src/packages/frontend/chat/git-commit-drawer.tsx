@@ -148,6 +148,7 @@ import {
   captureGitDiffScrollAnchor,
   matchGitDrawerScrollCommand,
   restoreGitDiffScrollAnchor,
+  revealGitReadingViewport,
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
 } from "./git-commit/drawer-scroll";
@@ -2983,6 +2984,38 @@ export function GitCommitDrawer({
     setDrawerScrollParent((current) => (current === node ? current : node));
   }, []);
 
+  useEffect(() => {
+    if (!drawerScrollParent) return;
+    const onWheel = (event: WheelEvent) => {
+      const inner = pierreNavigationRef.current?.viewport();
+      if (
+        !inner ||
+        event.ctrlKey ||
+        Math.abs(event.deltaX) > Math.abs(event.deltaY) ||
+        !event.composedPath().includes(inner) ||
+        isEditableEventTarget(event.target)
+      )
+        return;
+      const delta =
+        event.deltaY *
+        (event.deltaMode === 1
+          ? 16
+          : event.deltaMode === 2
+            ? inner.clientHeight
+            : 1);
+      const rest = revealGitReadingViewport(drawerScrollParent, inner, delta);
+      if (rest !== delta) {
+        event.preventDefault();
+        inner.scrollTop += rest;
+      }
+    };
+    drawerScrollParent.addEventListener("wheel", onWheel, {
+      passive: false,
+      capture: true,
+    });
+    return () => drawerScrollParent.removeEventListener("wheel", onWheel, true);
+  }, [drawerScrollParent]);
+
   const handleDrawerClose = () => {
     const node = scrollRef.current;
     if (node) {
@@ -3218,6 +3251,33 @@ export function GitCommitDrawer({
       if (scrollCommand) {
         const node =
           pierreNavigationRef.current?.viewport() ?? scrollRef.current;
+        const outer = scrollRef.current;
+        if (node && outer && node !== outer) {
+          if (scrollCommand === "top") {
+            node.scrollTop = 0;
+            outer.scrollTop = 0;
+            evt.preventDefault();
+            return;
+          }
+          const down =
+            scrollCommand === "pageDown" || scrollCommand === "lineDown";
+          const step =
+            scrollCommand === "pageDown" ? node.clientHeight * 0.9 : 40;
+          if (down) {
+            const rest = revealGitReadingViewport(outer, node, step);
+            if (rest !== step) {
+              node.scrollTop += rest;
+              evt.preventDefault();
+              return;
+            }
+          } else if (
+            node.scrollTop <= 0 &&
+            runGitDrawerScrollCommand(outer, scrollCommand)
+          ) {
+            evt.preventDefault();
+            return;
+          }
+        }
         if (node && runGitDrawerScrollCommand(node, scrollCommand)) {
           evt.preventDefault();
           if (node === scrollRef.current)

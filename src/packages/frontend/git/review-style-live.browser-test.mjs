@@ -12,8 +12,9 @@ const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
 page.setDefaultTimeout(60000);
 let appearance;
+const height = Number(process.env.VIEWPORT_HEIGHT ?? 1000);
 try {
-  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.setViewportSize({ width: 1440, height });
   const warning = page.getByRole("button", {
     name: "Dismiss stale frontend build warning",
   });
@@ -41,6 +42,22 @@ try {
       page.getByRole("checkbox", { name: "First-parent history", exact: true }),
     ).not.toBeVisible();
     await page.screenshot({ path: `/tmp/git-review-${mode}.png` });
+    const header = page.locator("[data-review-file-header]").first();
+    await header.hover();
+    await page.mouse.wheel(0, 650);
+    await expect
+      .poll(async () => (await header.boundingBox())?.y ?? 10000)
+      .toBeLessThan(160);
+    await page.screenshot({ path: `/tmp/git-reading-${mode}.png` });
+    // Home restores access to the setup controls, not just the first diff row.
+    await header.click();
+    await page.keyboard.press("Home");
+    if (process.env.READING_ONLY === "1") {
+      await expect(
+        page.getByRole("button", { name: "Compare revisions...", exact: true }),
+      ).toBeInViewport();
+      continue;
+    }
     await page
       .getByRole("button", { name: "Compare revisions...", exact: true })
       .click();
@@ -81,11 +98,13 @@ try {
       page.getByRole("combobox", { name: "Commit", exact: true }),
     ).toBeInViewport();
     await page.screenshot({ path: `/tmp/git-review-${mode}-narrow.png` });
-    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.setViewportSize({ width: 1440, height });
   }
   expect(errors).toEqual([]);
   console.log(
-    "PASS: light/dark review and comparison layouts, keyboard history disclosure, selectable comparisons; no page errors",
+    process.env.READING_ONLY === "1"
+      ? "PASS: light/dark reading viewport, wheel handoff and Home return; no page errors"
+      : "PASS: light/dark review and comparison layouts, keyboard history disclosure, selectable comparisons; no page errors",
   );
 } finally {
   if (appearance)
