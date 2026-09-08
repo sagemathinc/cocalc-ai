@@ -470,7 +470,7 @@ export async function bootstrapCloudflareConfiguration(opts: {
         clean(existing?.bucketPrefix) !== prefix
       ) {
         notes.push(
-          "Existing R2 credentials are incomplete or the account/bucket prefix changed. No settings were changed. Review R2 configuration in advanced manual setup before retrying; bootstrap never replaces existing S3 credentials or moves backup data.",
+          "Existing R2 credentials are incomplete or the account/bucket prefix changed. No settings were changed. An operator must review the underlying R2 site settings before retrying; bootstrap never replaces existing S3 credentials or moves backup data.",
         );
         throw new Error("Existing R2 configuration needs review");
       }

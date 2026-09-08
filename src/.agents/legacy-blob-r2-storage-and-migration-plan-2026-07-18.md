@@ -380,9 +380,9 @@ additional Worker permissions needed for public blob delivery. It also tends
 to produce either underpowered tokens that fail later or overpowered tokens
 that remain stored long term.
 
-Use a one-time bootstrap-token flow as the recommended configuration path.
-Keep manual token entry only as an advanced fallback for operators who already
-understand Cloudflare API permissions.
+Use a one-time bootstrap-token flow as the only wizard configuration path.
+Underlying site settings remain operator recovery/customization escape hatches,
+not a second guided workflow. Do not duplicate permission instructions there.
 
 #### Intended admin experience
 
@@ -510,11 +510,76 @@ for manual inspection. Creation is not a health check: blob provisioning must
 still verify S3 PUT/GET and Worker delivery, and backup diagnostics remain
 available. R2 must already be enabled in the Cloudflare account.
 
-The recommended wizard has no manual key entry step. Advanced manual setup
-retains the credential fields for existing/custom deployments. Before merging,
+The wizard has no manual key entry step or advanced workflow. Underlying site
+settings remain available for deliberate operator recovery. Before merging,
 manually verify creation and S3 access on lite4b, repeat bootstrap to confirm
 preservation, and confirm neither new credential secret appears in browser
 responses. This is in addition to the mocked policy/derivation/cleanup tests.
+
+#### Credential rotation: next implementation gate
+
+Status: design only; not implemented by the bootstrap-only wizard change.
+Re-running bootstrap currently refreshes REST automation permissions but
+preserves S3 credentials and leaves the previous REST token active. It is not
+a complete compromise-recovery or credential-rotation operation.
+
+Rotation changes Cloudflare authentication, not rustic repository encryption
+passwords, repository IDs, bucket names, paths, or backup data. No data copy
+or re-encryption should be needed. Keep REST-token replacement and S3-key
+replacement distinct internally, even if one guided action orchestrates both.
+
+Existing code that must participate:
+
+- `server/project-backup/index.ts` builds new TOML and index-store config from
+  current site settings; `DEFAULT_BACKUP_TTL_SECONDS` is 12 hours.
+- `project-host/file-server.ts` caches that config and writes local rustic
+  profiles. Its invalidation RPC clears caches but does not drain running
+  rustic processes or prove they no longer hold old credentials.
+- `server/project-host/client.ts` and the inter-bay service already route
+  invalidation to the host's authoritative bay. Use this path, not a local-only
+  host loop or a best-effort publish as evidence of adoption.
+- Bay backups, blob readers/writers, backup-index stores, external migration
+  jobs, stored bucket credential fallbacks and persisted export configurations
+  also need an inventory. Do not assume project-host cache invalidation covers
+  all consumers. Worker R2 bindings are distinct from S3 keys.
+
+Implement a durable seed-owned rotation operation with an encrypted pending
+credential set, credential generation, per-bay/host adoption status, retained
+old token IDs and explicit cleanup state. Never persist the bootstrap token.
+Repeated calls and disconnect recovery must resume the operation without minting
+unbounded replacement tokens.
+
+1. Require fresh admin authentication and a new temporary bootstrap token.
+   Discover and display the current resource set, including custom/legacy
+   backup buckets; rotation must neither lose existing coverage nor silently
+   broaden it to other sites. Keep account, domain and bucket names fixed.
+2. Create separate replacement REST and S3 tokens. Validate required REST
+   capabilities without replacing unrelated resources. Verify a bounded unique
+   S3 canary PUT/GET/DELETE in each required existing bucket and representative
+   rustic metadata reads before switching. Clean up failed candidates; report
+   uncertain provider responses without logging token material.
+3. Switch the active credential pair and generation coherently on the seed,
+   propagate to bays, and require acknowledgements. A pair must never be read
+   as the old access key plus the new secret. Retain the previous pair during
+   the controlled handoff, not indefinitely as an invisible fallback.
+4. Invalidate host profiles through ownership-aware RPC and require generation
+   acknowledgement before new operations. Track/drain old-generation rustic
+   jobs and other consumers. Offline hosts must refresh before storage work
+   when returning. A timer or TTL alone does not prove completion.
+5. Recheck backup reads/writes and blob delivery, then present explicit old-token
+   retirement. Do not revoke credentials shared outside this site automatically.
+   Cleanup failure must leave visible, retryable pending work; do not claim
+   successful rotation while known old tokens remain active.
+6. Offer a separately confirmed emergency revoke mode for suspected compromise:
+   retire old tokens immediately, disclose that running/offline jobs may fail,
+   and retry recoverable work with the new generation. This is intentionally
+   different from routine low-disruption rotation.
+
+Acceptance tests: multibay partial propagation, offline hosts, a long-running
+backup/restore during handoff, stale profiles, mixed-pair prevention, custom
+bucket coverage, failed canary cleanup, operation restart/resume, repeated
+revocation and emergency-mode interruption. Manually exercise at least one
+real rustic restore across rotation before exposing this as a security action.
 
 #### Site settings shape
 
@@ -1154,8 +1219,8 @@ Gate: focused tests cover every producer and multibay authorization path.
 
 ### Phase 2: staging bucket and Worker
 
-- Replace the screenshot/manual-token Cloudflare wizard with the recommended
-  bootstrap-token flow and an advanced manual fallback.
+- Replace the screenshot/manual-token Cloudflare wizard with the single
+  bootstrap-token flow.
 - Extend durable-token creation to include the Worker and Worker-route
   permissions needed for public blob delivery.
 - Add an idempotent server-side Cloudflare blob Worker reconciliation API that

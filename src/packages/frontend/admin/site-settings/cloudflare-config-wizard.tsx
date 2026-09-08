@@ -29,13 +29,12 @@ import type {
   R2CredentialsTestResult,
   VisitorLocationHeaderTestResult,
 } from "@cocalc/conat/hub/api/system";
-import SecretSettingInput from "./secret-setting-input";
 
 const DEFAULT_CLOUDFLARE_PREFIX = "cocalc";
 
 const { Item } = Descriptions;
 const { Item: FormItem } = Form;
-const { Link, Paragraph, Text, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
 
 interface WizardProps {
   open: boolean;
@@ -71,7 +70,6 @@ function hasPendingCloudflareRuntimeDraft(args: {
   mode: string;
   externalDomain: string;
   accountId: string;
-  apiToken: string;
   tunnelPrefix: string;
   hostSuffix: string;
 }): boolean {
@@ -89,9 +87,6 @@ function hasPendingCloudflareRuntimeDraft(args: {
   ) {
     return true;
   }
-  if (normalizedDraftValue(args.apiToken)) {
-    return true;
-  }
   const savedPrefix =
     normalizedDraftValue(args.data.project_hosts_cloudflare_tunnel_prefix) ||
     DEFAULT_CLOUDFLARE_PREFIX;
@@ -106,33 +101,6 @@ function hasPendingCloudflareRuntimeDraft(args: {
     return true;
   }
   return false;
-}
-
-function inferCloudflareZone(domain: string | undefined): string {
-  const normalized = normalizedDomain(domain);
-  if (!normalized) return "";
-  const labels = normalized.split(".").filter(Boolean);
-  if (labels.length <= 2) return normalized;
-  const secondLevelPublicSuffixes = new Set([
-    "ac",
-    "co",
-    "com",
-    "edu",
-    "gov",
-    "net",
-    "org",
-  ]);
-  const penultimate = labels[labels.length - 2];
-  const last = labels[labels.length - 1];
-  if (
-    last.length === 2 &&
-    penultimate.length <= 3 &&
-    secondLevelPublicSuffixes.has(penultimate) &&
-    labels.length >= 3
-  ) {
-    return labels.slice(-3).join(".");
-  }
-  return labels.slice(-2).join(".");
 }
 
 function CodeValue({ value }: { value: ReactNode }) {
@@ -175,14 +143,11 @@ export default function CloudflareConfigWizard({
   const [savedData, setSavedData] = useState<Record<string, string>>(data);
   const [savedIsSet, setSavedIsSet] = useState<Record<string, boolean>>(isSet);
   const [accountId, setAccountId] = useState("");
-  const [apiToken, setApiToken] = useState("");
   const [externalDomain, setExternalDomain] = useState("");
   const [hostSuffix, setHostSuffix] = useState("");
   const [tunnelPrefix, setTunnelPrefix] = useState(DEFAULT_CLOUDFLARE_PREFIX);
   const [mode, setMode] = useState("none");
-  const [r2ApiToken, setR2ApiToken] = useState("");
   const [r2AccessKey, setR2AccessKey] = useState("");
-  const [r2SecretKey, setR2SecretKey] = useState("");
   const [r2BucketPrefix, setR2BucketPrefix] = useState(
     DEFAULT_CLOUDFLARE_PREFIX,
   );
@@ -197,7 +162,6 @@ export default function CloudflareConfigWizard({
   const [notice, setNotice] = useState("");
   const [applyError, setApplyError] = useState("");
   const [applying, setApplying] = useState(false);
-  const [setupPath, setSetupPath] = useState("bootstrap");
   const [bootstrapToken, setBootstrapToken] = useState("");
   const [bootstrapping, setBootstrapping] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
@@ -219,19 +183,15 @@ export default function CloudflareConfigWizard({
   useEffect(() => {
     if (!open) {
       setBootstrapToken("");
-      setSetupPath("bootstrap");
       setBootstrapping(false);
       setBlobResult(undefined);
       setTunnelStatus(undefined);
       setAccountId("");
-      setApiToken("");
       setExternalDomain("");
       setHostSuffix("");
       setTunnelPrefix(DEFAULT_CLOUDFLARE_PREFIX);
       setMode("none");
-      setR2ApiToken("");
       setR2AccessKey("");
-      setR2SecretKey("");
       setR2BucketPrefix(DEFAULT_CLOUDFLARE_PREFIX);
       setR2Testing(false);
       setR2TestError("");
@@ -247,7 +207,6 @@ export default function CloudflareConfigWizard({
     setAccountId(trimOrEmpty(data.project_hosts_cloudflare_tunnel_account_id));
     setSavedData(data);
     setSavedIsSet(isSet);
-    setApiToken(trimOrEmpty(data.project_hosts_cloudflare_tunnel_api_token));
     setExternalDomain(trimOrEmpty(data.dns));
     setHostSuffix(
       trimOrEmpty(data.project_hosts_cloudflare_tunnel_host_suffix),
@@ -257,9 +216,7 @@ export default function CloudflareConfigWizard({
         DEFAULT_CLOUDFLARE_PREFIX,
     );
     setMode(savedCloudflareMode(data));
-    setR2ApiToken(trimOrEmpty(data.r2_api_token));
     setR2AccessKey(trimOrEmpty(data.r2_access_key_id));
-    setR2SecretKey(trimOrEmpty(data.r2_secret_access_key));
     setR2BucketPrefix(
       trimOrEmpty(data.r2_bucket_prefix) || DEFAULT_CLOUDFLARE_PREFIX,
     );
@@ -273,36 +230,20 @@ export default function CloudflareConfigWizard({
   }, [open, data, isSet]);
 
   const showSelfConfig = mode === "self";
-  const r2TokenUrl = accountId
-    ? `https://dash.cloudflare.com/${accountId}/r2/api-tokens/create?type=user`
-    : "https://dash.cloudflare.com/<account_id>/r2/api-tokens/create?type=user";
-  const accountIdTrimmed = accountId.trim();
-  const invalidAccountId =
-    accountIdTrimmed.length > 0 && !/^[a-f0-9]{32}$/.test(accountIdTrimmed);
-  const zoneGuess = inferCloudflareZone(externalDomain);
-  const managedTransformsUrl =
-    accountIdTrimmed && zoneGuess
-      ? `https://dash.cloudflare.com/${accountIdTrimmed}/${zoneGuess}/rules/settings/managed-transforms`
-      : "https://dash.cloudflare.com/<account_id>/<zone>/rules/settings/managed-transforms";
   const defaultHostSuffix = `-${normalizedDomain(externalDomain) || "<external domain name>"}`;
   const hasPendingRuntimeDraft = hasPendingCloudflareRuntimeDraft({
     data: savedData,
     mode,
     externalDomain,
     accountId,
-    apiToken,
     tunnelPrefix,
     hostSuffix,
   });
   const hasUnsavedDraft =
     hasPendingRuntimeDraft ||
     (mode === "self" &&
-      (!!normalizedDraftValue(r2ApiToken) ||
-        normalizedDraftValue(savedData.r2_access_key_id) !==
-          normalizedDraftValue(r2AccessKey) ||
-        !!normalizedDraftValue(r2SecretKey) ||
-        normalizedDraftValue(savedData.r2_bucket_prefix) !==
-          normalizedDraftValue(r2BucketPrefix)));
+      normalizedDraftValue(savedData.r2_bucket_prefix) !==
+        normalizedDraftValue(r2BucketPrefix));
   const buttonDisabledReason = hasUnsavedDraft
     ? undefined
     : "No unapplied changes.";
@@ -311,13 +252,11 @@ export default function CloudflareConfigWizard({
     if (mode !== "self") return null;
     if (!externalDomain) return "External Domain Name";
     if (!accountId) return "Cloudflare Account ID";
-    if (invalidAccountId) return "Valid Cloudflare Account ID";
-    if (!apiToken && !savedIsSet.project_hosts_cloudflare_tunnel_api_token)
+    if (!savedIsSet.project_hosts_cloudflare_tunnel_api_token)
       return "Cloudflare API Token";
-    if (!r2ApiToken && !savedIsSet.r2_api_token) return "R2 API Token";
+    if (!savedIsSet.r2_api_token) return "R2 API Token";
     if (!r2AccessKey) return "R2 Access Key ID";
-    if (!r2SecretKey && !savedIsSet.r2_secret_access_key)
-      return "R2 Secret Access Key";
+    if (!savedIsSet.r2_secret_access_key) return "R2 Secret Access Key";
     if (!r2BucketPrefix) return "R2 bucket prefix";
     return null;
   }
@@ -337,8 +276,6 @@ export default function CloudflareConfigWizard({
       if (mode === "self") {
         if (accountId)
           updates.project_hosts_cloudflare_tunnel_account_id = accountId;
-        if (apiToken)
-          updates.project_hosts_cloudflare_tunnel_api_token = apiToken;
         if (tunnelPrefix)
           updates.project_hosts_cloudflare_tunnel_prefix = tunnelPrefix;
         if (hostSuffix)
@@ -347,9 +284,6 @@ export default function CloudflareConfigWizard({
           updates.dns = externalDomain;
         }
         if (accountId) updates.r2_account_id = accountId;
-        if (r2ApiToken) updates.r2_api_token = r2ApiToken;
-        if (r2AccessKey) updates.r2_access_key_id = r2AccessKey;
-        if (r2SecretKey) updates.r2_secret_access_key = r2SecretKey;
         if (r2BucketPrefix) updates.r2_bucket_prefix = r2BucketPrefix;
       } else {
         updates.project_hosts_cloudflare_tunnel_api_token = "";
@@ -370,12 +304,7 @@ export default function CloudflareConfigWizard({
                 updates.project_hosts_cloudflare_tunnel_api_token !== "",
             }
           : {}),
-        ...(updates.r2_api_token ? { r2_api_token: true } : {}),
-        ...(updates.r2_secret_access_key ? { r2_secret_access_key: true } : {}),
       }));
-      setApiToken("");
-      setR2ApiToken("");
-      setR2SecretKey("");
       setNotice("Settings applied and saved. You can now run diagnostics.");
     } catch (err) {
       setApplyError(err instanceof Error ? err.message : `${err}`);
@@ -541,7 +470,7 @@ export default function CloudflareConfigWizard({
               type="info"
               showIcon
               title="Configure Cloudflare Tunnel + R2 in one pass."
-              description="This wizard fills in the Cloudflare settings for Launchpad. Advanced users can edit fields manually."
+              description="Bootstrap credentials, provision resources, then verify access. Existing credentials are preserved."
             />
             <WizardStep title="Step 1 - Cloudflare mode">
               <Radio.Group
@@ -574,21 +503,7 @@ export default function CloudflareConfigWizard({
                     />
                   </FormItem>
                 </WizardStep>
-                <Radio.Group
-                  aria-label="Cloudflare setup path"
-                  name="cloudflare-setup-path"
-                  value={setupPath}
-                  onChange={(e) => {
-                    setBootstrapToken("");
-                    setSetupPath(e.target.value);
-                  }}
-                >
-                  <Space vertical>
-                    <Radio value="bootstrap">Recommended bootstrap</Radio>
-                    <Radio value="manual">Advanced manual setup</Radio>
-                  </Space>
-                </Radio.Group>
-                {setupPath === "bootstrap" && open && (
+                {open && (
                   <CloudflareBootstrap
                     disabled={applying || provisioning || tunnelApplying}
                     runFreshAuthAction={runFreshAuthAction}
@@ -641,193 +556,21 @@ export default function CloudflareConfigWizard({
                       setR2BucketPrefix(
                         values.r2_bucket_prefix ?? r2BucketPrefix,
                       );
-                      setApiToken("");
-                      setR2ApiToken("");
                       setR2AccessKey(values.r2_access_key_id ?? r2AccessKey);
-                      setR2SecretKey("");
                       setBlobResult(undefined);
                     }}
                   />
                 )}
-                {setupPath === "manual" && (
-                  <>
-                    <WizardStep title="Step 3 - Cloudflare account ID">
-                      <Paragraph>
-                        Go to{" "}
-                        <Link
-                          href="https://dash.cloudflare.com/"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          https://dash.cloudflare.com/
-                        </Link>
-                        .
-                        <br />
-                        Use the left sidebar Quick search to find "account id".
-                        <br />
-                        Click the result to copy it and paste into the box
-                        below.
-                      </Paragraph>
-                      {invalidAccountId ? (
-                        <Alert
-                          type="warning"
-                          showIcon
-                          title="Account IDs are 32 lowercase hex characters."
-                        />
-                      ) : null}
-                      <FormItem
-                        label="Cloudflare Account ID"
-                        htmlFor="cf-account"
-                      >
-                        <Input
-                          id="cf-account"
-                          placeholder="Cloudflare Account ID"
-                          value={accountId}
-                          onChange={(e) => setAccountId(e.target.value)}
-                        />
-                      </FormItem>
-                    </WizardStep>
-                    <WizardStep title="Step 4 - Cloudflare API token">
-                      <Paragraph>
-                        Go to{" "}
-                        <Link
-                          href="https://dash.cloudflare.com/profile/api-tokens"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          https://dash.cloudflare.com/profile/api-tokens
-                        </Link>
-                        .
-                        <br />
-                        Create a custom durable token with the permissions
-                        below, or switch to Recommended bootstrap to let CoCalc
-                        configure them automatically.
-                      </Paragraph>
-                      <ul>
-                        <li>
-                          Scope account permissions to your selected account:
-                          Cloudflare Tunnel Edit, Workers Scripts Edit, and
-                          Workers R2 Storage Edit.
-                        </li>
-                        <li>
-                          Scope zone permissions to your site's zone: Zone Read,
-                          DNS Edit, Workers Routes Edit, Config Rules Edit, and
-                          Managed Headers Edit.
-                        </li>
-                        <li>
-                          Do not grant API-token-management permission to this
-                          durable token. Paste it below; this token will be
-                          saved, unlike the temporary bootstrap token.
-                        </li>
-                      </ul>
-                      <FormItem label="Cloudflare API Token" htmlFor="cf-token">
-                        <SecretSettingInput
-                          id="cf-token"
-                          placeholder="Cloudflare API Token"
-                          value={apiToken}
-                          isSet={
-                            isSet?.project_hosts_cloudflare_tunnel_api_token
-                          }
-                          onChange={setApiToken}
-                        />
-                      </FormItem>
-                    </WizardStep>
-                    <WizardStep title="Step 5 - Visitor Location Headers">
-                      <Paragraph type="secondary">
-                        CoCalc can pick good default regions for users and sort
-                        host regions by distance.
-                      </Paragraph>
-                      <Paragraph>
-                        Go to{" "}
-                        <Link
-                          href={managedTransformsUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {managedTransformsUrl}
-                        </Link>
-                        .
-                        <br />
-                        If the link above does not work, search in Cloudflare
-                        for Managed Transforms and select your domain.
-                        <br />
-                        Enable: <Text strong>Add visitor location headers</Text>
-                        .
-                      </Paragraph>
-                    </WizardStep>
-                  </>
-                )}
-                <WizardStep title="Step 6 - R2 backups">
-                  {setupPath === "bootstrap" ? (
-                    <Paragraph type="secondary">
-                      {savedData.r2_access_key_id &&
-                      savedIsSet.r2_secret_access_key
-                        ? "R2 credentials are saved. No keys to paste; run the diagnostics below to verify access."
-                        : "Bootstrap creates and saves R2 credentials automatically for this site's backup and blob buckets. Existing credentials are preserved."}{" "}
-                      R2 must be enabled in your Cloudflare account. Use
-                      Advanced manual setup only to supply or change your own
-                      keys.
-                    </Paragraph>
-                  ) : (
-                    <>
-                      <Paragraph type="secondary">
-                        R2 S3 object credentials are separate from the
-                        Cloudflare REST automation token. Bootstrap configures
-                        both automatically. To manage credentials yourself,
-                        create S3 credentials for object reads and writes in the
-                        required backup and blob buckets, then apply them here.
-                      </Paragraph>
-                      <Paragraph>
-                        Go to{" "}
-                        <Link
-                          href={r2TokenUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {r2TokenUrl}
-                        </Link>
-                        .
-                        <br />
-                        Choose the narrowest object read/write scope covering
-                        the required buckets.
-                        <br />
-                        Once the token is created, fill in the fields below.
-                      </Paragraph>
-                      {setupPath === "manual" && (
-                        <FormItem label="R2 API Token" htmlFor="cf-r2-token">
-                          <SecretSettingInput
-                            id="cf-r2-token"
-                            placeholder="R2 API Token"
-                            value={r2ApiToken}
-                            isSet={savedIsSet.r2_api_token}
-                            onChange={setR2ApiToken}
-                          />
-                        </FormItem>
-                      )}
-                      <FormItem label="R2 Access Key ID" htmlFor="cf-access">
-                        <Input
-                          id="cf-access"
-                          placeholder="R2 Access Key ID"
-                          value={r2AccessKey}
-                          onChange={(e) => setR2AccessKey(e.target.value)}
-                        />
-                      </FormItem>
-                      <FormItem
-                        label="R2 Secret Access Key"
-                        htmlFor="cf-secret"
-                      >
-                        <SecretSettingInput
-                          id="cf-secret"
-                          placeholder="R2 Secret Access Key"
-                          value={r2SecretKey}
-                          isSet={savedIsSet.r2_secret_access_key}
-                          onChange={setR2SecretKey}
-                        />
-                      </FormItem>
-                    </>
-                  )}
+                <WizardStep title="Step 3 - R2 backups">
+                  <Paragraph type="secondary">
+                    {savedData.r2_access_key_id &&
+                    savedIsSet.r2_secret_access_key
+                      ? "R2 credentials are saved. No keys to paste; run the diagnostics below to verify access."
+                      : "Bootstrap creates and saves R2 credentials automatically for this site's backup and blob buckets. Existing credentials are preserved."}{" "}
+                    R2 must be enabled in your Cloudflare account.
+                  </Paragraph>
                 </WizardStep>
-                <WizardStep title="Step 7 - Resource names">
+                <WizardStep title="Step 4 - Resource names">
                   <Paragraph type="secondary">
                     These names are used for Cloudflare and backup resources
                     created by CoCalc. The defaults are suitable for one CoCalc
@@ -838,9 +581,19 @@ export default function CloudflareConfigWizard({
                       id="cf-bucket-prefix"
                       placeholder={DEFAULT_CLOUDFLARE_PREFIX}
                       value={r2BucketPrefix}
+                      disabled={
+                        !!savedData.r2_bucket_prefix &&
+                        !!savedData.r2_access_key_id
+                      }
                       onChange={(e) => setR2BucketPrefix(e.target.value)}
                     />
                   </FormItem>
+                  {savedData.r2_bucket_prefix && savedData.r2_access_key_id && (
+                    <Paragraph type="secondary">
+                      The bucket prefix is fixed after configuration because R2
+                      credentials and existing backups depend on it.
+                    </Paragraph>
+                  )}
                   <FormItem
                     label="Tunnel name prefix"
                     htmlFor="cf-tunnel-prefix"
@@ -864,7 +617,7 @@ export default function CloudflareConfigWizard({
                     />
                   </FormItem>
                 </WizardStep>
-                <WizardStep title="Step 8 - Diagnostics">
+                <WizardStep title="Step 5 - Diagnostics">
                   <Paragraph>
                     Create or update the tunnel and restart cloudflared using
                     saved settings, without restarting the hub.
@@ -895,7 +648,7 @@ export default function CloudflareConfigWizard({
                     Blob provisioning uses saved credentials and is safe to
                     retry. It creates a private bucket and public-read Worker,
                     and activates blob serving only after health checks pass.
-                    Apply any S3 credential changes first.
+                    Apply any pending settings changes first.
                   </Paragraph>
                   <Button
                     onClick={provisionBlobs}

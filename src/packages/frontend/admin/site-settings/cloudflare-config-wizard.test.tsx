@@ -156,15 +156,9 @@ describe("CloudflareConfigWizard", () => {
     );
     expect(document.body).not.toHaveTextContent("must-not-apply");
     expect(onApply).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("radio", { name: "Advanced manual setup" }),
-    );
     expect(
-      screen.getByRole("textbox", { name: "R2 Access Key ID" }),
-    ).toHaveValue("access");
-    expect(
-      screen.getByRole("textbox", { name: "R2 Secret Access Key" }),
-    ).toHaveValue("");
+      screen.queryByRole("radio", { name: "Advanced manual setup" }),
+    ).toBeNull();
   });
 
   it("links to a single-permission user bootstrap template without leaking the token", () => {
@@ -244,7 +238,7 @@ describe("CloudflareConfigWizard", () => {
     expect(summary).toHaveFocus();
   });
 
-  it("provides a text-only advanced fallback without screenshot instructions", () => {
+  it("offers only bootstrap and no manual credential fields", () => {
     render(
       <CloudflareConfigWizard
         open
@@ -254,18 +248,23 @@ describe("CloudflareConfigWizard", () => {
         onApply={jest.fn()}
       />,
     );
-    expect(document.body).not.toHaveTextContent(/screenshot/i);
-    fireEvent.click(
-      screen.getByRole("radio", { name: "Advanced manual setup" }),
-    );
+    expect(
+      screen.queryByRole("radio", { name: "Advanced manual setup" }),
+    ).toBeNull();
+    for (const name of [
+      "Cloudflare Account ID",
+      "Cloudflare API Token",
+      "R2 API Token",
+      "R2 Access Key ID",
+      "R2 Secret Access Key",
+    ]) {
+      expect(screen.queryByRole("textbox", { name })).toBeNull();
+    }
     expect(document.body).not.toHaveTextContent(/screenshot/i);
     expect(document.querySelector("img")).toBeNull();
-    expect(document.body).toHaveTextContent(
-      "Scope account permissions to your selected account",
-    );
-    expect(document.body).toHaveTextContent(
-      "Scope zone permissions to your site's zone",
-    );
+    expect(
+      screen.getByRole("textbox", { name: "R2 bucket prefix" }),
+    ).toBeDisabled();
   });
 
   it("uses a five-minute timeout and resumes bootstrap only after fresh authentication", async () => {
@@ -574,12 +573,11 @@ describe("CloudflareConfigWizard", () => {
       ),
     ).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("must-not-apply");
-    fireEvent.click(
-      screen.getByRole("radio", { name: "Advanced manual setup" }),
-    );
     fireEvent.change(
-      screen.getByRole("textbox", { name: "R2 Access Key ID" }),
-      { target: { value: "new-access" } },
+      screen.getByRole("textbox", { name: "Tunnel name prefix" }),
+      {
+        target: { value: "new-prefix" },
+      },
     );
     await act(async () =>
       fireEvent.click(screen.getByRole("button", { name: "Apply Settings" })),
@@ -589,6 +587,8 @@ describe("CloudflareConfigWizard", () => {
       "project_hosts_cloudflare_tunnel_api_token",
     );
     expect(onApply.mock.calls[0][0]).not.toHaveProperty("r2_api_token");
+    expect(onApply.mock.calls[0][0]).not.toHaveProperty("r2_access_key_id");
+    expect(onApply.mock.calls[0][0]).not.toHaveProperty("r2_secret_access_key");
   });
 
   it("clears failed bootstrap input without rendering raw RPC errors", async () => {
@@ -664,7 +664,7 @@ describe("CloudflareConfigWizard", () => {
     expect(onApply).not.toHaveBeenCalled();
   });
 
-  it("supports keyboard secret visibility and manual fallback without retaining bootstrap input", async () => {
+  it("supports keyboard secret visibility and clears bootstrap input when Cloudflare is disabled", async () => {
     const user = userEvent.setup();
     render(
       <CloudflareConfigWizard
@@ -690,15 +690,17 @@ describe("CloudflareConfigWizard", () => {
       "true",
     );
     expect(input).toHaveFocus();
-    const manual = screen.getByRole("radio", { name: "Advanced manual setup" });
+    const manual = screen.getByRole("radio", {
+      name: "No Cloudflare (self-hosted only)",
+    });
     act(() => manual.focus());
     await user.keyboard(" ");
     expect(manual).toBeChecked();
     expect(
-      screen.getByRole("textbox", { name: "Cloudflare API Token" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("textbox", { name: "Temporary bootstrap token" }),
+    ).toBeNull();
     await user.click(
-      screen.getByRole("radio", { name: "Recommended bootstrap" }),
+      screen.getByRole("radio", { name: "Use my own Cloudflare account" }),
     );
     expect(
       screen.getByRole("textbox", { name: "Temporary bootstrap token" }),
@@ -806,7 +808,7 @@ describe("CloudflareConfigWizard", () => {
       />,
     );
 
-    expect(screen.getByText("Step 8 - Diagnostics")).toBeInTheDocument();
+    expect(screen.getByText("Step 5 - Diagnostics")).toBeInTheDocument();
     expect(
       screen.getByText(
         "Settings saved. Test visitor location headers and R2 backup credentials.",
@@ -920,7 +922,7 @@ describe("CloudflareConfigWizard", () => {
       <CloudflareConfigWizard
         open
         onClose={onClose}
-        data={baseData}
+        data={readyData}
         isSet={{
           project_hosts_cloudflare_tunnel_api_token: true,
           r2_api_token: true,
@@ -930,12 +932,12 @@ describe("CloudflareConfigWizard", () => {
       />,
     );
 
-    fireEvent.click(
-      screen.getByRole("radio", { name: "Advanced manual setup" }),
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Tunnel name prefix" }),
+      {
+        target: { value: "updated-prefix" },
+      },
     );
-    fireEvent.change(screen.getByPlaceholderText("R2 Access Key ID"), {
-      target: { value: "r2-access-key" },
-    });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Apply Settings" }));
     });
