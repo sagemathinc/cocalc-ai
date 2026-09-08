@@ -28,6 +28,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useEffect, useState } from "react";
+import { useComputeVmCatalog } from "./use-compute-vm-catalog";
 
 import type {
   ComputeAgentGrant,
@@ -413,6 +414,8 @@ export function VmCreateModal({
   project_id,
   catalog,
   creationUnavailable,
+  catalogLoading = false,
+  onRetryCatalog,
   volumes,
   initial,
   projectSshPublicKey,
@@ -428,6 +431,8 @@ export function VmCreateModal({
   project_id?: string;
   catalog: ComputeCatalog;
   creationUnavailable?: string;
+  catalogLoading?: boolean;
+  onRetryCatalog?: () => void;
   volumes: ComputeVolume[];
   initial: VmDraft;
   projectSshPublicKey: string | null;
@@ -440,6 +445,7 @@ export function VmCreateModal({
   onCreate: (values: VmDraft) => Promise<void>;
 }) {
   const [form] = Form.useForm<VmDraft>();
+  const creationBlocked = catalogLoading || !!creationUnavailable;
   const [draft, setDraft] = useState<Partial<VmDraft>>(initial);
   const [sortRegionsByPrice, setSortRegionsByPrice] = useState(false);
   const [sortMachinesByPrice, setSortMachinesByPrice] = useState(false);
@@ -643,7 +649,7 @@ export function VmCreateModal({
   });
 
   const reviewCreate = () => {
-    if (creationUnavailable) return;
+    if (creationBlocked) return;
     void form
       .validateFields()
       .then((values) => setConfirmedDraft(withResolvedSshKey(values)));
@@ -670,7 +676,7 @@ export function VmCreateModal({
               Cancel
             </Button>
             <Popconfirm
-              open={!creationUnavailable && confirmedDraft != null}
+              open={!creationBlocked && confirmedDraft != null}
               title={`Create ${confirmedDraft?.name ?? "this VM"}?`}
               description={
                 confirmedDraft && (
@@ -710,7 +716,7 @@ export function VmCreateModal({
               cancelText="Review"
               okButtonProps={{ loading: saving }}
               onConfirm={() => {
-                if (creationUnavailable || !confirmedDraft) return;
+                if (creationBlocked || !confirmedDraft) return;
                 const values = confirmedDraft;
                 setConfirmedDraft(undefined);
                 void onCreate(values);
@@ -721,7 +727,7 @@ export function VmCreateModal({
                 type="primary"
                 loading={saving}
                 disabled={
-                  !!creationUnavailable ||
+                  creationBlocked ||
                   saving ||
                   (draft.create_home_volume && !newVolumePrice)
                 }
@@ -736,15 +742,32 @@ export function VmCreateModal({
       styles={{ body: { maxHeight: "calc(100vh - 190px)", overflowY: "auto" } }}
       width={920}
     >
-      {creationUnavailable && (
+      {catalogLoading ? (
+        <Alert
+          showIcon
+          type="info"
+          title="Loading VM catalog"
+          description="Fetching machine choices, funding options, and prices."
+          style={{ marginBottom: 16 }}
+        />
+      ) : creationUnavailable ? (
         <Alert
           showIcon
           type="warning"
-          title="VM creation unavailable"
+          title={
+            onRetryCatalog
+              ? "Unable to load VM catalog"
+              : "VM creation unavailable"
+          }
           description={creationUnavailable}
+          action={
+            onRetryCatalog && (
+              <Button onClick={onRetryCatalog}>Retry catalog</Button>
+            )
+          }
           style={{ marginBottom: 16 }}
         />
-      )}
+      ) : null}
       <Form<VmDraft>
         form={form}
         layout="vertical"
@@ -2639,7 +2662,7 @@ export function ProjectComputeVms({
   const [rows, setRows] = useState<ComputeVm[]>([]);
   const [allRows, setAllRows] = useState<ComputeVm[]>([]);
   const [volumes, setVolumes] = useState<ComputeVolume[]>([]);
-  const [catalog, setCatalog] = useState<ComputeCatalog>();
+  const { catalog, catalogLoading, loadCatalog } = useComputeVmCatalog();
   const [agentGrants, setAgentGrants] = useState<ComputeAgentGrant[]>([]);
   const [projectAccess, setProjectAccess] = useState<ComputeVmProjectAccess[]>(
     [],
@@ -2675,32 +2698,28 @@ export function ProjectComputeVms({
   } = {}) => {
     if (showLoading) setLoading(true);
     try {
-      const [visibleVms, visibleVolumes, computeCatalog, grants, access] =
-        await Promise.all([
-          projectId
-            ? webapp_client.conat_client.hub.compute.listProjectVms({
-                project_id: projectId,
-              })
-            : webapp_client.conat_client.hub.compute.listVms({}),
-          accountMode
-            ? webapp_client.conat_client.hub.compute.listVolumes({})
-            : Promise.resolve([]),
-          refreshCatalogAndGrants
-            ? webapp_client.conat_client.hub.compute.getCatalog({})
-            : Promise.resolve(undefined),
-          refreshCatalogAndGrants && projectId
-            ? webapp_client.conat_client.hub.compute.listAgentGrants({
-                project_id: projectId,
-              })
-            : Promise.resolve(undefined),
-          accountMode
-            ? webapp_client.conat_client.hub.compute.listVmProjectAccess({})
-            : Promise.resolve(undefined),
-        ]);
+      const [visibleVms, visibleVolumes, , grants, access] = await Promise.all([
+        projectId
+          ? webapp_client.conat_client.hub.compute.listProjectVms({
+              project_id: projectId,
+            })
+          : webapp_client.conat_client.hub.compute.listVms({}),
+        accountMode
+          ? webapp_client.conat_client.hub.compute.listVolumes({})
+          : Promise.resolve([]),
+        refreshCatalogAndGrants ? loadCatalog() : Promise.resolve(undefined),
+        refreshCatalogAndGrants && projectId
+          ? webapp_client.conat_client.hub.compute.listAgentGrants({
+              project_id: projectId,
+            })
+          : Promise.resolve(undefined),
+        accountMode
+          ? webapp_client.conat_client.hub.compute.listVmProjectAccess({})
+          : Promise.resolve(undefined),
+      ]);
       setAllRows(visibleVms);
       setRows(visibleVms);
       setVolumes(visibleVolumes);
-      if (computeCatalog != null) setCatalog(computeCatalog);
       if (grants != null) setAgentGrants(grants);
       if (access != null) setProjectAccess(access);
       setError(undefined);
@@ -4356,9 +4375,11 @@ export function ProjectComputeVms({
           open={vmModalOpen}
           project_id={projectId}
           catalog={catalog ?? VM_PREVIEW_CATALOG}
+          catalogLoading={!catalog && catalogLoading}
+          onRetryCatalog={() => void loadCatalog()}
           creationUnavailable={
             !catalog
-              ? "The VM catalog is unavailable. You can inspect this form, but creating a VM requires an administrator to configure managed compute and cloud-provider credentials. If setup is already complete, refresh the Virtual Machines page to retry loading the catalog. Machine choices, funding options, and prices will appear when the catalog is available."
+              ? "We could not load machine choices, funding options, and prices. This does not indicate whether dedicated VMs are enabled. You can inspect the form and retry loading the catalog."
               : undefined
           }
           volumes={volumes}
