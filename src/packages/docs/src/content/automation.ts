@@ -4,63 +4,47 @@
  */
 
 export const COCALC_CLI_BODY = String.raw`
-## What the CoCalc CLI is for
+## Automate CoCalc from a terminal or an agent
 
-The CoCalc CLI is the preferred automation interface for many CoCalc-ai tasks.
-It can work with the running site, project context, browser sessions, notebooks,
-docs, hosts, and other typed workflows without exposing a broad API key.
+The CoCalc CLI provides commands for projects, files, collaborative documents,
+notebooks, agent sessions, browser actions, and long-running operations.
+Use it from your own computer or from a CoCalc environment with supplied
+project or agent credentials.
 
-Use the CLI when you want to automate CoCalc itself. Use project terminals and
-ordinary command-line tools when you want to automate software inside a project.
+## Start here
 
-## Why not start with API keys
+1. [Install and run your first command](/docs/cli/getting-started):
+   install the CLI, sign in on your own computer, and list a project's files.
+2. [Check authentication and targets](/docs/cli/authentication-and-targets):
+   choose the site, account, project, and browser deliberately.
+3. [Find the right command](/docs/cli/command-reference):
+   navigate the available command families and typed APIs.
+4. [Use the CLI in scripts](/docs/cli/scripting-and-results):
+   parse JSON, check remote results, and recover existing operations.
 
-CoCalc-ai intentionally reduced the power of general API keys. Broad API keys
-were rarely used and increased the security and attack surface risk. Prefer
-task-specific CLI commands and authenticated browser-session or project
-commands when they exist.
+## Practical workflows
 
-API access still has a place for narrow integration points, but it should not be
-the default answer for normal project, notebook, docs, or browser automation.
+- [Edit collaborative text with the CLI](/docs/cli/collaborative-text)
+- [Run and save notebooks with the CLI](/docs/cli/notebook-workflows)
+- [Test browser workflows with the CLI](/docs/cli/browser-workflows)
+- [Schedule agent tasks with the CLI](/docs/cli/scheduled-agents)
+- [Manage workspaces and notices with the CLI](/docs/cli/workspaces-and-notices)
+- [Build documents and track CLI versions](/docs/cli/builds-and-versions)
 
-## Common CLI workflows
+## Read documentation from the CLI
 
-Search and show the versioned docs bundled with this CoCalc-ai version:
+These commands read the docs bundled with the installed CLI and need no login:
 
 ~~~sh
+cocalc docs list --category CLI
 cocalc docs search "project secrets"
 cocalc docs show projects/project-secrets
 ~~~
 
-Open a documented UI destination in the current browser session:
-
-~~~sh
-cocalc browser action docs-list
-cocalc browser action docs settings.environment.secrets
-cocalc browser action docs hosts.access.open --host-id "$COCALC_DOCS_VERIFY_HOST_ID"
-~~~
-
-Work with live notebooks using the project Jupyter commands instead of editing
-\`.ipynb\` JSON directly:
-
-~~~sh
-cocalc project jupyter -h
-~~~
-
-For local development against a running hub, load the matching environment
-before control-plane or browser commands:
-
-~~~sh
-cd src
-eval "$(pnpm -s dev:hub:env)"
-~~~
-
-## Why this matters in CoCalc
-
-The CLI gives humans and agents a stable, inspectable way to drive CoCalc-ai
-without scraping the UI or handing out overly powerful credentials. It is also a
-bridge between docs, browser-session actions, notebooks, and project-host
-administration.
+Prefer the task-specific CLI command when one exists. For ordinary automation,
+start with the authentication flow appropriate to your environment rather than
+creating a broad API key. The [HTTP API guide](/docs/api/http-api) covers narrow
+external integrations.
 `;
 
 export const HTTP_API_BODY = String.raw`
