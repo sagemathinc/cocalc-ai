@@ -4,6 +4,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
+import { BlockList, isIP } from "node:net";
 
 import getLogger from "@cocalc/backend/logger";
 import type { HostIntrusionSnapshotResponse } from "@cocalc/conat/project-host/api";
@@ -27,6 +28,8 @@ const MAX_ALERT_HOSTS = 20;
 const MAX_ALERT_ENTRIES_PER_CATEGORY = 10;
 const MAX_ALERT_BODY_CHARS = 60_000;
 const LOCK_KEY = "project_host_intrusion_monitor";
+
+type TransitionAlertMode = "actionable" | "all" | "off";
 
 const MONITORED_CATEGORIES = [
   "accounts.uid_zero",
@@ -63,6 +66,33 @@ const DYNAMIC_LISTENER_PROCESSES = new Set([
 const DYNAMIC_LISTENER_MIN_PORT = 10_000;
 const NON_INTRUSION_KERNEL_SIGNALS = new Set(["oom", "tainted"]);
 const BACKUP_BROWSER_CGROUP = "/cocalc-backup-browsers/browser-*";
+const EXPECTED_IAP_SSH_USERS = new Set(["ubuntu", "user"]);
+const GOOGLE_IAP_SOURCES = new BlockList();
+GOOGLE_IAP_SOURCES.addSubnet("35.235.240.0", 20, "ipv4");
+GOOGLE_IAP_SOURCES.addSubnet("2600:2d00:1:7::", 64, "ipv6");
+
+// Broad inventory and rolling operational history remain queryable evidence;
+// only categories with a concrete operator response generate notifications.
+const ACTIONABLE_ADDITIONS = new Set<MonitoredCategory>([
+  "accounts.uid_zero",
+  "accounts.interactive",
+  "host_processes.findings",
+  "persistence.files",
+  "privileged_files.writable",
+  "privileged_files.suid_sgid",
+  "privileged_files.capabilities",
+  "services.enabled",
+  "network.listeners",
+  "authentication_7d.accepted",
+  "package_integrity.differences",
+]);
+
+const ACTIONABLE_REMOVALS = new Set<MonitoredCategory>([
+  "accounts.uid_zero",
+  "accounts.interactive",
+  "persistence.files",
+  "services.enabled",
+]);
 
 export interface NormalizedHostIntrusionSnapshot {
   version: 2;
@@ -240,6 +270,106 @@ function canonicalizeListener(value: string): string {
   return encode([protocol, process, `${match[1]}:<dynamic>`]);
 }
 
+function isGoogleIapSource(source: unknown): boolean {
+  if (typeof source !== "string") return false;
+  const family = isIP(source);
+  if (family === 0) return false;
+  return GOOGLE_IAP_SOURCES.check(source, family === 4 ? "ipv4" : "ipv6");
+}
+
+function isActionableAuthentication(value: string): boolean {
+  const fields = decodeSignal(value);
+  return (
+    fields == null ||
+    typeof fields[1] !== "string" ||
+    !EXPECTED_IAP_SSH_USERS.has(fields[1]) ||
+    !isGoogleIapSource(fields[2])
+  );
+}
+
+function isActionableListener(value: string): boolean {
+  const fields = decodeSignal(value);
+  if (!fields || fields.length !== 3) return true;
+  const [protocol, process, local] = fields;
+  if (typeof protocol !== "string" || typeof local !== "string") return true;
+  const match = /^(.*):(\d+|<dynamic>)$/.exec(local);
+  if (!match) return true;
+  if (match[2] === "<dynamic>") return false;
+  const host = match[1].replace(/^\[(.*)\]$/, "$1").toLowerCase();
+  if (host === "localhost" || host === "::1" || host.startsWith("127.")) {
+    return (
+      typeof process !== "string" || !DYNAMIC_LISTENER_PROCESSES.has(process)
+    );
+  }
+  const port = Number(match[2]);
+  if (protocol === "udp" && process === "unattributed" && port >= 32_768) {
+    return false;
+  }
+  return true;
+}
+
+type SnapRevisionSignal = {
+  key: string;
+  revision: string;
+};
+
+function snapRevisionSignal(
+  category: MonitoredCategory,
+  value: string,
+): SnapRevisionSignal | undefined {
+  if (category === "services.enabled") {
+    const match = /snap-([^/\s]+)-(\d+)\.mount/.exec(value);
+    if (!match) return;
+    return {
+      key: value.replace(match[0], `snap-${match[1]}-<revision>.mount`),
+      revision: match[2],
+    };
+  }
+  if (category === "persistence.files") {
+    const fields = decodeSignal(value);
+    if (!fields || typeof fields[0] !== "string") return;
+    if (!fields[0].startsWith("/etc/systemd/system/")) return;
+    const match = /snap-([^/\s]+)-(\d+)\.mount/.exec(fields[0]);
+    if (!match) return;
+    fields[0] = fields[0].replace(
+      match[0],
+      `snap-${match[1]}-<revision>.mount`,
+    );
+    // Revision-specific mount unit content changes along with its filename.
+    fields[5] = null;
+    return { key: encode(fields), revision: match[2] };
+  }
+  return;
+}
+
+function routineSnapRevisionChanges(delta: HostIntrusionSnapshotDelta): {
+  added: Set<string>;
+  removed: Set<string>;
+} {
+  const routine = { added: new Set<string>(), removed: new Set<string>() };
+  for (const category of ["persistence.files", "services.enabled"] as const) {
+    const removedByKey = new Map<string, Array<[string, string]>>();
+    for (const value of delta.removed[category] ?? []) {
+      const signal = snapRevisionSignal(category, value);
+      if (!signal) continue;
+      const values = removedByKey.get(signal.key) ?? [];
+      values.push([signal.revision, value]);
+      removedByKey.set(signal.key, values);
+    }
+    for (const value of delta.added[category] ?? []) {
+      const signal = snapRevisionSignal(category, value);
+      if (!signal) continue;
+      const match = removedByKey
+        .get(signal.key)
+        ?.find(([revision]) => revision !== signal.revision);
+      if (!match) continue;
+      routine.added.add(value);
+      routine.removed.add(match[1]);
+    }
+  }
+  return routine;
+}
+
 function monitoredSignals(
   snapshot: NormalizedHostIntrusionSnapshot,
   category: MonitoredCategory,
@@ -400,6 +530,54 @@ export function hasHostIntrusionSnapshotChanges(
   return (
     Object.keys(delta.added).length > 0 || Object.keys(delta.removed).length > 0
   );
+}
+
+export function selectActionableHostIntrusionChanges(
+  delta: HostIntrusionSnapshotDelta,
+): HostIntrusionSnapshotDelta {
+  const actionable: HostIntrusionSnapshotDelta = { added: {}, removed: {} };
+  const routineSnap = routineSnapRevisionChanges(delta);
+  for (const [category, values] of Object.entries(delta.added) as Array<
+    [MonitoredCategory, string[]]
+  >) {
+    if (!ACTIONABLE_ADDITIONS.has(category)) continue;
+    const relevant = values.filter((value) => !routineSnap.added.has(value));
+    const filtered =
+      category === "network.listeners"
+        ? relevant.filter(isActionableListener)
+        : category === "authentication_7d.accepted"
+          ? relevant.filter(isActionableAuthentication)
+          : relevant;
+    if (filtered.length) actionable.added[category] = filtered;
+  }
+  for (const [category, values] of Object.entries(delta.removed) as Array<
+    [MonitoredCategory, string[]]
+  >) {
+    if (!ACTIONABLE_REMOVALS.has(category)) continue;
+    const relevant = values.filter((value) => !routineSnap.removed.has(value));
+    if (relevant.length) {
+      actionable.removed[category] = relevant;
+    }
+  }
+  return actionable;
+}
+
+function transitionAlertMode(): TransitionAlertMode {
+  // `off` keeps collection and coverage alerts; `all` is useful for diagnosis.
+  const configured = process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+  if (configured == null || configured === "") return "actionable";
+  if (
+    configured === "actionable" ||
+    configured === "all" ||
+    configured === "off"
+  ) {
+    return configured;
+  }
+  logger.warn("invalid project-host intrusion monitor alert mode", {
+    configured,
+    fallback: "actionable",
+  });
+  return "actionable";
 }
 
 export function diffHostIntrusionSnapshotAgainstFleet(
@@ -616,9 +794,9 @@ function boundedAlertBody(lines: Array<string | undefined>): string {
 
 function formatTransitionAlert(transitions: HostTransition[]): string {
   const lines = [
-    `${transitions.length} project host${transitions.length === 1 ? " has" : "s have"} security-state changes relative to an available host or fleet baseline.`,
+    `${transitions.length} project host${transitions.length === 1 ? " has" : "s have"} actionable security-state changes relative to an available host or fleet baseline.`,
     "",
-    "This monitor is report-only. Review each change and run a fresh admin host intrusion-snapshot when deeper evidence is needed.",
+    "This monitor is report-only. Lower-confidence operational changes remain recorded in the snapshot history but do not trigger notifications. Review each listed change and run a fresh admin host intrusion-snapshot when deeper evidence is needed.",
   ];
   for (const { host, delta, baseline } of transitions.slice(
     0,
@@ -798,6 +976,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
       1,
     ),
   );
+  const alertMode = transitionAlertMode();
 
   await mapWithConcurrency(hosts, concurrency, async (host) => {
     result.checked += 1;
@@ -851,11 +1030,18 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
         normalized,
         delta,
       };
+      const alertDelta =
+        delta == null || alertMode === "off"
+          ? undefined
+          : alertMode === "all"
+            ? delta
+            : selectActionableHostIntrusionChanges(delta);
       const changedDelta =
-        delta != null && hasHostIntrusionSnapshotChanges(delta)
-          ? delta
+        alertDelta != null && hasHostIntrusionSnapshotChanges(alertDelta)
+          ? alertDelta
           : undefined;
-      const needsInitialReview = !previous && !comparedWithFleet;
+      const needsInitialReview =
+        alertMode !== "off" && !previous && !comparedWithFleet;
       // Do not promote a security baseline until its alert is accepted. If
       // delivery fails, the next pass compares against the older baseline and
       // retries rather than silently absorbing the transition.
@@ -905,7 +1091,8 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
 
   if (transitions.length) {
     await adminAlert({
-      subject: "Project host intrusion monitor detected security-state changes",
+      subject:
+        "Project host intrusion monitor detected actionable security-state changes",
       body: formatTransitionAlert(transitions),
       dedupMinutes: 5,
       errorOnFail: true,
@@ -966,6 +1153,7 @@ export function startHostIntrusionMonitor(): void {
   logger.info("starting project-host intrusion monitor", {
     interval_ms: intervalMs,
     normalization_version: NORMALIZATION_VERSION,
+    alert_mode: transitionAlertMode(),
   });
   void runLockedPass().catch((err) => {
     logger.error("project-host intrusion monitoring failed", err);
