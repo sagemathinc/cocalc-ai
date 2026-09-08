@@ -184,6 +184,8 @@ interface SlateRichTextAdapterProps {
   minimal?: boolean;
   height?: string;
   enableUpload?: boolean;
+  onUploadStart?: () => void;
+  onUploadEnd?: () => void;
   saveDebounceMs: number;
   getValueRef?: MutableRefObject<() => string>;
   onChange: (value: string) => void;
@@ -232,6 +234,8 @@ export function SlateRichTextAdapter({
   minimal,
   height,
   enableUpload,
+  onUploadStart,
+  onUploadEnd,
   saveDebounceMs,
   getValueRef,
   onChange,
@@ -369,6 +373,8 @@ export function SlateRichTextAdapter({
         unregisterEditor={unregisterEditor}
         disableBlockEditor={disableBlockEditor}
         enableUpload={enableUpload}
+        onUploadStart={onUploadStart}
+        onUploadEnd={onUploadEnd}
         placeholder={placeholder ?? "Type text..."}
         submitMentionsRef={submitMentionsRef}
         editBar2={editBar2}

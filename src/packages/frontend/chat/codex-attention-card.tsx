@@ -4,7 +4,8 @@
  */
 
 import { SafetyCertificateOutlined } from "@ant-design/icons";
-import { Alert, Button, Input, Radio, Space, Tag, Typography } from "antd";
+import { Alert, Button, Radio, Space, Tag, Typography } from "antd";
+import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import type {
   AcpAttentionQuestion,
   AcpAttentionRecord,
@@ -83,6 +84,7 @@ export function CodexAttentionCard({
   );
   const [other, setOther] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [uploads, setUploads] = useState(0);
   const [error, setError] = useState<string>();
   const responseIdRef = useRef(responseId());
   const markedSeenRef = useRef(initialRecord.seen_at != null);
@@ -374,24 +376,41 @@ export function CodexAttentionCard({
                   </Radio.Group>
                 ) : null}
                 {question.isOther || !question.options?.length ? (
-                  <Input.TextArea
+                  <div
+                    role="group"
                     aria-label={`Custom answer for ${question.header}`}
-                    autoSize={{ minRows: 2, maxRows: 6 }}
-                    placeholder="Type an answer"
-                    value={other[question.id] ?? ""}
-                    onChange={(event) => {
-                      setOther((current) => ({
-                        ...current,
-                        [question.id]: event.target.value,
-                      }));
-                      if (event.target.value) {
-                        setSelected((current) => ({
+                  >
+                    <MarkdownInput
+                      cacheId={`codex-answer:${record.attention_id}:${question.id}`}
+                      project_id={record.project_id}
+                      path={record.path}
+                      placeholder={`Custom answer for ${question.header}`}
+                      autoGrow
+                      autoGrowMaxHeight={220}
+                      hideHelp
+                      compact
+                      enableMentions={false}
+                      enableUpload
+                      saveDebounceMs={0}
+                      undoMode="local"
+                      redoMode="local"
+                      onUploadStart={() => setUploads((n) => n + 1)}
+                      onUploadEnd={() => setUploads((n) => Math.max(0, n - 1))}
+                      value={other[question.id] ?? ""}
+                      onChange={(value) => {
+                        setOther((current) => ({
                           ...current,
-                          [question.id]: undefined,
+                          [question.id]: value,
                         }));
-                      }
-                    }}
-                  />
+                        if (value) {
+                          setSelected((current) => ({
+                            ...current,
+                            [question.id]: undefined,
+                          }));
+                        }
+                      }}
+                    />
+                  </div>
                 ) : null}
               </fieldset>
             ))
@@ -427,7 +446,7 @@ export function CodexAttentionCard({
           <Space wrap>
             <Button
               type="primary"
-              disabled={!canSubmit}
+              disabled={!canSubmit || uploads > 0}
               loading={submitting}
               onClick={() => void respond(false)}
             >
