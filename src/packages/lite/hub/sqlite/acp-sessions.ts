@@ -1,8 +1,10 @@
 import type { AcpJobRequest, AcpChatContext } from "@cocalc/conat/ai/acp/types";
 import type { AiSessionState } from "@cocalc/conat/hub/api/ai-sessions";
 import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
+import getLogger from "@cocalc/backend/logger";
 
 const TABLE = "acp_sessions";
+const logger = getLogger("lite:acp-session-publication");
 
 export type AcpSessionState = AiSessionState;
 
@@ -149,6 +151,23 @@ function init(): void {
   if (!columns.has("site_funded_reservation_id")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN site_funded_reservation_id TEXT`);
   }
+  if (!columns.has("publication_revision")) {
+    db.exec(
+      `ALTER TABLE ${TABLE} ADD COLUMN publication_revision INTEGER NOT NULL DEFAULT 0`,
+    );
+  }
+  if (!columns.has("publication_pending")) {
+    db.exec(
+      `ALTER TABLE ${TABLE} ADD COLUMN publication_pending INTEGER NOT NULL DEFAULT 1`,
+    );
+  }
+  if (!columns.has("publication_attempted_at")) {
+    db.exec(
+      `ALTER TABLE ${TABLE} ADD COLUMN publication_attempted_at INTEGER NOT NULL DEFAULT 0`,
+    );
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS acp_sessions_pending_publication_idx
+    ON ${TABLE}(publication_attempted_at, updated_at) WHERE publication_pending=1`);
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_sessions_account_state_updated_idx ON ${TABLE}(account_id, terminal, updated_at)`,
   );
@@ -178,19 +197,89 @@ function init(): void {
 
 let initialized = false;
 let publisher: AcpSessionPublisher | undefined;
+let publicationTimer: ReturnType<typeof setInterval> | undefined;
+const publishing = new Set<string>();
 
 export function setAcpSessionPublisher(
   nextPublisher: AcpSessionPublisher | undefined,
 ): void {
   publisher = nextPublisher;
+  if (publicationTimer) clearInterval(publicationTimer);
+  publicationTimer = undefined;
+  if (publisher) {
+    publicationTimer = setInterval(() => {
+      try {
+        publishPendingAcpSessions();
+      } catch (err) {
+        logger.warn("unable to read pending session publications", {
+          err: `${err}`,
+        });
+      }
+    }, 10_000);
+    publicationTimer.unref?.();
+  }
 }
 
 function publishAcpSession(row: AcpSessionRow | undefined): void {
   if (!row || !publisher) return;
-  void Promise.resolve(publisher(row)).catch(() => {
-    // Publication is best-effort; local session tracking must not fail because
-    // the owning hub is temporarily unreachable.
-  });
+  const key = row.session_key;
+  if (publishing.has(key)) return;
+  const send = publisher;
+  // Read the revision from the same SQLite snapshot as the payload. Another
+  // worker may update the row between this read and the eventual acknowledgement.
+  const revision = (row as AcpSessionRow & { publication_revision: number })
+    .publication_revision;
+  if (revision == null) return;
+  getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE} SET publication_attempted_at=? WHERE session_key=?`,
+    )
+    .run(Date.now(), key);
+  publishing.add(key);
+  void (async () => {
+    let delivered = false;
+    try {
+      await send(row);
+      if (publisher !== send) return;
+      getAcpDatabase()
+        .prepare(
+          `UPDATE ${TABLE} SET publication_pending=0 WHERE session_key=? AND publication_revision=?`,
+        )
+        .run(key, revision);
+      delivered = true;
+    } catch {
+      // Keep the durable marker. Retry on the next tick, including terminal
+      // records which no longer receive a heartbeat after a failed delivery.
+    } finally {
+      publishing.delete(key);
+      if (delivered && publisher === send) {
+        try {
+          const pending = getAcpDatabase()
+            .prepare(
+              `SELECT * FROM ${TABLE} WHERE session_key=? AND publication_pending=1`,
+            )
+            .get(key) as AcpSessionRow | undefined;
+          publishAcpSession(pending);
+        } catch (err) {
+          logger.warn("unable to read updated session publication", {
+            err: `${err}`,
+          });
+        }
+      }
+    }
+  })();
+}
+
+export function publishPendingAcpSessions(): number {
+  if (!publisher) return 0;
+  ensureInit();
+  const rows = getAcpDatabase()
+    .prepare(
+      `SELECT * FROM ${TABLE} WHERE publication_pending=1 ORDER BY publication_attempted_at ASC, updated_at ASC LIMIT 500`,
+    )
+    .all() as AcpSessionRow[];
+  for (const row of rows) publishAcpSession(row);
+  return rows.length;
 }
 
 export function publishActiveAcpSessions({
@@ -351,6 +440,8 @@ export function upsertAcpSession(opts: UpsertAcpSessionOptions): AcpSessionRow {
         queued_at = COALESCE(${TABLE}.queued_at, excluded.queued_at),
         started_at = COALESCE(excluded.started_at, ${TABLE}.started_at),
         updated_at = excluded.updated_at,
+        publication_revision = ${TABLE}.publication_revision + 1,
+        publication_pending = 1,
         last_heartbeat_at = COALESCE(excluded.last_heartbeat_at, ${TABLE}.last_heartbeat_at),
         finished_at = CASE
           WHEN excluded.terminal = 1 THEN COALESCE(excluded.finished_at, ${TABLE}.finished_at, excluded.updated_at)
@@ -432,7 +523,7 @@ export function upsertAcpSessionFromRequest({
     model: modelFromRequest(request),
     agent_kind: request.request_kind === "command" ? "command" : "codex",
     run_kind: runKindFromRequest(request),
-    title: chat?.automation_title,
+    title: chat?.thread_title || chat?.automation_title,
     prompt_snippet: promptSnippet(request),
     queued_at: state === "queued" ? Date.now() : undefined,
     started_at,
@@ -469,7 +560,7 @@ export function upsertAcpSessionFromJob(
     model: modelFromRequest(request),
     agent_kind: request.request_kind === "command" ? "command" : "codex",
     run_kind: runKindFromRequest(request),
-    title: chat?.automation_title,
+    title: chat?.thread_title || chat?.automation_title,
     prompt_snippet: promptSnippet(request),
     queued_at: row.created_at,
     started_at: row.started_at ?? (state === "running" ? row.updated_at : null),
@@ -507,6 +598,8 @@ export function heartbeatAcpSession({
     .prepare(
       `UPDATE ${TABLE}
         SET last_heartbeat_at = ?,
+            publication_revision = publication_revision + 1,
+            publication_pending = 1,
             updated_at = ?,
             session_id = COALESCE(?, session_id)
         WHERE session_key = ?
@@ -544,7 +637,7 @@ export function listAcpSessions({
     .prepare(
       `SELECT * FROM ${TABLE}
        ${where}
-       ORDER BY updated_at DESC
+       ORDER BY terminal ASC, updated_at DESC
        LIMIT ?`,
     )
     .all(max) as AcpSessionRow[];
