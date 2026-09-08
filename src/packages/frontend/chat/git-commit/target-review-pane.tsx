@@ -8,13 +8,8 @@ import { reviewTargetKey } from "@cocalc/frontend/components/diff-viewer/review-
 import { ChangedFilesLayout } from "@cocalc/frontend/components/diff-viewer/changed-files-layout";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
-import {
-  dispatchWorktreeFeedback,
-  validateAgentWorktree,
-} from "@cocalc/frontend/git/agent-worktree";
 import { comparisonFeedbackPrompt } from "./comparison-feedback";
 import type { RequestComparisonAgentTurn } from "./comparison-feedback";
-import { WorktreeAgentConsent } from "./worktree-agent-consent";
 import { applySubmittedGitReviewComments } from "./review-state";
 import {
   loadTargetReview,
@@ -86,7 +81,6 @@ export function TargetReviewPane({
   const [localStored, setLocalStored] = useState(false);
   const [busy, setBusy] = useState(false);
   const saving = useRef(false);
-  const [agentConsent, setAgentConsent] = useState(false);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -244,7 +238,6 @@ export function TargetReviewPane({
   const submit = async () => {
     if (
       !onRequestAgentTurn ||
-      !agentConsent ||
       !ready ||
       dirty ||
       saving.current ||
@@ -266,31 +259,14 @@ export function TargetReviewPane({
         throw Error(
           "The saved review changed. Reload and reconcile before sending feedback.",
         );
-      const head = target.kind === "commit" ? target.commit : target.head;
-      await dispatchWorktreeFeedback({
-        prompt: comparisonFeedbackPrompt(target, snapshot.body),
-        title: "Address comparison review",
-        send: onRequestAgentTurn,
-        isCurrent: () => mounted.current && activeScope.current === scope,
-        validate: async () => {
-          projectGitReader.invalidateDiscovery(target.repository.projectId);
-          const discovered = await projectGitReader.discover(
-            target.repository.projectId,
-            target.repository.locator,
-          );
-          const tree = discovered.worktrees.find(
-            (tree) => tree.path === target.repository.locator,
-          );
-          return validateAgentWorktree(
-            projectGitReader,
-            target.repository,
-            target.repository.locator,
-            head,
-            head,
-            tree?.branch,
-          );
+      if (!mounted.current || activeScope.current !== scope)
+        throw Error("The review target changed before sending feedback.");
+      await onRequestAgentTurn(
+        comparisonFeedbackPrompt(target, snapshot.body),
+        {
+          title: "Address comparison review",
         },
-      });
+      );
       sent = true;
       const now = Date.now();
       const submissionId = `git-comparison-${crypto.randomUUID()}`;
@@ -540,19 +516,12 @@ export function TargetReviewPane({
       </Button>{" "}
       {onRequestAgentTurn && (
         <>
-          <WorktreeAgentConsent
-            path={target.repository.locator}
-            checked={agentConsent}
-            disabled={busy}
-            onChange={setAgentConsent}
-          />
           <Button
             disabled={
               !ready ||
               busy ||
               dirty ||
               Boolean(editor) ||
-              !agentConsent ||
               heads.length !== 1 ||
               (!draft.body.note.trim() &&
                 !Object.values(draft.body.comments).some(
@@ -563,9 +532,6 @@ export function TargetReviewPane({
           >
             Send saved review to agent
           </Button>
-          <div>
-            The working copy must still be at the comparison's head revision.
-          </div>
         </>
       )}
       <details className="git-review-disclosure">

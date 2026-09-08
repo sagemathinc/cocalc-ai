@@ -73,11 +73,7 @@ import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
 import { currentHistorySelection } from "@cocalc/frontend/git/history-selection";
 import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
 import { useCommitWorktree } from "@cocalc/frontend/git/use-commit-worktree";
-import {
-  validateAgentWorktree,
-  dispatchWorktreeFeedback,
-} from "@cocalc/frontend/git/agent-worktree";
-import { WorktreeAgentConsent } from "./git-commit/worktree-agent-consent";
+import { useFeedbackDestination } from "./git-commit/feedback-destination";
 import type {
   GitReviewHistoryRoute,
   GitComparisonRoute,
@@ -781,64 +777,14 @@ export function GitCommitDrawer({
     crossWorktree ||
     Boolean(contextNotice?.historicalOnly) ||
     Boolean(originDiscovery?.worktrees.find((tree) => tree.path === cwd)?.bare);
-  const expectedAgentBranch = selectedHistory?.selection.ref.startsWith(
-    "refs/heads/",
-  )
-    ? selectedHistory.selection.ref
-    : originDiscovery?.worktrees.find((tree) => tree.path === cwd)?.branch;
-  const agentRoutingScope = JSON.stringify([
-    repositoryScope,
-    cwd,
-    commit,
-    selectedHistory?.tip,
-    expectedAgentBranch,
-    commitSelectionRequestToken,
-  ]);
-  const [agentWorktreeConsent, setAgentWorktreeConsent] = useState<string>();
-  const agentRoutingCurrent = useRef<string | undefined>(undefined);
-  agentRoutingCurrent.current =
-    open && agentWorktreeConsent === agentRoutingScope
-      ? agentRoutingScope
-      : undefined;
-  useEffect(
-    () => () => {
-      agentRoutingCurrent.current = undefined;
-    },
-    [],
+  const feedbackDestination = useFeedbackDestination(
+    projectId,
+    sourcePath,
+    open,
   );
-  const canRouteWorktree = Boolean(
-    crossWorktree &&
-    !isHeadSelected &&
-    originDiscovery &&
-    selectedHistory &&
-    requestAgentTurn,
-  );
-  // Direct staging/commit controls remain read-only. Agent feedback has its own
-  // explicit opt-in and is revalidated immediately before creating a turn.
-  const onRequestAgentTurn = !readOnlyWorktree
-    ? requestAgentTurn
-    : canRouteWorktree && agentWorktreeConsent === agentRoutingScope
-      ? async (
-          prompt: string,
-          options?: { title?: string; workingDirectory?: string },
-        ) => {
-          await dispatchWorktreeFeedback({
-            prompt,
-            title: options?.title,
-            isCurrent: () => agentRoutingCurrent.current === agentRoutingScope,
-            send: requestAgentTurn!,
-            validate: () =>
-              validateAgentWorktree(
-                projectGitReader,
-                originDiscovery!.repository,
-                cwd,
-                selectedHistory!.tip,
-                commit!,
-                expectedAgentBranch,
-              ),
-          });
-        }
-      : undefined;
+  // Feedback is conversational, not a direct working-copy mutation. Keep the
+  // staging/commit guards above, but do not reroute the source conversation.
+  const onRequestAgentTurn = requestAgentTurn ?? feedbackDestination.request;
   const historyControlsSelection = useMemo<GitHistorySelection>(
     () =>
       selectedHistory?.selection ?? {
@@ -2446,7 +2392,9 @@ export function GitCommitDrawer({
     };
     const prompt = [
       "Please review and address these inline commit comments.",
+      `Reviewed repository/worktree: ${JSON.stringify(repoRoot || cwd)}`,
       `Target diff: ${gitCommand}`,
+      "Use the pinned commit and reviewed location, not an inferred diff in your current directory. Check the working copy before editing; do not switch branches or commit unless separately requested.",
       "Return what you changed and any follow-up questions.",
       "```json",
       JSON.stringify(payload, null, 2),
@@ -3542,16 +3490,6 @@ export function GitCommitDrawer({
           />
         )}
         {navigation}
-        {canRouteWorktree && (
-          <WorktreeAgentConsent
-            path={cwd}
-            checked={agentWorktreeConsent === agentRoutingScope}
-            disabled={reviewSubmitBusy}
-            onChange={(checked) =>
-              setAgentWorktreeConsent(checked ? agentRoutingScope : undefined)
-            }
-          />
-        )}
         {contextNotice && (
           <Alert type="info" title={contextNotice.message} showIcon />
         )}
@@ -3897,7 +3835,7 @@ export function GitCommitDrawer({
           commit={commit ?? "HEAD"}
           accountId={accountId}
           fontSize={effectiveFontSize}
-          onRequestAgentTurn={requestAgentTurn}
+          onRequestAgentTurn={onRequestAgentTurn}
           onClose={() => {
             setComparisonOpen(false);
             onComparisonChange?.(undefined);
@@ -3916,6 +3854,7 @@ export function GitCommitDrawer({
         onClose={() => setHistoricalFile(undefined)}
         fontSize={effectiveFontSize}
       />
+      {feedbackDestination.modal}
     </Drawer>
   );
 }

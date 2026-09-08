@@ -3162,11 +3162,6 @@ export function ChatPanel({
             onRequestAgentTurn={
               gitBrowserThreadKey ? sendGitBrowserAgentPrompt : undefined
             }
-            reviewSubmissionHelpText={
-              gitBrowserThreadKey
-                ? undefined
-                : "Open Git review from an agent thread to send feedback. A review URL does not select an agent or change its working directory."
-            }
             onDirectCommitLogged={
               gitBrowserThreadKey ? logGitBrowserDirectCommit : undefined
             }

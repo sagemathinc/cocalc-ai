@@ -123,18 +123,9 @@ export function sendGitCommitAgentTurn({
   const metadata = threadId
     ? actions.getThreadMetadata?.(threadId, { threadId })
     : undefined;
-  const requestedDirectory = normalizeWorkingDirectory(workingDirectory);
-  const effectiveConfig = threadId
-    ? (actions.getCodexConfig?.(threadId) ?? field(metadata, "acp_config"))
-    : undefined;
-  const threadDirectory = normalizeWorkingDirectory(
-    field<string>(effectiveConfig, "workingDirectory"),
-  );
-  // An absent effective directory is not evidence that the thread uses this
-  // worktree. A fresh thread is safer than changing an existing session's cwd.
-  const directoryMatches =
-    requestedDirectory == null || requestedDirectory === threadDirectory;
-  if (threadId && threadSupportsCodex(metadata as any) && directoryMatches) {
+  // The review's location is context, not a request to move the conversation
+  // or change the existing agent's working directory.
+  if (threadId && threadSupportsCodex(metadata as any)) {
     const timestamp = actions.sendChat({
       extraInput: trimmed,
       reply_thread_id: threadId,
