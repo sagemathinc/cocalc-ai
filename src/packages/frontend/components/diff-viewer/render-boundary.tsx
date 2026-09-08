@@ -15,7 +15,7 @@ export class DiffRenderBoundary extends Component<
       <Alert
         type="error"
         title="The diff renderer could not load"
-        description="Switch to the Classic renderer to continue reviewing."
+        description="Try reopening this view or reloading the page."
       />
     ) : (
       this.props.children

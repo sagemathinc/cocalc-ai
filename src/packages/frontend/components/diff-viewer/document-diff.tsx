@@ -77,7 +77,7 @@ function DocumentDiffContent({
           ? [source.before, source.after]
           : [source.patch];
       // Refuse oversized sources instead of presenting a truncated document as
-      // complete. The caller retains its original text renderer.
+      // complete. Individual historical versions remain available separately.
       if (
         texts.reduce((sum, text) => sum + text.length, 0) > 4 * 1024 * 1024 ||
         texts.reduce(
@@ -86,14 +86,16 @@ function DocumentDiffContent({
         ) >
           4 * 1024 * 1024
       ) {
-        throw Error("Text comparison exceeds 4 MB; use the Classic renderer.");
+        throw Error(
+          "Text comparison exceeds 4 MB. Choose a smaller comparison or view the versions separately.",
+        );
       }
       let lines = 2;
       for (const text of texts) {
         for (let index = 0; index < text.length; index++) {
           if (text.charCodeAt(index) === 10 && ++lines > 100_000)
             throw Error(
-              "Text comparison exceeds 100,000 lines; use the Classic renderer.",
+              "Text comparison exceeds 100,000 lines. Choose a smaller comparison or view the versions separately.",
             );
         }
       }

@@ -315,7 +315,7 @@ function ReviewContent(props: ReviewDiffPanelProps) {
       <Alert
         type="warning"
         title="Pierre cannot render this patch"
-        description={`${parsed.error} Switch to Classic to inspect the original output.`}
+        description={`${parsed.error} Try a smaller comparison or inspect the original patch with Git.`}
       />
     );
   return (

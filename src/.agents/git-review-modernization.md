@@ -14,7 +14,7 @@ with little existing adoption. Do not build a staged dual-renderer product for
 an assumed installed base. Prioritize a coherent worktree-aware review tool,
 while retaining correctness and personal review-data preservation checks.
 
-## Current completion audit (2026-09-07)
+## Current completion audit (2026-09-08)
 
 The dated progress notes below are chronological; an old "pending" statement is
 not a current checklist. The objective is not complete. Current release work:
@@ -59,6 +59,19 @@ Only after these checks should the approved complete replacement proceed.
 Missing live test evidence does not establish that these checks pass.
 
 ### Restored live-session checks
+
+The September 8 combined regression passes 323 tests in 51 suites, covering
+Git/review, shared diff, TimeTravel and activity modules. A new Pierre-only
+live reconnect run also passed using disposable commit object
+`2009f3cafd20d50f9fcaf768b18aec76b7a3f54c` in the remote acceptance repository.
+No branch, index or working file was changed. The test left two private fixture
+comments, interrupted only its second tab's real WebSockets, observed rejected
+reconnect attempts and editor retention, then verified actual reconnection and
+both comments after resave/reload and recovery-draft removal. This closes the
+post-Classic-removal reconnect gap, not the separate quota-blocked agent gate.
+Cleanup inspection removed obsolete Classic-recovery advice from renderer
+failure and comparison-limit messages; a boundary regression covers the
+available recovery wording.
 
 Activity provenance audit found the last terminal/file cwd was applied to every
 row in the log, redirecting earlier relative diff links. Context is now computed
@@ -1529,7 +1542,8 @@ diff was reviewed.
   a bare hash in a known repository, resolve the commit independently of the
   currently listed history; then apply the containment heuristic in Phase 1.
   Do not scan the user's filesystem to guess an unrelated repository.
-- History includes merge commits. Default the selected history view to
+- History can include merge commits through the remembered "Show merge commits"
+  checkbox (hidden by default per the September 8 request). Default the selected history view to
   first-parent with an explicit all-ancestors option. Reviewing an unmerged
   branch contribution uses its chosen base's merge-base and the pinned head;
   an explicit two-tree comparison remains a separate mode. If no unique base
