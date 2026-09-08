@@ -1,7 +1,8 @@
-import { Popover, Radio } from "antd";
-import { MutableRefObject, useState } from "react";
+import { Button, Popover, Radio } from "antd";
+import { useRef, useState } from "react";
+import type { MutableRefObject } from "react";
 import { Icon } from "@cocalc/frontend/components";
-import { COLORS } from "@cocalc/util/theme";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { Mode } from "./types";
 
@@ -35,36 +36,77 @@ export function MarkdownInputModeSwitch({
   onInteractionEnd,
 }: MarkdownInputModeSwitchProps) {
   const [menuOpen, setMenuOpen] = useState<boolean>(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
 
   if (hidden) {
     return null;
   }
 
-  function toggleMenu() {
-    setMenuOpen((open) => !open);
+  function closeMenu() {
+    setMenuOpen(false);
+    triggerRef.current?.focus({ preventScroll: true });
   }
 
   function renderEllipsis() {
     return (
-      <span style={{ fontWeight: 400 }}>
-        {"\u22EF"}
-        <Popover
-          open={isFocusedFrame && isVisible && menuOpen}
-          content={
-            <div style={{ display: "flex" }}>
+      <Popover
+        open={isFocusedFrame && isVisible && menuOpen}
+        trigger="click"
+        onOpenChange={setMenuOpen}
+        afterOpenChange={(open) => {
+          if (open)
+            popupRef.current
+              ?.querySelector<HTMLButtonElement>("button")
+              ?.focus({ preventScroll: true });
+        }}
+        content={
+          <KeyboardBoundary
+            boundary="markdown-formatting"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                closeMenu();
+              }
+            }}
+          >
+            <div
+              ref={popupRef}
+              role="dialog"
+              aria-label="Text formatting"
+              style={{
+                maxWidth: "calc(100vw - 48px)",
+                maxHeight: "60dvh",
+                overflowY: "auto",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <Button
+                  type="text"
+                  aria-label="Close formatting"
+                  icon={<Icon name="times" />}
+                  onClick={closeMenu}
+                  style={{ minWidth: 44, minHeight: 44 }}
+                />
+              </div>
               {editBarContentRef.current}
-              <Icon
-                onClick={() => setMenuOpen(false)}
-                name="times"
-                style={{
-                  color: COLORS.GRAY_M,
-                  marginTop: "5px",
-                }}
-              />
             </div>
-          }
+          </KeyboardBoundary>
+        }
+      >
+        <Button
+          ref={triggerRef}
+          size="small"
+          aria-label="Text formatting"
+          aria-haspopup="dialog"
+          aria-expanded={!!(isFocusedFrame && isVisible && menuOpen)}
+          icon={<Icon name="ellipsis" />}
+          style={{
+            background: menuOpen ? UI_COLORS.hover : UI_COLORS.surface,
+          }}
         />
-      </span>
+      </Popover>
     );
   }
 
@@ -86,6 +128,8 @@ export function MarkdownInputModeSwitch({
         style={{
           background: UI_COLORS.surface,
           color: UI_COLORS.secondary,
+          display: "inline-flex",
+          alignItems: "center",
           ...(layout === "float"
             ? mode == "editor" || hideHelp
               ? {
@@ -102,23 +146,9 @@ export function MarkdownInputModeSwitch({
           ...style,
         }}
       >
+        {overflowEllipsis && mode === "editor" && renderEllipsis()}
         <Radio.Group
           options={[
-            ...(overflowEllipsis && mode == "editor"
-              ? [
-                  {
-                    label: renderEllipsis(),
-                    value: "menu",
-                    style: {
-                      backgroundColor: menuOpen
-                        ? UI_COLORS.hover
-                        : UI_COLORS.surface,
-                      paddingLeft: 10,
-                      paddingRight: 10,
-                    },
-                  },
-                ]
-              : []),
             {
               label: <span style={{ fontWeight: 400 }}>Rich Text</span>,
               value: "editor",
@@ -139,11 +169,8 @@ export function MarkdownInputModeSwitch({
                 active.blur();
               }
             }
-            if (nextMode === "menu") {
-              toggleMenu();
-            } else {
-              onSelectMode(nextMode as Mode);
-            }
+            setMenuOpen(false);
+            onSelectMode(nextMode as Mode);
             queueMicrotask(onInteractionEnd);
           }}
           value={mode}

@@ -20,9 +20,14 @@ const mockGetLocalStorage = jest.fn();
 const mockSetLocalStorage = jest.fn();
 
 jest.mock("antd", () => ({
+  Button: ({ icon, size: _size, ...props }: any) => (
+    <button {...props}>{icon}</button>
+  ),
   Popover: (props: any) => {
     latestPopoverProps = props;
-    return <>{props.children}</>;
+    return require("react").cloneElement(props.children, {
+      onClick: () => props.onOpenChange?.(!props.open),
+    });
   },
   Radio: {
     Group: ({ options, onChange, value }: any) => (
@@ -194,7 +199,7 @@ describe("MultiMarkdownInput wrapper contract", () => {
 
     render(<MultiMarkdownInput value="hello" onChange={() => {}} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "menu" }));
+    fireEvent.click(screen.getByRole("button", { name: "Text formatting" }));
 
     expect(latestPopoverProps?.open).toBe(true);
   });

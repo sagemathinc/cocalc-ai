@@ -3649,7 +3649,14 @@ export class ConatClient extends EventEmitter {
     path?: string;
     name: string;
   }) => {
-    return new PubSub({ client: this.conat(), project_id, path, name });
+    const channel = new PubSub({
+      client: this.conat(),
+      project_id,
+      path,
+      name,
+    });
+    await channel.ready;
+    return channel;
   };
 
   streamAcp = async (request, options?) => {

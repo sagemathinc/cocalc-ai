@@ -86,7 +86,9 @@ jest.mock("antd", () => {
     Space: Div,
     Table: Div,
     Tag: Div,
-    Typography: { Text: Div },
+    Typography: {
+      Text: ({ children, style }: any) => <span style={style}>{children}</span>,
+    },
     message: { error: jest.fn(), success: jest.fn() },
   };
 });
@@ -813,6 +815,7 @@ describe("CodexUsageMeters", () => {
     expect(screen.getByText("58%")).toBeTruthy();
     expect(screen.getByText("7-day limit")).toBeTruthy();
     expect(screen.getByText("93%")).toBeTruthy();
+    expect(screen.getByText("58%").style.whiteSpace).toBe("nowrap");
     expect(screen.getAllByText("time-ago-date")).toHaveLength(2);
   });
 

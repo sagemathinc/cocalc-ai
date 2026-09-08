@@ -41,8 +41,10 @@ jest.mock("antd", () => {
         {children}
       </div>
     ),
-    Button: ({ children, onClick }: any) => (
-      <button onClick={onClick}>{children}</button>
+    Button: ({ children, onClick, "aria-label": ariaLabel }: any) => (
+      <button onClick={onClick} aria-label={ariaLabel}>
+        {children}
+      </button>
     ),
     Divider: () => <div />,
     Dropdown: ({ children, menu, onOpenChange }: any) => {
@@ -83,11 +85,22 @@ jest.mock("antd", () => {
       <div aria-label={ariaLabel} />
     ),
     Radio,
-    Select: ({ onChange, placeholder, value }: any) => {
+    Select: ({
+      onChange,
+      placeholder,
+      value,
+      "aria-label": ariaLabel,
+    }: any) => {
       if (placeholder === "e.g., gpt-5.6-sol") {
         mockModelSelectOnChange = onChange;
       }
-      return <div>{String(value ?? "")}</div>;
+      return ariaLabel ? (
+        <select aria-label={ariaLabel} defaultValue="">
+          <option value="">{String(value ?? "")}</option>
+        </select>
+      ) : (
+        <div>{String(value ?? "")}</div>
+      );
     },
     Space: ({ children }: any) => <div>{children}</div>,
     Tag: ({ children }: any) => <span>{children}</span>,
@@ -199,6 +212,34 @@ describe("CodexConfigButton", () => {
     getCodexUsageStatus.mockResolvedValue({ available: true });
     projectToolsVersion = "tools-v1";
     window.localStorage.clear();
+  });
+
+  it("shows model and thinking level in the phone summary and opens settings", async () => {
+    render(
+      <CodexConfigButton
+        compact="summary"
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        threadConfig={{ model: "gpt-6-astra", reasoning: "medium" }}
+        actions={
+          { getCodexConfig: () => undefined, setCodexConfig: jest.fn() } as any
+        }
+      />,
+    );
+    const button = await screen.findByRole("button", {
+      name: /Codex settings: gpt-6-astra medium/i,
+    });
+    expect(button.textContent?.toLowerCase()).toBe("gpt-6-astra medium");
+    fireEvent.click(button);
+    expect(
+      await screen.findByText(
+        /These settings apply to the selected Codex thread/,
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("combobox", { name: "Payment source" }),
+    ).toBeTruthy();
   });
 
   it("uses the authenticated catalog and preserves only the selected unavailable model", () => {

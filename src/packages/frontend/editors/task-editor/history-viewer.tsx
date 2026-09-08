@@ -7,6 +7,7 @@
 History viewer for Tasks notebooks  --- very similar to same file in jupyter/ directory. Refactor!
 */
 
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Checkbox } from "antd";
 import { fromJS, Map } from "immutable";
 import TaskList from "./list";
@@ -16,9 +17,9 @@ import { Tasks } from "./types";
 
 const SHOW_DONE_STYLE = {
   fontSize: "12pt",
-  color: "#666",
+  color: UI_COLORS.secondary,
   padding: "5px 15px",
-  borderBottom: "1px solid lightgrey",
+  borderBottom: `1px solid ${UI_COLORS.border}`,
 } as const;
 
 export function TasksHistoryViewer({ doc, project_id, path, font_size }) {

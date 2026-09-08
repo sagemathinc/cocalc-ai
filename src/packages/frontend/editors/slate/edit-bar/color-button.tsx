@@ -18,6 +18,7 @@ export default function Component(props: Props) {
 
   return (
     <ColorButton
+      ariaLabel="Text color"
       type="text"
       style={{ ...BUTTON_STYLE, background: color }}
       onChange={(color) => {

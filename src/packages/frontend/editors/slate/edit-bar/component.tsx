@@ -13,6 +13,7 @@ import { ListEdit } from "./list-edit";
 import { Marks } from "./marks";
 import { MarksBar } from "./marks-bar";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
+import "./responsive.css";
 
 interface Props {
   Search: React.JSX.Element;
@@ -57,6 +58,7 @@ export const EditBar: React.FC<Props> = (props: Props) => {
         {onHelp && (
           <Tooltip title="Editor Help" mouseEnterDelay={0.5}>
             <Button
+              aria-label="Editor Help"
               type="text"
               onClick={onHelp}
               style={{
@@ -76,6 +78,7 @@ export const EditBar: React.FC<Props> = (props: Props) => {
 
   return (
     <div
+      className={overflowVisible ? "cocalc-slate-edit-bar-popup" : undefined}
       style={{
         borderBottom: isCurrent
           ? "1px solid lightgray"

@@ -7,6 +7,7 @@
 Toggle whether or not to show tasks (deleted, done)
 */
 
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { React, useRef } from "../../app-framework";
 import { TaskActions } from "./actions";
 import { Checkbox } from "antd";
@@ -48,7 +49,7 @@ export const ShowToggle: React.FC<Props> = React.memo(
       // no support for toggling (e.g., history view)
       return null;
     }
-    const color = count > 0 || show ? "#666" : "#999";
+    const color = count > 0 || show ? UI_COLORS.secondary : UI_COLORS.muted;
     return (
       <div onClick={toggle_state} style={{ margin: "5px 0 0 15px" }}>
         <Checkbox

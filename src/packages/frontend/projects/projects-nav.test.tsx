@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { List, Map as ImmutableMap } from "immutable";
 
 import { ProjectsNav } from "./projects-nav";
@@ -27,9 +28,7 @@ jest.mock("antd", () => ({
   ),
   Divider: () => <hr />,
   Popover: ({ children }: any) => <>{children}</>,
-  Select: ({ "aria-label": ariaLabel }: any) => (
-    <select aria-label={ariaLabel} />
-  ),
+  Select: jest.requireActual("antd").Select,
   Tabs: ({ hideAdd, items = [], onEdit, onChange }: any) => (
     <div>
       {!hideAdd && (
@@ -196,6 +195,54 @@ describe("ProjectsNav", () => {
     expect(
       screen.getByRole("combobox", { name: "Switch project" }),
     ).toBeInTheDocument();
+  });
+
+  it("hides the selected rich label during search and restores it on clear or Escape", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<ProjectsNav height={42} />);
+    await user.click(screen.getByRole("button", { name: "Tabs" }));
+    const input = screen.getByRole("combobox", { name: "Switch project" });
+    const selectedLabel = () => container.querySelector(".ant-select-content");
+    expect(selectedLabel()?.textContent).toContain("Alpha");
+    expect(
+      selectedLabel()?.querySelector('[data-testid="project-theme-avatar"]'),
+    ).not.toBeNull();
+    await user.type(input, "Al");
+    expect(input).toHaveValue("Al");
+    expect(selectedLabel()?.textContent ?? "").not.toContain("Alpha");
+    expect(
+      selectedLabel()?.querySelector('[data-testid="project-theme-avatar"]'),
+    ).toBeNull();
+    await waitFor(() => expect(screen.getByText("Alpha")).toBeVisible());
+    await user.clear(input);
+    expect(selectedLabel()?.textContent).toContain("Alpha");
+    await user.type(input, "not a project");
+    expect(selectedLabel()?.textContent ?? "").not.toContain("Alpha");
+    await user.clear(input);
+    await user.type(input, "Al");
+    fireEvent.keyDown(input, { key: "Escape", code: "Escape", keyCode: 27 });
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(selectedLabel()?.textContent).toContain("Alpha");
+    expect(input).toHaveFocus();
+    expect(projectActions.open_project).not.toHaveBeenCalled();
+  });
+
+  it("clears search and restores the label after choosing a custom result", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<ProjectsNav height={42} />);
+    await user.click(screen.getByRole("button", { name: "Tabs" }));
+    const input = screen.getByRole("combobox", { name: "Switch project" });
+    await user.type(input, "Al");
+    await waitFor(() => expect(screen.getByText("Alpha")).toBeVisible());
+    await user.click(screen.getByText("Alpha"));
+    expect(projectActions.open_project).toHaveBeenCalledWith({
+      project_id: "project-1",
+      switch_to: true,
+    });
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(container.querySelector(".ant-select-content")).toHaveTextContent(
+      "Alpha",
+    );
   });
 
   it("reports mode changes to the app navigation", async () => {

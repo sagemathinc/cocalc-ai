@@ -21,6 +21,7 @@
 // this avoids excessive resubmission of errors
 let ENABLED;
 const already_reported = [];
+const { unhandledRejectionDetails } = require("./unhandled-rejection");
 const {
   isBrowserExtensionError,
   isIgnorableBrowserError,
@@ -76,10 +77,13 @@ const WHITELIST = [
 const isWhitelisted = function (opts) {
   if (
     isIgnorableBrowserError(opts?.message) ||
-    isBrowserExtensionError({
-      file: opts?.file,
-      stacktrace: opts?.stacktrace,
-    })
+    // Rejections previously had this reporter's generated stack here. Keeping
+    // the original stack must not newly suppress mixed app/extension failures.
+    (opts?.name !== "unhandledrejection" &&
+      isBrowserExtensionError({
+        file: opts?.file,
+        stacktrace: opts?.stacktrace,
+      }))
   ) {
     return true;
   }
@@ -239,19 +243,7 @@ if (ENABLED) {
     if (isIgnorableUnhandledRejection(e.reason)) {
       return;
     }
-    // just to make sure there is a message
-    let reason = e.reason != null ? e.reason : "<no reason>";
-    if (typeof reason === "object") {
-      let left;
-      const misc = require("@cocalc/util/misc");
-      reason = `${
-        (left = reason.stack != null ? reason.stack : reason.message) != null
-          ? left
-          : misc.trunc_middle(misc.to_json(reason), 1000)
-      }`;
-    }
-    e.message = `unhandledrejection: ${reason}`;
-    reportException(e, "unhandledrejection");
+    reportException(unhandledRejectionDetails(e.reason), "unhandledrejection");
   });
 }
 

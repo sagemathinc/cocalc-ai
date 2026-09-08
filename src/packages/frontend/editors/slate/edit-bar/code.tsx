@@ -7,6 +7,7 @@ export default function CodeButton({ editor }) {
   return (
     <Tooltip title="Create executable code block">
       <Button
+        aria-label="Create executable code block"
         size="small"
         onClick={() => {
           formatAction(editor, "format_code", []);

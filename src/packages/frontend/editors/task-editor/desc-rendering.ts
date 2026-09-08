@@ -10,6 +10,7 @@ Utility/parsing functions used in rendering task description.
 import { replace_all_function, parse_hashtags } from "@cocalc/util/misc";
 import { apply_without_math } from "@cocalc/util/mathjax-utils-2";
 import { SelectedHashtags } from "./types";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 // Make clever use of replace_all_function to toggle the state of a checkbox.
 export function toggle_checkbox(s, index, checked): string {
@@ -55,11 +56,11 @@ export function process_hashtags(
     if (state === 1) {
       cls = "ant-tag ant-tag-checkable ant-tag-checkable-checked";
     } else {
-      bgcolor = "background-color:white;";
+      bgcolor = `background-color:${UI_COLORS.surface};color:${UI_COLORS.text};`;
     }
     value0 +=
       value.slice(x0[1], x[0]) +
-      `<span style='border:1px solid #ddd;border-radius:5px;font-size:inherit;${bgcolor}' class='${cls}' data-hashtag='${hashtag}' data-state='${state}'>#` +
+      `<span style='border:1px solid ${UI_COLORS.border};border-radius:5px;font-size:inherit;${bgcolor}' class='${cls}' data-hashtag='${hashtag}' data-state='${state}'>#` +
       hashtag +
       "</span>";
     x0 = x;

@@ -212,6 +212,7 @@ function ColorModal({
 }
 
 interface ButtonProps {
+  ariaLabel?: string;
   children?: ReactNode;
   color?: string;
   disabled?: boolean;
@@ -225,6 +226,7 @@ interface ButtonProps {
 }
 
 export function ColorButton({
+  ariaLabel,
   children,
   color,
   disabled,
@@ -239,6 +241,7 @@ export function ColorButton({
   const [show, setShow] = useState<boolean>(false);
   const button = (
     <Button
+      aria-label={ariaLabel ?? (children == null ? "Choose color" : undefined)}
       disabled={disabled}
       onClick={() => {
         if (onClick?.()) return;

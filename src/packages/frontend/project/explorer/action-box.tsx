@@ -47,7 +47,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { PublicDirectoryShareSummary } from "@cocalc/conat/hub/api/public-directory-shares";
 import type { SiteLicenseOverview } from "@cocalc/conat/hub/api/purchases";
 import * as misc from "@cocalc/util/misc";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import DirectorySelector from "../directory-selector";
 import { in_snapshot_path } from "../utils";
 import CreateArchive from "./create-archive";
@@ -76,8 +76,8 @@ export const PRE_STYLE = {
   minHeight: "34px",
   fontSize: "14px",
   fontFamily: "inherit",
-  color: "#555",
-  backgroundColor: "#eee",
+  color: UI_COLORS.text,
+  backgroundColor: UI_COLORS.inset,
   padding: "6px 12px",
   overflowY: "auto",
   overflowX: "hidden",
@@ -302,7 +302,7 @@ export function ActionBox({
           margin: "15px 30px",
           overflowY: "auto" as const,
           maxHeight: "50vh",
-          backgroundColor: "#fafafa",
+          backgroundColor: UI_COLORS.surface,
         };
 
   useEffect(() => {
@@ -477,7 +477,7 @@ export function ActionBox({
             title={name}
             style={{
               overflowWrap: "anywhere",
-              borderBottom: "1px solid #ddd",
+              borderBottom: `1px solid ${UI_COLORS.border}`,
               padding: "2px 0",
             }}
           >
@@ -489,7 +489,7 @@ export function ActionBox({
             style={{
               marginTop: "6px",
               fontStyle: "italic",
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.secondary,
             }}
           >
             ... and {hiddenCount} more selected{" "}
@@ -556,7 +556,9 @@ export function ActionBox({
         </Checkbox>
         <div
           style={{
-            color: snapshotPruneDisabled ? COLORS.GRAY : COLORS.GRAY_M,
+            color: snapshotPruneDisabled
+              ? UI_COLORS.muted
+              : UI_COLORS.secondary,
             fontSize: "13px",
             marginTop: "4px",
           }}
@@ -593,7 +595,7 @@ export function ActionBox({
           <div
             style={{
               marginBottom: "16px",
-              color: COLORS.GRAY_D,
+              color: UI_COLORS.text,
               lineHeight: 1.5,
             }}
           >
@@ -647,7 +649,7 @@ export function ActionBox({
     return (
       <div>
         <Row>
-          <Col sm={5} style={{ color: COLORS.GRAY_M }}>
+          <Col sm={5} style={{ color: UI_COLORS.secondary }}>
             {render_selected_files_list()}
           </Col>
         </Row>
@@ -734,7 +736,7 @@ export function ActionBox({
     return (
       <div>
         <Row>
-          <Col sm={5} style={{ color: COLORS.GRAY_M }}>
+          <Col sm={5} style={{ color: UI_COLORS.secondary }}>
             <h4>Move files to a directory</h4>
             {render_selected_files_list()}
             <Space>
@@ -748,7 +750,10 @@ export function ActionBox({
               </AntdButton>
             </Space>
           </Col>
-          <Col sm={5} style={{ color: COLORS.GRAY_M, marginBottom: "15px" }}>
+          <Col
+            sm={5}
+            style={{ color: UI_COLORS.secondary, marginBottom: "15px" }}
+          >
             <h4>Destination: {move_destination}</h4>
             <DirectorySelector
               title="Select Move Destination Folder"
@@ -772,7 +777,10 @@ export function ActionBox({
   function render_different_project_dialog() {
     if (show_different_project) {
       return (
-        <Col sm={4} style={{ color: COLORS.GRAY_M, marginBottom: "15px" }}>
+        <Col
+          sm={4}
+          style={{ color: UI_COLORS.secondary, marginBottom: "15px" }}
+        >
           <h4>Target {projectLabel}</h4>
           <SelectProject
             at_top={readOnlySource ? undefined : [project_id]}
@@ -969,7 +977,7 @@ export function ActionBox({
           <Row>
             <Col
               sm={show_different_project ? 4 : 5}
-              style={{ color: COLORS.GRAY_M }}
+              style={{ color: UI_COLORS.secondary }}
             >
               {render_copy_description()}
               <Space>
@@ -987,7 +995,7 @@ export function ActionBox({
             {render_different_project_dialog()}
             <Col
               sm={show_different_project ? 4 : 5}
-              style={{ color: COLORS.GRAY_M }}
+              style={{ color: UI_COLORS.secondary }}
             >
               <h4
                 style={
@@ -1270,8 +1278,8 @@ export function ActionBox({
               alignItems: "center",
               background: publishTheme.accent_color
                 ? `${publishTheme.accent_color}22`
-                : COLORS.GRAY_LLL,
-              border: `1px solid ${publishTheme.color ?? COLORS.GRAY_LL}`,
+                : UI_COLORS.inset,
+              border: `1px solid ${publishTheme.color ?? UI_COLORS.border}`,
               borderRadius: 8,
               display: "flex",
               gap: 12,
@@ -1282,7 +1290,7 @@ export function ActionBox({
             <div
               style={{
                 alignItems: "center",
-                background: publishTheme.accent_color ?? COLORS.GRAY_LL,
+                background: publishTheme.accent_color ?? UI_COLORS.border,
                 borderRadius: 8,
                 color: publishTheme.color ?? undefined,
                 display: "flex",
@@ -1555,7 +1563,7 @@ export function ActionBox({
           <Col
             sm={12}
             style={{
-              color: COLORS.GRAY_M,
+              color: UI_COLORS.secondary,
               fontWeight: "bold",
               fontSize: "15pt",
             }}
