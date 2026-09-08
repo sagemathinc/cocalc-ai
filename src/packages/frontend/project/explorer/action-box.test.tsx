@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Map as ImmutableMap, Set as ImmutableSet } from "immutable";
 import { IntlProvider } from "react-intl";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import {
   ActionBox,
@@ -128,6 +129,8 @@ describe("ActionBox delete modal", () => {
     );
 
     const list = screen.getByTestId("selected-files-list");
+    expect(list.style.color).toBe(UI_COLORS.text);
+    expect(list.style.backgroundColor).toBe(UI_COLORS.inset);
     expect(list).toHaveStyle({
       overflowY: "auto",
       overflowX: "hidden",

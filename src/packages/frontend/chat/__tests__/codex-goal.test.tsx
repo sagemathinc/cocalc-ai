@@ -58,6 +58,33 @@ it("opens with the keyboard, labels inputs, and restores focus after Escape", as
   await waitFor(() => expect(document.activeElement).toBe(trigger));
 });
 
+it("uses readable phone-sized goal inputs without saving on open", async () => {
+  const original = window.matchMedia;
+  window.matchMedia = jest.fn(() => ({
+    matches: true,
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+  })) as any;
+  const onChange = jest.fn();
+  const { unmount } = render(<CodexGoalControl onChange={onChange} />);
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Set goal" }));
+    expect(
+      screen.getByRole("textbox", { name: "What should Codex accomplish?" })
+        .style.fontSize,
+    ).toBe("16px");
+    fireEvent.click(screen.getByText("Budget and usage"));
+    expect(
+      screen.getByRole("textbox", { name: "Token budget (optional)" }).style
+        .fontSize,
+    ).toBe("16px");
+    expect(onChange).not.toHaveBeenCalled();
+  } finally {
+    unmount();
+    window.matchMedia = original;
+  }
+});
+
 it("saves an explicit objective and optional budget", async () => {
   const user = userEvent.setup();
   const onChange = jest.fn(async () => {});

@@ -81,7 +81,7 @@ overrides:
 
 patchedDependencies:
   '@rc-component/portal@2.2.0': b6f877518e590497afc1bc08045e7388a098c2d276d59c861683811ebfb8da04
-  '@rc-component/tabs@1.7.0': 012320e45fed87a7ebc8585e9bff0595e697985e698f0b21fece4ab202a0bee5
+  '@rc-component/tabs@1.7.0': 3545851304665e492072e9f07920574f7dbccd16fab7e709bc7fa6482d032c46
   codemirror@5.65.20: 4ad13d7e47bf077e8a10b59454b70fa6b415f1085ffd53c965a7ab9f17213b59
   dropzone@5.9.3: be96936e7311bf6c69b2316841bc586344ec9388ef93ff008eebe8aabac14b25
   fs-ext@2.1.1: 8de34bb8636073ff75cba28e1092a4e6bd4b0f9f8b2cc05b5fc95f80d978408b
@@ -890,7 +890,7 @@ importers:
         version: 1.57.0
       '@rc-component/tabs':
         specifier: 1.7.0
-        version: 1.7.0(patch_hash=012320e45fed87a7ebc8585e9bff0595e697985e698f0b21fece4ab202a0bee5)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        version: 1.7.0(patch_hash=3545851304665e492072e9f07920574f7dbccd16fab7e709bc7fa6482d032c46)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@simplewebauthn/browser':
         specifier: ^13.3.0
         version: 13.3.0
@@ -15511,7 +15511,7 @@ snapshots:
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
 
-  '@rc-component/tabs@1.7.0(patch_hash=012320e45fed87a7ebc8585e9bff0595e697985e698f0b21fece4ab202a0bee5)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@rc-component/tabs@1.7.0(patch_hash=3545851304665e492072e9f07920574f7dbccd16fab7e709bc7fa6482d032c46)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@rc-component/dropdown': 1.0.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@rc-component/menu': 1.2.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -16877,7 +16877,7 @@ snapshots:
       '@rc-component/steps': 1.2.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@rc-component/switch': 1.0.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@rc-component/table': 1.9.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@rc-component/tabs': 1.7.0(patch_hash=012320e45fed87a7ebc8585e9bff0595e697985e698f0b21fece4ab202a0bee5)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@rc-component/tabs': 1.7.0(patch_hash=3545851304665e492072e9f07920574f7dbccd16fab7e709bc7fa6482d032c46)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@rc-component/textarea': 1.1.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@rc-component/tooltip': 1.4.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@rc-component/tour': 2.3.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)

@@ -24,6 +24,7 @@ import { trimEnd } from "lodash";
 import { normalize as path_normalize } from "path";
 
 import { filename_extension } from "@cocalc/util/misc";
+import { ALLOWED_DEP_EXTENSIONS } from "./constants";
 
 // Define some constants
 const LOG_WRAP_LIMIT = 79;
@@ -34,26 +35,6 @@ const PACKAGE_WARNING_REGEX = /^((?:Package|Class|Module) \b.+\b Warning:.*)$/;
 const LINES_REGEX = /lines? ([0-9]+)/;
 // This is used to parse the package name from the package warnings
 const PACKAGE_REGEX = /^(?:Package|Class|Module) (\b.+\b) Warning/;
-
-// Whitelist of text file extensions that can be used with \input{} or \include{}
-const ALLOWED_DEP_EXTENSIONS = [
-  "bbx",
-  "bib",
-  "bst",
-  "cbx",
-  "cfg",
-  "cls",
-  "def",
-  "lbx",
-  "md",
-  "pgf",
-  "rnw",
-  "rtex",
-  "sty",
-  "tex",
-  "tikz",
-  "txt",
-] as const;
 
 class LogText {
   private lines: string[];

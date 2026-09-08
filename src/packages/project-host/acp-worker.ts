@@ -132,7 +132,9 @@ function configureProjectHostAcpSessionPublisher(): void {
         project_id: row.project_id,
         state: row.state,
       });
-      return;
+      throw new Error(
+        "ACP session publisher has no master client or host identity",
+      );
     }
     try {
       await callHub({
@@ -257,6 +259,7 @@ export async function main(): Promise<void> {
   registerPidFile(pidFile, async () => {
     stopEventLoopStallMonitor();
     await disposeAcpAgents();
+    setAcpSessionPublisherOverride(undefined);
     try {
       masterClient?.close();
     } catch {
@@ -277,6 +280,7 @@ export async function main(): Promise<void> {
   } finally {
     stopEventLoopStallMonitor();
     await disposeAcpAgents();
+    setAcpSessionPublisherOverride(undefined);
     setMasterConatClient(undefined);
     try {
       masterClient?.close();

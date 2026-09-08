@@ -21,6 +21,8 @@ import { BlitLauncher } from "./blit-launcher";
 
 interface Props {
   is_current: boolean;
+  is_visible?: boolean;
+  tab_is_visible?: boolean;
   project_id: string;
   reload?: number;
 }
@@ -34,7 +36,13 @@ type Stage =
   | "needs-packages"
   | "ready";
 
-export function Blit({ is_current, project_id, reload }: Props) {
+export function Blit({
+  is_current,
+  is_visible = true,
+  tab_is_visible = true,
+  project_id,
+  reload,
+}: Props) {
   const [stage, setStage] = useState<Stage>("checking");
   const [error, setError] = useState<string>();
   const [missingPackages, setMissingPackages] = useState<string[]>([]);
@@ -190,10 +198,13 @@ export function Blit({ is_current, project_id, reload }: Props) {
   }
 
   if (src) {
+    // Hiding an iframe does not suspend its scripts or focus requests. Dispose
+    // only the browser client; the managed compositor and applications keep
+    // running, and the same URL reconnects when this frame becomes active.
+    if (!is_current || !is_visible || !tab_is_visible) return null;
     return (
       <Flex
         style={{
-          display: is_current ? "flex" : "none",
           height: "100%",
           minHeight: 0,
           minWidth: 0,

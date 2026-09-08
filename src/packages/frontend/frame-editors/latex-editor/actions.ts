@@ -88,7 +88,7 @@ import {
   UxLatencyTrace,
 } from "@cocalc/frontend/monitoring/ux-latency-trace";
 import { clean } from "./clean";
-import { KNITR_EXTS } from "./constants";
+import { ALLOWED_DEP_EXTENSIONS, KNITR_EXTS } from "./constants";
 import { count_words } from "./count_words";
 import { update_gutters } from "./gutters";
 import { IProcessedLatexLog } from "./latex-log-parser";
@@ -116,6 +116,10 @@ import {
 import { getLogger } from "@cocalc/frontend/logger";
 import { getSummaryHomeDirectory, summarizeTexFiles } from "./file-summaries";
 
+const SYNCTEX_SOURCE_EXTS: ReadonlySet<string> = new Set([
+  ...ALLOWED_DEP_EXTENSIONS,
+  "latex",
+]);
 const fileSummariesLogger = getLogger("latex-file-summaries");
 
 interface LatexEditorState extends CodeEditorState {
@@ -1372,7 +1376,18 @@ export class Actions extends BaseActions<LatexEditorState> {
       if (typeof info.Input != "string") {
         throw Error("unable to determine source file");
       }
-      await this.goto_line_in_file(line, info.Input);
+      const input = info.Input;
+      if (
+        !SYNCTEX_SOURCE_EXTS.has(
+          separate_file_extension(input).ext.toLowerCase(),
+        )
+      ) {
+        if (!manual) {
+          this.set_auto_sync_in_progress(false);
+        }
+        return;
+      }
+      await this.goto_line_in_file(line, input);
     } catch (err) {
       if (err.message.indexOf("ENOENT") != -1) {
         console.log("synctex_pdf_to_tex err:", err);
@@ -1731,6 +1746,16 @@ export class Actions extends BaseActions<LatexEditorState> {
       path = this.relative_paths[path];
     }
     this.synctex_tex_to_pdf(line, ch, path);
+  }
+
+  set_frame_type(id: string, type: string): void {
+    const node = this._get_frame_node(id);
+    if (node == null || node.get("type") === type) return;
+    super.set_frame_type(id, type);
+    if ((type === "time_travel" || type === "cm") && this.knitr) {
+      // Both history and Code must use the authored source, not generated TeX.
+      this.set_frame_tree({ id, path: this.filename_knitr });
+    }
   }
 
   time_travel(opts: { path?: string; frame?: boolean }): void {

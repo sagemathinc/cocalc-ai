@@ -84,6 +84,21 @@ describe("buildHostSpec", () => {
     expect(spec.metadata.shared_disk_name).toBe("host-scratch");
   });
 
+  it("binds the project-host isolation tag during GCP instance creation", async () => {
+    const spec = await buildHostSpec({
+      id: "832da43c-d18e-406d-8e1d-c28973378b24",
+      region: "us-south1",
+      metadata: {
+        machine: {
+          cloud: "gcp",
+          metadata: {},
+        },
+      },
+    });
+
+    expect(spec.tags).toEqual(["cocalc-project-host-isolated"]);
+  });
+
   it("rejects Nebius spot hosts on platforms that disallow preemptibles", async () => {
     loadNebiusInstanceTypesMock.mockResolvedValue([
       {

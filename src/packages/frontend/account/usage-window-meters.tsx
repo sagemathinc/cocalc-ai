@@ -51,7 +51,7 @@ export function UsageWindowMeters({
       style={{
         display: "grid",
         gap: compact ? 8 : 12,
-        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))",
         position: "relative",
         width: "100%",
       }}
@@ -105,6 +105,7 @@ export function UsageWindowMeters({
             style={{
               alignItems: "baseline",
               display: "flex",
+              flexWrap: "wrap",
               gap: 8,
               justifyContent: "space-between",
             }}
@@ -122,6 +123,7 @@ export function UsageWindowMeters({
                 style={{
                   alignItems: "baseline",
                   display: "flex",
+                  flexWrap: "wrap",
                   gap: compact ? 4 : 6,
                   marginTop: compact ? 2 : 6,
                 }}
@@ -131,6 +133,7 @@ export function UsageWindowMeters({
                   style={{
                     fontSize: compact ? 18 : 26,
                     lineHeight: compact ? "22px" : "30px",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   {`${window.remainingPercent}%`}

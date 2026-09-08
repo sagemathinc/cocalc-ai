@@ -21,6 +21,7 @@ import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { codexAgentName } from "@cocalc/frontend/account/chatbot";
 import { CSS, useMemo, useRef, useState } from "@cocalc/frontend/app-framework";
+import { useNarrowChatViewport } from "./use-chat-viewport";
 import {
   DropdownMenu,
   Gap,
@@ -394,6 +395,8 @@ export default function Message({
   onCachedCodexActivityBlocksChange,
 }: Props) {
   const intl = useIntl();
+  const narrow = useNarrowChatViewport();
+  const fullWidthContent = narrow && (mode === "sidechat" || !show_avatar);
   const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
 
   const [edited_message, set_edited_message] = useState<string>(
@@ -519,6 +522,23 @@ export default function Message({
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [showTouchActions, setShowTouchActions] = useState<boolean>(false);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
+  const messageRowRef = useRef<HTMLDivElement>(null);
+  const zenTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const openZenMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
+    zenTriggerRef.current = event.currentTarget;
+    setShowZenMessage(true);
+  };
+  const closeZenMessage = () => {
+    setShowZenMessage(false);
+    requestAnimationFrame(() => {
+      if (document.activeElement !== document.body) return;
+      // Hover-only actions can unmount while the drawer is open.
+      const target = zenTriggerRef.current?.isConnected
+        ? zenTriggerRef.current
+        : messageRowRef.current;
+      target?.focus({ preventScroll: true });
+    });
+  };
   const [showAcpPromptModal, setShowAcpPromptModal] = useState<boolean>(false);
   const [openActivityDrawerToken, setOpenActivityDrawerToken] = useState<
     number | undefined
@@ -1630,7 +1650,9 @@ export default function Message({
           size="small"
           type="text"
           style={getFocusMessageButtonStyle()}
-          onClick={() => setShowZenMessage(true)}
+          aria-label="Focus this message"
+          aria-haspopup="dialog"
+          onClick={openZenMessage}
         >
           <Icon name="expand-arrows" />
         </Button>
@@ -1726,7 +1748,9 @@ export default function Message({
           size="small"
           type="text"
           style={getFocusMessageButtonStyle()}
-          onClick={() => setShowZenMessage(true)}
+          aria-label="Focus this message"
+          aria-haspopup="dialog"
+          onClick={openZenMessage}
         >
           <Icon name="expand-arrows" />
         </Button>
@@ -2372,7 +2396,7 @@ export default function Message({
       <Drawer
         title={senderName}
         open={showZenMessage}
-        onClose={() => setShowZenMessage(false)}
+        onClose={closeZenMessage}
         placement="right"
         width="100vw"
         destroyOnHidden
@@ -2489,7 +2513,7 @@ export default function Message({
   }
 
   function contentColumn() {
-    const mainXS = mode === "standalone" ? 20 : 22;
+    const mainXS = fullWidthContent ? 24 : mode === "standalone" ? 20 : 22;
 
     const { background, color, lighten, message_class } = message_colors(
       account_id,
@@ -2512,7 +2536,7 @@ export default function Message({
       fontSize: `${font_size}px`,
       paddingBottom: baseBottomPadding,
       ...padding,
-      ...(is_viewers_message && mode === "standalone"
+      ...(is_viewers_message && mode === "standalone" && !narrow
         ? { marginLeft: VIEWER_MESSAGE_LEFT_MARGIN }
         : undefined),
       ...(mode === "sidechat"
@@ -2791,6 +2815,7 @@ export default function Message({
       case "standalone":
         return {
           ...getStyleBase(),
+          ...(narrow ? { marginLeft: 4, marginRight: 4, paddingLeft: 0 } : {}),
           opacity: dim ? 0.45 : 1,
         };
       case "sidechat":
@@ -2808,6 +2833,7 @@ export default function Message({
   }
 
   function renderCols(): React.JSX.Element[] | React.JSX.Element {
+    if (fullWidthContent) return contentColumn();
     switch (mode) {
       case "standalone":
         const cols = [avatar_column(), contentColumn(), BLANK_COLUMN(2)];
@@ -2930,6 +2956,8 @@ export default function Message({
 
   return (
     <Row
+      ref={messageRowRef}
+      tabIndex={-1}
       style={getStyle()}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}

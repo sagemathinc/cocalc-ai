@@ -426,6 +426,8 @@ export default function MultiMarkdownInput({
             minimal={minimal}
             height={editorHeight}
             enableUpload={enableUpload}
+            onUploadStart={onUploadStart}
+            onUploadEnd={onUploadEnd}
             saveDebounceMs={saveDebounceMs}
             getValueRef={internalGetValueRef}
             onChange={(value) => {

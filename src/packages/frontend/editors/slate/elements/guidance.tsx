@@ -4,7 +4,7 @@
  */
 
 import { LoadingOutlined } from "@ant-design/icons";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { markdown_to_slate } from "../markdown-to-slate";
 import { register, type SlateElement } from "./register";
 
@@ -48,34 +48,34 @@ function guidanceAppearance(state: GuidanceState | undefined) {
     case "sending":
       return {
         label: "Sending guidance",
-        borderColor: COLORS.BLUE_LLL,
-        background: COLORS.BLUE_LLLL,
-        pillBackground: COLORS.BLUE_LLL,
-        pillColor: COLORS.BLUE_DDD,
+        borderColor: UI_COLORS.infoBg,
+        background: UI_COLORS.infoBg,
+        pillBackground: UI_COLORS.infoBg,
+        pillColor: UI_COLORS.info,
       };
     case "queued":
       return {
         label: "Guidance queued",
-        borderColor: COLORS.YELL_LL,
-        background: COLORS.YELL_LLL,
-        pillBackground: COLORS.YELL_LL,
-        pillColor: COLORS.BRWN,
+        borderColor: UI_COLORS.warningBg,
+        background: UI_COLORS.warningBg,
+        pillBackground: UI_COLORS.warningBg,
+        pillColor: UI_COLORS.warning,
       };
     case "not-sent":
       return {
         label: "Guidance not sent",
-        borderColor: COLORS.ANTD_BG_RED_M,
-        background: COLORS.ANTD_BG_RED_L,
-        pillBackground: COLORS.ANTD_BG_RED_M,
-        pillColor: "white",
+        borderColor: UI_COLORS.dangerBg,
+        background: UI_COLORS.dangerBg,
+        pillBackground: UI_COLORS.dangerBg,
+        pillColor: UI_COLORS.danger,
       };
     default:
       return {
         label: "Guidance sent",
-        borderColor: COLORS.BLUE_LLL,
-        background: COLORS.BLUE_LLLL,
-        pillBackground: COLORS.BLUE_LLL,
-        pillColor: COLORS.BLUE_DDD,
+        borderColor: UI_COLORS.infoBg,
+        background: UI_COLORS.infoBg,
+        pillBackground: UI_COLORS.infoBg,
+        pillColor: UI_COLORS.info,
       };
   }
 }
@@ -93,6 +93,7 @@ const Element = ({ attributes, children, element }) => {
         padding: "8px 10px 10px",
         borderRadius: 10,
         background: appearance.background,
+        color: UI_COLORS.text,
         border: `1px solid ${appearance.borderColor}`,
       }}
     >

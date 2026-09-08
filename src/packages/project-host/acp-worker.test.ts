@@ -294,7 +294,10 @@ describe("project-host ACP worker runtime wiring", () => {
 
     await main();
 
-    expect(setAcpSessionPublisherOverrideMock).toHaveBeenCalledTimes(1);
+    expect(setAcpSessionPublisherOverrideMock).toHaveBeenCalledTimes(2);
+    expect(setAcpSessionPublisherOverrideMock).toHaveBeenLastCalledWith(
+      undefined,
+    );
     const publisher = setAcpSessionPublisherOverrideMock.mock.calls[0][0];
     await publisher({
       account_id: "11111111-1111-4111-8111-111111111111",

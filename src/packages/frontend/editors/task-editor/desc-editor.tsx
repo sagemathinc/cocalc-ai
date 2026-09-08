@@ -7,6 +7,7 @@
 Edit description of a single task
 */
 
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Button } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedCallback } from "use-debounce";
@@ -126,11 +127,11 @@ export default function DescriptionEditor({
         }}
         style={{
           float: "right",
-          border: "1px solid #ccc",
+          border: `1px solid ${UI_COLORS.border}`,
           padding: "15px",
-          background: "white",
+          background: UI_COLORS.surface,
           marginBottom: "15px",
-          boxShadow: "3px 3px 3px #ccc",
+          boxShadow: `3px 3px 3px ${UI_COLORS.shadow}`,
         }}
       />
       <Button

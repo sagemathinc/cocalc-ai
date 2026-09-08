@@ -36,13 +36,40 @@ async function loadImageDimensions(
 export default function useUpload(
   editor: SlateEditor,
   body: React.JSX.Element,
+  callbacks: { onUploadStart?: () => void; onUploadEnd?: () => void } = {},
 ): React.JSX.Element {
+  const callbacksRef = useRef(callbacks);
+  callbacksRef.current = callbacks;
+  const pending = useRef(new Set<unknown>());
+  const mounted = useRef(true);
+  const finish = (file) => {
+    if (pending.current.delete(file.upload?.uuid ?? file)) {
+      callbacksRef.current.onUploadEnd?.();
+    }
+  };
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      for (const _ of pending.current) callbacksRef.current.onUploadEnd?.();
+      pending.current.clear();
+    };
+  }, []);
   const dropzoneRef = useRef<Dropzone>(null);
   const { actions, project_id, path } = useFrameContext();
   const actionsRef = useRef<any>(actions);
   actionsRef.current = actions;
   const pathRef = useRef<string>(path);
   pathRef.current = path;
+
+  useEffect(() => {
+    const openFilePicker = () => dropzoneRef.current?.hiddenFileInput?.click();
+    editor.openFilePicker = openFilePicker;
+    return () => {
+      if (editor.openFilePicker === openFilePicker)
+        delete editor.openFilePicker;
+    };
+  }, [editor]);
 
   // We setup the slate "plugin" change to insertData here exactly once when
   // the component is mounted, because otherwise we would have to save
@@ -84,57 +111,72 @@ export default function useUpload(
   // depends on in a ref and only create it once.
   const updloadEventHandlers = useMemo(() => {
     return {
-      error: (_, message) => {
+      addedfile: (file) => {
+        const key = file.upload?.uuid ?? file;
+        if (!pending.current.has(key)) {
+          pending.current.add(key);
+          callbacksRef.current.onUploadStart?.();
+        }
+      },
+      canceled: finish,
+      error: (file, message) => {
+        finish(file);
         reportSlateUploadError(actionsRef.current, message, alert_message);
       },
       sending: ({ name }) => {
         actionsRef.current?.set_status?.(`Uploading ${name}...`);
       },
       complete: async (file) => {
-        actionsRef.current?.set_status?.("");
-        const { url } = file;
-        if (!url) {
-          // probably an error
-          return;
-        }
-        const uploadGeneration =
-          file?.upload?.chunks?.[0]?.file?._slateUploadGeneration;
-        const currentUploadGeneration = (editor as any).__uploadGeneration ?? 0;
-        if (
-          uploadGeneration != null &&
-          uploadGeneration !== currentUploadGeneration
-        ) {
-          return;
-        }
-        let node;
-        const { height, upload } = file;
-        const type = upload.chunks[0]?.file.type;
-        if (!height && !type?.startsWith("image")) {
-          node = {
-            type: "link",
-            isInline: true,
-            children: [{ text: upload.filename ? upload.filename : "file" }],
-            url,
-          } as const;
-        } else {
-          const dimensions = initialPastedImageDimensions({
-            filename: upload?.filename,
-            ...(await loadImageDimensions(file?.dataURL ?? url)),
-            devicePixelRatio:
-              typeof window === "undefined" ? 1 : window.devicePixelRatio,
+        try {
+          actionsRef.current?.set_status?.("");
+          const { url } = file;
+          if (!url) {
+            // probably an error
+            return;
+          }
+          const uploadGeneration =
+            file?.upload?.chunks?.[0]?.file?._slateUploadGeneration;
+          const currentUploadGeneration =
+            (editor as any).__uploadGeneration ?? 0;
+          if (
+            uploadGeneration != null &&
+            uploadGeneration !== currentUploadGeneration
+          ) {
+            return;
+          }
+          let node;
+          const { height, upload } = file;
+          const type = upload.chunks[0]?.file.type;
+          if (!height && !type?.startsWith("image")) {
+            node = {
+              type: "link",
+              isInline: true,
+              children: [{ text: upload.filename ? upload.filename : "file" }],
+              url,
+            } as const;
+          } else {
+            const dimensions = initialPastedImageDimensions({
+              filename: upload?.filename,
+              ...(await loadImageDimensions(file?.dataURL ?? url)),
+              devicePixelRatio:
+                typeof window === "undefined" ? 1 : window.devicePixelRatio,
+            });
+            node = {
+              type: "image",
+              isInline: true,
+              isVoid: true,
+              src: url,
+              ...(dimensions ?? {}),
+              children: [{ text: "" }],
+            } as const;
+          }
+          if (!mounted.current) return;
+          Transforms.insertFragment(editor, [node], {
+            at: getFocus(editor),
           });
-          node = {
-            type: "image",
-            isInline: true,
-            isVoid: true,
-            src: url,
-            ...(dimensions ?? {}),
-            children: [{ text: "" }],
-          } as const;
+        } finally {
+          finish(file);
         }
-        Transforms.insertFragment(editor, [node], {
-          at: getFocus(editor),
-        });
       },
     };
   }, []);

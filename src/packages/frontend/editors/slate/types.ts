@@ -31,6 +31,7 @@ export interface SlateEditor extends ReactEditor {
   isComposing?: boolean;
   preserveBlankLines?: boolean;
   cancelPendingUploads?: () => void;
+  openFilePicker?: () => void;
 }
 
 /*

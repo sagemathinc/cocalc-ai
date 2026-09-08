@@ -108,6 +108,23 @@ describe("AI ACP session registry interrupts", () => {
     await getPool().end();
   });
 
+  it("keeps older active sessions ahead of terminal history when limiting results", async () => {
+    await seedSession({ session_key: "active" });
+    await seedSession({
+      session_key: "done",
+      state: "completed",
+      terminal: true,
+    });
+    await getPool().query(
+      "UPDATE ai_sessions SET updated_at=NOW() WHERE session_key='done'",
+    );
+    const rows = await listAiSessionsForAccount({
+      account_id: ACCOUNT_ID,
+      opts: { limit: 1 },
+    });
+    expect(rows.map((row) => row.session_key)).toEqual(["active"]);
+  });
+
   it("keeps a session visible as possibly active when interrupt transport fails", async () => {
     await seedSession();
     mockInterruptAcp.mockRejectedValue(new Error("timeout"));

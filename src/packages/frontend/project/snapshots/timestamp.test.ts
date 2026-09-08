@@ -1,9 +1,15 @@
 import {
   extractSnapshotTimestamp,
   formatSnapshotLocalTimestamp,
+  SnapshotTimestamp,
 } from "./timestamp";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 describe("snapshot timestamp helpers", () => {
+  it("uses a theme-aware timestamp foreground", () => {
+    const element = SnapshotTimestamp({ name: "2026-04-11T00:23:54.375Z" });
+    expect(element?.props.style.color).toBe(UI_COLORS.secondary);
+  });
   it("extracts ISO timestamps from plain snapshot names", () => {
     const timestamp = extractSnapshotTimestamp("2026-04-11T00:23:54.375Z");
     expect(timestamp?.toISOString()).toBe("2026-04-11T00:23:54.375Z");

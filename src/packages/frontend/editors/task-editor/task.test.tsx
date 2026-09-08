@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { fromJS } from "immutable";
 import Task from "./task";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 jest.mock("./desc", () => ({
   Description: ({ editing }: { editing: boolean }) => (
@@ -53,6 +54,30 @@ describe("Task", () => {
     deleted: false,
     done: false,
   });
+
+  it.each([
+    [{}, UI_COLORS.surface, UI_COLORS.text],
+    [{ done: true }, UI_COLORS.surface, UI_COLORS.muted],
+    [{ deleted: true }, UI_COLORS.dangerBg, UI_COLORS.danger],
+    [{ color: "#ffffff" }, "rgb(255, 255, 255)", undefined],
+  ])(
+    "preserves semantic task colors and authored backgrounds: %j",
+    (state, background, foreground) => {
+      const { container } = render(
+        <Task
+          task={task.merge(state) as any}
+          is_current={false}
+          editing_desc={false}
+          editing_due_date={false}
+          font_size={14}
+          selectedHashtags={new Set()}
+        />,
+      );
+      const row = container.firstElementChild as HTMLElement;
+      expect(row.style.background).toBe(background);
+      if (foreground) expect(row.style.color).toBe(foreground);
+    },
+  );
 
   it("does not re-enable the global key handler while editing the description", () => {
     const actions = {

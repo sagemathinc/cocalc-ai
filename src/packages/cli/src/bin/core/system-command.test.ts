@@ -1,12 +1,46 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
+import { spawnSync } from "node:child_process";
 
 import {
   commandPathCandidates,
   cocalcCliDataDir,
   getCloudflaredDownloadSpec,
   localCloudflaredBinaryPath,
+  ensureCloudflaredBinary,
 } from "./system-command";
+
+test(
+  "cloudflared resolves to an absolute executable for non-login SSH shells",
+  { skip: process.platform === "win32" },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cloudflared path "));
+    const binary = join(dir, "cloudflared");
+    const saved = { ...process.env };
+    try {
+      writeFileSync(binary, "#!/bin/sh\nprintf working", { mode: 0o755 });
+      process.env.PATH = dir;
+      delete process.env.COCALC_CLI_CLOUDFLARED;
+      assert.equal(await ensureCloudflaredBinary(), binary);
+      const result = spawnSync(await ensureCloudflaredBinary(), [], {
+        env: { PATH: "/usr/bin:/bin" },
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 0);
+      assert.equal(result.stdout, "working");
+      process.env.COCALC_CLI_CLOUDFLARED = relative(process.cwd(), binary);
+      assert.equal(await ensureCloudflaredBinary(), binary);
+      process.env.COCALC_CLI_CLOUDFLARED = "missing-cloudflared";
+      await assert.rejects(ensureCloudflaredBinary(), /not executable/);
+    } finally {
+      process.env = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("cloudflared download spec supports linux x64", () => {
   assert.deepEqual(

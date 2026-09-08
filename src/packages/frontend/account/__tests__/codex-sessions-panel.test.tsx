@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import CodexSessionsPanel from "../codex-sessions-panel";
+import { fromJS } from "immutable";
 
 const listMock = jest.fn();
 const interruptMock = jest.fn();
@@ -12,6 +13,10 @@ const ensureProjectReduxRuntimeMock = jest.fn();
 const openFileMock = jest.fn();
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
+  useTypedRedux: () =>
+    fromJS({
+      "22222222-2222-4222-8222-222222222222": { title: "Research project" },
+    }),
   redux: {
     getProjectActions: jest.fn(() => ({
       ensureProjectIsOpen: (...args: any[]) => ensureProjectIsOpenMock(...args),
@@ -155,6 +160,25 @@ describe("CodexSessionsPanel", () => {
         /38 active descendant threads reported; usage may continue.*configured subagent cap 10 exceeded.*anomaly/,
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows project and thread titles without hiding an older running turn", async () => {
+    listMock.mockResolvedValueOnce([
+      runningSession({
+        session_key: "new",
+        title: "Investigate parser",
+        state: "completed",
+        terminal: true,
+        updated_at: "2026-06-20T20:00:00.000Z",
+      }),
+      runningSession(),
+    ]);
+    render(<CodexSessionsPanel />);
+    expect(await screen.findByText("Research project")).toBeInTheDocument();
+    expect(screen.getByText("Investigate parser")).toBeInTheDocument();
+    expect(screen.getByText("running")).toBeInTheDocument();
+    expect(screen.queryByText("completed")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop all" })).toBeEnabled();
   });
 
   it("interrupts one session and confirms after refresh", async () => {

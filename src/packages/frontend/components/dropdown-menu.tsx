@@ -50,6 +50,7 @@ interface Props {
   size?;
   mode?: "vertical" | "inline";
   defaultOpen?: boolean;
+  ariaLabel?: string;
 }
 
 export function DropdownMenu({
@@ -64,6 +65,7 @@ export function DropdownMenu({
   size,
   mode,
   defaultOpen,
+  ariaLabel,
 }: Props) {
   const [open, setOpen] = useState<boolean>(!!defaultOpen);
   const items = useMemo(() => {
@@ -72,6 +74,7 @@ export function DropdownMenu({
 
   let body = (
     <Button
+      aria-label={ariaLabel}
       style={style}
       disabled={disabled}
       id={id}

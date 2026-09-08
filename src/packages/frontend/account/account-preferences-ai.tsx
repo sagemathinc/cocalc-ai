@@ -66,6 +66,7 @@ export function AccountPreferencesAI() {
   if (lite) {
     return (
       <>
+        {codexSessionsSection}
         <Typography.Title level={4} style={{ marginBottom: 8 }}>
           Choose one: ChatGPT Plan or OpenAI API key
         </Typography.Title>
@@ -82,13 +83,13 @@ export function AccountPreferencesAI() {
         <CodexSubagentConcurrencyField />
         <CodexDefaultsPanel other_settings={other_settings} />
         <LiteAISettings />
-        {codexSessionsSection}
       </>
     );
   }
 
   return (
     <>
+      {codexSessionsSection}
       <OtherSettings
         other_settings={other_settings}
         is_stripe_customer={
@@ -107,7 +108,6 @@ export function AccountPreferencesAI() {
       <CodexCredentialsPanel />
       <CodexSubagentConcurrencyField />
       <CodexDefaultsPanel other_settings={other_settings} />
-      {codexSessionsSection}
     </>
   );
 }

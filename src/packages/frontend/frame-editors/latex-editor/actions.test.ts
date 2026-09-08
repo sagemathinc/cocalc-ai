@@ -1,6 +1,7 @@
 import { fromJS, List, Map } from "immutable";
 import * as CodeMirror from "codemirror";
 import { Actions } from "./actions";
+import * as synctex from "./synctex";
 import * as fileSummaries from "./file-summaries";
 import { EventEmitter } from "events";
 import { ChatMarkerManager } from "./chat-marker-manager";
@@ -1529,5 +1530,136 @@ describe("shared LaTeX file summaries", () => {
     expect(actions.store.get("file_summaries_loading")).toBe(false);
     await actions.updateFileSummaries(true);
     expect(actions.store.getIn(["file_summaries", "/project/a.tex"])).toBe("A");
+  });
+});
+
+describe("knitr frame-type TimeTravel", () => {
+  function createActions(source: string, knitr: boolean) {
+    const actions = createActionsFixture();
+    actions.path = "/project/paper.tex";
+    actions.filename_knitr = source;
+    actions.knitr = knitr;
+    let node = Map<string, any>({ id: "frame", type: "cm", path: source });
+    actions._get_frame_node = () => node;
+    actions._get_most_recent_active_frame_id_of_type = () => undefined;
+    actions._cm = {};
+    actions.terminals = { close_terminal: jest.fn() };
+    actions.code_editors = { close_code_editor: jest.fn() };
+    actions.store = new EventEmitter();
+    actions.set_frame_tree = (update) => {
+      node = node.merge(update);
+    };
+    return { actions, getNode: () => node };
+  }
+
+  it.each(["rnw", "Rnw", "rtex"])(
+    "opens original %s source history and supports switching back",
+    (ext) => {
+      const source = `/project/paper.${ext}`;
+      const { actions, getNode } = createActions(source, true);
+      actions.set_frame_type("frame", "time_travel");
+      expect(getNode().get("type")).toBe("time_travel");
+      expect(getNode().get("path")).toBe(source);
+      actions.set_frame_type("frame", "cm");
+      expect(getNode().get("type")).toBe("cm");
+      expect(getNode().get("path")).toBe(source);
+      actions.set_frame_type("frame", "time_travel");
+      expect(getNode().get("path")).toBe(source);
+    },
+  );
+
+  it("leaves an existing Code subfile selected when choosing Code again", () => {
+    const { actions, getNode } = createActions("/project/paper.rnw", true);
+    actions.set_frame_tree({ path: "/project/included.tex" });
+    actions.set_frame_type("frame", "cm");
+    expect(getNode().get("path")).toBe("/project/included.tex");
+  });
+
+  it("keeps ordinary LaTeX history on the tex source", () => {
+    const { actions, getNode } = createActions("/project/paper.tex", false);
+    actions.set_frame_type("frame", "time_travel");
+    expect(getNode().get("path")).toBe("/project/paper.tex");
+  });
+});
+
+describe("Synctex PDF-to-source navigation", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function createActions() {
+    const actions = createActionsFixture();
+    actions.path = "/project/main.tex";
+    actions.project_id = "project-1";
+    actions.get_output_directory = () => undefined;
+    actions.is_auto_sync_in_progress = () => false;
+    actions.set_auto_sync_in_progress = jest.fn();
+    actions.set_status = jest.fn();
+    actions.set_error = jest.fn();
+    actions.goto_line_in_file = jest.fn(async () => undefined);
+    return actions;
+  }
+
+  it.each([
+    "tex",
+    "TEX",
+    "latex",
+    "sty",
+    "cls",
+    "Rnw",
+    "rtex",
+    "tikz",
+    "def",
+    "cfg",
+    "pgf",
+    "bib",
+    "bst",
+    "bbx",
+    "cbx",
+    "lbx",
+    "md",
+    "txt",
+  ])("navigates to a %s source file", async (ext) => {
+    const input = `/project/chapter.${ext}`;
+    jest
+      .spyOn(synctex, "pdf_to_tex")
+      .mockResolvedValue({ Input: input, Line: 42 });
+    const actions = createActions();
+    await actions.synctex_pdf_to_tex(1, 10, 20);
+    expect(actions.goto_line_in_file).toHaveBeenCalledWith(42, input);
+    expect(actions.set_status).toHaveBeenLastCalledWith("");
+    expect(actions.set_error).not.toHaveBeenCalled();
+  });
+
+  it.each(["figure.pdf", "image.png", "main.aux", "main.log", "README"])(
+    "ignores %s and releases automatic sync for the next request",
+    async (file) => {
+      const lookup = jest.spyOn(synctex, "pdf_to_tex");
+      lookup.mockResolvedValueOnce({ Input: `/project/${file}`, Line: 1 });
+      const actions = createActions();
+      await actions.synctex_pdf_to_tex(1, 10, 20);
+      expect(actions.goto_line_in_file).not.toHaveBeenCalled();
+      expect(actions.set_auto_sync_in_progress.mock.calls).toEqual([
+        [true],
+        [false],
+      ]);
+      expect(actions.set_status).toHaveBeenLastCalledWith("");
+      expect(actions.set_error).not.toHaveBeenCalled();
+      lookup.mockResolvedValueOnce({ Input: "/project/main.tex", Line: 5 });
+      await actions.synctex_pdf_to_tex(1, 10, 20);
+      expect(actions.goto_line_in_file).toHaveBeenCalledWith(
+        5,
+        "/project/main.tex",
+      );
+    },
+  );
+
+  it("ignores non-source manual targets without changing the automatic sync flag", async () => {
+    jest
+      .spyOn(synctex, "pdf_to_tex")
+      .mockResolvedValue({ Input: "/project/image.pdf", Line: 1 });
+    const actions = createActions();
+    await actions.synctex_pdf_to_tex(1, 10, 20, true);
+    expect(actions.goto_line_in_file).not.toHaveBeenCalled();
+    expect(actions.set_auto_sync_in_progress).not.toHaveBeenCalled();
+    expect(actions.set_status).toHaveBeenLastCalledWith("");
   });
 });
