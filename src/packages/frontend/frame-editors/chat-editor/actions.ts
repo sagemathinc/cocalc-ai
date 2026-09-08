@@ -378,6 +378,9 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     if (!frameId) {
       return;
     }
+    // Publish the target for message-driven thread selection without rewriting
+    // the incoming URL (which may also contain attention or thread parameters).
+    this.set_frame_data({ id: frameId, fragmentId: chat });
     let attentionOpened = false;
     for (const d of [1, 10, 50, 500, 1000]) {
       const actions = this.getChatActions(frameId);

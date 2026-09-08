@@ -127,6 +127,10 @@ register({
                 const elt = $(imageRef.current);
                 const width = elt.width() ?? 0;
                 const height = elt.height() ?? 0;
+                // A cached image can load while a virtualized portal is detached
+                // or hidden. Do not turn that temporary lack of layout into a
+                // permanent zero-size image when the portal becomes visible.
+                if (width <= 0 || height <= 0) return;
                 setWidth(width);
                 setHeight(height);
               }}

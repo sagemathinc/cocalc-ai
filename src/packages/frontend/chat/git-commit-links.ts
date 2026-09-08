@@ -4,8 +4,8 @@
  */
 
 const GIT_COMMIT_LINK_SCHEME = "cocalc-commit://";
-const COMMIT_HASH_BOUNDARY_RE = /\b[0-9a-f]{7,40}\b/gi;
-const INLINE_COMMIT_CODE_RE = /^`([0-9a-f]{7,40})(?:\s+([^\n`]*\S))?`$/i;
+const COMMIT_HASH_BOUNDARY_RE = /\b[0-9a-f]{7,64}\b/gi;
+const INLINE_COMMIT_CODE_RE = /^`([0-9a-f]{7,64})(?:\s+([^\n`]*\S))?`$/i;
 const HEAD_REF = "HEAD";
 
 type MarkdownSpan = { protected: boolean; text: string };
@@ -101,13 +101,13 @@ function shouldAutoLinkCommitHash(
   hash: string,
   opts?: { subject?: string },
 ): boolean {
-  if (!/^[0-9a-f]{7,40}$/i.test(hash)) return false;
+  if (!/^[0-9a-f]{7,64}$/i.test(hash)) return false;
   if (hasHexLetter(hash)) return true;
   return !!opts?.subject;
 }
 
 export function linkifyCommitHashes(text: string): string {
-  if (!text || !/[0-9a-f]{7,40}/i.test(text)) return text;
+  if (!text || !/[0-9a-f]{7,64}/i.test(text)) return text;
   const fencedChunks = text.split(/(```[\s\S]*?```)/g);
   return fencedChunks
     .map((chunk, idx) => {
@@ -159,12 +159,12 @@ export function linkifyCommitHashes(text: string): string {
 export function parseGitCommitLink(href?: string | null): string | undefined {
   if (!href || !href.startsWith(GIT_COMMIT_LINK_SCHEME)) return undefined;
   const hash = href.slice(GIT_COMMIT_LINK_SCHEME.length).trim();
-  if (!/^[0-9a-f]{7,40}$/i.test(hash)) return undefined;
+  if (!/^[0-9a-f]{7,64}$/i.test(hash)) return undefined;
   return hash;
 }
 
 export function extractFirstCommitMention(text: string): string | undefined {
-  if (!text || !/[0-9a-f]{7,40}/i.test(text)) return undefined;
+  if (!text || !/[0-9a-f]{7,64}/i.test(text)) return undefined;
   const fencedChunks = text.split(/(```[\s\S]*?```)/g);
   for (let idx = 0; idx < fencedChunks.length; idx += 1) {
     if (idx % 2 === 1) continue;
@@ -182,7 +182,7 @@ export function extractFirstCommitMention(text: string): string | undefined {
           }
           continue;
         }
-        const re = /\b[0-9a-f]{7,40}\b/gi;
+        const re = /\b[0-9a-f]{7,64}\b/gi;
         let match: RegExpExecArray | null = null;
         while ((match = re.exec(part)) != null) {
           const hash = match[0];

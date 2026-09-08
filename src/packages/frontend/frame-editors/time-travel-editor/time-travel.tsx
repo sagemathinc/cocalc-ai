@@ -21,6 +21,7 @@ import { TimeTravelActions, TimeTravelState } from "./actions";
 import { GitAuthors, TimeTravelAuthors } from "./authors";
 import { Diff } from "./diff";
 import { timeTravelDocumentSource } from "./document-source";
+import { useHistoryLoad } from "./use-history-load";
 import { LoadMoreHistory } from "./load-more-history";
 import { LogView } from "./log-view";
 import { NavigationButtons } from "./navigation-buttons";
@@ -77,13 +78,6 @@ export function TimeTravel(props: Props) {
   const docext = useEditor("docext");
   const git = !!useEditor("git");
   const gitRepo = !!useEditor("git_repo");
-
-  const [doc, setDoc] = useState<(() => Document | undefined) | undefined>(
-    undefined,
-  );
-  const [doc0, setDoc0] = useState<string | undefined>(undefined);
-  const [doc1, setDoc1] = useState<string | undefined>(undefined);
-  const [useJson, setUseJson] = useState<boolean>(false);
 
   const [marks, setMarks] = useState<boolean>(!!props.desc?.get("marks"));
   const [source, setSource] = useState<
@@ -361,15 +355,36 @@ export function TimeTravel(props: Props) {
     return () => props.actions.get_doc(version);
   };
 
-  useAsyncEffect(async () => {
+  const documentSelection = useMemo(
+    () => ({}),
+    [
+      props.actions,
+      docpath,
+      docext,
+      version,
+      version0,
+      version1,
+      changesMode,
+      source,
+      activeVersions,
+    ],
+  );
+  const loadedDocuments = useHistoryLoad<
+    | {
+        doc?: () => Document | undefined;
+        doc0?: string;
+        doc1?: string;
+        useJson?: boolean;
+      }
+    | undefined
+  >(documentSelection, async () => {
     if (docpath == null) {
       return;
     }
     if (!changesMode) {
       // non-changes mode
       const f = await getDoc(version);
-      // use a function since getDoc returns a function
-      setDoc(() => f);
+      return { doc: f };
     } else {
       // diff mode
       const doc0 = (await getDoc(version0))?.();
@@ -379,11 +394,14 @@ export function TimeTravel(props: Props) {
 
       const source0 = timeTravelDocumentSource(doc0, docext);
       const source1 = timeTravelDocumentSource(doc1, docext);
-      setUseJson(source0.useJson || source1.useJson);
-      setDoc0(source0.text);
-      setDoc1(source1.text);
+      return {
+        useJson: source0.useJson || source1.useJson,
+        doc0: source0.text,
+        doc1: source1.text,
+      };
     }
-  }, [version, version0, version1, changesMode, source, activeVersions]);
+  });
+  const { doc, doc0, doc1, useJson = false } = loadedDocuments?.value ?? {};
 
   useAsyncEffect(async () => {
     if (!gitMode || changesMode || version == null) {
@@ -1311,6 +1329,8 @@ export function TimeTravel(props: Props) {
         editor_settings={props.editor_settings}
       />
     );
+  } else if (!changesMode && loadedDocuments == null) {
+    body = renderLoading();
   } else {
     body = renderDiff();
   }
@@ -1324,8 +1344,8 @@ export function TimeTravel(props: Props) {
       {renderTimeSelect()}
       <ShowError
         style={{ margin: "5px 15px" }}
-        error={error}
-        setError={props.actions.set_error}
+        error={error || loadedDocuments?.error}
+        setError={error ? props.actions.set_error : undefined}
       />
       <div
         className="smc-vfill"

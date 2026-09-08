@@ -966,7 +966,7 @@ describe("open_file wait_for_ready", () => {
     );
   });
 
-  it("keeps background opens from foregrounding or hydrating the project", async () => {
+  it("hydrates background opens only when readiness is explicitly requested, without foregrounding", async () => {
     const path = "/home/user/background.txt";
     const ensureProjectIsOpen = jest.fn().mockResolvedValue(undefined);
     const openProject = jest.fn();
@@ -1034,5 +1034,18 @@ describe("open_file wait_for_ready", () => {
     expect(ensureProjectIsOpen).not.toHaveBeenCalled();
     expect(openProject).not.toHaveBeenCalled();
     expect(saveSession).toHaveBeenCalled();
+    canonicalSyncIdentityPath.mockResolvedValue(path);
+    await open_file(actions, {
+      path,
+      foreground: false,
+      foreground_project: false,
+      wait_for_ready: true,
+      change_history: false,
+    });
+    expect(actions.initFileRedux).toHaveBeenCalledWith(path, undefined, {
+      syncIdentityPathIsCanonical: true,
+    });
+    expect(actions.foreground_project).not.toHaveBeenCalled();
+    expect(actions.set_active_tab).not.toHaveBeenCalled();
   });
 });

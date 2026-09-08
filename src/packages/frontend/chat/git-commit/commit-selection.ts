@@ -7,7 +7,7 @@
 
 import type { GitLogEntry } from "./types";
 
-const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
+const COMMIT_HASH_RE = /^[0-9a-f]{7,64}$/i;
 const HEAD_REF = "HEAD";
 
 export function parseCommitHash(commitHash?: string): string | undefined {

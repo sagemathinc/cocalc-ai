@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { act, render } from "@testing-library/react";
+import { useState } from "react";
 import {
   resetThreadSelectionForNewChat,
   useChatThreadSelection,
@@ -8,6 +9,33 @@ import {
 import type { ThreadMeta } from "../threads";
 
 describe("useChatThreadSelection", () => {
+  it("persists a message URL's thread without clearing its fragment", () => {
+    const actions = {
+      clearAllFilters: jest.fn(),
+      setFragment: jest.fn(),
+      setSelectedThread: jest.fn(),
+    } as any;
+    let latest: any;
+    function Harness() {
+      const [storedThread, setStoredThread] = useState("previous-thread");
+      actions.setSelectedThread.mockImplementation(setStoredThread);
+      latest = useChatThreadSelection({
+        actions,
+        threads: [],
+        storedThreadFromDesc: storedThread,
+        fragmentId: "100",
+        messages: new Map([
+          ["100", { date: new Date(100), thread_id: "linked-thread" }],
+        ]) as any,
+      });
+      return null;
+    }
+    render(<Harness />);
+    expect(latest.selectedThreadKey).toBe("linked-thread");
+    expect(actions.setSelectedThread).toHaveBeenCalledWith("linked-thread");
+    expect(actions.setFragment).not.toHaveBeenCalled();
+  });
+
   it("clears the selected message fragment when starting a new chat", () => {
     const calls: string[] = [];
     resetThreadSelectionForNewChat({

@@ -1,5 +1,6 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { redux } from "@cocalc/frontend/app-framework";
 import CodexActivity, {
   reconcileSubagentEvents,
   summarizeSubagentEvents,
@@ -11,6 +12,117 @@ jest.mock("@cocalc/frontend/components/time-ago", () => ({
     <span>{date instanceof Date ? date.toISOString() : String(date)}</span>
   ),
 }));
+jest.mock("../activity-diff", () => ({
+  ActivityDiff: () => <div>Recorded diff</div>,
+}));
+
+test("an earlier diff link keeps its recorded worktree when later terminal events arrive", async () => {
+  const open_file = jest.fn().mockResolvedValue(undefined);
+  const actions = jest
+    .spyOn(redux, "getProjectActions")
+    .mockReturnValue({ open_file } as any);
+  const events: any[] = [
+    {
+      type: "event",
+      seq: 1,
+      event: {
+        type: "config",
+        model: "test",
+        workingDirectory: "/work/feature",
+      },
+    },
+    {
+      type: "event",
+      seq: 2,
+      event: { type: "diff", path: "src/example.ts", diff: {} },
+    },
+  ];
+  try {
+    const { rerender } = render(
+      <CodexActivity expanded projectId="project" events={events} />,
+    );
+    expect(
+      screen.getByRole("button", { name: "src/example.ts" }),
+    ).toHaveAttribute("href", "/work/feature/src/example.ts");
+    rerender(
+      <CodexActivity
+        expanded
+        projectId="project"
+        events={[
+          ...events,
+          {
+            type: "event",
+            seq: 3,
+            event: {
+              type: "terminal",
+              terminalId: "build",
+              cwd: "/tmp/build",
+              command: "pwd",
+            },
+          } as any,
+        ]}
+      />,
+    );
+    const link = screen.getByRole("button", { name: "src/example.ts" });
+    expect(link).toHaveAttribute("href", "/work/feature/src/example.ts");
+    fireEvent.click(link);
+    await waitFor(() =>
+      expect(open_file).toHaveBeenCalledWith(
+        expect.objectContaining({ path: "/work/feature/src/example.ts" }),
+      ),
+    );
+  } finally {
+    actions.mockRestore();
+  }
+});
+
+test.each(["src/a#b.ts", "src/a:42", "src/a\\b.ts", "src/trailing "])(
+  "recorded diff paths remain literal: %s",
+  async (path) => {
+    const open_file = jest.fn().mockResolvedValue(undefined);
+    const actions = jest
+      .spyOn(redux, "getProjectActions")
+      .mockReturnValue({ open_file } as any);
+    try {
+      render(
+        <CodexActivity
+          expanded
+          projectId="project"
+          events={
+            [
+              {
+                type: "event",
+                seq: 1,
+                event: {
+                  type: "config",
+                  model: "test",
+                  workingDirectory: "/work/feature ",
+                },
+              },
+              {
+                type: "event",
+                seq: 2,
+                event: { type: "diff", path, diff: {} },
+              },
+            ] as any
+          }
+        />,
+      );
+      const link = screen.getByRole("button", { name: path.trim() });
+      fireEvent.click(link);
+      await waitFor(() =>
+        expect(open_file).toHaveBeenCalledWith(
+          expect.objectContaining({
+            path: `/work/feature /${path}`,
+            line: undefined,
+          }),
+        ),
+      );
+    } finally {
+      actions.mockRestore();
+    }
+  },
+);
 
 describe("CodexActivity terminal rows", () => {
   it("renders historical goal snapshots rather than the current thread goal", () => {

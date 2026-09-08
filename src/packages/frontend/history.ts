@@ -67,6 +67,15 @@ import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { handoffToPrivateProjectApp } from "@cocalc/frontend/project/private-app-handoff";
 import { parsePrivateProjectAppHandoffTarget } from "@cocalc/frontend/project-routing";
 import { getNotificationFilterFromFragment } from "./notifications/fragment";
+import {
+  APP_NAVIGATION_EVENT,
+  createGitReviewNavigationSearch,
+  consumeGitReviewOnlyNavigation,
+} from "./git/review-route";
+
+const reviewSearchForNavigation = createGitReviewNavigationSearch(
+  new URL(location.href),
+);
 
 // Determine query params part of URL based on state of the project store.
 // This also leaves unchanged any *other* params already there (i.e., not
@@ -118,17 +127,25 @@ export function set_url_with_search(
     return;
   }
   last_url = url;
-  const query_params = search ?? params();
+  const current = new URL(location.href);
+  current.search = params();
+  const query_params =
+    search ?? reviewSearchForNavigation(current, join(appBasePath, url));
   const full_url = join(
     appBasePath,
     url + query_params + (hash ?? location.hash),
   );
-  if (full_url === last_full_url) {
+  if (
+    full_url === last_full_url &&
+    full_url === location.pathname + location.search + location.hash
+  ) {
     // nothing to do
     return;
   }
   last_full_url = full_url;
   history.pushState({}, "", full_url);
+  consumeGitReviewOnlyNavigation(new URL(location.href));
+  window.dispatchEvent(new Event(APP_NAVIGATION_EVENT));
 }
 
 // Now load any specific page/project/previous state
@@ -286,6 +303,9 @@ window.onpopstate = (_) => {
   if (isPublicApp()) {
     return;
   }
+  // The owning chat listens to popstate. Reopening the same file for a drawer
+  // selection can create an extra history entry and discard the Forward stack.
+  if (consumeGitReviewOnlyNavigation(new URL(location.href))) return;
   load_target(
     decodeURIComponent(
       document.location.pathname.slice(

@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Checkbox, Drawer, Spin, Alert, type MenuProps } from "antd";
+import { Checkbox, Drawer, Spin, Alert, Button, type MenuProps } from "antd";
+import { ComparisonModal } from "./git-commit/comparison-modal";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import type {
   CommentAnchor,
@@ -21,15 +22,18 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { ChangedFilesLayout } from "@cocalc/frontend/components/diff-viewer/changed-files-layout";
 import { matchFontSizeShortcut } from "@cocalc/frontend/editors/markdown-input/font-size-shortcut";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { containingPath } from "@cocalc/util/misc";
+import { gitReviewOrigin } from "./git-turn-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   deleteAllReviewRecords,
   exportReviewBundle,
   importReviewBundle,
+  chooseReviewAlias,
+  GitReviewAliasConflict,
   loadReviewRecord,
   loadReviewRecords,
   loadReviewDraft,
@@ -40,6 +44,7 @@ import {
   saveReviewRecord,
   type GitReviewRecordV2,
 } from "./git-review-store";
+import { ReviewAliasChoice } from "./git-commit/review-alias-choice";
 import { buildAgentCommitPrompt } from "./git-commit-prompt";
 import {
   buildGitLogArgs,
@@ -61,7 +66,27 @@ import {
   getRenderedDiffLineLimit,
   isGitDiffFindTargetRendered,
 } from "./git-commit/diff-find";
-import { DiffBlock } from "./git-commit/diff-components";
+import { ReviewDiffPanel } from "./git-commit/review-diff-panel";
+import { GitHistoryControls } from "./git-commit/history-controls";
+import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
+import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
+import { currentHistorySelection } from "@cocalc/frontend/git/history-selection";
+import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
+import { useCommitWorktree } from "@cocalc/frontend/git/use-commit-worktree";
+import {
+  validateAgentWorktree,
+  dispatchWorktreeFeedback,
+} from "@cocalc/frontend/git/agent-worktree";
+import { WorktreeAgentConsent } from "./git-commit/worktree-agent-consent";
+import type {
+  GitReviewHistoryRoute,
+  GitComparisonRoute,
+} from "@cocalc/frontend/git/review-route";
+import type {
+  GitHistorySelection,
+  PinnedHistorySelection,
+} from "@cocalc/frontend/git/history-selection";
+import type { ReviewDiffNavigation } from "./git-commit/review-diff-panel";
 import {
   commentAnchorKey,
   diffLineNumberColumnWidth,
@@ -73,6 +98,7 @@ import {
   persistGitReviewCommitSearchPreference,
   persistGitReviewFetchCountPreference,
   persistGitReviewOnlyUnreviewedPreference,
+  persistGitReviewShowMergesPreference,
   persistGitReviewRecentCutoffPreference,
   persistDrawerScrollPosition,
   persistDrawerSize,
@@ -81,6 +107,7 @@ import {
   readGitReviewCommitSearchPreference,
   readGitReviewFetchCountPreference,
   readGitReviewOnlyUnreviewedPreference,
+  readGitReviewShowMergesPreference,
   readGitReviewRecentCutoffPreference,
 } from "./git-commit/drawer-storage";
 import {
@@ -111,7 +138,6 @@ import {
   GitChangedFilesPanel,
   GitCommitDetailsPanel,
   GitCommitDrawerTitle,
-  GitDiffFilesPanel,
   GitDiffListFooterSpacer,
   GitEmptyCommitDiff,
   GitHeadCommitPanel,
@@ -122,9 +148,12 @@ import {
   captureGitDiffScrollAnchor,
   matchGitDrawerScrollCommand,
   restoreGitDiffScrollAnchor,
+  revealGitReadingViewport,
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
 } from "./git-commit/drawer-scroll";
+import { GitReviewTitle } from "./git-commit/review-title";
+import { CommitDetailsDisclosure } from "./git-commit/commit-details-disclosure";
 import {
   formatMergeCommitBodyMarkdown,
   hasExpandedTextSelectionWithin,
@@ -147,6 +176,8 @@ import {
 import "./git-commit-drawer.css";
 import type { ReactNode } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
+import { GitRevisionModal } from "@cocalc/frontend/frame-editors/time-travel-editor/git-revision-modal";
+import type { GitHistoricalFileRequest } from "@cocalc/frontend/git/historical-file";
 
 export { buildGitLogArgs, buildGitShowArgs, parseGitLogOutput };
 export {
@@ -156,7 +187,6 @@ export {
   captureGitDiffScrollAnchor,
   commentAnchorKey,
   diffLineNumberColumnWidth,
-  DiffBlock,
   getGitDiffFindVisibleLineLimitUpdate,
   getNextRenderedDiffLineLimit,
   getRenderedDiffLineLimit,
@@ -194,7 +224,6 @@ export {
   buildGitReviewNoteEditorId,
   GIT_DIFF_LIST_FOOTER_SPACER_HEIGHT,
   formatMergeCommitBodyMarkdown,
-  GitDiffFilesPanel,
   GitDiffListFooterSpacer,
   getCommitReviewIndicatorState,
   hasExpandedTextSelectionWithin,
@@ -253,10 +282,19 @@ interface GitCommitDrawerProps {
   projectId?: string;
   sourcePath?: string;
   cwdOverride?: string;
+  inferCommitWorktree?: boolean;
+  initialHistory?: GitReviewHistoryRoute;
+  initialComparison?: GitComparisonRoute;
+  onComparisonChange?: (route?: GitComparisonRoute) => void;
   commitHash?: string;
   commitSelectionRequestToken?: number;
   open: boolean;
   onClose: () => void;
+  onSelectedCommitChange?: (
+    commit: string,
+    workingDirectory: string,
+    history?: GitReviewHistoryRoute,
+  ) => void;
   fontSize?: number;
   onRequestAgentTurn?: (
     prompt: string,
@@ -434,15 +472,20 @@ async function runGitCommand({
 }
 
 export function GitCommitDrawer({
+  inferCommitWorktree = false,
   projectId,
   sourcePath,
   cwdOverride,
+  initialHistory,
+  initialComparison,
+  onComparisonChange,
   commitHash,
   commitSelectionRequestToken = 0,
   open,
   onClose,
+  onSelectedCommitChange,
   fontSize = 14,
-  onRequestAgentTurn,
+  onRequestAgentTurn: requestAgentTurn,
   onDirectCommitLogged,
   onFindInChat,
   onOpenActivityLog,
@@ -451,6 +494,12 @@ export function GitCommitDrawer({
   reviewSubmissionHelpText,
 }: GitCommitDrawerProps) {
   const accountId = useTypedRedux("account", "account_id");
+  const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [comparisonLanding, setComparisonLanding] = useState(initialComparison);
+  useEffect(() => {
+    setComparisonOpen(!!initialComparison);
+    setComparisonLanding(initialComparison);
+  }, [initialComparison, commitSelectionRequestToken]);
   const editorTheme = useEffectiveEditorThemeForPath(projectId, sourcePath);
   const [localFontSize, setLocalFontSize] = useState(() =>
     clampGitReviewFontSize(fontSize),
@@ -460,6 +509,10 @@ export function GitCommitDrawer({
     DEFAULT_CONTEXT_LINES,
   );
   const [loading, setLoading] = useState(false);
+  const [historicalFile, setHistoricalFile] = useState<{
+    scope: string;
+    request: GitHistoricalFileRequest;
+  }>();
   const [error, setError] = useState<string>("");
   const [data, setData] = useState<GitShowParsed | undefined>(undefined);
   const [loadedCommit, setLoadedCommit] = useState<string | undefined>(
@@ -504,6 +557,9 @@ export function GitCommitDrawer({
   const [commitFilter, setCommitFilter] = useState(
     readGitReviewCommitSearchPreference,
   );
+  const [showMerges, setShowMerges] = useState(
+    readGitReviewShowMergesPreference,
+  );
   const [recentCutoff, setRecentCutoff] = useState<number | undefined>(
     readGitReviewRecentCutoffPreference,
   );
@@ -511,6 +567,10 @@ export function GitCommitDrawer({
     readGitReviewFetchCountPreference,
   );
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [activeNavigationFile, setActiveNavigationFile] = useState<{
+    scope: string;
+    id: string;
+  }>();
   const [diffFindQuery, setDiffFindQuery] = useState("");
   const [activeDiffFindMatchIndex, setActiveDiffFindMatchIndex] =
     useState<number>(-1);
@@ -550,6 +610,8 @@ export function GitCommitDrawer({
   const [reviewSaving, setReviewSaving] = useState(false);
   const [reviewTransferBusy, setReviewTransferBusy] = useState(false);
   const [reviewError, setReviewError] = useState("");
+  const [reviewAliasConflict, setReviewAliasConflict] =
+    useState<GitReviewAliasConflict>();
   const [reviewed, setReviewed] = useState(false);
   const [reviewNote, setReviewNote] = useState("");
   const [reviewNoteDraft, setReviewNoteDraft] = useState("");
@@ -558,6 +620,7 @@ export function GitCommitDrawer({
     undefined,
   );
   const [reviewDirty, setReviewDirty] = useState(false);
+  const [reviewStorageResolved, setReviewStorageResolved] = useState(false);
   const [reviewRecord, setReviewRecord] = useState<
     GitReviewRecordV2 | undefined
   >(undefined);
@@ -589,6 +652,7 @@ export function GitCommitDrawer({
   const diffFindInputRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+  const pierreNavigationRef = useRef<ReviewDiffNavigation | null>(null);
   const drawerViewSessionEpochRef = useRef(0);
   const drawerViewWasOpenRef = useRef(false);
   const drawerViewScopeRef = useRef<string | undefined>(undefined);
@@ -606,6 +670,8 @@ export function GitCommitDrawer({
     CommentAnchor | undefined
   >(undefined);
   const [activeInlineDraftBody, setActiveInlineDraftBody] = useState("");
+  const inlineDraftCommentIdRef = useRef<string | undefined>(undefined);
+  const inlineEditorGenerationRef = useRef(0);
   const [activeInlineEditId, setActiveInlineEditId] = useState<
     string | undefined
   >(undefined);
@@ -613,11 +679,175 @@ export function GitCommitDrawer({
   const [inlineCommentPendingKey, setInlineCommentPendingKey] = useState("");
   const inlineCommentPendingKeyRef = useRef(inlineCommentPendingKey);
 
-  const cwd = useMemo(() => {
-    const override = `${cwdOverride ?? ""}`.trim();
-    if (override) return override;
-    return containingPath(sourcePath ?? ".") || ".";
-  }, [sourcePath, cwdOverride]);
+  const originCwd = useMemo(
+    () => gitReviewOrigin(sourcePath, cwdOverride),
+    [sourcePath, cwdOverride],
+  );
+  const repositoryScope = `${projectId ?? ""}\0${originCwd}`;
+  const [repositoryDiscovery, setRepositoryDiscovery] = useState<{
+    scope: string;
+    discovery: RepositoryDiscovery;
+  }>();
+  const [historySelection, setHistorySelection] =
+    useState<PinnedHistorySelection>();
+  const restoredHistory = useMemo<PinnedHistorySelection | undefined>(
+    () =>
+      initialHistory
+        ? {
+            scope: repositoryScope,
+            requestToken: commitSelectionRequestToken,
+            tip: initialHistory.tip,
+            selection: {
+              worktree: originCwd,
+              ref: initialHistory.ref,
+              firstParent: initialHistory.firstParent,
+            },
+          }
+        : undefined,
+    [initialHistory, repositoryScope, commitSelectionRequestToken, originCwd],
+  );
+  const selectedHistory =
+    currentHistorySelection(
+      historySelection,
+      repositoryScope,
+      commitSelectionRequestToken,
+    ) ?? restoredHistory;
+  const originDiscovery =
+    repositoryDiscovery?.scope === repositoryScope
+      ? repositoryDiscovery.discovery
+      : undefined;
+  const cwd = selectedHistory?.selection.worktree ?? originCwd;
+  const commitContextKey = JSON.stringify([
+    repositoryScope,
+    commitSelectionRequestToken,
+    commitHash,
+  ]);
+  const contextNotice = useCommitWorktree({
+    requestKey: commitContextKey,
+    enabled: Boolean(
+      open &&
+      commitHash &&
+      !isHeadCommit(commitHash) &&
+      (!cwdOverride || inferCommitWorktree) &&
+      !initialHistory &&
+      !selectedHistory &&
+      commit === parseCommitHash(commitHash),
+    ),
+    blocked: Boolean(
+      activeInlineDraft ||
+      activeInlineEditId ||
+      reviewNoteEditing ||
+      reviewSaving ||
+      reviewSubmitBusy ||
+      headCommitBusy ||
+      headStatusAction,
+    ),
+    origin: originDiscovery,
+    commit: commitHash,
+    onSelect: (result) =>
+      setHistorySelection({
+        scope: repositoryScope,
+        requestToken: commitSelectionRequestToken,
+        selection: result.selection,
+        tip: result.tip,
+      }),
+  });
+  const comparisonRepository = useMemo(
+    () =>
+      originDiscovery
+        ? { ...originDiscovery.repository, locator: cwd }
+        : undefined,
+    [originDiscovery, cwd],
+  );
+  useEffect(() => {
+    if (open && commit)
+      onSelectedCommitChange?.(
+        commit,
+        cwd,
+        selectedHistory
+          ? {
+              tip: selectedHistory.tip,
+              ref: selectedHistory.selection.ref,
+              firstParent: selectedHistory.selection.firstParent,
+            }
+          : undefined,
+      );
+  }, [open, commit, cwd, selectedHistory, onSelectedCommitChange]);
+  const crossWorktree = Boolean(
+    selectedHistory &&
+    selectedHistory.selection.worktree !== originDiscovery?.repository.locator,
+  );
+  const readOnlyWorktree =
+    crossWorktree ||
+    Boolean(contextNotice?.historicalOnly) ||
+    Boolean(originDiscovery?.worktrees.find((tree) => tree.path === cwd)?.bare);
+  const expectedAgentBranch = selectedHistory?.selection.ref.startsWith(
+    "refs/heads/",
+  )
+    ? selectedHistory.selection.ref
+    : originDiscovery?.worktrees.find((tree) => tree.path === cwd)?.branch;
+  const agentRoutingScope = JSON.stringify([
+    repositoryScope,
+    cwd,
+    commit,
+    selectedHistory?.tip,
+    expectedAgentBranch,
+    commitSelectionRequestToken,
+  ]);
+  const [agentWorktreeConsent, setAgentWorktreeConsent] = useState<string>();
+  const agentRoutingCurrent = useRef<string | undefined>(undefined);
+  agentRoutingCurrent.current =
+    open && agentWorktreeConsent === agentRoutingScope
+      ? agentRoutingScope
+      : undefined;
+  useEffect(
+    () => () => {
+      agentRoutingCurrent.current = undefined;
+    },
+    [],
+  );
+  const canRouteWorktree = Boolean(
+    crossWorktree &&
+    !isHeadSelected &&
+    originDiscovery &&
+    selectedHistory &&
+    requestAgentTurn,
+  );
+  // Direct staging/commit controls remain read-only. Agent feedback has its own
+  // explicit opt-in and is revalidated immediately before creating a turn.
+  const onRequestAgentTurn = !readOnlyWorktree
+    ? requestAgentTurn
+    : canRouteWorktree && agentWorktreeConsent === agentRoutingScope
+      ? async (
+          prompt: string,
+          options?: { title?: string; workingDirectory?: string },
+        ) => {
+          await dispatchWorktreeFeedback({
+            prompt,
+            title: options?.title,
+            isCurrent: () => agentRoutingCurrent.current === agentRoutingScope,
+            send: requestAgentTurn!,
+            validate: () =>
+              validateAgentWorktree(
+                projectGitReader,
+                originDiscovery!.repository,
+                cwd,
+                selectedHistory!.tip,
+                commit!,
+                expectedAgentBranch,
+              ),
+          });
+        }
+      : undefined;
+  const historyControlsSelection = useMemo<GitHistorySelection>(
+    () =>
+      selectedHistory?.selection ?? {
+        worktree: originDiscovery?.repository.locator ?? originCwd,
+        ref: "HEAD",
+        firstParent: true,
+      },
+    [selectedHistory, originDiscovery, originCwd],
+  );
 
   useEffect(() => {
     reviewNoteDraftRef.current = reviewNoteDraft;
@@ -635,6 +865,9 @@ export function GitCommitDrawer({
     const raw = `${projectId ?? "no-project"}|${sourcePath ?? ""}|${cwd}|${commitKey}`;
     return hashGitCommitValue(raw);
   }, [projectId, sourcePath, cwd, commit]);
+  useEffect(() => {
+    setHistoricalFile(undefined);
+  }, [open, scrollStorageId]);
 
   useEffect(() => {
     if (open && !drawerViewWasOpenRef.current) {
@@ -714,6 +947,8 @@ export function GitCommitDrawer({
   }, [open, commit, contextLines, reloadCounter]);
 
   useEffect(() => {
+    inlineEditorGenerationRef.current += 1;
+    inlineDraftCommentIdRef.current = undefined;
     if (!open) return;
     setActiveInlineDraft(undefined);
     setActiveInlineDraftBody("");
@@ -809,6 +1044,12 @@ export function GitCommitDrawer({
     if (!node) return;
     let frame: number | undefined;
     const restore = () => {
+      // A child renderer may have claimed restoration using source coordinates.
+      if (
+        pendingScrollRestoreRef.current == null &&
+        pendingContextAnchorRef.current == null
+      )
+        return;
       if (anchor) {
         restoringScrollRef.current = true;
         if (restoreGitDiffScrollAnchor(node, anchor)) {
@@ -851,37 +1092,50 @@ export function GitCommitDrawer({
     let cancelled = false;
     (async () => {
       try {
-        const rootResult = await runGitCommand({
-          projectId,
-          cwd,
-          args: ["rev-parse", "--show-toplevel"],
-        });
-        if (rootResult.exit_code !== 0) {
-          throw new Error(
-            (
-              rootResult.stderr ||
-              rootResult.stdout ||
-              "not a git repository"
-            ).trim(),
+        const origin = await projectGitReader.discover(projectId, originCwd);
+        const discovery =
+          cwd === originCwd
+            ? origin
+            : await projectGitReader.discover(projectId, cwd);
+        if (
+          discovery.repository.commonDirectory !==
+          origin.repository.commonDirectory
+        )
+          throw Error(
+            "The selected worktree no longer belongs to this repository.",
           );
-        }
-        const root = `${rootResult.stdout ?? ""}`.trim();
+        const root = discovery.repository.locator;
         if (!cancelled) {
+          setRepositoryDiscovery({ scope: repositoryScope, discovery: origin });
           setRepoRoot(root);
           setNonRepoError("");
           setGitLogError("");
         }
-        const logResult = await runGitCommand({
-          projectId,
-          cwd: root || cwd,
-          args: buildGitLogArgs(gitLogFetchCount),
-        });
-        if (logResult.exit_code !== 0) {
-          throw new Error(
-            (logResult.stderr || logResult.stdout || "git log failed").trim(),
+        const tip =
+          selectedHistory?.tip ??
+          (await projectGitReader.resolveCommit(discovery.repository, "HEAD"));
+        const history: Awaited<ReturnType<typeof projectGitReader.history>> =
+          [];
+        while (history.length < gitLogFetchCount && !cancelled) {
+          const count = Math.min(500, gitLogFetchCount - history.length);
+          const page = await projectGitReader.history(
+            discovery.repository,
+            tip,
+            {
+              skip: history.length,
+              count,
+              firstParent: selectedHistory?.selection.firstParent ?? true,
+              showMerges,
+            },
           );
+          history.push(...page);
+          if (page.length < count) break;
         }
-        const entries = parseGitLogOutput(logResult.stdout ?? "");
+        const entries = history.map((entry) => ({
+          hash: entry.commit,
+          subject: entry.subject,
+          committedAt: entry.timestamp,
+        }));
         if (!cancelled) {
           setGitLog(entries);
           setNonRepoError("");
@@ -899,7 +1153,17 @@ export function GitCommitDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, projectId, cwd, gitLogFetchCount, gitLogReloadCounter]);
+  }, [
+    open,
+    projectId,
+    cwd,
+    originCwd,
+    repositoryScope,
+    selectedHistory,
+    gitLogFetchCount,
+    gitLogReloadCounter,
+    showMerges,
+  ]);
 
   useEffect(() => {
     if (!open || !isHeadSelected) return;
@@ -1153,17 +1417,24 @@ export function GitCommitDrawer({
     if (commit && !options.some((opt) => opt.value === commit)) {
       const fallback: GitLogEntry = {
         hash: commit,
-        subject: "selected commit",
+        subject:
+          currentData?.summary.message.trim().split("\n")[0] ||
+          "Loading commit title...",
       };
       options.unshift({
         value: commit,
         label: makeOptionLabel(fallback, true),
         plainLabel: makePlainLabel(fallback, true),
-        search: `${commit} selected commit`,
+        search: `${commit} ${fallback.subject}`,
       });
     }
     return options;
-  }, [visibleLogEntries, commit, reviewedByCommit]);
+  }, [
+    visibleLogEntries,
+    commit,
+    reviewedByCommit,
+    currentData?.summary.message,
+  ]);
 
   useEffect(() => {
     const nextScope =
@@ -1295,6 +1566,8 @@ export function GitCommitDrawer({
       );
       setReviewDirty(false);
       setReviewRecord(undefined);
+      setReviewStorageResolved(false);
+      setReviewAliasConflict(undefined);
       setReviewStateCommit(normalizedNext);
       if (normalizedNext) {
         setReviewedByCommit((prev) =>
@@ -1322,9 +1595,17 @@ export function GitCommitDrawer({
         const rec = await loadReviewRecord({
           accountId,
           commitSha: normalizedCommit,
+          resolveCommit: async (input) => {
+            const { repository } = await projectGitReader.discover(
+              projectId!,
+              cwd,
+            );
+            return projectGitReader.resolveCommit(repository, input);
+          },
         });
         if (reviewLoadTokenRef.current !== token) return;
         setReviewRecord(rec);
+        setReviewStorageResolved(true);
         setReviewed(Boolean(rec?.reviewed));
         setReviewedByCommit((prev) =>
           applyGitReviewedByCommitEntries({
@@ -1343,6 +1624,7 @@ export function GitCommitDrawer({
         setReviewError("");
       } catch (err) {
         if (reviewLoadTokenRef.current !== token) return;
+        if (err instanceof GitReviewAliasConflict) setReviewAliasConflict(err);
         const fallback = resolveGitReviewLoadFailure({
           draft: loadReviewDraft(normalizedCommit, accountId),
           error: err,
@@ -1362,7 +1644,7 @@ export function GitCommitDrawer({
         setReviewLoading(false);
       }
     })();
-  }, [open, accountId, commit, reviewReloadCounter]);
+  }, [open, accountId, commit, reviewReloadCounter, projectId, cwd]);
 
   useEffect(() => {
     if (
@@ -1568,9 +1850,13 @@ export function GitCommitDrawer({
       > = {},
     ) => {
       if (!accountId || !commit || isHeadCommit(commit)) return;
+      if (reviewLoading || !reviewRecord || !reviewStorageResolved) return;
       const normalizedCommit = normalizeCommitSha(commit);
       if (!normalizedCommit) return;
-      const latestDraft = loadReviewDraft(normalizedCommit, accountId);
+      const latestDraft = loadReviewDraft(
+        reviewRecord?.commit_sha ?? normalizedCommit,
+        accountId,
+      );
       const resolved = resolveGitReviewSaveState({
         next,
         draft: latestDraft,
@@ -1624,6 +1910,13 @@ export function GitCommitDrawer({
           },
           {
             clearDraftThroughRevision: latestDraft?.revision,
+            resolveCommit: async (input) => {
+              const { repository } = await projectGitReader.discover(
+                projectId!,
+                cwd,
+              );
+              return projectGitReader.resolveCommit(repository, input);
+            },
           },
         );
         setReviewedByCommit((prev) => ({
@@ -1634,7 +1927,7 @@ export function GitCommitDrawer({
           const mergedPayload =
             mergeRecordWithDraft(
               payload,
-              loadReviewDraft(normalizedCommit, accountId),
+              loadReviewDraft(payload.commit_sha, accountId),
             ) ?? payload;
           const completion = resolveGitReviewSaveCompletion({
             payload: mergedPayload,
@@ -1652,17 +1945,34 @@ export function GitCommitDrawer({
           setReviewDirty(completion.reviewDirty);
           setReviewError("");
         }
+        return true;
       } catch (err) {
         if (activeReviewCommitRef.current === normalizedCommit) {
           setReviewError(`${err ?? "Unable to save review state."}`);
+          if (err instanceof GitReviewAliasConflict) {
+            setReviewAliasConflict(err);
+            setReviewStorageResolved(false);
+          }
         }
+        return false;
       } finally {
         if (activeReviewCommitRef.current === normalizedCommit) {
           setReviewSaving(false);
         }
       }
     },
-    [accountId, commit, reviewed, reviewNote, reviewNoteDraft, reviewRecord],
+    [
+      accountId,
+      commit,
+      reviewed,
+      reviewNote,
+      reviewNoteDraft,
+      reviewRecord,
+      reviewLoading,
+      reviewStorageResolved,
+      projectId,
+      cwd,
+    ],
   );
 
   const allInlineComments = useMemo(
@@ -1701,9 +2011,13 @@ export function GitCommitDrawer({
       ) => Record<string, GitReviewCommentV2>,
     ) => {
       if (!accountId || !commit || isHeadCommit(commit)) return;
+      if (reviewLoading || !reviewRecord || !reviewStorageResolved) return;
       const normalizedCommit = normalizeCommitSha(commit);
       if (!normalizedCommit) return;
-      const latestDraft = loadReviewDraft(normalizedCommit, accountId);
+      const latestDraft = loadReviewDraft(
+        reviewRecord?.commit_sha ?? normalizedCommit,
+        accountId,
+      );
       const resolved = resolveGitReviewSaveState({
         draft: latestDraft,
         reviewed,
@@ -1714,7 +2028,7 @@ export function GitCommitDrawer({
       const current = resolved.comments;
       const next = mutate({ ...current });
       saveReviewDraft(
-        normalizedCommit,
+        reviewRecord?.commit_sha ?? normalizedCommit,
         {
           reviewed: resolved.reviewed,
           note: resolved.note,
@@ -1722,7 +2036,7 @@ export function GitCommitDrawer({
         },
         accountId,
       );
-      await saveReview({
+      return await saveReview({
         comments: next,
         reviewed: resolved.reviewed,
         note: resolved.note,
@@ -1731,7 +2045,9 @@ export function GitCommitDrawer({
     [
       accountId,
       commit,
-      reviewRecord?.comments,
+      reviewRecord,
+      reviewLoading,
+      reviewStorageResolved,
       reviewNoteDraft,
       reviewNote,
       reviewed,
@@ -1740,12 +2056,11 @@ export function GitCommitDrawer({
   );
 
   const createInlineComment = useCallback(
-    async (anchor: CommentAnchor, body: string) => {
+    async (anchor: CommentAnchor, body: string, id: string) => {
       const trimmed = `${body ?? ""}`.trim();
       if (!trimmed) return;
       const now = Date.now();
-      await mutateInlineComments((comments) => {
-        const id = makeCommentId();
+      return await mutateInlineComments((comments) => {
         comments[id] = {
           id,
           file_path: anchor.filePath,
@@ -1756,9 +2071,9 @@ export function GitCommitDrawer({
           snippet: anchor.snippet,
           body_md: trimmed,
           status: "draft",
-          created_at: now,
+          created_at: comments[id]?.created_at ?? now,
           updated_at: now,
-          local_revision: 1,
+          local_revision: (comments[id]?.local_revision ?? 0) + 1,
         };
         return comments;
       });
@@ -1771,7 +2086,7 @@ export function GitCommitDrawer({
       const trimmed = `${body ?? ""}`.trim();
       if (!id || !trimmed) return;
       const now = Date.now();
-      await mutateInlineComments((comments) => {
+      return await mutateInlineComments((comments) => {
         const existing = comments[id];
         if (!existing) return comments;
         comments[id] = {
@@ -1844,9 +2159,22 @@ export function GitCommitDrawer({
         : commentAnchorKey(activeInlineDraft),
     [activeInlineDraft],
   );
+  const navigationFiles = useMemo(
+    () =>
+      (currentData?.files ?? []).map((file, index) => ({
+        id: String(index),
+        path: file.path,
+        commentCount: inlineCommentsByFile.get(file.path)?.length ?? 0,
+      })),
+    [currentData, inlineCommentsByFile],
+  );
 
   const openInlineDraft = useCallback(
     (anchor: CommentAnchor) => {
+      inlineEditorGenerationRef.current += 1;
+      if (activeDraftAnchorId !== commentAnchorKey(anchor)) {
+        inlineDraftCommentIdRef.current = undefined;
+      }
       setActiveInlineEditId(undefined);
       setActiveInlineEditBody("");
       setActiveInlineDraft(anchor);
@@ -1858,11 +2186,15 @@ export function GitCommitDrawer({
   );
 
   const cancelInlineDraft = useCallback(() => {
+    inlineEditorGenerationRef.current += 1;
+    inlineDraftCommentIdRef.current = undefined;
     setActiveInlineDraft(undefined);
     setActiveInlineDraftBody("");
   }, []);
 
   const openInlineEdit = useCallback((comment: GitReviewCommentV2) => {
+    inlineEditorGenerationRef.current += 1;
+    inlineDraftCommentIdRef.current = undefined;
     setActiveInlineDraft(undefined);
     setActiveInlineDraftBody("");
     setActiveInlineEditId(comment.id);
@@ -1870,6 +2202,7 @@ export function GitCommitDrawer({
   }, []);
 
   const cancelInlineEdit = useCallback(() => {
+    inlineEditorGenerationRef.current += 1;
     setActiveInlineEditId(undefined);
     setActiveInlineEditBody("");
   }, []);
@@ -1879,11 +2212,18 @@ export function GitCommitDrawer({
       const trimmed = `${value ?? ""}`.trim();
       if (!trimmed) return;
       const key = `create:${commentAnchorKey(anchor)}`;
+      const generation = inlineEditorGenerationRef.current;
+      // A rejected save already has a durable local draft. Retry that identity,
+      // rather than inserting a duplicate comment into the recovery snapshot.
+      const id = (inlineDraftCommentIdRef.current ??= makeCommentId());
       setInlineCommentPendingKey(key);
       try {
-        await createInlineComment(anchor, trimmed);
-        setActiveInlineDraft(undefined);
-        setActiveInlineDraftBody("");
+        const saved = await createInlineComment(anchor, trimmed, id);
+        if (saved && generation === inlineEditorGenerationRef.current) {
+          inlineDraftCommentIdRef.current = undefined;
+          setActiveInlineDraft(undefined);
+          setActiveInlineDraftBody("");
+        }
       } finally {
         if (
           shouldClearGitInlinePendingKey({
@@ -1905,10 +2245,13 @@ export function GitCommitDrawer({
       if (!trimmed) return;
       setInlineCommentPendingKey(`edit:${id}`);
       const pendingKey = `edit:${id}`;
+      const generation = inlineEditorGenerationRef.current;
       try {
-        await updateInlineComment(id, trimmed);
-        setActiveInlineEditId(undefined);
-        setActiveInlineEditBody("");
+        const saved = await updateInlineComment(id, trimmed);
+        if (saved && generation === inlineEditorGenerationRef.current) {
+          setActiveInlineEditId(undefined);
+          setActiveInlineEditBody("");
+        }
       } finally {
         if (
           shouldClearGitInlinePendingKey({
@@ -1973,6 +2316,10 @@ export function GitCommitDrawer({
 
   const scrollToDiffFile = useCallback(
     (index: number, behavior: "auto" | "smooth" = "smooth") => {
+      if (pierreNavigationRef.current) {
+        pierreNavigationRef.current.navigateToFile(index, behavior);
+        return;
+      }
       virtuosoRef.current?.scrollToIndex({
         index,
         align: "start",
@@ -2000,6 +2347,9 @@ export function GitCommitDrawer({
 
   useEffect(() => {
     if (!open || !currentData || !activeDiffFindMatch) return;
+    // The Pierre adapter navigates in source coordinates, including search hits
+    // beyond its virtual window. Do not overwrite that with a file-top jump.
+    if (pierreNavigationRef.current?.handlesSearch) return;
     const file = currentData.files[activeDiffFindMatch.fileIndex];
     if (!file) return;
     if (activeDiffFindVisibleLineLimitUpdate) {
@@ -2041,6 +2391,7 @@ export function GitCommitDrawer({
           })
         : buildGitReviewFileSectionId(file.path, activeDiffFindMatch.fileIndex);
     const scrollTargetIntoView = () => {
+      if (pierreNavigationRef.current?.handlesSearch) return;
       const element = document.getElementById(targetId);
       if (element) {
         const node = scrollRef.current;
@@ -2071,6 +2422,7 @@ export function GitCommitDrawer({
 
   const sendInlineReviewToAgent = async () => {
     if (!onRequestAgentTurn || !commit || isHeadSelected) return;
+    if (reviewLoading || !reviewRecord || !reviewStorageResolved) return;
     const startedScope = normalizeCommitSha(commit);
     if (!startedScope) return;
     const actionable = actionableInlineComments;
@@ -2110,7 +2462,10 @@ export function GitCommitDrawer({
       const turnId = `git-review-${now}`;
       const normalizedCommit = normalizeCommitSha(commit);
       const latestDraft = normalizedCommit
-        ? loadReviewDraft(normalizedCommit, accountId)
+        ? loadReviewDraft(
+            reviewRecord?.commit_sha ?? normalizedCommit,
+            accountId,
+          )
         : undefined;
       const resolved = resolveGitReviewSaveState({
         draft: latestDraft,
@@ -2128,7 +2483,7 @@ export function GitCommitDrawer({
       if (commit) {
         if (normalizedCommit) {
           saveReviewDraft(
-            normalizedCommit,
+            reviewRecord?.commit_sha ?? normalizedCommit,
             {
               reviewed: resolved.reviewed,
               note: resolved.note,
@@ -2176,10 +2531,16 @@ export function GitCommitDrawer({
     const normalizedCommit = normalizeCommitSha(commit);
     if (!normalizedCommit) return;
     if (reviewStateCommit !== normalizedCommit) return;
-    if (reviewLoading || reviewSaving) return;
+    if (
+      reviewLoading ||
+      reviewSaving ||
+      !reviewRecord ||
+      !reviewStorageResolved
+    )
+      return;
     if (!reviewDirty) return;
     saveReviewDraft(
-      normalizedCommit,
+      reviewRecord?.commit_sha ?? normalizedCommit,
       {
         reviewed: Boolean(reviewed),
         note: `${reviewNoteDraft ?? ""}`,
@@ -2193,11 +2554,12 @@ export function GitCommitDrawer({
     commit,
     reviewLoading,
     reviewSaving,
+    reviewStorageResolved,
     reviewDirty,
     reviewStateCommit,
     reviewed,
     reviewNoteDraft,
-    reviewRecord?.comments,
+    reviewRecord,
   ]);
 
   useEffect(() => {
@@ -2230,6 +2592,24 @@ export function GitCommitDrawer({
     setLoadedCommit(undefined);
     (async () => {
       try {
+        if (!isHeadSelected) {
+          const discovery = await projectGitReader.discover(projectId, cwd);
+          const target = await projectGitReader.pinCommit(
+            discovery.repository,
+            commit,
+          );
+          const parsed = await readTargetDiff(
+            projectGitReader,
+            target,
+            contextLines,
+          );
+          if (!cancelled) {
+            setData(parsed);
+            setLoadedCommit(requestedCommit);
+            setError("");
+          }
+          return;
+        }
         const args = buildGitShowArgs({
           isHeadSelected,
           contextLines,
@@ -2289,6 +2669,7 @@ export function GitCommitDrawer({
   };
 
   const initializeGitRepo = async () => {
+    if (readOnlyWorktree) return;
     if (!projectId) return;
     const startedScope = repoBootstrapScopeRef.current;
     if (!startedScope) return;
@@ -2421,6 +2802,7 @@ export function GitCommitDrawer({
   };
 
   const addUntrackedFile = async (path: string) => {
+    if (readOnlyWorktree) return;
     if (!projectId) return;
     const startedScope = headScopeRef.current;
     if (!startedScope) return;
@@ -2461,6 +2843,7 @@ export function GitCommitDrawer({
   };
 
   const ignoreUntrackedFile = async (path: string) => {
+    if (readOnlyWorktree) return;
     if (!projectId) return;
     const startedScope = headScopeRef.current;
     if (!startedScope) return;
@@ -2580,6 +2963,20 @@ export function GitCommitDrawer({
   const handleDrawerScroll = () => {
     const node = scrollRef.current;
     if (!node) return;
+    const top = node.getBoundingClientRect().top;
+    for (const header of node.querySelectorAll<HTMLElement>(
+      "[data-review-file-id]",
+    )) {
+      if (header.getBoundingClientRect().bottom > top) {
+        const id = header.dataset.reviewFileId!;
+        setActiveNavigationFile((current) =>
+          current?.scope === scrollStorageId && current.id === id
+            ? current
+            : { scope: scrollStorageId, id },
+        );
+        break;
+      }
+    }
     if (restoringScrollRef.current) return;
     persistDrawerScrollPosition(scrollStorageId, node.scrollTop);
   };
@@ -2588,6 +2985,38 @@ export function GitCommitDrawer({
     scrollRef.current = node;
     setDrawerScrollParent((current) => (current === node ? current : node));
   }, []);
+
+  useEffect(() => {
+    if (!drawerScrollParent) return;
+    const onWheel = (event: WheelEvent) => {
+      const inner = pierreNavigationRef.current?.viewport();
+      if (
+        !inner ||
+        event.ctrlKey ||
+        Math.abs(event.deltaX) > Math.abs(event.deltaY) ||
+        !event.composedPath().includes(inner) ||
+        isEditableEventTarget(event.target)
+      )
+        return;
+      const delta =
+        event.deltaY *
+        (event.deltaMode === 1
+          ? 16
+          : event.deltaMode === 2
+            ? inner.clientHeight
+            : 1);
+      const rest = revealGitReadingViewport(drawerScrollParent, inner, delta);
+      if (rest !== delta) {
+        event.preventDefault();
+        inner.scrollTop += rest;
+      }
+    };
+    drawerScrollParent.addEventListener("wheel", onWheel, {
+      passive: false,
+      capture: true,
+    });
+    return () => drawerScrollParent.removeEventListener("wheel", onWheel, true);
+  }, [drawerScrollParent]);
 
   const handleDrawerClose = () => {
     const node = scrollRef.current;
@@ -2668,6 +3097,7 @@ export function GitCommitDrawer({
   };
 
   const doHeadCommit = async () => {
+    if (readOnlyWorktree) return;
     if (!projectId) return;
     const trimmed = headCommitMessage.trim();
     if (!trimmed) {
@@ -2821,10 +3251,39 @@ export function GitCommitDrawer({
       }
       const scrollCommand = matchGitDrawerScrollCommand(evt);
       if (scrollCommand) {
-        const node = scrollRef.current;
+        const node =
+          pierreNavigationRef.current?.viewport() ?? scrollRef.current;
+        const outer = scrollRef.current;
+        if (node && outer && node !== outer) {
+          if (scrollCommand === "top") {
+            node.scrollTop = 0;
+            outer.scrollTop = 0;
+            evt.preventDefault();
+            return;
+          }
+          const down =
+            scrollCommand === "pageDown" || scrollCommand === "lineDown";
+          const step =
+            scrollCommand === "pageDown" ? node.clientHeight * 0.9 : 40;
+          if (down) {
+            const rest = revealGitReadingViewport(outer, node, step);
+            if (rest !== step) {
+              node.scrollTop += rest;
+              evt.preventDefault();
+              return;
+            }
+          } else if (
+            node.scrollTop <= 0 &&
+            runGitDrawerScrollCommand(outer, scrollCommand)
+          ) {
+            evt.preventDefault();
+            return;
+          }
+        }
         if (node && runGitDrawerScrollCommand(node, scrollCommand)) {
           evt.preventDefault();
-          persistDrawerScrollPosition(scrollStorageId, node.scrollTop);
+          if (node === scrollRef.current)
+            persistDrawerScrollPosition(scrollStorageId, node.scrollTop);
         }
         return;
       }
@@ -2908,60 +3367,72 @@ export function GitCommitDrawer({
       data != null &&
       !currentData);
 
+  const navigation = (
+    <GitCommitDrawerTitle
+      nonRepoError={nonRepoError}
+      commit={commit}
+      commitFilter={commitFilter}
+      logOptions={logOptions}
+      onCommitChange={handleCommitChange}
+      onCommitFilterChange={handleCommitFilterChange}
+      filteredCommitCount={filteredRecentCommitCount}
+      recentCommitCount={recentCommitCount}
+      reviewedRecentCommitCount={reviewedRecentCommitCount}
+      recentCutoff={recentCutoff}
+      onRecentCutoffChange={handleRecentCutoffChange}
+      gitLogFetchCount={gitLogFetchCount}
+      onGitLogFetchCountChange={handleGitLogFetchCountChange}
+      showOnlyUnreviewedCommits={showOnlyUnreviewedCommits}
+      onToggleShowOnlyUnreviewed={handleToggleShowOnlyUnreviewed}
+      diffFindInputRef={diffFindInputRef}
+      diffFindQuery={diffFindQuery}
+      onDiffFindQueryChange={setDiffFindQuery}
+      onNextDiffFindMatch={goToNextDiffFindMatch}
+      onPreviousDiffFindMatch={goToPreviousDiffFindMatch}
+      diffFindMatchesLength={diffFindMatches.length}
+      activeDiffFindMatchIndex={activeDiffFindMatchIndex}
+      canGoNewer={canGoNewer}
+      canGoOlder={canGoOlder}
+      onGoNewer={goNewer}
+      onGoOlder={goOlder}
+      canFindInChat={canFindInChat}
+      findInChatEnabled={findInChatEnabled}
+      onFindInChat={
+        !commit || !onFindInChat
+          ? undefined
+          : () => {
+              void onFindInChat(commit);
+            }
+      }
+      contextLines={contextLines}
+      contextOptions={CONTEXT_OPTIONS}
+      onContextChange={(value) => {
+        const node = scrollRef.current;
+        pendingScrollRestoreRef.current = node?.scrollTop ?? null;
+        pendingContextAnchorRef.current = node
+          ? (captureGitDiffScrollAnchor(node) ?? null)
+          : null;
+        setContextLines(value);
+      }}
+      reviewMenuItems={reviewMenuItems}
+      onReviewMenuClick={handleReviewMenuClick}
+      reviewTransferBusy={reviewTransferBusy}
+      shortcutsOpen={shortcutsOpen}
+      onShortcutsOpenChange={setShortcutsOpen}
+    />
+  );
   return (
     <Drawer
+      className="git-review-drawer"
       title={
-        <GitCommitDrawerTitle
-          nonRepoError={nonRepoError}
-          commit={commit}
-          commitFilter={commitFilter}
-          logOptions={logOptions}
-          onCommitChange={handleCommitChange}
-          onCommitFilterChange={handleCommitFilterChange}
-          filteredCommitCount={filteredRecentCommitCount}
-          recentCommitCount={recentCommitCount}
-          reviewedRecentCommitCount={reviewedRecentCommitCount}
-          recentCutoff={recentCutoff}
-          onRecentCutoffChange={handleRecentCutoffChange}
-          gitLogFetchCount={gitLogFetchCount}
-          onGitLogFetchCountChange={handleGitLogFetchCountChange}
-          showOnlyUnreviewedCommits={showOnlyUnreviewedCommits}
-          onToggleShowOnlyUnreviewed={handleToggleShowOnlyUnreviewed}
-          diffFindInputRef={diffFindInputRef}
-          diffFindQuery={diffFindQuery}
-          onDiffFindQueryChange={setDiffFindQuery}
-          onNextDiffFindMatch={goToNextDiffFindMatch}
-          onPreviousDiffFindMatch={goToPreviousDiffFindMatch}
-          diffFindMatchesLength={diffFindMatches.length}
-          activeDiffFindMatchIndex={activeDiffFindMatchIndex}
-          canGoNewer={canGoNewer}
-          canGoOlder={canGoOlder}
-          onGoNewer={goNewer}
-          onGoOlder={goOlder}
-          canFindInChat={canFindInChat}
-          findInChatEnabled={findInChatEnabled}
-          onFindInChat={
-            !commit || !onFindInChat
-              ? undefined
-              : () => {
-                  void onFindInChat(commit);
-                }
+        <GitReviewTitle
+          subject={
+            isHeadSelected
+              ? "Uncommitted changes"
+              : currentData?.summary.message ||
+                visibleLogEntries.find((entry) => entry.hash === commit)
+                  ?.subject
           }
-          contextLines={contextLines}
-          contextOptions={CONTEXT_OPTIONS}
-          onContextChange={(value) => {
-            const node = scrollRef.current;
-            pendingScrollRestoreRef.current = node?.scrollTop ?? null;
-            pendingContextAnchorRef.current = node
-              ? (captureGitDiffScrollAnchor(node) ?? null)
-              : null;
-            setContextLines(value);
-          }}
-          reviewMenuItems={reviewMenuItems}
-          onReviewMenuClick={handleReviewMenuClick}
-          reviewTransferBusy={reviewTransferBusy}
-          shortcutsOpen={shortcutsOpen}
-          onShortcutsOpenChange={setShortcutsOpen}
         />
       }
       placement="right"
@@ -3022,6 +3493,68 @@ export function GitCommitDrawer({
           color: UI_COLORS.text,
         }}
       >
+        {originDiscovery && accountId && (
+          <Button
+            style={{ float: "right", marginBottom: 8, marginLeft: 12 }}
+            onClick={() => {
+              setComparisonLanding(undefined);
+              setComparisonOpen(true);
+            }}
+            disabled={Boolean(
+              activeInlineDraft ||
+              activeInlineEditId ||
+              reviewNoteEditing ||
+              reviewSaving,
+            )}
+          >
+            Compare revisions...
+          </Button>
+        )}
+        {originDiscovery && (
+          <GitHistoryControls
+            origin={originDiscovery}
+            selection={historyControlsSelection}
+            showMerges={showMerges}
+            onShowMergesChange={(show) => {
+              setShowMerges(show);
+              persistGitReviewShowMergesPreference(show);
+            }}
+            disabled={Boolean(
+              activeInlineDraft ||
+              activeInlineEditId ||
+              reviewNoteEditing ||
+              reviewSaving ||
+              headCommitBusy ||
+              headStatusAction,
+            )}
+            onApply={(selection, discovery, tip) => {
+              setData(undefined);
+              setLoadedCommit(undefined);
+              setRepoRoot(discovery.repository.locator);
+              setHistorySelection({
+                scope: repositoryScope,
+                requestToken: commitSelectionRequestToken,
+                selection,
+                tip,
+              });
+              setSelectedCommit(tip);
+            }}
+          />
+        )}
+        {navigation}
+        {canRouteWorktree && (
+          <WorktreeAgentConsent
+            path={cwd}
+            checked={agentWorktreeConsent === agentRoutingScope}
+            disabled={reviewSubmitBusy}
+            onChange={(checked) =>
+              setAgentWorktreeConsent(checked ? agentRoutingScope : undefined)
+            }
+          />
+        )}
+        {contextNotice && (
+          <Alert type="info" title={contextNotice.message} showIcon />
+        )}
         {gitLogError ? (
           <Alert
             type="warning"
@@ -3030,6 +3563,33 @@ export function GitCommitDrawer({
             style={{ marginBottom: 10 }}
           />
         ) : null}
+        {reviewAliasConflict && accountId && projectId && (
+          <ReviewAliasChoice
+            key={JSON.stringify([
+              accountId,
+              cwd,
+              reviewAliasConflict.inspection.full,
+              reviewReloadCounter,
+            ])}
+            conflict={reviewAliasConflict}
+            onReload={() => setReviewReloadCounter((value) => value + 1)}
+            onChoose={async (selected) => {
+              await chooseReviewAlias({
+                accountId,
+                conflict: reviewAliasConflict,
+                selected,
+                resolveCommit: async (input) => {
+                  const { repository } = await projectGitReader.discover(
+                    projectId,
+                    cwd,
+                  );
+                  return projectGitReader.resolveCommit(repository, input);
+                },
+              });
+              setReviewReloadCounter((value) => value + 1);
+            }}
+          />
+        )}
         {nonRepoError ? (
           <GitRepoBootstrapPanel
             cwd={cwd}
@@ -3042,6 +3602,12 @@ export function GitCommitDrawer({
             onAskAgent={() => {
               void requestAgentRepoSetup();
             }}
+          />
+        ) : isHeadSelected && readOnlyWorktree ? (
+          <Alert
+            type="info"
+            title="Read-only worktree review"
+            description="Working changes can be inspected here. Commit, staging, and agent write actions are unavailable until this worktree has a matching agent context."
           />
         ) : isHeadSelected ? (
           <GitHeadCommitPanel
@@ -3082,6 +3648,7 @@ export function GitCommitDrawer({
             isHeadSelected={isHeadSelected}
             reviewNoteEditing={reviewNoteEditing}
             reviewNote={reviewNote}
+            reviewNoteVersions={reviewRecord?.note_versions}
             reviewNoteDraft={reviewNoteDraft}
             reviewNoteHistoryId={reviewNoteHistoryId}
             fontSize={effectiveFontSize}
@@ -3108,10 +3675,12 @@ export function GitCommitDrawer({
               if (activeReviewCommitRef.current !== currentReviewCommit) {
                 return;
               }
+              if (reviewLoading || !reviewRecord || !reviewStorageResolved)
+                return;
               setReviewNoteDraft(value);
               setReviewDirty(true);
               saveReviewDraft(
-                currentReviewCommit,
+                reviewRecord?.commit_sha ?? currentReviewCommit,
                 {
                   reviewed: Boolean(reviewed),
                   note: `${value ?? ""}`,
@@ -3130,11 +3699,18 @@ export function GitCommitDrawer({
             }}
             onSaveReviewNote={(nextNote) => {
               if (!currentReviewCommit) return;
-              setReviewNote(nextNote);
               setReviewNoteDraft(nextNote);
               setReviewDirty(true);
-              setReviewNoteEditing(false);
-              void saveReview({ note: nextNote, reviewed });
+              const savingCommit = currentReviewCommit;
+              void saveReview({ note: nextNote, reviewed }).then((saved) => {
+                if (
+                  saved &&
+                  activeReviewCommitRef.current === savingCommit &&
+                  reviewNoteDraftRef.current === nextNote
+                ) {
+                  setReviewNoteEditing(false);
+                }
+              });
             }}
             actionableInlineCommentCount={actionableInlineComments.length}
             reviewSubmitBusy={reviewSubmitBusy}
@@ -3159,16 +3735,18 @@ export function GitCommitDrawer({
           />
         ) : null}
         {!showCommitLoading && !error && currentData ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {currentData.summaryLines.length ? (
-              <GitCommitDetailsPanel
-                summary={currentData.summary}
-                commit={commit}
-                isHeadSelected={isHeadSelected}
-                fontSize={effectiveFontSize}
-                editorTheme={editorTheme}
-                headRefLabel={HEAD_REF}
-              />
+              <CommitDetailsDisclosure>
+                <GitCommitDetailsPanel
+                  summary={currentData.summary}
+                  commit={commit}
+                  isHeadSelected={isHeadSelected}
+                  fontSize={effectiveFontSize}
+                  editorTheme={editorTheme}
+                  headRefLabel={HEAD_REF}
+                />
+              </CommitDetailsDisclosure>
             ) : null}
             {currentData.files.length === 0 ? (
               <GitEmptyCommitDiff />
@@ -3179,38 +3757,113 @@ export function GitCommitDrawer({
                   inlineCommentsByFile={inlineCommentsByFile}
                   onOpenFileDiff={scrollToDiffFile}
                 />
-                <GitDiffFilesPanel
-                  files={currentData.files}
-                  drawerScrollParent={drawerScrollParent}
-                  virtuosoRef={virtuosoRef}
-                  fontSize={effectiveFontSize}
-                  editorTheme={editorTheme}
-                  reviewEditorScope={reviewEditorScope}
-                  inlineCommentsByFile={inlineCommentsByFile}
-                  showResolvedComments={showResolvedComments}
-                  isHeadSelected={isHeadSelected}
-                  visibleDiffLinesByFile={visibleDiffLinesByFile}
-                  onOpenFile={openFile}
-                  onShowMoreLines={showMoreDiffLines}
-                  activeDraftAnchorId={activeDraftAnchorId}
-                  activeDraftBody={activeInlineDraftBody}
-                  activeEditingId={activeInlineEditId}
-                  activeEditingBody={activeInlineEditBody}
-                  pendingKey={inlineCommentPendingKey}
-                  onOpenDraft={openInlineDraft}
-                  onDraftBodyChange={setActiveInlineDraftBody}
-                  onCancelDraft={cancelInlineDraft}
-                  onOpenEdit={openInlineEdit}
-                  onEditingBodyChange={setActiveInlineEditBody}
-                  onCancelEdit={cancelInlineEdit}
-                  onCreateComment={submitInlineDraft}
-                  onUpdateComment={submitInlineEdit}
-                  onResolveComment={handleResolveInlineComment}
-                  onReopenComment={handleReopenInlineComment}
-                  diffFindMatchCounts={diffFindMeta.counts}
-                  diffFindMatchedLineIndexes={diffFindMeta.matchedLineIndexes}
-                  activeDiffFindMatch={activeDiffFindMatch}
-                />
+                <ChangedFilesLayout
+                  key={reviewEditorScope}
+                  expansionScope={JSON.stringify([
+                    accountId,
+                    projectId,
+                    originDiscovery?.repository.commonDirectory ?? originCwd,
+                    cwd,
+                    reviewStateCommit ?? currentReviewCommit,
+                  ])}
+                  files={navigationFiles}
+                  activeId={
+                    activeNavigationFile?.scope === scrollStorageId
+                      ? activeNavigationFile.id
+                      : undefined
+                  }
+                  onSelect={(id) => scrollToDiffFile(Number(id), "auto")}
+                >
+                  <ReviewDiffPanel
+                    navigationRef={pierreNavigationRef}
+                    onClaimScrollRestoration={() => {
+                      pendingScrollRestoreRef.current = null;
+                      pendingContextAnchorRef.current = null;
+                    }}
+                    scrollScope={JSON.stringify([
+                      accountId,
+                      projectId,
+                      originDiscovery?.repository.commonDirectory ?? originCwd,
+                      cwd,
+                      reviewStateCommit ?? currentReviewCommit,
+                    ])}
+                    onActiveFile={(index) =>
+                      setActiveNavigationFile({
+                        scope: scrollStorageId,
+                        id: String(index),
+                      })
+                    }
+                    linesTruncated={currentData.linesTruncated}
+                    repoRoot={repoRoot || currentData.repoRoot}
+                    canOpenWorkingCopy={Boolean(
+                      originDiscovery?.worktrees.some(
+                        (tree) =>
+                          tree.path === (repoRoot || currentData.repoRoot) &&
+                          !tree.bare &&
+                          tree.prunable == null,
+                      ),
+                    )}
+                    activeDraft={activeInlineDraft ?? undefined}
+                    files={currentData.files}
+                    drawerScrollParent={drawerScrollParent}
+                    virtuosoRef={virtuosoRef}
+                    fontSize={effectiveFontSize}
+                    editorTheme={editorTheme}
+                    reviewEditorScope={reviewEditorScope}
+                    inlineCommentsByFile={inlineCommentsByFile}
+                    showResolvedComments={showResolvedComments}
+                    isHeadSelected={isHeadSelected}
+                    visibleDiffLinesByFile={visibleDiffLinesByFile}
+                    onOpenFile={openFile}
+                    onViewFile={
+                      projectId && commit && !isHeadSelected
+                        ? (path, side) => {
+                            const file = currentData.files.find(
+                              (file) => file.path === path,
+                            );
+                            const source =
+                              side === "old"
+                                ? file?.oldSource
+                                : side === "new"
+                                  ? file?.newSource
+                                  : (file?.newSource ?? file?.oldSource);
+                            if (side && !source) return;
+                            setHistoricalFile({
+                              scope: scrollStorageId,
+                              request: source
+                                ? { source }
+                                : {
+                                    projectId,
+                                    cwd:
+                                      repoRoot || currentData.repoRoot || cwd,
+                                    commit,
+                                    path,
+                                  },
+                            });
+                          }
+                        : undefined
+                    }
+                    onShowMoreLines={showMoreDiffLines}
+                    activeDraftAnchorId={activeDraftAnchorId}
+                    activeDraftBody={activeInlineDraftBody}
+                    activeEditingId={activeInlineEditId}
+                    activeEditingBody={activeInlineEditBody}
+                    pendingKey={inlineCommentPendingKey}
+                    onOpenDraft={openInlineDraft}
+                    onDraftBodyChange={setActiveInlineDraftBody}
+                    onCancelDraft={cancelInlineDraft}
+                    onOpenEdit={openInlineEdit}
+                    onEditingBodyChange={setActiveInlineEditBody}
+                    onCancelEdit={cancelInlineEdit}
+                    onCreateComment={submitInlineDraft}
+                    onUpdateComment={submitInlineEdit}
+                    onResolveComment={handleResolveInlineComment}
+                    onReopenComment={handleReopenInlineComment}
+                    diffFindMatchCounts={diffFindMeta.counts}
+                    diffFindMatchedLineIndexes={diffFindMeta.matchedLineIndexes}
+                    activeDiffFindMatch={activeDiffFindMatch}
+                  />
+                </ChangedFilesLayout>
               </>
             )}
             {currentData.linesTruncated ? (
@@ -3235,6 +3888,34 @@ export function GitCommitDrawer({
           </div>
         ) : null}
       </div>
+      {comparisonOpen && open && comparisonRepository && accountId && (
+        <ComparisonModal
+          key={commitSelectionRequestToken}
+          initialComparison={comparisonLanding}
+          onTargetChange={onComparisonChange}
+          repository={comparisonRepository}
+          commit={commit ?? "HEAD"}
+          accountId={accountId}
+          fontSize={effectiveFontSize}
+          onRequestAgentTurn={requestAgentTurn}
+          onClose={() => {
+            setComparisonOpen(false);
+            onComparisonChange?.(undefined);
+          }}
+          onView={(source) =>
+            setHistoricalFile({ scope: scrollStorageId, request: { source } })
+          }
+        />
+      )}
+      <GitRevisionModal
+        request={
+          open && historicalFile?.scope === scrollStorageId
+            ? historicalFile.request
+            : undefined
+        }
+        onClose={() => setHistoricalFile(undefined)}
+        fontSize={effectiveFontSize}
+      />
     </Drawer>
   );
 }

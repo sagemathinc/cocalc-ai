@@ -3484,6 +3484,12 @@ describe("CodexAppServerAgent", () => {
             path: "src/app.ts",
             diff: {
               lines: ["const x = 1;", "const x = 2;"],
+              source: {
+                kind: "unified",
+                text: expect.stringContaining(
+                  "@@ -1 +1 @@\n-const x = 1;\n+const x = 2;",
+                ),
+              },
               types: [-1, 1],
               gutters: ["     1         -", "            1  +"],
               chunkBoundaries: [1],
@@ -3588,6 +3594,12 @@ describe("CodexAppServerAgent", () => {
             path: "primes.py",
             diff: {
               lines: ["def count_primes_up_to(n):", "    return 0"],
+              source: {
+                kind: "add",
+                text: expect.stringContaining(
+                  "def count_primes_up_to(n):\n    return 0",
+                ),
+              },
               types: [1, 1],
               gutters: ["            1  +", "            2  +"],
               chunkBoundaries: [1],
@@ -3679,6 +3691,10 @@ describe("CodexAppServerAgent", () => {
             path: "primes.py",
             diff: {
               lines: ["def count_primes_up_to(n):", "    return 0", ""],
+              source: {
+                kind: "unified",
+                text: expect.stringContaining("@@ -0,0 +1,3 @@"),
+              },
               types: [1, 1, 1],
               gutters: [
                 "            1  +",
