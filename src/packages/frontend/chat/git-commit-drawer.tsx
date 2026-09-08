@@ -844,7 +844,7 @@ export function GitCommitDrawer({
       selectedHistory?.selection ?? {
         worktree: originDiscovery?.repository.locator ?? originCwd,
         ref: "HEAD",
-        firstParent: true,
+        firstParent: false,
       },
     [selectedHistory, originDiscovery, originCwd],
   );
@@ -1124,7 +1124,7 @@ export function GitCommitDrawer({
             {
               skip: history.length,
               count,
-              firstParent: selectedHistory?.selection.firstParent ?? true,
+              firstParent: selectedHistory?.selection.firstParent ?? false,
               showMerges,
             },
           );
