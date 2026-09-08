@@ -60,6 +60,14 @@ Missing live test evidence does not establish that these checks pass.
 
 ### Restored live-session checks
 
+Activity provenance audit found the last terminal/file cwd was applied to every
+row in the log, redirecting earlier relative diff links. Context is now computed
+chronologically: config changes set the agent directory, and terminal/file cwd
+applies only to that event. A rendered activity regression verifies the earlier
+diff link and its open-file action before/after a later terminal event arrives;
+pure tests cover config boundaries, missing context and literal directory names.
+This is component evidence, not yet a live activity-provenance acceptance pass.
+
 September 8 follow-up: history has an immediate, remembered "Show merge commits"
 checkbox, defaulting to hidden. Git filters merges before pagination rather
 than filtering an already limited page. The option is independent of first-parent

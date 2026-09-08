@@ -33,6 +33,7 @@ import { formatCodexErrorForDisplay } from "./codex-error-presentation";
 import { lite } from "@cocalc/frontend/lite";
 import { CodexVmApprovalPrompt } from "./codex-vm-approval";
 import { ActivityDiff } from "./activity-diff";
+import { activityPathContexts } from "./activity-path-context";
 
 const { Text } = Typography;
 type SubagentEvent = Extract<AcpStreamEvent, { type: "subagent" }>;
@@ -244,13 +245,17 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
       }),
     [entries, generating],
   );
-  const resolvedBasePath = useMemo(
-    () => detectBasePath(basePath, entries, chatPath),
+  const entryBasePaths = useMemo(
+    () =>
+      activityPathContexts(
+        entries,
+        basePath ?? (chatPath ? containingPath(chatPath) : undefined),
+      ),
     [basePath, entries, chatPath],
   );
   const editorTheme = useEffectiveEditorThemeForPath(
     projectId,
-    chatPath ?? resolvedBasePath,
+    chatPath ?? basePath,
   );
   const [expanded, setExpanded] = useState<boolean>(() => {
     if (persistKey) {
@@ -486,7 +491,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
             entry={entry}
             fontSize={baseFontSize}
             projectId={projectId}
-            basePath={resolvedBasePath}
+            basePath={entryBasePaths[index]}
             editorTheme={editorTheme}
             inlineCodeLinks={inlineCodeLinks}
           />
@@ -1552,30 +1557,6 @@ function normalizeAbsoluteMaybe(path?: string): string | undefined {
   return isAbsolutePath(normalized)
     ? normalizeAbsolutePath(normalized)
     : undefined;
-}
-
-function detectBasePath(
-  configuredBasePath: string | undefined,
-  entries: ActivityEntry[],
-  chatPath?: string,
-): string | undefined {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    const cwd =
-      entry.kind === "terminal" || entry.kind === "file"
-        ? normalizeAbsoluteMaybe(entry.cwd)
-        : entry.kind === "config"
-          ? normalizeAbsoluteMaybe(entry.workingDirectory)
-          : undefined;
-    if (cwd) return cwd;
-  }
-  const explicit = normalizeAbsoluteMaybe(configuredBasePath);
-  if (explicit) return explicit;
-  const chatDir = chatPath
-    ? normalizeAbsoluteMaybe(containingPath(chatPath))
-    : undefined;
-  if (chatDir) return chatDir;
-  return undefined;
 }
 
 function ConfigRow({
