@@ -67,6 +67,7 @@ import {
   isGitDiffFindTargetRendered,
 } from "./git-commit/diff-find";
 import { ReviewDiffPanel } from "./git-commit/review-diff-panel";
+import { GitDiffFind } from "./git-commit/diff-find-control";
 import { GitHistoryControls } from "./git-commit/history-controls";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
@@ -3384,13 +3385,6 @@ export function GitCommitDrawer({
       onGitLogFetchCountChange={handleGitLogFetchCountChange}
       showOnlyUnreviewedCommits={showOnlyUnreviewedCommits}
       onToggleShowOnlyUnreviewed={handleToggleShowOnlyUnreviewed}
-      diffFindInputRef={diffFindInputRef}
-      diffFindQuery={diffFindQuery}
-      onDiffFindQueryChange={setDiffFindQuery}
-      onNextDiffFindMatch={goToNextDiffFindMatch}
-      onPreviousDiffFindMatch={goToPreviousDiffFindMatch}
-      diffFindMatchesLength={diffFindMatches.length}
-      activeDiffFindMatchIndex={activeDiffFindMatchIndex}
       canGoNewer={canGoNewer}
       canGoOlder={canGoOlder}
       onGoNewer={goNewer}
@@ -3775,6 +3769,17 @@ export function GitCommitDrawer({
                   onSelect={(id) => scrollToDiffFile(Number(id), "auto")}
                 >
                   <ReviewDiffPanel
+                    findControl={
+                      <GitDiffFind
+                        inputRef={diffFindInputRef}
+                        query={diffFindQuery}
+                        onChange={setDiffFindQuery}
+                        onNext={goToNextDiffFindMatch}
+                        onPrevious={goToPreviousDiffFindMatch}
+                        count={diffFindMatches.length}
+                        index={activeDiffFindMatchIndex}
+                      />
+                    }
                     navigationRef={pierreNavigationRef}
                     onClaimScrollRestoration={() => {
                       pendingScrollRestoreRef.current = null;

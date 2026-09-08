@@ -1,10 +1,29 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PierreReviewPanel from "./pierre-review-panel";
 import type { ReviewDiffPanelProps } from "./review-diff-panel";
 import { buildDiffLineMetas, makeCommentAnchor } from "./diff-lines";
 import { copyTextToClipboard } from "@cocalc/frontend/components/copy-button";
 import { writeScrollAnchor } from "@cocalc/frontend/components/diff-viewer/scroll-anchor";
+
+test("find is the last control beside the diff viewing and copy actions", () => {
+  render(
+    <PierreReviewPanel
+      {...props()}
+      findControl={<div role="search" aria-label="Find in diff" />}
+    />,
+  );
+  const toolbar = screen.getByRole("group", { name: "Diff controls" });
+  expect(
+    within(toolbar).getByRole("checkbox", { name: "Side by side" }),
+  ).toBeInTheDocument();
+  expect(
+    within(toolbar).getByRole("button", { name: "Copy loaded patch" }),
+  ).toBeVisible();
+  expect(toolbar.lastElementChild).toBe(
+    within(toolbar).getByRole("search", { name: "Find in diff" }),
+  );
+});
 
 test("historical headers offer working-copy opening only when a worktree is available", async () => {
   const user = userEvent.setup();

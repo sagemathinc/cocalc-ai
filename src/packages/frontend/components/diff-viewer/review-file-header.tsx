@@ -10,10 +10,10 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 
 export function reviewFileHeaderHeight(fontSize: number): number {
-  return Math.ceil(Math.max(13, fontSize) * 1.5) + 44;
+  return Math.max(24, Math.ceil(Math.max(13, fontSize) * 1.5)) + 13;
 }
 
-/** Fixed two-row layout: match Pierre's itemMetrics.diffHeaderHeight exactly. */
+/** Single-row layout: match Pierre's itemMetrics.diffHeaderHeight exactly. */
 export function ReviewFileHeader({
   path,
   oldPath,
@@ -108,18 +108,21 @@ export function ReviewFileHeader({
         color: UI_COLORS.text,
         borderBottom: `1px solid ${UI_COLORS.border}`,
         display: "flex",
-        flexDirection: "column",
-        gap: 4,
+        alignItems: "center",
+        gap: 8,
       }}
     >
       <button
         type="button"
         aria-label={`${copyLabel}: ${path}`}
-        title={
+        title={[
           oldPath && oldPath !== path
             ? `${oldPath} → ${path}\n${copyLabel}`
-            : `${path}\n${copyLabel}`
-        }
+            : `${path}\n${copyLabel}`,
+          description,
+        ]
+          .filter(Boolean)
+          .join("\n")}
         style={{
           fontFamily: "monospace",
           fontSize: Math.max(13, fontSize),
@@ -132,6 +135,7 @@ export function ReviewFileHeader({
           textAlign: "left",
           whiteSpace: "nowrap",
           minWidth: 0,
+          flex: 1,
           overflow: "hidden",
           textOverflow: "ellipsis",
           cursor: "copy",
@@ -158,22 +162,9 @@ export function ReviewFileHeader({
           gap: 6,
           minWidth: 0,
           height: 24,
+          flexShrink: 0,
         }}
       >
-        <span
-          title={description}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            fontSize: 11,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {description ??
-            (oldPath && oldPath !== path ? `Renamed from ${oldPath}` : "")}
-        </span>
         {primary ? (
           <Button size="small" onClick={primary}>
             {workingOnly ? "Open" : "View at this revision"}
