@@ -3305,62 +3305,64 @@ export function GitCommitDrawer({
       data != null &&
       !currentData);
 
+  const navigation = (
+    <GitCommitDrawerTitle
+      nonRepoError={nonRepoError}
+      commit={commit}
+      commitFilter={commitFilter}
+      logOptions={logOptions}
+      onCommitChange={handleCommitChange}
+      onCommitFilterChange={handleCommitFilterChange}
+      filteredCommitCount={filteredRecentCommitCount}
+      recentCommitCount={recentCommitCount}
+      reviewedRecentCommitCount={reviewedRecentCommitCount}
+      recentCutoff={recentCutoff}
+      onRecentCutoffChange={handleRecentCutoffChange}
+      gitLogFetchCount={gitLogFetchCount}
+      onGitLogFetchCountChange={handleGitLogFetchCountChange}
+      showOnlyUnreviewedCommits={showOnlyUnreviewedCommits}
+      onToggleShowOnlyUnreviewed={handleToggleShowOnlyUnreviewed}
+      diffFindInputRef={diffFindInputRef}
+      diffFindQuery={diffFindQuery}
+      onDiffFindQueryChange={setDiffFindQuery}
+      onNextDiffFindMatch={goToNextDiffFindMatch}
+      onPreviousDiffFindMatch={goToPreviousDiffFindMatch}
+      diffFindMatchesLength={diffFindMatches.length}
+      activeDiffFindMatchIndex={activeDiffFindMatchIndex}
+      canGoNewer={canGoNewer}
+      canGoOlder={canGoOlder}
+      onGoNewer={goNewer}
+      onGoOlder={goOlder}
+      canFindInChat={canFindInChat}
+      findInChatEnabled={findInChatEnabled}
+      onFindInChat={
+        !commit || !onFindInChat
+          ? undefined
+          : () => {
+              void onFindInChat(commit);
+            }
+      }
+      contextLines={contextLines}
+      contextOptions={CONTEXT_OPTIONS}
+      onContextChange={(value) => {
+        const node = scrollRef.current;
+        pendingScrollRestoreRef.current = node?.scrollTop ?? null;
+        pendingContextAnchorRef.current = node
+          ? (captureGitDiffScrollAnchor(node) ?? null)
+          : null;
+        setContextLines(value);
+      }}
+      reviewMenuItems={reviewMenuItems}
+      onReviewMenuClick={handleReviewMenuClick}
+      reviewTransferBusy={reviewTransferBusy}
+      shortcutsOpen={shortcutsOpen}
+      onShortcutsOpenChange={setShortcutsOpen}
+    />
+  );
   return (
     <Drawer
-      title={
-        <GitCommitDrawerTitle
-          nonRepoError={nonRepoError}
-          commit={commit}
-          commitFilter={commitFilter}
-          logOptions={logOptions}
-          onCommitChange={handleCommitChange}
-          onCommitFilterChange={handleCommitFilterChange}
-          filteredCommitCount={filteredRecentCommitCount}
-          recentCommitCount={recentCommitCount}
-          reviewedRecentCommitCount={reviewedRecentCommitCount}
-          recentCutoff={recentCutoff}
-          onRecentCutoffChange={handleRecentCutoffChange}
-          gitLogFetchCount={gitLogFetchCount}
-          onGitLogFetchCountChange={handleGitLogFetchCountChange}
-          showOnlyUnreviewedCommits={showOnlyUnreviewedCommits}
-          onToggleShowOnlyUnreviewed={handleToggleShowOnlyUnreviewed}
-          diffFindInputRef={diffFindInputRef}
-          diffFindQuery={diffFindQuery}
-          onDiffFindQueryChange={setDiffFindQuery}
-          onNextDiffFindMatch={goToNextDiffFindMatch}
-          onPreviousDiffFindMatch={goToPreviousDiffFindMatch}
-          diffFindMatchesLength={diffFindMatches.length}
-          activeDiffFindMatchIndex={activeDiffFindMatchIndex}
-          canGoNewer={canGoNewer}
-          canGoOlder={canGoOlder}
-          onGoNewer={goNewer}
-          onGoOlder={goOlder}
-          canFindInChat={canFindInChat}
-          findInChatEnabled={findInChatEnabled}
-          onFindInChat={
-            !commit || !onFindInChat
-              ? undefined
-              : () => {
-                  void onFindInChat(commit);
-                }
-          }
-          contextLines={contextLines}
-          contextOptions={CONTEXT_OPTIONS}
-          onContextChange={(value) => {
-            const node = scrollRef.current;
-            pendingScrollRestoreRef.current = node?.scrollTop ?? null;
-            pendingContextAnchorRef.current = node
-              ? (captureGitDiffScrollAnchor(node) ?? null)
-              : null;
-            setContextLines(value);
-          }}
-          reviewMenuItems={reviewMenuItems}
-          onReviewMenuClick={handleReviewMenuClick}
-          reviewTransferBusy={reviewTransferBusy}
-          shortcutsOpen={shortcutsOpen}
-          onShortcutsOpenChange={setShortcutsOpen}
-        />
-      }
+      className="git-review-drawer"
+      title="Git review"
       placement="right"
       size={drawerSize}
       resizable={{
@@ -3421,6 +3423,7 @@ export function GitCommitDrawer({
       >
         {originDiscovery && accountId && (
           <Button
+            style={{ float: "right", marginBottom: 8, marginLeft: 12 }}
             onClick={() => {
               setComparisonLanding(undefined);
               setComparisonOpen(true);
@@ -3466,6 +3469,7 @@ export function GitCommitDrawer({
             }}
           />
         )}
+        {navigation}
         {canRouteWorktree && (
           <WorktreeAgentConsent
             path={cwd}
@@ -3659,16 +3663,19 @@ export function GitCommitDrawer({
           />
         ) : null}
         {!showCommitLoading && !error && currentData ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {currentData.summaryLines.length ? (
-              <GitCommitDetailsPanel
-                summary={currentData.summary}
-                commit={commit}
-                isHeadSelected={isHeadSelected}
-                fontSize={effectiveFontSize}
-                editorTheme={editorTheme}
-                headRefLabel={HEAD_REF}
-              />
+              <details className="git-review-disclosure">
+                <summary>Commit details</summary>
+                <GitCommitDetailsPanel
+                  summary={currentData.summary}
+                  commit={commit}
+                  isHeadSelected={isHeadSelected}
+                  fontSize={effectiveFontSize}
+                  editorTheme={editorTheme}
+                  headRefLabel={HEAD_REF}
+                />
+              </details>
             ) : null}
             {currentData.files.length === 0 ? (
               <GitEmptyCommitDiff />

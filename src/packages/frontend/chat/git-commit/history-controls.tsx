@@ -57,7 +57,11 @@ export function GitHistoryControls({
     }
   };
   return (
-    <section aria-label="Repository history" style={{ marginBottom: 12 }}>
+    <section
+      className="git-review-context"
+      aria-label="Repository history"
+      style={{ marginBottom: 12 }}
+    >
       <div
         style={{
           display: "flex",
@@ -66,36 +70,13 @@ export function GitHistoryControls({
           gap: 8,
         }}
       >
-        <div>
-          <label htmlFor={`${id}-worktree`}>Working copy</label>{" "}
-          <Select
-            id={`${id}-worktree`}
-            aria-label="Review working copy"
-            showSearch={{ optionFilterProp: "label" }}
-            style={{ width: "min(32rem, 70vw)" }}
-            disabled={disabled || busy}
-            value={draft.worktree}
-            onChange={(worktree) => setDraft({ ...draft, worktree })}
-            options={origin.worktrees.map((tree) => ({
-              value: tree.path,
-              disabled: tree.prunable != null,
-              label: `${tree.path} (${
-                tree.bare
-                  ? "bare"
-                  : tree.detached
-                    ? "detached"
-                    : tree.branch?.replace(/^refs\/heads\//, "") || "unborn"
-              }${tree.locked != null ? "; locked" : ""}${tree.prunable != null ? "; unavailable" : ""})`,
-            }))}
-          />
-        </div>
-        <div>
+        <div className="git-review-context-field">
           <label htmlFor={`${id}-ref`}>Branch / ref</label>{" "}
           <Select
             id={`${id}-ref`}
             aria-label="Branch / ref"
             showSearch={{ optionFilterProp: "label" }}
-            style={{ width: "min(24rem, 70vw)" }}
+            style={{ flex: "1 1 auto", minWidth: 0 }}
             disabled={disabled || busy}
             value={draft.ref}
             onChange={(ref) => {
@@ -129,17 +110,49 @@ export function GitHistoryControls({
             ]}
           />
         </div>
-        <label>
-          <input
-            type="checkbox"
-            checked={draft.firstParent}
+        <div className="git-review-context-field git-review-worktree">
+          <label htmlFor={`${id}-worktree`}>Working copy</label>{" "}
+          <Select
+            id={`${id}-worktree`}
+            aria-label="Review working copy"
+            showSearch={{ optionFilterProp: "label" }}
+            style={{ flex: "1 1 auto", minWidth: 0 }}
+            size="small"
+            variant="borderless"
             disabled={disabled || busy}
-            onChange={(event) =>
-              setDraft({ ...draft, firstParent: event.target.checked })
-            }
-          />{" "}
-          First-parent history
-        </label>
+            value={draft.worktree}
+            onChange={(worktree) => setDraft({ ...draft, worktree })}
+            options={origin.worktrees.map((tree) => ({
+              value: tree.path,
+              disabled: tree.prunable != null,
+              label: `${tree.path} (${
+                tree.bare
+                  ? "bare"
+                  : tree.detached
+                    ? "detached"
+                    : tree.branch?.replace(/^refs\/heads\//, "") || "unborn"
+              }${tree.locked != null ? "; locked" : ""}${tree.prunable != null ? "; unavailable" : ""})`,
+            }))}
+          />
+        </div>
+        <details className="git-review-disclosure">
+          <summary>History options</summary>
+          <label>
+            <input
+              type="checkbox"
+              checked={draft.firstParent}
+              disabled={disabled || busy}
+              onChange={(event) =>
+                setDraft({ ...draft, firstParent: event.target.checked })
+              }
+            />{" "}
+            First-parent history
+          </label>
+          <p>
+            Browsing never checks out a branch. Ref tips stay pinned until you
+            refresh.
+          </p>
+        </details>
         {onShowMergesChange && (
           <label>
             <input
@@ -159,12 +172,11 @@ export function GitHistoryControls({
           Browse / Refresh
         </Button>
       </div>
-      <div style={{ fontSize: 12 }}>
-        Browsing never checks out a branch.{" "}
-        {disabled
-          ? "Save or cancel active edits before changing the review context."
-          : "Ref tips are pinned when you browse; refresh explicitly to load new commits."}
-      </div>
+      {disabled && (
+        <div style={{ fontSize: 12 }}>
+          Save or cancel active edits before changing the review context.
+        </div>
+      )}
       {error && (
         <Alert
           type="error"

@@ -99,6 +99,45 @@ test("keyboard branch selection immediately browses the branch's worktree", asyn
   );
 });
 
+test("history disclosure keeps first-parent controls keyboard operable", async () => {
+  const user = userEvent.setup();
+  const onApply = jest.fn();
+  jest
+    .mocked(resolveHistorySelection)
+    .mockResolvedValue({ discovery: origin, tip: "b".repeat(40) });
+  render(
+    <GitHistoryControls
+      origin={origin}
+      selection={selection}
+      disabled={false}
+      onApply={onApply}
+    />,
+  );
+  expect(
+    screen.getByText("History options").closest("details"),
+  ).not.toHaveAttribute("open");
+  await user.click(screen.getByText("History options"));
+  expect(
+    screen.getByText("History options").closest("details"),
+  ).toHaveAttribute("open");
+  const checkbox = screen.getByRole("checkbox", {
+    name: "First-parent history",
+  });
+  checkbox.focus();
+  await user.keyboard(" ");
+  expect(checkbox).toHaveFocus();
+  expect(checkbox).not.toBeChecked();
+  screen.getByRole("button", { name: "Browse / Refresh" }).focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(onApply).toHaveBeenCalledWith(
+      { ...selection, firstParent: false },
+      origin,
+      "b".repeat(40),
+    ),
+  );
+});
+
 test("late results from an obsolete context do not replace the new review", async () => {
   let finish!: (value: any) => void;
   jest.mocked(resolveHistorySelection).mockImplementation(

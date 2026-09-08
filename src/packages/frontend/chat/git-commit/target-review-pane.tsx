@@ -1,4 +1,4 @@
-import { Alert, Button } from "antd";
+import { Alert, Button, Input } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   GitSource,
@@ -421,9 +421,17 @@ export function TargetReviewPane({
         runGitDrawerScrollCommand(viewport, command);
       }}
     >
-      <p style={{ overflowWrap: "anywhere" }}>
+      <p
+        className="git-review-target-summary"
+        title={
+          target.kind === "comparison"
+            ? `${target.mode}: ${target.base} to ${target.head}`
+            : target.commit
+        }
+        style={{ overflowWrap: "anywhere" }}
+      >
         {target.kind === "comparison"
-          ? `${target.mode}: ${target.base} to ${target.head}`
+          ? `${target.base.slice(0, 10)} → ${target.head.slice(0, 10)} · ${data.files.length} files changed`
           : `${target.commit} versus parent ${target.parentIndex + 1} (${target.parent ?? "empty tree"})`}
       </p>
       {error && (
@@ -492,21 +500,26 @@ export function TargetReviewPane({
           </Button>
         </span>
       ))}
-      <label>
-        Review note{" "}
-        <textarea
-          aria-label="Comparison review note"
-          disabled={!ready || busy}
-          value={draft.body.note}
-          onChange={(event) =>
-            change({
-              ...draft,
-              body: { ...draft.body, note: event.target.value },
-            })
-          }
-          style={{ width: "100%" }}
-        />
-      </label>
+      <details className="git-review-disclosure">
+        <summary>
+          Review note{draft.body.note.trim() ? " (has content)" : ""}
+        </summary>
+        <label>
+          Review note{" "}
+          <Input.TextArea
+            aria-label="Comparison review note"
+            disabled={!ready || busy}
+            value={draft.body.note}
+            onChange={(event) =>
+              change({
+                ...draft,
+                body: { ...draft.body, note: event.target.value },
+              })
+            }
+            style={{ width: "100%" }}
+          />
+        </label>
+      </details>
       <label>
         <input
           type="checkbox"
@@ -557,18 +570,21 @@ export function TargetReviewPane({
           </div>
         </>
       )}
-      <Button
-        disabled={!ready || busy || Boolean(editor)}
-        onClick={() => void transfer()}
-      >
-        Export saved versions
-      </Button>{" "}
-      <Button
-        disabled={!ready || busy || dirty || Boolean(editor)}
-        onClick={() => importInput.current?.click()}
-      >
-        Import review archive
-      </Button>
+      <details className="git-review-disclosure">
+        <summary>Import / export review</summary>
+        <Button
+          disabled={!ready || busy || Boolean(editor)}
+          onClick={() => void transfer()}
+        >
+          Export saved versions
+        </Button>{" "}
+        <Button
+          disabled={!ready || busy || dirty || Boolean(editor)}
+          onClick={() => importInput.current?.click()}
+        >
+          Import review archive
+        </Button>
+      </details>
       <input
         ref={importInput}
         type="file"

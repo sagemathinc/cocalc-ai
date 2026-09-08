@@ -73,7 +73,8 @@ export function ComparisonModal({
   return (
     <Modal
       open
-      title="Compare and review revisions"
+      title="Compare revisions"
+      className="git-review-comparison-modal"
       footer={null}
       width="95vw"
       afterOpenChange={setLayoutReady}

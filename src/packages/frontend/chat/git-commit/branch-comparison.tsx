@@ -1,5 +1,5 @@
 import { Alert, Button, Select } from "antd";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type {
   RepositoryContext,
   ImmutableReviewTarget,
@@ -18,6 +18,7 @@ export function BranchComparison({
   onApply: (target: ImmutableReviewTarget) => void;
 }) {
   const [origin, setOrigin] = useState<RepositoryDiscovery>();
+  const id = useId();
   const [branch, setBranch] = useState("HEAD");
   const [entries, setEntries] = useState<GitHistoryEntry[]>([]);
   const [tip, setTip] = useState("");
@@ -111,51 +112,60 @@ export function BranchComparison({
     search: `${entry.commit} ${entry.subject}`,
   }));
   return (
-    <section aria-label="Compare branch commits">
-      <p>
-        Choose a branch, then the before and after commits. This compares their
-        exact contents without checking out a branch.
-      </p>
-      <Select
-        aria-label="Comparison branch"
-        showSearch={{ optionFilterProp: "label" }}
-        style={{ width: "100%", marginBottom: 8 }}
-        value={branch}
-        disabled={disabled || busy}
-        onChange={setBranch}
-        options={[
-          { value: "HEAD", label: "Current worktree branch (HEAD)" },
-          ...(origin?.refs ?? [])
-            .filter((ref) => /^refs\/(heads|remotes)\//.test(ref.name))
-            .map((ref) => ({
-              value: ref.name,
-              label: `${ref.name.replace(/^refs\/(heads|remotes)\//, "")}${origin?.worktrees.some((tree) => tree.branch === ref.name) ? " (checked out)" : ""}`,
-            })),
-        ]}
-      />
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+    <section
+      className="git-review-comparison"
+      aria-label="Compare branch commits"
+    >
+      <div className="git-review-compare-field git-review-compare-branch">
+        <label htmlFor={`${id}-branch`}>Branch</label>
         <Select
+          id={`${id}-branch`}
+          aria-label="Comparison branch"
+          showSearch={{ optionFilterProp: "label" }}
+          style={{ width: "100%", minWidth: 0 }}
+          value={branch}
+          disabled={disabled || busy}
+          onChange={setBranch}
+          options={[
+            { value: "HEAD", label: "Current worktree branch (HEAD)" },
+            ...(origin?.refs ?? [])
+              .filter((ref) => /^refs\/(heads|remotes)\//.test(ref.name))
+              .map((ref) => ({
+                value: ref.name,
+                label: `${ref.name.replace(/^refs\/(heads|remotes)\//, "")}${origin?.worktrees.some((tree) => tree.branch === ref.name) ? " (checked out)" : ""}`,
+              })),
+          ]}
+        />
+      </div>
+      <div className="git-review-compare-field">
+        <label htmlFor={`${id}-before`}>Before</label>
+        <Select
+          id={`${id}-before`}
           aria-label="Before commit"
           placeholder="Before commit"
           showSearch={{ optionFilterProp: "search" }}
-          style={{ flex: "1 1 280px", minWidth: 0 }}
+          style={{ width: "100%", minWidth: 0 }}
           options={options}
           value={base}
           onChange={setBase}
           disabled={disabled || busy}
         />
+      </div>
+      <div className="git-review-compare-field">
+        <label htmlFor={`${id}-after`}>After</label>
         <Select
+          id={`${id}-after`}
           aria-label="After commit"
           placeholder="After commit"
           showSearch={{ optionFilterProp: "search" }}
-          style={{ flex: "1 1 280px", minWidth: 0 }}
+          style={{ width: "100%", minWidth: 0 }}
           options={options}
           value={head}
           onChange={setHead}
           disabled={disabled || busy}
         />
       </div>
-      <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+      <div className="git-review-comparison-actions">
         <Button
           type="primary"
           disabled={disabled || busy || !base || !head}
@@ -164,7 +174,11 @@ export function BranchComparison({
           Compare commits
         </Button>
         {more && (
-          <Button disabled={disabled || busy} onClick={() => void loadMore()}>
+          <Button
+            type="link"
+            disabled={disabled || busy}
+            onClick={() => void loadMore()}
+          >
             Load older commits
           </Button>
         )}

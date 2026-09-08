@@ -77,7 +77,10 @@ export function ComparisonControls({
         disabled={disabled}
         onApply={onApply}
       />
-      <details open={initialComparison != null}>
+      <details
+        className="git-review-disclosure"
+        open={initialComparison != null}
+      >
         <summary>Advanced: refs, merge base, or merge parent</summary>
         <fieldset
           disabled={disabled || busy}
