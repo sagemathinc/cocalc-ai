@@ -224,6 +224,41 @@ project codex execution run in the same project-host containerized path as the U
 emits raw ACP stream messages as JSONL on stdout.
 `--verbose` also enables codex progress streaming automatically.
 
+## Run And Continue Codex From The CLI
+
+Use the project Codex command for a turn against a project-hosted runtime. Start
+with the matching authenticated CLI profile and check the effective authentication/payment source:
+
+```bash
+cocalc project codex auth status --project "$COCALC_PROJECT_ID"
+cocalc --json project codex exec --project "$COCALC_PROJECT_ID" \
+  --session-mode read-only --stdin <<'PROMPT'
+Inspect README.md and summarize the project. Do not change files.
+PROMPT
+```
+
+JSON output wraps the command result under `data`: read `data.final_response`,
+`data.usage`, and `data.thread_id`. For a new turn, `data.session_id` echoes the
+optional input and can be null; keep `data.thread_id` as the Codex session
+identifier. After that turn finishes, pass it
+explicitly when continuing:
+
+```bash
+cocalc project codex exec --project "$COCALC_PROJECT_ID" \
+  --session-id "$codex_thread_id" --session-mode read-only \
+  "Explain the main entry points in that same project."
+```
+
+Set `codex_thread_id` to the previous result's `data.thread_id`. There is no implicit
+resume-last command. This RPC command does not create a `.chat` transcript.
+
+Human mode prints the final response; `--stream` adds progress on stderr.
+`--jsonl` emits raw stream messages on stdout. Combining `--json` with `--stream`
+also streams JSONL, so omit `--stream` when saving one final JSON result.
+An incomplete stream reports an error; inspect session state before retrying
+work that may already have changed files. See `project codex exec --help` for
+model, reasoning, working-directory and session-mode options.
+
 ## Codex Runtime Environment (Agent Integration)
 
 When CoCalc runs Codex turns with CLI/browser integration enabled, turns may
@@ -272,6 +307,40 @@ cocalc browser session destroy <spawn_id_or_browser_id>
 For scoped/agent tokens, prefer `--project-id` + `--browser` (or the matching
 env vars) to avoid discovery calls that may require broader hub permissions.
 
+## Create A Daily Chat Automation
+
+The `project chat` commands operate on a project `.chat` document. Create the
+thread first; creation alone does not run its agent:
+
+```bash
+cocalc --json project chat thread create --project "$COCALC_PROJECT_ID" \
+  --path checks.chat --name "Daily check" --session-mode read-only
+```
+
+Copy `data.thread.thread_id` from that JSON result into `check_thread_id`. Configure the automation in
+a paused state so its prompt, local time and IANA time zone can be reviewed:
+
+```bash
+cocalc project chat automation upsert --project "$COCALC_PROJECT_ID" \
+  --path checks.chat --thread-id "$check_thread_id" \
+  --prompt "Read run.log and summarize new failures without editing files." \
+  --local-time 09:00 --timezone Europe/Madrid --disabled
+cocalc project chat automation status --project "$COCALC_PROJECT_ID" \
+  --path checks.chat --thread-id "$check_thread_id"
+```
+
+This CLI form configures a daily local-time schedule. It does not expose every
+schedule or Bash option available elsewhere in the product. Use
+`project chat automation --help` for the installed command surface.
+
+After review, use `resume` with the same project/path/thread flags to enable
+scheduled runs. `pause` disables scheduling; `run-now` requests an immediate run.
+`acknowledge` clears the unacknowledged-run count. The optional
+`--pause-after-unacknowledged-runs` on `upsert` limits unattended repetition.
+Use `thread status` to inspect thread configuration, and `chat activity` with
+the path and thread ID to read the latest persisted Codex activity log once a
+turn has produced one.
+
 ## Auth Commands
 
 - `auth status [--check]`
@@ -288,6 +357,40 @@ Example:
 ```bash
 cocalc --profile alice --api https://lite4b.cocalc.ai auth login --email alice@example.com
 ```
+
+## Leave Workspace Messages And Notices
+
+Use `workspaces list --project "$COCALC_PROJECT_ID"` to find the saved workspace
+ID. Set `workspace_id` to that result before writing a handoff:
+
+```bash
+cocalc workspaces message "$workspace_id" \
+  --project "$COCALC_PROJECT_ID" --stdin <<'MESSAGE'
+The run finished. Results are in results/summary.csv; the failed inputs are
+listed in runs/failures.txt.
+MESSAGE
+```
+
+`message` appends to the workspace's canonical chat in its **Workspace notices**
+thread, creating the chat/thread assignment if needed. It persists without an
+open browser. It records a message; it does not submit a new Codex turn.
+
+Add `--open --browser "$COCALC_BROWSER_ID"` when the written chat should also
+open in a selected browser session. The message is saved before the optional
+browser action, so inspect the chat before retrying if opening fails.
+
+For a short status on the workspace card, use a notice instead:
+
+```bash
+cocalc workspaces notify "$workspace_id" --project "$COCALC_PROJECT_ID" \
+  --level success --title "Run complete" "See results/summary.csv"
+cocalc workspaces clear-notice "$workspace_id" \
+  --project "$COCALC_PROJECT_ID"
+```
+
+`notify` replaces the card notice; `clear-notice` clears it. These operate on
+the saved workspace record and do not create chat messages. Use durable chat
+messages for the record of what happened and the card notice for current status.
 
 ## Phase 0 Commands
 
