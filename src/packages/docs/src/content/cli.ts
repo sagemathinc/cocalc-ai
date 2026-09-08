@@ -14,7 +14,7 @@ Inside a CoCalc project or an agent session started by CoCalc, first try
 agent authentication. Do not save a personal account login in a shared project.
 See [authentication and targeting](/docs/cli/authentication-and-targets).
 
-## 1. Install on your own computer
+## Step 1: Install on your own computer
 
 For Linux (x64 or ARM64) or Apple Silicon macOS, open Terminal and run:
 
@@ -44,7 +44,7 @@ repository. The Unix installer defaults to the \`latest\` channel and Windows to
 \`stable\`. Available commands can therefore differ between installed releases.
 Use your installed command's help to check an option before relying on it.
 
-## 2. Read a page before signing in
+## Step 2: Read a page before signing in
 
 These commands read documentation bundled with the CLI and need no login:
 
@@ -57,7 +57,7 @@ cocalc docs search "project secrets"
 Bundled documentation describes that CLI build. Updating the website does not
 update an already installed CLI.
 
-## 3. Sign in on your own computer
+## Step 3: Sign in on your own computer
 
 Create a named profile for this site:
 
@@ -83,7 +83,7 @@ without testing the connection.
 Login may save your account's routed site address. Continue using the profile
 without repeating \`--api\` on every command.
 
-## 4. Find and inspect a project
+## Step 4: Find and inspect a project
 
 ~~~sh
 cocalc --profile cocalc-ai project list
@@ -325,9 +325,11 @@ cocalc browser exec-api --help
 ~~~
 
 Follow that command's target options to retrieve the declaration for your
-session. Browser exec is not an unrestricted page JavaScript console:
-do not assume \`window\`, \`document\`, or top-level \`await\` are available.
-Use the exposed API and command examples.
+session. The constrained QuickJS mode is not an unrestricted page JavaScript
+console: \`window\`, \`document\`, and top-level \`await\` are unavailable.
+Trusted development sessions may expose a richer runtime when site policy
+permits it. Inspect the actual declaration; use the exposed API and command
+examples rather than assuming either runtime.
 
 ## Find documentation and stable UI actions
 

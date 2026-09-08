@@ -14,7 +14,7 @@ Complete the [quickstart](/docs/cli/getting-started) first. This Bash recipe edi
 an existing text file, replacing exactly one occurrence of \`Status: draft\` with
 \`Status: reviewed\`. Use a scratch copy to learn the workflow.
 
-## 1. Select the project and inspect the API
+## Step 1: Select the project and inspect the API
 
 Replace the project placeholder with the full ID from \`project list\`, and set
 \`TEXT_PATH\` to the existing file's path inside that project:
@@ -22,17 +22,21 @@ Replace the project placeholder with the full ID from \`project list\`, and set
 ~~~bash
 export CLI_PROFILE=cocalc-ai
 export PROJECT_ID='REPLACE_WITH_FULL_PROJECT_ID'
-export TEXT_PATH='notes.md'
+export TEXT_PATH='/home/user/notes.md'
 
 cocalc --profile "$CLI_PROFILE" project get --project "$PROJECT_ID"
 cocalc exec-api
 ~~~
 
+Use the absolute path inside the remote project, adjusting \`/home/user\` if
+needed. Relative text paths resolve against the CLI computer's home directory,
+not the remote project's home.
+
 Confirm the project before editing. \`exec-api\` describes the API bundled with
 your installed CLI. JavaScript passed to \`cocalc exec\` runs in the CLI process;
 its \`api.text\` methods access the selected project's collaborative state.
 
-## 2. Read, check, and replace one passage
+## Step 2: Read, check, and replace one passage
 
 The quoted heredoc keeps your shell from interpreting the JavaScript. The
 script reads its selection from the exported variables:
@@ -77,7 +81,7 @@ Require successful command completion and \`ok:true\`. Inspect \`data.result\` f
 the intended project/path and \`replaceCount:1\`. Script return values from
 \`cocalc exec\` are nested under \`data.result\`, not directly under \`data\`.
 
-## 3. Read back and review
+## Step 3: Read back and review
 
 ~~~bash
 cocalc --profile "$CLI_PROFILE" --json exec --stdin <<'JS'
@@ -123,7 +127,7 @@ an open browser tab. Use them instead of rewriting \`.ipynb\` JSON while CoCalc
 is editing the document. This recipe inserts one cell in an existing scratch
 notebook, runs it, inspects its output, and saves it.
 
-## 1. Select the notebook and confirm its kernel
+## Step 1: Select the notebook and confirm its kernel
 
 In Bash, use the profile from the [quickstart](/docs/cli/getting-started), the
 full project ID, and an existing scratch notebook with a Python kernel:
@@ -131,7 +135,7 @@ full project ID, and an existing scratch notebook with a Python kernel:
 ~~~bash
 export CLI_PROFILE=cocalc-ai
 export PROJECT_ID='REPLACE_WITH_FULL_PROJECT_ID'
-export NOTEBOOK_PATH='scratch/cli-demo.ipynb'
+export NOTEBOOK_PATH='/home/user/scratch/cli-demo.ipynb'
 
 cocalc --profile "$CLI_PROFILE" project get --project "$PROJECT_ID"
 cocalc --profile "$CLI_PROFILE" --json project jupyter kernel \\
@@ -140,10 +144,12 @@ cocalc --profile "$CLI_PROFILE" --json project jupyter cells \\
   --project "$PROJECT_ID" --path "$NOTEBOOK_PATH"
 ~~~
 
+Use the absolute remote notebook path, adjusting \`/home/user\` if needed;
+relative notebook paths resolve against the CLI computer's home directory.
 Confirm the project, path, kernel, and existing cells. \`cells\` includes each
 cell's full input. Use \`project jupyter --help\` to inspect your version's commands.
 
-## 2. Insert and run one cell
+## Step 2: Insert and run one cell
 
 Run this insertion once:
 
@@ -167,7 +173,7 @@ Require successful command completion, \`ok:true\`, and \`data.error_count:0\`.
 This command follows execution by default. \`--jsonl\` is a different, streaming
 output format; do not parse it as one JSON result.
 
-## 3. Inspect output and save
+## Step 3: Inspect output and save
 
 ~~~bash
 cocalc --profile "$CLI_PROFILE" --json project jupyter outputs \\
@@ -237,7 +243,7 @@ and document APIs for work that should continue independently of a browser tab.
 A valid account login does not by itself select the right browser or authorize
 every browser action.
 
-## 1. Discover and verify an existing session
+## Step 1: Discover and verify an existing session
 
 Sign in using the [quickstart](/docs/cli/getting-started), open the intended
 project in CoCalc, and list browser sessions:
@@ -269,7 +275,7 @@ For a local source-development server, reload its matching \`dev:hub:env\` or
 \`dev:lite:env\` in the current shell before discovery. See
 [authentication and targets](/docs/cli/authentication-and-targets).
 
-## 2. Read the session's API and inspect the page
+## Step 2: Read the session's API and inspect the page
 
 ~~~bash
 cocalc --profile "$CLI_PROFILE" browser exec-api \\
@@ -298,7 +304,7 @@ cocalc --profile "$CLI_PROFILE" --json browser exec \\
 Require \`data.result.ok:true\` for this assertion. A successful exec envelope can
 contain an unsuccessful assertion result.
 
-## 3. Use a stable action and verify its result
+## Step 3: Use a stable action and verify its result
 
 Discover documented UI destinations before inventing selectors:
 
@@ -364,7 +370,7 @@ does not roll back earlier ones.
 ~~~bash
 cocalc --profile "$CLI_PROFILE" --json browser logs tail \\
   --browser "$BROWSER_ID" --lines 50
-cocalc --profile "$CLI_PROFILE" --json browser uncaught \\
+cocalc --profile "$CLI_PROFILE" --json browser logs uncaught \\
   --browser "$BROWSER_ID" --no-follow --lines 50
 cocalc browser network summary --help
 cocalc browser network trace --help
@@ -389,14 +395,14 @@ existing working directory inside the project:
 ~~~bash
 export CLI_PROFILE=cocalc-ai
 export PROJECT_ID='REPLACE_WITH_FULL_PROJECT_ID'
-export CHAT_PATH='daily-check.chat'
+export CHAT_PATH='/home/user/daily-check.chat'
 export AGENT_MODEL='REPLACE_WITH_SUPPORTED_MODEL'
 export PROJECT_WORKDIR='/home/user'
 
 cocalc --profile "$CLI_PROFILE" project get --project "$PROJECT_ID"
 ~~~
 
-## 1. Create a dedicated thread
+## Step 1: Create a dedicated thread
 
 ~~~bash
 cocalc --profile "$CLI_PROFILE" --json project chat thread create \\
@@ -411,7 +417,7 @@ inspect \`data.thread.acp_config\`. Scheduled runs use the thread's model,
 reasoning, working directory, and access mode, but get their own Codex session
 instead of resuming its interactive session. Write a self-contained task prompt.
 
-## 2. Save and inspect a disabled draft
+## Step 2: Save and inspect a disabled draft
 
 ~~~bash
 export THREAD_ID='REPLACE_WITH_RETURNED_THREAD_ID'
@@ -436,7 +442,7 @@ Check both outer \`ok:true\` and \`data.ok:true\`, then confirm
 \`data.state.status:"paused"\`. A successful status request with \`data.config:null\`
 means the thread has no saved automation.
 
-## 3. Activate when ready
+## Step 3: Activate when ready
 
 To enable the reviewed daily task:
 
@@ -522,7 +528,7 @@ cocalc --profile "$CLI_PROFILE" --json workspaces list \\
   --project "$PROJECT_ID"
 ~~~
 
-## 1. Create only when the root has no workspace
+## Step 1: Create only when the root has no workspace
 
 If the list already contains that root, retain its workspace ID and update the
 existing record. Repeating \`create\` for the same root replaces its saved metadata.
@@ -538,7 +544,7 @@ Retain \`data.workspace_id\` as \`WORKSPACE_ID\`. Confirm \`project_id\`, \`root
 title, and pinned state. Creating this record does not create or verify the
 underlying directory.
 
-## 2. Update and resolve
+## Step 2: Update and resolve
 
 ~~~bash
 export WORKSPACE_ID='REPLACE_WITH_RETURNED_WORKSPACE_ID'
@@ -554,7 +560,7 @@ workspace matching the path, or \`data:null\`. It does not check whether the
 path exists. Selecting a workspace in a browser is separate from editing this
 persistent record.
 
-## 3. Leave a durable message
+## Step 3: Leave a durable message
 
 ~~~bash
 cocalc --profile "$CLI_PROFILE" --json workspaces message "$WORKSPACE_ID" \\
@@ -619,7 +625,7 @@ path inside the project:
 ~~~bash
 export CLI_PROFILE=cocalc-ai
 export PROJECT_ID='REPLACE_WITH_FULL_PROJECT_ID'
-export DOCUMENT_PATH='paper.tex'
+export DOCUMENT_PATH='/home/user/paper.tex'
 
 cocalc project build --help
 cocalc --profile "$CLI_PROFILE" --json --timeout 20m \\
