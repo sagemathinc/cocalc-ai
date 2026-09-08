@@ -19,6 +19,28 @@ const page = await browser.contexts()[0].newPage();
 const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
 try {
+  await page.addInitScript(() => {
+    window.__reviewNavigation = [];
+    const record = (kind) => {
+      window.__reviewNavigation.push({
+        kind,
+        href: location.href,
+        at: performance.now(),
+      });
+      if (window.__reviewNavigation.length > 50)
+        window.__reviewNavigation.shift();
+    };
+    for (const name of ["pushState", "replaceState"]) {
+      const original = history[name].bind(history);
+      history[name] = (...args) => {
+        const result = original(...args);
+        record(name);
+        return result;
+      };
+    }
+    for (const name of ["popstate", "cocalc:app-navigation"])
+      window.addEventListener(name, () => record(name));
+  });
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto(chat, { waitUntil: "domcontentloaded" });
   const link = page.locator(`a[href="cocalc-commit://${commit}"]`).first();
@@ -37,12 +59,20 @@ try {
   await expect(
     page.getByRole("region", { name: "Git diff", exact: true }),
   ).toBeVisible({ timeout: 60000 });
-  expect(new URL(page.url()).searchParams.get("git-hash")).toBe(commit);
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("git-hash"), {
+      timeout: 10000,
+    })
+    .toBe(commit);
   expect(errors).toEqual([]);
   console.log(
     "Passed: native keyboard commit link opens the archived turn directory rather than current thread settings, with Pierre and no page errors.",
   );
 } catch (error) {
+  console.error(
+    "Navigation",
+    await page.evaluate(() => window.__reviewNavigation),
+  );
   console.error("Final URL", page.url());
   console.error((await page.locator("body").innerText()).slice(-4000));
   throw error;

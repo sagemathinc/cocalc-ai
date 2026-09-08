@@ -60,6 +60,21 @@ Missing live test evidence does not establish that these checks pass.
 
 ### Restored live-session checks
 
+September 8 follow-up: history has an immediate, remembered "Show merge commits"
+checkbox, defaulting to hidden. Git filters merges before pagination rather
+than filtering an already limited page. The option is independent of first-parent
+traversal and does not replace the selected revision; direct merge links remain
+valid. Focused tests cover keyboard toggling, preference storage failure, both
+ancestry modes and real-Git filtered pages.
+
+Cold originating-link probes now retain a bounded navigation trace on failure.
+A correctly uploaded new scratch fixture passed. Another rendered the expected
+worktree and diff but failed an immediate URL assertion; subsequent fresh-tab
+runs passed. The assertion now waits for asynchronous URL synchronization, but
+this is not evidence that the earlier disappearing drawer is fixed. No
+production navigation change was made from this inconclusive observation.
+The temporary archived-context worktree was removed after these checks.
+
 Combined frontend Git/review/diff/TimeTravel regression run passed 259 tests
 in 44 suites after the Pierre-only cleanup. Originating-context browser
 acceptance uses an explicitly synthetic scratch chat, whose current thread cwd
