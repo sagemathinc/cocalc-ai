@@ -44,7 +44,15 @@ project), and 17.0 KiB (full project). The reduced-project route crosses its
 budget by 3.2 KiB only in the current build. The checker itself is unchanged
 from origin/main. This establishes substantial preexisting overages but does
 not attribute every delta to Git review or justify increasing any budget.
-Investigate the reduced-route increment before closing this check.
+Module-set comparison of that route found only two newly included modules:
+`frontend/git/review-route.ts` and `frontend/chat/git-commit/commit-selection.ts`.
+They support synchronous application history/deep-link handling, not diff
+rendering. The named load and app chunks increase by 4,402 and 1,688 gzip bytes
+respectively; the total route increase is approximately 5.6 KiB, so the rest
+of the route has a small net decrease. No eager Pierre/Trees leak was found.
+The absolute budget check remains failed; the plan's measured-delta and
+lazy-loading checks pass. Do not silently raise thresholds or describe the
+absolute startup budget as passing.
 
 - Current-head hosted CI run `34189093152` is in progress. Do not substitute the
   preceding head's successful frontend/build lanes for current-head completion.
