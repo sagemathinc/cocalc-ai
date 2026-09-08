@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { CODEX_CREDENTIALS_LABELS } from "./codex-labels";
 import {
   Alert,
   Button,
@@ -215,12 +216,6 @@ function formatCodexUsageReason(reason?: string): string | undefined {
   }
   return formatCodexErrorForDisplay(reason, lite);
 }
-
-export const CODEX_CREDENTIALS_LABELS = {
-  title: "OpenAI Credentials & Codex Payment Source",
-  chatgpt: "Connect Codex with ChatGPT",
-  apiKeys: "OpenAI API Keys",
-} as const;
 
 export function CodexCredentialsPanel(props: CodexCredentialsPanelProps = {}) {
   return <CodexCredentialsPanelBody {...props} />;

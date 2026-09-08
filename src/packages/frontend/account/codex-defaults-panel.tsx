@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { CODEX_DEFAULTS_LABELS } from "./codex-labels";
 import { Button, Select, Space, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -31,13 +32,6 @@ const { Paragraph, Text, Title } = Typography;
 interface Props {
   other_settings: AccountState["other_settings"];
 }
-
-export const CODEX_DEFAULTS_LABELS = {
-  title: "New Codex chat defaults",
-  model: "Model",
-  reasoning: "Reasoning",
-  execution: "Execution mode",
-} as const;
 
 export function CodexDefaultsPanel({ other_settings }: Readonly<Props>) {
   const storedDefaults = useMemo(

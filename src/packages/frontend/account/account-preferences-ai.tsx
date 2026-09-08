@@ -11,18 +11,14 @@ import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { labels } from "@cocalc/frontend/i18n";
 import { lite } from "@cocalc/frontend/lite";
 import { OtherSettings } from "./other-settings";
+import { CodexCredentialsPanel } from "./codex-credentials-panel";
+import { CodexDefaultsPanel } from "./codex-defaults-panel";
 import {
-  CodexCredentialsPanel,
   CODEX_CREDENTIALS_LABELS,
-} from "./codex-credentials-panel";
-import {
-  CodexDefaultsPanel,
   CODEX_DEFAULTS_LABELS,
-} from "./codex-defaults-panel";
-import {
-  CodexSubagentConcurrencyField,
   CODEX_SUBAGENTS_LABEL,
-} from "./codex-subagent-concurrency";
+} from "./codex-labels";
+import { CodexSubagentConcurrencyField } from "./codex-subagent-concurrency";
 import CodexSessionsPanel from "./codex-sessions-panel";
 import LiteAISettings from "./lite-ai-settings";
 import { AIUsageStatus } from "@cocalc/frontend/misc/ai-usage-status";

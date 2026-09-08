@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { CODEX_SUBAGENTS_LABEL } from "./codex-labels";
 import { Button, Popover, Select, Typography } from "antd";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -46,8 +47,6 @@ export function saveCodexMaxConcurrentSubagents(
     );
   return normalized;
 }
-
-export const CODEX_SUBAGENTS_LABEL = "Maximum concurrent subagents";
 
 export function CodexSubagentConcurrencyField({
   compact = false,
