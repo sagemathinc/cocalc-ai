@@ -71,6 +71,14 @@ cache savings from retry avoidance and run-to-run variance. Combining it with
 the earlier build would imply roughly 7m08s, but that is **not** a measured
 second end-to-end clean build.
 
+Increasing server workers from six to eight in the next warm-cache repeat
+(05:48:21-05:53:30 UTC) made all checks/tests **5m09s**, worse overall than
+six workers. Server improved from 266s to 231s, but frontend increased from 155s
+to 213s and rest from 265s to 281s. All passed first try. This is evidence
+against raising worker counts blindly, not a statistically conclusive optimum.
+Some rest packages start many workers of their own; others have intervals with
+little CPU use. Budgeting lanes together and profiling waits remain worthwhile.
+
 Hosted references, with setup included in job durations:
 
 - [GitHub run](https://github.com/sagemathinc/cocalc-ai/actions/runs/34185868762):
