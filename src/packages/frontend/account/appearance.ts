@@ -10,6 +10,8 @@ import type { AppearanceStore } from "@cocalc/util/appearance-store";
 import type { AccountActions } from "./actions";
 import type { AccountStore } from "./store";
 
+export const ACCOUNT_APPEARANCE_SNAPSHOT = "appearance-snapshot";
+
 export function initAccountAppearance(
   account: Pick<AccountStore, "get" | "on" | "removeListener">,
   actions: Pick<AccountActions, "set_other_settings_and_wait">,
@@ -17,7 +19,7 @@ export function initAccountAppearance(
 ): () => void {
   let lastAccountId: string | undefined;
   let lastPreference: AppearancePreference | undefined;
-  const update = () => {
+  const update = (authoritative = false) => {
     const userType = account.get("user_type");
     if (userType === "public") {
       lastAccountId = undefined;
@@ -36,6 +38,7 @@ export function initAccountAppearance(
     // can undo a newer choice received from another tab through local storage.
     // Pending saves still need even same-value observations for acknowledgment.
     if (
+      !authoritative &&
       accountId === lastAccountId &&
       preference === lastPreference &&
       !appearance.getSnapshot().saving
@@ -54,7 +57,17 @@ export function initAccountAppearance(
       await actions.set_other_settings_and_wait("appearance_theme", preference);
     });
   };
-  account.on("change", update);
+  const onChange = () => update();
+  const onSnapshot = (accountId: string) => {
+    if (accountId === account.get("account_id")) update(true);
+  };
+  account.on("change", onChange);
+  // Even an equal-valued server observation is authoritative. It must not be
+  // confused with an unrelated local change replaying that same stored value.
+  account.on(ACCOUNT_APPEARANCE_SNAPSHOT, onSnapshot);
   update();
-  return () => account.removeListener("change", update);
+  return () => {
+    account.removeListener("change", onChange);
+    account.removeListener(ACCOUNT_APPEARANCE_SNAPSHOT, onSnapshot);
+  };
 }

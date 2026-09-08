@@ -10,7 +10,11 @@ import {
   serializeAppearance,
 } from "@cocalc/util/appearance";
 import { createAppearanceStore } from "@cocalc/util/appearance-store";
-import { initAccountAppearance } from "./appearance";
+import {
+  ACCOUNT_APPEARANCE_SNAPSHOT,
+  initAccountAppearance,
+} from "./appearance";
+import { applyAccountPatch } from "./table";
 
 test("ignores pre-auth defaults, handles Immutable settings, and uses acknowledged account saves", async () => {
   const state = {
@@ -144,6 +148,7 @@ test("unchanged pending acknowledgments still reconcile a later remote choice", 
   const save = appearance.choose("light");
   await Promise.resolve();
   account.emit("change");
+  account.emit(ACCOUNT_APPEARANCE_SNAPSHOT, "alice");
   state.other_settings = { appearance_theme: "dark" };
   account.emit("change");
   expect(appearance.getSnapshot()).toMatchObject({
@@ -178,6 +183,7 @@ test("failed saves retain the explicit choice despite account and OS events", as
   const dispose = initAccountAppearance(account as any, actions, appearance);
   await appearance.choose("dark");
   account.emit("change");
+  account.emit(ACCOUNT_APPEARANCE_SNAPSHOT, "alice");
   appearance.setSystemDark(false);
   expect(appearance.getSnapshot()).toMatchObject({
     preference: "dark",
@@ -187,3 +193,99 @@ test("failed saves retain the explicit choice despite account and OS events", as
   });
   dispose();
 });
+
+test.each([
+  ["light", "dark", false],
+  ["dark", "light", false],
+  ["light", "dark", true],
+  ["dark", "light", true],
+] as const)(
+  "accepts an authoritative %s snapshot after cached %s, including replacement=%s",
+  (serverPreference, cachedPreference, first_set) => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    };
+    const state = {
+      account_id: "alice",
+      user_type: "signed_in",
+      is_ready: true,
+      other_settings: fromJS({ appearance_theme: serverPreference }),
+    };
+    const account = Object.assign(new EventEmitter(), {
+      get: (key: string) => state[key],
+    });
+    const redux = {
+      getStore: () => account,
+      getActions: () => ({
+        setState: (patch) => {
+          const before = fromJS(state);
+          Object.assign(state, patch);
+          if (patch.other_settings != null) {
+            state.other_settings = fromJS(patch.other_settings);
+          }
+          if (!before.equals(fromJS(state)))
+            account.emit("change", fromJS(state));
+        },
+      }),
+    };
+    const actions = { set_other_settings_and_wait: jest.fn(async () => {}) };
+    const appearance = createAppearanceStore({ storage });
+    const dispose = initAccountAppearance(account as any, actions, appearance);
+    storage.setItem(
+      APPEARANCE_ACCOUNT_STORAGE_KEY,
+      serializeAppearance(cachedPreference, "alice"),
+    );
+    appearance.receiveStorageChange(APPEARANCE_ACCOUNT_STORAGE_KEY);
+    account.emit(ACCOUNT_APPEARANCE_SNAPSHOT, "bob");
+    expect(appearance.getSnapshot().preference).toBe(cachedPreference);
+    // A newer account event alone is not an appearance observation.
+    applyAccountPatch({
+      redux,
+      patch: { font_size: 16 },
+      appearance_snapshot: true,
+    });
+    expect(appearance.getSnapshot().preference).toBe(cachedPreference);
+    applyAccountPatch({
+      redux,
+      patch: { other_settings: { locale: "fr" } },
+      appearance_snapshot: true,
+    });
+    expect(appearance.getSnapshot().preference).toBe(cachedPreference);
+    // This server snapshot genuinely says the same value last seen by Redux.
+    applyAccountPatch({
+      redux,
+      patch: {
+        account_id: "alice",
+        other_settings: { appearance_theme: serverPreference },
+      },
+      first_set,
+      appearance_snapshot: true,
+    });
+    expect(appearance.getSnapshot().preference).toBe(serverPreference);
+    expect(
+      JSON.parse(storage.getItem(APPEARANCE_ACCOUNT_STORAGE_KEY)!),
+    ).toMatchObject({
+      account_id: "alice",
+      preference: serverPreference,
+    });
+    // Omitting settings is not a reset; explicit null is an authoritative reset.
+    storage.setItem(
+      APPEARANCE_ACCOUNT_STORAGE_KEY,
+      serializeAppearance("dark", "alice"),
+    );
+    appearance.receiveStorageChange(APPEARANCE_ACCOUNT_STORAGE_KEY);
+    applyAccountPatch({ redux, patch: {}, appearance_snapshot: true });
+    expect(appearance.getSnapshot().preference).toBe("dark");
+    applyAccountPatch({
+      redux,
+      patch: { other_settings: null },
+      appearance_snapshot: true,
+    });
+    expect(appearance.getSnapshot().preference).toBe("light");
+    expect(actions.set_other_settings_and_wait).not.toHaveBeenCalled();
+    dispose();
+    expect(account.listenerCount(ACCOUNT_APPEARANCE_SNAPSHOT)).toBe(0);
+  },
+);

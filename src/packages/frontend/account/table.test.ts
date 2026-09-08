@@ -50,28 +50,34 @@ describe("AccountTable", () => {
     expect(AccountTable.prototype.no_changefeed.call({})).toBe(true);
   });
 
-  it("does not replay stale appearance when a local snapshot field changes", () => {
-    const projection = accountProjection();
-    projection.snapshot({ appearance_theme: "light", dark_mode: false });
-    projection.realtime({ appearance_theme: "dark" });
-    projection.snapshot(
-      { appearance_theme: "light", dark_mode: false },
-      { font_size: 16 },
-    );
-    expect(projection.state()).toMatchObject({
-      font_size: 16,
-      other_settings: { appearance_theme: "dark" },
-    });
-    projection.snapshot({
-      appearance_theme: "light",
-      dark_mode: false,
-      locale: "fr",
-    });
-    expect(projection.state().other_settings).toMatchObject({
-      appearance_theme: "dark",
-      locale: "fr",
-    });
-  });
+  it.each([
+    ["light", "dark"],
+    ["dark", "light"],
+  ])(
+    "does not replay stale %s over realtime %s on a local edit",
+    (stale, current) => {
+      const projection = accountProjection();
+      projection.snapshot({ appearance_theme: stale, dark_mode: false });
+      projection.realtime({ appearance_theme: current });
+      projection.snapshot(
+        { appearance_theme: stale, dark_mode: false },
+        { font_size: 16 },
+      );
+      expect(projection.state()).toMatchObject({
+        font_size: 16,
+        other_settings: { appearance_theme: current },
+      });
+      projection.snapshot({
+        appearance_theme: stale,
+        dark_mode: false,
+        locale: "fr",
+      });
+      expect(projection.state().other_settings).toMatchObject({
+        appearance_theme: current,
+        locale: "fr",
+      });
+    },
+  );
 
   it("forwards explicit legacy migration even when the effective theme is unchanged", () => {
     const projection = accountProjection();

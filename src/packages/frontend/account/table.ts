@@ -24,6 +24,7 @@ import {
   recordProjectionRepairFailure,
 } from "@cocalc/frontend/projection-diagnostics";
 import { markStartupPhaseOnce } from "@cocalc/frontend/app/startup-phase";
+import { ACCOUNT_APPEARANCE_SNAPSHOT } from "./appearance";
 
 export type AccountProjectionRepairReason =
   | "write-ack"
@@ -50,6 +51,7 @@ export function applyAccountPatch(opts: {
   redux;
   patch: Record<string, any>;
   first_set?: boolean;
+  appearance_snapshot?: boolean;
 }): void {
   const actions = opts.redux.getActions("account");
   const next = normalizeAccountPatch(opts.redux, opts.patch);
@@ -60,6 +62,21 @@ export function applyAccountPatch(opts: {
     });
     actions.setState({ is_ready: true });
     opts.redux.getStore("account").emit("is_ready");
+  }
+  const settings = opts.patch.other_settings;
+  if (
+    opts.first_set ||
+    (opts.appearance_snapshot &&
+      Object.prototype.hasOwnProperty.call(opts.patch, "other_settings") &&
+      (settings == null ||
+        Object.prototype.hasOwnProperty.call(settings, "appearance_theme") ||
+        Object.prototype.hasOwnProperty.call(settings, "dark_mode")))
+  ) {
+    // Realtime settings payloads are authoritative snapshots, not proof of a
+    // change to each nested key. Unlike ordinary Redux notifications, an equal
+    // value here must still supersede an optimistic cross-tab cache choice.
+    const account = opts.redux.getStore("account");
+    account.emit(ACCOUNT_APPEARANCE_SNAPSHOT, account.get("account_id"));
   }
 }
 
@@ -288,6 +305,7 @@ function handleRealtimeFeedChange(
   if (
     event == null ||
     event.type !== "account.upsert" ||
+    event.account_id !== getAccountId() ||
     realtimeRedux == null
   ) {
     return;
@@ -295,6 +313,7 @@ function handleRealtimeFeedChange(
   applyAccountPatch({
     redux: realtimeRedux,
     patch: event.account as AccountFeedAccountRow,
+    appearance_snapshot: true,
   });
 }
 
