@@ -76,6 +76,54 @@ test("an earlier diff link keeps its recorded worktree when later terminal event
   }
 });
 
+test.each(["src/a#b.ts", "src/a:42", "src/a\\b.ts", "src/trailing "])(
+  "recorded diff paths remain literal: %s",
+  async (path) => {
+    const open_file = jest.fn().mockResolvedValue(undefined);
+    const actions = jest
+      .spyOn(redux, "getProjectActions")
+      .mockReturnValue({ open_file } as any);
+    try {
+      render(
+        <CodexActivity
+          expanded
+          projectId="project"
+          events={
+            [
+              {
+                type: "event",
+                seq: 1,
+                event: {
+                  type: "config",
+                  model: "test",
+                  workingDirectory: "/work/feature ",
+                },
+              },
+              {
+                type: "event",
+                seq: 2,
+                event: { type: "diff", path, diff: {} },
+              },
+            ] as any
+          }
+        />,
+      );
+      const link = screen.getByRole("button", { name: path.trim() });
+      fireEvent.click(link);
+      await waitFor(() =>
+        expect(open_file).toHaveBeenCalledWith(
+          expect.objectContaining({
+            path: `/work/feature /${path}`,
+            line: undefined,
+          }),
+        ),
+      );
+    } finally {
+      actions.mockRestore();
+    }
+  },
+);
+
 describe("CodexActivity terminal rows", () => {
   it("renders historical goal snapshots rather than the current thread goal", () => {
     render(

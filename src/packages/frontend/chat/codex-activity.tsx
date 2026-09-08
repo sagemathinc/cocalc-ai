@@ -735,6 +735,7 @@ function ActivityRow({
                   path={entry.path}
                   projectId={projectId}
                   basePath={basePath}
+                  literal
                   bold
                 />
               </span>
@@ -1408,6 +1409,7 @@ function PathLink({
   fontSize,
   bold,
   basePath,
+  literal = false,
 }: {
   path?: string;
   line?: number;
@@ -1415,14 +1417,20 @@ function PathLink({
   fontSize?: number;
   bold?: boolean;
   basePath?: string;
+  literal?: boolean;
 }) {
   const actions =
     projectId != null ? redux.getProjectActions(projectId) : undefined;
   const parsedTarget = React.useMemo(
-    () => parsePathLineTarget(path, line),
-    [path, line],
+    () => (literal ? { path, line } : parsePathLineTarget(path, line)),
+    [path, line, literal],
   );
-  const resolvedPath = resolvePath(parsedTarget.path, basePath, projectId);
+  const resolvedPath = resolvePath(
+    parsedTarget.path,
+    basePath,
+    projectId,
+    literal,
+  );
   const onClick = React.useCallback(
     (e: React.MouseEvent) => {
       if (!actions || !resolvedPath) return;
@@ -1507,19 +1515,28 @@ function resolvePath(
   path?: string,
   basePath?: string,
   projectId?: string,
+  literal = false,
 ): string | undefined {
-  const normalizedPath = normalizeSlashPath(path);
+  const normalizedPath = literal ? path : normalizeSlashPath(path);
   if (!normalizedPath) return undefined;
-  const absolutePath = normalizeAbsoluteMaybe(normalizedPath);
+  const absolutePath = literal
+    ? isAbsolutePath(normalizedPath)
+      ? normalizeAbsolutePath(normalizedPath)
+      : undefined
+    : normalizeAbsoluteMaybe(normalizedPath);
   if (absolutePath) return absolutePath;
   const homePath = normalizeAbsoluteMaybe(getProjectHomeDirectory(projectId));
-  if (normalizedPath === "~") return homePath;
-  if (normalizedPath.startsWith("~/")) {
+  if (!literal && normalizedPath === "~") return homePath;
+  if (!literal && normalizedPath.startsWith("~/")) {
     return homePath
       ? normalizeAbsolutePath(normalizedPath.slice(2), homePath)
       : undefined;
   }
-  const normalizedBase = normalizeAbsoluteMaybe(basePath);
+  // Context directories come from structured events, not prose.
+  const normalizedBase =
+    basePath && isAbsolutePath(basePath)
+      ? normalizeAbsolutePath(basePath)
+      : undefined;
   if (normalizedBase && homePath) {
     const homePrefix = homePath.endsWith("/") ? homePath : `${homePath}/`;
     if (normalizedBase === homePath || normalizedBase.startsWith(homePrefix)) {
