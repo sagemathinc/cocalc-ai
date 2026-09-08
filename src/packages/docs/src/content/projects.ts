@@ -68,6 +68,9 @@ credentials into shared document content.
 `;
 
 export const CREATE_PROJECT_BODY = String.raw`
+For a worked example in Essential CoCalc, see
+[Start and hand off a research task](/docs/projects/research-handoff).
+
 ## What projects are for
 
 A CoCalc project is a persistent Linux workspace with files, terminals,

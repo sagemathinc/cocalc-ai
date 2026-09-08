@@ -13,6 +13,7 @@ import {
   PROJECT_SECRETS_BODY,
   PUBLISH_FILES_BODY,
   PUBLISH_ROOTFS_BODY,
+  RESEARCH_HANDOFF_BODY,
   RSTUDIO_PROJECT_BODY,
   ROOTFS_BODY,
   TASKS_BODY,
@@ -43,6 +44,26 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
     summary:
       "Create a durable Linux workspace for files, notebooks, terminals, chat, and agents.",
     title: "Create a project",
+  },
+  {
+    audiences: ["agents", "researchers", "teams"],
+    body: RESEARCH_HANDOFF_BODY.trim(),
+    category: "Projects",
+    id: "projects.research-handoff",
+    image: docsIcon(
+      "/public/docs/create-project-5b221552.webp",
+      "A CoCalc project containing notebooks, files, and chat",
+    ),
+    lastReviewed: "2026-09-08",
+    noActionReason:
+      "The walkthrough starts from the linked Essential projects page and uses files chosen by the reader.",
+    searchKeywords:
+      "essential research handoff resume reviewer notebook saved output recent browser coauthor",
+    slug: "projects/research-handoff",
+    status: "ready",
+    summary:
+      "Create and check a small analysis in Essential, save its context, and let a collaborator or viewer pick it up.",
+    title: "Start and hand off a research task",
   },
   {
     actions: [
@@ -287,11 +308,13 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
       "/public/docs/collaborators-8ce1955f.webp",
       "Collaborators sharing a project folder with realtime cursors",
     ),
-    lastReviewed: "2026-05-24",
+    lastReviewed: "2026-09-08",
+    searchKeywords:
+      "collaborator viewer reviewer read-only access selected files directories invitation read policy promote revoke",
     slug: "projects/collaborators",
     status: "ready",
     summary:
-      "Invite people into a shared project with realtime files, notebooks, terminals, and chat.",
+      "Invite collaborators or read-only reviewers, select visible files, and manage access as the work changes.",
     title: "Add project collaborators",
   },
 ];
