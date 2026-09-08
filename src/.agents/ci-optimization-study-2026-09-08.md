@@ -12,8 +12,10 @@ The most promising gain was eliminating repeated compilation and scheduling
 independent packages concurrently. Explicit tmpfs did not improve clean-build
 time over ext4 with Linux page cache in these experiments.
 
-This PR records measurements and adds read-only saved-report analysis to the
-existing test audit tool. It deliberately does **not** change CI worker defaults,
+This PR records measurements, adds read-only saved-report analysis to the
+existing test audit tool, and restricts the opt-in workspace `--max-workers`
+flag to recognized Jest packages instead of forwarding it to non-Jest commands.
+It deliberately does **not** change CI worker defaults,
 the compiler, test selection, application behavior, or the default build graph.
 
 Benchmark environment:
@@ -41,6 +43,7 @@ Warm dependencies and warm compiled/Jest outputs are different conditions.
 | Original clean build, warm dependencies, ext4                      |   4m45s | Passed                            |
 | Experimental DAG clean build, warm dependencies, tmpfs             |   2m12s | Passed                            |
 | Experimental DAG clean build, warm dependencies, ext4              |   2m11s | Passed                            |
+| Experimental DAG, eight workers instead of four, clean ext4        |   2m11s | Passed                            |
 | Baseline frontend, 4 workers / 512 MB recycle limit                |   4m55s | Includes lint and retry           |
 | Tuned frontend, 8 workers / 2 GB recycle limit                     |   1m57s | Includes lint; first-pass success |
 | Baseline server, 4 workers                                         |   6m30s | First-pass success                |
@@ -74,10 +77,20 @@ second end-to-end clean build.
 Increasing server workers from six to eight in the next warm-cache repeat
 (05:48:21-05:53:30 UTC) made all checks/tests **5m09s**, worse overall than
 six workers. Server improved from 266s to 231s, but frontend increased from 155s
-to 213s and rest from 265s to 281s. All passed first try. This is evidence
+to 213s and rest from 265s to 281s. Frontend/server passed first try; rest retried
+`project-host/codex-project.test.ts` after two token-content assertions failed,
+then passed all 27 tests in that suite. Retry time is included. This is evidence
 against raising worker counts blindly, not a statistically conclusive optimum.
 Some rest packages start many workers of their own; others have intervals with
 little CPU use. Budgeting lanes together and profiling waits remain worthwhile.
+
+A third warm repeat (05:57:15-06:02:52 UTC) kept frontend/server at six workers
+but explicitly set remaining Jest packages to four workers. All 31 rest groups
+passed first try, as did frontend/server. Total checks/tests increased to
+**5m37s**: frontend 148s, server 245s, rest 312s. A uniform override helped the
+other lanes but delayed the critical path. This flag overrides existing package
+worker settings; it is not a cap that preserves lower package-specific values.
+The PR fixes forwarding to non-Jest commands but does not enable the override.
 
 Hosted references, with setup included in job durations:
 
@@ -100,6 +113,15 @@ Non-static-bundle JavaScript and declarations were byte-for-byte identical.
 Ten hashed static filenames changed; no other output paths were missing. Bundle
 budgets and full tests passed. This is useful evidence, not proof that arbitrary
 future package graph changes are safe.
+
+The final build-only experiment (06:03:06-06:05:17 UTC) increased the graph's
+worker limit from four to eight on a fresh ext4 checkout. It still took 131s;
+frontend took 62.75s and server 20.43s. It again emitted 16,456 files with
+identical non-bundle JavaScript/declarations, and only ten hashed bundle paths
+replaced. The full test suite was not rerun against this eight-build-worker
+checkout; it is a build/output-equivalence experiment, not a new end-to-end
+record. A subsequent Essential frontend bundle-budget check passed. There is no
+measured advantage to the higher graph worker limit.
 
 Do not simply enable `workspaces.py --parallel`: it uses a thread pool with
 process-wide `os.chdir`, and concurrent recursive compiler invocations can write
@@ -177,7 +199,14 @@ The storage comparison is ext4 plus normal page cache versus explicit tmpfs,
 not uncached physical disk versus RAM. Test scratch remained on tmpfs even for
 the ext4 checkout; that does not rule out a benefit for database/test scratch.
 
-## Next experiments
+## Conclusions and follow-up priorities
+
+The feasibility and resource-tuning study is complete: the VM meets the
+approximately eight-minute target without a compiler upgrade. Storage placement,
+dependency cache state, build scheduling, test scheduling, Jest caches, and
+several worker allocations were measured; slow suites were audited without
+removing current-feature coverage. These observations do not establish an
+absolute optimum or make the experimental build graph production-ready.
 
 The measured build/check/test processes used approximately 4,585 CPU-seconds.
 Dividing by 16 gives 4m47s as a rough perfect-utilization bound for unchanged work,
