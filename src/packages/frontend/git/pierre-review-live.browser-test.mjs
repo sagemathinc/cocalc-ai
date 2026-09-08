@@ -1,0 +1,464 @@
+// Real application/Slate smoke test through an isolated Chrome target. The raw
+// page CDP connection avoids attaching to every preexisting maintainer tab.
+// Usage: node .../pierre-review-live.browser-test.mjs <chat-url> <commit>
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+
+const [chat, commit] = process.argv.slice(2);
+const historyWorktree = process.argv[4];
+const historyRef = process.env.REVIEW_HISTORY_REF;
+const uploadDelay = Number(process.env.REVIEW_UPLOAD_DELAY_MS ?? 0);
+assert(
+  Number.isFinite(uploadDelay) && uploadDelay >= 0 && uploadDelay <= 10000,
+);
+if (uploadDelay)
+  assert(process.env.REVIEW_IMAGE, "Delayed upload requires REVIEW_IMAGE=1");
+if (!chat || !/^[a-f0-9]{7,64}$/i.test(commit ?? ""))
+  throw Error("Supply an isolated chat URL and a commit in its repository.");
+const endpoint = process.env.CDP_URL ?? "http://localhost:9222";
+const target = await (
+  await fetch(`${endpoint}/json/new?about:blank`, { method: "PUT" })
+).json();
+const socket = new WebSocket(target.webSocketDebuggerUrl);
+await new Promise((resolve, reject) => {
+  socket.onopen = resolve;
+  socket.onerror = reject;
+});
+let sequence = 0;
+const requests = new Map();
+let pausedUpload;
+socket.onmessage = ({ data }) => {
+  const message = JSON.parse(data);
+  if (message.id) requests.get(message.id)?.(message);
+  if (message.method === "Fetch.requestPaused") {
+    if (message.params.request.method === "POST")
+      pausedUpload = message.params.requestId;
+    else
+      void send("Fetch.continueRequest", {
+        requestId: message.params.requestId,
+      });
+  }
+};
+function send(method, params = {}) {
+  return new Promise((resolve, reject) => {
+    const id = ++sequence;
+    const timer = setTimeout(() => {
+      requests.delete(id);
+      reject(Error(`CDP timeout: ${method}`));
+    }, 15000);
+    requests.set(id, (message) => {
+      clearTimeout(timer);
+      requests.delete(id);
+      if (message.error) reject(Error(JSON.stringify(message.error)));
+      else resolve(message.result);
+    });
+    socket.send(JSON.stringify({ id, method, params }));
+  });
+}
+async function evaluate(expression) {
+  const result = await send("Runtime.evaluate", {
+    expression,
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  if (result.exceptionDetails)
+    throw Error(JSON.stringify(result.exceptionDetails));
+  return result.result.value;
+}
+async function until(expression) {
+  for (let attempt = 0; attempt < 120; attempt++) {
+    if (await evaluate(expression)) return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw Error(`Timed out: ${expression}`);
+}
+async function click(expression) {
+  await evaluate(`${expression}.scrollIntoView({block:'center'})`);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  // Some forwarded Chrome sessions acknowledge Input.dispatchMouseEvent but
+  // deliver no events. This is a DOM-driven integration check, not evidence of
+  // native pointer/clipboard behavior (covered by the standalone browser suite).
+  await evaluate(`(()=>{const e=${expression};const r=e.getBoundingClientRect();
+    const options={bubbles:true,composed:true,clientX:r.x+r.width/2,clientY:r.y+r.height/2,button:0,pointerId:1,pointerType:'mouse'};
+    e.dispatchEvent(new PointerEvent('pointerdown',{...options,buttons:1}));
+    e.dispatchEvent(new MouseEvent('mousedown',{...options,buttons:1}));
+    e.dispatchEvent(new PointerEvent('pointerup',{...options,buttons:0}));
+    e.dispatchEvent(new MouseEvent('mouseup',{...options,buttons:0}));
+    e.click();e.focus();})()`);
+}
+const selected = (label, value) =>
+  `document.querySelector('[role="combobox"][aria-label=${JSON.stringify(label)}]')?.closest('.ant-select')?.textContent.includes(${JSON.stringify(value.replace(/^refs\/(heads|remotes)\//, ""))})`;
+async function select(label, value) {
+  await evaluate(
+    `document.querySelector('[role="combobox"][aria-label=${JSON.stringify(label)}]').focus()`,
+  );
+  await send("Input.insertText", {
+    text:
+      value === "HEAD"
+        ? "Selected worktree HEAD"
+        : value.replace(/^refs\/(heads|remotes)\//, ""),
+  });
+  for (const key of ["ArrowDown", "Enter"]) {
+    await send("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key,
+      windowsVirtualKeyCode: key === "Enter" ? 13 : 40,
+    });
+    await send("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key,
+      windowsVirtualKeyCode: key === "Enter" ? 13 : 40,
+    });
+  }
+}
+const button = (label) =>
+  `Array.from(document.querySelectorAll('button')).find(e=>e.textContent.trim()===${JSON.stringify(label)})`;
+let appearance;
+try {
+  const url = new URL(chat);
+  url.searchParams.set("git-hash", commit);
+  await send("Page.navigate", { url: url.href });
+  await send("Page.bringToFront");
+  await until(
+    `!!document.querySelector('[role="region"][aria-label="Git diff"]')`,
+  );
+  assert.equal(
+    await evaluate(
+      `!!document.querySelector('select[aria-label="Diff renderer"]')`,
+    ),
+    false,
+  );
+  appearance = await evaluate(
+    `document.querySelector('select[aria-label="Appearance"]').value`,
+  );
+  if (process.env.REVIEW_COMPARE) {
+    const beforeKeys = await evaluate(`Object.keys(localStorage)`);
+    await click(button("Compare revisions..."));
+    await until(`!!document.querySelector('[aria-label="Compare revisions"]')`);
+    await click(
+      `document.querySelector('[aria-label="Compare revisions"] summary')`,
+    );
+    await evaluate(
+      `(()=>{const section=document.querySelector('[aria-label="Compare revisions"]');const select=section.querySelector('select');select.value='trees';select.dispatchEvent(new Event('change',{bubbles:true}));})()`,
+    );
+    await evaluate(
+      `(()=>{const section=document.querySelector('[aria-label="Compare revisions"]');for(const label of section.querySelectorAll('label')) {const input=label.querySelector('input');if(!input)continue;const value=label.textContent.includes('Base ref')?${JSON.stringify(process.env.REVIEW_COMPARE_BASE ?? commit)}:${JSON.stringify(commit)};Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);input.dispatchEvent(new Event('input',{bubbles:true}));}})()`,
+    );
+    await click(button("Compare / Refresh"));
+    await until(
+      `!!document.querySelector('[aria-label="Comparison review note"]') && !document.querySelector('[aria-label="Comparison review note"]').disabled`,
+    );
+    const pinnedRoute = await evaluate(
+      `new URL(location.href).searchParams.get('git-compare')`,
+    );
+    assert.equal(JSON.parse(pinnedRoute).mode, "trees");
+    assert.equal(JSON.parse(pinnedRoute).head, commit);
+    assert.equal(
+      JSON.parse(pinnedRoute).base,
+      process.env.REVIEW_COMPARE_BASE ?? commit,
+    );
+    const oldTimeOrigin = await evaluate("performance.timeOrigin");
+    await send("Page.reload");
+    await until(`performance.timeOrigin !== ${JSON.stringify(oldTimeOrigin)}`);
+    await until(
+      `!!document.querySelector('[aria-label="Comparison review note"]') && !document.querySelector('[aria-label="Comparison review note"]').disabled`,
+    );
+    assert.deepEqual(
+      JSON.parse(
+        await evaluate(
+          `new URL(location.href).searchParams.get('git-compare')`,
+        ),
+      ),
+      JSON.parse(pinnedRoute),
+    );
+    if (process.env.REVIEW_COMPARE_BASE) {
+      await until(
+        `!!document.querySelector('[aria-label="Comparison review"] diffs-container')`,
+      );
+      await evaluate(
+        `document.querySelector('[aria-label="Comparison review"]').dispatchEvent(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true}))`,
+      );
+      assert.equal(
+        await evaluate(
+          `document.activeElement?.closest('label')?.textContent.trim()`,
+        ),
+        "Search loaded diff",
+      );
+      await evaluate(
+        `(()=>{const input=document.activeElement;Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'+');input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+      );
+      await until(
+        `/1 of [1-9][0-9]* matches/.test(document.querySelector('[aria-label="Comparison review"]').innerText)`,
+      );
+      await click(button("Next match"));
+    } else
+      await until(
+        `document.querySelector('[aria-label="Comparison review"]').innerText.includes('No changes between these pinned endpoints')`,
+      );
+    await evaluate(
+      `(()=>{const input=document.querySelector('[aria-label="Comparison review note"]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Comparison local draft smoke');input.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+    );
+    await until(`!!${button("Keep local draft and close")}`);
+    await click(button("Keep local draft and close"));
+    await until(`!document.querySelector('[aria-label="Comparison review"]')`);
+    assert.equal(
+      await evaluate(`new URL(location.href).searchParams.has('git-compare')`),
+      false,
+    );
+    await evaluate(
+      `(()=>{for(const key of Object.keys(localStorage))if(key.startsWith('cocalc:git-target-draft:v1:')&&!${JSON.stringify(beforeKeys)}.includes(key))localStorage.removeItem(key);})()`,
+    );
+    console.log(
+      "PASS: live comparison controls, pinned trees, account review loading, optional diff search, and local-draft close without remote review writes.",
+    );
+  } else if (historyRef) {
+    await until(
+      `!!document.querySelector('[role="combobox"][aria-label="Branch / ref"]')`,
+    );
+    await select("Branch / ref", historyRef);
+    await until(
+      `new URL(location.href).searchParams.get('git-ref') === ${JSON.stringify(historyRef)}`,
+    );
+    const route = await evaluate(`location.href`);
+    const tip = new URL(route).searchParams.get("git-tip");
+    assert.match(tip, /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
+    assert.equal(new URL(route).searchParams.get("git-hash"), tip);
+    await send("Page.reload");
+    await until(selected("Branch / ref", historyRef));
+    assert.equal(await evaluate(`location.href`), route);
+    console.log(
+      "PASS: explicit ref browsing pins history and restores its context on reload.",
+    );
+  } else if (historyWorktree) {
+    const git = (...args) =>
+      execFileSync("git", ["-C", historyWorktree, ...args], {
+        encoding: "utf8",
+      });
+    const expected = git("rev-parse", "HEAD").trim();
+    const before = git("status", "--porcelain=v1");
+    await until(
+      `!!document.querySelector('[role="combobox"][aria-label="Review working copy"]')`,
+    );
+    await select("Review working copy", historyWorktree);
+    await until(selected("Review working copy", historyWorktree));
+    await select("Branch / ref", "HEAD");
+    await click(button("Browse / Refresh"));
+    await until(
+      `new URL(location.href).searchParams.get('git-hash') === ${JSON.stringify(expected)}`,
+    );
+    await until(selected("Review working copy", historyWorktree));
+    assert.equal(
+      await evaluate(`new URL(location.href).searchParams.get('git-cwd')`),
+      historyWorktree,
+    );
+    await send("Page.reload");
+    await until(selected("Review working copy", historyWorktree));
+    assert.equal(
+      await evaluate(`new URL(location.href).searchParams.get('git-hash')`),
+      expected,
+    );
+    assert.equal(git("rev-parse", "HEAD").trim(), expected);
+    assert.equal(git("status", "--porcelain=v1"), before);
+    console.log(
+      "PASS: explicit live worktree browsing pins the selected HEAD without checkout or working-copy changes.",
+    );
+  } else {
+    await until(
+      `!!document.querySelector('diffs-container')?.shadowRoot?.querySelector('[data-gutter] [data-line-number-content]')`,
+    );
+    await click(
+      `document.querySelector('diffs-container').shadowRoot.querySelector('[data-gutter] [data-line-number-content]')`,
+    );
+    await until(`!${button("Add inline comment")}.disabled`);
+    await click(button("Add inline comment"));
+    const editor = `document.querySelector('[aria-label="Active inline comment"] [contenteditable="true"]')`;
+    await until(`!!${editor}`);
+    await click(editor);
+    await evaluate(
+      `(()=>{const range=document.createRange();range.selectNodeContents(${editor});range.collapse(true);const selection=getSelection();selection.removeAllRanges();selection.addRange(range)})()`,
+    );
+    await evaluate(`(()=>{
+      const element=${editor};let fiber=element[Object.keys(element).find(key=>key.startsWith('__reactFiber'))];
+      while(fiber && !fiber.memoizedProps?.editor?.insertText)fiber=fiber.return;
+      if(!fiber)throw Error('Unable to locate the live Slate editor');
+      const slate=window.__reviewSlate=fiber.memoizedProps.editor;
+      slate.select({anchor:{path:[0,0],offset:0},focus:{path:[0,0],offset:0}});
+      slate.insertText('Pierre live retained draft');
+    })()`);
+    await evaluate(`void (window.__reviewEditor = ${editor})`);
+    if (process.env.REVIEW_FOCUS) {
+      await click(
+        `Array.from(Array.from(document.querySelectorAll('.ant-drawer-body label')).find(e=>e.textContent.trim()==='Reviewed').parentElement.parentElement.querySelectorAll('button')).find(e=>e.textContent.trim()==='Edit')`,
+      );
+      await until(`!!${button("Save note")}`);
+      await evaluate(`(()=>{
+        const element=${button("Save note")}.parentElement.parentElement.querySelector('[contenteditable="true"]');
+        if(!element || element===window.__reviewEditor)throw Error('Separate note editor missing');
+        window.__reviewNoteEditor=element;
+        let fiber=element[Object.keys(element).find(key=>key.startsWith('__reactFiber'))];
+        while(fiber && !fiber.memoizedProps?.editor?.insertText)fiber=fiber.return;
+        const slate=window.__reviewNoteSlate=fiber.memoizedProps.editor;
+        element.focus();
+        slate.select({anchor:{path:[0,0],offset:0},focus:{path:[0,0],offset:0}});
+      })()`);
+      await send("Input.insertText", {
+        text: "Separate private keyboard draft",
+      });
+      await until(
+        `window.__reviewNoteEditor.textContent.includes('Separate private keyboard draft')`,
+      );
+      await evaluate(
+        `window.__reviewEditor.focus();window.__reviewSlate.select({anchor:{path:[0,0],offset:0},focus:{path:[0,0],offset:0}})`,
+      );
+      await send("Input.insertText", { text: "Inline keyboard input: " });
+      await until(
+        `window.__reviewEditor.textContent.includes('Inline keyboard input: ')`,
+      );
+      assert.equal(
+        await evaluate(
+          `window.__reviewNoteEditor.textContent.includes('Inline keyboard input: ')`,
+        ),
+        false,
+      );
+    }
+    if (process.env.REVIEW_IMAGE) {
+      if (uploadDelay)
+        await send("Fetch.enable", {
+          patterns: [{ urlPattern: "*/blobs?*", requestStage: "Request" }],
+        });
+      await evaluate(`(async()=>{
+        const canvas=document.createElement('canvas');canvas.width=64;canvas.height=64;
+        const ctx=canvas.getContext('2d');ctx.fillStyle='#2684ff';ctx.fillRect(0,0,64,64);
+        const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+        const data=new DataTransfer();data.items.add(new File([blob],'review-smoke.png',{type:'image/png'}));
+        window.__reviewSlate.insertData(data);
+      })()`);
+    }
+    await evaluate(
+      `document.querySelector('[aria-label="Git diff"]').scrollTop = 10000`,
+    );
+    if (uploadDelay) {
+      const deadline = Date.now() + 15000;
+      while (!pausedUpload && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      assert(pausedUpload, "No actual blob upload request was intercepted");
+      await new Promise((resolve) => setTimeout(resolve, uploadDelay));
+      assert.equal(await evaluate(`${editor} === window.__reviewEditor`), true);
+      assert.equal(
+        await evaluate(`${editor}.querySelectorAll('img').length`),
+        0,
+      );
+      assert(
+        await evaluate(
+          `document.querySelector('[aria-label="Git diff"]').scrollTop > 0`,
+        ),
+      );
+      await send("Fetch.continueRequest", { requestId: pausedUpload });
+      pausedUpload = undefined;
+      await send("Fetch.disable");
+      console.log(
+        `PASS: actual upload POST held for ${uploadDelay}ms while scrolled; original Slate editor retained before upload completed.`,
+      );
+    }
+    if (process.env.REVIEW_IMAGE) {
+      await until(
+        `Array.from(${editor}.querySelectorAll('img')).some(img=>img.complete && img.naturalWidth===64)`,
+      );
+      await evaluate(
+        `window.__reviewImageSrc=Array.from(${editor}.querySelectorAll('img')).find(img=>img.naturalWidth===64).src`,
+      );
+      assert.match(await evaluate(`window.__reviewImageSrc`), /\/blobs\//);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await select("Appearance", "dark");
+    await until(
+      `document.querySelector('diffs-container')?.shadowRoot?.querySelector('pre') && getComputedStyle(document.querySelector('diffs-container').shadowRoot.querySelector('pre')).backgroundColor === 'rgb(36, 41, 46)'`,
+    );
+    assert.equal(await evaluate(`${editor} === window.__reviewEditor`), true);
+    assert.match(
+      await evaluate(`${editor}.textContent`),
+      /Pierre live retained draft/,
+    );
+    await select("Appearance", "light");
+    await until(
+      `document.querySelector('diffs-container')?.shadowRoot?.querySelector('pre') && getComputedStyle(document.querySelector('diffs-container').shadowRoot.querySelector('pre')).backgroundColor === 'rgb(255, 255, 255)'`,
+    );
+    await evaluate(
+      `document.querySelector('[aria-label="Git diff"]').scrollTop = 0`,
+    );
+    assert.equal(await evaluate(`${editor} === window.__reviewEditor`), true);
+    if (process.env.REVIEW_IMAGE) {
+      await until(
+        `Array.from(${editor}.querySelectorAll('img')).some(img=>img.src===window.__reviewImageSrc && img.complete && img.naturalWidth===64 && img.getBoundingClientRect().height>0)`,
+      );
+      const undo = await evaluate(`(()=>{
+        const slate=window.__reviewSlate;
+        const before=JSON.stringify(slate.children);
+        slate.undo();const undone=JSON.stringify(slate.children);
+        slate.redo();const redone=JSON.stringify(slate.children);
+        return {changed:before!==undone,restored:before===redone};
+      })()`);
+      assert.deepEqual(undo, { changed: true, restored: true });
+      await until(
+        `Array.from(${editor}.querySelectorAll('img')).some(img=>img.src===window.__reviewImageSrc && img.complete && img.naturalWidth===64)`,
+      );
+    }
+    if (process.env.REVIEW_FOCUS) {
+      assert.equal(
+        await evaluate(
+          `window.__reviewNoteEditor.isConnected && window.__reviewEditor.isConnected`,
+        ),
+        true,
+      );
+      assert.match(
+        await evaluate(`window.__reviewNoteEditor.textContent`),
+        /Separate private keyboard draft/,
+      );
+      await evaluate(`window.__reviewNoteEditor.focus()`);
+      await send("Input.insertText", { text: " after scroll" });
+      await until(
+        `window.__reviewNoteEditor.textContent.includes('after scroll')`,
+      );
+      assert.equal(
+        await evaluate(
+          `window.__reviewEditor.textContent.includes('after scroll')`,
+        ),
+        false,
+      );
+      await click(
+        `Array.from(${button("Save note")}.parentElement.querySelectorAll('button')).find(e=>e.textContent.trim()==='Cancel')`,
+      );
+      await until(`!${button("Save note")}`);
+      console.log(
+        "PASS: simultaneous real Slate note/inline editors retained independent content through scroll/themes and native text input after focus transfer.",
+      );
+    }
+    await click(
+      `Array.from(document.querySelectorAll('[aria-label="Active inline comment"] button')).find(e => e.textContent.trim() === 'Cancel')`,
+    );
+    await until(
+      `!document.querySelector('[aria-label="Active inline comment"]')`,
+    );
+    console.log(
+      "PASS: live Pierre gutter selection, real Slate editor retained through virtualization and Light/Dark changes, draft cancelled without saving.",
+    );
+    if (process.env.REVIEW_IMAGE)
+      console.log(
+        "PASS: real Slate image-file insertion uploaded a blob, survived scrolling/themes and undo/redo; no review comment saved (not a native clipboard test).",
+      );
+  }
+} catch (error) {
+  console.error(
+    await evaluate(
+      `JSON.stringify({url:location.href,error:document.querySelector('[aria-label="Repository history"] .ant-alert')?.innerText})`,
+    ),
+  );
+  throw error;
+} finally {
+  if (pausedUpload)
+    await send("Fetch.continueRequest", { requestId: pausedUpload });
+  if (uploadDelay) await send("Fetch.disable");
+  if (appearance) await select("Appearance", appearance);
+  socket.close();
+  await fetch(`${endpoint}/json/close/${target.id}`);
+}

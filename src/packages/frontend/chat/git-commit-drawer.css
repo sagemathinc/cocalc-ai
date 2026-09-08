@@ -34,3 +34,152 @@
   user-select: text;
   -webkit-user-select: text;
 }
+
+.git-review-navigation {
+  clear: both;
+  padding: 12px 0;
+  margin-bottom: 8px;
+  font-weight: normal;
+  font-size: 13px;
+}
+
+.git-review-title {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  min-width: 0;
+}
+
+.git-review-title > span {
+  flex-shrink: 0;
+}
+
+.git-review-title-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-review-context-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(560px, 100%);
+  min-width: 0;
+}
+
+.git-review-context-field > label {
+  flex: 0 0 84px;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.git-review-worktree {
+  flex-basis: 100%;
+  font-size: 12px;
+}
+
+.git-review-disclosure {
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.git-review-disclosure > summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.git-review-disclosure[open] > summary {
+  margin-bottom: 8px;
+}
+
+.git-review-private {
+  padding: 12px 0;
+  margin-bottom: 12px;
+}
+
+.git-review-private-toolbar,
+.git-review-private-send {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.git-review-private-label {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  margin-right: 8px;
+}
+
+.git-review-private-send {
+  margin-left: auto;
+}
+
+.git-review-private-note {
+  margin: 12px 0;
+}
+
+.git-review-updated {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.git-review-compare-field {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.git-review-compare-field > label {
+  font-size: 12px;
+}
+
+.git-review-compare-branch {
+  max-width: 560px;
+}
+
+.git-review-comparison-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.git-review-comparison-actions [role="status"] {
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.git-review-target-summary {
+  font-family: monospace;
+  font-size: 12px;
+  margin: 12px 0 0;
+  padding: 8px 0;
+}
+
+.git-review-drawer select[aria-label="Changed files"],
+.git-review-drawer .cocalc-changed-files-controls button,
+.git-review-comparison-modal .cocalc-changed-files-controls button {
+  color: var(--cocalc-ui-text);
+  background: var(--cocalc-ui-surface);
+  border: 1px solid var(--cocalc-ui-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+@media (max-width: 600px) {
+  .git-review-private-send {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+  .git-review-compare-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}

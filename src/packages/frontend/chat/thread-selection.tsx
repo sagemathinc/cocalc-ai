@@ -152,6 +152,9 @@ export function useChatThreadSelection({
     if (threadKey !== selectedThreadKey) {
       setAllowAutoSelectThread(false);
       syncSelectedThreadKeyFromExternal(threadKey);
+      // Keep subsequent metadata hydration from restoring the old selection.
+      // Do not use the interactive setter: it clears the message fragment.
+      actions.setSelectedThread?.(threadKey);
     }
     appliedFragmentThreadRef.current = appliedToken;
   }, [fragmentId, messages, selectedThreadKey]);

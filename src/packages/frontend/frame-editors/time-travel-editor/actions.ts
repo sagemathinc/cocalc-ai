@@ -162,7 +162,11 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
         // open the file that we're showing timetravel for, so that the
         // actions are available
         try {
-          await this.open_file({ foreground: false, explicit: false });
+          await this.open_file({
+            foreground: false,
+            explicit: false,
+            wait_for_ready: true,
+          });
         } catch (err) {
           console.warn(err);
         }

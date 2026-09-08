@@ -6,10 +6,13 @@
 // Focus: shared structural types used across git commit drawer parsing, diff rendering, and review state.
 
 import type { GitReviewCommentSide } from "../git-review-store";
+import type { GitSource } from "@cocalc/frontend/components/diff-viewer/review-model";
 
 export type GitShowFile = {
   path: string;
   lines: string[];
+  oldSource?: GitSource;
+  newSource?: GitSource;
 };
 
 export type GitShowSummary = {

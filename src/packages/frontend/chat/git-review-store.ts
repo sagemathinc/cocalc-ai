@@ -1,12 +1,170 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
+import { hash_string } from "@cocalc/util/misc";
 
 const REVIEW_STORE_V2 = "cocalc-git-review-v2";
 const REVIEW_STORE_V1 = "cocalc-commit-review-v1";
 const REVIEW_DRAFT_STORAGE_PREFIX = "cocalc:git-review:draft:v2:";
 const LEGACY_REVIEW_DRAFT_STORAGE_PREFIX = "cocalc:git-review:draft:v2:commit:";
-const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
+const COMMIT_HASH_RE = /^[0-9a-f]{7,64}$/i;
 const REVIEW_EXPORT_KIND = "cocalc-git-review-export-v1";
+const REVIEW_ALIAS_CHOICES = "cocalc-git-review-alias-choices-v1";
+
+export type ResolveReviewCommit = (input: string) => Promise<string>;
+
+type AliasInspection = {
+  full: string;
+  snapshots: Record<string, string>;
+  records: GitReviewRecordV2[];
+};
+type AliasChoice = { selected: string; snapshots: Record<string, string> };
+export class GitReviewAliasConflict extends Error {
+  constructor(public readonly inspection: AliasInspection) {
+    super(
+      `Conflicting review keys for ${inspection.full}: ${Object.keys(inspection.snapshots).join(", ")}. No records were changed. Choose the active review; other records will be retained.`,
+    );
+  }
+}
+function aliasChoiceStore(accountId: string) {
+  return webapp_client.conat_client.conat().sync.akv<AliasChoice>({
+    account_id: accountId,
+    name: REVIEW_ALIAS_CHOICES,
+  });
+}
+
+// Retain an existing legacy key until explicit reconciliation. New reviews use
+// the full repository-resolved ID; never create a competing canonical record.
+export async function resolveReviewStorageCommit({
+  accountId,
+  commitSha,
+  resolveCommit,
+}: {
+  accountId: string;
+  commitSha: string;
+  resolveCommit: ResolveReviewCommit;
+}): Promise<string> {
+  const inspection = await inspectReviewAliases({
+    accountId,
+    commitSha,
+    resolveCommit,
+  });
+  const keys = Object.keys(inspection.snapshots);
+  if (keys.length <= 1) return keys[0] ?? inspection.full;
+  const choice = await aliasChoiceStore(accountId).get(inspection.full);
+  if (
+    choice?.snapshots &&
+    keys.includes(choice.selected) &&
+    JSON.stringify(Object.keys(choice.snapshots).sort()) ===
+      JSON.stringify(keys.sort()) &&
+    keys.every(
+      (key) =>
+        key === choice.selected ||
+        choice.snapshots[key] === inspection.snapshots[key],
+    )
+  )
+    return choice.selected;
+  throw new GitReviewAliasConflict(inspection);
+}
+
+export async function chooseReviewAlias({
+  accountId,
+  conflict,
+  selected,
+  resolveCommit,
+}: {
+  accountId: string;
+  conflict: GitReviewAliasConflict;
+  selected: string;
+  resolveCommit: ResolveReviewCommit;
+}): Promise<void> {
+  const current = await inspectReviewAliases({
+    accountId,
+    commitSha: conflict.inspection.full,
+    resolveCommit,
+  });
+  if (
+    !Object.hasOwn(current.snapshots, selected) ||
+    JSON.stringify(current.snapshots) !==
+      JSON.stringify(conflict.inspection.snapshots)
+  )
+    throw Error(
+      "Review records changed while choosing. Reload the review and compare them again.",
+    );
+  // This only chooses a storage owner. It never merges, overwrites, or deletes
+  // any review or draft. Changes to another alias reopen the conflict.
+  await aliasChoiceStore(accountId).set(current.full, {
+    selected,
+    snapshots: current.snapshots,
+  });
+}
+
+async function inspectReviewAliases({
+  accountId,
+  commitSha,
+  resolveCommit,
+}: {
+  accountId: string;
+  commitSha: string;
+  resolveCommit: ResolveReviewCommit;
+}): Promise<AliasInspection> {
+  const full = (await resolveCommit(commitSha)).toLowerCase();
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(full))
+    throw Error("Git did not resolve the review to a full object ID.");
+  const cn = webapp_client.conat_client.conat();
+  const v2 = getReviewStore(accountId);
+  const v1 = cn.sync.akv<LegacyCommitReviewRecord>({
+    account_id: accountId,
+    name: REVIEW_STORE_V1,
+  });
+  const candidates = new Set<string>();
+  for (const key of await v2.keys()) {
+    if (key.startsWith("commit:")) candidates.add(key.slice(7));
+  }
+  for (const key of await v1.keys()) candidates.add(key);
+  try {
+    const prefix = makeDraftStoragePrefix(accountId);
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(prefix)) candidates.add(key.slice(prefix.length));
+    }
+  } catch {
+    // Server records still work when browser storage is disabled.
+  }
+  const snapshots: Record<string, string> = {};
+  const records: GitReviewRecordV2[] = [];
+  for (const candidate of [...candidates].sort()) {
+    const id = normalizeCommitSha(candidate);
+    if (!id || !full.startsWith(id)) continue;
+    // A prefix is not proof: Git must reject ambiguous abbreviations in this
+    // repository instead of associating another commit's review by string match.
+    if ((await resolveCommit(id)).toLowerCase() !== full)
+      throw Error("Legacy review abbreviation resolved to a different commit.");
+    const raw = await v2.get(`commit:${id}`);
+    const legacy = await v1.get(id);
+    const draft = loadReviewDraft(id, accountId);
+    if (raw != null || legacy != null || draft) {
+      snapshots[id] = JSON.stringify([
+        raw ?? null,
+        legacy ?? null,
+        draft ?? null,
+      ]);
+      const record = sanitizeReviewRecord(raw, {
+        accountId,
+        commitSha: id,
+      }) ?? {
+        ...emptyRecord({
+          accountId,
+          commitSha: id,
+          now: legacy?.updated_at ?? draft?.updated_at ?? 0,
+        }),
+        note: `${legacy?.note ?? ""}`,
+        reviewed: Boolean(legacy?.reviewed),
+      };
+      records.push(mergeRecordWithDraft(record, draft) ?? record);
+    }
+  }
+  return { full, snapshots, records };
+}
 
 type LegacyCommitReviewRecord = {
   version?: number;
@@ -18,7 +176,11 @@ type LegacyCommitReviewRecord = {
 };
 
 export type GitReviewCommentSide = "new" | "old" | "context";
-export type GitReviewCommentStatus = "draft" | "submitted" | "resolved";
+export type GitReviewCommentStatus =
+  | "draft"
+  | "submitted"
+  | "resolved"
+  | "conflict";
 
 export type GitReviewCommentV2 = {
   id: string;
@@ -38,11 +200,15 @@ export type GitReviewCommentV2 = {
 };
 
 export type GitReviewRecordV2 = {
+  // Transport-only concurrency token; never persisted or exported.
+  storageSequence?: number;
   version: 2;
   account_id: string;
   commit_sha: string;
   reviewed: boolean;
   note: string;
+  // Private recovery snapshots, never inline comments or agent feedback.
+  note_versions?: string[];
   comments: Record<string, GitReviewCommentV2>;
   last_submitted_at?: number;
   last_submission_turn_id?: string;
@@ -127,7 +293,7 @@ function emptyRecord({
 function sanitizeComment(input: unknown): GitReviewCommentV2 | undefined {
   const raw: any = input;
   const id = `${raw?.id ?? ""}`.trim();
-  const filePath = `${raw?.file_path ?? ""}`.trim();
+  const filePath = `${raw?.file_path ?? ""}`;
   const body = `${raw?.body_md ?? ""}`;
   if (!id || !filePath) return undefined;
   const sideRaw = `${raw?.side ?? ""}`.trim().toLowerCase();
@@ -135,7 +301,11 @@ function sanitizeComment(input: unknown): GitReviewCommentV2 | undefined {
     sideRaw === "old" || sideRaw === "context" ? sideRaw : "new";
   const statusRaw = `${raw?.status ?? ""}`.trim().toLowerCase();
   const status: GitReviewCommentStatus =
-    statusRaw === "submitted" || statusRaw === "resolved" ? statusRaw : "draft";
+    statusRaw === "submitted" ||
+    statusRaw === "resolved" ||
+    statusRaw === "conflict"
+      ? statusRaw
+      : "draft";
   const lineNum = Number(raw?.line);
   const createdAt = Number(raw?.created_at);
   const updatedAt = Number(raw?.updated_at);
@@ -165,7 +335,9 @@ function sanitizeComment(input: unknown): GitReviewCommentV2 | undefined {
   };
 }
 
-function sanitizeComments(input: unknown): Record<string, GitReviewCommentV2> {
+export function sanitizeComments(
+  input: unknown,
+): Record<string, GitReviewCommentV2> {
   const out: Record<string, GitReviewCommentV2> = {};
   if (!input || typeof input !== "object") return out;
   for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
@@ -202,6 +374,7 @@ function sanitizeReviewRecord(
     commit_sha: normalizedCommit,
     reviewed: Boolean(raw?.reviewed),
     note: `${raw?.note ?? ""}`,
+    note_versions: sanitizeNoteVersions(raw?.note_versions),
     comments: sanitizeComments(raw?.comments),
     last_submitted_at: Number.isFinite(lastSubmittedAt)
       ? lastSubmittedAt
@@ -214,6 +387,14 @@ function sanitizeReviewRecord(
     updated_at: Number.isFinite(updatedAt) ? updatedAt : now,
     revision: Number.isFinite(revision) ? Math.max(1, revision) : 1,
   };
+}
+
+function sanitizeNoteVersions(input: unknown): string[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const versions = [
+    ...new Set(input.filter((x): x is string => typeof x === "string")),
+  ];
+  return versions.length ? versions : undefined;
 }
 
 function getReviewStore(accountId: string) {
@@ -353,6 +534,42 @@ export function clearReviewDraftThroughUpdatedAt(
   clearReviewDraft(commitSha, accountId);
 }
 
+export function mergeRecoveredComments(
+  record: Record<string, GitReviewCommentV2> = {},
+  draft: Record<string, GitReviewCommentV2> = {},
+): Record<string, GitReviewCommentV2> {
+  const result = { ...record };
+  const content = (comment: GitReviewCommentV2) =>
+    JSON.stringify([
+      comment.body_md,
+      comment.file_path,
+      comment.side,
+      comment.line,
+      comment.hunk_header,
+      comment.hunk_hash,
+      comment.snippet,
+    ]);
+  for (const [id, local] of Object.entries(draft)) {
+    const remote = record[id];
+    if (!remote) {
+      result[id] = local;
+    } else if (content(remote) === content(local)) {
+      if (local.updated_at > remote.updated_at) result[id] = local;
+    } else {
+      // There is no trustworthy common ancestor in legacy draft snapshots.
+      // Preserve both bodies instead of guessing which author intent wins.
+      const fingerprint = content(local);
+      const base = `${id}:recovered:${hash_string(fingerprint)}`;
+      let key = base;
+      let suffix = 0;
+      while (result[key] && content(result[key]) !== fingerprint)
+        key = `${base}:${++suffix}`;
+      if (!result[key]) result[key] = { ...local, id: key, status: "conflict" };
+    }
+  }
+  return result;
+}
+
 export function mergeRecordWithDraft(
   record: GitReviewRecordV2 | undefined,
   draft: GitReviewDraftV2 | undefined,
@@ -363,18 +580,30 @@ export function mergeRecordWithDraft(
   const normalizedRecord = {
     ...record,
     comments: sanitizeComments(record.comments),
+    note_versions: sanitizeNoteVersions(record.note_versions),
   };
   if (!draft) return normalizedRecord;
-  if (draft.updated_at < normalizedRecord.updated_at) return normalizedRecord;
+  // Legacy drafts have no common ancestor. Keep both versions rather than
+  // treating a timestamp as proof that the other note can be discarded.
+  if (draft.note !== normalizedRecord.note) {
+    normalizedRecord.note_versions = sanitizeNoteVersions([
+      ...(normalizedRecord.note_versions ?? []),
+      normalizedRecord.note,
+      draft.note,
+    ]);
+  }
   const draftComments = sanitizeComments(draft.comments);
+  const comments = mergeRecoveredComments(
+    normalizedRecord.comments,
+    draftComments,
+  );
+  if (draft.updated_at < normalizedRecord.updated_at)
+    return { ...normalizedRecord, comments };
   return {
     ...normalizedRecord,
     reviewed: draft.reviewed,
     note: draft.note,
-    comments:
-      Object.keys(draftComments).length > 0
-        ? draftComments
-        : normalizedRecord.comments,
+    comments,
     updated_at: draft.updated_at,
     revision: Math.max(normalizedRecord.revision, draft.revision),
   };
@@ -383,21 +612,37 @@ export function mergeRecordWithDraft(
 export async function loadReviewRecord({
   accountId,
   commitSha,
+  resolveCommit,
 }: {
   accountId: string;
   commitSha: string;
+  resolveCommit?: ResolveReviewCommit;
 }): Promise<GitReviewRecordV2 | undefined> {
+  if (resolveCommit) {
+    const storageCommit = await resolveReviewStorageCommit({
+      accountId,
+      commitSha,
+      resolveCommit,
+    });
+    return (
+      (await loadReviewRecord({ accountId, commitSha: storageCommit })) ?? {
+        ...emptyRecord({ accountId, commitSha: storageCommit }),
+        storageSequence: 0,
+      }
+    );
+  }
   const normalizedCommit = normalizeCommitSha(commitSha);
   const key = makeReviewKey(commitSha);
   if (!normalizedCommit || !key) return undefined;
   const kvV2 = getReviewStore(accountId);
-  const current = sanitizeReviewRecord(await kvV2.get(key), {
+  const message = await kvV2.getMessage(key, { includeDeleted: true });
+  const current = sanitizeReviewRecord(message?.data, {
     accountId,
     commitSha: normalizedCommit,
   });
   if (current) {
     return mergeRecordWithDraft(
-      current,
+      { ...current, storageSequence: message?.headers?.seq as number },
       loadReviewDraft(normalizedCommit, accountId),
     );
   }
@@ -410,14 +655,22 @@ export async function loadReviewRecord({
   const draft = loadReviewDraft(normalizedCommit, accountId);
   if (!legacy) {
     if (!draft) {
-      return undefined;
+      return message
+        ? {
+            ...emptyRecord({ accountId, commitSha: normalizedCommit }),
+            storageSequence: message.headers?.seq as number,
+          }
+        : undefined;
     }
     return mergeRecordWithDraft(
-      emptyRecord({
-        accountId,
-        commitSha: normalizedCommit,
-        now: draft.updated_at ?? Date.now(),
-      }),
+      {
+        ...emptyRecord({
+          accountId,
+          commitSha: normalizedCommit,
+          now: draft.updated_at ?? Date.now(),
+        }),
+        storageSequence: (message?.headers?.seq as number) ?? 0,
+      },
       draft,
     );
   }
@@ -433,8 +686,13 @@ export async function loadReviewRecord({
     updated_at: typeof legacy.updated_at === "number" ? legacy.updated_at : now,
     revision: 1,
   };
-  await kvV2.set(key, migrated);
-  return mergeRecordWithDraft(migrated, draft);
+  const saved = await kvV2.set(key, migrated, {
+    previousSeq: (message?.headers?.seq as number) ?? 0,
+  });
+  return mergeRecordWithDraft(
+    { ...migrated, storageSequence: saved.seq },
+    draft,
+  );
 }
 
 export async function loadReviewRecords({
@@ -490,34 +748,52 @@ export async function saveReviewRecord(
   record: GitReviewRecordV2,
   opts?: {
     clearDraftThroughRevision?: number;
+    resolveCommit?: ResolveReviewCommit;
   },
 ): Promise<GitReviewRecordV2> {
   const accountId = `${record.account_id ?? ""}`.trim();
-  const commitSha = normalizeCommitSha(record.commit_sha);
+  const commitSha = normalizeCommitSha(
+    opts?.resolveCommit
+      ? await resolveReviewStorageCommit({
+          accountId,
+          commitSha: record.commit_sha,
+          resolveCommit: opts.resolveCommit,
+        })
+      : record.commit_sha,
+  );
   const key = makeReviewKey(commitSha);
   if (!accountId || !commitSha || !key) {
     throw new Error("invalid review record");
   }
   const kv = getReviewStore(accountId);
   const now = Date.now();
+  const { storageSequence, ...storedRecord } = record;
   const payload: GitReviewRecordV2 = {
-    ...record,
+    ...storedRecord,
     version: 2,
     account_id: accountId,
     commit_sha: commitSha,
     note: `${record.note ?? ""}`,
+    note_versions: sanitizeNoteVersions(record.note_versions),
     reviewed: Boolean(record.reviewed),
     comments: sanitizeComments(record.comments),
     updated_at: now,
     revision: Math.max(1, (record.revision ?? 0) + 1),
   };
-  await kv.set(key, payload);
+  let saved;
+  try {
+    saved = await kv.set(key, payload, { previousSeq: storageSequence ?? 0 });
+  } catch (error) {
+    throw new Error(
+      `Unable to save review; another window may have changed it. Your local draft was not cleared. Reload and reconcile before saving again. ${error}`,
+    );
+  }
   clearReviewDraftThroughRevision(
     commitSha,
     opts?.clearDraftThroughRevision,
     accountId,
   );
-  return payload;
+  return { ...payload, storageSequence: saved.seq };
 }
 
 export async function exportReviewBundle({
@@ -594,7 +870,7 @@ export async function importReviewBundle({
       skipped += 1;
       continue;
     }
-    const existing = sanitizeReviewRecord(existingAll[key], {
+    const existing = sanitizeReviewRecord(pending[key] ?? existingAll[key], {
       accountId: normalizedAccountId,
       commitSha: record.commit_sha,
     });
@@ -608,17 +884,22 @@ export async function importReviewBundle({
       commit_sha: record.commit_sha,
       revision: Math.max(record.revision ?? 1, existing?.revision ?? 1),
     };
+    if (pending[key]) skipped += 1;
+    else imported += 1;
     pending[key] = nextRecord;
-    clearReviewDraftThroughUpdatedAt(
-      record.commit_sha,
-      nextRecord.updated_at,
-      normalizedAccountId,
-    );
-    imported += 1;
   }
   if (imported > 0) {
     kv.setMany(pending);
     await kv.flush();
+    // Keep recovery drafts until the remote write is acknowledged. Recheck
+    // their timestamps here so edits made while flushing also survive.
+    for (const record of Object.values(pending)) {
+      clearReviewDraftThroughUpdatedAt(
+        record.commit_sha,
+        record.updated_at,
+        normalizedAccountId,
+      );
+    }
   }
   return {
     imported,
@@ -664,6 +945,16 @@ export async function deleteAllReviewRecords({
   const reviewKeys = Object.keys(kv.getAll()).filter((key) =>
     key.startsWith("commit:"),
   );
+  const choices = await getSharedAccountDkv<AliasChoice>({
+    account_id: normalizedAccountId,
+    name: REVIEW_ALIAS_CHOICES,
+  });
+  choices.setMany(
+    Object.fromEntries(
+      Object.keys(choices.getAll()).map((key) => [key, undefined]),
+    ),
+  );
+  await choices.flush();
   if (reviewKeys.length === 0) {
     clearAllReviewDrafts(normalizedAccountId, { includeLegacy: true });
     return { deleted: 0 };

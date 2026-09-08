@@ -171,6 +171,7 @@ function lineDiffFromRawChangeText(
   return {
     lines,
     types: lines.map(() => op),
+    source: { kind: op === 1 ? "add" : "delete", text },
     gutters: lines.map((_line, i) =>
       op === 1
         ? formatDiffGutter(undefined, i + 1, "+")
@@ -254,7 +255,13 @@ function lineDiffFromUnifiedPatch(
 
   pushBoundary();
   if (!diffLines.length) return undefined;
-  return { lines: diffLines, types, gutters, chunkBoundaries };
+  return {
+    lines: diffLines,
+    types,
+    gutters,
+    chunkBoundaries,
+    source: { kind: "unified", text: diffText },
+  };
 }
 
 function getFileChangeLineDiff(change: any): LineDiffResult | undefined {

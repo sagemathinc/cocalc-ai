@@ -9,6 +9,22 @@ import type { GitDiffScrollAnchor } from "./types";
 
 const DRAWER_LINE_SCROLL_PX = 40;
 
+// Reveal the reading viewport before spending scroll movement on its contents.
+export function revealGitReadingViewport(
+  outer: HTMLElement,
+  inner: HTMLElement,
+  delta: number,
+): number {
+  if (delta <= 0) return delta;
+  const remaining = Math.max(
+    0,
+    inner.getBoundingClientRect().top - outer.getBoundingClientRect().top,
+  );
+  const before = outer.scrollTop;
+  outer.scrollTop += Math.min(delta, remaining);
+  return delta - (outer.scrollTop - before);
+}
+
 export type GitDrawerScrollCommand =
   | "lineDown"
   | "lineUp"

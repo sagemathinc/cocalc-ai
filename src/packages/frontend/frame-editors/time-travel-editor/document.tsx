@@ -35,6 +35,7 @@ type TextDocumentProps = {
   editor_settings: AccountState["editor_settings"];
   value: string | (() => string);
   syntaxHighlightExtension?: string;
+  sourcePosition?: { line: number; column?: number; request?: number };
 };
 
 function readValue(value: string | (() => string)): string {
@@ -89,6 +90,22 @@ export function TextDocument(props: TextDocumentProps) {
     }
     requestAnimationFrame(refresh);
   }, [value]);
+
+  useEffect(() => {
+    const position = props.sourcePosition;
+    const cm = cmRef.current;
+    if (!position || !cm) return;
+    const line = position.line - 1;
+    if (!Number.isInteger(line) || line < 0 || line >= cm.lineCount()) return;
+    const target = { line, ch: Math.max(0, (position.column ?? 1) - 1) };
+    const frame = requestAnimationFrame(() => {
+      cm.refresh();
+      cm.setCursor(target);
+      cm.scrollIntoView(target, 80);
+      cm.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [props.sourcePosition, modePath, editor_settings]);
 
   return (
     <div

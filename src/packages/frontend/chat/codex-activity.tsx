@@ -31,12 +31,9 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { AttachedSteerMessage } from "./agent-message-status";
 import { formatCodexErrorForDisplay } from "./codex-error-presentation";
 import { lite } from "@cocalc/frontend/lite";
-import {
-  buildPrismLineMetasFromPlain,
-  highlightPrismLines,
-  languageHintFromPath,
-} from "./diff-prism";
 import { CodexVmApprovalPrompt } from "./codex-vm-approval";
+import { ActivityDiff } from "./activity-diff";
+import { activityPathContexts } from "./activity-path-context";
 
 const { Text } = Typography;
 type SubagentEvent = Extract<AcpStreamEvent, { type: "subagent" }>;
@@ -248,13 +245,17 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
       }),
     [entries, generating],
   );
-  const resolvedBasePath = useMemo(
-    () => detectBasePath(basePath, entries, chatPath),
+  const entryBasePaths = useMemo(
+    () =>
+      activityPathContexts(
+        entries,
+        basePath ?? (chatPath ? containingPath(chatPath) : undefined),
+      ),
     [basePath, entries, chatPath],
   );
   const editorTheme = useEffectiveEditorThemeForPath(
     projectId,
-    chatPath ?? resolvedBasePath,
+    chatPath ?? basePath,
   );
   const [expanded, setExpanded] = useState<boolean>(() => {
     if (persistKey) {
@@ -490,7 +491,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
             entry={entry}
             fontSize={baseFontSize}
             projectId={projectId}
-            basePath={resolvedBasePath}
+            basePath={entryBasePaths[index]}
             editorTheme={editorTheme}
             inlineCodeLinks={inlineCodeLinks}
           />
@@ -734,16 +735,17 @@ function ActivityRow({
                   path={entry.path}
                   projectId={projectId}
                   basePath={basePath}
+                  literal
                   bold
                 />
               </span>
             </TimestampTooltip>
             <ActivityTimestamp time={entry.time} />
           </Space>
-          <DiffPreview
+          <ActivityDiff
             diff={entry.diff}
+            path={entry.path ?? "activity.txt"}
             fontSize={fontSize}
-            languageHint={languageHintFromPath(entry.path)}
           />
         </div>
       );
@@ -1407,6 +1409,7 @@ function PathLink({
   fontSize,
   bold,
   basePath,
+  literal = false,
 }: {
   path?: string;
   line?: number;
@@ -1414,14 +1417,20 @@ function PathLink({
   fontSize?: number;
   bold?: boolean;
   basePath?: string;
+  literal?: boolean;
 }) {
   const actions =
     projectId != null ? redux.getProjectActions(projectId) : undefined;
   const parsedTarget = React.useMemo(
-    () => parsePathLineTarget(path, line),
-    [path, line],
+    () => (literal ? { path, line } : parsePathLineTarget(path, line)),
+    [path, line, literal],
   );
-  const resolvedPath = resolvePath(parsedTarget.path, basePath, projectId);
+  const resolvedPath = resolvePath(
+    parsedTarget.path,
+    basePath,
+    projectId,
+    literal,
+  );
   const onClick = React.useCallback(
     (e: React.MouseEvent) => {
       if (!actions || !resolvedPath) return;
@@ -1502,101 +1511,32 @@ export function parsePathLineTarget(
   };
 }
 
-function DiffPreview({
-  diff,
-  fontSize,
-  languageHint,
-}: {
-  diff: LineDiffResult;
-  fontSize: number;
-  languageHint: string;
-}) {
-  const lines = diff?.lines ?? [];
-  const codeFontSize = Math.max(11, fontSize - 1);
-  const chunkEnds = new Set(diff.chunkBoundaries ?? []);
-  const lineMetas = useMemo(() => buildPrismLineMetasFromPlain(lines), [lines]);
-  const highlightedByLine = useMemo(
-    () => highlightPrismLines(lineMetas, languageHint),
-    [lineMetas, languageHint],
-  );
-  if (lines.length === 0) {
-    // ?'s for old input
-    return (
-      <Text type="secondary" style={{ fontSize: Math.max(11, fontSize - 2) }}>
-        No changes detected.
-      </Text>
-    );
-  }
-  return (
-    <div
-      className="cocalc-slate-code-block"
-      style={{
-        marginTop: 6,
-        fontFamily: "monospace",
-        fontSize: codeFontSize,
-        border: `1px solid ${UI_COLORS.border}`,
-        borderRadius: 6,
-        overflow: "hidden",
-      }}
-    >
-      {lines.map((_line, i) => {
-        const op = diff.types[i] ?? 0;
-        const gutter = diff.gutters[i] ?? "";
-        const background =
-          op === -1
-            ? UI_COLORS.dangerBg
-            : op === 1
-              ? UI_COLORS.successBg
-              : "transparent";
-        const color = op === 0 ? UI_COLORS.secondary : "inherit";
-        const borderTop = chunkEnds.has(i)
-          ? `1px solid ${UI_COLORS.border}`
-          : "none";
-        const html = highlightedByLine[i] ?? "";
-        return (
-          <div
-            key={i}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "auto 1fr",
-              gap: 8,
-              padding: "2px 8px",
-              background,
-              color,
-              borderTop,
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            <span style={{ color: UI_COLORS.secondary }}>{gutter}</span>
-            <span
-              dangerouslySetInnerHTML={{
-                __html: html.length > 0 ? html : "&nbsp;",
-              }}
-            />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function resolvePath(
   path?: string,
   basePath?: string,
   projectId?: string,
+  literal = false,
 ): string | undefined {
-  const normalizedPath = normalizeSlashPath(path);
+  const normalizedPath = literal ? path : normalizeSlashPath(path);
   if (!normalizedPath) return undefined;
-  const absolutePath = normalizeAbsoluteMaybe(normalizedPath);
+  const absolutePath = literal
+    ? isAbsolutePath(normalizedPath)
+      ? normalizeAbsolutePath(normalizedPath)
+      : undefined
+    : normalizeAbsoluteMaybe(normalizedPath);
   if (absolutePath) return absolutePath;
   const homePath = normalizeAbsoluteMaybe(getProjectHomeDirectory(projectId));
-  if (normalizedPath === "~") return homePath;
-  if (normalizedPath.startsWith("~/")) {
+  if (!literal && normalizedPath === "~") return homePath;
+  if (!literal && normalizedPath.startsWith("~/")) {
     return homePath
       ? normalizeAbsolutePath(normalizedPath.slice(2), homePath)
       : undefined;
   }
-  const normalizedBase = normalizeAbsoluteMaybe(basePath);
+  // Context directories come from structured events, not prose.
+  const normalizedBase =
+    basePath && isAbsolutePath(basePath)
+      ? normalizeAbsolutePath(basePath)
+      : undefined;
   if (normalizedBase && homePath) {
     const homePrefix = homePath.endsWith("/") ? homePath : `${homePath}/`;
     if (normalizedBase === homePath || normalizedBase.startsWith(homePrefix)) {
@@ -1634,30 +1574,6 @@ function normalizeAbsoluteMaybe(path?: string): string | undefined {
   return isAbsolutePath(normalized)
     ? normalizeAbsolutePath(normalized)
     : undefined;
-}
-
-function detectBasePath(
-  configuredBasePath: string | undefined,
-  entries: ActivityEntry[],
-  chatPath?: string,
-): string | undefined {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    const cwd =
-      entry.kind === "terminal" || entry.kind === "file"
-        ? normalizeAbsoluteMaybe(entry.cwd)
-        : entry.kind === "config"
-          ? normalizeAbsoluteMaybe(entry.workingDirectory)
-          : undefined;
-    if (cwd) return cwd;
-  }
-  const explicit = normalizeAbsoluteMaybe(configuredBasePath);
-  if (explicit) return explicit;
-  const chatDir = chatPath
-    ? normalizeAbsoluteMaybe(containingPath(chatPath))
-    : undefined;
-  if (chatDir) return chatDir;
-  return undefined;
 }
 
 function ConfigRow({

@@ -12,6 +12,8 @@ const STATS_PATH = resolve(OUTPUT_DIR, "chunk-stats.json");
 const { chunks, groups } = JSON.parse(readFileSync(STATS_PATH, "utf8"));
 
 const loadAndAppForbidden = [
+  "@pierre/diffs/",
+  "@pierre/trees/",
   "pdfjs-dist/",
   "@xterm/xterm/",
   "frontend/jupyter/new-notebook",
@@ -56,6 +58,8 @@ const initialProjectSurfaceForbidden = [
 ];
 
 const signedInStartupRouteForbidden = [
+  "@pierre/diffs/",
+  "@pierre/trees/",
   "frontend/app/post-surface-banners.tsx",
   "frontend/app/post-surface-modals.tsx",
   "frontend/app/post-surface-right-nav.tsx",

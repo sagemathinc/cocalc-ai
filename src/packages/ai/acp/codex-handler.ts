@@ -1069,6 +1069,15 @@ export class CodexClientHandler implements TerminalClient {
     if (previous === next) return false;
     const diff = computeLineDiff(previous, next);
     if (!diff.lines.length) return false;
+    // These are the last observed read and requested write, not an atomic
+    // filesystem before/after pair. Keep complete context bounded in events.
+    if (Buffer.byteLength(previous) + Buffer.byteLength(next) <= 256 * 1024) {
+      diff.source = {
+        kind: "observed-documents",
+        before: previous,
+        after: next,
+      };
+    }
     await this.stream({
       type: "event",
       event: {

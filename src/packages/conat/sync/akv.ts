@@ -71,10 +71,13 @@ export class AKV<T = any> {
 
   getMessage = async (
     key: string,
-    { timeout }: { timeout?: number } = {},
+    {
+      timeout,
+      includeDeleted = false,
+    }: { timeout?: number; includeDeleted?: boolean } = {},
   ): Promise<Message<T> | undefined> => {
     const mesg = await this.stream.get({ key, timeout });
-    if (mesg?.headers?.[COCALC_TOMBSTONE_HEADER]) {
+    if (!includeDeleted && mesg?.headers?.[COCALC_TOMBSTONE_HEADER]) {
       return undefined;
     }
     return mesg;

@@ -20,7 +20,6 @@ import {
   Select,
   Space,
   Spin,
-  Switch,
   Typography,
   type MenuProps,
 } from "antd";
@@ -29,17 +28,10 @@ import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import {
-  memo,
-  type ComponentProps,
-  type ReactNode,
-  type RefObject,
-} from "react";
-import { Virtuoso } from "react-virtuoso";
-import { DiffFileSection } from "./diff-components";
-import { getRenderedDiffLineLimit } from "./diff-find";
+import { type ComponentProps, type ReactNode, type RefObject } from "react";
 import { buildGitReviewFileSectionId } from "./ids";
 import { ReviewNoteEditor } from "./review-editors";
+import { RecoveredNotes } from "./recovered-notes";
 import type {
   CommentAnchor,
   GitDiffFindMatch,
@@ -58,7 +50,6 @@ import type { GitReviewCommentV2 } from "../git-review-store";
 
 const CARD_BORDER_COLOR = UI_COLORS.border;
 const CARD_BACKGROUND = UI_COLORS.surface;
-const CARD_INSET_BACKGROUND = UI_COLORS.inset;
 const CARD_SHADOW = `0 1px 2px ${UI_COLORS.shadow}`;
 export const GIT_DIFF_LIST_FOOTER_SPACER_HEIGHT = 72;
 const EMPTY_GIT_REVIEW_COMMENTS: GitReviewCommentV2[] = [];
@@ -234,6 +225,7 @@ export function GitCommitDrawerTitle({
   );
   return (
     <div
+      className="git-review-navigation"
       style={{
         display: "flex",
         alignItems: "center",
@@ -249,12 +241,13 @@ export function GitCommitDrawerTitle({
               display: "flex",
               alignItems: "center",
               gap: 8,
-              flex: "1 1 760px",
-              minWidth: 360,
-              maxWidth: 980,
+              flex: "1 1 100%",
+              minWidth: 0,
             }}
           >
             <Select
+              aria-label="Commit"
+              showSearch={{ optionFilterProp: "search" }}
               size="small"
               value={commit}
               options={logOptions}
@@ -263,60 +256,88 @@ export function GitCommitDrawerTitle({
               style={{ minWidth: 0, flex: "1 1 auto" }}
               optionLabelProp="plainLabel"
             />
+            <Space.Compact size="small">
+              <Tooltip title="Newer commit (shortcut: k)">
+                <span style={{ display: "inline-flex" }}>
+                  <Button
+                    size="small"
+                    onClick={onGoNewer}
+                    disabled={!canGoNewer}
+                  >
+                    Newer
+                  </Button>
+                </span>
+              </Tooltip>
+              <Tooltip title="Older commit (shortcut: j)">
+                <span style={{ display: "inline-flex" }}>
+                  <Button
+                    size="small"
+                    onClick={onGoOlder}
+                    disabled={!canGoOlder}
+                  >
+                    Older
+                  </Button>
+                </span>
+              </Tooltip>
+            </Space.Compact>
           </div>
-          <Space size="small" wrap>
-            <Input
-              size="small"
-              allowClear
-              value={commitFilter}
-              placeholder="Filter commits"
-              style={{ width: 240 }}
-              onChange={(evt) => onCommitFilterChange(evt.target.value)}
-            />
-            <Checkbox
-              checked={showOnlyUnreviewedCommits}
-              onChange={(evt) => onToggleShowOnlyUnreviewed(evt.target.checked)}
-              style={{ whiteSpace: "nowrap" }}
-            >
-              Only unreviewed
-            </Checkbox>
-            <Typography.Text
-              type="secondary"
-              style={{ fontSize: 12, whiteSpace: "nowrap" }}
-            >
-              {filteredCommitCount.toLocaleString()} /{" "}
-              {recentCommitCount.toLocaleString()} recent commits
-            </Typography.Text>
-            <Popover trigger="click" content={progressPopover}>
-              <div
-                role="button"
-                tabIndex={0}
-                style={{
-                  width: 180,
-                  cursor: "pointer",
-                  lineHeight: 1,
-                }}
+          <Checkbox
+            checked={showOnlyUnreviewedCommits}
+            onChange={(evt) => onToggleShowOnlyUnreviewed(evt.target.checked)}
+            style={{ whiteSpace: "nowrap" }}
+          >
+            Only unreviewed
+          </Checkbox>
+          <details className="git-review-disclosure">
+            <summary>Review filters &amp; progress</summary>
+            <Space size="small" wrap>
+              <Input
+                size="small"
+                allowClear
+                value={commitFilter}
+                placeholder="Filter commits"
+                style={{ width: 200 }}
+                onChange={(evt) => onCommitFilterChange(evt.target.value)}
+              />
+
+              <Typography.Text
+                type="secondary"
+                style={{ fontSize: 12, whiteSpace: "nowrap" }}
               >
-                <Progress
-                  size="small"
-                  percent={reviewPercent}
-                  status={reviewComplete ? "success" : "normal"}
-                  strokeColor={reviewProgressColor}
-                  format={() => (
-                    <span>
-                      {reviewComplete ? (
-                        <>
-                          <Icon name="check" />{" "}
-                        </>
-                      ) : null}
-                      {reviewedRecentCommitCount.toLocaleString()} /{" "}
-                      {recentCommitCount.toLocaleString()}
-                    </span>
-                  )}
-                />
-              </div>
-            </Popover>
-          </Space>
+                {filteredCommitCount.toLocaleString()} /{" "}
+                {recentCommitCount.toLocaleString()} recent commits
+              </Typography.Text>
+              <Popover trigger="click" content={progressPopover}>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  style={{
+                    width: 120,
+                    cursor: "pointer",
+                    lineHeight: 1,
+                  }}
+                >
+                  <Progress
+                    size="small"
+                    percent={reviewPercent}
+                    status={reviewComplete ? "success" : "normal"}
+                    strokeColor={reviewProgressColor}
+                    format={() => (
+                      <span>
+                        {reviewComplete ? (
+                          <>
+                            <Icon name="check" />{" "}
+                          </>
+                        ) : null}
+                        {reviewedRecentCommitCount.toLocaleString()} /{" "}
+                        {recentCommitCount.toLocaleString()}
+                      </span>
+                    )}
+                  />
+                </div>
+              </Popover>
+            </Space>
+          </details>
           <Space.Compact size="small">
             <Input
               ref={diffFindInputRef}
@@ -324,7 +345,7 @@ export function GitCommitDrawerTitle({
               allowClear
               value={diffFindQuery}
               placeholder="Find in diff"
-              style={{ width: 220 }}
+              style={{ width: 160 }}
               onChange={(evt) => onDiffFindQueryChange(evt.target.value)}
               onPressEnter={(evt) => {
                 if ((evt as any)?.shiftKey) {
@@ -359,22 +380,6 @@ export function GitCommitDrawerTitle({
                 : `${activeDiffFindMatchIndex + 1} / ${diffFindMatchesLength}`}
             </Typography.Text>
           ) : null}
-          <Space.Compact size="small">
-            <Tooltip title="Newer commit (shortcut: k)">
-              <span style={{ display: "inline-flex" }}>
-                <Button size="small" onClick={onGoNewer} disabled={!canGoNewer}>
-                  Newer
-                </Button>
-              </span>
-            </Tooltip>
-            <Tooltip title="Older commit (shortcut: j)">
-              <span style={{ display: "inline-flex" }}>
-                <Button size="small" onClick={onGoOlder} disabled={!canGoOlder}>
-                  Older
-                </Button>
-              </span>
-            </Tooltip>
-          </Space.Compact>
           {canFindInChat ? (
             <Button
               size="small"
@@ -728,6 +733,7 @@ type GitReviewPanelProps = {
   isHeadSelected: boolean;
   reviewNoteEditing: boolean;
   reviewNote: string;
+  reviewNoteVersions?: string[];
   reviewNoteDraft: string;
   reviewNoteHistoryId: string;
   fontSize: number;
@@ -759,6 +765,7 @@ export function GitReviewPanel({
   isHeadSelected,
   reviewNoteEditing,
   reviewNote,
+  reviewNoteVersions,
   reviewNoteDraft,
   reviewNoteHistoryId,
   fontSize,
@@ -804,29 +811,19 @@ export function GitReviewPanel({
     </Button>
   );
   return (
-    <div
+    <section
+      className="git-review-private"
+      aria-label="Private review"
       style={{
-        border: `1px solid ${CARD_BORDER_COLOR}`,
-        borderRadius: 8,
-        borderLeft: `4px solid ${UI_COLORS.primary}`,
-        padding: 12,
-        marginBottom: 12,
-        background: CARD_BACKGROUND,
+        borderBlock: `1px solid ${UI_COLORS.border}`,
         color: UI_COLORS.text,
-        boxShadow: CARD_SHADOW,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: 10,
-          marginBottom: 8,
-          flexWrap: "wrap",
-          overflow: "visible",
-        }}
-      >
+      <div className="git-review-private-toolbar">
+        <div className="git-review-private-label">
+          <strong>Private review</strong>
+          <span style={{ color: UI_COLORS.secondary }}>Only you</span>
+        </div>
         <Checkbox
           checked={reviewed}
           disabled={
@@ -836,40 +833,40 @@ export function GitReviewPanel({
             !currentReviewCommit ||
             isHeadSelected
           }
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            alignSelf: "flex-start",
-            minHeight: 22,
-            lineHeight: "20px",
-          }}
-          onChange={(e) => onToggleReviewed(e.target.checked)}
+          onChange={(event) => onToggleReviewed(event.target.checked)}
         >
-          <span style={{ fontWeight: 600 }}>Reviewed</span>
+          Reviewed
         </Checkbox>
-        <div style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
-          <Space size={8} align="center">
-            {resolvedInlineCount > 0 ? (
-              <>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  Show resolved
-                </Typography.Text>
-                <Switch
-                  size="small"
-                  checked={showResolvedComments}
-                  onChange={onToggleShowResolvedComments}
-                />
-              </>
-            ) : null}
-            <span>
-              {reviewSaving ? "Saving..." : null}
-              {!reviewSaving && reviewUpdatedAt ? (
-                <>
-                  Updated <TimeAgo date={new Date(reviewUpdatedAt)} />
-                </>
-              ) : null}
-            </span>
-          </Space>
+        {!reviewNoteEditing && (
+          <Button
+            size="small"
+            type="link"
+            disabled={
+              reviewSaving ||
+              !accountId ||
+              !currentReviewCommit ||
+              isHeadSelected
+            }
+            onClick={onStartEditingReviewNote}
+          >
+            {reviewNote?.trim() ? "Edit private note" : "Add private note"}
+          </Button>
+        )}
+        <div className="git-review-private-send">
+          {inlineCommentCount > 0 && (
+            <Typography.Text type="secondary">
+              {inlineCommentCount} comments
+            </Typography.Text>
+          )}
+          <Tooltip
+            title={
+              reviewSubmissionHelpText && !canRequestAgentTurn
+                ? reviewSubmissionHelpText
+                : "Only draft inline comments are sent. Private notes and review status stay private."
+            }
+          >
+            <span style={{ display: "inline-flex" }}>{submitButton}</span>
+          </Tooltip>
         </div>
       </div>
       {reviewNoteEditing ? (
@@ -890,98 +887,41 @@ export function GitReviewPanel({
           onCancel={onCancelReviewNote}
           onSave={onSaveReviewNote}
         />
-      ) : (
-        <div
-          style={{
-            border: `1px solid ${UI_COLORS.border}`,
-            borderRadius: 6,
-            padding: "8px 10px",
-            background: CARD_INSET_BACKGROUND,
-            minHeight: 40,
-          }}
-        >
-          {reviewNote?.trim() ? (
-            <StaticMarkdown
-              value={reviewNote}
-              style={{ fontSize: Math.max(13, fontSize) }}
-              editorTheme={editorTheme}
-            />
-          ) : (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              No private review note yet.
-            </Typography.Text>
-          )}
+      ) : reviewNote?.trim() ? (
+        <div className="git-review-private-note">
+          <StaticMarkdown
+            value={reviewNote}
+            style={{ fontSize: Math.max(13, fontSize) }}
+            editorTheme={editorTheme}
+          />
+        </div>
+      ) : null}
+      <RecoveredNotes versions={reviewNoteVersions} current={reviewNote} />
+      {(reviewError || reviewLoading || reviewSaving) && (
+        <div role="status" style={{ color: UI_COLORS.secondary }}>
+          {reviewError ||
+            (reviewLoading ? "Loading review state..." : "Saving...")}
         </div>
       )}
-      <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 6 }}>
-        This note and the Reviewed checkbox are private state only. They are not
-        sent to the agent.
-      </Typography.Text>
-      <div
-        style={{
-          marginTop: 8,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "flex-start",
-          gap: 8,
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
-          {reviewError || (reviewLoading ? "Loading review state..." : "")}
-          {!reviewError && !reviewLoading && inlineCommentCount > 0
-            ? ` · ${inlineCommentCount} inline comments`
-            : ""}
+      {resolvedInlineCount > 0 && (
+        <Checkbox
+          checked={showResolvedComments}
+          onChange={(event) =>
+            onToggleShowResolvedComments(event.target.checked)
+          }
+        >
+          Show resolved comments ({resolvedInlineCount})
+        </Checkbox>
+      )}
+      {reviewUpdatedAt && (
+        <div
+          className="git-review-updated"
+          style={{ color: UI_COLORS.secondary }}
+        >
+          Updated <TimeAgo date={new Date(reviewUpdatedAt)} />
         </div>
-        {!reviewNoteEditing ? (
-          <Button
-            size="small"
-            disabled={
-              reviewSaving ||
-              !accountId ||
-              !currentReviewCommit ||
-              isHeadSelected
-            }
-            onClick={onStartEditingReviewNote}
-          >
-            Edit
-          </Button>
-        ) : null}
-      </div>
-      <div
-        style={{
-          marginTop: 8,
-          border: `1px solid ${UI_COLORS.border}`,
-          borderRadius: 6,
-          background: CARD_INSET_BACKGROUND,
-          padding: "8px 10px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-          flexWrap: "wrap",
-        }}
-      >
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          Send only draft inline diff comments (created with the <code>+</code>{" "}
-          buttons in the patch below).
-        </Typography.Text>
-        {reviewSubmissionHelpText && !canRequestAgentTurn ? (
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {reviewSubmissionHelpText}
-          </Typography.Text>
-        ) : null}
-        <Space.Compact size="small">
-          {reviewSubmissionHelpText && !canRequestAgentTurn ? (
-            <Tooltip title={reviewSubmissionHelpText}>
-              <span style={{ display: "inline-flex" }}>{submitButton}</span>
-            </Tooltip>
-          ) : (
-            submitButton
-          )}
-        </Space.Compact>
-      </div>
-    </div>
+      )}
+    </section>
   );
 }
 
@@ -1138,7 +1078,7 @@ export function GitCommitDetailsPanel({
 type GitChangedFilesPanelProps = {
   files: GitShowFile[];
   inlineCommentsByFile: Map<string, GitReviewCommentV2[]>;
-  onOpenFileDiff: (index: number) => void;
+  onOpenFileDiff: (index: number, behavior: "auto") => void;
 };
 
 export function GitChangedFilesPanel({
@@ -1149,54 +1089,49 @@ export function GitChangedFilesPanel({
   return (
     <div
       style={{
-        marginBottom: 18,
-        padding: "10px 12px",
-        border: `1px solid ${CARD_BORDER_COLOR}`,
-        borderRadius: 10,
-        background: CARD_BACKGROUND,
+        padding: "4px 0",
         color: UI_COLORS.text,
-        boxShadow: CARD_SHADOW,
       }}
     >
-      <Typography.Text strong style={{ display: "block", marginBottom: 10 }}>
-        Changed files
-      </Typography.Text>
-      <div
+      <label
         style={{
           display: "flex",
-          flexDirection: "column",
-          gap: 6,
+          alignItems: "center",
+          gap: 12,
+          whiteSpace: "nowrap",
+          fontSize: 12,
         }}
       >
-        {files.map((file, idx) => {
-          const sectionId = buildGitReviewFileSectionId(file.path, idx);
-          const fileComments =
-            inlineCommentsByFile.get(file.path) ?? EMPTY_GIT_REVIEW_COMMENTS;
-          return (
-            <Button
-              key={`file-index-${sectionId}`}
-              size="small"
-              style={{
-                alignSelf: "flex-start",
-                fontFamily: "monospace",
-                maxWidth: "100%",
-                overflow: "hidden",
-                textAlign: "left",
-                textOverflow: "ellipsis",
-              }}
-              onClick={() => onOpenFileDiff(idx)}
-            >
-              {file.path}
-              {fileComments.length > 0 ? ` (${fileComments.length})` : ""}
-            </Button>
-          );
-        })}
-      </div>
+        Changed files
+        <select
+          aria-label="Changed files"
+          value=""
+          onChange={(event) =>
+            onOpenFileDiff(Number(event.target.value), "auto")
+          }
+          style={{ width: "100%", minWidth: 0 }}
+        >
+          <option value="" disabled>
+            Choose a file ({files.length})
+          </option>
+          {files.map((file, idx) => {
+            const sectionId = buildGitReviewFileSectionId(file.path, idx);
+            const fileComments =
+              inlineCommentsByFile.get(file.path) ?? EMPTY_GIT_REVIEW_COMMENTS;
+            return (
+              <option key={`file-index-${sectionId}`} value={idx}>
+                {file.path}
+                {fileComments.length > 0 ? ` (${fileComments.length})` : ""}
+              </option>
+            );
+          })}
+        </select>
+      </label>
     </div>
   );
 }
 
-type GitDiffFilesPanelProps = {
+export type GitDiffFilesPanelProps = {
   files: GitShowFile[];
   drawerScrollParent: HTMLElement | null;
   virtuosoRef: RefObject<any>;
@@ -1208,6 +1143,7 @@ type GitDiffFilesPanelProps = {
   isHeadSelected: boolean;
   visibleDiffLinesByFile: Record<string, number>;
   onOpenFile: (filePath: string) => Promise<void>;
+  onViewFile?: (filePath: string, side?: "old" | "new") => void;
   onShowMoreLines: (sectionId: string) => void;
   activeDraftAnchorId?: string;
   activeDraftBody: string;
@@ -1228,124 +1164,6 @@ type GitDiffFilesPanelProps = {
   diffFindMatchedLineIndexes: Map<number, Set<number>>;
   activeDiffFindMatch?: GitDiffFindMatch;
 };
-
-export const GitDiffFilesPanel = memo(function GitDiffFilesPanel({
-  files,
-  drawerScrollParent,
-  virtuosoRef,
-  fontSize,
-  editorTheme,
-  reviewEditorScope,
-  inlineCommentsByFile,
-  showResolvedComments,
-  isHeadSelected,
-  visibleDiffLinesByFile,
-  onOpenFile,
-  onShowMoreLines,
-  activeDraftAnchorId,
-  activeDraftBody,
-  activeEditingId,
-  activeEditingBody,
-  pendingKey,
-  onOpenDraft,
-  onDraftBodyChange,
-  onCancelDraft,
-  onOpenEdit,
-  onEditingBodyChange,
-  onCancelEdit,
-  onCreateComment,
-  onUpdateComment,
-  onResolveComment,
-  onReopenComment,
-  diffFindMatchCounts,
-  diffFindMatchedLineIndexes,
-  activeDiffFindMatch,
-}: GitDiffFilesPanelProps) {
-  return (
-    <DiffVirtualizedList
-      files={files}
-      drawerScrollParent={drawerScrollParent}
-      virtuosoRef={virtuosoRef}
-      itemContent={(idx, file) => {
-        const sectionId = buildGitReviewFileSectionId(file.path, idx);
-        const fileComments =
-          inlineCommentsByFile.get(file.path) ?? EMPTY_GIT_REVIEW_COMMENTS;
-        return (
-          <DiffFileSection
-            file={file}
-            index={idx}
-            fontSize={fontSize}
-            editorTheme={editorTheme}
-            editorHistoryScope={reviewEditorScope}
-            fileComments={fileComments}
-            showResolvedComments={showResolvedComments}
-            isHeadSelected={isHeadSelected}
-            visibleLineLimit={getRenderedDiffLineLimit(
-              visibleDiffLinesByFile[sectionId],
-            )}
-            onOpenFile={onOpenFile}
-            onShowMoreLines={onShowMoreLines}
-            activeDraftAnchorId={activeDraftAnchorId}
-            activeDraftBody={activeDraftBody}
-            activeEditingId={activeEditingId}
-            activeEditingBody={activeEditingBody}
-            pendingKey={pendingKey}
-            onOpenDraft={onOpenDraft}
-            onDraftBodyChange={onDraftBodyChange}
-            onCancelDraft={onCancelDraft}
-            onOpenEdit={onOpenEdit}
-            onEditingBodyChange={onEditingBodyChange}
-            onCancelEdit={onCancelEdit}
-            onCreateComment={onCreateComment}
-            onUpdateComment={onUpdateComment}
-            onResolveComment={onResolveComment}
-            onReopenComment={onReopenComment}
-            matchedFindCount={diffFindMatchCounts.get(idx) ?? 0}
-            matchedLineIndexes={diffFindMatchedLineIndexes.get(idx)}
-            activeFindMatchKind={
-              activeDiffFindMatch?.fileIndex === idx
-                ? activeDiffFindMatch.kind
-                : undefined
-            }
-            activeFindLineIndex={
-              activeDiffFindMatch?.fileIndex === idx
-                ? activeDiffFindMatch.lineIndex
-                : undefined
-            }
-          />
-        );
-      }}
-    />
-  );
-});
-
-function DiffVirtualizedList({
-  files,
-  drawerScrollParent,
-  virtuosoRef,
-  itemContent,
-}: {
-  files: GitShowFile[];
-  drawerScrollParent: HTMLElement | null;
-  virtuosoRef: RefObject<any>;
-  itemContent: (idx: number, file: GitShowFile) => ReactNode;
-}) {
-  return (
-    <Virtuoso
-      ref={virtuosoRef}
-      customScrollParent={drawerScrollParent ?? undefined}
-      data={files}
-      components={{
-        Footer: GitDiffListFooterSpacer,
-      }}
-      computeItemKey={(idx, file) =>
-        buildGitReviewFileSectionId(file.path, idx)
-      }
-      increaseViewportBy={1200}
-      itemContent={itemContent}
-    />
-  );
-}
 
 export function GitDiffListFooterSpacer() {
   return (

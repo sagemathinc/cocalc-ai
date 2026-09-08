@@ -15,7 +15,7 @@ import type {
 
 export const MAX_GIT_SHOW_LINES = 20_000;
 export const DEFAULT_GIT_LOG_FETCH_COUNT = 500;
-const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
+const COMMIT_HASH_RE = /^[0-9a-f]{7,64}$/i;
 
 export function buildGitShowArgs({
   isHeadSelected,
@@ -122,7 +122,7 @@ function parseGitShowSummary(summaryLines: string[]): GitShowSummary {
       }
       continue;
     }
-    const commitMatch = /^commit\s+([0-9a-f]{7,40})/i.exec(line);
+    const commitMatch = /^commit\s+([0-9a-f]{7,64})(?=\s|$)/i.exec(line);
     if (commitMatch) {
       parsed.commit = `${commitMatch[1]}`.toLowerCase();
       continue;
