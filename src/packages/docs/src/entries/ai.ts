@@ -9,6 +9,10 @@ import {
   AI_CREDENTIALS_BODY,
   CODEX_CHAT_BODY,
   CODEX_SETTINGS_BODY,
+  CODEX_CONVERSATIONS_BODY,
+  CODEX_GOALS_BODY,
+  CODEX_AUTOMATION_BODY,
+  CODEX_NOTIFICATIONS_BODY,
 } from "../content";
 
 export const AI_ENTRIES: DocsEntry[] = [
@@ -71,5 +75,79 @@ export const AI_ENTRIES: DocsEntry[] = [
     summary:
       "Choose access, models, reasoning, speed, defaults, and parallel workers.",
     title: "Configure Codex chats",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: CODEX_CONVERSATIONS_BODY.trim(),
+    category: "AI",
+    id: "ai.codex-conversations",
+    image: docsIcon(
+      "/public/docs/codex-chat-3008e11e.webp",
+      "Codex working in a CoCalc project",
+    ),
+    lastReviewed: "2026-09-07",
+    noActionReason:
+      "This workflow uses controls in an existing chat or account; start from the linked Open Codex chat guide.",
+    slug: "ai/codex-conversations",
+    status: "ready",
+    summary:
+      "Steer running work, manage queued messages, choose a working directory, and fork context.",
+    title: "Guide and fork Codex conversations",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: CODEX_GOALS_BODY.trim(),
+    category: "AI",
+    id: "ai.codex-goals",
+    image: docsIcon(
+      "/public/docs/codex-chat-3008e11e.webp",
+      "Codex working in a CoCalc project",
+    ),
+    lastReviewed: "2026-09-07",
+    noActionReason:
+      "This workflow uses controls in an existing chat or account; start from the linked Open Codex chat guide.",
+    slug: "ai/codex-goals",
+    status: "ready",
+    summary:
+      "Manage continuing objectives and answer blocking or asynchronous questions.",
+    title: "Goals and questions",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: CODEX_AUTOMATION_BODY.trim(),
+    category: "AI",
+    id: "ai.codex-automation",
+    image: docsIcon(
+      "/public/docs/codex-chat-3008e11e.webp",
+      "Codex working in a CoCalc project",
+    ),
+    lastReviewed: "2026-09-07",
+    noActionReason:
+      "This workflow uses controls in an existing chat or account; start from the linked Open Codex chat guide.",
+    slug: "ai/codex-automation",
+    status: "ready",
+    summary:
+      "Schedule Codex prompts or Bash commands, review runs, and pause automation.",
+    title: "Schedule agent work",
+  },
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: CODEX_NOTIFICATIONS_BODY.trim(),
+    category: "AI",
+    id: "ai.codex-notifications",
+    searchKeywords:
+      "Stop all active or uncertain completion notifications inbox email toast browser activity sessions",
+    image: docsIcon(
+      "/public/docs/codex-chat-3008e11e.webp",
+      "Codex working in a CoCalc project",
+    ),
+    lastReviewed: "2026-09-07",
+    noActionReason:
+      "This workflow uses controls in an existing chat or account; start from the linked Open Codex chat guide.",
+    slug: "ai/codex-notifications",
+    status: "ready",
+    summary:
+      "Choose completion notifications and inspect or stop ongoing Codex sessions.",
+    title: "Notifications and session activity",
   },
 ];
