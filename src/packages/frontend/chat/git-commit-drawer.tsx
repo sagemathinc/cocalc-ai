@@ -153,6 +153,7 @@ import {
   scrollGitDrawerElementIntoView,
 } from "./git-commit/drawer-scroll";
 import { GitReviewTitle } from "./git-commit/review-title";
+import { CommitDetailsDisclosure } from "./git-commit/commit-details-disclosure";
 import {
   formatMergeCommitBodyMarkdown,
   hasExpandedTextSelectionWithin,
@@ -3736,8 +3737,7 @@ export function GitCommitDrawer({
         {!showCommitLoading && !error && currentData ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {currentData.summaryLines.length ? (
-              <details className="git-review-disclosure">
-                <summary>Commit details</summary>
+              <CommitDetailsDisclosure>
                 <GitCommitDetailsPanel
                   summary={currentData.summary}
                   commit={commit}
@@ -3746,7 +3746,7 @@ export function GitCommitDrawer({
                   editorTheme={editorTheme}
                   headRefLabel={HEAD_REF}
                 />
-              </details>
+              </CommitDetailsDisclosure>
             ) : null}
             {currentData.files.length === 0 ? (
               <GitEmptyCommitDiff />

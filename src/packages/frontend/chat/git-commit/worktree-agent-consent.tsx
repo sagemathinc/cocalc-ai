@@ -1,3 +1,5 @@
+import { Checkbox } from "antd";
+
 export function WorktreeAgentConsent({
   path,
   checked,
@@ -10,15 +12,14 @@ export function WorktreeAgentConsent({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label style={{ display: "block", margin: "8px 0" }}>
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-      />{" "}
+    <Checkbox
+      style={{ display: "flex", margin: "8px 0" }}
+      checked={checked}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.checked)}
+    >
       Send agent feedback in {path} (a new thread is created if the current
       thread uses another directory)
-    </label>
+    </Checkbox>
   );
 }

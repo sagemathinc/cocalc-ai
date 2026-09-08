@@ -15,6 +15,23 @@ const COMMIT_SEARCH_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:commitSearch";
 const RECENT_CUTOFF_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:recentCutoff";
 const FETCH_COUNT_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:fetchCount";
 const SHOW_MERGES_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:showMerges";
+const DETAILS_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:showDetails";
+
+export function readGitReviewDetailsPreference(): boolean {
+  try {
+    return localStorage.getItem(DETAILS_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function persistGitReviewDetailsPreference(value: boolean): void {
+  try {
+    localStorage.setItem(DETAILS_STORAGE_KEY, String(value));
+  } catch {
+    // Keep the disclosure usable when browser storage is unavailable.
+  }
+}
 const MAX_DRAWER_SCROLL_ENTRIES = 50;
 const DEFAULT_DRAWER_SIZE = 920;
 const MIN_DRAWER_SIZE = 520;

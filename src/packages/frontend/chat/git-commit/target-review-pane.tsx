@@ -1,4 +1,4 @@
-import { Alert, Button, Input } from "antd";
+import { Alert, Button, Checkbox, Input } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   GitSource,
@@ -520,20 +520,18 @@ export function TargetReviewPane({
           />
         </label>
       </details>
-      <label>
-        <input
-          type="checkbox"
-          disabled={!ready || busy}
-          checked={draft.body.reviewed}
-          onChange={(event) =>
-            change({
-              ...draft,
-              body: { ...draft.body, reviewed: event.target.checked },
-            })
-          }
-        />{" "}
+      <Checkbox
+        disabled={!ready || busy}
+        checked={draft.body.reviewed}
+        onChange={(event) =>
+          change({
+            ...draft,
+            body: { ...draft.body, reviewed: event.target.checked },
+          })
+        }
+      >
         Reviewed this comparison
-      </label>{" "}
+      </Checkbox>{" "}
       <Button
         disabled={!ready || busy || Boolean(editor)}
         onClick={() => void save(false)}

@@ -1,4 +1,4 @@
-import { Alert, Button, Select } from "antd";
+import { Alert, Button, Checkbox, Select } from "antd";
 import { useEffect, useId, useRef, useState } from "react";
 import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
@@ -137,31 +137,27 @@ export function GitHistoryControls({
         </div>
         <details className="git-review-disclosure">
           <summary>History options</summary>
-          <label>
-            <input
-              type="checkbox"
-              checked={draft.firstParent}
-              disabled={disabled || busy}
-              onChange={(event) =>
-                setDraft({ ...draft, firstParent: event.target.checked })
-              }
-            />{" "}
+          <Checkbox
+            checked={draft.firstParent}
+            disabled={disabled || busy}
+            onChange={(event) =>
+              setDraft({ ...draft, firstParent: event.target.checked })
+            }
+          >
             First-parent history
-          </label>
+          </Checkbox>
           <p>
             Browsing never checks out a branch. Ref tips stay pinned until you
             refresh.
           </p>
         </details>
         {onShowMergesChange && (
-          <label>
-            <input
-              type="checkbox"
-              checked={showMerges}
-              onChange={(event) => onShowMergesChange(event.target.checked)}
-            />{" "}
+          <Checkbox
+            checked={showMerges}
+            onChange={(event) => onShowMergesChange(event.target.checked)}
+          >
             Show merge commits
-          </label>
+          </Checkbox>
         )}
         <Button
           size="small"
