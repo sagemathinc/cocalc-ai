@@ -19,6 +19,26 @@ while retaining correctness and personal review-data preservation checks.
 The dated progress notes below are chronological; an old "pending" statement is
 not a current checklist. The objective is not complete. Current release work:
 
+Remaining live acceptance gaps (September 8):
+
+- Actual agent command execution in the selected worktree: persisted dispatch
+  context was verified, but the connected account rejected execution at its
+  usage limit. Do not repeatedly resubmit without changed quota/account state.
+- Activity diffs in a completed real turn: component and producer checks pass,
+  but the supplied `x.chat` test threads contain computation/time queries, an
+  empty human thread, and quota-failed review turns. A suitable existing turn
+  was requested from the maintainer; no replacement agent run was submitted.
+- Intermittent cold originating-link behavior: the archived-directory fixture
+  and subsequent route tests pass, but an earlier disappearance and transient
+  missing URL were not reproduced with a demonstrated production root cause.
+  Keep the bounded navigation diagnostics rather than claiming this fixed.
+
+The standard live route suite was rerun against the current deployed build and
+passed deep-link opening, selection, reload, Escape, Back/Forward, preservation
+of unrelated parameters and absence of page errors. This does not substitute
+for the cold originating-link case above. The remaining scope is still the
+complete acceptance matrix below, not just these three live checks.
+
 | Requirement | Current evidence and remaining work |
 | --- | --- |
 | Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Live detached-worktree unique/ambiguous/absent cases, moved-ref pinning, and exact working-copy file opening in both renderers passed (details below). Actual agent dispatch remains a separate acceptance case. |
