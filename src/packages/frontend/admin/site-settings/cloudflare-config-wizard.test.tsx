@@ -263,6 +263,33 @@ describe("CloudflareConfigWizard", () => {
     expect(document.body).not.toHaveTextContent(/screenshot/i);
     expect(document.querySelector("img")).toBeNull();
     expect(
+      screen
+        .getAllByRole("heading", { level: 5 })
+        .map((heading) => heading.textContent),
+    ).toEqual([
+      "Step 1 - Cloudflare mode",
+      "Step 2 - External domain",
+      "Step 3 - Cloudflare Tokens",
+      "Step 4 - Ensure R2 is Enabled in your Cloudflare account",
+      "Step 5 - Resource names",
+      "Step 6 - Diagnostics",
+    ]);
+    expect(
+      screen.getByRole("link", { name: "Cloudflare dashboard" }),
+    ).toHaveAttribute("href", "https://dash.cloudflare.com/");
+    expect(
+      screen.getByRole("link", { name: "R2 setup guide" }),
+    ).toHaveAttribute(
+      "href",
+      "https://developers.cloudflare.com/r2/get-started/",
+    );
+    expect(document.body).toHaveTextContent(
+      "complete the subscription checkout",
+    );
+    expect(document.body).toHaveTextContent(
+      "do not need to create buckets or keys manually",
+    );
+    expect(
       screen.getByRole("textbox", { name: "R2 bucket prefix" }),
     ).toBeDisabled();
   });
@@ -808,7 +835,7 @@ describe("CloudflareConfigWizard", () => {
       />,
     );
 
-    expect(screen.getByText("Step 5 - Diagnostics")).toBeInTheDocument();
+    expect(screen.getByText("Step 6 - Diagnostics")).toBeInTheDocument();
     expect(
       screen.getByText(
         "Settings saved. Test visitor location headers and R2 backup credentials.",

@@ -503,65 +503,99 @@ export default function CloudflareConfigWizard({
                     />
                   </FormItem>
                 </WizardStep>
-                {open && (
-                  <CloudflareBootstrap
-                    disabled={applying || provisioning || tunnelApplying}
-                    runFreshAuthAction={runFreshAuthAction}
-                    token={bootstrapToken}
-                    setToken={setBootstrapToken}
-                    domain={externalDomain}
-                    tunnelPrefix={tunnelPrefix}
-                    hostSuffix={hostSuffix}
-                    r2BucketPrefix={r2BucketPrefix}
-                    onBusy={setBootstrapping}
-                    onSaved={(result) => {
-                      // Only copy known non-secret settings. The server already saved
-                      // the durable tokens; never pass result.values to onApply.
-                      const values: Record<string, string> = {};
-                      for (const key of [
-                        "dns",
-                        "cloudflare_mode",
-                        "project_hosts_cloudflare_tunnel_enabled",
-                        "project_hosts_cloudflare_tunnel_account_id",
-                        "project_hosts_cloudflare_tunnel_prefix",
-                        "project_hosts_cloudflare_tunnel_host_suffix",
-                        "r2_account_id",
-                        "r2_access_key_id",
-                        "r2_bucket_prefix",
-                      ]) {
-                        if (typeof result.values[key] === "string")
-                          values[key] = result.values[key];
-                      }
-                      setSavedData((current) => ({ ...current, ...values }));
-                      setSavedIsSet((current) => ({
-                        ...current,
-                        project_hosts_cloudflare_tunnel_api_token: true,
-                        r2_api_token: true,
-                        ...(result.r2.ok ? { r2_secret_access_key: true } : {}),
-                      }));
-                      setAccountId(
-                        values.project_hosts_cloudflare_tunnel_account_id ??
-                          result.account_id ??
-                          "",
-                      );
-                      setExternalDomain(values.dns ?? externalDomain);
-                      setTunnelPrefix(
-                        values.project_hosts_cloudflare_tunnel_prefix ??
-                          tunnelPrefix,
-                      );
-                      setHostSuffix(
-                        values.project_hosts_cloudflare_tunnel_host_suffix ??
-                          hostSuffix,
-                      );
-                      setR2BucketPrefix(
-                        values.r2_bucket_prefix ?? r2BucketPrefix,
-                      );
-                      setR2AccessKey(values.r2_access_key_id ?? r2AccessKey);
-                      setBlobResult(undefined);
-                    }}
-                  />
-                )}
-                <WizardStep title="Step 3 - R2 backups">
+                <WizardStep title="Step 3 - Cloudflare Tokens">
+                  {open && (
+                    <CloudflareBootstrap
+                      disabled={applying || provisioning || tunnelApplying}
+                      runFreshAuthAction={runFreshAuthAction}
+                      token={bootstrapToken}
+                      setToken={setBootstrapToken}
+                      domain={externalDomain}
+                      tunnelPrefix={tunnelPrefix}
+                      hostSuffix={hostSuffix}
+                      r2BucketPrefix={r2BucketPrefix}
+                      onBusy={setBootstrapping}
+                      onSaved={(result) => {
+                        // Only copy known non-secret settings. The server already saved
+                        // the durable tokens; never pass result.values to onApply.
+                        const values: Record<string, string> = {};
+                        for (const key of [
+                          "dns",
+                          "cloudflare_mode",
+                          "project_hosts_cloudflare_tunnel_enabled",
+                          "project_hosts_cloudflare_tunnel_account_id",
+                          "project_hosts_cloudflare_tunnel_prefix",
+                          "project_hosts_cloudflare_tunnel_host_suffix",
+                          "r2_account_id",
+                          "r2_access_key_id",
+                          "r2_bucket_prefix",
+                        ]) {
+                          if (typeof result.values[key] === "string")
+                            values[key] = result.values[key];
+                        }
+                        setSavedData((current) => ({ ...current, ...values }));
+                        setSavedIsSet((current) => ({
+                          ...current,
+                          project_hosts_cloudflare_tunnel_api_token: true,
+                          r2_api_token: true,
+                          ...(result.r2.ok
+                            ? { r2_secret_access_key: true }
+                            : {}),
+                        }));
+                        setAccountId(
+                          values.project_hosts_cloudflare_tunnel_account_id ??
+                            result.account_id ??
+                            "",
+                        );
+                        setExternalDomain(values.dns ?? externalDomain);
+                        setTunnelPrefix(
+                          values.project_hosts_cloudflare_tunnel_prefix ??
+                            tunnelPrefix,
+                        );
+                        setHostSuffix(
+                          values.project_hosts_cloudflare_tunnel_host_suffix ??
+                            hostSuffix,
+                        );
+                        setR2BucketPrefix(
+                          values.r2_bucket_prefix ?? r2BucketPrefix,
+                        );
+                        setR2AccessKey(values.r2_access_key_id ?? r2AccessKey);
+                        setBlobResult(undefined);
+                      }}
+                    />
+                  )}
+                </WizardStep>
+                <WizardStep title="Step 4 - Ensure R2 is Enabled in your Cloudflare account">
+                  <Paragraph>
+                    Go to the{" "}
+                    <Typography.Link
+                      href="https://dash.cloudflare.com/"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Cloudflare dashboard
+                    </Typography.Link>{" "}
+                    and select the same account as your site's domain. Open{" "}
+                    <Text strong>
+                      Storage &amp; databases &gt; R2 &gt; Overview
+                    </Text>
+                    . If R2 is not enabled, complete the subscription checkout,
+                    adding payment details if prompted. For a new account, do
+                    this before running the token setup in Step 3.
+                  </Paragraph>
+                  <Paragraph type="secondary">
+                    If you already use R2 in this account, no action is needed.
+                    You do not need to create buckets or keys manually. R2
+                    includes free monthly usage; additional usage is billed by
+                    Cloudflare.{" "}
+                    <Typography.Link
+                      href="https://developers.cloudflare.com/r2/get-started/"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      R2 setup guide
+                    </Typography.Link>
+                  </Paragraph>
                   <Paragraph type="secondary">
                     {savedData.r2_access_key_id &&
                     savedIsSet.r2_secret_access_key
@@ -570,7 +604,7 @@ export default function CloudflareConfigWizard({
                     R2 must be enabled in your Cloudflare account.
                   </Paragraph>
                 </WizardStep>
-                <WizardStep title="Step 4 - Resource names">
+                <WizardStep title="Step 5 - Resource names">
                   <Paragraph type="secondary">
                     These names are used for Cloudflare and backup resources
                     created by CoCalc. The defaults are suitable for one CoCalc
@@ -617,7 +651,7 @@ export default function CloudflareConfigWizard({
                     />
                   </FormItem>
                 </WizardStep>
-                <WizardStep title="Step 5 - Diagnostics">
+                <WizardStep title="Step 6 - Diagnostics">
                   <Paragraph>
                     Create or update the tunnel and restart cloudflared using
                     saved settings, without restarting the hub.

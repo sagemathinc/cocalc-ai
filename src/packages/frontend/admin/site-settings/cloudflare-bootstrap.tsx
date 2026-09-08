@@ -99,7 +99,6 @@ export default function CloudflareBootstrap({
 
   return (
     <section aria-label="Cloudflare bootstrap">
-      <Typography.Title level={5}>One-time Cloudflare setup</Typography.Title>
       <Typography.Paragraph type="secondary">
         Give CoCalc a temporary token to configure Cloudflare automatically.
         CoCalc saves narrower automation and R2 credentials for ongoing use, not
