@@ -31,6 +31,7 @@ import {
   normalizeHostIntrusionSnapshot,
   reachedCoverageFailureThreshold,
   runHostIntrusionMonitorPass,
+  selectActionableHostIntrusionChanges,
 } from "./intrusion-monitor";
 
 async function ensureProjectHostsTestTable(): Promise<void> {
@@ -323,6 +324,139 @@ describe("project-host intrusion monitor normalization", () => {
     }
   });
 
+  it("can collect evidence with transition notifications disabled", async () => {
+    await ensureHostIntrusionMonitorSchema();
+    await ensureProjectHostsTestTable();
+    const hostId = "0630d575-e9ef-41bc-a91e-c9f407f77821";
+    const pool = getPool();
+    const previousMode = process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+    process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = "off";
+    mockAdminAlert.mockReset();
+    mockGetIntrusionSnapshot.mockReset();
+    mockGetIntrusionSnapshot.mockResolvedValue(snapshot());
+    await pool.query(
+      `INSERT INTO project_hosts
+         (id, name, bay_id, status, last_seen, created, updated)
+       VALUES ($1, 'collection-only', 'intrusion-monitor-test', 'running',
+               NOW(), NOW(), NOW())`,
+      [hostId],
+    );
+    try {
+      await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+        checked: 1,
+        changed: 0,
+        baselined: 1,
+      });
+      expect(mockAdminAlert).not.toHaveBeenCalled();
+      const { rows } = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+           FROM project_host_intrusion_snapshots
+          WHERE host_id=$1 AND coverage='complete'`,
+        [hostId],
+      );
+      expect(rows[0]?.count).toBe("1");
+      mockGetIntrusionSnapshot.mockResolvedValue({
+        ...snapshot(),
+        coverage: "partial",
+      });
+      for (let i = 0; i < 2; i++) {
+        await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+          incomplete: 1,
+          changed: 0,
+        });
+      }
+      expect(mockAdminAlert).not.toHaveBeenCalled();
+      await runHostIntrusionMonitorPass();
+      expect(mockAdminAlert).toHaveBeenCalledTimes(1);
+      expect(mockAdminAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subject: "Project host intrusion monitoring has incomplete coverage",
+          errorOnFail: true,
+        }),
+      );
+    } finally {
+      if (previousMode == null) {
+        delete process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+      } else {
+        process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = previousMode;
+      }
+      await pool.query(
+        "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
+        [hostId],
+      );
+      await pool.query("DELETE FROM project_hosts WHERE id=$1", [hostId]);
+      mockAdminAlert.mockReset();
+      mockGetIntrusionSnapshot.mockReset();
+    }
+  });
+
+  it.each(["actionable", "all", "off"])(
+    "retains observational changes in storage with alert mode %s",
+    async (mode) => {
+      await ensureHostIntrusionMonitorSchema();
+      await ensureProjectHostsTestTable();
+      const hostId = "42821656-87db-4c64-997e-71a679674c34";
+      const baselineId = "c357ce5b-bb1b-4bfa-bd47-a002041dd544";
+      const pool = getPool();
+      const previousMode = process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+      process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = mode;
+      const before = normalizeHostIntrusionSnapshot(snapshot());
+      const source = snapshot();
+      source.services.failed.push("routine.service failed");
+      const current = normalizeHostIntrusionSnapshot(source);
+      mockAdminAlert.mockReset();
+      mockGetIntrusionSnapshot.mockReset();
+      mockGetIntrusionSnapshot.mockResolvedValue(source);
+      try {
+        await pool.query(
+          `INSERT INTO project_hosts
+             (id, name, bay_id, status, last_seen, created, updated)
+           VALUES ($1, 'observational-change', 'intrusion-monitor-test',
+                   'running', NOW(), NOW(), NOW())`,
+          [hostId],
+        );
+        await pool.query(
+          `INSERT INTO project_host_intrusion_snapshots
+             (id, host_id, bay_id, captured_at, duration_ms, coverage,
+              normalization_version, normalized)
+           VALUES ($1, $2, 'intrusion-monitor-test', NOW(), 1, 'complete',
+                   2, $3::jsonb)`,
+          [baselineId, hostId, JSON.stringify(before)],
+        );
+        await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+          checked: 1,
+          changed: mode === "all" ? 1 : 0,
+          failed: 0,
+        });
+        expect(mockAdminAlert).toHaveBeenCalledTimes(mode === "all" ? 1 : 0);
+        const { rows } = await pool.query(
+          `SELECT normalized, delta FROM project_host_intrusion_snapshots
+           WHERE host_id=$1 AND id<>$2`,
+          [hostId, baselineId],
+        );
+        expect(rows).toEqual([
+          {
+            normalized: current,
+            delta: diffHostIntrusionSnapshots(before, current),
+          },
+        ]);
+      } finally {
+        if (previousMode == null) {
+          delete process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+        } else {
+          process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = previousMode;
+        }
+        await pool.query(
+          "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
+          [hostId],
+        );
+        await pool.query("DELETE FROM project_hosts WHERE id=$1", [hostId]);
+        mockAdminAlert.mockReset();
+        mockGetIntrusionSnapshot.mockReset();
+      }
+    },
+  );
+
   it("does not promote a changed baseline until its alert is delivered", async () => {
     await ensureHostIntrusionMonitorSchema();
     await ensureProjectHostsTestTable();
@@ -542,6 +676,139 @@ describe("project-host intrusion monitor normalization", () => {
     );
 
     expect(delta).toEqual({ added: {}, removed: {} });
+  });
+
+  it("records routine Snap revisions without hiding same-unit mutations", () => {
+    const before = snapshot();
+    before.host_processes.summary.push({
+      count: 1,
+      uid: 0,
+      comm: "snapd",
+      exe: "/snap/snapd/27710/usr/lib/snapd/snapd",
+      capability_mask: "000001ffffffffff",
+      executable_uid: 0,
+      executable_mode: "0755",
+      cgroup: "/system.slice/snapd.service",
+    });
+    before.persistence.files.push({
+      path: "/etc/systemd/system/snap-snapd-27710.mount",
+      uid: 0,
+      gid: 0,
+      mode: "0644",
+      mtime: "2026-09-01T00:00:00.000Z",
+      size: 100,
+      type: "file",
+      sha256: "old-hash",
+    });
+    before.services.enabled.push("snap-snapd-27710.mount enabled enabled");
+    const after = structuredClone(before);
+    after.host_processes.summary[1].exe =
+      "/snap/snapd/27738/usr/lib/snapd/snapd";
+    after.persistence.files[1].path =
+      "/etc/systemd/system/snap-snapd-27738.mount";
+    after.persistence.files[1].sha256 = "new-hash";
+    after.services.enabled[1] = "snap-snapd-27738.mount enabled enabled";
+
+    const normalizedAfter = normalizeHostIntrusionSnapshot(after);
+    const delta = diffHostIntrusionSnapshots(
+      normalizeHostIntrusionSnapshot(before),
+      normalizedAfter,
+    );
+
+    expect(hasHostIntrusionSnapshotChanges(delta)).toBe(true);
+    expect(selectActionableHostIntrusionChanges(delta)).toEqual({
+      added: {},
+      removed: {},
+    });
+    expect(normalizedAfter.signals["persistence.files"].join("\n")).toContain(
+      "snap-snapd-27738.mount",
+    );
+    expect(normalizedAfter.signals["persistence.files"].join("\n")).toContain(
+      "new-hash",
+    );
+
+    const unexpectedExtra = structuredClone(after);
+    unexpectedExtra.persistence.files.push({
+      ...unexpectedExtra.persistence.files[1],
+      path: "/etc/systemd/system/snap-snapd-27739.mount",
+      sha256: "extra-hash",
+    });
+    unexpectedExtra.services.enabled.push(
+      "snap-snapd-27739.mount enabled enabled",
+    );
+    const extraDelta = diffHostIntrusionSnapshots(
+      normalizeHostIntrusionSnapshot(before),
+      normalizeHostIntrusionSnapshot(unexpectedExtra),
+    );
+    expect(selectActionableHostIntrusionChanges(extraDelta)).toMatchObject({
+      added: {
+        "persistence.files": expect.arrayContaining([
+          expect.stringContaining("snap-snapd-27739.mount"),
+        ]),
+        "services.enabled": ["snap-snapd-27739.mount enabled enabled"],
+      },
+    });
+
+    const tampered = structuredClone(before);
+    tampered.persistence.files[1].sha256 = "tampered-hash";
+    const tamperedDelta = diffHostIntrusionSnapshots(
+      normalizeHostIntrusionSnapshot(before),
+      normalizeHostIntrusionSnapshot(tampered),
+    );
+    expect(selectActionableHostIntrusionChanges(tamperedDelta)).toMatchObject({
+      added: { "persistence.files": expect.any(Array) },
+      removed: { "persistence.files": expect.any(Array) },
+    });
+  });
+
+  it("only promotes high-confidence changes to notifications", () => {
+    const delta = {
+      added: {
+        "host_processes.summary": ['[2000,"python3"]'],
+        "host_processes.findings": ['[0,"unknown","/tmp/run"]'],
+        "services.failed": ["routine.service failed"],
+        kernel_signals_7d: ["apparmor_denied"],
+        "network.listeners": [
+          '["tcp","rustic","127.0.0.1:<dynamic>"]',
+          '["tcp","project-host:ac","0.0.0.0:<dynamic>"]',
+          '["udp","unattributed","0.0.0.0:46482"]',
+          '["tcp","unknown","127.0.0.1:4444"]',
+          '["tcp","unknown","0.0.0.0:4444"]',
+        ],
+        "authentication_7d.accepted": [
+          '["publickey","user","35.235.245.17"]',
+          '["publickey","user","2600:2d00:1:7::123"]',
+          '["publickey","root","35.235.245.17"]',
+          '["publickey","root","203.0.113.10"]',
+        ],
+        "privileged_files.writable": ["/usr/local/bin/unsafe"],
+        "package_integrity.differences": ["changed package file"],
+      },
+      removed: {
+        "network.listeners": ['["tcp","sshd","0.0.0.0:22"]'],
+        "host_processes.summary": ['[2000,"bash"]'],
+        "services.enabled": ["security-agent.service enabled"],
+      },
+    } satisfies Parameters<typeof selectActionableHostIntrusionChanges>[0];
+
+    expect(selectActionableHostIntrusionChanges(delta)).toEqual({
+      added: {
+        "host_processes.findings": ['[0,"unknown","/tmp/run"]'],
+        "network.listeners": [
+          '["tcp","unknown","127.0.0.1:4444"]',
+          '["tcp","unknown","0.0.0.0:4444"]',
+        ],
+        "authentication_7d.accepted": [
+          '["publickey","root","35.235.245.17"]',
+          '["publickey","root","203.0.113.10"]',
+        ],
+        "privileged_files.writable": ["/usr/local/bin/unsafe"],
+        "package_integrity.differences": ["changed package file"],
+      },
+      removed: {
+        "services.enabled": ["security-agent.service enabled"],
+      },
+    });
   });
 
   it("still alerts on unknown processes and fixed listener changes", () => {
