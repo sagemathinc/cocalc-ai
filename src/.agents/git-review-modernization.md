@@ -60,6 +60,13 @@ Missing live test evidence does not establish that these checks pass.
 
 ### Restored live-session checks
 
+Source-change recovery audit: the shared activity/TimeTravel error boundary
+previously remained failed after selecting different inputs. It now resets on
+source changes only; healthy children are not keyed/remounted. The regression
+checks retained healthy mounts, unchanged-input failure retention and recovery
+with a changed source. Draft PR #420 remains open; its current check rollup has
+only a skipped Codesmith check, not a successful hosted CI test run.
+
 The September 8 combined regression passes 323 tests in 51 suites, covering
 Git/review, shared diff, TimeTravel and activity modules. A new Pierre-only
 live reconnect run also passed using disposable commit object

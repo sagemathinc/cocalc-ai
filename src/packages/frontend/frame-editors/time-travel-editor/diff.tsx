@@ -26,7 +26,9 @@ export function Diff(props: TimeTravelDiffProps) {
       className="smc-vfill"
       style={{ minHeight: 0, minWidth: 0, height: "100%", overflow: "hidden" }}
     >
-      <DiffRenderBoundary>
+      <DiffRenderBoundary
+        resetKeys={[props.v0, props.v1, props.path, props.use_json]}
+      >
         <Suspense fallback={<div role="status">Loading text diff...</div>}>
           <DocumentDiff
             before={props.v0}

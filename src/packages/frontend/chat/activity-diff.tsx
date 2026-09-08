@@ -14,7 +14,7 @@ export function ActivityDiff({
   fontSize: number;
 }) {
   return (
-    <DiffRenderBoundary>
+    <DiffRenderBoundary resetKeys={[diff, path]}>
       <Suspense fallback={<div role="status">Loading activity diff...</div>}>
         <ActivityPierreDiff diff={diff} path={path} fontSize={fontSize} />
       </Suspense>
