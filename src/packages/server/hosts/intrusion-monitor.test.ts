@@ -355,6 +355,25 @@ describe("project-host intrusion monitor normalization", () => {
         [hostId],
       );
       expect(rows[0]?.count).toBe("1");
+      mockGetIntrusionSnapshot.mockResolvedValue({
+        ...snapshot(),
+        coverage: "partial",
+      });
+      for (let i = 0; i < 2; i++) {
+        await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+          incomplete: 1,
+          changed: 0,
+        });
+      }
+      expect(mockAdminAlert).not.toHaveBeenCalled();
+      await runHostIntrusionMonitorPass();
+      expect(mockAdminAlert).toHaveBeenCalledTimes(1);
+      expect(mockAdminAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subject: "Project host intrusion monitoring has incomplete coverage",
+          errorOnFail: true,
+        }),
+      );
     } finally {
       if (previousMode == null) {
         delete process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
@@ -370,6 +389,73 @@ describe("project-host intrusion monitor normalization", () => {
       mockGetIntrusionSnapshot.mockReset();
     }
   });
+
+  it.each(["actionable", "all", "off"])(
+    "retains observational changes in storage with alert mode %s",
+    async (mode) => {
+      await ensureHostIntrusionMonitorSchema();
+      await ensureProjectHostsTestTable();
+      const hostId = "42821656-87db-4c64-997e-71a679674c34";
+      const baselineId = "c357ce5b-bb1b-4bfa-bd47-a002041dd544";
+      const pool = getPool();
+      const previousMode = process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+      process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = mode;
+      const before = normalizeHostIntrusionSnapshot(snapshot());
+      const source = snapshot();
+      source.services.failed.push("routine.service failed");
+      const current = normalizeHostIntrusionSnapshot(source);
+      mockAdminAlert.mockReset();
+      mockGetIntrusionSnapshot.mockReset();
+      mockGetIntrusionSnapshot.mockResolvedValue(source);
+      try {
+        await pool.query(
+          `INSERT INTO project_hosts
+             (id, name, bay_id, status, last_seen, created, updated)
+           VALUES ($1, 'observational-change', 'intrusion-monitor-test',
+                   'running', NOW(), NOW(), NOW())`,
+          [hostId],
+        );
+        await pool.query(
+          `INSERT INTO project_host_intrusion_snapshots
+             (id, host_id, bay_id, captured_at, duration_ms, coverage,
+              normalization_version, normalized)
+           VALUES ($1, $2, 'intrusion-monitor-test', NOW(), 1, 'complete',
+                   2, $3::jsonb)`,
+          [baselineId, hostId, JSON.stringify(before)],
+        );
+        await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+          checked: 1,
+          changed: mode === "all" ? 1 : 0,
+          failed: 0,
+        });
+        expect(mockAdminAlert).toHaveBeenCalledTimes(mode === "all" ? 1 : 0);
+        const { rows } = await pool.query(
+          `SELECT normalized, delta FROM project_host_intrusion_snapshots
+           WHERE host_id=$1 AND id<>$2`,
+          [hostId, baselineId],
+        );
+        expect(rows).toEqual([
+          {
+            normalized: current,
+            delta: diffHostIntrusionSnapshots(before, current),
+          },
+        ]);
+      } finally {
+        if (previousMode == null) {
+          delete process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+        } else {
+          process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = previousMode;
+        }
+        await pool.query(
+          "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
+          [hostId],
+        );
+        await pool.query("DELETE FROM project_hosts WHERE id=$1", [hostId]);
+        mockAdminAlert.mockReset();
+        mockGetIntrusionSnapshot.mockReset();
+      }
+    },
+  );
 
   it("does not promote a changed baseline until its alert is delivered", async () => {
     await ensureHostIntrusionMonitorSchema();
