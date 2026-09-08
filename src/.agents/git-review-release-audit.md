@@ -2,8 +2,12 @@
 
 Companion to `git-review-modernization.md`. This is an evidence index, not a
 replacement or reduction of its requirements. September 8, 2026; implementation
-head `dd6d8f75ea`. Historical browser results retain the scope and limitations
+head `fcbb10d077`. Historical browser results retain the scope and limitations
 recorded in the main plan.
+
+Status: implementation complete. Hosted CI run `34189093152` passed plan,
+checks, build, frontend, server and remaining-package tests. Subsequent commits
+only document the audit; they do not change the validated implementation.
 
 ## Current code and regression
 
@@ -28,7 +32,7 @@ Git service; 59 tests / 6 suites for activity; 41 tests / 2 suites for storage;
 3 tests / 1 suite for the ACP diff producer. Frontend typecheck and lint pass.
 These counts describe distinct selected suites, not the entire monorepo.
 
-## Release gates still being checked
+## Final validation and caveats
 
 September 8 packaging follow-up at `fcbb10d077`: fresh `pnpm analyze` passed
 with asset/entrypoint size warnings. The entry-module guards passed across 930
@@ -54,11 +58,16 @@ The absolute budget check remains failed; the plan's measured-delta and
 lazy-loading checks pass. Do not silently raise thresholds or describe the
 absolute startup budget as passing.
 
-- Current-head hosted CI run `34189093152` is in progress. Do not substitute the
-  preceding head's successful frontend/build lanes for current-head completion.
-- Finish the requirement-by-requirement source/evidence cross-check, including
-  the plan's packaging, transport-limit and recovery details. Recorded live
-  evidence is not a claim that every browser scenario was rerun at this head.
+- Implementation-head hosted CI run `34189093152` passed every job. Additional
+  local checks passed: 70 app-server tests, 58 routing/thread/file tests, the
+  storage compare-and-set regression, and seven real-Pierre parser tests.
+- Source/evidence cross-check covers the plan's identities, target routing,
+  review recovery, historical surfaces, interaction and packaging requirements.
+  Strict parsing rejects incomplete patches; Git retains its 20,000-line and
+  bounded-byte limits. Current real-package tests cover these guards, sparse
+  coordinates and filename mismatches. Recorded live evidence is not a claim
+  that every browser scenario was rerun at this head. Final light/dark 768px
+  review/comparison acceptance passed again after rebuilding the app.
 - Earlier intermittent loading/disappearance observations remain unreproduced,
   with bounded diagnostics retained. Three fresh-tab archived-context runs and
   current selectable-comparison runs passed. No demonstrated root-cause fix is

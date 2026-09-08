@@ -1,8 +1,10 @@
 # Git review modernization
 
-Status: proceed with Pierre integration, following maintainer acceptance of the
-experiment on September 6, 2026. Production replacement remains gated on product
-parity and data-safety checks below. Definition lookup remains future work.
+Status: implemented and validated on September 8, 2026. Pierre completely
+replaces Classic across the planned diff surfaces. The implementation, live
+acceptance, regression and packaging evidence is indexed in
+`git-review-release-audit.md`. Hosted CI run `34189093152` passed all jobs for
+implementation commit `fcbb10d077`. Definition lookup remains future work.
 
 Maintainer decision (September 7, 2026): after the compatibility checks pass,
 completely replace Classic with Pierre. Remove the Classic rendering path,
@@ -17,7 +19,11 @@ while retaining correctness and personal review-data preservation checks.
 ## Current completion audit (2026-09-08)
 
 The dated progress notes below are chronological; an old "pending" statement is
-not a current checklist. The objective is not complete. Current release work:
+not a current checklist. The implementation objective is complete. The release
+audit records the accepted scope, validation, and residual observations;
+repository-wide absolute startup budgets are not claimed to pass. PR #420
+contains the implementation; production merge/deployment remains a maintainer
+action, not an automatic action taken by this goal.
 
 Latest acceptance and residual observations (September 8):
 
