@@ -25,11 +25,27 @@ Remaining live acceptance gaps (September 8):
   message target into frame data without rewriting URL parameters, and the
   thread-selection hook persists its resolved thread rather than allowing
   later metadata hydration to restore the previous selection. Nine focused
-  tests pass. A fresh-tab check of `x.chat#chat=1788832135399` displayed the
-  source conversation and its `01cab683...` commit link without manual thread
-  selection. The stale-build warning interrupted the browser probe's final
-  action, so the rendered result was inspected separately; this is not a
-  complete cold-link lifecycle regression pass.
+  tests pass. The live `branch-review-live.browser-test.mjs` subsequently
+  passed against `x.chat#chat=1788832135399` with no manual source-thread
+  override: the commit link selected `test-worktree`, its URL contained that
+  ref and working directory, and the selectable comparison produced a pinned
+  comparison route. This closes the reported message-anchor selection case,
+  not the separate intermittent cold-link lifecycle observation below.
+
+- Comparison loading investigation: the 768px layout run against `3365e543`
+  in the main checkout timed out waiting for branch history; the rendered
+  status remained `Loading...`, before comparison endpoints could be selected.
+  A preceding run reached comparison review but had no rendered file header.
+  The test now captures rendered page text on failure. Do not conflate this
+  unresolved loading issue with Pierre rendering or the verified reading
+  viewport fix. The separate worktree comparison acceptance still passes.
+
+September 8 latest regression: 130 tests in 35 suites passed across Git drawer,
+shared diff viewer, Git read service, and TimeTravel modules. The reading-view
+layout now hands downward wheel/keyboard motion to the outer drawer before
+scrolling Pierre, and Home returns to setup. Live light/dark checks passed,
+including a multi-file commit at 768px viewport height. This is not a substitute
+for the outstanding comparison-loading investigation above.
 
 - Intermittent cold originating-link behavior: the archived-directory fixture
   and subsequent route tests pass, but an earlier disappearance and transient

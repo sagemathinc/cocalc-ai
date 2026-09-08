@@ -106,6 +106,12 @@ try {
       ? "PASS: light/dark reading viewport, wheel handoff and Home return; no page errors"
       : "PASS: light/dark review and comparison layouts, keyboard history disclosure, selectable comparisons; no page errors",
   );
+} catch (error) {
+  console.error(
+    "Rendered page at failure:",
+    (await page.locator("body").innerText()).slice(-16000),
+  );
+  throw error;
 } finally {
   if (appearance)
     await page
