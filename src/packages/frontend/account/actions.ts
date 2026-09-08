@@ -34,6 +34,7 @@ import {
 } from "./table";
 import { writeAndWaitForProjection } from "@cocalc/frontend/projection-ack";
 import { isExamMode } from "@cocalc/frontend/customize/exam-mode";
+import { parseAppearancePreference } from "@cocalc/util/appearance";
 
 export type AccountProjectionRepairRequest = {
   fields?: string[];
@@ -290,9 +291,13 @@ export class AccountActions extends Actions<AccountState> {
   public async set_other_settings_many_and_wait(
     values: Record<string, any>,
   ): Promise<void> {
+    const names = Object.keys(values);
+    if (names.length === 1 && names[0] === "appearance_theme") {
+      await this.setAppearanceAndWait(values.appearance_theme);
+      return;
+    }
     const current =
       this.redux.getStore("account")?.get("other_settings")?.toJS?.() ?? {};
-    const names = Object.keys(values);
     await writeAndWaitForProjection({
       consumer: "account",
       name: `account.other_settings.${names.join("+")}`,
@@ -305,6 +310,55 @@ export class AccountActions extends Actions<AccountState> {
           this.otherSettingProjectionMatches(name, values[name]),
         ),
       repair: () => refreshAccountSnapshot("write-ack"),
+      timeout_ms: 2_500,
+    });
+  }
+
+  private async setAppearanceAndWait(value: unknown): Promise<void> {
+    const preference = parseAppearancePreference(value);
+    if (preference == null) throw Error("Invalid appearance preference");
+    const accountId = this.redux.getStore("account")?.get("account_id");
+    const assertSameAccount = () => {
+      const account = this.redux.getStore("account");
+      if (
+        !accountId ||
+        account?.get("account_id") !== accountId ||
+        account?.get("user_type") !== "signed_in" ||
+        webapp_client.account_id !== accountId
+      ) {
+        throw Error("Account changed before appearance could be saved");
+      }
+    };
+    await writeAndWaitForProjection({
+      consumer: "account",
+      name: "account.other_settings.appearance_theme",
+      write: async () => {
+        assertSameAccount();
+        // The snapshot-only table may still contain this value and omit the
+        // write, even though a newer realtime preference is different. Submit
+        // this single key through the existing account/home-bay query route.
+        await webapp_client.async_query({
+          query: {
+            accounts: {
+              account_id: accountId,
+              other_settings: { appearance_theme: preference },
+            },
+          },
+        });
+        assertSameAccount();
+      },
+      matchesProjection: () => {
+        assertSameAccount();
+        return this.otherSettingProjectionMatches(
+          "appearance_theme",
+          preference,
+        );
+      },
+      repair: async () => {
+        assertSameAccount();
+        await refreshAccountSnapshot("write-ack");
+        assertSameAccount();
+      },
       timeout_ms: 2_500,
     });
   }

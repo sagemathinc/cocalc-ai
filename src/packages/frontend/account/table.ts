@@ -67,6 +67,10 @@ export function applyAccountPatch(opts: {
 // synchronized with the server.
 export class AccountTable extends Table {
   private first_set = true;
+  private lastAppearanceSnapshot?: {
+    accountId: string | undefined;
+    settings: Record<string, unknown>;
+  };
 
   constructor(name, redux) {
     super(name, redux);
@@ -132,6 +136,39 @@ export class AccountTable extends Table {
     const changes = table.get_one();
     if (!changes) return;
     const obj = changes.toJS();
+    const settings = obj.other_settings ?? {};
+    const appearanceFields = ["appearance_theme", "dark_mode"];
+    const appearanceSettings = Object.fromEntries(
+      appearanceFields
+        .filter((key) => Object.prototype.hasOwnProperty.call(settings, key))
+        .map((key) => [key, settings[key]]),
+    );
+    // This table is snapshot-only; realtime patches update Redux separately.
+    // A local edit emits the whole old row. Forward only changed appearance
+    // fields so an unrelated edit cannot replay them over a newer preference.
+    // Compare raw fields independently: legacy -> explicit Light is still a
+    // persisted-key change, even though the effective appearance is unchanged.
+    const previous = this.lastAppearanceSnapshot;
+    if (
+      !this.first_set &&
+      previous != null &&
+      previous.accountId === obj.account_id &&
+      obj.other_settings != null
+    ) {
+      obj.other_settings = { ...settings };
+      for (const key of appearanceFields) {
+        if (
+          Object.prototype.hasOwnProperty.call(previous.settings, key) &&
+          previous.settings[key] === settings[key]
+        ) {
+          delete obj.other_settings[key];
+        }
+      }
+    }
+    this.lastAppearanceSnapshot = {
+      accountId: obj.account_id,
+      settings: appearanceSettings,
+    };
     applyAccountPatch({
       redux: this.redux,
       patch: obj,
