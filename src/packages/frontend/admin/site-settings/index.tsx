@@ -48,6 +48,7 @@ import type {
 import GcpServiceAccountWizard from "./gcp-service-account-wizard";
 import NebiusCliWizard from "./nebius-cli-wizard";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
+import CloudflareCredentialRotationHelp from "./cloudflare-credential-rotation-help";
 import LauncherDefaultsWizard from "./launcher-defaults-wizard";
 import RuntimeRetentionPolicyWizard from "./runtime-retention-policy-wizard";
 import ShowError from "@cocalc/frontend/components/error";
@@ -1293,6 +1294,7 @@ export default function SiteSettings({
               )}
             </div>
             {groupName === "Messaging & Email" && <EmailTest />}
+            {groupName === "Cloudflare" && <CloudflareCredentialRotationHelp />}
             {[...subgroups.entries()]
               .sort((a, b) => a[0].localeCompare(b[0]))
               .map(([subgroupName, items]) => (
