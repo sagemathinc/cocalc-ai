@@ -4,7 +4,6 @@
  */
 
 import { Button, Space, Typography } from "antd";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { GitReviewCommentV2 } from "../git-review-store";
 import type { CommentAnchor } from "./types";
@@ -14,6 +13,7 @@ import {
   InlineDraftCommentEditor,
   InlineEditCommentEditor,
 } from "./review-editors";
+import { UntrustedStaticMarkdown } from "./untrusted-static-markdown";
 
 export interface InlineReviewCardsProps {
   filePath: string;
@@ -120,7 +120,7 @@ export function InlineReviewCards({
                     onSave={(value) => void onUpdateComment(comment.id, value)}
                   />
                 ) : (
-                  <StaticMarkdown
+                  <UntrustedStaticMarkdown
                     value={comment.body_md}
                     style={{
                       fontSize: commentFontSize,
