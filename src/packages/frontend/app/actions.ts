@@ -438,6 +438,11 @@ export class PageActions extends Actions<PageState> {
     this.session_manager?.save();
   }
 
+  // Open-file lists remembered for closed projects (see SessionManager).
+  closed_session_files(): { [project_id: string]: string[] } {
+    return this.session_manager?.getClosedProjectFiles?.() ?? {};
+  }
+
   restore_session(project_id) {
     this.session_manager?.restore(project_id);
   }

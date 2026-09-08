@@ -9,9 +9,26 @@ import {
   BROWSER_AUTOMATION_BODY,
   DOCS_ACTIONS_BODY,
   DOCS_BROWSER_BODY,
+  QUICK_NAVIGATION_BODY,
 } from "../content";
 
 export const DOCUMENTATION_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: QUICK_NAVIGATION_BODY.trim(),
+    category: "Docs",
+    id: "docs.quick-navigation",
+    lastReviewed: "2026-09-07",
+    noActionReason:
+      "Open with the configurable global shortcut or the button in Keyboard preferences.",
+    searchKeywords:
+      "quick navigation double shift shortcuts keyboard search projects files frames preferences",
+    slug: "documentation/quick-navigation",
+    status: "ready",
+    summary:
+      "Jump between projects, files, editor frames, and settings using the keyboard.",
+    title: "Quick Navigation",
+  },
   {
     actions: [
       {

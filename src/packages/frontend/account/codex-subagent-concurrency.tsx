@@ -47,6 +47,8 @@ export function saveCodexMaxConcurrentSubagents(
   return normalized;
 }
 
+export const CODEX_SUBAGENTS_LABEL = "Maximum concurrent subagents";
+
 export function CodexSubagentConcurrencyField({
   compact = false,
 }: Readonly<{ compact?: boolean }>) {
@@ -68,7 +70,7 @@ export function CodexSubagentConcurrencyField({
       style={{ marginTop: compact ? 0 : 16, marginBottom: compact ? 0 : 16 }}
     >
       <div style={{ marginBottom: 6 }}>
-        <Text strong>Maximum concurrent subagents</Text>{" "}
+        <Text strong>{CODEX_SUBAGENTS_LABEL}</Text>{" "}
         <Text type="secondary">(Account-wide)</Text>
       </div>
       <Select

@@ -205,6 +205,57 @@
           "selector": ".smc-vfill"
         }
       ]
+    },
+    {
+      "id": "quick-navigation-dialog",
+      "title": "Quick Navigation keyboard and focus",
+      "path": "/settings/keyboard",
+      "authentication": "account",
+      "engine": "axe",
+      "minimumScore": 1,
+      "settleMs": 1000,
+      "actions": [
+        {
+          "type": "remember",
+          "key": "trigger",
+          "role": "button",
+          "name": "Open Quick Navigation"
+        },
+        {
+          "type": "focus",
+          "role": "button",
+          "name": "Open Quick Navigation"
+        },
+        {
+          "type": "press",
+          "key": "Enter"
+        },
+        {
+          "type": "wait",
+          "role": "dialog",
+          "name": "Quick Navigation"
+        },
+        {
+          "type": "assertFocusWithin",
+          "role": "combobox",
+          "name": "Search projects, files, frames, and settings"
+        }
+      ],
+      "cleanupActions": [
+        {
+          "type": "press",
+          "key": "Escape"
+        },
+        {
+          "type": "assertHidden",
+          "role": "dialog",
+          "name": "Quick Navigation"
+        },
+        {
+          "type": "assertFocus",
+          "key": "trigger"
+        }
+      ]
     }
   ]
 }

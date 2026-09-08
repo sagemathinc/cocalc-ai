@@ -8,6 +8,8 @@ import { useIntl } from "react-intl";
 import { LabeledRow, SelectorInput } from "@cocalc/frontend/components";
 import { EDITOR_BINDINGS } from "@cocalc/util/db-schema/accounts";
 
+import { KEYBOARD_BINDINGS_LABEL } from "./labels";
+
 interface Props {
   bindings: string;
   on_change: (selected: string) => void;
@@ -18,10 +20,7 @@ export function EditorSettingsKeyboardBindings(
 ): React.JSX.Element {
   const intl = useIntl();
 
-  const label = intl.formatMessage({
-    id: "account.editor-settings.keyboard-bindings.label",
-    defaultMessage: "Editor keyboard bindings",
-  });
+  const label = intl.formatMessage(KEYBOARD_BINDINGS_LABEL);
 
   return (
     <LabeledRow label={label}>

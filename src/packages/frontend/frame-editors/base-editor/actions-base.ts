@@ -2585,6 +2585,7 @@ export class BaseEditorActions<
       // restore saved selections (cursor position, selected ranges)
       cm.getDoc().setSelections(sel);
     }
+    this.store.emit("cm-mounted", id);
   }
 
   // 1. if id given, returns cm with given id if id

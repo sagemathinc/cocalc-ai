@@ -7,6 +7,8 @@ import { useIntl } from "react-intl";
 import { InputNumber } from "antd";
 import { LabeledRow } from "@cocalc/frontend/components";
 
+import { AUTOSAVE_LABEL } from "./labels";
+
 interface Props {
   autosave: number;
   on_change: (string, number) => void;
@@ -18,14 +20,9 @@ export function EditorSettingsAutosaveInterval(
   const intl = useIntl();
 
   return (
-    <LabeledRow
-      label={intl.formatMessage({
-        id: "account.editor-settings-autosave-interval.label",
-        defaultMessage: "Autosave interval",
-      })}
-    >
+    <LabeledRow label={intl.formatMessage(AUTOSAVE_LABEL)}>
       <InputNumber
-        aria-label="Autosave interval"
+        aria-label={intl.formatMessage(AUTOSAVE_LABEL)}
         onChange={(n) => props.on_change("autosave", n)}
         min={15}
         max={900}

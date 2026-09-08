@@ -19,7 +19,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import keyboardShortcuts from "./keyboard-shortcuts";
 import { set_account_table } from "./util";
 
-const KEYBOARD_SHORTCUTS = keyboardShortcuts(IS_MACOS);
+export const KEYBOARD_SHORTCUTS = keyboardShortcuts(IS_MACOS);
 
 const EVALUATE_KEYS = {
   "Shift-Enter": "shift+enter",
@@ -76,10 +76,10 @@ export const KeyboardSettings: React.FC = () => {
     return (
       <Paragraph type="secondary">
         <FormattedMessage
-          id="account.keyboard-settings.intro"
+          id="account.keyboard-settings.intro-with-quick-navigation"
           defaultMessage={`These are mostly CoCalc-specific keyboard shortcuts for editing code.
             Many of these are not standard functions provided by editor keyboards.
-            Unfortunately, keyboard shortcuts are not currently customizable.`}
+            Most editor shortcuts below are fixed. Quick Navigation can be configured above.`}
         />
       </Paragraph>
     );

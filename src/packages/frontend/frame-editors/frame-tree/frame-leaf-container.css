@@ -1,0 +1,5 @@
+/* Passive frames become focusable only for a keyboard navigation handoff. */
+.cc-frame-leaf-container:focus-visible {
+  outline: 2px solid var(--cocalc-ui-focus);
+  outline-offset: -2px;
+}

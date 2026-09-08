@@ -47,6 +47,8 @@ export interface AccountState {
   }>;
   font_size: number;
   other_settings: TypedMap<{
+    quick_navigation_shortcut?: string;
+    quick_navigation_delay?: number;
     confirm_close: string;
     page_size?: number;
     [NEW_FILENAMES]?: NewFilenameTypes;

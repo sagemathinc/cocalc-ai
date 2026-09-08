@@ -35,6 +35,7 @@ import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { IS_ANDROID, IS_IOS, IS_MOBILE, IS_SAFARI } from "../feature";
+import QuickNavigation from "./quick-navigation";
 import { ActiveContent } from "./active-content";
 import { ConnectionIndicator } from "./connection-indicator";
 import { ConnectionInfo } from "./connection-info";
@@ -566,6 +567,7 @@ export const Page: React.FC = () => {
       >
         <ActiveContent />
       </CocalcErrorBoundary>
+      {!examMode && <QuickNavigation />}
       {showPostSurfaceModals && !examMode ? (
         <PostSurfaceSlot scope="app.post-surface-modals">
           <PostSurfaceModals />
