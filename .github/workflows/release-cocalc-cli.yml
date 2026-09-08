@@ -37,7 +37,7 @@ permissions:
 
 jobs:
   plan:
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     outputs:
       release_id: ${{ steps.release.outputs.release_id }}
       tag: ${{ steps.release.outputs.tag }}
@@ -70,7 +70,7 @@ jobs:
   bundle:
     needs: plan
     timeout-minutes: 45
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -107,10 +107,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-8vcpu-ubuntu-2404
+          - runner: ubuntu-24.04
             arch: amd64
             machine: x86_64
-          - runner: blacksmith-8vcpu-ubuntu-2404-arm
+          - runner: ubuntu-24.04-arm
             arch: arm64
             machine: aarch64
     runs-on: ${{ matrix.runner }}
@@ -161,7 +161,7 @@ jobs:
       - plan
       - bundle
     timeout-minutes: 60
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15
     environment: cocalc-cli-signing
     steps:
       - uses: actions/checkout@v4
@@ -259,7 +259,7 @@ jobs:
       - plan
       - bundle
     timeout-minutes: 60
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: windows-2025
     environment: cocalc-cli-signing
     permissions:
       contents: read
@@ -347,7 +347,7 @@ jobs:
       - build-macos
       - build-windows
     timeout-minutes: 45
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     environment: cocalc-cli-release
     env:
       RELEASE_DIR: release-assets

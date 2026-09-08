@@ -47,10 +47,10 @@ The manual publishers remain useful for development, but production CLI
 releases should use the **Release CoCalc CLI** GitHub Actions workflow. It builds
 and verifies these native artifacts under one immutable release ID:
 
-- Linux amd64 on `blacksmith-8vcpu-ubuntu-2404`
-- Linux arm64 on `blacksmith-8vcpu-ubuntu-2404-arm`
-- macOS arm64 on `blacksmith-6vcpu-macos-15`
-- Windows amd64 on `blacksmith-4vcpu-windows-2025`
+- Linux amd64 on `ubuntu-24.04`
+- Linux arm64 on `ubuntu-24.04-arm`
+- macOS arm64 on `macos-15`
+- Windows amd64 on `windows-2025`
 
 The workflow defaults to the `candidate` channel. Choose `none` to build,
 sign, notarize, and retain the workflow artifacts without publishing them.
@@ -119,9 +119,8 @@ openssl base64 -A -in developer-id-application.p12
 openssl base64 -A -in AuthKey_XXXXXXXXXX.p8
 ```
 
-The Blacksmith GitHub App must have access to this repository. The workflow
-uses GitHub, Azure, and Blacksmith-supported actions on ephemeral Blacksmith
-runners.
+The workflow uses standard GitHub-hosted runners and GitHub/Azure actions.
+No third-party runner subscription or runner-provider GitHub App is required.
 
 The macOS build requires a timestamped Developer ID signature and submits a ZIP
 containing the standalone binary to Apple's notary service. Apple publishes an
