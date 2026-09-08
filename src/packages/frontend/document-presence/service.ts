@@ -95,6 +95,10 @@ class ProjectPresenceChannel extends EventEmitter {
         project_id: this.project_id,
         name: STREAM_NAME,
       });
+      // The stream may have ended before this async caller can attach listeners.
+      if (sub.isClosed()) {
+        throw Error("document presence channel closed during subscription");
+      }
       this.sub = sub;
       sub.on("change", (message) => {
         if (!isPresenceMessage(message)) {

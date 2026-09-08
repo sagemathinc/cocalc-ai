@@ -58,6 +58,8 @@ export class PubSub extends EventEmitter {
     this.emit(state);
   };
 
+  isClosed = (): boolean => this.state === "closed";
+
   close = () => {
     if (this.state == "closed") {
       return;
