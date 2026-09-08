@@ -21,10 +21,15 @@ not a current checklist. The objective is not complete. Current release work:
 
 Remaining live acceptance gaps (September 8):
 
-- Message anchor navigation: loading `x.chat#chat=1788832135399` in a fresh
-  tab retained the previously selected feedback thread. Selecting the source
-  thread manually exposed the requested commit link. Fix this independently
-  of Git branch/worktree inference; do not count the message URL as accepted.
+- Message anchor navigation follow-up: `gotoFragment` now publishes the
+  message target into frame data without rewriting URL parameters, and the
+  thread-selection hook persists its resolved thread rather than allowing
+  later metadata hydration to restore the previous selection. Nine focused
+  tests pass. A fresh-tab check of `x.chat#chat=1788832135399` displayed the
+  source conversation and its `01cab683...` commit link without manual thread
+  selection. The stale-build warning interrupted the browser probe's final
+  action, so the rendered result was inspected separately; this is not a
+  complete cold-link lifecycle regression pass.
 
 - Intermittent cold originating-link behavior: the archived-directory fixture
   and subsequent route tests pass, but an earlier disappearance and transient
