@@ -2324,7 +2324,9 @@ export interface System {
     browser_id?: string;
     session_hash?: string;
     subject_account_id: string;
-    reason?: string | null;
+    reason: string;
+    support_ticket_id?: number;
+    consent_reference?: string;
     lang_temp?: string | null;
   }) => Promise<{
     grant_id: string;
