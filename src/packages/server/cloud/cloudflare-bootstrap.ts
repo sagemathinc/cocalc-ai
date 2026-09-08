@@ -3,6 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { createHash } from "node:crypto";
+import { R2_REGIONS } from "@cocalc/util/consts/r2-regions";
+
 type CloudflareResponse<T> = {
   success?: boolean;
   errors?: Array<{ code?: number; message?: string }>;
@@ -363,6 +366,14 @@ export async function bootstrapCloudflareConfiguration(opts: {
   tunnelPrefix?: string;
   hostSuffix?: string;
   r2BucketPrefix?: string;
+  // Loaded only from seed-bay settings, never accepted from the RPC caller.
+  existingR2?: {
+    accountId?: string;
+    accessKey?: string;
+    secretKey?: string;
+    bucketPrefix?: string;
+    blobBucket?: string;
+  };
   // Persistence stays server-side; no token secret is returned to the caller.
   save: (values: Record<string, string>) => Promise<void>;
 }): Promise<CloudflareBootstrapResult> {
@@ -389,12 +400,12 @@ export async function bootstrapCloudflareConfiguration(opts: {
     visitor_location_headers: { ok: false },
     r2: {
       ok: false,
-      message:
-        "Save separate R2 S3 credentials, then provision and test image delivery.",
+      message: "R2 S3 credentials have not been saved.",
     },
   };
   let discovery: CreatedToken | undefined;
   let durable: CreatedToken | undefined;
+  let s3: CreatedToken | undefined;
   let saved = false;
   let saveAttempted = false;
   let stage = "verify the bootstrap token";
@@ -445,6 +456,25 @@ export async function bootstrapCloudflareConfiguration(opts: {
       account_id: accountId,
       account_name: zone.account?.name,
     });
+    stage = "validate existing R2 configuration";
+    const existing = opts.existingR2;
+    const accessKey = clean(existing?.accessKey);
+    const secretKey = clean(existing?.secretKey);
+    const prefix = clean(opts.r2BucketPrefix) ?? clean(existing?.bucketPrefix);
+    if (!prefix) throw new Error("Missing R2 bucket prefix");
+    if (accessKey || secretKey) {
+      if (
+        !accessKey ||
+        !secretKey ||
+        clean(existing?.accountId) !== accountId ||
+        clean(existing?.bucketPrefix) !== prefix
+      ) {
+        notes.push(
+          "Existing R2 credentials are incomplete or the account/bucket prefix changed. No settings were changed. Review R2 configuration in advanced manual setup before retrying; bootstrap never replaces existing S3 credentials or moves backup data.",
+        );
+        throw new Error("Existing R2 configuration needs review");
+      }
+    }
     stage = "create the scoped automation token";
     durable = await createDurableAutomationToken({
       bootstrapToken: token,
@@ -457,11 +487,47 @@ export async function bootstrapCloudflareConfiguration(opts: {
     result.durable_token_id = durable.id;
     result.permissions = durable.permissions ?? [];
     if (!durable.value) throw new Error("Missing automation token secret");
+    if (!accessKey) {
+      stage =
+        "create the bucket-scoped R2 S3 token (enable R2 in Cloudflare first)";
+      const objectWrite = requirePermissionGroup(
+        groups,
+        ["Workers R2 Storage Bucket Item Write"],
+        "com.cloudflare.edge.r2.bucket",
+      );
+      const buckets = [
+        ...R2_REGIONS.map((region) => `${prefix}-${region}`),
+        clean(existing?.blobBucket) ?? `${prefix}-blobs`,
+      ];
+      if (
+        buckets.some(
+          (bucket) => !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket),
+        )
+      )
+        throw new Error("Invalid R2 bucket name");
+      s3 = await cloudflareRequest<CreatedToken>(token, "POST", "user/tokens", {
+        name: `CoCalc R2 objects ${domain}`,
+        policies: [
+          {
+            effect: "allow",
+            resources: Object.fromEntries(
+              buckets.map((bucket) => [
+                `com.cloudflare.edge.r2.bucket.${accountId}_default_${bucket}`,
+                "*",
+              ]),
+            ),
+            permission_groups: [{ id: objectWrite.id }],
+          },
+        ],
+      });
+      if (!s3.id || !s3.value) throw new Error("Missing S3 token credentials");
+    }
     const values: Record<string, string> = {
       cloudflare_mode: "self",
       project_hosts_cloudflare_tunnel_enabled: "yes",
       project_hosts_cloudflare_tunnel_account_id: accountId,
       r2_account_id: accountId,
+      r2_access_key_id: accessKey ?? s3!.id!,
       cloudflare_automation_token_id: durable.id ?? "",
       cloudflare_zone_id: zoneId,
       cloudflare_zone_name: zoneName,
@@ -472,7 +538,7 @@ export async function bootstrapCloudflareConfiguration(opts: {
       ...(opts.hostSuffix
         ? { project_hosts_cloudflare_tunnel_host_suffix: opts.hostSuffix }
         : {}),
-      ...(opts.r2BucketPrefix ? { r2_bucket_prefix: opts.r2BucketPrefix } : {}),
+      r2_bucket_prefix: prefix,
     };
     stage = "save the automation token";
     saveAttempted = true;
@@ -480,6 +546,15 @@ export async function bootstrapCloudflareConfiguration(opts: {
       ...values,
       project_hosts_cloudflare_tunnel_api_token: durable.value,
       r2_api_token: durable.value,
+      // Cloudflare documents id + SHA-256(value) as the S3 credential pair.
+      // Keep this separate from the account-wide REST automation token.
+      ...(s3?.value
+        ? {
+            r2_secret_access_key: createHash("sha256")
+              .update(s3.value)
+              .digest("hex"),
+          }
+        : {}),
     });
     saved = true;
     result.values = values;
@@ -487,8 +562,19 @@ export async function bootstrapCloudflareConfiguration(opts: {
       ok: true,
       message: "Scoped automation token saved on the server.",
     };
+    result.r2 = {
+      ok: true,
+      message: s3
+        ? "Bucket-scoped R2 S3 credentials created and saved server-side. Provision blob storage and run R2 diagnostics to verify access."
+        : "Existing R2 S3 credentials preserved. Run R2 diagnostics to verify access.",
+    };
   } catch {
     // Neither provider nor database exceptions are safe to expose here.
+    if (stage.startsWith("create the bucket-scoped R2 S3 token") && !s3) {
+      notes.push(
+        `If Cloudflare created an R2 token but its response was lost, inspect API Tokens for "CoCalc R2 objects ${domain}" before retrying; an unknown token ID cannot be revoked automatically.`,
+      );
+    }
     result.tunnel_token = {
       ok: false,
       message: `Unable to ${stage}. Check permissions, domain and expiry; retry with a new bootstrap token.`,
@@ -497,9 +583,13 @@ export async function bootstrapCloudflareConfiguration(opts: {
       notes.push(
         `Saving may have partially completed. Check stored settings before deleting automation token ${durable.id}; it has not been revoked.`,
       );
+      if (s3?.id)
+        notes.push(
+          `R2 S3 token ${s3.id} may also have been saved and has not been revoked. Check stored settings before deleting it.`,
+        );
     }
   } finally {
-    for (const child of [discovery, ...(!saveAttempted ? [durable] : [])]) {
+    for (const child of [discovery, ...(!saveAttempted ? [durable, s3] : [])]) {
       if (!child?.id) continue;
       const cleanup = await invalidateBootstrapToken({
         token,

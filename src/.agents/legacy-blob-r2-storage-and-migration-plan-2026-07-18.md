@@ -486,13 +486,35 @@ dynamically, as the existing bootstrap code already does, instead of hardcoding
 ids. The wizard should display the resulting human-readable permission names
 before or immediately after creation so admins can audit what CoCalc requested.
 
-Initially, keep R2 S3 object credentials (`r2_access_key_id` and
-`r2_secret_access_key`) as a separate credential class. The Cloudflare REST API
-token can administer buckets and deploy the Worker, but server-side object
-PUT/GET currently uses the S3-compatible R2 credentials. Only fold S3
-credential creation into the bootstrap flow after the implementation verifies a
-Cloudflare API path that returns exactly the needed access key id and secret
-with a narrow bucket/object scope.
+R2 S3 object credentials (`r2_access_key_id` and `r2_secret_access_key`) remain
+a separate credential class, but bootstrap now creates them automatically.
+Cloudflare documents this path in [R2 authentication](https://developers.cloudflare.com/r2/api/tokens/):
+create a user token with `Workers R2 Storage Bucket Item Write`, use its `id`
+as the access key, and SHA-256 of its `value` as the secret key. Never reuse
+the broader REST automation token as the S3 token.
+
+The new token includes only exact default-jurisdiction bucket resources for
+the configured prefix's six regional backup buckets and the configured blob
+bucket (default `<prefix>-blobs`). It has no bucket-administration, DNS,
+Workers, or token-management permission. Names also cover buckets provisioned
+later. Additional/custom backup buckets or jurisdictions need explicit manual
+credentials; do not silently widen the S3 policy to all account buckets.
+
+The seed bay loads existing credentials under the provisioning lock. Complete
+credentials for the same account/prefix are preserved, not rotated; incomplete
+pairs or account/prefix changes fail before saving settings. Credentials are
+saved through encrypted site settings, and only the nonsecret access-key/token
+ID is returned to the wizard. Unsaved child tokens are revoked on failure;
+ambiguous persistence failures preserve possibly saved tokens and report IDs
+for manual inspection. Creation is not a health check: blob provisioning must
+still verify S3 PUT/GET and Worker delivery, and backup diagnostics remain
+available. R2 must already be enabled in the Cloudflare account.
+
+The recommended wizard has no manual key entry step. Advanced manual setup
+retains the credential fields for existing/custom deployments. Before merging,
+manually verify creation and S3 access on lite4b, repeat bootstrap to confirm
+preservation, and confirm neither new credential secret appears in browser
+responses. This is in addition to the mocked policy/derivation/cleanup tests.
 
 #### Site settings shape
 
@@ -555,10 +577,12 @@ summary before submission:
 - discover the matching zone and account for the configured domain;
 - enumerate Cloudflare permission groups so a narrow token can be constructed;
 - create one durable CoCalc automation token for this site;
+- create separate bucket-scoped R2 S3 credentials if none are configured;
 - optionally enable visitor location headers;
 - provision R2 and Worker resources needed by configured features;
 - attempt to delete the bootstrap token; and
-- store only the durable token and non-secret resource identifiers.
+- store only the durable automation token, R2 S3 credentials, and non-secret
+  resource identifiers; never the bootstrap or discovery token.
 
 It should also include a "What CoCalc will not do" summary:
 
@@ -1141,7 +1165,7 @@ Gate: focused tests cover every producer and multibay authorization path.
 - Exercise cold/warm reads at representative sizes and malformed/miss load.
 - Confirm no public bucket/list/write path exists.
 
-Gate: the wizard creates and stores only the durable token, the bootstrap token
+Gate: the wizard creates and stores only durable automation/S3 credentials, the bootstrap token
 is invalidated or explicitly flagged for manual deletion, and staging cost,
 cache, and security behavior is understood under load.
 

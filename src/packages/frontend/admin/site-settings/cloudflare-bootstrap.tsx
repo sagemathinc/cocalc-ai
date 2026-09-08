@@ -104,7 +104,8 @@ export default function CloudflareBootstrap({
       </Typography.Title>
       <Typography.Paragraph type="secondary">
         Give CoCalc a temporary token to configure Cloudflare automatically.
-        CoCalc saves a narrower token for ongoing use, not this temporary one.
+        CoCalc saves narrower automation and R2 credentials for ongoing use, not
+        this temporary token.
       </Typography.Paragraph>
       <Typography.Paragraph>
         Go to{" "}
@@ -151,6 +152,13 @@ export default function CloudflareBootstrap({
             are limited to the selected zone.
           </li>
           <li>
+            Create separate R2 S3 credentials restricted to this site's six
+            regional backup buckets and blob bucket, including future buckets
+            with those exact names. Existing complete credentials are preserved,
+            not rotated. The S3 token has object read/write access, not bucket
+            administration, DNS, Workers, or token-management permissions.
+          </li>
+          <li>
             Configure visitor location headers and attempt to revoke both
             bootstrap and discovery tokens.
           </li>
@@ -173,9 +181,12 @@ export default function CloudflareBootstrap({
             read-only discovery token can list zones to find the match.
           </li>
           <li>
-            Make the R2 bucket public. This wizard currently requires separate
-            R2 S3 object credentials in the R2 step; creating those
-            automatically is possible but is not part of this setup yet.
+            Make the R2 bucket public or return the S3 secret to the browser.
+            Bootstrap saves credentials; the separate provisioning and
+            diagnostic actions verify storage access before enabling blob
+            delivery. Changing the account or bucket prefix of existing S3
+            credentials requires explicit manual configuration and does not
+            migrate data.
           </li>
         </ul>
       </details>
@@ -235,7 +246,7 @@ export default function CloudflareBootstrap({
               }
               description={
                 result.tunnel_token.ok
-                  ? "No returned token is applied or saved by the browser. R2 S3 credentials and blob health checks are still required."
+                  ? "Automation and R2 credentials are saved server-side. Run provisioning and diagnostics to verify storage access; no secrets are returned to the browser."
                   : "Review the cleanup notes and saved settings before retrying. Configuration may not have been saved. No returned tokens are applied by the browser."
               }
             />

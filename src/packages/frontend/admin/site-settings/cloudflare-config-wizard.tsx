@@ -611,6 +611,7 @@ export default function CloudflareConfigWizard({
                         "project_hosts_cloudflare_tunnel_prefix",
                         "project_hosts_cloudflare_tunnel_host_suffix",
                         "r2_account_id",
+                        "r2_access_key_id",
                         "r2_bucket_prefix",
                       ]) {
                         if (typeof result.values[key] === "string")
@@ -621,6 +622,7 @@ export default function CloudflareConfigWizard({
                         ...current,
                         project_hosts_cloudflare_tunnel_api_token: true,
                         r2_api_token: true,
+                        ...(result.r2.ok ? { r2_secret_access_key: true } : {}),
                       }));
                       setAccountId(
                         values.project_hosts_cloudflare_tunnel_account_id ??
@@ -641,6 +643,8 @@ export default function CloudflareConfigWizard({
                       );
                       setApiToken("");
                       setR2ApiToken("");
+                      setR2AccessKey(values.r2_access_key_id ?? r2AccessKey);
+                      setR2SecretKey("");
                       setBlobResult(undefined);
                     }}
                   />
@@ -754,53 +758,74 @@ export default function CloudflareConfigWizard({
                   </>
                 )}
                 <WizardStep title="Step 6 - R2 backups">
-                  <Paragraph type="secondary">
-                    R2 S3 object credentials are separate from the Cloudflare
-                    REST automation token. Bootstrap saves the REST token, not
-                    these access keys. Create S3 credentials for object reads
-                    and writes in the required backup and blob buckets, then
-                    apply them here.
-                  </Paragraph>
-                  <Paragraph>
-                    Go to{" "}
-                    <Link href={r2TokenUrl} target="_blank" rel="noreferrer">
-                      {r2TokenUrl}
-                    </Link>
-                    .
-                    <br />
-                    Choose the narrowest object read/write scope covering the
-                    required buckets.
-                    <br />
-                    Once the token is created, fill in the fields below.
-                  </Paragraph>
-                  {setupPath === "manual" && (
-                    <FormItem label="R2 API Token" htmlFor="cf-r2-token">
-                      <SecretSettingInput
-                        id="cf-r2-token"
-                        placeholder="R2 API Token"
-                        value={r2ApiToken}
-                        isSet={savedIsSet.r2_api_token}
-                        onChange={setR2ApiToken}
-                      />
-                    </FormItem>
+                  {setupPath === "bootstrap" ? (
+                    <Paragraph type="secondary">
+                      {savedData.r2_access_key_id &&
+                      savedIsSet.r2_secret_access_key
+                        ? "R2 credentials are saved. No keys to paste; run the diagnostics below to verify access."
+                        : "Bootstrap creates and saves R2 credentials automatically for this site's backup and blob buckets. Existing credentials are preserved."}{" "}
+                      R2 must be enabled in your Cloudflare account. Use
+                      Advanced manual setup only to supply or change your own
+                      keys.
+                    </Paragraph>
+                  ) : (
+                    <>
+                      <Paragraph type="secondary">
+                        R2 S3 object credentials are separate from the
+                        Cloudflare REST automation token. Bootstrap configures
+                        both automatically. To manage credentials yourself,
+                        create S3 credentials for object reads and writes in the
+                        required backup and blob buckets, then apply them here.
+                      </Paragraph>
+                      <Paragraph>
+                        Go to{" "}
+                        <Link
+                          href={r2TokenUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {r2TokenUrl}
+                        </Link>
+                        .
+                        <br />
+                        Choose the narrowest object read/write scope covering
+                        the required buckets.
+                        <br />
+                        Once the token is created, fill in the fields below.
+                      </Paragraph>
+                      {setupPath === "manual" && (
+                        <FormItem label="R2 API Token" htmlFor="cf-r2-token">
+                          <SecretSettingInput
+                            id="cf-r2-token"
+                            placeholder="R2 API Token"
+                            value={r2ApiToken}
+                            isSet={savedIsSet.r2_api_token}
+                            onChange={setR2ApiToken}
+                          />
+                        </FormItem>
+                      )}
+                      <FormItem label="R2 Access Key ID" htmlFor="cf-access">
+                        <Input
+                          id="cf-access"
+                          placeholder="R2 Access Key ID"
+                          value={r2AccessKey}
+                          onChange={(e) => setR2AccessKey(e.target.value)}
+                        />
+                      </FormItem>
+                      <FormItem
+                        label="R2 Secret Access Key"
+                        htmlFor="cf-secret"
+                      >
+                        <SecretSettingInput
+                          id="cf-secret"
+                          placeholder="R2 Secret Access Key"
+                          value={r2SecretKey}
+                          isSet={savedIsSet.r2_secret_access_key}
+                          onChange={setR2SecretKey}
+                        />
+                      </FormItem>
+                    </>
                   )}
-                  <FormItem label="R2 Access Key ID" htmlFor="cf-access">
-                    <Input
-                      id="cf-access"
-                      placeholder="R2 Access Key ID"
-                      value={r2AccessKey}
-                      onChange={(e) => setR2AccessKey(e.target.value)}
-                    />
-                  </FormItem>
-                  <FormItem label="R2 Secret Access Key" htmlFor="cf-secret">
-                    <SecretSettingInput
-                      id="cf-secret"
-                      placeholder="R2 Secret Access Key"
-                      value={r2SecretKey}
-                      isSet={isSet?.r2_secret_access_key}
-                      onChange={setR2SecretKey}
-                    />
-                  </FormItem>
                 </WizardStep>
                 <WizardStep title="Step 7 - Resource names">
                   <Paragraph type="secondary">

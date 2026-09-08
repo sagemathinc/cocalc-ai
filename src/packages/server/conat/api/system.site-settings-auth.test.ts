@@ -353,6 +353,45 @@ describe("site settings dangerous-session auth", () => {
     ).toBe(pin);
   });
 
+  it("loads S3 preservation state from the seed and saves derived credentials through secret settings", async () => {
+    getServerSettingsMock.mockResolvedValue({
+      r2_account_id: "seed-account",
+      r2_access_key_id: "seed-access",
+      r2_secret_access_key: "seed-secret",
+      r2_bucket_prefix: "seed-prefix",
+      blob_r2_bucket: "seed-images",
+    });
+    bootstrapMock.mockImplementation(async ({ existingR2, save }) => {
+      expect(existingR2).toEqual({
+        accountId: "seed-account",
+        accessKey: "seed-access",
+        secretKey: "seed-secret",
+        bucketPrefix: "seed-prefix",
+        blobBucket: "seed-images",
+      });
+      await save({
+        r2_access_key_id: "created-id",
+        r2_secret_access_key: "derived-secret",
+      });
+      return { tunnel_token: { ok: true }, r2: { ok: true }, notes: [] };
+    });
+    const { bootstrapCloudflareConfigurationOnSeed } = await import("./system");
+    const result = await bootstrapCloudflareConfigurationOnSeed({
+      domain: "example.com",
+      token: "bootstrap-token",
+    });
+    expect(dbMock.set_server_setting).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "r2_secret_access_key",
+        value: "derived-secret",
+      }),
+    );
+    expect(JSON.stringify(centralLogMock.mock.calls)).not.toContain(
+      "derived-secret",
+    );
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
   it("does not suggest old-token cleanup when bootstrap fails", async () => {
     getServerSettingsMock.mockResolvedValue({
       cloudflare_automation_token_id: "old-token-id",

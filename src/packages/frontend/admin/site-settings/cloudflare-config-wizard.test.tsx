@@ -105,8 +105,67 @@ describe("CloudflareConfigWizard", () => {
       ...readyData,
       project_hosts_cloudflare_tunnel_api_token: "must-not-apply",
       r2_api_token: "must-not-apply",
+      r2_secret_access_key: "must-not-apply",
     },
   };
+
+  it("configures S3 from bootstrap without manual keys or a second settings save", async () => {
+    const onApply = jest.fn();
+    const bootstrap = webapp_client.conat_client.hub.system
+      .bootstrapCloudflareConfiguration as jest.Mock;
+    bootstrap.mockResolvedValueOnce(bootstrapResult);
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={baseData}
+        isSet={{}}
+        onApply={onApply}
+      />,
+    );
+    expect(
+      screen.queryByRole("textbox", { name: "R2 Access Key ID" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("textbox", { name: "R2 Secret Access Key" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Provision or retry blob storage" }),
+    ).toBeDisabled();
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Temporary bootstrap token" }),
+      {
+        target: { value: "temporary" },
+      },
+    );
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Bootstrap and save Cloudflare",
+        }),
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "Provision or retry blob storage" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Apply Settings" }),
+    ).toBeDisabled();
+    expect(document.body).toHaveTextContent(
+      "R2 credentials are saved. No keys to paste",
+    );
+    expect(document.body).not.toHaveTextContent("must-not-apply");
+    expect(onApply).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Advanced manual setup" }),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "R2 Access Key ID" }),
+    ).toHaveValue("access");
+    expect(
+      screen.getByRole("textbox", { name: "R2 Secret Access Key" }),
+    ).toHaveValue("");
+  });
 
   it("links to a single-permission user bootstrap template without leaking the token", () => {
     render(
@@ -515,6 +574,9 @@ describe("CloudflareConfigWizard", () => {
       ),
     ).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("must-not-apply");
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Advanced manual setup" }),
+    );
     fireEvent.change(
       screen.getByRole("textbox", { name: "R2 Access Key ID" }),
       { target: { value: "new-access" } },
@@ -868,6 +930,9 @@ describe("CloudflareConfigWizard", () => {
       />,
     );
 
+    fireEvent.click(
+      screen.getByRole("radio", { name: "Advanced manual setup" }),
+    );
     fireEvent.change(screen.getByPlaceholderText("R2 Access Key ID"), {
       target: { value: "r2-access-key" },
     });

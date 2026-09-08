@@ -7647,6 +7647,13 @@ export async function bootstrapCloudflareConfigurationOnSeed({
     let pinnedToPostgres = false;
     const result = await bootstrapCloudflareConfiguration0({
       ...options,
+      existingR2: {
+        accountId: `${previousSettings.r2_account_id || previousSettings.project_hosts_cloudflare_tunnel_account_id || ""}`,
+        accessKey: `${previousSettings.r2_access_key_id ?? ""}`,
+        secretKey: `${previousSettings.r2_secret_access_key ?? ""}`,
+        bucketPrefix: `${previousSettings.r2_bucket_prefix ?? ""}`,
+        blobBucket: `${previousSettings.blob_r2_bucket ?? ""}`,
+      },
       save: async (values) => {
         const nextSettings = { ...previousSettings, ...values };
         const nextAccount = `${nextSettings.r2_account_id ?? ""}`.trim();

@@ -4,10 +4,16 @@
  */
 
 import { bootstrapCloudflareConfiguration } from "./cloudflare-bootstrap";
+import { createHash } from "node:crypto";
 
 const accountScope = "com.cloudflare.api.account";
 const zoneScope = "com.cloudflare.api.account.zone";
 const groups = [
+  {
+    id: "s3-objects-write",
+    name: "Workers R2 Storage Bucket Item Write",
+    scopes: ["com.cloudflare.edge.r2.bucket"],
+  },
   ...[
     "Cloudflare Tunnel Write",
     "Workers Scripts Write",
@@ -56,6 +62,8 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
         const body = JSON.parse(init.body as string);
         if (body.expires_on)
           return response({ id: "discovery-id", value: "discovery-secret" });
+        if (body.name.startsWith("CoCalc R2 objects"))
+          return response({ id: "s3-id", value: "s3-secret" });
         return response({ id: "durable-id", value: "durable-secret" });
       }
       if (path.startsWith("zones?")) {
@@ -95,12 +103,18 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
       expect.objectContaining({
         r2_api_token: "durable-secret",
         project_hosts_cloudflare_tunnel_api_token: "durable-secret",
+        r2_access_key_id: "s3-id",
+        r2_secret_access_key: createHash("sha256")
+          .update("s3-secret")
+          .digest("hex"),
       }),
     );
     for (const secret of [
       "bootstrap-secret",
       "discovery-secret",
       "durable-secret",
+      "s3-secret",
+      createHash("sha256").update("s3-secret").digest("hex"),
     ]) {
       expect(JSON.stringify(result)).not.toContain(secret);
     }
@@ -120,6 +134,23 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
       { "com.cloudflare.api.account.zone.zone-id": "*" },
     ]);
     expect(JSON.stringify(policies[1])).not.toContain("forbidden");
+    expect(policies[2].policies).toEqual([
+      {
+        effect: "allow",
+        permission_groups: [{ id: "s3-objects-write" }],
+        resources: Object.fromEntries(
+          ["wnam", "enam", "weur", "eeur", "apac", "oc", "blobs"].map(
+            (suffix) => [
+              `com.cloudflare.edge.r2.bucket.account-id_default_site-${suffix}`,
+              "*",
+            ],
+          ),
+        ),
+      },
+    ]);
+    expect(policies[2]).not.toHaveProperty("expires_on");
+    expect(result.r2.ok).toBe(true);
+    expect(result.values.r2_access_key_id).toBe("s3-id");
     expect(
       fetchMock.mock.calls
         .filter(([, init]) => init.method === "DELETE")
@@ -159,13 +190,146 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
     const result = await run(save);
     expect(result.tunnel_token.ok).toBe(false);
     expect(result.notes.join(" ")).toContain("durable-id");
+    expect(result.notes.join(" ")).toContain("s3-id");
     expect(JSON.stringify(result)).not.toContain("secret");
     expect(
       fetchMock.mock.calls.some(
         ([url, init]) =>
-          init.method === "DELETE" && url.endsWith("/durable-id"),
+          init.method === "DELETE" &&
+          (url.endsWith("/durable-id") || url.endsWith("/s3-id")),
       ),
     ).toBe(false);
+  });
+
+  const existingR2 = {
+    accountId: "account-id",
+    accessKey: "existing-id",
+    secretKey: "existing-secret",
+    bucketPrefix: "site",
+  };
+
+  it("preserves an existing credential pair on repeat bootstrap", async () => {
+    const result = await bootstrapCloudflareConfiguration({
+      domain: "example.edu",
+      token: "bootstrap-secret",
+      r2BucketPrefix: "site",
+      existingR2,
+      save,
+    });
+    expect(result.r2.ok).toBe(true);
+    expect(result.r2.message).toContain("preserved");
+    expect(save.mock.calls[0][0].r2_access_key_id).toBe("existing-id");
+    expect(save.mock.calls[0][0]).not.toHaveProperty("r2_secret_access_key");
+    expect(JSON.stringify(result)).not.toContain("existing-secret");
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) => url.endsWith("/user/tokens") && init.method === "POST",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it.each([
+    { accountId: "another-account" },
+    { bucketPrefix: "another-prefix" },
+    { secretKey: "" },
+    { accessKey: "" },
+  ])(
+    "refuses to replace or retarget existing credentials: %j",
+    async (changes) => {
+      const result = await bootstrapCloudflareConfiguration({
+        domain: "example.edu",
+        token: "bootstrap-secret",
+        r2BucketPrefix: "site",
+        existingR2: { ...existingR2, ...changes },
+        save,
+      });
+      expect(result.tunnel_token.ok).toBe(false);
+      expect(result.notes.join(" ")).toContain("No settings were changed");
+      expect(save).not.toHaveBeenCalled();
+      expect(result.bootstrap_token_invalidated).toBe(true);
+    },
+  );
+
+  it("uses the configured custom blob bucket without granting account-wide S3 access", async () => {
+    await bootstrapCloudflareConfiguration({
+      domain: "example.edu",
+      token: "bootstrap-secret",
+      r2BucketPrefix: "site",
+      existingR2: { blobBucket: "custom-images" },
+      save,
+    });
+    const body = fetchMock.mock.calls
+      .filter(
+        ([url, init]) => url.endsWith("/user/tokens") && init.method === "POST",
+      )
+      .map(([, init]) => JSON.parse(init.body))
+      .at(-1);
+    expect(Object.keys(body.policies[0].resources)).toContain(
+      "com.cloudflare.edge.r2.bucket.account-id_default_custom-images",
+    );
+    expect(Object.keys(body.policies[0].resources)).not.toContain(
+      "com.cloudflare.edge.r2.bucket.account-id_default_site-blobs",
+    );
+  });
+
+  it("cleans up the unsaved automation token if S3 creation fails", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (
+        init.method === "POST" &&
+        JSON.parse(init.body).name.startsWith("CoCalc R2 objects")
+      )
+        return response({}, 403);
+      return normal(url, init);
+    });
+    const result = await run(save);
+    expect(save).not.toHaveBeenCalled();
+    expect(result.r2.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(
+      fetchMock.mock.calls
+        .filter(([, init]) => init.method === "DELETE")
+        .map(([url]) => url.split("/").pop()),
+    ).toEqual(["discovery-id", "durable-id", "bootstrap-id"]);
+  });
+
+  it("fails closed if the bucket-scoped permission is unavailable", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (url.endsWith("/permission_groups"))
+        return response(
+          groups.filter((group) => group.id !== "s3-objects-write"),
+        );
+      return normal(url, init);
+    });
+    const result = await run(save);
+    expect(result.r2.ok).toBe(false);
+    expect(save).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) => url.endsWith("/user/tokens") && init.method === "POST",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("revokes a malformed S3 token response rather than saving incomplete credentials", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (
+        init.method === "POST" &&
+        JSON.parse(init.body).name.startsWith("CoCalc R2 objects")
+      )
+        return response({ id: "incomplete-s3-id" });
+      return normal(url, init);
+    });
+    const result = await run(save);
+    expect(result.tunnel_token.ok).toBe(false);
+    expect(save).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls
+        .filter(([, init]) => init.method === "DELETE")
+        .map(([url]) => url.split("/").pop()),
+    ).toContain("incomplete-s3-id");
   });
 
   it("does not configure anything if domain validation fails", async () => {
