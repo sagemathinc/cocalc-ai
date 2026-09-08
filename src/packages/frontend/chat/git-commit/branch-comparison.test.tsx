@@ -25,13 +25,11 @@ const rows = ["a", "b"].map((c, i) => ({
 }));
 beforeEach(() => {
   jest.resetAllMocks();
-  jest
-    .mocked(projectGitReader.discover)
-    .mockResolvedValue({
-      repository,
-      refs: [{ name: "refs/heads/feature", object: "a".repeat(40) }],
-      worktrees: [],
-    });
+  jest.mocked(projectGitReader.discover).mockResolvedValue({
+    repository,
+    refs: [{ name: "refs/heads/feature", object: "a".repeat(40) }],
+    worktrees: [],
+  });
   jest.mocked(projectGitReader.resolveCommit).mockResolvedValue("a".repeat(40));
   jest.mocked(projectGitReader.history).mockResolvedValue(rows);
 });
@@ -104,4 +102,55 @@ test("late branch history is discarded after the component unmounts", async () =
   view.unmount();
   finish(rows);
   expect(apply).not.toHaveBeenCalled();
+});
+
+test("editing locks preserve history and endpoints but invalidate pending comparisons", async () => {
+  let finish!: (value: any) => void;
+  jest.mocked(projectGitReader.compare).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const apply = jest.fn();
+  const view = render(
+    <BranchComparison
+      repository={repository}
+      disabled={false}
+      onApply={apply}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("2 commits loaded"),
+  );
+  await select("Before commit", "Before implementation");
+  await select("After commit", "After implementation");
+  fireEvent.click(screen.getByRole("button", { name: "Compare commits" }));
+  await waitFor(() =>
+    expect(projectGitReader.compare).toHaveBeenCalledTimes(1),
+  );
+  view.rerender(
+    <BranchComparison repository={repository} disabled onApply={apply} />,
+  );
+  view.rerender(
+    <BranchComparison
+      repository={repository}
+      disabled={false}
+      onApply={apply}
+    />,
+  );
+  finish({ kind: "comparison" });
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Compare commits" }),
+    ).toBeEnabled(),
+  );
+  expect(apply).not.toHaveBeenCalled();
+  expect(projectGitReader.history).toHaveBeenCalledTimes(1);
+  expect(
+    screen.getByRole("combobox", { name: "Before commit" }).parentElement,
+  ).toHaveTextContent("Before implementation");
+  expect(
+    screen.getByRole("combobox", { name: "After commit" }).parentElement,
+  ).toHaveTextContent("After implementation");
 });

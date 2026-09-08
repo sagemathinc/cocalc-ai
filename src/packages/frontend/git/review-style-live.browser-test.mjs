@@ -73,9 +73,18 @@ try {
     );
     for (const name of ["Before commit", "After commit"]) {
       const input = comparison.getByRole("combobox", { name, exact: true });
-      await input.click();
-      await input.press("ArrowDown");
-      if (name === "Before commit") await input.press("ArrowDown");
+      const ref =
+        name === "Before commit"
+          ? process.env.BEFORE_COMMIT
+          : process.env.AFTER_COMMIT;
+      if (ref) {
+        await input.fill(ref);
+        await input.press("ArrowDown");
+      } else {
+        await input.click();
+        await input.press("ArrowDown");
+        if (name === "Before commit") await input.press("ArrowDown");
+      }
       await input.press("Enter");
     }
     await comparison

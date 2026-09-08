@@ -39,6 +39,17 @@ Remaining live acceptance gaps (September 8):
   The test now captures rendered page text on failure. Do not conflate this
   unresolved loading issue with Pierre rendering or the verified reading
   viewport fix. The separate worktree comparison acceptance still passes.
+  Follow-up instrumentation in an isolated tab measured discovery, HEAD
+  resolution and history completing in about 201ms total, with no queued
+  requests; the explicit `6057d353ea` to `3365e54323` comparison rendered 12
+  files. Two subsequent fresh-tab runs with those explicitly filtered endpoints
+  passed both themes. No root cause is claimed for the earlier transient stall.
+  Inspection found a separate selection-reset bug: disabling controls while
+  editing reloaded history and cleared both endpoints. Loading no longer depends
+  on that editing lock, while a separate generation invalidates pending applies.
+  A regression verifies endpoint retention and rejection of a late comparison
+  after an edit-lock cycle. The wider pre-fix regression passed 273 tests in
+  49 suites; the three focused comparison tests passed after the fix.
 
 September 8 latest regression: 130 tests in 35 suites passed across Git drawer,
 shared diff viewer, Git read service, and TimeTravel modules. The reading-view

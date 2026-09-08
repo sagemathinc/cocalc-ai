@@ -28,6 +28,12 @@ export function BranchComparison({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const generation = useRef(0);
+  const compareGeneration = useRef(0);
+  useEffect(() => {
+    // Editing locks the controls, not the history or selected endpoints.
+    // Invalidate a pending apply even if editing starts and ends before it returns.
+    compareGeneration.current++;
+  }, [disabled]);
   useEffect(() => {
     const request = ++generation.current;
     setEntries([]);
@@ -67,7 +73,7 @@ export function BranchComparison({
     return () => {
       generation.current++;
     };
-  }, [repository, branch, disabled]);
+  }, [repository, branch]);
   const loadMore = async () => {
     const request = generation.current;
     setBusy(true);
@@ -88,8 +94,9 @@ export function BranchComparison({
     }
   };
   const compare = async () => {
-    if (!base || !head) return;
+    if (disabled || busy || !base || !head) return;
     const request = generation.current;
+    const applyRequest = compareGeneration.current;
     setBusy(true);
     setError("");
     try {
@@ -99,9 +106,17 @@ export function BranchComparison({
         head,
         "trees",
       );
-      if (request === generation.current) onApply(target);
+      if (
+        request === generation.current &&
+        applyRequest === compareGeneration.current
+      )
+        onApply(target);
     } catch (err) {
-      if (request === generation.current) setError(String(err));
+      if (
+        request === generation.current &&
+        applyRequest === compareGeneration.current
+      )
+        setError(String(err));
     } finally {
       if (request === generation.current) setBusy(false);
     }
