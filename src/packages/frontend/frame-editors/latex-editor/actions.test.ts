@@ -1449,6 +1449,55 @@ describe("LaTeX fatal build error toast", () => {
   });
 });
 
+describe("knitr frame-type TimeTravel", () => {
+  function createActions(source: string, knitr: boolean) {
+    const actions = createActionsFixture();
+    actions.path = "/project/paper.tex";
+    actions.filename_knitr = source;
+    actions.knitr = knitr;
+    let node = Map<string, any>({ id: "frame", type: "cm", path: source });
+    actions._get_frame_node = () => node;
+    actions._get_most_recent_active_frame_id_of_type = () => undefined;
+    actions._cm = {};
+    actions.terminals = { close_terminal: jest.fn() };
+    actions.code_editors = { close_code_editor: jest.fn() };
+    actions.store = new EventEmitter();
+    actions.set_frame_tree = (update) => {
+      node = node.merge(update);
+    };
+    return { actions, getNode: () => node };
+  }
+
+  it.each(["rnw", "Rnw", "rtex"])(
+    "opens original %s source history and supports switching back",
+    (ext) => {
+      const source = `/project/paper.${ext}`;
+      const { actions, getNode } = createActions(source, true);
+      actions.set_frame_type("frame", "time_travel");
+      expect(getNode().get("type")).toBe("time_travel");
+      expect(getNode().get("path")).toBe(source);
+      actions.set_frame_type("frame", "cm");
+      expect(getNode().get("type")).toBe("cm");
+      expect(getNode().get("path")).toBe(source);
+      actions.set_frame_type("frame", "time_travel");
+      expect(getNode().get("path")).toBe(source);
+    },
+  );
+
+  it("leaves an existing Code subfile selected when choosing Code again", () => {
+    const { actions, getNode } = createActions("/project/paper.rnw", true);
+    actions.set_frame_tree({ path: "/project/included.tex" });
+    actions.set_frame_type("frame", "cm");
+    expect(getNode().get("path")).toBe("/project/included.tex");
+  });
+
+  it("keeps ordinary LaTeX history on the tex source", () => {
+    const { actions, getNode } = createActions("/project/paper.tex", false);
+    actions.set_frame_type("frame", "time_travel");
+    expect(getNode().get("path")).toBe("/project/paper.tex");
+  });
+});
+
 describe("Synctex PDF-to-source navigation", () => {
   afterEach(() => jest.restoreAllMocks());
 

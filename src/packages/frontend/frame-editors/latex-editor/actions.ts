@@ -1669,6 +1669,16 @@ export class Actions extends BaseActions<LatexEditorState> {
     this.synctex_tex_to_pdf(line, ch, path);
   }
 
+  set_frame_type(id: string, type: string): void {
+    const node = this._get_frame_node(id);
+    if (node == null || node.get("type") === type) return;
+    super.set_frame_type(id, type);
+    if ((type === "time_travel" || type === "cm") && this.knitr) {
+      // Both history and Code must use the authored source, not generated TeX.
+      this.set_frame_tree({ id, path: this.filename_knitr });
+    }
+  }
+
   time_travel(opts: { path?: string; frame?: boolean }): void {
     // knitr case: point to editor file, not the generated tex
     // https://github.com/sagemathinc/cocalc/issues/3336
