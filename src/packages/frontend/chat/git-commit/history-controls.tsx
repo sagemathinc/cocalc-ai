@@ -10,10 +10,14 @@ export function GitHistoryControls({
   selection,
   disabled,
   onApply,
+  showMerges = false,
+  onShowMergesChange,
 }: {
   origin: RepositoryDiscovery;
   selection: GitHistorySelection;
   disabled: boolean;
+  showMerges?: boolean;
+  onShowMergesChange?: (show: boolean) => void;
   onApply: (
     selection: GitHistorySelection,
     discovery: RepositoryDiscovery,
@@ -126,6 +130,16 @@ export function GitHistoryControls({
           />{" "}
           First-parent history
         </label>
+        {onShowMergesChange && (
+          <label>
+            <input
+              type="checkbox"
+              checked={showMerges}
+              onChange={(event) => onShowMergesChange(event.target.checked)}
+            />{" "}
+            Show merge commits
+          </label>
+        )}
         <Button
           size="small"
           loading={busy}

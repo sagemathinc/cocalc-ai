@@ -98,6 +98,7 @@ import {
   persistGitReviewCommitSearchPreference,
   persistGitReviewFetchCountPreference,
   persistGitReviewOnlyUnreviewedPreference,
+  persistGitReviewShowMergesPreference,
   persistGitReviewRecentCutoffPreference,
   persistDrawerScrollPosition,
   persistDrawerSize,
@@ -106,6 +107,7 @@ import {
   readGitReviewCommitSearchPreference,
   readGitReviewFetchCountPreference,
   readGitReviewOnlyUnreviewedPreference,
+  readGitReviewShowMergesPreference,
   readGitReviewRecentCutoffPreference,
 } from "./git-commit/drawer-storage";
 import {
@@ -549,6 +551,9 @@ export function GitCommitDrawer({
     });
   const [commitFilter, setCommitFilter] = useState(
     readGitReviewCommitSearchPreference,
+  );
+  const [showMerges, setShowMerges] = useState(
+    readGitReviewShowMergesPreference,
   );
   const [recentCutoff, setRecentCutoff] = useState<number | undefined>(
     readGitReviewRecentCutoffPreference,
@@ -1115,6 +1120,7 @@ export function GitCommitDrawer({
               skip: history.length,
               count,
               firstParent: selectedHistory?.selection.firstParent ?? true,
+              showMerges,
             },
           );
           history.push(...page);
@@ -1151,6 +1157,7 @@ export function GitCommitDrawer({
     selectedHistory,
     gitLogFetchCount,
     gitLogReloadCounter,
+    showMerges,
   ]);
 
   useEffect(() => {
@@ -3423,6 +3430,11 @@ export function GitCommitDrawer({
           <GitHistoryControls
             origin={originDiscovery}
             selection={historyControlsSelection}
+            showMerges={showMerges}
+            onShowMergesChange={(show) => {
+              setShowMerges(show);
+              persistGitReviewShowMergesPreference(show);
+            }}
             disabled={Boolean(
               activeInlineDraft ||
               activeInlineEditId ||

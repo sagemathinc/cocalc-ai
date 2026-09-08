@@ -32,6 +32,33 @@ const origin = {
 };
 const selection = { worktree: "/repo", ref: "HEAD", firstParent: true };
 
+test("merge visibility changes immediately by keyboard without browsing a new ref", async () => {
+  const user = userEvent.setup();
+  const onApply = jest.fn();
+  const onShowMergesChange = jest.fn();
+  const props = {
+    origin,
+    selection,
+    disabled: false,
+    onApply,
+    onShowMergesChange,
+  };
+  const { rerender } = render(
+    <GitHistoryControls {...props} showMerges={false} />,
+  );
+  const checkbox = screen.getByRole("checkbox", { name: "Show merge commits" });
+  expect(checkbox).not.toBeChecked();
+  checkbox.focus();
+  await user.keyboard(" ");
+  expect(onShowMergesChange).toHaveBeenLastCalledWith(true);
+  expect(onApply).not.toHaveBeenCalled();
+  rerender(<GitHistoryControls {...props} showMerges />);
+  expect(checkbox).toBeChecked();
+  expect(checkbox).toHaveFocus();
+  await user.keyboard(" ");
+  expect(onShowMergesChange).toHaveBeenLastCalledWith(false);
+});
+
 test("keyboard browsing applies the validated choice, not each draft change", async () => {
   const user = userEvent.setup();
   const onApply = jest.fn();

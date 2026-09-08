@@ -361,7 +361,13 @@ export class GitReadService {
       skip = 0,
       count = 100,
       firstParent = true,
-    }: { skip?: number; count?: number; firstParent?: boolean } = {},
+      showMerges = true,
+    }: {
+      skip?: number;
+      count?: number;
+      firstParent?: boolean;
+      showMerges?: boolean;
+    } = {},
   ) {
     requireObject(commit);
     if (
@@ -380,6 +386,7 @@ export class GitReadService {
         `--skip=${skip}`,
         `-n${count}`,
         ...(firstParent ? ["--first-parent"] : []),
+        ...(showMerges ? [] : ["--no-merges"]),
         commit,
         "--",
       ]),

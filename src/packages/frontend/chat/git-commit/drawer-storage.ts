@@ -14,6 +14,7 @@ const ONLY_UNREVIEWED_STORAGE_KEY =
 const COMMIT_SEARCH_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:commitSearch";
 const RECENT_CUTOFF_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:recentCutoff";
 const FETCH_COUNT_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:fetchCount";
+const SHOW_MERGES_STORAGE_KEY = "cocalc:chat:gitCommitDrawer:showMerges";
 const MAX_DRAWER_SCROLL_ENTRIES = 50;
 const DEFAULT_DRAWER_SIZE = 920;
 const MIN_DRAWER_SIZE = 520;
@@ -54,6 +55,22 @@ export function readGitReviewOnlyUnreviewedPreference(): boolean {
     return localStorage.getItem(ONLY_UNREVIEWED_STORAGE_KEY) === "true";
   } catch {
     return false;
+  }
+}
+
+export function readGitReviewShowMergesPreference(): boolean {
+  try {
+    return localStorage.getItem(SHOW_MERGES_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function persistGitReviewShowMergesPreference(value: boolean): void {
+  try {
+    localStorage.setItem(SHOW_MERGES_STORAGE_KEY, String(value));
+  } catch {
+    // Preferences must not prevent browsing when storage is unavailable.
   }
 }
 

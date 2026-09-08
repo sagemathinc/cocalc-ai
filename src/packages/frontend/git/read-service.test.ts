@@ -403,6 +403,31 @@ describe("read-only Git fixtures", () => {
     ).toBe(mainTip);
   });
 
+  test("hiding merges filters before pagination without changing traversal or the tip", async () => {
+    const hidden = await service.history(repository, mergeTip, {
+      showMerges: false,
+    });
+    expect(hidden.map((entry) => entry.commit)).toEqual([mainTip, root]);
+    expect(
+      (
+        await service.history(repository, mergeTip, {
+          showMerges: false,
+          skip: 1,
+          count: 1,
+        })
+      ).map((entry) => entry.commit),
+    ).toEqual([root]);
+    const all = await service.history(repository, mergeTip, {
+      firstParent: false,
+      showMerges: false,
+    });
+    expect(all.map((entry) => entry.commit)).toContain(featureTip);
+    expect(all.every((entry) => entry.parents.length < 2)).toBe(true);
+    expect((await service.history(repository, mergeTip))[0].commit).toBe(
+      mergeTip,
+    );
+  });
+
   test("root and each merge parent have explicit nonempty comparisons", async () => {
     const initial = await service.pinCommit(repository, root);
     expect(initial.parent).toBeNull();
