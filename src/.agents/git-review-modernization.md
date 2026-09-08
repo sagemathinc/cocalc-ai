@@ -21,15 +21,31 @@ not a current checklist. The objective is not complete. Current release work:
 
 Remaining live acceptance gaps (September 8):
 
-- Actual agent command execution in the selected worktree: persisted dispatch
-  context was verified, but the earlier cross-worktree attempt hit its usage
-  limit. The maintainer's newer successful execution below establishes changed
-  execution availability, but is rooted in the main working copy rather than
-  a separately selected worktree. Cross-worktree execution remains to verify.
 - Intermittent cold originating-link behavior: the archived-directory fixture
   and subsequent route tests pass, but an earlier disappearance and transient
   missing URL were not reproduced with a demonstrated production root cause.
   Keep the bounded navigation diagnostics rather than claiming this fixed.
+
+Cross-worktree execution verified (September 8): review feedback created thread
+`7ca2b76d-c919-4a75-8eee-919527a1a019`, Codex session
+`01a07ea4-c45b-73a1-bba9-3314feda0f6b`, with cwd
+`/tmp/cocalc-review-worktrees-Cq4gOf/first`. Archived terminal events show `pwd`
+and Git repository/HEAD checks executing there, exiting 0, with the worktree
+path and expected HEAD in their output. The agent reported no file changes.
+The disposable worktree was cleaned up after terminal completion. The initial
+test assertion incorrectly required stdout to contain only the path; the
+agent legitimately combined `pwd` with the requested Git checks. The harness
+now correlates the successful output with the same terminal's `pwd` command.
+
+Historical commit headers now expose More > Edit in this worktree when the
+selected working copy is available, separately from historical revision views.
+Live opening verified the selected worktree path, not the main checkout. Both
+working-copy and history-ref selectors now support filtering by their labels.
+The complete live worktree suite subsequently passed, including a second real
+agent execution (thread `5afc7e55-b815-4493-9c28-5c823195e002`), historical and
+current file opening, ambiguous/absent worktree notices, and moved-ref pinning
+across reload until explicit refresh. Frontend typecheck, lint, and 54 focused
+Git drawer tests passed for this change-set.
 
 The standard live route suite was rerun against the current deployed build and
 passed deep-link opening, selection, reload, Escape, Back/Forward, preservation
@@ -48,16 +64,16 @@ the activity file diffs render nicely, the checkboxes work, and dark mode works.
 This closes the missing completed activity-diff visual fixture gate. It does
 not establish cross-worktree dispatch or a fix for intermittent cold links.
 
-| Requirement | Current evidence and remaining work |
-| --- | --- |
-| Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Live detached-worktree unique/ambiguous/absent cases, moved-ref pinning, and exact working-copy file opening in both renderers passed (details below). Actual agent dispatch remains a separate acceptance case. |
-| Review preservation | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Live independent/same-ID comment recovery, draft-alias choice, actual WebSocket disconnect/reconnect, and conflicting private-note reconciliation checks passed. Existing keys and recovered note alternatives remain intact. Details and test boundaries are recorded below. |
-| Navigation and copy | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Live drawer close/reopen preserves the source position within a few wrapped lines. Native mouse selection and exact clipboard copying across virtual windows passed after stabilizing Pierre options; retain those checks through Classic removal. |
-| Rich comments | Active editors live outside recyclable rows. Real delayed HTTP upload, image rendering, undo/redo, theme changes, two-window inline recovery, simultaneous note/inline editor focus, and network reconnect passed. |
-| TimeTravel | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Both rename sides and deleted-file viewing passed in Classic/Pierre. |
-| Agent context/activity | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live UI submission created a separate thread with the selected worktree in both persisted thread config and Codex activity config. Execution stopped at the connected account's usage limit; actual command execution and originating-context links still need end-to-end confirmation. |
-| Performance/theme/packaging | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor and strict native-copy checks passed. Measured main-thread heap excludes worker heaps. |
-| Default and cleanup | Git review, TimeTravel text comparison, and activity diffs now use Pierre only. Classic renderers, selectors and the experimental preview are deleted. Old activity entries without trustworthy source retain an explicit raw-data disclosure, not a second renderer. Final integration audit remains. |
+| Requirement                              | Current evidence and remaining work                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Git/worktree/ref and comparison browsing | Facade, selectors, pinned endpoints, historical Git file loader, URL routes, and disposable real-Git tests exist. Live detached-worktree unique/ambiguous/absent cases, moved-ref pinning, and exact working-copy file opening in both renderers passed (details below). Actual agent dispatch remains a separate acceptance case.                                                                                                         |
+| Review preservation                      | V2 adapters, comparison revisions, import recovery and account-scoped alias choices are implemented. Live independent/same-ID comment recovery, draft-alias choice, actual WebSocket disconnect/reconnect, and conflicting private-note reconciliation checks passed. Existing keys and recovered note alternatives remain intact. Details and test boundaries are recorded below.                                                         |
+| Navigation and copy                      | Trees, sticky headers, keyboard handling, source-side copy, loaded-patch copy, search maps, and semantic scroll adapters are wired. Live drawer close/reopen preserves the source position within a few wrapped lines. Native mouse selection and exact clipboard copying across virtual windows passed after stabilizing Pierre options; retain those checks through Classic removal.                                                     |
+| Rich comments                            | Active editors live outside recyclable rows. Real delayed HTTP upload, image rendering, undo/redo, theme changes, two-window inline recovery, simultaneous note/inline editor focus, and network reconnect passed.                                                                                                                                                                                                                         |
+| TimeTravel                               | Live Git, patchflow, snapshot and backup comparisons passed through both renderers. Guarded rich Markdown restore tests passed for all four sources, preserving previous history (details below). Both rename sides and deleted-file viewing passed in Classic/Pierre.                                                                                                                                                                     |
+| Agent context/activity                   | Validated worktree dispatch, immutable comparison prompts, retained sparse patches and bounded read/write observations are implemented and tested. Live UI submission created a separate thread with the selected worktree in both persisted thread config and Codex activity config. Execution stopped at the connected account's usage limit; actual command execution and originating-context links still need end-to-end confirmation. |
+| Performance/theme/packaging              | Real Chromium fixtures cover themes, layout, worker failure/cleanup, native operator copying, an 18,001-line multi-file benchmark, a 19,000-line single file, and 128 KB minified lines. Production baseline deltas and eager-import guards are recorded below. Full-app appearance/editor and strict native-copy checks passed. Measured main-thread heap excludes worker heaps.                                                          |
+| Default and cleanup                      | Git review, TimeTravel text comparison, and activity diffs now use Pierre only. Classic renderers, selectors and the experimental preview are deleted. Old activity entries without trustworthy source retain an explicit raw-data disclosure, not a second renderer. Final integration audit remains.                                                                                                                                     |
 
 Browser access: local signed-in Chromium now exposes CDP on port 9222
 (Chrome 149.0.7827.196), replacing the laptop forward. Earlier live checks
@@ -691,7 +707,7 @@ stats passed all guards (931 chunks, two preexisting grandfathered matches).
 Injecting either library into the app chunk in memory correctly failed the
 guard. This protects lazy loading without relying on source-level import
 inspection alone. An equivalent before/after production build is still needed
-for the requested initial/lazy bundle-size *delta*; these absolute measurements
+for the requested initial/lazy bundle-size _delta_; these absolute measurements
 must not be presented as that delta.
 
 ### Production baseline comparison (2026-09-07)
@@ -704,14 +720,14 @@ bootstrap required building `apps/document-build` and `cdn` before retrying
 analysis; no baseline source changes were made. The baseline contains no
 Pierre modules.
 
-| JavaScript output | Baseline gzip bytes | Current gzip bytes | Delta |
-| --- | ---: | ---: | ---: |
-| load | 84,524 | 88,927 | +4,403 |
-| app | 981,993 | 983,638 | +1,645 |
-| embed | 1,009,903 | 1,011,330 | +1,427 |
-| All initial chunks, unique assets | 3,547,705 | 3,555,221 | +7,516 |
-| All noninitial chunks, unique assets | 10,679,087 | 13,019,132 | +2,340,045 |
-| All emitted JS, unique assets | 14,226,792 | 16,574,353 | +2,347,561 |
+| JavaScript output                    | Baseline gzip bytes | Current gzip bytes |      Delta |
+| ------------------------------------ | ------------------: | -----------------: | ---------: |
+| load                                 |              84,524 |             88,927 |     +4,403 |
+| app                                  |             981,993 |            983,638 |     +1,645 |
+| embed                                |           1,009,903 |          1,011,330 |     +1,427 |
+| All initial chunks, unique assets    |           3,547,705 |          3,555,221 |     +7,516 |
+| All noninitial chunks, unique assets |          10,679,087 |         13,019,132 | +2,340,045 |
+| All emitted JS, unique assets        |          14,226,792 |         16,574,353 | +2,347,561 |
 
 The total raw-JS delta is +12,018,402 bytes; Brotli is +2,108,747 bytes.
 Sum `assets` with `.js` suffix by unique filename, using the `initial` flag
@@ -1657,7 +1673,7 @@ selection with a whole-file or whole-hunk copy.
 | 4. Range and merge review          | Add explicit base/head/parent UI and versioned comparison records with non-destructive legacy handling. Test divergent, merged, squash/rebase, root-commit, empty, and force-moved-ref cases.                                                                                                        |
 | 5. Agent context                   | Carry validated project/repository/worktree/target through links, feedback, and new turns; reject mismatched existing-thread mutation routing. Test busy threads and a worktree disappearing or changing branch between selection and submission.                                                    |
 | 6. Other diff surfaces             | Reuse the adapter for TimeTravel text comparisons, preserving rich historical viewers and restore semantics. Then add the proven sparse-hunk activity adapter with bounded streaming updates. Do not change inline Slate activity Markdown rendering.                                                |
-| 7. Default and cleanup             | After the compatibility matrix passes, make Pierre the only renderer. Delete Classic rendering, its selector and the experimental modal, retaining reusable review logic and rich non-diff viewers. The maintainer explicitly rejected a rollback window on September 7. |
+| 7. Default and cleanup             | After the compatibility matrix passes, make Pierre the only renderer. Delete Classic rendering, its selector and the experimental modal, retaining reusable review logic and rich non-diff viewers. The maintainer explicitly rejected a rollback window on September 7.                             |
 
 For every change-set run package-local types/tests and frontend lint where
 applicable. For each interactive milestone run the real-renderer browser suite

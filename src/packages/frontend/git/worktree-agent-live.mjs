@@ -2,6 +2,7 @@
 // Leaves an audit thread and submitted comment; never asks the agent to edit.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { chooseHistory } from "./history-select.browser-helper.mjs";
 
 export async function checkWorktreeAgent({
   page,
@@ -39,12 +40,18 @@ export async function checkWorktreeAgent({
   // URL browsing deliberately does not bind an agent. Enter through the chat's
   // Git action so the production callback carries the selected thread context.
   await page.keyboard.press("Escape");
+  if (process.env.REVIEW_AGENT_THREAD_LABEL) {
+    await page
+      .getByRole("menuitem", {
+        name: process.env.REVIEW_AGENT_THREAD_LABEL,
+        exact: false,
+      })
+      .click();
+  }
   await page
     .getByRole("button", { name: "Open git browser", exact: true })
     .click();
-  await page
-    .getByRole("combobox", { name: "Review working copy", exact: true })
-    .selectOption(worktree);
+  await chooseHistory(page, "Review working copy", worktree);
   await page
     .getByRole("button", { name: "Browse / Refresh", exact: true })
     .click();

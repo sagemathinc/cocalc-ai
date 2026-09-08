@@ -86,10 +86,31 @@ async function click(expression) {
     e.dispatchEvent(new MouseEvent('mouseup',{...options,buttons:0}));
     e.click();e.focus();})()`);
 }
-const select = (label, value) =>
-  evaluate(
-    `(()=>{const e=document.querySelector('select[aria-label=${JSON.stringify(label)}]');if(!e || !Array.from(e.options).some(option=>option.value===${JSON.stringify(value)}))throw Error(${JSON.stringify(`Missing option ${value} in ${label}`)});e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('change',{bubbles:true}))})()`,
+const selected = (label, value) =>
+  `document.querySelector('[role="combobox"][aria-label=${JSON.stringify(label)}]')?.closest('.ant-select')?.textContent.includes(${JSON.stringify(value.replace(/^refs\//, ""))})`;
+async function select(label, value) {
+  await evaluate(
+    `document.querySelector('[role="combobox"][aria-label=${JSON.stringify(label)}]').focus()`,
   );
+  await send("Input.insertText", {
+    text:
+      value === "HEAD"
+        ? "Selected worktree HEAD"
+        : value.replace(/^refs\//, ""),
+  });
+  for (const key of ["ArrowDown", "Enter"]) {
+    await send("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key,
+      windowsVirtualKeyCode: key === "Enter" ? 13 : 40,
+    });
+    await send("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key,
+      windowsVirtualKeyCode: key === "Enter" ? 13 : 40,
+    });
+  }
+}
 const button = (label) =>
   `Array.from(document.querySelectorAll('button')).find(e=>e.textContent.trim()===${JSON.stringify(label)})`;
 let appearance;
@@ -188,7 +209,9 @@ try {
       "PASS: live comparison controls, pinned trees, account review loading, optional diff search, and local-draft close without remote review writes.",
     );
   } else if (historyRef) {
-    await until(`!!document.querySelector('select[aria-label="History ref"]')`);
+    await until(
+      `!!document.querySelector('[role="combobox"][aria-label="History ref"]')`,
+    );
     await select("History ref", historyRef);
     assert.equal(
       await evaluate(`new URL(location.href).searchParams.get('git-hash')`),
@@ -203,9 +226,7 @@ try {
     assert.match(tip, /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
     assert.equal(new URL(route).searchParams.get("git-hash"), tip);
     await send("Page.reload");
-    await until(
-      `document.querySelector('select[aria-label="History ref"]')?.value === ${JSON.stringify(historyRef)}`,
-    );
+    await until(selected("History ref", historyRef));
     assert.equal(await evaluate(`location.href`), route);
     console.log(
       "PASS: explicit ref browsing pins history and restores its context on reload.",
@@ -218,16 +239,10 @@ try {
     const expected = git("rev-parse", "HEAD").trim();
     const before = git("status", "--porcelain=v1");
     await until(
-      `!!document.querySelector('select[aria-label="Review working copy"]')`,
-    );
-    assert.equal(
-      await evaluate(
-        `Array.from(document.querySelector('select[aria-label="Review working copy"]').options).some(option => option.value === ${JSON.stringify(historyWorktree)})`,
-      ),
-      true,
-      "The browser project must contain the supplied local worktree; a different project can have a separate checkout.",
+      `!!document.querySelector('[role="combobox"][aria-label="Review working copy"]')`,
     );
     await select("Review working copy", historyWorktree);
+    await until(selected("Review working copy", historyWorktree));
     await select("History ref", "HEAD");
     assert.equal(
       await evaluate(`new URL(location.href).searchParams.get('git-hash')`),
@@ -237,17 +252,13 @@ try {
     await until(
       `new URL(location.href).searchParams.get('git-hash') === ${JSON.stringify(expected)}`,
     );
-    await until(
-      `document.querySelector('select[aria-label="Review working copy"]').value === ${JSON.stringify(historyWorktree)}`,
-    );
+    await until(selected("Review working copy", historyWorktree));
     assert.equal(
       await evaluate(`new URL(location.href).searchParams.get('git-cwd')`),
       historyWorktree,
     );
     await send("Page.reload");
-    await until(
-      `document.querySelector('select[aria-label="Review working copy"]')?.value === ${JSON.stringify(historyWorktree)}`,
-    );
+    await until(selected("Review working copy", historyWorktree));
     assert.equal(
       await evaluate(`new URL(location.href).searchParams.get('git-hash')`),
       expected,

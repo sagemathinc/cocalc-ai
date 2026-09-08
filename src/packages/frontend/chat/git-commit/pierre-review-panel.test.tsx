@@ -6,6 +6,30 @@ import { buildDiffLineMetas, makeCommentAnchor } from "./diff-lines";
 import { copyTextToClipboard } from "@cocalc/frontend/components/copy-button";
 import { writeScrollAnchor } from "@cocalc/frontend/components/diff-viewer/scroll-anchor";
 
+test("historical headers offer working-copy opening only when a worktree is available", async () => {
+  const user = userEvent.setup();
+  const onOpenFile = jest.fn();
+  const { rerender } = render(
+    <PierreReviewPanel
+      {...props()}
+      onOpenFile={onOpenFile}
+      canOpenWorkingCopy
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: /More/ }));
+  await user.click(screen.getByText("Edit in this worktree"));
+  expect(onOpenFile).toHaveBeenCalledWith("a.ts");
+  rerender(
+    <PierreReviewPanel
+      {...props()}
+      onOpenFile={onOpenFile}
+      canOpenWorkingCopy={false}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: /More/ }));
+  expect(screen.queryByText("Edit in this worktree")).toBeNull();
+});
+
 test("restores a semantic old-side anchor, but refuses a line missing from the patch", () => {
   localStorage.clear();
   mockScrollTo.mockClear();
@@ -101,7 +125,10 @@ const mockScrollTo = jest.fn();
 jest.mock("@cocalc/frontend/appearance/use-appearance", () => ({
   useAppearance: () => ({ resolved: mockTheme }),
 }));
-jest.mock("@cocalc/frontend/app-framework", () => require("react"));
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  ...require("react"),
+  redux: { getActions: () => ({}) },
+}));
 jest.mock("@cocalc/frontend/components/copy-button", () => ({
   copyTextToClipboard: jest.fn(),
 }));

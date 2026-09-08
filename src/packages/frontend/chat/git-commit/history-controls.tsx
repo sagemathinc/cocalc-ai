@@ -1,5 +1,5 @@
-import { Alert, Button } from "antd";
-import { useEffect, useRef, useState } from "react";
+import { Alert, Button, Select } from "antd";
+import { useEffect, useId, useRef, useState } from "react";
 import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import { resolveHistorySelection } from "@cocalc/frontend/git/history-selection";
@@ -25,6 +25,7 @@ export function GitHistoryControls({
   ) => void;
 }) {
   const [draft, setDraft] = useState(selection);
+  const id = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const generation = useRef(0);
@@ -65,60 +66,57 @@ export function GitHistoryControls({
           gap: 8,
         }}
       >
-        <label>
-          Working copy{" "}
-          <select
+        <div>
+          <label htmlFor={`${id}-worktree`}>Working copy</label>{" "}
+          <Select
+            id={`${id}-worktree`}
             aria-label="Review working copy"
-            style={{ maxWidth: "min(32rem, 70vw)" }}
+            showSearch={{ optionFilterProp: "label" }}
+            style={{ width: "min(32rem, 70vw)" }}
             disabled={disabled || busy}
             value={draft.worktree}
-            onChange={(event) =>
-              setDraft({ ...draft, worktree: event.target.value })
-            }
-          >
-            {origin.worktrees.map((tree) => (
-              <option
-                key={tree.path}
-                value={tree.path}
-                disabled={tree.prunable != null}
-              >
-                {tree.path} (
-                {tree.bare
+            onChange={(worktree) => setDraft({ ...draft, worktree })}
+            options={origin.worktrees.map((tree) => ({
+              value: tree.path,
+              disabled: tree.prunable != null,
+              label: `${tree.path} (${
+                tree.bare
                   ? "bare"
                   : tree.detached
                     ? "detached"
-                    : tree.branch?.replace(/^refs\/heads\//, "") || "unborn"}
-                {tree.locked != null ? "; locked" : ""}
-                {tree.prunable != null ? "; unavailable" : ""})
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          History ref{" "}
-          <select
+                    : tree.branch?.replace(/^refs\/heads\//, "") || "unborn"
+              }${tree.locked != null ? "; locked" : ""}${tree.prunable != null ? "; unavailable" : ""})`,
+            }))}
+          />
+        </div>
+        <div>
+          <label htmlFor={`${id}-ref`}>History ref</label>{" "}
+          <Select
+            id={`${id}-ref`}
             aria-label="History ref"
-            style={{ maxWidth: "min(24rem, 70vw)" }}
+            showSearch={{ optionFilterProp: "label" }}
+            style={{ width: "min(24rem, 70vw)" }}
             disabled={disabled || busy}
             value={draft.ref}
-            onChange={(event) =>
-              setDraft({ ...draft, ref: event.target.value })
-            }
-          >
-            <option value="HEAD">Selected worktree HEAD</option>
-            {draft.ref !== "HEAD" &&
-              !origin.refs.some((ref) => ref.name === draft.ref) && (
-                <option value={draft.ref}>
-                  {draft.ref} (saved ref; no longer listed)
-                </option>
-              )}
-            {origin.refs.map((ref) => (
-              <option key={ref.name} value={ref.name}>
-                {ref.name.replace(/^refs\//, "")}
-              </option>
-            ))}
-          </select>
-        </label>
+            onChange={(ref) => setDraft({ ...draft, ref })}
+            options={[
+              { value: "HEAD", label: "Selected worktree HEAD" },
+              ...(draft.ref !== "HEAD" &&
+              !origin.refs.some((ref) => ref.name === draft.ref)
+                ? [
+                    {
+                      value: draft.ref,
+                      label: `${draft.ref} (saved ref; no longer listed)`,
+                    },
+                  ]
+                : []),
+              ...origin.refs.map((ref) => ({
+                value: ref.name,
+                label: ref.name.replace(/^refs\//, ""),
+              })),
+            ]}
+          />
+        </div>
         <label>
           <input
             type="checkbox"

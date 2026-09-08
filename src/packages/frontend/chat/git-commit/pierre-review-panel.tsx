@@ -485,7 +485,7 @@ function ReviewContent(props: ReviewDiffPanelProps) {
                     : undefined
                 }
                 onEditWorking={
-                  props.isHeadSelected
+                  props.isHeadSelected || props.canOpenWorkingCopy
                     ? () => void props.onOpenFile(path)
                     : undefined
                 }

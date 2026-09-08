@@ -3708,6 +3708,14 @@ export function GitCommitDrawer({
                     }
                     linesTruncated={currentData.linesTruncated}
                     repoRoot={repoRoot || currentData.repoRoot}
+                    canOpenWorkingCopy={Boolean(
+                      originDiscovery?.worktrees.some(
+                        (tree) =>
+                          tree.path === (repoRoot || currentData.repoRoot) &&
+                          !tree.bare &&
+                          tree.prunable == null,
+                      ),
+                    )}
                     activeDraft={activeInlineDraft ?? undefined}
                     files={currentData.files}
                     drawerScrollParent={drawerScrollParent}

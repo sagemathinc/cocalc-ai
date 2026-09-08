@@ -1,6 +1,7 @@
 // Read-only link acceptance. Supply a fixture whose current thread directory
 // differs from the archived config directory; never changes thread settings.
 import { createRequire } from "node:module";
+import { historySelect } from "./history-select.browser-helper.mjs";
 const require = createRequire(import.meta.url);
 const { chromium, expect } = require("@playwright/test");
 const [chat, commit, expectedDirectory] = process.argv.slice(2);
@@ -52,9 +53,10 @@ try {
   await link.scrollIntoViewIfNeeded();
   await link.press("Enter");
   console.log("After activation", page.url());
-  await expect(
-    page.getByRole("combobox", { name: "Review working copy", exact: true }),
-  ).toHaveValue(expectedDirectory, { timeout: 60000 });
+  await expect(historySelect(page, "Review working copy")).toContainText(
+    expectedDirectory,
+    { timeout: 60000 },
+  );
   console.log("Archived directory selected", page.url());
   await expect(
     page.getByRole("region", { name: "Git diff", exact: true }),

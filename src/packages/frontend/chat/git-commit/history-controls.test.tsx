@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GitHistoryControls } from "./history-controls";
 import { resolveHistorySelection } from "@cocalc/frontend/git/history-selection";
@@ -73,14 +73,23 @@ test("keyboard browsing applies the validated choice, not each draft change", as
       onApply={onApply}
     />,
   );
-  await user.selectOptions(
+  await user.type(
     screen.getByRole("combobox", { name: "Review working copy" }),
     "/feature",
   );
-  await user.selectOptions(
-    screen.getByRole("combobox", { name: "History ref" }),
-    "refs/heads/feature",
+  fireEvent.keyDown(
+    screen.getByRole("combobox", { name: "Review working copy" }),
+    { key: "Enter", keyCode: 13, which: 13 },
   );
+  await user.type(
+    screen.getByRole("combobox", { name: "History ref" }),
+    "heads/feature",
+  );
+  fireEvent.keyDown(screen.getByRole("combobox", { name: "History ref" }), {
+    key: "Enter",
+    keyCode: 13,
+    which: 13,
+  });
   expect(onApply).not.toHaveBeenCalled();
   screen.getByRole("button", { name: "Browse / Refresh" }).focus();
   await user.keyboard("{Enter}");

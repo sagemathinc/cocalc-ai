@@ -5,6 +5,10 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { checkWorktreeAgent } from "./worktree-agent-live.mjs";
+import {
+  chooseHistory,
+  historySelect,
+} from "./history-select.browser-helper.mjs";
 const require = createRequire(import.meta.url);
 const { chromium, expect } = require("@playwright/test");
 const [chat, repository] = process.argv.slice(2);
@@ -69,6 +73,11 @@ try {
   async function open(working = false, explicitWorktree = false) {
     await page?.close();
     page = await browser.contexts()[0].newPage();
+    page.setDefaultTimeout(30000);
+    const staleBuild = page.getByRole("button", {
+      name: "Dismiss stale frontend build warning",
+    });
+    await page.addLocatorHandler(staleBuild, () => staleBuild.click());
     await page.setViewportSize({ width: 1600, height: 1000 });
     await page.bringToFront();
     page.on("pageerror", (error) => errors.push(error.message));
@@ -91,9 +100,10 @@ try {
   }
   add(first);
   await open();
-  await expect(
-    page.getByRole("combobox", { name: "Review working copy", exact: true }),
-  ).toHaveValue(first, { timeout: 60000 });
+  await expect(historySelect(page, "Review working copy")).toContainText(
+    first,
+    { timeout: 60000 },
+  );
   await expect
     .poll(() => new URL(page.url()).searchParams.get("git-tip"))
     .toBe(commit);
@@ -131,6 +141,23 @@ try {
     `[data-review-file-header=${JSON.stringify(file)}]`,
   );
   await header.getByRole("button", { name: "Open", exact: true }).click();
+  await expect
+    .poll(() => decodeURIComponent(new URL(page.url()).pathname))
+    .toBe(`/projects/${project}/files${first}/${file}`);
+  await open(false, true);
+  await page
+    .getByRole("combobox", { name: "Changed files", exact: true })
+    .selectOption({ label: file });
+  await page
+    .getByRole("region", { name: "Git diff", exact: true })
+    .evaluate((element) => element.scrollIntoView({ block: "center" }));
+  await page
+    .locator(`[data-review-file-header=${JSON.stringify(file)}]`)
+    .getByRole("button", { name: `More file actions: ${file}`, exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Edit in this worktree", exact: true })
+    .click();
   await expect
     .poll(() => decodeURIComponent(new URL(page.url()).pathname))
     .toBe(`/projects/${project}/files${first}/${file}`);
@@ -172,6 +199,23 @@ try {
         .find((e) => e.type === "summary")
         ?.finalResponse.includes(first),
     );
+    assert(
+      activity.events.some(
+        (e) =>
+          e.event?.type === "terminal" &&
+          e.event.cwd === first &&
+          e.event.exitStatus?.exitCode === 0 &&
+          e.event.output?.split(/\r?\n/).includes(first) &&
+          activity.events.some(
+            (start) =>
+              start.event?.type === "terminal" &&
+              start.event.terminalId === e.event.terminalId &&
+              start.event.phase === "start" &&
+              /\bpwd\b/.test(start.event.command ?? ""),
+          ),
+      ),
+      "A successful terminal pwd result must confirm the actual execution directory",
+    );
     console.log("Completed worktree agent activity", JSON.stringify(activity));
   }
   add(second);
@@ -179,9 +223,9 @@ try {
   await expect(
     page.getByText("Several worktrees contain this commit:", { exact: false }),
   ).toBeVisible({ timeout: 60000 });
-  await expect(
-    page.getByRole("combobox", { name: "Review working copy", exact: true }),
-  ).toHaveValue(repository);
+  await expect(historySelect(page, "Review working copy")).toContainText(
+    repository,
+  );
   remove(second);
   remove(first);
   await open();
@@ -191,9 +235,7 @@ try {
     }),
   ).toBeVisible({ timeout: 60000 });
   assert.equal(new URL(page.url()).searchParams.get("git-hash"), commit);
-  await page
-    .getByRole("combobox", { name: "History ref", exact: true })
-    .selectOption(testRef);
+  await chooseHistory(page, "History ref", testRef);
   await page
     .getByRole("button", { name: "Browse / Refresh", exact: true })
     .click();
@@ -204,9 +246,10 @@ try {
   remote(`git update-ref ${quote(testRef)} ${parent} ${commit}`);
   refTip = parent;
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(
-    page.getByRole("combobox", { name: "History ref", exact: true }),
-  ).toHaveValue(testRef, { timeout: 60000 });
+  await expect(historySelect(page, "History ref")).toContainText(
+    testRef.replace(/^refs\//, ""),
+    { timeout: 60000 },
+  );
   assert.equal(new URL(page.url()).searchParams.get("git-tip"), commit);
   assert.equal(new URL(page.url()).searchParams.get("git-hash"), commit);
   await page
