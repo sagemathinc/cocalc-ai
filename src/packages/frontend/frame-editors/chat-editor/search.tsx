@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import type { EditorDescription } from "@cocalc/frontend/frame-editors/frame-tree/types";
 import { Card, Input } from "antd";
@@ -356,17 +357,31 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
           style={{ marginBottom: "15px", fontSize }}
         />
         {isIndexing ? (
-          <div style={{ color: "#888", marginBottom: "10px", fontSize }}>
+          <div
+            style={{
+              color: UI_COLORS.secondary,
+              marginBottom: "10px",
+              fontSize,
+            }}
+          >
             Indexing...
           </div>
         ) : null}
         {archivedSearchLoading ? (
-          <div style={{ color: "#888", marginBottom: "10px", fontSize }}>
+          <div
+            style={{
+              color: UI_COLORS.secondary,
+              marginBottom: "10px",
+              fontSize,
+            }}
+          >
             Searching history stored on backend...
           </div>
         ) : null}
         {archivedSearchError ? (
-          <div style={{ color: "#b71c1c", marginBottom: "10px", fontSize }}>
+          <div
+            style={{ color: UI_COLORS.danger, marginBottom: "10px", fontSize }}
+          >
             Backend-stored history search error: {archivedSearchError}
           </div>
         ) : null}
@@ -398,7 +413,7 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
             }}
           />
           {search.trim() ? (
-            <div style={{ color: "#666", fontSize: 12 }}>
+            <div style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
               {archivedSearchLoading
                 ? `Searching… loaded: ${loadedCount}`
                 : `Hits shown: ${totalCount} (${loadedCount} loaded${
@@ -412,7 +427,13 @@ function ChatSearch({ font_size: fontSize, desc }: Props) {
       </Card>
       <div className="smc-vfill">
         <div style={{ overflow: "auto", padding: "15px" }}>
-          <div style={{ color: "#888", textAlign: "center", fontSize }}>
+          <div
+            style={{
+              color: UI_COLORS.secondary,
+              textAlign: "center",
+              fontSize,
+            }}
+          >
             {!search?.trim() && <span>Enter a search above</span>}
             {combinedResult.length === 0 && search?.trim() && (
               <span>No Matches</span>
@@ -449,8 +470,9 @@ function SearchResult({
         cursor: hasJumpTarget ? "pointer" : "default",
         margin: "10px 0",
         padding: "5px",
-        border: "1px solid #ccc",
-        background: "#f8f8f8",
+        border: `1px solid ${UI_COLORS.border}`,
+        background: UI_COLORS.surface,
+        color: UI_COLORS.text,
         borderRadius: "5px",
         maxHeight: "120px",
         overflow: "hidden",
@@ -462,10 +484,15 @@ function SearchResult({
       }}
     >
       {hasJumpTarget ? (
-        <TimeAgo style={{ float: "right", color: "#888" }} date={dateMs} />
+        <TimeAgo
+          style={{ float: "right", color: UI_COLORS.secondary }}
+          date={dateMs}
+        />
       ) : null}
       {hit.source === "archived" ? (
-        <span style={{ float: "right", color: "#888", marginRight: 8 }}>
+        <span
+          style={{ float: "right", color: UI_COLORS.secondary, marginRight: 8 }}
+        >
           stored on backend
         </span>
       ) : null}

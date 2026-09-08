@@ -1,3 +1,4 @@
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   Button,
   Popconfirm,
@@ -68,11 +69,12 @@ export default function MoveOps({ project_id }: { project_id: string }) {
   return (
     <div
       style={{
-        border: "1px solid #ddd",
+        border: `1px solid ${UI_COLORS.border}`,
         borderRadius: "4px",
         padding: "6px 8px",
         marginBottom: "8px",
-        background: "white",
+        background: UI_COLORS.surface,
+        color: UI_COLORS.text,
       }}
     >
       <div style={{ fontWeight: 600, fontSize: "12px", marginBottom: "6px" }}>
@@ -89,7 +91,9 @@ export default function MoveOps({ project_id }: { project_id: string }) {
             style={{ width: "180px" }}
           />
         )}
-        <span style={{ fontSize: "11px", color: "#666" }}>{statusText}</span>
+        <span style={{ fontSize: "11px", color: UI_COLORS.secondary }}>
+          {statusText}
+        </span>
         <Popover
           trigger="click"
           open={detailsOpen}
@@ -165,7 +169,9 @@ function MoveOpDetails({ op }: { op: MoveLroState }) {
             {copied ? "Copied" : "Copy ID"}
           </Button>
         </Space>
-        <div style={{ fontSize: "12px", color: "#666" }}>{statusText}</div>
+        <div style={{ fontSize: "12px", color: UI_COLORS.secondary }}>
+          {statusText}
+        </div>
         <Space size="small" wrap style={{ fontSize: "12px" }}>
           {summary?.created_by ? (
             <span>

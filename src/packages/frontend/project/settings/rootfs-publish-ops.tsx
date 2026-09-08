@@ -155,10 +155,12 @@ function RootfsPublishRow({
             style={{ width: "220px" }}
           />
         )}
-        <span style={{ fontSize: "11px", color: "#666" }}>{statusText}</span>
+        <span style={{ fontSize: "11px", color: UI_COLORS.secondary }}>
+          {statusText}
+        </span>
         {status ? <Tag color={lroStatusColor(status)}>{status}</Tag> : null}
         {summary?.updated_at ? (
-          <span style={{ fontSize: "11px", color: "#999" }}>
+          <span style={{ fontSize: "11px", color: UI_COLORS.secondary }}>
             <TimeAgo date={summary.updated_at} />
           </span>
         ) : null}
@@ -185,8 +187,10 @@ function RootfsPublishRow({
         ) : null}
       </Space>
       {resultImage ? (
-        <div style={{ fontSize: "11px", color: "#444", marginTop: "4px" }}>
-          <span style={{ color: "#666" }}>Image:</span>{" "}
+        <div
+          style={{ fontSize: "11px", color: UI_COLORS.text, marginTop: "4px" }}
+        >
+          <span style={{ color: UI_COLORS.secondary }}>Image:</span>{" "}
           <code
             style={{
               whiteSpace: "pre-wrap",
@@ -199,7 +203,13 @@ function RootfsPublishRow({
         </div>
       ) : null}
       {Number.isFinite(durationMs) || phaseTimings ? (
-        <div style={{ fontSize: "11px", color: "#666", marginTop: "2px" }}>
+        <div
+          style={{
+            fontSize: "11px",
+            color: UI_COLORS.secondary,
+            marginTop: "2px",
+          }}
+        >
           {formatTimingSummary(durationMs, phaseTimings)}
         </div>
       ) : null}
@@ -236,7 +246,7 @@ function RootfsPublishTimeline({
       children: (
         <div>
           <div style={{ fontWeight: 600 }}>{entry.label}</div>
-          <div style={{ color: "#666", fontSize: "11px" }}>
+          <div style={{ color: UI_COLORS.secondary, fontSize: "11px" }}>
             {entry.description}
           </div>
         </div>
@@ -266,7 +276,9 @@ function RootfsPublishTimeline({
             {copied ? "Copied" : "Copy ID"}
           </Button>
         </Space>
-        <div style={{ fontSize: "12px", color: "#666" }}>{statusText}</div>
+        <div style={{ fontSize: "12px", color: UI_COLORS.secondary }}>
+          {statusText}
+        </div>
         <Space size="small" wrap style={{ fontSize: "12px" }}>
           {summary?.created_by ? (
             <span>

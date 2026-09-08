@@ -15,6 +15,22 @@ jest.mock("@cocalc/frontend/components", () => ({
 }));
 
 describe("time-travel log view", () => {
+  it("leaves scrolling to the TimeTravel body rather than nesting a full-height scroller", () => {
+    const { container } = render(
+      <LogView
+        actions={{ snapshotWallTime: () => 0 } as any}
+        source="snapshots"
+        versions={List(Array.from({ length: 100 }, (_, i) => i))}
+        firstVersion={0}
+        onSelectVersion={() => {}}
+      />,
+    );
+    const list = container.firstElementChild as HTMLElement;
+    expect(list.style.overflowY).toBe("");
+    expect(list.style.height).toBe("");
+    expect(screen.getByText("Snapshot 99")).toBeInTheDocument();
+    expect(screen.getByText("Snapshot 0")).toBeInTheDocument();
+  });
   it("themes selected and unselected history rows", () => {
     render(
       <LogView

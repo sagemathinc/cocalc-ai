@@ -6,6 +6,7 @@
 // Time travel editor react component
 
 import { Button, Modal, Radio, Select, Space, message } from "antd";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Map, List } from "immutable";
 import { debounce } from "lodash";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
@@ -678,7 +679,7 @@ export function TimeTravel(props: Props) {
     ) => (
       <div
         style={{
-          border: "1px solid #e6e6e6",
+          border: `1px solid ${UI_COLORS.border}`,
           borderRadius: "6px",
           padding: "6px 8px",
           minWidth: "320px",
@@ -712,11 +713,13 @@ export function TimeTravel(props: Props) {
           </Space.Compact>
         </div>
         {meta == null ? (
-          <div style={{ color: "#666", fontSize: "12px" }}>Unknown version</div>
+          <div style={{ color: UI_COLORS.secondary, fontSize: "12px" }}>
+            Unknown version
+          </div>
         ) : (
           <>
             <div style={{ fontWeight: 600 }}>{meta.title}</div>
-            <div style={{ color: "#666", fontSize: "12px" }}>
+            <div style={{ color: UI_COLORS.secondary, fontSize: "12px" }}>
               {meta.subtitle ?? ""}
               {meta.timeMs != null && (
                 <>
@@ -1001,7 +1004,7 @@ export function TimeTravel(props: Props) {
                   {commit.shortHash}
                 </Button>
                 <span>{commit.subject}</span>
-                <div style={{ color: "#666", fontSize: "12px" }}>
+                <div style={{ color: UI_COLORS.secondary, fontSize: "12px" }}>
                   {commit.authorName} ·{" "}
                   <TimeAgo
                     date={new Date(commit.timestampMs)}
@@ -1106,8 +1109,10 @@ export function TimeTravel(props: Props) {
     return (
       <div
         style={{
-          background: props.is_current ? "#fafafa" : "#ddd",
-          borderBottom: "1px solid #ccc",
+          background: props.is_current ? UI_COLORS.page : UI_COLORS.inset,
+          color: UI_COLORS.text,
+          borderBottom: `1px solid ${UI_COLORS.border}`,
+          flexShrink: 0,
           padding: "5px",
         }}
       >
@@ -1168,7 +1173,13 @@ export function TimeTravel(props: Props) {
           </Space.Compact>
         </div>
         {!logMode && activeVersionCount > 0 && (
-          <div style={{ marginTop: "6px", fontSize: "12px", color: "#666" }}>
+          <div
+            style={{
+              marginTop: "6px",
+              fontSize: "12px",
+              color: UI_COLORS.secondary,
+            }}
+          >
             {renderRevisionMeta()}
           </div>
         )}
