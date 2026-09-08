@@ -12,6 +12,7 @@ import {
 } from "@testing-library/react";
 import { Blit } from "./blit";
 import { BLIT_APP_ID, INSTALL_GRAPHICAL_APPS_COMMAND } from "./blit-app";
+import userEvent from "@testing-library/user-event";
 
 const execMock = jest.fn();
 const getProjectAppOpenUrlMock = jest.fn();
@@ -50,6 +51,52 @@ describe("Blit graphical application setup", () => {
     stopAppMock.mockReset();
     upsertAppSpecMock.mockReset();
   });
+
+  it.each(["is_current", "is_visible", "tab_is_visible"])(
+    "disconnects hidden clients when %s changes without stopping applications",
+    async (visibility) => {
+      execMock.mockResolvedValue({ exit_code: 0, stderr: "", stdout: "" });
+      upsertAppSpecMock.mockResolvedValue({ spec: { id: BLIT_APP_ID } });
+      ensureRunningMock.mockResolvedValue({
+        id: BLIT_APP_ID,
+        state: "running",
+      });
+      getProjectAppOpenUrlMock.mockResolvedValue("https://example.test/blit/");
+      const user = userEvent.setup();
+      const view = (active: boolean) => (
+        <>
+          <Blit
+            is_current
+            project_id="project-id"
+            {...{ [visibility]: active }}
+          />
+          <input aria-label="Chat message" />
+        </>
+      );
+      const { rerender } = render(view(true));
+      const iframe = await screen.findByTitle("Blit graphical applications");
+      const src = iframe.getAttribute("src");
+      iframe.focus();
+      expect(iframe).toHaveFocus();
+
+      rerender(view(false));
+      expect(iframe).not.toBeInTheDocument();
+      expect(screen.queryByTitle("Blit graphical applications")).toBeNull();
+      const input = screen.getByRole("textbox", { name: "Chat message" });
+      await user.click(input);
+      await user.keyboard("Still typing in chat");
+      expect(input).toHaveFocus();
+      expect(input).toHaveValue("Still typing in chat");
+
+      rerender(view(true));
+      const reconnected = screen.getByTitle("Blit graphical applications");
+      expect(reconnected).not.toBe(iframe);
+      expect(reconnected).toHaveAttribute("src", src);
+      expect(stopAppMock).not.toHaveBeenCalled();
+      expect(ensureRunningMock).toHaveBeenCalledTimes(1);
+      expect(upsertAppSpecMock).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("offers a keyboard-focusable package install when dependencies are missing", async () => {
     execMock
