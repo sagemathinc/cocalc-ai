@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sha256Hex, signR2Request } from "@cocalc/backend/r2";
 import type { R2ObjectStoreAuth, R2RequestMethod } from "@cocalc/backend/r2";
 import { blobWorkerSource } from "./cloudflare-blob-worker-source";
+import { assertManagedBlobEnvironment } from "./cloudflare-blob-preflight";
 
 export interface CloudflareBlobReconcileResult {
   ok: boolean;
@@ -81,6 +82,11 @@ export async function reconcileCloudflareBlobs(
     : (options as ReconcileOptions);
   let phase = "configuration validation";
   try {
+    try {
+      assertManagedBlobEnvironment();
+    } catch (err) {
+      throw new ReconcileError((err as Error).message);
+    }
     const token = clean(settings.project_hosts_cloudflare_tunnel_api_token);
     const account = clean(settings.project_hosts_cloudflare_tunnel_account_id);
     const r2Account = clean(settings.r2_account_id) || account;
@@ -90,6 +96,14 @@ export async function reconcileCloudflareBlobs(
     const worker = `${prefix}-blob-images`;
     const hostname = `blobs.${domain}`;
     const public_url = `https://${hostname}`;
+    if (
+      clean(settings.blob_r2_public_url) &&
+      clean(settings.blob_r2_public_url).replace(/\/+$/, "") !== public_url
+    ) {
+      throw new ReconcileError(
+        "The saved blob public URL differs from this domain. This wizard does not migrate blob domains or buckets. Keep the original target configured until an explicit migration is planned.",
+      );
+    }
     const accessKey = clean(settings.r2_access_key_id);
     const secretKey = clean(settings.r2_secret_access_key);
     if (
@@ -197,7 +211,7 @@ export async function reconcileCloudflareBlobs(
         ))
     ) {
       throw new ReconcileError(
-        "Blob Worker name is already in use by an unmanaged Worker.",
+        "Blob Worker ownership or bucket binding does not match this target. This wizard does not migrate blob domains or buckets and will not overwrite the existing Worker. Restore the original target or plan an explicit migration.",
       );
     }
     phase = "hostname ownership check";

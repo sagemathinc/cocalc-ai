@@ -289,6 +289,59 @@ test("respects an existing bucket override and retries without recreating resour
   expect(h.state.calls.some((c) => c.path.includes("tokens"))).toBe(false);
 });
 
+test.each([
+  "COCALC_BLOB_STORAGE_BACKEND",
+  "COCALC_BLOB_R2_ACCOUNT_ID",
+  "COCALC_BLOB_R2_ENDPOINT",
+  "COCALC_BLOB_R2_BUCKET",
+  "COCALC_BLOB_R2_PUBLIC_URL",
+  "COCALC_BLOB_R2_ACCESS_KEY_ID",
+  "COCALC_BLOB_R2_SECRET_ACCESS_KEY",
+  "COCALC_BLOB_R2_REGION",
+])("refuses runtime override %s before provisioning", async (name) => {
+  const previous = process.env[name];
+  process.env[name] = "private-override";
+  try {
+    const h = harness();
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("environment overrides");
+    expect(result.message).not.toContain("private-override");
+    expect(h.state.calls).toHaveLength(0);
+    expect(h.save).not.toHaveBeenCalled();
+  } finally {
+    if (previous === undefined) delete process.env[name];
+    else process.env[name] = previous;
+  }
+});
+
+test("refuses domain migration before touching the existing Worker", async () => {
+  const h = harness({
+    blob_r2_public_url: "https://blobs.previous.example.com",
+  });
+  expect(await h.run()).toEqual({
+    ok: false,
+    message: expect.stringContaining(
+      "does not migrate blob domains or buckets",
+    ),
+  });
+  expect(h.state.calls).toHaveLength(0);
+  expect(h.save).not.toHaveBeenCalled();
+});
+
+test("refuses bucket reconfiguration without replacing the existing Worker", async () => {
+  const h = harness();
+  expect((await h.run()).ok).toBe(true);
+  h.settings.blob_r2_bucket = "different-blobs";
+  h.state.uploads.length = 0;
+  h.save.mockClear();
+  const result = await h.run();
+  expect(result.ok).toBe(false);
+  expect(result.message).toContain("does not migrate blob domains or buckets");
+  expect(h.state.uploads).toHaveLength(0);
+  expect(h.save).not.toHaveBeenCalled();
+});
+
 test("supports the settings/save positional API", async () => {
   const h = harness();
   expect((await reconcileCloudflareBlobs(h.settings, h.save)).ok).toBe(true);

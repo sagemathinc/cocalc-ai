@@ -469,6 +469,7 @@ export async function bootstrapCloudflareConfiguration(opts: {
     secretKey?: string;
     bucketPrefix?: string;
     blobBucket?: string;
+    blobPublicUrl?: string;
   };
   // Persistence stays server-side; no token secret is returned to the caller.
   save: (values: Record<string, string>) => Promise<void>;
@@ -509,6 +510,20 @@ export async function bootstrapCloudflareConfiguration(opts: {
   try {
     const verified = await verifyToken(token);
     result.bootstrap_token_id = verified.id;
+    stage = "validate the managed blob target";
+    const { assertManagedBlobEnvironment } =
+      await import("./cloudflare-blob-preflight");
+    assertManagedBlobEnvironment();
+    const existingPublicUrl = clean(opts.existingR2?.blobPublicUrl)?.replace(
+      /\/+$/,
+      "",
+    );
+    if (existingPublicUrl && existingPublicUrl !== `https://blobs.${domain}`) {
+      notes.push(
+        "Changing the domain of an existing blob Worker requires an explicit migration. Use the original site domain to replace credentials; no settings were changed.",
+      );
+      throw Error("Existing blob domain cannot be changed by bootstrap");
+    }
     stage = "discover token permissions";
     const groups = await cloudflareRequest<PermissionGroup[]>(
       token,

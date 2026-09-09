@@ -420,12 +420,57 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
     bucketPrefix: "site",
   };
 
+  it("refuses an existing blob domain change without saving and revokes bootstrap", async () => {
+    const result = await bootstrapCloudflareConfiguration({
+      domain: "new.example.edu",
+      token: "bootstrap-secret",
+      r2BucketPrefix: "test",
+      existingR2: { ...existingR2, blobPublicUrl: "https://blobs.example.edu" },
+      save,
+    });
+    expect(result.tunnel_token.ok).toBe(false);
+    expect(result.settings_status).toBe("not_saved");
+    expect(result.bootstrap_token_invalidated).toBe(true);
+    expect(result.notes.join(" ")).toContain("explicit migration");
+    expect(save).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init.method === "POST"),
+    ).toBe(false);
+  });
+
+  it("refuses environment overrides and still revokes the temporary token", async () => {
+    const name = "COCALC_BLOB_R2_BUCKET";
+    const previous = process.env[name];
+    process.env[name] = "override-bucket";
+    try {
+      const result = await bootstrapCloudflareConfiguration({
+        domain: "example.edu",
+        token: "bootstrap-secret",
+        r2BucketPrefix: "site",
+        save,
+      });
+      expect(result.tunnel_token.ok).toBe(false);
+      expect(result.settings_status).toBe("not_saved");
+      expect(result.bootstrap_token_invalidated).toBe(true);
+      expect(save).not.toHaveBeenCalled();
+      expect(
+        fetchMock.mock.calls.some(([, init]) => init.method === "POST"),
+      ).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    }
+  });
+
   it("preserves an existing credential pair on repeat bootstrap", async () => {
     const result = await bootstrapCloudflareConfiguration({
       domain: "example.edu",
       token: "bootstrap-secret",
       r2BucketPrefix: "site",
-      existingR2,
+      existingR2: {
+        ...existingR2,
+        blobPublicUrl: "https://blobs.example.edu/",
+      },
       save,
     });
     expect(result.r2.ok).toBe(true);

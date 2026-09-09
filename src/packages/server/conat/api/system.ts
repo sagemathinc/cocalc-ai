@@ -7645,6 +7645,7 @@ export async function bootstrapCloudflareConfigurationOnSeed({
     const previousBlobConfig = await resolveBlobStorageConfig();
     const previousSettings = await getServerSettings();
     let pinnedToPostgres = false;
+    let propagationFailed = false;
     const result = await bootstrapCloudflareConfiguration0({
       ...options,
       existingR2: {
@@ -7653,6 +7654,7 @@ export async function bootstrapCloudflareConfigurationOnSeed({
         secretKey: `${previousSettings.r2_secret_access_key ?? ""}`,
         bucketPrefix: `${previousSettings.r2_bucket_prefix ?? ""}`,
         blobBucket: `${previousSettings.blob_r2_bucket ?? ""}`,
+        blobPublicUrl: `${previousSettings.blob_r2_public_url ?? ""}`,
       },
       save: async (values) => {
         const nextSettings = { ...previousSettings, ...values };
@@ -7669,7 +7671,7 @@ export async function bootstrapCloudflareConfigurationOnSeed({
         // bucket, or domain before explicit blob reconciliation succeeds.
         pinnedToPostgres =
           previousBlobConfig.activeBackend === "postgres" || !sameBlobTarget;
-        await setSiteSettingsOnSeed({
+        const sync = await setSiteSettingsOnSeed({
           account_id,
           source_bay_id,
           settings: Object.entries({
@@ -7677,8 +7679,17 @@ export async function bootstrapCloudflareConfigurationOnSeed({
             ...(pinnedToPostgres ? { blob_storage_backend: "postgres" } : {}),
           }).map(([name, value]) => ({ name, value })),
         });
+        propagationFailed = sync.bays.some((bay) => bay.status === "failed");
+        if (propagationFailed)
+          throw Error("Cloudflare settings propagation failed");
       },
     });
+    if (propagationFailed) {
+      result.settings_status = "saved";
+      result.failure =
+        "Credentials were saved on the seed bay, but propagation to other bays failed. Keep both old and new credentials active. Repair bay connectivity and synchronize site settings before retrying diagnostics; do not bootstrap again just to retry propagation.";
+      result.tunnel_token.ok = false;
+    }
     if (result.tunnel_token.ok) {
       const previousTokenId =
         `${previousSettings.cloudflare_automation_token_id ?? ""}`.trim();
@@ -7758,16 +7769,31 @@ export async function reconcileCloudflareBlobsOnSeed({
   return await withCloudflareProvisioningLock(async () => {
     const { reconcileCloudflareBlobs: reconcile } =
       await import("@cocalc/server/cloud/cloudflare-blob-reconcile");
-    return await reconcile(await getServerSettings(), async (values) => {
-      await setSiteSettingsOnSeed({
-        account_id,
-        source_bay_id,
-        settings: Object.entries(values).map(([name, value]) => ({
-          name,
-          value,
-        })),
-      });
-    });
+    let propagationFailed = false;
+    const result = await reconcile(
+      await getServerSettings(),
+      async (values) => {
+        const sync = await setSiteSettingsOnSeed({
+          account_id,
+          source_bay_id,
+          settings: Object.entries(values).map(([name, value]) => ({
+            name,
+            value,
+          })),
+        });
+        propagationFailed = sync.bays.some((bay) => bay.status === "failed");
+        if (propagationFailed)
+          throw Error("Cloudflare settings propagation failed");
+      },
+    );
+    if (propagationFailed) {
+      return {
+        ok: false,
+        message:
+          "Blob settings were saved on the seed bay, but propagation to other bays failed. Repair bay connectivity, synchronize site settings, then retry reconciliation. Do not remove old credentials or storage.",
+      };
+    }
+    return result;
   });
 }
 

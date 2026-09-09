@@ -368,6 +368,7 @@ describe("site settings dangerous-session auth", () => {
         secretKey: "seed-secret",
         bucketPrefix: "seed-prefix",
         blobBucket: "seed-images",
+        blobPublicUrl: "",
       });
       await save({
         r2_access_key_id: "created-id",
@@ -391,6 +392,63 @@ describe("site settings dangerous-session auth", () => {
     );
     expect(JSON.stringify(result)).not.toContain("secret");
   });
+
+  it.each(["bootstrap", "reconcile"])(
+    "does not report %s success after remote propagation fails",
+    async (operation) => {
+      listClusterBayRegistryMock.mockResolvedValue([
+        { bay_id: "seed" },
+        { bay_id: "remote" },
+      ]);
+      const remoteSave = jest
+        .fn()
+        .mockRejectedValue(new Error("private upstream detail"));
+      bayOpsMock.mockReturnValue({ setServerSetting: remoteSave });
+      bootstrapMock.mockImplementation(async ({ save }) => {
+        try {
+          await save({ r2_api_token: "new-secret" });
+        } catch {
+          return {
+            tunnel_token: { ok: false },
+            notes: [],
+            settings_status: "unknown",
+          };
+        }
+        return { tunnel_token: { ok: true }, notes: [] };
+      });
+      reconcileMock.mockImplementation(async (_settings, save) => {
+        try {
+          await save({ blob_storage_backend: "auto" });
+        } catch {
+          return { ok: false };
+        }
+        return { ok: true };
+      });
+      const system = await import("./system");
+      const run = () =>
+        operation === "bootstrap"
+          ? system.bootstrapCloudflareConfigurationOnSeed({
+              domain: "example.com",
+              token: "bootstrap-token",
+            })
+          : system.reconcileCloudflareBlobsOnSeed({});
+      const result: any = await run();
+      expect(
+        operation === "bootstrap" ? result.tunnel_token.ok : result.ok,
+      ).toBe(false);
+      expect(result.failure ?? result.message).toContain(
+        "propagation to other bays failed",
+      );
+      if (operation === "bootstrap")
+        expect(result.settings_status).toBe("saved");
+      expect(JSON.stringify(result)).not.toMatch(
+        /new-secret|private upstream detail/,
+      );
+      remoteSave.mockResolvedValue(undefined);
+      if (operation === "reconcile") expect(await run()).toEqual({ ok: true });
+      expect(releaseMock).toHaveBeenCalledWith(true);
+    },
+  );
 
   it("does not suggest old-token cleanup when bootstrap fails", async () => {
     getServerSettingsMock.mockResolvedValue({
