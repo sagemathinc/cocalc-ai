@@ -1,5 +1,8 @@
 name: Test
 
+env:
+  PYTHONUNBUFFERED: "1"
+
 # Newer commits cancel superseded runs on the same PR or branch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
@@ -237,6 +240,7 @@ jobs:
       - name: Test ${{ matrix.lane }} packages
         env:
           COCALC_RUNTIME_STORAGE_ALLOW_DIRECT: "yes"
+          COCALC_TEST_REPORT_DIR: ${{ github.workspace }}/src/.cache/test-reports
           TEST_PACKAGES: ${{ matrix.packages }}
         run: |
           if [[ "${{ matrix.lane }}" == "rest" ]]; then
@@ -244,3 +248,13 @@ jobs:
           fi
           cd src
           ./workspaces.py test --packages="$TEST_PACKAGES"
+
+      - name: Upload test attempts and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ matrix.lane }}
+          path: src/.cache/test-reports
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7

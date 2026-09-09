@@ -84,6 +84,32 @@ def failed_jest_test_paths(report_path: str) -> List[str]:
     ]
 
 
+def preserve_test_attempt(report_root: Optional[str], package: str,
+                          attempt: int, report_path: str, elapsed: float,
+                          status: str) -> None:
+    if not report_root:
+        return
+    directory = os.path.join(report_root, package.strip('/').replace('/', '-'))
+    os.makedirs(directory, exist_ok=True)
+    has_jest_report = os.path.isfile(report_path)
+    if has_jest_report:
+        shutil.copyfile(
+            report_path, os.path.join(directory,
+                                      f'jest-results-{attempt}.json'))
+    with open(os.path.join(directory, f'attempt-{attempt}.json'),
+              'w') as output:
+        json.dump(
+            {
+                'package': package,
+                'attempt': attempt,
+                'status': status,
+                'elapsed_seconds': elapsed,
+                'has_jest_report': has_jest_report,
+            },
+            output,
+            indent=2)
+
+
 def newest_file(path: str) -> str:
     if platform.system() != 'Darwin':
         # See https://gist.github.com/brwyatt/c21a888d79927cb476a4 for this Linux
@@ -468,6 +494,9 @@ def write_github_summary(success: List[str], flaky: List[str],
 
 def test(args) -> None:
     CUR = os.path.abspath('.')
+    report_root = os.environ.get("COCALC_TEST_REPORT_DIR")
+    if report_root:
+        report_root = os.path.abspath(report_root)
     jest_cache_root = os.environ.get("COCALC_JEST_CACHE_DIR",
                                      os.path.join(CUR, ".cache", "jest"))
     flaky: List[str] = []
@@ -546,11 +575,10 @@ def test(args) -> None:
             if args.max_workers and jest_backed:
                 test_cmd += f' --maxWorkers={args.max_workers} '
             if retry_paths:
-                quoted_paths = " ".join(shlex.quote(path)
-                                        for path in retry_paths)
+                quoted_paths = " ".join(
+                    shlex.quote(path) for path in retry_paths)
                 test_cmd += f" --runTestsByPath {quoted_paths}"
-            report_path = os.path.join(tmpdir,
-                                       f"jest-results-{attempt}.json")
+            report_path = os.path.join(tmpdir, f"jest-results-{attempt}.json")
             if jest_backed:
                 os.makedirs(jest_cache_path, exist_ok=True)
                 test_cmd += (f" --cacheDirectory "
@@ -566,10 +594,12 @@ def test(args) -> None:
         tmpdir, old_tmp_env = set_package_test_tmpdir(path)
         try:
             for i in range(args.retries + 1):
-                report_path = os.path.join(tmpdir,
-                                           f"jest-results-{i}.json")
+                report_path = os.path.join(tmpdir, f"jest-results-{i}.json")
+                attempt_start = time.monotonic()
+                attempt_status = "failed"
                 try:
                     f(i, retry_paths)
+                    attempt_status = "passed"
                     worked = True
                     if i == 0:
                         success.append(path)
@@ -577,6 +607,7 @@ def test(args) -> None:
                         flaky.append(path)
                     break
                 except KeyboardInterrupt:
+                    attempt_status = "interrupted"
                     print("SIGINT -- ending test suite")
                     status()
                     return
@@ -592,6 +623,10 @@ def test(args) -> None:
                         print(
                             f"Trying {path} again at most {args.retries - i} more times"
                         )
+                finally:
+                    preserve_test_attempt(report_root, path, i, report_path,
+                                          time.monotonic() - attempt_start,
+                                          attempt_status)
         finally:
             restore_package_test_tmpdir(tmpdir, old_tmp_env, cleanup=worked)
             restore_scrubbed_env(scrubbed)

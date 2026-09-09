@@ -2,6 +2,15 @@
 
 Date: 2026-09-09. Scope: investigation and implementation plan, not a workflow rollout.
 
+Implementation follow-up (2026-09-09): `58f60b3a57` adds branch/PR concurrency,
+shallow checkout for full plans, and a tracked-input Jest digest computed once
+before installation (about 35ms locally). Planner/cache-key tests now run in
+static checks. Per-attempt report retention and seven-day CI artifacts are also
+implemented, with unbuffered Python build logs. Runner tests, mypy, and a real
+notebook-package invocation validate local reporting behavior. Hosted timing
+validation, test lifecycle optimizations, sharding, and build deduplication remain
+outstanding; the targets below are not yet achieved.
+
 ## Recommendation
 
 Keep standard GitHub-hosted runners. First remove repeated module initialization,
