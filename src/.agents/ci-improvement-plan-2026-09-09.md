@@ -45,8 +45,8 @@ successfully and started all three test lanes. Its separate checks job reported
 `music-metadata` as unused because depcheck cannot inspect the native dynamic
 import in `server/ai/chat-speech.ts`; a narrow depcheck exception fixes that
 locally. Hosted before/after timings remain pending. The frontend teardown change
-and depcheck exception are held for the next push so this measurement is not
-cancelled by the new concurrency policy.
+and depcheck exception were held until this measurement finished to avoid
+cancelling it under the new concurrency policy.
 
 Server sharding is now implemented as `server-1` and `server-2` matrix lanes,
 each running four Jest workers. `workspaces.py test --shard=INDEX/COUNT` requires
@@ -88,6 +88,16 @@ existing parallel-mode cleanup policy. A real two-project TypeScript fixture
 checks obsolete-file removal and verifies that a later dependency build reuses
 the output emitted by an earlier consumer build. Sixteen runner tests and mypy
 pass. A full clean hosted build remains the integration gate for this change.
+
+Follow-up run 34405735389 at `9a449e80b6` includes the build cleanup, frontend
+teardown, server sharding, and depcheck fix. Its plan passed and build/checks are
+running. The repeated workspace chat-store timeout was also investigated locally:
+mock unused filesystem transport, notebook conversion, and blob-service imports
+while keeping the real sandbox and path mapping. The two tests take 0.871s versus
+3.780s before isolation. Both chat-store and workspace-filesystem suites pass
+together (10 tests), randomized without transform cache and with open-handle
+detection; the server TypeScript build passes. That test-only follow-up is held
+for the next push so run 34405735389 can finish.
 
 ## Recommendation
 
