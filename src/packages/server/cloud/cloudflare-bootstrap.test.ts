@@ -362,6 +362,7 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
       return normal(url, init);
     });
     const result = await run(save);
+    expect(result.failure).toContain("Workers R2 Storage Bucket Item Write");
     expect(result.r2.ok).toBe(false);
     expect(save).not.toHaveBeenCalled();
     expect(
@@ -369,6 +370,43 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
         ([url, init]) => url.endsWith("/user/tokens") && init.method === "POST",
       ),
     ).toHaveLength(2);
+  });
+
+  it("distinguishes a missing Zone Read permission from discovery token creation failure", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (url.endsWith("/permission_groups"))
+        return response(groups.filter((group) => group.name !== "Zone Read"));
+      return normal(url, init);
+    });
+    const result = await run(save);
+    expect(result.failure).toContain(
+      "Unable to resolve the Zone Read permission",
+    );
+    expect(result.failure).toContain("permission group not found: Zone Read");
+    expect(result.settings_status).toBe("not_saved");
+    expect(result.bootstrap_token_invalidated).toBe(true);
+    expect(save).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init.method === "POST"),
+    ).toBe(false);
+  });
+
+  it("reports a rejected discovery token creation without proceeding to settings", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (init.method === "POST") return response({}, 400);
+      return normal(url, init);
+    });
+    const result = await run(save);
+    expect(result.failure).toContain(
+      "Unable to create a temporary zone discovery token",
+    );
+    expect(result.failure).toContain("HTTP 400");
+    expect(result.settings_status).toBe("not_saved");
+    expect(result.bootstrap_token_invalidated).toBe(true);
+    expect(save).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("secret");
   });
 
   it("revokes a malformed S3 token response rather than saving incomplete credentials", async () => {

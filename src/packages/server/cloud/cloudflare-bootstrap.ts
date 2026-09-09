@@ -216,7 +216,8 @@ function requirePermissionGroup(
 ): PermissionGroup {
   const group = findPermissionGroup(groups, names, scope);
   if (!group?.id) {
-    throw new Error(
+    // Names and scope come from our fixed requirements, not provider messages.
+    throw new BootstrapDiagnostic(
       `Cloudflare permission group not found: ${names.join(" or ")} (${scope})`,
     );
   }
@@ -464,12 +465,13 @@ export async function bootstrapCloudflareConfiguration(opts: {
     );
     // The Create additional tokens template cannot list zones itself. Its
     // short-lived child has only Zone Read, and is always removed below.
-    stage = "create a temporary zone discovery token";
+    stage = "resolve the Zone Read permission";
     const zoneRead = requirePermissionGroup(
       groups,
       ["Zone Read"],
       "com.cloudflare.api.account.zone",
     );
+    stage = "create a temporary zone discovery token";
     discovery = await cloudflareRequest<CreatedToken>(
       token,
       "POST",
