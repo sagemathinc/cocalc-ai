@@ -13,6 +13,8 @@ import {
   validateChatSpeechAudio,
   validateChatSpeechText,
 } from "./chat-speech";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 afterEach(() => resetChatSpeechStateForTests());
 
@@ -202,6 +204,27 @@ describe("chat speech request validation", () => {
         audio: makeWav(1),
       }),
     ).resolves.toBe(1_000);
+  });
+
+  it("accepts a real Chromium streaming WebM without duration metadata", async () => {
+    const audio = readFileSync(
+      join(__dirname, "fixtures/chromium-streaming-opus.webm"),
+    );
+    const duration = await measureChatSpeechAudioDuration({
+      contentType: "audio/webm;codecs=opus",
+      audio,
+    });
+    expect(duration).toBeGreaterThanOrEqual(900);
+    expect(duration).toBeLessThanOrEqual(1200);
+  });
+
+  it("rejects malformed WebM rather than accepting a missing duration", async () => {
+    await expect(
+      measureChatSpeechAudioDuration({
+        contentType: "audio/webm",
+        audio: webm,
+      }),
+    ).rejects.toMatchObject({ code: 400 });
   });
 
   it("enforces the duration limit using the uploaded audio", async () => {

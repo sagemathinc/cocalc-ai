@@ -2046,6 +2046,9 @@ importers:
       uuid:
         specifier: ^11.1.1
         version: 11.1.1
+      mediabunny:
+        specifier: 1.55.7
+        version: 1.55.7
     devDependencies:
       '@types/async':
         specifier: ^2.0.43
@@ -12538,6 +12541,15 @@ packages:
       integrity: sha512-O6MHzYNIKYaiSX3bOw0gGZfEbOmlIDtDfWwN1JJdc/T3ihzRT6tGGSEWE088dWrEDGa1u7101q+6fzQnO9XCPA==
     peerDependencies:
       preact: ">=10 || >= 11.0.0-0"
+  mediabunny@1.55.7:
+    resolution:
+      integrity: sha512-Sb/vI8frRiDPbPUwl3hz0n69NSe9yt4Nydcv5yxi8Rdgk0BgnujEGjZqE+uCTehFbafcqIu6gDAok8ln98dcqg==
+  "@types/dom-mediacapture-transform@0.1.12":
+    resolution:
+      integrity: sha512-d7/QsLRwF864A5mgIM/YrfiglHoYn7zgCcAoJgW404r+2DwnNr7EBbLnCWpmOMgH8y0te73L1AV6H1bmauaWFw==
+  "@types/dom-webcodecs@0.1.13":
+    resolution:
+      integrity: sha512-O5hkiFIcjjszPIYyUSyvScyvrBoV3NOEEZx/pMlsu44TKzWNkLVBBxnxJz42in5n3QIolYOcBYFCPZZ0h8SkwQ==
 
 snapshots:
 
@@ -24593,3 +24605,11 @@ snapshots:
   preact-render-to-string@6.6.5(preact@11.0.0-beta.0):
     dependencies:
       preact: 11.0.0-beta.0
+  mediabunny@1.55.7:
+    dependencies:
+      "@types/dom-mediacapture-transform": 0.1.12
+      "@types/dom-webcodecs": 0.1.13
+  "@types/dom-mediacapture-transform@0.1.12":
+    dependencies:
+      "@types/dom-webcodecs": 0.1.13
+  "@types/dom-webcodecs@0.1.13": {}

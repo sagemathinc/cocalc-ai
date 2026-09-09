@@ -15,6 +15,7 @@ import { isAiLaunchDisabled } from "@cocalc/server/launch/kill-switches";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getExternalCredentialRouted } from "@cocalc/server/external-credentials/routing";
 import { getAIUsageStatus } from "./usage-status";
+import { measureWebmSpeechDurationMs } from "./webm-speech-duration";
 import {
   releaseChatSpeechUsage,
   reserveChatSpeechUsage,
@@ -203,8 +204,16 @@ export async function measureChatSpeechAudioDuration({
 }): Promise<number> {
   let duration: number | undefined;
   try {
-    const metadata = await parseAudioMetadata(audio, contentType);
-    duration = metadata.format.duration;
+    if (contentType.split(";", 1)[0].trim().toLowerCase() === "audio/webm") {
+      duration =
+        (await measureWebmSpeechDurationMs(
+          audio,
+          CHAT_SPEECH_MAX_DURATION_MS,
+        )) / 1_000;
+    } else {
+      const metadata = await parseAudioMetadata(audio, contentType);
+      duration = metadata.format.duration;
+    }
   } catch {
     throw codedError("The audio recording could not be read.", 400);
   }
