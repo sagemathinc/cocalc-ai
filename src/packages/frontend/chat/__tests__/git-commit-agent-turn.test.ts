@@ -66,17 +66,15 @@ describe("sendGitCommitAgentTurn", () => {
         defaultNewThreadSetup: getDefaultNewThreadSetup(),
         workingDirectory: "/home/user/project",
       });
-      expect(result.mode).toBe("created");
+      expect(result.mode).toBe("existing");
       const sent = actions.sendChat.mock.calls[0][0];
-      expect(sent.reply_thread_id).toBeUndefined();
-      expect(sent.threadAgent.codexConfig.workingDirectory).toBe(
-        "/home/user/project",
-      );
-      expect(actions.getMessagesInThread).not.toHaveBeenCalled();
+      expect(sent.reply_thread_id).toBe("busy-thread");
+      expect(sent.threadAgent).toBeUndefined();
+      expect(actions.getMessagesInThread).toHaveBeenCalledWith("busy-thread");
     },
   );
 
-  it("uses effective immutable configuration rather than stale thread metadata", () => {
+  it("preserves an existing thread with immutable metadata", () => {
     const actions = createActions({
       metadata: fromJS({
         agent_kind: "acp",
@@ -94,7 +92,7 @@ describe("sendGitCommitAgentTurn", () => {
       workingDirectory: "/matching ",
     });
     expect(result.mode).toBe("existing");
-    expect(actions.getCodexConfig).toHaveBeenCalledWith("thread-1");
+    expect(actions.getCodexConfig).not.toHaveBeenCalled();
   });
 
   it("preserves literal requested directories when creating a new thread", () => {
