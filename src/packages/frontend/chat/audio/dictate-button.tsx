@@ -143,7 +143,7 @@ export function DictateButton({
       recorder.capabilities?.input.max_duration_ms,
     );
     return (
-      <>
+      <span className="cocalc-chat-dictate-control" data-active="true">
         <Space.Compact>
           <Button
             aria-label={`Stop dictation recording, ${timeLabel}`}
@@ -165,13 +165,13 @@ export function DictateButton({
           </Tooltip>
         </Space.Compact>
         <DictationLiveStatus label="Recording dictation" />
-      </>
+      </span>
     );
   }
 
   if (recorder.status === "transcribing") {
     return (
-      <>
+      <span className="cocalc-chat-dictate-control" data-active="true">
         <Space.Compact>
           <Button
             aria-label="Transcribing dictation"
@@ -191,7 +191,7 @@ export function DictateButton({
           </Tooltip>
         </Space.Compact>
         <DictationLiveStatus label="Transcribing dictation" />
-      </>
+      </span>
     );
   }
 
@@ -203,7 +203,10 @@ export function DictateButton({
       "Dictation unavailable")
     : "Dictate message";
   return (
-    <>
+    <span
+      className="cocalc-chat-dictate-control"
+      data-active={recorder.status === "requesting" ? "true" : "false"}
+    >
       <Tooltip placement="bottomRight" title={title}>
         <Button
           aria-label="Dictate message"
@@ -224,6 +227,6 @@ export function DictateButton({
           recorder.status === "requesting" ? "Requesting microphone access" : ""
         }
       />
-    </>
+    </span>
   );
 }

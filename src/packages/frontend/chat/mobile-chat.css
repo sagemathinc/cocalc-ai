@@ -38,6 +38,20 @@
   white-space: nowrap;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .cocalc-chat-composer-meta .cocalc-chat-dictate-control[data-active="false"] {
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  .cocalc-chat-composer-meta:hover
+    .cocalc-chat-dictate-control[data-active="false"],
+  .cocalc-chat-composer-meta:focus-within
+    .cocalc-chat-dictate-control[data-active="false"] {
+    opacity: 1;
+  }
+}
+
 .cocalc-chat-narrow [data-testid="chat-composer"] {
   flex-shrink: 0;
   padding: 4px;

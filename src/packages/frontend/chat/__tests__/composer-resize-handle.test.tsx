@@ -159,6 +159,11 @@ describe("ChatRoomComposer resize handle", () => {
     expect(actions.contains(screen.getByRole("button", { name: "Send" }))).toBe(
       true,
     );
+    expect(
+      dictate
+        .closest(".cocalc-chat-dictate-control")
+        ?.getAttribute("data-active"),
+    ).toBe("false");
   });
 
   it("shows goal controls for legacy Codex thread metadata", () => {
