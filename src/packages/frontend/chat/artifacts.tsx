@@ -45,6 +45,39 @@ export function ArtifactCards({
       {rows.map((row) => {
         try {
           const publication = validateArtifactPublication(row);
+          const open = (version?: string) => {
+            const frames = actions.frameTreeActions;
+            const existing = frames
+              ?.get_frame_ids_in_order()
+              .find(
+                (id) =>
+                  frames._get_frame_data(id, "artifact") ===
+                    publication.artifact_id &&
+                  frames._get_frame_data(id, "thread") === threadId &&
+                  frames._get_frame_data(id, "origin") === actions.frameId &&
+                  (version === undefined ||
+                    frames._get_frame_data(id, "version") === version),
+              );
+            if (existing) {
+              frames?.set_active_id(existing);
+              if (window.innerWidth < 768) frames?.set_frame_full(existing);
+              return;
+            }
+            const opened = frames?.split_frame(
+              "col",
+              actions.frameId,
+              "workbench",
+              {
+                "data-artifact": publication.artifact_id,
+                "data-thread": threadId,
+                "data-origin": actions.frameId,
+                "data-publication": publication.operation_id,
+                ...(version === undefined ? {} : { "data-version": version }),
+              },
+            );
+            if (opened && window.innerWidth < 768)
+              frames?.set_frame_full(opened);
+          };
           return (
             <div
               key={publication.operation_id}
@@ -64,39 +97,21 @@ export function ArtifactCards({
                   disabled={!actions.frameTreeActions || !actions.frameId}
                   onClick={(event) => {
                     event.stopPropagation();
-                    const frames = actions.frameTreeActions;
-                    const existing = frames
-                      ?.get_frame_ids_in_order()
-                      .find(
-                        (id) =>
-                          frames._get_frame_data(id, "artifact") ===
-                            publication.artifact_id &&
-                          frames._get_frame_data(id, "thread") === threadId &&
-                          frames._get_frame_data(id, "origin") ===
-                            actions.frameId,
-                      );
-                    if (existing) {
-                      frames?.set_active_id(existing);
-                      if (window.innerWidth < 768)
-                        frames?.set_frame_full(existing);
-                      return;
-                    }
-                    const opened = frames?.split_frame(
-                      "col",
-                      actions.frameId,
-                      "workbench",
-                      {
-                        "data-artifact": publication.artifact_id,
-                        "data-thread": threadId,
-                        "data-origin": actions.frameId,
-                        "data-publication": publication.operation_id,
-                      },
-                    );
-                    if (opened && window.innerWidth < 768)
-                      frames?.set_frame_full(opened);
+                    open();
                   }}
                 >
                   Open artifact
+                </Button>
+                <Button
+                  size="small"
+                  type="text"
+                  disabled={!actions.frameTreeActions || !actions.frameId}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    open(publication.operation_id);
+                  }}
+                >
+                  Published version
                 </Button>
               </Space>
               <div

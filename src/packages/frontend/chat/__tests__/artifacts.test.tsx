@@ -66,6 +66,23 @@ test.each([1024, 375])(
     if (width < 768)
       expect(set_frame_full).toHaveBeenCalledWith("artifact-frame");
     else expect(set_frame_full).not.toHaveBeenCalled();
+    const published = screen.getByRole("button", { name: "Published version" });
+    published.focus();
+    expect(document.activeElement).toBe(published);
+    fireEvent.click(published);
+    expect(split_frame).toHaveBeenLastCalledWith(
+      "col",
+      "chat-frame",
+      "workbench",
+      {
+        "data-artifact": "doc-1",
+        "data-thread": "thread-1",
+        "data-origin": "chat-frame",
+        "data-publication": "op-1",
+        "data-version": "op-1",
+      },
+    );
+    expect(activateParent).not.toHaveBeenCalled();
   },
 );
 
@@ -135,5 +152,28 @@ test.each([
     expect(frames.set_frame_data).not.toHaveBeenCalled();
     expect(frames.close_frame).not.toHaveBeenCalled();
     expect(existing.version).toBe("old-publication");
+    frames.split_frame.mockClear();
+    frames.set_active_id.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Published version" }));
+    expect(frames.split_frame).toHaveBeenCalledWith(
+      "col",
+      "chat-frame",
+      "workbench",
+      expect.objectContaining({
+        "data-version": "publication-1",
+      }),
+    );
+    expect(frames.set_frame_data).not.toHaveBeenCalled();
+    expect(existing.version).toBe("old-publication");
+    if (reuse) {
+      // A matching snapshot may be focused, but a different view is never repurposed.
+      existing.version = "publication-1";
+      frames.split_frame.mockClear();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Published version" }),
+      );
+      expect(frames.split_frame).not.toHaveBeenCalled();
+      expect(frames.set_active_id).toHaveBeenCalledWith("existing-artifact");
+    }
   },
 );
