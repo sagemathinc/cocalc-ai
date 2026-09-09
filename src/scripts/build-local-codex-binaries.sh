@@ -5,12 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 UPSTREAM_DIR="${CODEX_UPSTREAM_DIR:-/home/user/upstream/codex}"
 CODEX_UPSTREAM_REPO="${CODEX_UPSTREAM_REPO:-https://github.com/openai/codex.git}"
-CODEX_VERSION="${CODEX_VERSION:-0.151.0}"
+CODEX_VERSION="${CODEX_VERSION:-0.153.4}"
 CODEX_TAG="rust-v${CODEX_VERSION}"
 CODEX_BRANCH="cocalc-upstream-build-v${CODEX_VERSION}"
-# Keep this as an array so a future release can add a narrowly scoped patch
-# without changing the build flow. Current releases use unmodified upstream.
-PATCH_FILES=()
+# Keep the transport fix scoped to the source version it was validated against.
+PATCH_FILES=("${SCRIPT_DIR}/patches/codex-rust-v${CODEX_VERSION}-tcp-user-timeout.patch")
 LOCAL_BIN_ROOT="${COCALC_CODEX_LOCAL_BIN_DIR:-${REPO_ROOT}/src/.cache/codex-binaries}"
 CARGO_MANIFEST="${UPSTREAM_DIR}/codex-rs/Cargo.toml"
 BUILD_PLATFORM="${CODEX_BUILD_PLATFORM:-all}"
@@ -318,8 +317,8 @@ cat > "${MANIFEST_PATH}" <<EOF
   "tag": "${CODEX_TAG}",
   "branch": "${CODEX_BRANCH}",
   "upstream_head": "${UPSTREAM_HEAD}",
-  "source_description": "unmodified upstream release",
-  "patches": [],
+  "source_description": "upstream release with CoCalc Linux TCP user timeout override",
+  "patches": ["$(basename "${PATCH_FILES[0]}")"],
   "build_platform": "${BUILD_PLATFORM}",
   "host_arch": "${HOST_ARCH}",
   "rust_toolchain": "${RUST_TOOLCHAIN}",
@@ -335,7 +334,7 @@ cat > "${MANIFEST_PATH}" <<EOF
 EOF
 
 echo
-echo "Built upstream codex binaries for ${BUILD_PLATFORM}:"
+echo "Built patched codex binaries for ${BUILD_PLATFORM}:"
 echo "Manifest:"
 echo "  ${MANIFEST_PATH}"
 
