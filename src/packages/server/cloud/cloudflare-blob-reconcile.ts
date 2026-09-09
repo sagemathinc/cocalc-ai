@@ -389,6 +389,14 @@ async function probe(
       },
     );
   }
+  async function cleanupProbe(): Promise<void> {
+    try {
+      await s3("DELETE");
+    } catch (err) {
+      setPhase("probe cleanup");
+      throw err;
+    }
+  }
   try {
     setPhase("S3 write probe");
     await s3("PUT");
@@ -415,11 +423,6 @@ async function probe(
     }
     await onHealthy(uuid);
   } finally {
-    try {
-      await s3("DELETE");
-    } catch (err) {
-      setPhase("probe cleanup");
-      throw err;
-    }
+    await cleanupProbe();
   }
 }
