@@ -1,6 +1,51 @@
 import type { ArtifactFeedback, ArtifactRecord } from "@cocalc/chat";
 import { validateArtifactFeedback } from "@cocalc/chat";
 
+// Read-only rendered documents do not get the native caret behavior of inputs.
+// Keep keyboard extension local so it cannot capture adjacent chat content.
+export function extendArtifactSelection(
+  element: HTMLElement,
+  selection: Selection | null,
+  key: string,
+  byWord: boolean,
+): boolean {
+  if (
+    !selection?.modify ||
+    !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(key)
+  ) {
+    return false;
+  }
+  const backward = key === "ArrowLeft" || key === "ArrowUp";
+  if (
+    !element.contains(selection.anchorNode) ||
+    !element.contains(selection.focusNode)
+  ) {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(!backward);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  selection.modify(
+    "extend",
+    backward ? "backward" : "forward",
+    key === "ArrowUp" || key === "ArrowDown"
+      ? "line"
+      : byWord
+        ? "word"
+        : "character",
+  );
+  if (!element.contains(selection.focusNode)) {
+    selection.setBaseAndExtent(
+      selection.anchorNode!,
+      selection.anchorOffset,
+      element,
+      backward ? 0 : element.childNodes.length,
+    );
+  }
+  return true;
+}
+
 export function captureArtifactSelection(
   element: HTMLElement,
   artifact: ArtifactRecord,

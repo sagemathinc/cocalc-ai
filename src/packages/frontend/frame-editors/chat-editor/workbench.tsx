@@ -6,7 +6,10 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ArtifactFeedback, ArtifactRecord } from "@cocalc/chat";
-import { captureArtifactSelection } from "@cocalc/frontend/chat/artifact-selection";
+import {
+  captureArtifactSelection,
+  extendArtifactSelection,
+} from "@cocalc/frontend/chat/artifact-selection";
 import { focusChatFrameInput } from "./actions";
 import { Alert, Button, Select, Space } from "antd";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
@@ -379,7 +382,28 @@ export function Workbench({
             />
           </div>
         ) : (
-          <div ref={content} tabIndex={0} aria-label="Artifact document">
+          <div
+            ref={content}
+            tabIndex={0}
+            aria-label="Artifact document"
+            aria-description="Use Shift and arrow keys to select text, then activate Comment."
+            onKeyDown={(event) => {
+              if (
+                event.target === event.currentTarget &&
+                event.shiftKey &&
+                !event.altKey &&
+                extendArtifactSelection(
+                  event.currentTarget,
+                  window.getSelection(),
+                  event.key,
+                  event.ctrlKey || event.metaKey,
+                )
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+              }
+            }}
+          >
             <StaticMarkdown value={value.input} />
           </div>
         )}

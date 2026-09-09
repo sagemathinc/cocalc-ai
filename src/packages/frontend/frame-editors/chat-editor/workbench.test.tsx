@@ -128,6 +128,18 @@ test.each([false, true])(
         } as any)}
       />,
     );
+    const documentView = screen.getByLabelText("Artifact document");
+    documentView.focus();
+    const selection = window.getSelection()!;
+    selection.modify = jest.fn();
+    fireEvent.keyDown(documentView, { key: "ArrowRight", shiftKey: true });
+    expect(selection.modify).toHaveBeenCalledWith(
+      "extend",
+      "forward",
+      "character",
+    );
+    expect(document.activeElement).toBe(documentView);
+    delete (selection as any).modify;
     const range = document.createRange();
     range.selectNodeContents(screen.getByText("Original passage"));
     act(() => {

@@ -446,6 +446,15 @@ events. Chromium left the selection empty. Keyboard-only text selection is
 not established by this probe; native browser caret-navigation behavior and
 the complete keyboard path still need validation. No artifact text was changed.
 
+Follow-up: the read view now handles Shift+Arrow using scoped browser selection
+extension (Ctrl/Meta selects by word; up/down by line), clamping the selection
+to the artifact rather than adjacent chat content. In live Chromium, focus the
+read document with no existing selection and press Shift+Right six times:
+`Isolat` is selected. Shift+Tab reaches Clear selection, then Comment; Enter
+stages exactly `Isolat` in the original thread and focuses its composer. No
+browser caret-browsing preference or content editing is required. Helper and
+workbench tests cover initialization, boundary clamping, granularity, and focus.
+
 Live disconnected independent edits were exercised on the same QA artifact.
 After enabling the CDP Page domain, a temporary new-document WebSocket wrapper
 tracked the primary QA tab's two sockets. Set that tab offline and close those
