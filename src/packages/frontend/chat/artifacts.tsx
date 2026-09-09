@@ -76,14 +76,23 @@ export function ArtifactCards({
                       );
                     if (existing) {
                       frames?.set_active_id(existing);
+                      if (window.innerWidth < 768)
+                        frames?.set_frame_full(existing);
                       return;
                     }
-                    frames?.split_frame("col", actions.frameId, "workbench", {
-                      "data-artifact": publication.artifact_id,
-                      "data-thread": threadId,
-                      "data-origin": actions.frameId,
-                      "data-publication": publication.operation_id,
-                    });
+                    const opened = frames?.split_frame(
+                      "col",
+                      actions.frameId,
+                      "workbench",
+                      {
+                        "data-artifact": publication.artifact_id,
+                        "data-thread": threadId,
+                        "data-origin": actions.frameId,
+                        "data-publication": publication.operation_id,
+                      },
+                    );
+                    if (opened && window.innerWidth < 768)
+                      frames?.set_frame_full(opened);
                   }}
                 >
                   Open artifact

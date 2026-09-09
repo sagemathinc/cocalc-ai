@@ -159,6 +159,18 @@ export function Workbench({
     );
   };
   const flushEditor = () => saveInput(getEditorValue.current());
+  const returnToChat = () => {
+    const origin = desc.get("data-origin");
+    if (
+      window.innerWidth < 768 ||
+      actions.store?.getIn(["local_view_state", "full_id"]) === id
+    ) {
+      actions.set_frame_full(origin);
+    } else {
+      actions.set_active_id(origin);
+    }
+    focusChatFrameInput(origin);
+  };
   return (
     <KeyboardBoundary
       className="smc-vfill"
@@ -181,6 +193,20 @@ export function Workbench({
         }}
       >
         <Space wrap style={{ marginBottom: 12, flexShrink: 0 }}>
+          <Button
+            size="small"
+            disabled={!chat}
+            onClick={() => {
+              try {
+                if (editing) flushEditor();
+                returnToChat();
+              } catch (err) {
+                setError(String(err));
+              }
+            }}
+          >
+            Back to chat
+          </Button>
           <strong>{value.title}</strong>
           <Button
             size="small"
@@ -249,8 +275,7 @@ export function Workbench({
                 void chat
                   .stageArtifactFeedback(feedback)
                   .then(() => {
-                    actions.set_active_id(desc.get("data-origin"));
-                    focusChatFrameInput(desc.get("data-origin"));
+                    returnToChat();
                   })
                   .catch((err) => setError(String(err)));
               } catch (err) {
