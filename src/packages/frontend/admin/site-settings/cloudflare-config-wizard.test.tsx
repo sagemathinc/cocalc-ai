@@ -861,6 +861,47 @@ describe("CloudflareConfigWizard", () => {
     ).toHaveValue("");
   });
 
+  it("keeps the token when cancelling discard and clears it on confirmed closure", async () => {
+    const user = userEvent.setup();
+    const onClose = jest.fn();
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={onClose}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    const input = screen.getByRole("textbox", {
+      name: "Temporary bootstrap token",
+    });
+    await user.type(input, "temporary-secret");
+    await user.type(
+      screen.getByRole("textbox", { name: "Domain name" }),
+      ".changed",
+    );
+    await user.click(
+      screen.getAllByRole("button", { name: "Close", exact: true })[0],
+    );
+    const keep = await screen.findByRole("button", { name: "Keep editing" });
+    keep.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Keep editing" })).toBeNull(),
+    );
+    expect(input).toHaveValue("temporary-secret");
+    expect(onClose).not.toHaveBeenCalled();
+    await user.click(
+      screen.getAllByRole("button", { name: "Close", exact: true })[1],
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Discard changes" }),
+    );
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(input).toHaveValue("");
+  });
+
   it("clears bootstrap input when closed and restores focus on Escape", async () => {
     const user = userEvent.setup();
     const onClose = jest.fn();

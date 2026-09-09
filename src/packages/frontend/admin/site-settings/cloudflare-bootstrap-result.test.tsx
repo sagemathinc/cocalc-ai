@@ -75,6 +75,31 @@ it("keeps unsuccessful setup diagnostics expanded", () => {
   expect(screen.queryByText("Details", { selector: "summary" })).toBeNull();
 });
 
+it("shows only propagation recovery advice for a saved partial failure", () => {
+  render(
+    <CloudflareBootstrapResultView
+      result={{
+        ...success,
+        settings_status: "saved",
+        tunnel_token: {
+          ok: false,
+          message: "Retry with a new bootstrap token.",
+        },
+        failure:
+          "Propagation failed. Synchronize site settings; keep old and new credentials active.",
+      }}
+    />,
+  );
+  expect(screen.getByText(/Propagation failed/)).toBeVisible();
+  expect(screen.getByText(/Settings were saved on the seed bay/)).toBeVisible();
+  expect(document.body).not.toHaveTextContent(
+    "Retry with a new bootstrap token",
+  );
+  expect(document.body).not.toHaveTextContent(
+    "Saving may have partially completed",
+  );
+});
+
 it("does not collapse a failed discovery-token cleanup into success details", () => {
   render(
     <CloudflareBootstrapResultView

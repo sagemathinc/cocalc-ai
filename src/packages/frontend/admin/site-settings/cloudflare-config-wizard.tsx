@@ -315,8 +315,8 @@ export default function CloudflareConfigWizard({
 
   function requestClose() {
     if (operationBusy) return;
-    setBootstrapToken("");
     if (!hasUnsavedDraft) {
+      setBootstrapToken("");
       onClose();
       return;
     }
@@ -327,7 +327,10 @@ export default function CloudflareConfigWizard({
       okText: "Discard changes",
       cancelText: "Keep editing",
       okButtonProps: { danger: true },
-      onOk: onClose,
+      onOk: () => {
+        setBootstrapToken("");
+        onClose();
+      },
     });
   }
 

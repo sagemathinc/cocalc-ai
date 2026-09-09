@@ -724,6 +724,11 @@ async function startBayOpsService(): Promise<void> {
     setServerSetting: async (opts) => {
       await callback2(db().set_server_setting, opts);
     },
+    checkCloudflareBlobEnvironment: async () => {
+      const { checkCloudflareBlobEnvironment } =
+        await import("@cocalc/server/cloud/cloudflare-blob-preflight");
+      return checkCloudflareBlobEnvironment();
+    },
     setSiteSettings: async (opts) => await setSiteSettingsOnSeed(opts),
     bootstrapCloudflareConfiguration: async (opts) =>
       await bootstrapCloudflareConfigurationOnSeed(opts),

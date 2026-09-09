@@ -7633,6 +7633,30 @@ async function withCloudflareProvisioningLock<T>(
   }
 }
 
+// Check every registered bay, including temporarily unavailable bays, before writes.
+async function preflightCloudflareBays(): Promise<void> {
+  const { assertManagedBlobEnvironment } =
+    await import("@cocalc/server/cloud/cloudflare-blob-preflight");
+  assertManagedBlobEnvironment();
+  const bays = await listClusterBayRegistry();
+  for (const bayId of [...new Set(bays.map(({ bay_id }) => bay_id))]) {
+    if (bayId === getConfiguredBayId()) continue;
+    let ok = false;
+    try {
+      const result = await getInterBayBridge()
+        .bayOps(bayId, { timeout_ms: 15_000 })
+        .checkCloudflareBlobEnvironment();
+      ok = result?.ok === true;
+    } catch {
+      // Old/unreachable bays must not be mistaken for a clean environment.
+    }
+    if (!ok)
+      throw Error(
+        `Cloudflare preflight failed for bay '${bayId}'. Ensure every bay is upgraded, reachable, and has no COCALC_BLOB_* environment overrides, then retry. No provisioning or settings writes were performed. Delete any unused temporary bootstrap token in Cloudflare.`,
+      );
+  }
+}
+
 // Private inter-bay entry: the entry bay has already authorized the operator.
 export async function bootstrapCloudflareConfigurationOnSeed({
   account_id,
@@ -7640,6 +7664,7 @@ export async function bootstrapCloudflareConfigurationOnSeed({
   ...options
 }: import("@cocalc/conat/inter-bay/api").BayOpsCloudflareBootstrapRequest): Promise<CloudflareBootstrapResult> {
   return await withCloudflareProvisioningLock(async () => {
+    await preflightCloudflareBays();
     const { resolveBlobStorageConfig } =
       await import("@cocalc/server/blobs/config");
     const previousBlobConfig = await resolveBlobStorageConfig();
@@ -7689,6 +7714,7 @@ export async function bootstrapCloudflareConfigurationOnSeed({
       result.failure =
         "Credentials were saved on the seed bay, but propagation to other bays failed. Keep both old and new credentials active. Repair bay connectivity and synchronize site settings before retrying diagnostics; do not bootstrap again just to retry propagation.";
       result.tunnel_token.ok = false;
+      result.tunnel_token.message = result.failure;
     }
     if (result.tunnel_token.ok) {
       const previousTokenId =
@@ -7767,6 +7793,7 @@ export async function reconcileCloudflareBlobsOnSeed({
   source_bay_id,
 }: import("@cocalc/conat/inter-bay/api").BayOpsCloudflareReconcileRequest) {
   return await withCloudflareProvisioningLock(async () => {
+    await preflightCloudflareBays();
     const { reconcileCloudflareBlobs: reconcile } =
       await import("@cocalc/server/cloud/cloudflare-blob-reconcile");
     let propagationFailed = false;

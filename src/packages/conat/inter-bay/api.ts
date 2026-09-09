@@ -2888,6 +2888,7 @@ export type BayOpsMethod =
   | "set-site-settings"
   | "bootstrap-cloudflare-configuration"
   | "reconcile-cloudflare-blobs"
+  | "check-cloudflare-blob-environment"
   | "get-site-settings"
   | "sync-site-settings"
   | "get-global-config-propagation-status"
@@ -4607,6 +4608,7 @@ export interface InterBayBayOpsApi {
     opts: AdminCrashLocalResolutionRequest,
   ) => Promise<AdminCrashLocalResolutionResponse>;
   setServerSetting: (opts: BayOpsSetServerSettingRequest) => Promise<void>;
+  checkCloudflareBlobEnvironment: () => Promise<{ ok: boolean }>;
   setSiteSettings: (
     opts: BayOpsSetSiteSettingsRequest,
   ) => Promise<SiteSettingsSyncResult>;
@@ -10189,6 +10191,15 @@ export function createInterBayBayOpsClient({
     ...serviceClientOptions({ client, timeout }),
     subject: bayOpsSubject({ dest_bay, method: "set-site-settings" }),
   });
+  const cloudflareEnvironmentClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "checkCloudflareBlobEnvironment">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "check-cloudflare-blob-environment",
+    }),
+  });
   const bootstrapCloudflareClient = createServiceClient<
     Pick<InterBayBayOpsApi, "bootstrapCloudflareConfiguration">
   >({
@@ -10517,6 +10528,8 @@ export function createInterBayBayOpsClient({
       await webappCrashResolutionClient.setWebappCrashResolution(opts),
     setServerSetting: async (opts) =>
       await setServerSettingClient.setServerSetting(opts),
+    checkCloudflareBlobEnvironment: async () =>
+      await cloudflareEnvironmentClient.checkCloudflareBlobEnvironment(),
     setSiteSettings: async (opts) =>
       await setSiteSettingsClient.setSiteSettings(opts),
     bootstrapCloudflareConfiguration: async (opts) =>
@@ -10637,6 +10650,20 @@ export function createInterBayBayOpsHandlers({
       }),
       impl: {
         setSiteSettings: async (opts) => await impl.setSiteSettings(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "checkCloudflareBlobEnvironment">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "check-cloudflare-blob-environment",
+      }),
+      impl: {
+        checkCloudflareBlobEnvironment: async () =>
+          await impl.checkCloudflareBlobEnvironment(),
       },
     }),
     createServiceHandler<

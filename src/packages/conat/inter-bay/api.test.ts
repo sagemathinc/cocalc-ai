@@ -11,6 +11,24 @@ import {
 import { DataEncoding, encode } from "@cocalc/conat/core/codec";
 
 describe("inter-bay typed service transport", () => {
+  it("routes environment preflight to the remote bay with a bounded timeout", async () => {
+    const fastRpcRequest = jest.fn(async () => ({
+      raw: encode({ encoding: DataEncoding.MsgPack, mesg: { ok: false } }),
+    }));
+    const client = createInterBayBayOpsClient({
+      client: { fastRpcRequest } as any,
+      dest_bay: "remote",
+      timeout: 15_000,
+    });
+    await expect(client.checkCloudflareBlobEnvironment()).resolves.toEqual({
+      ok: false,
+    });
+    expect(fastRpcRequest).toHaveBeenCalledWith(
+      "bay.remote.rpc.bay-ops.check-cloudflare-blob-environment",
+      { raw: expect.any(Uint8Array) },
+      { timeout: 15_000 },
+    );
+  });
   it.each([
     ["bootstrapCloudflareConfiguration", "bootstrap-cloudflare-configuration"],
     ["reconcileCloudflareBlobs", "reconcile-cloudflare-blobs"],

@@ -14,3 +14,13 @@ export function assertManagedBlobEnvironment(): void {
     );
   }
 }
+
+// Return only a capability result, never environment values or credentials.
+export function checkCloudflareBlobEnvironment(): { ok: boolean } {
+  try {
+    assertManagedBlobEnvironment();
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}

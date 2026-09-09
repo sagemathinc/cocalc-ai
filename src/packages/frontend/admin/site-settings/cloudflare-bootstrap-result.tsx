@@ -31,7 +31,8 @@ export default function CloudflareBootstrapResultView({
             {result.permissions?.join(", ")}
           </Descriptions.Item>
           <Descriptions.Item label="Tunnel capability">
-            {saved ? "Ready" : "Needs attention"} {result.tunnel_token.message}
+            {saved ? "Ready" : "Needs attention"}{" "}
+            {result.failure ? undefined : result.tunnel_token.message}
           </Descriptions.Item>
           <Descriptions.Item label="Visitor location headers">
             {result.visitor_location_headers.ok
@@ -85,7 +86,9 @@ export default function CloudflareBootstrapResultView({
               <Typography.Paragraph>
                 {result.settings_status === "not_saved"
                   ? "No site settings were changed. Later configuration checks were not run. Review token cleanup below, then retry with a new bootstrap token."
-                  : "Saving may have partially completed. Review the cleanup notes and saved settings before retrying. No returned tokens are applied by the browser."}
+                  : result.settings_status === "saved"
+                    ? "Settings were saved on the seed bay. Follow the recovery instructions above before running diagnostics. No returned tokens are applied by the browser."
+                    : "Saving may have partially completed. Review the cleanup notes and saved settings before retrying. No returned tokens are applied by the browser."}
               </Typography.Paragraph>
               {details}
             </>
