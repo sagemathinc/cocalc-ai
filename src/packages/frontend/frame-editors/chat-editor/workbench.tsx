@@ -69,6 +69,7 @@ export function Workbench({
   const content = useRef<HTMLDivElement>(null);
   const displayed = useRef<ArtifactRecord | undefined>(undefined);
   const selectedFeedback = useRef<ArtifactFeedback | undefined>(undefined);
+  const getEditorValue = useRef<() => string>(() => "");
   useEffect(() => {
     const select = () => {
       const selection = window.getSelection();
@@ -142,6 +143,22 @@ export function Workbench({
           (latest?.snapshot.markdown === value.input ? 2 : 1)
       ];
   displayed.current = value;
+  const saveInput = (input: string) => {
+    const current = readArtifact(syncdb, target).artifact;
+    const next = validateArtifact({ ...current, input });
+    if (next.input === current.input) return;
+    syncdb.set({ ...artifactKey(target), input: next.input });
+    syncdb.commit();
+    setSaving(true);
+    void syncdb.save().then(
+      () => setSaving(false),
+      (err) => {
+        setSaving(false);
+        setError(String(err));
+      },
+    );
+  };
+  const flushEditor = () => saveInput(getEditorValue.current());
   return (
     <KeyboardBoundary
       className="smc-vfill"
@@ -163,12 +180,19 @@ export function Workbench({
               : context.urlTransform?.(url, tag),
         }}
       >
-        <Space wrap style={{ marginBottom: 12 }}>
+        <Space wrap style={{ marginBottom: 12, flexShrink: 0 }}>
           <strong>{value.title}</strong>
           <Button
             size="small"
             disabled={read_only || historical || !!pinned || showChanges}
-            onClick={() => setEditing(!editing)}
+            onClick={() => {
+              try {
+                if (editing) flushEditor();
+                setEditing(!editing);
+              } catch (err) {
+                setError(String(err));
+              }
+            }}
           >
             {editing ? "Read" : "Edit"}
           </Button>
@@ -279,34 +303,39 @@ export function Workbench({
             </Suspense>
           </div>
         ) : editing && !read_only ? (
-          <MarkdownInput
-            cacheId={`artifact:${project_id}:${path}:${target.thread_id}:${target.artifact_id}`}
-            value={value.input}
-            fontSize={font_size}
-            minimal
-            compact
-            hideHelp
-            enableMentions={false}
-            enableUpload={false}
-            onChange={(input) => {
-              try {
-                const current = readArtifact(syncdb, target).artifact;
-                const next = validateArtifact({ ...current, input });
-                syncdb.set({ ...artifactKey(target), input: next.input });
-                syncdb.commit();
-                setSaving(true);
-                void syncdb
-                  .save()
-                  .then(() => setSaving(false))
-                  .catch((err) => {
-                    setSaving(false);
-                    setError(String(err));
-                  });
-              } catch (err) {
-                setError(String(err));
-              }
-            }}
-          />
+          <div
+            className="smc-vfill"
+            style={{ minHeight: 0, overflow: "hidden" }}
+          >
+            <MarkdownInput
+              cacheId={`artifact:${project_id}:${path}:${target.thread_id}:${target.artifact_id}`}
+              value={value.input}
+              fontSize={font_size}
+              height="100%"
+              autoGrow={false}
+              modeSwitchPlacement="toolbar"
+              getValueRef={getEditorValue}
+              onSave={() => {
+                try {
+                  flushEditor();
+                } catch (err) {
+                  setError(String(err));
+                }
+              }}
+              minimal
+              compact
+              hideHelp
+              enableMentions={false}
+              enableUpload={false}
+              onChange={(input) => {
+                try {
+                  saveInput(input);
+                } catch (err) {
+                  setError(String(err));
+                }
+              }}
+            />
+          </div>
         ) : (
           <div ref={content} tabIndex={0} aria-label="Artifact document">
             <StaticMarkdown value={value.input} />

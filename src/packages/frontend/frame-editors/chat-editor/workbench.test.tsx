@@ -20,11 +20,15 @@ jest.mock("@cocalc/frontend/editors/slate/static-markdown", () => ({
 }));
 jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
   __esModule: true,
-  default: ({ value, onChange }) => (
+  default: ({ value, getValueRef, height, autoGrow }) => (
     <textarea
       aria-label="Edit artifact"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
+      defaultValue={value}
+      data-height={height}
+      data-autogrow={String(autoGrow)}
+      ref={(element) => {
+        if (element && getValueRef) getValueRef.current = () => element.value;
+      }}
     />
   ),
 }));
@@ -92,6 +96,53 @@ test("selected text remains pinned through remote updates and keyboard focus cha
     screen.getByRole("button", { name: "Show updated document" }),
   );
   expect(screen.getByText("New passage")).toBeTruthy();
+});
+
+test("Read flushes pending editor text and edit mode requests full height", async () => {
+  const target = { thread_id: "thread", artifact_id: "artifact" };
+  let record = {
+    ...artifactKey(target),
+    ...target,
+    schema_version: 1,
+    kind: "markdown",
+    title: "Draft",
+    input: "Original",
+  };
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => record,
+    get: () => [],
+    set: jest.fn((patch) => {
+      record = { ...record, ...patch };
+    }),
+    commit: jest.fn(),
+    save: jest.fn(async () => {}),
+  });
+  render(
+    <Workbench
+      {...({
+        actions: { getChatActions: () => ({ syncdb }) },
+        desc: fromJS({
+          "data-origin": "origin",
+          "data-thread": "thread",
+          "data-artifact": "artifact",
+        }),
+        read_only: false,
+        font_size: 14,
+      } as any)}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  const editor = screen.getByRole("textbox", { name: "Edit artifact" });
+  expect(editor).toHaveAttribute("data-height", "100%");
+  expect(editor).toHaveAttribute("data-autogrow", "false");
+  fireEvent.change(editor, { target: { value: "Pending human edit" } });
+  expect(record.input).toBe("Original");
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Read" }));
+  });
+  expect(record.input).toBe("Pending human edit");
+  expect(syncdb.save).toHaveBeenCalledTimes(1);
+  expect(screen.getByText("Pending human edit")).toBeTruthy();
 });
 
 test("historical views stay pinned and See changes uses the preceding publication", async () => {
