@@ -772,6 +772,10 @@ describe("project-host intrusion monitor normalization", () => {
           '["tcp","rustic","127.0.0.1:<dynamic>"]',
           '["tcp","project-host:ac","0.0.0.0:<dynamic>"]',
           '["udp","unattributed","0.0.0.0:46482"]',
+          '["tcp","unattributed","127.0.0.1:38839"]',
+          '["tcp","unattributed","localhost:53839"]',
+          '["tcp","unattributed","[::1]:53840"]',
+          '["tcp","unattributed","127.0.0.1:4444"]',
           '["tcp","unknown","127.0.0.1:4444"]',
           '["tcp","unknown","0.0.0.0:4444"]',
         ],
@@ -795,6 +799,7 @@ describe("project-host intrusion monitor normalization", () => {
       added: {
         "host_processes.findings": ['[0,"unknown","/tmp/run"]'],
         "network.listeners": [
+          '["tcp","unattributed","127.0.0.1:4444"]',
           '["tcp","unknown","127.0.0.1:4444"]',
           '["tcp","unknown","0.0.0.0:4444"]',
         ],
