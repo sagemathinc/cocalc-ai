@@ -482,7 +482,21 @@ async function main() {
     // Do not discover packages, spawn commands, or clean --out in read-only mode.
     const results = opts.reports.map((outputFile) => {
       const data = readJsonResults(outputFile);
-      if (!data || data.parseError || !Array.isArray(data.testResults)) {
+      if (
+        !data ||
+        data.parseError ||
+        !Array.isArray(data.testResults) ||
+        typeof data.success !== "boolean" ||
+        ![
+          "numTotalTests",
+          "numFailedTests",
+          "numTotalTestSuites",
+          "numFailedTestSuites",
+        ].every((key) => Number.isSafeInteger(data[key]) && data[key] >= 0) ||
+        data.numFailedTests > data.numTotalTests ||
+        data.numFailedTestSuites > data.numTotalTestSuites ||
+        data.testResults.length !== data.numTotalTestSuites
+      ) {
         throw new Error(`invalid Jest JSON report: ${outputFile}`);
       }
       return {

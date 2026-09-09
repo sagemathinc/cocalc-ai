@@ -25,6 +25,9 @@ function report(status = "passed") {
   return {
     success: status !== "failed",
     numTotalTests: 1,
+    numFailedTests: status === "failed" ? 1 : 0,
+    numTotalTestSuites: 1,
+    numFailedTestSuites: status === "failed" ? 1 : 0,
     testResults: [
       {
         name: "/checkout/packages/example/a.test.ts",
@@ -75,7 +78,15 @@ test("missing, malformed, and non-Jest reports fail explicitly", (t) => {
   const dir = fixture(t);
   const file = join(dir, "bad.json");
   assert.equal(run(`--report=${file}`).status, 1);
-  for (const contents of ["not json", "{}", "null"]) {
+  for (const contents of [
+    "not json",
+    "{}",
+    "null",
+    '{"testResults":[]}',
+    JSON.stringify({ ...report(), success: "true" }),
+    JSON.stringify({ ...report(), numFailedTests: -1 }),
+    JSON.stringify({ ...report(), testResults: [] }),
+  ]) {
     writeFileSync(file, contents);
     const result = run(`--report=${file}`);
     assert.equal(result.status, 1);
