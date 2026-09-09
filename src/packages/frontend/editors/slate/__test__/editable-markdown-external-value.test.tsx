@@ -29,6 +29,81 @@ function StreamingMarkdown({ value }: { value: string }) {
 }
 
 describe("EditableMarkdown external read-only values", () => {
+  it("merges delayed independent edits in two editors without publishing echo loops", async () => {
+    const base = "First paragraph.\n\nLast paragraph.";
+    const merged = "Local first paragraph.\n\nRemote last paragraph.";
+    const clients = [0, 1].map(() => ({
+      controlRef: { current: null } as any,
+      getValueRef: { current: () => "" },
+      remote: base,
+      setValue: jest.fn(),
+    }));
+    const view = () => (
+      <>
+        {clients.map((client, i) => (
+          <EditableMarkdown
+            key={i}
+            value={client.remote}
+            mergeRemoteValues
+            getRemoteValue={() => client.remote}
+            controlRef={client.controlRef}
+            getValueRef={client.getValueRef}
+            actions={{ set_value: client.setValue } as any}
+            saveDebounceMs={10}
+            is_current
+            enableUpload={false}
+            minimal
+            hidePath
+            disableWindowing
+            noVfill
+            showEditBar={false}
+            height="auto"
+          />
+        ))}
+      </>
+    );
+    const { rerender } = render(view());
+    await act(async () => {
+      clients[0].controlRef.current.setValueNow(
+        "Local first paragraph.\n\nLast paragraph.",
+      );
+      clients[1].controlRef.current.setValueNow(
+        "First paragraph.\n\nRemote last paragraph.",
+      );
+    });
+    expect(clients[0].getValueRef.current()).not.toContain("Remote last");
+    expect(clients[1].getValueRef.current()).not.toContain("Local first");
+    clients[0].remote = "First paragraph.\n\nRemote last paragraph.";
+    clients[1].remote = "Local first paragraph.\n\nLast paragraph.";
+    rerender(view());
+    await waitFor(() => {
+      for (const client of clients)
+        expect(client.getValueRef.current()).toBe(merged);
+    });
+    await waitFor(() => {
+      for (const client of clients) {
+        expect(client.setValue).toHaveBeenCalledWith(
+          `${merged}\n\n`,
+          undefined,
+          "slate",
+        );
+        expect(client.setValue).toHaveBeenCalledTimes(1);
+      }
+    });
+    for (const client of clients) {
+      client.remote = `${merged}\n\n`;
+      client.setValue.mockClear();
+    }
+    rerender(view());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+    for (const client of clients) {
+      expect(client.getValueRef.current()).toBe(`${merged}\n\n`);
+      expect(client.setValue).not.toHaveBeenCalled();
+    }
+  });
+
   it("merges collaborative value updates with an unsaved local buffer", async () => {
     const controlRef: any = { current: null };
     const getValueRef = { current: () => "" };
