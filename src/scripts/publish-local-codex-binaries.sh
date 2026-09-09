@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CODEX_VERSION="${CODEX_VERSION:-0.153.4}"
 RELEASE_REPO="${CODEX_RELEASE_REPO:-sagemathinc/codex}"
-RELEASE_TAG="${CODEX_RELEASE_TAG:-v${CODEX_VERSION}}"
+RELEASE_TAG="${CODEX_RELEASE_TAG:-v${CODEX_VERSION}-cocalc-musl-1}"
 LOCAL_BIN_ROOT="${COCALC_CODEX_LOCAL_BIN_DIR:-${REPO_ROOT}/src/.cache/codex-binaries}"
 MANIFEST_PATH="${LOCAL_BIN_ROOT}/${CODEX_VERSION}/manifest.json"
 X64_SOURCE="${LOCAL_BIN_ROOT}/${CODEX_VERSION}/linux-x64/codex"
@@ -38,11 +38,18 @@ fi
 
 verify_portable_linux_binary() {
   local binary="$1"
-  if readelf -l "${binary}" | grep -q 'Requesting program interpreter'; then
+  local headers dynamic
+  if ! readelf -h "${binary}" >/dev/null ||
+    ! headers="$(readelf -l "${binary}")" ||
+    ! dynamic="$(readelf -d "${binary}")"; then
+    echo "Invalid ELF release binary: ${binary}" >&2
+    exit 1
+  fi
+  if [[ "${headers}" == *"Requesting program interpreter"* ]]; then
     echo "Refusing dynamically linked release binary with an ELF interpreter: ${binary}" >&2
     exit 1
   fi
-  if readelf -d "${binary}" 2>/dev/null | grep -q '(NEEDED)'; then
+  if [[ "${dynamic}" == *"(NEEDED)"* ]]; then
     echo "Refusing release binary with shared-library dependencies: ${binary}" >&2
     exit 1
   fi
