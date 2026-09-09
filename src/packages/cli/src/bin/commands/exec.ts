@@ -233,7 +233,7 @@ export interface TaskImportResult {
 export interface BackendExecApi {
   /** Experimental live chat artifacts; uses the collaborative store. */
   artifacts: {
-    open(options: { path: string; threadId: string; projectIdentifier?: string }): {
+    open(options: { path: string; threadId: string; projectIdentifier?: string; experimental?: boolean }): {
       context(messageDate: string): Promise<{ project_id: string; path: string; thread_id: string; message_id: string }>;
       list(): Promise<Array<{ artifact_id: string; thread_id: string; title: string; input: string }>>;
       read(artifactId: string): Promise<{ artifact: { artifact_id: string; thread_id: string; title: string; input: string }; base: string }>;
@@ -640,6 +640,7 @@ export function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
         path: string;
         threadId: string;
         projectIdentifier?: string;
+        experimental?: boolean;
       }) {
         const call = (action: string, extra: object = {}) => {
           if (!deps.projectChatArtifactData)

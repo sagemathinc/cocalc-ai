@@ -253,6 +253,7 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     artifactId,
     operationId,
     messageDate,
+    experimental,
     payload,
   }: {
     ctx: Ctx;
@@ -263,8 +264,12 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     artifactId?: string;
     operationId?: string;
     messageDate?: string;
+    experimental?: boolean;
     payload?: PublishArtifactInput;
   }) {
+    if ((action === "create" || action === "update") && experimental !== true) {
+      throw Error("artifact writes require explicit experimental opt-in");
+    }
     return await withProjectChatFile({
       deps,
       ctx,

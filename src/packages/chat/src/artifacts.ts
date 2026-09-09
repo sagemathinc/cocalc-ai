@@ -18,6 +18,7 @@ export interface ArtifactRecord extends ArtifactTarget {
 }
 
 export interface ArtifactPublication extends ArtifactTarget {
+  published_at?: string;
   event: "chat-artifact-publication";
   sender_id: string;
   date: string;
@@ -154,11 +155,20 @@ export function validateArtifactPublication(
   const key = artifactPublicationKey(row, row.operation_id);
   if (row.sender_id !== key.sender_id || row.date !== DATE)
     throw Error("invalid publication key");
+  if (
+    row.published_at !== undefined &&
+    (typeof row.published_at !== "string" ||
+      row.published_at.length > 32 ||
+      !Number.isFinite(Date.parse(row.published_at)))
+  ) {
+    throw Error("invalid artifact publication time");
+  }
   return {
     ...key,
     artifact_id: row.artifact_id,
     schema_version: 1,
     operation_id: row.operation_id,
+    published_at: row.published_at,
     message_id: id(row.message_id, "message id"),
     snapshot: {
       title: text(row.snapshot?.title, "title", 256),
@@ -204,6 +214,7 @@ export function publishArtifact(
     artifact_id: input.artifact_id,
     schema_version: 1,
     operation_id: input.operation_id,
+    published_at: new Date().toISOString(),
     message_id: input.message_id,
     snapshot: { title: artifact.title, markdown: artifact.input },
   });
@@ -211,13 +222,18 @@ export function publishArtifact(
     artifactPublicationKey(input, input.operation_id),
   );
   if (previous != null) {
+    const prior = validateArtifactPublication(previous);
     if (
-      JSON.stringify(validateArtifactPublication(previous)) !==
-      JSON.stringify(publication)
+      JSON.stringify({ ...prior, published_at: undefined }) !==
+      JSON.stringify({ ...publication, published_at: undefined })
     ) {
       throw Error("artifact operation id already used for different content");
     }
-    return { ...readArtifact(store, input), publication, replayed: true };
+    return {
+      ...readArtifact(store, input),
+      publication: prior,
+      replayed: true,
+    };
   }
   const current = store.get_one(artifactKey(input));
   if (

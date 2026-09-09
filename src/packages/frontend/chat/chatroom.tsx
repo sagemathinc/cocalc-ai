@@ -2277,7 +2277,7 @@ export function ChatPanel({
       setAcpPrompt(rawAcpPrompt);
       return;
     }
-    if (feedback) await artifactFeedback.clear();
+    if (feedback) await artifactFeedback.clear(feedback);
     const threadKey =
       !reply_thread_id && timeStamp
         ? (() => {

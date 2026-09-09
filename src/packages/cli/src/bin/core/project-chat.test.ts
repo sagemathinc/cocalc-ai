@@ -4,7 +4,28 @@ import test from "node:test";
 import {
   mergeThreadConfigRecord,
   resolveArtifactMessage,
+  createProjectChatOps,
 } from "./project-chat";
+
+test("artifact writes require opt-in before opening a live document", async () => {
+  let opened = false;
+  const ops = createProjectChatOps({
+    resolveProjectConatClient: async () => {
+      opened = true;
+      throw Error("unexpected project connection");
+    },
+  });
+  await assert.rejects(
+    ops.projectChatArtifactData({
+      ctx: {},
+      path: "x.chat",
+      threadId: "thread",
+      action: "create",
+    }),
+    /experimental opt-in/,
+  );
+  assert.equal(opened, false);
+});
 
 test("artifact context resolves an exact producing row, never the newest row", () => {
   const row = {

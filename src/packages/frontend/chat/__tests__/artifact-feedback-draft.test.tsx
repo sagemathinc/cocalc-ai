@@ -62,7 +62,7 @@ function setup(threadId = "t") {
     return <>{api.control}</>;
   }
   render(<Test />);
-  return { actions, read: () => api.read() };
+  return { actions, read: () => api.read(), captureClear: () => api.clear };
 }
 
 test("stages a pinned quote without sending, and supports removal", async () => {
@@ -97,4 +97,24 @@ test("cross-thread staging writes the originating thread's account draft", async
     }),
   );
   expect(actions.setSelectedThread).toHaveBeenCalledWith("t");
+});
+
+test("delayed send completion does not clear newly staged feedback", async () => {
+  const { actions, read, captureClear } = setup();
+  await act(async () => {
+    await actions.stageArtifactFeedback(feedback);
+  });
+  const completeOriginalSend = captureClear();
+  const next = { ...feedback, title: "New feedback" };
+  await act(async () => {
+    await actions.stageArtifactFeedback(next);
+  });
+  await act(async () => {
+    await completeOriginalSend(feedback);
+  });
+  expect(read()).toEqual(next);
+  await act(async () => {
+    await captureClear()(next);
+  });
+  expect(read()).toBeUndefined();
 });

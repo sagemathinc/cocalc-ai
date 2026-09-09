@@ -15,6 +15,7 @@ test("artifact scripting preserves explicit context and editing base", async () 
     path: "x.chat",
     threadId: "thread",
     projectIdentifier: "project",
+    experimental: true,
   });
   await doc.context("2026-09-09T00:00:00Z");
   await doc.read("artifact");
@@ -35,6 +36,7 @@ test("artifact scripting preserves explicit context and editing base", async () 
     assert.equal(call.threadId, "thread");
     assert.equal(call.path, "x.chat");
     assert.equal(call.projectIdentifier, "project");
+    assert.equal(call.experimental, true);
   }
   assert.equal(calls[2].payload, payload);
 });

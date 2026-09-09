@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Alert, Button, Space } from "antd";
 import { readArtifact, validateArtifactFeedback } from "@cocalc/chat";
 import type { ArtifactFeedback } from "@cocalc/chat";
@@ -33,22 +33,39 @@ export function useArtifactFeedbackDraft({
     composerDraftKey,
     suffix,
   });
+  const knownDrafts = useRef(new Map<number, string>());
+  const latestDraft = useRef(draft);
+  latestDraft.current = draft;
+  if (!draft.input) knownDrafts.current.set(composerDraftKey, "");
+  else {
+    try {
+      if (JSON.parse(draft.input).thread_id === threadId) {
+        knownDrafts.current.set(composerDraftKey, draft.input);
+      }
+    } catch {
+      /* Keep invalid drafts visible; never clear them as a sent snapshot. */
+    }
+  }
   useEffect(() => {
     const stage = async (value: ArtifactFeedback) => {
       const feedback = validateArtifactFeedback(value);
       if (!actions.syncdb) throw Error("Chat is not connected");
       readArtifact(actions.syncdb, feedback);
       const serialized = JSON.stringify(feedback);
-      if (feedback.thread_id === threadId) draft.setInput(serialized);
-      else {
+      const targetKey = stableDraftKeyFromThreadKey(feedback.thread_id);
+      if (feedback.thread_id === threadId) {
+        knownDrafts.current.set(composerDraftKey, serialized);
+        draft.setInput(serialized);
+      } else {
         await writeChatComposerDraft({
           account_id,
           project_id,
           path,
           suffix,
-          composerDraftKey: stableDraftKeyFromThreadKey(feedback.thread_id),
+          composerDraftKey: targetKey,
           text: serialized,
         });
+        knownDrafts.current.set(targetKey, serialized);
         actions.setSelectedThread?.(feedback.thread_id);
       }
     };
@@ -57,7 +74,15 @@ export function useArtifactFeedbackDraft({
       if (actions.stageArtifactFeedback === stage)
         actions.stageArtifactFeedback = undefined;
     };
-  }, [actions, account_id, project_id, path, threadId, draft.setInput]);
+  }, [
+    actions,
+    account_id,
+    project_id,
+    path,
+    threadId,
+    composerDraftKey,
+    draft.setInput,
+  ]);
 
   const read = (): ArtifactFeedback | undefined => {
     if (!draft.input) return;
@@ -77,7 +102,14 @@ export function useArtifactFeedbackDraft({
   }
   return {
     read,
-    clear: () => draft.clearComposerDraft(composerDraftKey),
+    clear: async (submitted: ArtifactFeedback) => {
+      const expected = JSON.stringify(validateArtifactFeedback(submitted));
+      if (knownDrafts.current.get(composerDraftKey) !== expected) return;
+      knownDrafts.current.delete(composerDraftKey);
+      // Use the latest callback: the composer may have switched controller/key
+      // while Send was awaiting its outbox write.
+      await latestDraft.current.clearComposerDraft(composerDraftKey);
+    },
     control: draft.input ? (
       <Space wrap style={{ padding: "4px 12px" }}>
         {error ? (

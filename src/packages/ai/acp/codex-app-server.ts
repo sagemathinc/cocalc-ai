@@ -367,7 +367,7 @@ function getCoCalcProjectRuntimeGuidance(cliCommand: string): string[] {
     "Use COCALC_CODEX_CHAT_PATH, COCALC_CODEX_THREAD_ID, and COCALC_CODEX_MESSAGE_DATE as explicit originating context when provided. Resolve the producing message with `project chat artifact context --path <chat> --thread-id <thread> --message-date <date>`; never choose the latest message or the selected browser thread.",
     "Artifact create/update accept --path, --thread-id, --artifact-id and --file <JSON file> (or --file - for stdin). Payload fields: message_id, operation_id (a fresh stable retry ID), title, markdown. Update also requires base from a current artifact read. Retry with the same operation_id and content; a changed-base error requires rereading, not dropping the base check.",
     "Read the current artifact before changing it, including after user feedback on an older snapshot. Keep the same artifact_id for revisions. Publishing creates a card; do not fabricate a user message, iframe, or Markdown command to display it.",
-    "Backend exec also exposes api.artifacts.open({ path, threadId, projectIdentifier }) with context(messageDate), list(), read(artifactId), create(artifactId, payload), and update(artifactId, payload). Inspect exec-api for the installed declaration before using it.",
+    "Artifact writes require explicit prototype opt-in: --experimental on CLI create/update, or experimental: true in api.artifacts.open({ path, threadId, projectIdentifier, experimental: true }). The scripting API has context(messageDate), list(), read(artifactId), create(artifactId, payload), and update(artifactId, payload). Inspect exec-api for the installed declaration before using it.",
   ];
 }
 

@@ -64,6 +64,7 @@ export function registerProjectChatCommands(
         "exact producing message timestamp for context",
       )
       .option("--file <path>", "JSON publication payload, or - for stdin")
+      .option("--experimental", "opt into prototype artifact writes")
       .action(async (opts, command: Command) => {
         await withContext(
           command,
@@ -105,6 +106,7 @@ export function registerProjectChatCommands(
               artifactId: opts.artifactId,
               operationId: opts.operationId,
               messageDate: opts.messageDate,
+              experimental: opts.experimental,
               payload,
             });
           },

@@ -3,11 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import type { ArtifactFeedback, ArtifactRecord } from "@cocalc/chat";
 import { captureArtifactSelection } from "@cocalc/frontend/chat/artifact-selection";
 import { focusChatFrameInput } from "./actions";
-import { Alert, Button, Space } from "antd";
+import { Alert, Button, Select, Space } from "antd";
+import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import {
   artifactKey,
   readArtifact,
@@ -27,6 +28,11 @@ import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
+const DocumentDiff = lazyWithRetry(
+  () => import("@cocalc/frontend/components/diff-viewer/document-diff"),
+  "artifact changes",
+);
+
 export const workbench: EditorDescription = {
   type: "workbench",
   short: "Artifact",
@@ -44,6 +50,7 @@ export function Workbench({
   font_size,
   project_id,
   path,
+  id,
 }: EditorComponentProps) {
   const actions = frameActions as Actions;
   const chat = actions.getChatActions(desc.get("data-origin"));
@@ -51,7 +58,11 @@ export function Workbench({
   useArtifactChanges(syncdb);
   const context = useFileContext();
   const [editing, setEditing] = useState(false);
-  const [historical, setHistorical] = useState(false);
+  const [version, setVersion] = useState<string | undefined>(
+    desc.get("data-version") ?? undefined,
+  );
+  const historical = version !== undefined;
+  const [showChanges, setShowChanges] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [pinned, setPinned] = useState<ArtifactRecord>();
@@ -90,14 +101,25 @@ export function Workbench({
     artifact_id: desc.get("data-artifact"),
   };
   let artifact;
+  let publications: ReturnType<typeof validateArtifactPublication>[] = [];
   try {
     if (!syncdb) return <div role="status">Loading artifact...</div>;
     artifact = readArtifact(syncdb, target).artifact;
+    const rows = syncdb.get({
+      event: "chat-artifact-publication",
+      thread_id: target.thread_id,
+    });
+    publications = (rows?.toJS?.() ?? rows ?? [])
+      .filter((row) => row.artifact_id === target.artifact_id)
+      .map(validateArtifactPublication)
+      .sort(
+        (a, b) =>
+          (a.published_at ?? "").localeCompare(b.published_at ?? "") ||
+          a.operation_id.localeCompare(b.operation_id),
+      );
     if (historical) {
       const pub = validateArtifactPublication(
-        syncdb.get_one(
-          artifactPublicationKey(target, desc.get("data-publication")),
-        ),
+        syncdb.get_one(artifactPublicationKey(target, version!)),
       );
       artifact = {
         ...artifact,
@@ -109,6 +131,16 @@ export function Workbench({
     return <Alert type="warning" message="Artifact unavailable" />;
   }
   const value = pinned ?? artifact;
+  const selectedIndex = publications.findIndex(
+    (pub) => pub.operation_id === version,
+  );
+  const latest = publications[publications.length - 1];
+  const before = historical
+    ? publications[selectedIndex - 1]
+    : publications[
+        publications.length -
+          (latest?.snapshot.markdown === value.input ? 2 : 1)
+      ];
   displayed.current = value;
   return (
     <KeyboardBoundary
@@ -135,21 +167,50 @@ export function Workbench({
           <strong>{value.title}</strong>
           <Button
             size="small"
-            disabled={read_only || historical || !!pinned}
+            disabled={read_only || historical || !!pinned || showChanges}
             onClick={() => setEditing(!editing)}
           >
             {editing ? "Read" : "Edit"}
           </Button>
+          <Select
+            aria-label="Artifact revision"
+            size="small"
+            style={{ width: 190, maxWidth: "100%" }}
+            value={
+              version === undefined ? "__current__" : `publication:${version}`
+            }
+            disabled={editing || !!pinned}
+            options={[
+              { value: "__current__", label: "Current document" },
+              ...publications.map((pub, index) => ({
+                value: `publication:${pub.operation_id}`,
+                label: `Published ${index + 1}: ${pub.operation_id.slice(0, 12)}`,
+              })),
+            ]}
+            onChange={(next) => {
+              const selected =
+                next === "__current__"
+                  ? undefined
+                  : next.slice("publication:".length);
+              setVersion(selected);
+              actions.set_frame_data({ id, version: selected ?? null });
+            }}
+          />
           <Button
             size="small"
             disabled={editing || !!pinned}
-            onClick={() => setHistorical(!historical)}
+            onClick={() => setShowChanges(!showChanges)}
           >
-            {historical ? "Show current" : "Show published"}
+            {showChanges ? "Show document" : "See changes"}
           </Button>
           <Button
             size="small"
-            disabled={read_only || editing || !chat?.stageArtifactFeedback}
+            disabled={
+              read_only ||
+              editing ||
+              showChanges ||
+              !chat?.stageArtifactFeedback
+            }
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               if (!content.current || !chat?.stageArtifactFeedback) return;
@@ -205,7 +266,19 @@ export function Workbench({
             onClose={() => setError("")}
           />
         )}
-        {editing && !read_only ? (
+        {showChanges ? (
+          <div style={{ minHeight: 280, flex: 1 }}>
+            <Suspense fallback={<div role="status">Loading changes...</div>}>
+              <DocumentDiff
+                before={before?.snapshot.markdown ?? ""}
+                after={value.input}
+                path="artifact.md"
+                label="Changes since preceding published snapshot"
+                fontSize={font_size}
+              />
+            </Suspense>
+          </div>
+        ) : editing && !read_only ? (
           <MarkdownInput
             cacheId={`artifact:${project_id}:${path}:${target.thread_id}:${target.artifact_id}`}
             value={value.input}

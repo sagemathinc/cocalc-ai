@@ -294,15 +294,17 @@ features appropriate for the authenticated application origin.
   current/published views and local edits. Selection feedback now pins rendered
   text offsets and the source snapshot, stages a removable account-scoped draft,
   and retains context on sent messages and in the pending-send outbox. The agent
-  prompt includes that bounded context. Agent runtime guidance and the
-  end-to-end acceptance session remain unfinished.
-- No ordinary chat exposes creation controls yet. Explicit experimental CLI
-  publication opts into the prototype; frame type is hidden from ordinary menus
-  and public editor selection. Confirm final opt-in behavior before a demo.
-- Validation so far: shared chat suite 75 tests; initial card interaction test;
+  prompt includes that bounded context. Agent runtime guidance is implemented;
+  the end-to-end acceptance session remains unfinished.
+- No ordinary chat exposes creation controls. CLI create/update require
+  `--experimental`; scripting requires `experimental: true` in open options.
+  The gate is checked before opening the document. The frame type is hidden
+  from ordinary menus and public editor selection. This is a rollout gate,
+  not an authorization boundary for project code that can already edit files.
+- Validation so far: shared chat suite and initial card interaction test;
   chat, CLI, and frontend package typechecks; frontend lint. Repeat after further
-  changes. Browser integration, real Patchflow concurrent-client regression,
-  export/rotation retention, and real-agent testing are still required.
+  changes. Browser integration, connected-client concurrency,
+  rotation retention, and real-agent testing are still required.
 - Selection and workbench regressions now cover repeated rendered passages,
   Unicode offsets, out-of-artifact selections, background updates during a
   selection, keyboard focus changes before Comment, thread-targeted draft
@@ -318,6 +320,19 @@ projectIdentifier })` over the same operations. Installed runtime validation
   Import remaps thread/message identities and preserves exact snapshots; a
   filesystem fixture round-trip passes. Rotation's non-chat row retention was
   inspected, but a live rotation/artifact reload test is still outstanding.
+- Real Patchflow document-level tests now cover independent concurrent
+  human/agent text patches and publication retention. Legacy SyncDB serialization
+  preserves artifact records. These do not replace the pending two-connected-
+  client/Slate acceptance test. Feedback clearing is conditional on the submitted
+  snapshot so delayed Send completion cannot erase newer feedback in that frame.
+- The workbench now has a publication selector and explicit See changes view,
+  lazy-loading the existing document diff viewer only on demand. Publication
+  timestamps survive idempotent retries. A component regression checks that
+  historical comparisons remain pinned during live updates.
+- The maintainer's local Chromium is reachable via CDP on port 9222. Its
+  authenticated Lite1b tab successfully opens the test project. Development
+  build and real-agent acceptance are in progress; this is not yet live feature
+  acceptance.
 
 ### Agent Recipe For The Dev Acceptance Run
 
@@ -330,6 +345,7 @@ const doc = api.artifacts.open({
   path: process.env.COCALC_CODEX_CHAT_PATH,
   threadId: process.env.COCALC_CODEX_THREAD_ID,
   projectIdentifier: process.env.COCALC_PROJECT_ID,
+  experimental: true,
 });
 const context = await doc.context(process.env.COCALC_CODEX_MESSAGE_DATE);
 return await doc.create("support-replies", {

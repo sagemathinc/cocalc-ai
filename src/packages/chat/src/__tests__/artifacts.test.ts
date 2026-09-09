@@ -78,6 +78,27 @@ test("retry does not roll back a later human edit", () => {
   expect(db.rows.size).toBe(2);
 });
 
+test("retry preserves the original publication time", () => {
+  jest.useFakeTimers();
+  try {
+    jest.setSystemTime(new Date("2026-09-09T00:00:00Z"));
+    const db = store();
+    const first = publishArtifact(db, input);
+    jest.advanceTimersByTime(60_000);
+    const retry = publishArtifact(db, input);
+    expect(retry.publication).toEqual(first.publication);
+    expect(retry.publication.published_at).toBe("2026-09-09T00:00:00.000Z");
+    expect(() =>
+      validateArtifactPublication({
+        ...first.publication,
+        published_at: "bad",
+      }),
+    ).toThrow(/publication time/);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
 test("rejects stale agent updates and duplicate creates", () => {
   const db = store();
   const first = publishArtifact(db, input);
