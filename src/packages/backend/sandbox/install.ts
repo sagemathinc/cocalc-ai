@@ -32,6 +32,7 @@ import { join } from "path";
 // using old version of pkg-dir because of nextjs :-(
 import { sync as packageDirectorySync } from "pkg-dir";
 import getLogger from "@cocalc/backend/logger";
+import { matchesBinarySha256 } from "./binary-integrity";
 
 const logger = getLogger("files:sandbox:install");
 
@@ -111,14 +112,28 @@ type CodexArch = "x64" | "arm64";
 
 const CODEX_RELEASE_SHA256: Record<CodexArch, Record<CodexBinary, string>> = {
   x64: {
-    codex: "e8cd1160071f725d2a10cab81073dd6818fc8b096372125d27ef6e66fdf0979e",
+    codex: "9b060d4bfa7f415598ccdd4d9fce8ea42416837d786c276240559cfe29cd5139",
     "codex-code-mode-host":
-      "177a4507b9cc7f97f113ac034697b39f6a71a876a8bd508ff6d7f52f342ebe4a",
+      "104559f66f341bc67bd231d6e75bfbe04b5c4fec48363092e0ffde609d35969c",
   },
   arm64: {
-    codex: "878693f9b370320ea21793f99ea1f5687b7d9aa1f2c733de693d9ec0baa4e62a",
+    codex: "745371dcee6e4687816f20673b9a1d1be406ef37f9430939bf9ed2d40f5038dd",
     "codex-code-mode-host":
-      "70fe485e6919a038b75f70be71aa5782a19a5f36ee85597301e90bd1c9bcbf07",
+      "b6c1dba8cb83849f019ee589d129be1850c01d952d999fded629fd158b6f3e5b",
+  },
+};
+
+// Stock and patched Codex report the same version; verify the matched pair.
+const CODEX_BINARY_SHA256: Record<CodexArch, Record<CodexBinary, string>> = {
+  x64: {
+    codex: "b6606ff9f7ceb810ce4ee16730bd38ddc0f435c395faceeb461cdbdd50b08926",
+    "codex-code-mode-host":
+      "28b9b3f32be941bc3ff55a5f47ef69347624dda59f4d8fe5614e6623830ad7f9",
+  },
+  arm64: {
+    codex: "3dbad13d4ce6a24e29fcd8281df6337a1ad4d70f4986485c39713cc33265f5ac",
+    "codex-code-mode-host":
+      "334ca593a4be06e5cf82dc4863eaf96b97e417671f99d56ede9d15b8b2fa080e",
   },
 };
 
@@ -137,27 +152,26 @@ function getCodexReleaseAssetName(
   binary: CodexBinary,
   currentArch: CodexArch,
 ): string {
-  const upstreamArch = currentArch === "x64" ? "x86_64" : "aarch64";
-  return `${binary}-${upstreamArch}-unknown-linux-musl.tar.gz`;
+  return `${binary}-v${SPEC.codex.VERSION}-linux-${currentArch}.xz`;
 }
 
 function getCodexInstallScript(version: string): string {
-  const releaseBase = `https://github.com/openai/codex/releases/download/rust-v${version}`;
+  const releaseBase = `https://github.com/sagemathinc/codex/releases/download/v${version}`;
   const currentArch = getCodexArch();
   const binaries = ["codex", "codex-code-mode-host"] as const;
   const paths = Object.fromEntries(
     binaries.map((binary) => [binary, join(binPath, binary)]),
   );
   const archives = Object.fromEntries(
-    binaries.map((binary) => [binary, `${paths[binary]}.tar.gz.tmp`]),
+    binaries.map((binary) => [binary, `${paths[binary]}.xz.tmp`]),
   );
   const downloads = binaries.flatMap((binary) => {
     const assetName = getCodexReleaseAssetName(binary, currentArch);
-    const extractedName = assetName.slice(0, -".tar.gz".length);
     return [
       `curl -fL "${releaseBase}/${assetName}" -o "${archives[binary]}"`,
       `printf '%s  %s\\n' "${CODEX_RELEASE_SHA256[currentArch][binary]}" "${archives[binary]}" | sha256sum -c -`,
-      `tar -xOzf "${archives[binary]}" "${extractedName}" > "${paths[binary]}.tmp"`,
+      `xz -dc "${archives[binary]}" > "${paths[binary]}.tmp"`,
+      `printf '%s  %s\\n' "${CODEX_BINARY_SHA256[currentArch][binary]}" "${paths[binary]}.tmp" | sha256sum -c -`,
     ];
   });
   return [
@@ -391,7 +405,7 @@ export const SPEC = {
     desc: "codex",
     path: join(binPath, "codex"),
     getVersion: "codex --version | awk '{print $2}'",
-    VERSION: "0.153.2",
+    VERSION: "0.153.4",
     platforms: ["linux"],
     script: () => getCodexInstallScript(SPEC.codex.VERSION),
     BASE: "https://github.com/openai/codex/releases",
@@ -549,11 +563,13 @@ export async function alreadyInstalled(app: App) {
   if (!(await exists(path))) {
     return false;
   }
-  if (
-    app === "codex" &&
-    !(await exists(join(binPath, "codex-code-mode-host")))
-  ) {
-    return false;
+  if (app === "codex") {
+    const hashes = CODEX_BINARY_SHA256[getCodexArch()];
+    for (const binary of ["codex", "codex-code-mode-host"] as const) {
+      if (!(await matchesBinarySha256(join(binPath, binary), hashes[binary]))) {
+        return false;
+      }
+    }
   }
   if (isCrossBuild()) {
     return true;
@@ -561,7 +577,7 @@ export async function alreadyInstalled(app: App) {
   const v = await installedVersion(app);
   if (v == null) {
     // no version info
-    return true;
+    return app !== "codex";
   }
   return v == VERSION;
 }
