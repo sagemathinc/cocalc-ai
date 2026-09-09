@@ -476,6 +476,15 @@ both merged edits, proving their persistence beyond that tab's prior runtime.
 Reloading the second tab likewise displayed the same combined document.
 The transient routing observation is not claimed fixed by the workbench.
 
+The same live partition procedure also tested overlapping insertion at offset
+zero. Before reconnect, the disconnected tab contained only its new
+`Overlap-A: ` prefix and the connected tab only its new `Overlap-B: ` prefix.
+After reconnect both rendered `Overlap-A: Overlap-B: ` followed by the complete
+previous document. This proves convergence without dropping either insertion
+at the same position; it is not a claim about arbitrary competing replacements
+or a separate conflict-resolution UI. Network emulation and instrumentation
+were restored/removed in the test's finally block.
+
 ### Live Acceptance Progress
 
 The maintainer tried the prototype and confirmed the instant-opening shared
