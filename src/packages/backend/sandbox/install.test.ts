@@ -23,7 +23,7 @@ describe("sandbox tool install scripts", () => {
   it("verifies both patched Codex binaries before replacing installed files", () => {
     const script = SPEC.codex.script();
     expect(script).toContain(
-      "https://github.com/sagemathinc/codex/releases/download/v0.153.4",
+      "https://github.com/sagemathinc/codex/releases/download/v0.153.4-cocalc-musl-1/",
     );
     expect(script).toMatch(/codex-v0\.153\.4-linux-(?:x64|arm64)\.xz/);
     expect(script).toMatch(

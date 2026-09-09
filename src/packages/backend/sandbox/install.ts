@@ -112,28 +112,28 @@ type CodexArch = "x64" | "arm64";
 
 const CODEX_RELEASE_SHA256: Record<CodexArch, Record<CodexBinary, string>> = {
   x64: {
-    codex: "9b060d4bfa7f415598ccdd4d9fce8ea42416837d786c276240559cfe29cd5139",
+    codex: "47aa244350797dc42e6ba63277d49fc7bcd5cd1df3b640519520e8c4a975dbbb",
     "codex-code-mode-host":
-      "104559f66f341bc67bd231d6e75bfbe04b5c4fec48363092e0ffde609d35969c",
+      "8d89bb4641dd1c0169382bc19a525cb42bc2b3507813d4206d43a0f44927a995",
   },
   arm64: {
-    codex: "745371dcee6e4687816f20673b9a1d1be406ef37f9430939bf9ed2d40f5038dd",
+    codex: "6c2f8826255e564395a865353aca742c30f5c672b7ed968fc59409a09826c1c2",
     "codex-code-mode-host":
-      "b6c1dba8cb83849f019ee589d129be1850c01d952d999fded629fd158b6f3e5b",
+      "c5a103f2e5c8cb698174ae557b8ea817671c32c0cb345174fcd2edd18dd92e73",
   },
 };
 
 // Stock and patched Codex report the same version; verify the matched pair.
 const CODEX_BINARY_SHA256: Record<CodexArch, Record<CodexBinary, string>> = {
   x64: {
-    codex: "b6606ff9f7ceb810ce4ee16730bd38ddc0f435c395faceeb461cdbdd50b08926",
+    codex: "c732a36fcfbed3c1d981ffb4bc9e836ab871dffe51c8716add2359733d6e109e",
     "codex-code-mode-host":
-      "28b9b3f32be941bc3ff55a5f47ef69347624dda59f4d8fe5614e6623830ad7f9",
+      "4335d114dde1732d28d00c0ee940f7a1683c4aedd1eb6512fd8c8f3a2746866f",
   },
   arm64: {
-    codex: "3dbad13d4ce6a24e29fcd8281df6337a1ad4d70f4986485c39713cc33265f5ac",
+    codex: "96449434101c323be451985e02bb645f98458e4fd9d9f1866c5f180d2c339b7e",
     "codex-code-mode-host":
-      "334ca593a4be06e5cf82dc4863eaf96b97e417671f99d56ede9d15b8b2fa080e",
+      "53151b473541cdd3574df79a0aea41b92136a1526c03df4276a1a4027d88d594",
   },
 };
 
@@ -156,7 +156,7 @@ function getCodexReleaseAssetName(
 }
 
 function getCodexInstallScript(version: string): string {
-  const releaseBase = `https://github.com/sagemathinc/codex/releases/download/v${version}`;
+  const releaseBase = `https://github.com/sagemathinc/codex/releases/download/v${version}-cocalc-musl-1`;
   const currentArch = getCodexArch();
   const binaries = ["codex", "codex-code-mode-host"] as const;
   const paths = Object.fromEntries(
