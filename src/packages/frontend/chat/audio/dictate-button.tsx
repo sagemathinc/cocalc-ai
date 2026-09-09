@@ -155,7 +155,7 @@ export function DictateButton({
           >
             {timeLabel}
           </Button>
-          <Tooltip title="Cancel dictation">
+          <Tooltip placement="bottomRight" title="Cancel dictation">
             <Button
               aria-label="Cancel dictation"
               icon={<Icon name="times" />}
@@ -181,7 +181,7 @@ export function DictateButton({
           >
             Transcribing
           </Button>
-          <Tooltip title="Cancel transcription">
+          <Tooltip placement="bottomRight" title="Cancel transcription">
             <Button
               aria-label="Cancel transcription"
               icon={<Icon name="times" />}
@@ -204,7 +204,7 @@ export function DictateButton({
     : "Dictate message";
   return (
     <>
-      <Tooltip title={title}>
+      <Tooltip placement="bottomRight" title={title}>
         <Button
           aria-label="Dictate message"
           aria-busy={

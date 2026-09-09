@@ -51,7 +51,7 @@ describe("CodexFinalResponseCopy", () => {
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Read final response aloud" }),
+      screen.getByRole("button", { name: "Read this response aloud" }),
     );
 
     expect(startChatSpeech).toHaveBeenCalledWith({

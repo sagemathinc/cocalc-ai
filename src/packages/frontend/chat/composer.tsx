@@ -560,6 +560,17 @@ export function ChatRoomComposer({
               </span>
             </button>
           )}
+          <div
+            style={{ flex: "0 0 auto", marginLeft: threadLabel ? 0 : "auto" }}
+          >
+            <DictateButton
+              inputControlRef={chatInputControlRef}
+              path={path}
+              projectId={project_id}
+              session={composerSession}
+              threadId={selectedThread?.key}
+            />
+          </div>
         </div>
         {showCodexPaymentSourceBanner && (
           <Alert
@@ -651,13 +662,6 @@ export function ChatRoomComposer({
         }}
       >
         {!mobile && <div style={{ flex: 1 }} />}
-        <DictateButton
-          inputControlRef={chatInputControlRef}
-          path={path}
-          projectId={project_id}
-          session={composerSession}
-          threadId={selectedThread?.key}
-        />
         {hasInput && (
           <>
             {hasAcpPrompt ? (

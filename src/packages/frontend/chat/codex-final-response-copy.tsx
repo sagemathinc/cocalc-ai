@@ -12,18 +12,20 @@ import { startChatSpeech } from "./audio/chat-speech-player";
 
 const READ_ALOUD_DISCLOSURE_KEY = "cocalc-chat-speech-output-disclosed";
 
-export function CodexFinalResponseCopy({
+export function ChatReadAloudButton({
   value,
   projectId,
   path,
   threadId,
   messageId = "codex-final-response",
+  showLabel = false,
 }: {
   value: string;
   projectId?: string;
   path?: string;
   threadId?: string;
   messageId?: string;
+  showLabel?: boolean;
 }) {
   const start = () =>
     startChatSpeech({
@@ -64,16 +66,43 @@ export function CodexFinalResponseCopy({
   };
 
   return (
+    <Tooltip placement="bottom" title="Read this response aloud">
+      <Button
+        aria-label="Read this response aloud"
+        icon={<Icon name="sound-outlined" />}
+        onClick={requestReadAloud}
+        size="small"
+        type="text"
+      >
+        {showLabel ? "Read aloud" : null}
+      </Button>
+    </Tooltip>
+  );
+}
+
+export function CodexFinalResponseCopy({
+  value,
+  projectId,
+  path,
+  threadId,
+  messageId = "codex-final-response",
+}: {
+  value: string;
+  projectId?: string;
+  path?: string;
+  threadId?: string;
+  messageId?: string;
+}) {
+  return (
     <Space size={2}>
-      <Tooltip title="Read final response aloud">
-        <Button
-          aria-label="Read final response aloud"
-          icon={<Icon name="sound-outlined" />}
-          onClick={requestReadAloud}
-          size="small"
-          type="text"
-        />
-      </Tooltip>
+      <ChatReadAloudButton
+        messageId={messageId}
+        path={path}
+        projectId={projectId}
+        showLabel
+        threadId={threadId}
+        value={value}
+      />
       <Tooltip title="Copy final response">
         <CopyButton
           markdown

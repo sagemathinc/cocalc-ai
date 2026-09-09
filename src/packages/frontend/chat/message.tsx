@@ -136,7 +136,10 @@ import {
   trimCompletedCachedCodexActivityBlocks,
   type InlineCodexActivityBlock,
 } from "./message-state";
-import { CodexFinalResponseCopy } from "./codex-final-response-copy";
+import {
+  ChatReadAloudButton,
+  CodexFinalResponseCopy,
+} from "./codex-final-response-copy";
 
 const EDIT_MARKDOWN_MIN_HEIGHT = 120;
 
@@ -1511,6 +1514,26 @@ export default function Message({
     );
   }
 
+  function renderReadAloudButton() {
+    if (
+      !msgWrittenByLLM ||
+      effectiveGenerating ||
+      !renderedMessageMarkdown.trim()
+    ) {
+      return null;
+    }
+    return (
+      <ChatReadAloudButton
+        key="read-aloud"
+        value={renderedMessageMarkdown}
+        projectId={project_id}
+        path={path}
+        threadId={messageThreadId}
+        messageId={field<string>(message, "message_id") ?? `${date}`}
+      />
+    );
+  }
+
   async function openGitBrowserFromMessage(commitHash?: string) {
     const requestId = ++gitOpenRequest.current;
     try {
@@ -1552,12 +1575,18 @@ export default function Message({
   function renderHeaderActions() {
     const showActions = isActive;
     if (!showActions && !IS_TOUCH) {
-      return null;
+      const readAloud = renderReadAloudButton();
+      return readAloud ? (
+        <div style={{ position: "absolute", right: 0 }}>{readAloud}</div>
+      ) : null;
     }
     if (useCodexSelectToolbar) {
       return renderCodexHeaderActions();
     }
     const buttons: ReactNode[] = [];
+
+    const readAloud = renderReadAloudButton();
+    if (readAloud) buttons.push(readAloud);
 
     const llmFeedbackButton = renderLLMFeedbackButtons();
     if (llmFeedbackButton) {
@@ -1790,6 +1819,8 @@ export default function Message({
         </Button>
       </Tooltip>,
     ];
+    const readAloud = renderReadAloudButton();
+    if (readAloud) buttons.unshift(readAloud);
     if (!read_only) {
       buttons.unshift(
         <Tooltip key="git-browser" placement="bottom" title="Open git browser">
