@@ -307,6 +307,58 @@ test("historical views stay pinned and See changes uses the preceding publicatio
   );
 });
 
+test("missing published snapshots never fall back to current text and recover on sync", () => {
+  const target = { thread_id: "thread", artifact_id: "artifact" };
+  const current = {
+    ...artifactKey(target),
+    ...target,
+    schema_version: 1,
+    kind: "markdown",
+    title: "Current title",
+    input: "Current text must not substitute for history",
+  };
+  let publication: any;
+  const syncdb = Object.assign(new EventEmitter(), {
+    get: () => (publication ? [publication] : []),
+    get_one: (key) => (key.event === "chat-artifact" ? current : publication),
+  });
+  render(
+    <Workbench
+      {...({
+        actions: {
+          getArtifactSyncdb: () => syncdb,
+          getChatActions: () => ({ syncdb }),
+        },
+        desc: fromJS({
+          "data-thread": "thread",
+          "data-artifact": "artifact",
+          "data-version": "missing",
+        }),
+        read_only: false,
+        font_size: 14,
+      } as any)}
+    />,
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent("Artifact unavailable");
+  expect(screen.queryByText(current.input)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+  act(() => {
+    publication = {
+      ...artifactPublicationKey(target, "missing"),
+      ...target,
+      schema_version: 1,
+      operation_id: "missing",
+      message_id: "message",
+      snapshot: { title: "Published title", markdown: "Exact historical text" },
+    };
+    syncdb.emit("change");
+  });
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByText("Exact historical text")).toBeTruthy();
+  expect(screen.queryByText(current.input)).toBeNull();
+  expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
+});
+
 test("read-only workbenches expose the document but cannot edit or stage feedback", () => {
   const target = { thread_id: "thread", artifact_id: "artifact" };
   const record = {

@@ -130,7 +130,7 @@ export function Workbench({
       };
     }
   } catch {
-    return <Alert type="warning" message="Artifact unavailable" />;
+    return <Alert type="warning" title="Artifact unavailable" />;
   }
   const value = pinned ?? artifact;
   const selectedIndex = publications.findIndex(
@@ -324,7 +324,7 @@ export function Workbench({
         {error && (
           <Alert
             type="error"
-            message={error}
+            title={error}
             closable
             onClose={() => setError("")}
           />
