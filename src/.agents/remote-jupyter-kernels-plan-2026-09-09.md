@@ -40,7 +40,9 @@ production robustness. Scope acceptance by demonstrated behavior, not date alone
    server or frontend.
 3. Make remote preparation explicit, repeatable, diagnosable, and user-owned.
 4. Support correct interrupt, restart, shutdown, and bounded orphan cleanup.
-5. Expose a useful standalone Reflect facility as well as a CoCalc integration.
+5. Register an ordinary local kernelspec whose Reflect launcher proxies a remote
+   kernel. Standard kernelspec-based clients must work without a CoCalc-specific
+   adapter or Python provisioner plugin.
 6. Keep local kernels unchanged and covered by regression tests.
 
 ## Non-Goals
@@ -97,16 +99,27 @@ bootstrap and standalone compatibility on the minimal VM need explicit validatio
 Browser
   | existing CoCalc notebook communication
 CoCalc project runtime
-  | existing Jupyter ZeroMQ client
-  | Reflect-managed loopback TCP forwards through SSH
+  | existing Jupyter ZeroMQ client (or another standard local Jupyter client)
+Local ports from the client-supplied connection file
+  | Reflect-managed TCP forwards through SSH
 Remote language kernel + small Reflect lifecycle supervisor
 ```
+
+An ordinary local kernelspec launches a long-lived Reflect process that manages
+these forwards and bridges local process lifecycle to the remote supervisor.
+This is a local proxy kernel from the client's perspective, not a second language
+interpreter. The same launcher must work outside CoCalc.
 
 CoCalc owns notebook state, collaboration, frontend behavior, project
 authorization, kernel selection, and Jupyter protocol handling. Reflect owns SSH,
 remote helper preparation, kernel environment discovery/preparation, process
-lifecycle, grouped forwards, and session diagnostics. The kernel owns language
-execution. Reflect must not acquire a dependency on CoCalc.
+lifecycle, grouped forwards, and session diagnostics. The language kernel executes
+notebook code remotely. Reflect must not acquire a dependency on CoCalc.
+
+Forward the Jupyter wire protocol over TCP without decoding and re-encoding every
+message in a new local protocol proxy. This preserves the existing message
+signatures, routing, and binary payloads. Reflect's lifecycle management is
+separate from the notebook execution protocol.
 
 Steady-state traffic goes from the project runtime to the VM, not through the hub.
 Any dedicated-VM discovery or ownership checks use the existing authoritative
@@ -126,11 +139,67 @@ Two notebooks selecting the same environment normally launch separate kernels.
 Collaborators viewing the same notebook should share its existing project-owned
 session, not create a kernel per browser tab.
 
-### CoCalc Lifecycle Adapter
+### Standard Kernelspec Contract
 
-Introduce a small launch/lifecycle contract with local and Reflect-backed
-implementations: launch, connection information, interrupt, terminate, exit
-notification, and bounded diagnostics. Keep the local implementation the default.
+The foundational interface is a conventional kernelspec, for example:
+
+```json
+{
+  "argv": [
+    "reflect",
+    "jupyter",
+    "launch",
+    "--target",
+    "my-gpu",
+    "--environment",
+    "teaching",
+    "--connection-file",
+    "{connection_file}"
+  ],
+  "display_name": "Python - My GPU VM",
+  "language": "python",
+  "interrupt_mode": "signal"
+}
+```
+
+Registration should resolve the local Reflect executable to an absolute path.
+The launcher consumes the connection file supplied by the Jupyter client/manager:
+it must use that file's local ports, IP, key, and signature scheme, not replace
+them with a different descriptor that only a custom CoCalc adapter understands.
+Initial support is loopback TCP; reject unsupported transports or unsafe bind
+addresses with clear errors rather than silently changing them.
+
+Remote ports may differ from local ports. Create a separate private remote
+connection file and map the client's local endpoints to the actual remote
+endpoints. Preserve the signing configuration end to end. The caller owns its
+connection file; Reflect cleans up its own remote files and session artifacts.
+
+The local launcher remains alive for the managed session, reports bounded/redacted
+diagnostics on stderr, and exits when the session terminates or is irrecoverably
+lost. The ordinary client must observe remote failure through process exit, not
+be left with an apparently healthy launcher. Its exit must not cause a Reflect
+daemon to resurrect a terminated kernel behind the client's back.
+
+Signal handling must match the declared interrupt mode. For the initial
+signal-based contract, translate local SIGINT to a remote interrupt and local
+SIGTERM to remote termination. CoCalc signals process groups: isolate SSH children
+from the group receiving client interrupts so SIGINT does not kill the tunnel
+before the launcher can forward it. Local SIGKILL cannot be handled; remote lease
+expiry is the cleanup backstop even if other local Reflect processes survive.
+
+Standard Jupyter shutdown requests travel through the tunnel to the remote
+kernel. Observe its exit and close the launcher. Test protocol-driven shutdown
+and client-manager restart behavior as well as OS signals. Remote kernels using
+message-based interruption need an explicit supported translation, not an
+unverified change to the local kernelspec's interrupt mode.
+
+### CoCalc Integration
+
+First use CoCalc's existing kernelspec discovery, local process launcher, and
+ZeroMQ transport unchanged. CoCalc-specific work should primarily supply target
+setup, environment preparation, registration, and richer diagnostics. Introduce
+only the small lifecycle adjustments demonstrated necessary by compatibility
+tests; a parallel remote-kernel backend is not the starting architecture.
 
 Do not model the remote kernel PID as the PID of the local SSH process. Remote
 metrics must be labeled as such, or explicitly unavailable, rather than reporting
@@ -142,10 +211,11 @@ SSH secrets or transient ports, in notebook-facing configuration. A notebook
 opened in a project without that target should offer an explicit replacement,
 not silently execute on a different machine.
 
-Audit external kernelspec consumers such as `jupyter console`, nbconvert, and
-nbgrader execution. If they require a conventional `argv`, supply a Reflect
-launcher wrapper over the same session API; do not build a second lifecycle
-implementation. UI/transport reuse alone is not proof that these paths work.
+Compatibility with JupyterLab, `jupyter console`, and relevant nbconvert/nbgrader
+execution paths is an acceptance requirement, not an optional wrapper added
+later. All clients use the same kernelspec launcher and session implementation.
+Do not claim compatibility with every client until its required behavior is
+tested; UI/transport reuse alone is not proof that these paths work.
 
 ## Proposed Reflect Surface
 
@@ -154,15 +224,22 @@ Illustrative commands:
 ```text
 reflect jupyter prepare --host jupyter --environment teaching
 reflect jupyter kernels --host jupyter
-reflect jupyter start --host jupyter --kernel teaching
+reflect jupyter register --target my-gpu --environment teaching
+reflect jupyter launch --target my-gpu --environment teaching --connection-file <path>
 reflect jupyter status <session-id>
 reflect jupyter interrupt <session-id>
 reflect jupyter stop <session-id>
 ```
 
-Provide corresponding structured operations usable by CoCalc. Decide between a
-dedicated library export and a versioned JSON subprocess protocol during the
-first integration spike. Do not require CoCalc to scrape human-readable output.
+`register` installs a local kernelspec; `launch` is the foreground process invoked
+by that spec. A future standalone `start` convenience command may create a local
+connection file for clients attaching to an existing session, but must reuse the
+same lifecycle implementation rather than replace the client-supplied-file path.
+
+Provide structured setup/status operations usable by CoCalc. Decide between a
+dedicated library export and a versioned JSON subprocess protocol for these
+management operations during the first integration spike. Kernel launching itself
+uses the standard kernelspec contract. Do not scrape human-readable output.
 A narrow export should avoid initializing file-sync machinery just to manage a
 kernel. Check Node/ESM/runtime compatibility before selecting the embedding mode.
 
@@ -197,14 +274,21 @@ operation from the kernel. A visible GPU device alone is not sufficient evidence
 
 ## Launch And Readiness
 
-1. Allocate a session ID and launch attempt/incarnation; make retries idempotent.
+1. Read and validate the client-supplied connection file. Allocate a session ID
+   and launch attempt/incarnation; make retries within that launch idempotent.
 2. Start the remote supervisor and kernel in a private runtime directory.
 3. Obtain the kernel's actual bound connection information. Handle port allocation
    races with bounded retries, not a permanent assumption that probed ports stay free.
-4. Create a forward group for the standard Jupyter ports, preferably over one SSH
-   connection. Bind kernel and local forward endpoints to loopback explicitly.
-5. Give CoCalc a local connection descriptor using local ports and the matching key.
-6. Require SSH forwarding success and a bounded Jupyter readiness handshake.
+4. Create a forward group for all five standard Jupyter ports, including heartbeat,
+   preferably over one SSH connection. Bind the exact client-supplied local ports
+   to loopback and forward to the actual remote kernel ports. A local bind failure
+   is a startup failure, not permission to choose new client ports silently.
+5. Keep the remote kernel on loopback and use the client's signing configuration.
+   No replacement client descriptor or CoCalc-specific connection negotiation is
+   required. Leave the client-owned connection file unchanged.
+6. Require SSH forwarding success and a bounded Jupyter readiness handshake from
+   the ordinary client. Reflect may expose transport readiness separately; it must
+   not mistake a live SSH process for a responsive kernel or consume client replies.
 7. Publish ready state only after the entire operation succeeds; otherwise unwind
    partial processes, forwards, and private connection files.
 
@@ -221,7 +305,8 @@ Suggested observable states: preparing, connecting, starting, ready, disconnecte
 stopping, stopped, lost, and failed. Keep Jupyter busy/idle state separate from
 transport/process state. Report which stage failed.
 
-- **Interrupt:** signal the remote kernel process group through the supervisor;
+- **Interrupt:** the local launcher translates client signals to the remote kernel
+  process group through the supervisor;
   respect message-based interrupt modes where applicable. Do not signal SSH as a
   substitute. Escalate separately if interrupt cannot stop a busy kernel.
 - **Restart:** stop and confirm termination of the old incarnation, then create a
@@ -236,7 +321,8 @@ transport/process state. Report which stage failed.
   timeout, and use remote lease expiry as the cleanup backstop.
 - **Remove target:** stop owned sessions explicitly before removing configuration.
 
-A local owner renews the remote supervisor's bounded lease. The supervisor must
+A local owner renews the remote supervisor's bounded lease only while the owning
+launcher/session is alive; daemon liveness alone must not renew it. The supervisor must
 survive transient SSH loss, but terminate the owned process group after lease
 expiry. Choose and document the grace period; it trades off temporary disconnect
 tolerance against abandoned GPU cost. Distinguish remote process cleanup from VM
@@ -268,8 +354,10 @@ All phases below are pending approval and implementation.
 ### 1. CPU Transport And Lifecycle Spike
 
 Use `ssh jupyter` to probe the minimal VM, prepare one Python environment, launch a
-kernel, and connect with CoCalc's existing ZeroMQ implementation. Exercise the
-supervisor, grouped forwards, interrupt, and cleanup before investing in a wizard.
+kernel through a registered local kernelspec, and connect using both a conventional
+Jupyter client and CoCalc's existing launcher/ZeroMQ implementation. Exercise the
+client-supplied connection file, supervisor, grouped forwards, signal translation,
+and cleanup before investing in a wizard or a custom CoCalc lifecycle adapter.
 
 Deliverable: a repeatable standalone demonstration and an agreed lifecycle/API
 contract. Use synthetic workloads and no production student data.
@@ -277,7 +365,8 @@ contract. Use synthetic workloads and no production student data.
 ### 2. Reflect Session Implementation
 
 Implement the session records, helper bootstrap, environment operations, lifecycle
-commands, leases, and reconnect behavior. Add focused tests and disposable-SSH
+commands, standard kernelspec registration/launch, leases, and reconnect behavior.
+Add focused tests and disposable-SSH
 integration tests, including partial startup failures and duplicate launch retries.
 
 Deliverable: independently usable Reflect commands with structured output and
@@ -285,10 +374,11 @@ documented failure semantics. File sync is not required to run these tests.
 
 ### 3. CoCalc Integration
 
-Add the local/remote lifecycle adapter, target/environment registration, existing
-kernel-selector integration, and diagnostic states. Validate startup and cleanup
-through the real project runtime. Follow the frontend accessibility/theme guidance
-for any new controls.
+Add target/environment setup and registration controls, existing kernel-selector
+integration, and diagnostic states around the standard launcher. Make minimal
+lifecycle adjustments only where the spike demonstrates they are necessary.
+Validate startup and cleanup through the real project runtime. Follow the frontend
+accessibility/theme guidance for any new controls.
 
 Deliverable: a student account can create a notebook, select the remote environment,
 and use the full supported notebook workflow from a project on `lite2b`.
@@ -311,6 +401,13 @@ Do not mark phases complete merely because a single cell executed remotely.
 - Clean minimal Ubuntu bootstrap; repeated preparation; interrupted installation;
   existing compatible environment; unsupported/missing prerequisites.
 - Actual student/project SSH access, not just development-machine connectivity.
+- The same registered kernelspec launches through CoCalc, JupyterLab, and
+  `jupyter console` without a custom client plugin or CoCalc service dependency.
+- Client-supplied local ports/signing key are honored; remote ports may differ;
+  heartbeat works; the client connection file is neither replaced nor deleted.
+- Local process and process-group interrupt/termination, protocol shutdown,
+  manager-driven restart, launcher SIGKILL, and remote crash all have correct
+  remote cleanup and local process-exit behavior.
 - Execute, stream output, display errors and rich output, completion, inspection,
   stdin, widget communication, and binary Jupyter payloads.
 - Two simultaneous notebooks with independent variables, output, ports, and keys.
@@ -331,8 +428,9 @@ student-account evidence. No single category substitutes for the others.
 
 1. Confirm Reflect as the reusable lifecycle/bootstrap implementation and CoCalc as
    the notebook/protocol owner.
-2. Choose the CoCalc embedding mode after checking runtime compatibility: narrow
-   library export versus structured local subprocess.
+2. Treat ordinary kernelspec registration/launch as the required client contract.
+   Choose library export versus structured subprocess only for additional
+   management operations after checking runtime compatibility.
 3. Choose the Ubuntu Python bootstrap and first supported GPU framework recipe.
 4. Choose lease grace period and initial reconnect policy. Explicit loss/restart
    is preferable to unverified transparent recovery.
@@ -350,5 +448,7 @@ student-account evidence. No single category substitutes for the others.
 - Gateway server or full CoCalc runtime on the VM: unnecessary extra machinery
   for this scope and contrary to the desired lightweight design.
 
-The recommendation is Reflect-managed remote kernel sessions, a thin CoCalc
-lifecycle adapter, and an initial CPU proof of concept followed by GPU validation.
+The recommendation is a standard local kernelspec backed by a Reflect remote
+kernel launcher, with CoCalc setup/diagnostics integration and only necessary
+lifecycle adjustments. Prove the same launcher in CoCalc and a conventional
+Jupyter client on the CPU VM, then validate GPU environments.
