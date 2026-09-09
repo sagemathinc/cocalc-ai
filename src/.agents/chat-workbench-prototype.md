@@ -430,8 +430,8 @@ failed live: bubbling button clicks reactivated the pane being left, and focus
 was requested before the destination rendered. Commits `92e0efc98f` and
 `cf430d4902` fix these separately. The 600px live round trip now opens a visible
 artifact and returns focus to the `Ask Codex...` textbox. Closing the originating
-chat frame still remains unverified live; `5ce0c46d78` removes the dependency on
-that frame's actions for document access, with a closed-origin save regression.
+chat frame was subsequently verified live below; `5ce0c46d78` removes the
+dependency on that frame's actions for document access.
 
 Focused commands (run from `src/packages/frontend`):
 
@@ -531,7 +531,14 @@ Workbench document access now uses the chat editor's shared syncdb independently
 of originating frame actions. A component regression verifies that a closed
 origin still permits reading/editing/saving, while Comment and Back to chat stay
 disabled with an explanation rather than silently targeting a different thread.
-Live origin-frame closure acceptance remains to be checked.
+Live origin-frame closure acceptance passed with the explicit static build from
+`e3e21ba387` on 2026-09-09. In QA tab `8AA6AD4B4FBBE3A6E0077C68E78B7F98`,
+closing chat frame `5d908fc1` left artifact frame `d9deb578` readable. Comment and
+Back to chat were disabled with the closed-origin explanation, while Edit
+remained enabled. Typing `OriginClosedSaved ` in Slate and clicking Read saved
+it; the second QA tab received the text. Reloading the first tab restored its
+artifact-only layout and the saved text without recreating the origin. Only the
+disposable QA chat was changed; the maintainer's demo tab was not touched.
 
 Use one feature branch with coherent commits and a draft PR when implementation
 is requested. Keep behind an experimental feature gate. Production deployment
