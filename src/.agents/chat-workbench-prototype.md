@@ -428,8 +428,23 @@ P3's complete selection -> agent update -> human edit -> further agent update
 loop has been exercised in the QA chat, including preservation of the human
 note. P4 remains open for the extended matrix, notably simultaneous conflicting
 browser edits/reconnect, keyboard range selection/Tab traversal, and live
-multiple-thread/read-only collaborator cases. Do not infer these from the
+read-only collaborator cases. Do not infer these from the
 sequential browser edit test or the deterministic two-Slate regression.
+
+Live cross-thread routing passed on the `afcd8b32de` development build:
+in the disposable QA chat, select `Feedback routing QA` (thread
+`43c8d71d-e759-4d07-8f37-fbaf04df9280`) and type an unsent draft. Click Comment
+on `Clean collaboration check`, whose origin is `Artifact agent QA`. The chat
+returns to Artifact agent QA, shows the correct whole-document feedback chip,
+and focuses its empty composer. Remove the chip and switch back: the other
+thread's draft is unchanged. The test draft was then removed without sending.
+This verifies live routing and draft separation, not collaborator permissions.
+
+A subsequent read-view keyboard probe focused the document, placed a collapsed
+DOM selection at the first paragraph, and dispatched six native Shift+Right
+events. Chromium left the selection empty. Keyboard-only text selection is
+not established by this probe; native browser caret-navigation behavior and
+the complete keyboard path still need validation. No artifact text was changed.
 
 ### Live Acceptance Progress
 
