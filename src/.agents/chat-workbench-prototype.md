@@ -481,6 +481,18 @@ browser during a maintenance rotation; that distinction remains open.
 
 ### Open Live Collaboration Finding
 
+Published-card navigation was verified live on the static build from
+`6d65140049`: the first QA message's Published version action opened Published 1
+with the original "Please refresh the project" reply and Edit disabled. The
+existing Current document frame retained the later "Which course" reply and
+human QA markers. Repeating the action reused the same snapshot frame (three
+frames total: current document, chat, and snapshot). The restored QA chat frame
+is `d76fd0ce`; snapshot frame `ecc9f011`. The prior artifact-only layout was
+restored on reload in both tabs through shared local frame preferences, so the
+chat pane was recreated using Split and Change Type, without replacing the
+current artifact. This verifies direct immutable-snapshot navigation and reuse,
+not pending-draft preservation under concurrent typing.
+
 Two QA browser tabs were opened in Slate on Current document. A single-tab
 append (`Client B verification.`) was visible before Read, survived Read, and
 arrived intact in the other still-open Slate editor after six seconds.
