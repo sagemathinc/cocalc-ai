@@ -321,6 +321,11 @@ projectIdentifier })` over the same operations. Installed runtime validation
   Import remaps thread/message identities and preserves exact snapshots; a
   filesystem fixture round-trip passes. Rotation's non-chat row retention was
   inspected, but a live rotation/artifact reload test is still outstanding.
+  The SQLite offload regression now also applies its live-callback delete/upsert
+  operations to a real Patchflow document, with an artifact edit arriving after
+  snapshot collection. The edit and publication survive while the producing
+  message is archived; the callback leaves the source file untouched. All nine
+  offload tests pass. This does not substitute for the outstanding browser test.
 - Real Patchflow document-level tests now cover independent concurrent
   human/agent text patches and publication retention. Legacy SyncDB serialization
   preserves artifact records. These do not replace the pending two-connected-

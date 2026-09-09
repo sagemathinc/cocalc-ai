@@ -1,7 +1,14 @@
 import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { publishArtifact, readArtifact, artifactKey } from "@cocalc/chat";
+import {
+  publishArtifact,
+  readArtifact,
+  artifactKey,
+  CHAT_PRIMARY_KEYS,
+  CHAT_STRING_COLS,
+} from "@cocalc/chat";
+import { from_str } from "@cocalc/sync/editor/immer-db/doc";
 import {
   deleteChatStoreData,
   getChatStoreStats,
@@ -62,89 +69,116 @@ function makeChatRow({
 }
 
 describe("chat offload sqlite store", () => {
-  it("retains live artifacts and publications when their producing message is archived", async () => {
-    const tmp = await mkTempDir("chat-artifact-offload-");
-    const chatPath = path.join(tmp, "test.chat");
-    const dbPath = path.join(tmp, "offload.sqlite3");
-    const records: any[] = [];
-    const store = {
-      get_one: (key) =>
-        records.find((row) =>
-          Object.entries(key).every(([k, v]) => row[k] === v),
-        ),
-      set: (row) => records.push(...(Array.isArray(row) ? row : [row])),
-    };
-    const target = { thread_id: "thread-1", artifact_id: "reply" };
-    const publication = publishArtifact(store, {
-      ...target,
-      operation_id: "initial",
-      message_id: "old-message",
-      title: "Reply",
-      markdown: "Original reply",
-    }).publication;
-    store.get_one(artifactKey(target)).input = "Human-edited reply";
-    await fs.writeFile(
-      chatPath,
-      [
-        makeChatRow({
-          date: "2026-02-19T23:59:00.000Z",
-          message_id: "root-message",
-          content: "Draft a reply",
-        }),
-        makeChatRow({
-          date: "2026-02-20T00:00:00.000Z",
-          message_id: "old-message",
-          content: "Published the reply",
-        }),
-        makeChatRow({
-          date: "2026-02-20T00:01:00.000Z",
-          message_id: "new-message",
-          content: "Please keep my edit",
-        }),
-        ...records,
-      ]
-        .map((row) => JSON.stringify(row))
-        .join("\n") + "\n",
-    );
-    const result = await rotateChatStore({
-      chat_path: chatPath,
-      db_path: dbPath,
-      keep_recent_messages: 1,
-      force: true,
-      require_idle: false,
-    });
-    expect(result.rotated).toBe(true);
-    expect(
-      readChatStoreArchived({
+  it.each([false, true])(
+    "retains artifacts when their producing message is archived (live callback=%s)",
+    async (live) => {
+      const tmp = await mkTempDir("chat-artifact-offload-");
+      const chatPath = path.join(tmp, "test.chat");
+      const dbPath = path.join(tmp, "offload.sqlite3");
+      const records: any[] = [];
+      const store = {
+        get_one: (key) =>
+          records.find((row) =>
+            Object.entries(key).every(([k, v]) => row[k] === v),
+          ),
+        set: (row) => records.push(...(Array.isArray(row) ? row : [row])),
+      };
+      const target = { thread_id: "thread-1", artifact_id: "reply" };
+      const publication = publishArtifact(store, {
+        ...target,
+        operation_id: "initial",
+        message_id: "old-message",
+        title: "Reply",
+        markdown: "Original reply",
+      }).publication;
+      store.get_one(artifactKey(target)).input = "Human-edited reply";
+      await fs.writeFile(
+        chatPath,
+        [
+          makeChatRow({
+            date: "2026-02-19T23:59:00.000Z",
+            message_id: "root-message",
+            content: "Draft a reply",
+          }),
+          makeChatRow({
+            date: "2026-02-20T00:00:00.000Z",
+            message_id: "old-message",
+            content: "Published the reply",
+          }),
+          makeChatRow({
+            date: "2026-02-20T00:01:00.000Z",
+            message_id: "new-message",
+            content: "Please keep my edit",
+          }),
+          ...records,
+        ]
+          .map((row) => JSON.stringify(row))
+          .join("\n") + "\n",
+      );
+      const originalFile = await fs.readFile(chatPath, "utf8");
+      let document = from_str(
+        originalFile,
+        [...CHAT_PRIMARY_KEYS],
+        [...CHAT_STRING_COLS],
+      );
+      const apply = jest.fn(async (context) => {
+        // Simulate a local edit made after the rotation snapshot was collected.
+        document = document.set({
+          ...artifactKey(target),
+          input: "Edit during rotation",
+        });
+        for (const change of context.delete_changes)
+          document = document.delete(change.where);
+        document = document.set(context.upsert_rows);
+        return { applied: true, status: "done" as const };
+      });
+      const result = await rotateChatStore({
         chat_path: chatPath,
         db_path: dbPath,
-        limit: 10,
-      }).rows.some((row) => row.message_id === "old-message"),
-    ).toBe(true);
-    const reloaded = (await fs.readFile(chatPath, "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(
-      reloaded.some(
-        (row) => row.event === "chat" && row.message_id === "old-message",
-      ),
-    ).toBe(false);
-    expect(
-      reloaded.filter((row) => row.event === "chat-artifact-publication"),
-    ).toEqual([publication]);
-    expect(
-      readArtifact(
-        {
-          get_one: (key) =>
-            reloaded.find((row) =>
-              Object.entries(key).every(([k, v]) => row[k] === v),
-            ),
-        },
-        target,
-      ).artifact.input,
-    ).toBe("Human-edited reply");
-  });
+        keep_recent_messages: 1,
+        force: true,
+        require_idle: false,
+        apply_head_changes: live ? apply : undefined,
+      });
+      expect(result.rotated).toBe(true);
+      expect(
+        readChatStoreArchived({
+          chat_path: chatPath,
+          db_path: dbPath,
+          limit: 10,
+        }).rows.some((row) => row.message_id === "old-message"),
+      ).toBe(true);
+      if (live) {
+        expect(apply).toHaveBeenCalledTimes(1);
+        expect(await fs.readFile(chatPath, "utf8")).toBe(originalFile);
+      }
+      const reloaded = (
+        live ? document.to_str() : await fs.readFile(chatPath, "utf8")
+      )
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(
+        reloaded.some(
+          (row) => row.event === "chat" && row.message_id === "old-message",
+        ),
+      ).toBe(false);
+      expect(
+        reloaded.filter((row) => row.event === "chat-artifact-publication"),
+      ).toEqual([publication]);
+      expect(
+        readArtifact(
+          {
+            get_one: (key) =>
+              reloaded.find((row) =>
+                Object.entries(key).every(([k, v]) => row[k] === v),
+              ),
+          },
+          target,
+        ).artifact.input,
+      ).toBe(live ? "Edit during rotation" : "Human-edited reply");
+    },
+  );
 
   it("rotates old rows, supports read/search/delete/vacuum", async () => {
     const tmp = await mkTempDir("chat-offload-");
