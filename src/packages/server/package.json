@@ -55,7 +55,7 @@
     "test:psql": "NODE_NO_WARNINGS=1 TZ=UTC jest --maxWorkers=1",
     "test:pglite": "NODE_NO_WARNINGS=1 COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS='--experimental-vm-modules' TZ=UTC jest",
     "test:both": "pnpm test:psql && pnpm test:pglite",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\"",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=music-metadata",
     "prepublishOnly": "test"
   },
   "author": "SageMath, Inc.",
