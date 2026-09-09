@@ -64,9 +64,30 @@ test("full plans retain every test-bearing workspace", () => {
     ].sort(),
     plan.selectedPackages,
   );
+  const scheduled = plan.lanes.flatMap(({ packages }) => packages.split(","));
+  for (const name of plan.selectedPackages) {
+    assert.equal(
+      scheduled.filter((packageName) => packageName === name).length,
+      name === "server" ? 2 : 1,
+      name,
+    );
+  }
 });
 
 test("does not schedule server shards for unrelated affected packages", () => {
   const plan = createPlan({ workspaces, affectedPackages: ["frontend"] });
   assert.deepEqual(plan.lanes, [{ lane: "frontend", packages: "frontend" }]);
+});
+
+test("balances database and backend without expanding affected selection", () => {
+  for (const heavy of [["backend"], ["database"], ["backend", "database"]]) {
+    const plan = createPlan({
+      workspaces,
+      affectedPackages: [...heavy, "cli"],
+    });
+    assert.deepEqual(plan.lanes, [
+      { lane: "backend-database", packages: heavy.join(",") },
+      { lane: "rest", packages: "cli" },
+    ]);
+  }
 });

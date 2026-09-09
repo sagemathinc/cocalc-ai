@@ -117,6 +117,17 @@ export function createPlan({
   if (selectedSet.delete("frontend")) {
     lanes.push({ lane: "frontend", packages: "frontend" });
   }
+  // These packages accounted for 183s of the 399s remaining-package lane in
+  // the September 9 measurement. Run their complete suites on another runner.
+  const backendDatabase = ["backend", "database"].filter((name) =>
+    selectedSet.delete(name),
+  );
+  if (backendDatabase.length) {
+    lanes.push({
+      lane: "backend-database",
+      packages: backendDatabase.join(","),
+    });
+  }
   const rest = [...selectedSet].sort();
   if (rest.length) {
     lanes.push({ lane: "rest", packages: rest.join(",") });

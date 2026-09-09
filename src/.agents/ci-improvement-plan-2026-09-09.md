@@ -99,6 +99,32 @@ together (10 tests), randomized without transform cache and with open-handle
 detection; the server TypeScript build passes. That test-only follow-up is held
 for the next push so run 34405735389 can finish.
 
+That follow-up run's clean Build step succeeded in 4m32s, compared with 5m57s in
+the first run. In particular, the later server and database hooks now reuse
+reference-built outputs (about 0.5s each), instead of compiling again (about 22s
+and 4s previously). All package build hooks still execute. The full test lanes
+are still running; checks passed.
+
+The other first-run timeout, `inter-bay/accounts-ban.test.ts`, performed a real
+legacy-table existence query before reaching its mocked signup-domain rejection.
+Its fixture now explicitly models an absent legacy table and rejects unexpected
+SQL. Unused account lifecycle/authentication services are guarded mocks; real
+ban routing and all nine assertions remain. Local suite time drops from 22.107s
+to 2.807s. Both formerly retrying suites pass together with randomized order,
+no cache, and open-handle detection (11 tests); server typecheck and lint pass.
+
+The measured remaining-package split is implemented locally: a
+`backend-database` lane contains whichever of those two packages were selected,
+and `rest` contains the other selected packages. Jupyter setup and Essential
+bundle checks remain on `rest`; every runner still installs the required system
+packages, including Python. Ten planner/cache tests check selection, unique lane
+names, and exact package multiplicity. The actual backend/database workspace
+command passed with retries disabled and CPU affinity restricted to four local
+CPUs: 219 suites passed, one existing suite skipped, 2,166 tests passed, three
+existing tests skipped. Total package-runner time was 155.406s. Backend reported
+a worker-teardown warning; database retains its pre-existing `--forceExit`.
+These follow-ups are held for the next push to avoid cancelling the hosted run.
+
 ## Recommendation
 
 Keep standard GitHub-hosted runners. First remove repeated module initialization,
