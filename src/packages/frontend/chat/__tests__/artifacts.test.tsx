@@ -68,3 +68,72 @@ test.each([1024, 375])(
     else expect(set_frame_full).not.toHaveBeenCalled();
   },
 );
+
+test.each([
+  ["same artifact", "doc-1", "thread-1", "chat-frame", true],
+  ["different artifact", "doc-2", "thread-1", "chat-frame", false],
+  ["different thread", "doc-1", "thread-2", "chat-frame", false],
+  ["different origin", "doc-1", "thread-1", "other-chat-frame", false],
+])(
+  "opening a card preserves an existing %s frame",
+  (_name, artifact, thread, origin, reuse) => {
+    const rows: any[] = [];
+    const syncdb = Object.assign(new EventEmitter(), {
+      get_one: () => undefined,
+      set: (row) => rows.push(row),
+      get: (where) =>
+        rows.filter((row) =>
+          Object.entries(where).every(([key, value]) => row[key] === value),
+        ),
+    });
+    publishArtifact(syncdb, {
+      thread_id: "thread-1",
+      artifact_id: "doc-1",
+      operation_id: "publication-1",
+      message_id: "message-1",
+      title: "Replies",
+      markdown: "Published text",
+    });
+    const existing = { artifact, thread, origin, version: "old-publication" };
+    const frames = {
+      get_frame_ids_in_order: () => ["terminal", "existing-artifact"],
+      _get_frame_data: (id, key) =>
+        id === "existing-artifact" ? existing[key] : undefined,
+      set_active_id: jest.fn(),
+      set_frame_data: jest.fn(),
+      split_frame: jest.fn(() => "new-artifact"),
+      set_frame_full: jest.fn(),
+      close_frame: jest.fn(),
+    };
+    render(
+      <ArtifactCards
+        actions={
+          { syncdb, frameId: "chat-frame", frameTreeActions: frames } as any
+        }
+        threadId="thread-1"
+        messageId="message-1"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open artifact" }));
+    if (reuse) {
+      expect(frames.set_active_id).toHaveBeenCalledWith("existing-artifact");
+      expect(frames.split_frame).not.toHaveBeenCalled();
+    } else {
+      expect(frames.split_frame).toHaveBeenCalledWith(
+        "col",
+        "chat-frame",
+        "workbench",
+        expect.objectContaining({
+          "data-artifact": "doc-1",
+          "data-thread": "thread-1",
+          "data-origin": "chat-frame",
+        }),
+      );
+      expect(frames.set_active_id).not.toHaveBeenCalled();
+    }
+    // Focusing a frame must not reset its revision, remount its editor, or close a terminal.
+    expect(frames.set_frame_data).not.toHaveBeenCalled();
+    expect(frames.close_frame).not.toHaveBeenCalled();
+    expect(existing.version).toBe("old-publication");
+  },
+);
