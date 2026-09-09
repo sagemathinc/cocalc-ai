@@ -43,6 +43,7 @@ export type UndoMode = "auto" | "local" | "external";
 export interface MultiMarkdownInputProps {
   cacheId?: string;
   value?: string;
+  mergeRemoteValues?: boolean;
   defaultMode?: Mode;
   fixedMode?: Mode;
   onChange: (value: string) => void;

@@ -40,6 +40,7 @@ export default function MultiMarkdownInput({
   unboundedAutoGrow,
   clampAutoGrowToHost,
   getValueRef,
+  mergeRemoteValues,
   height = "auto",
   autoGrow,
   hideHelp,
@@ -413,6 +414,7 @@ export default function MultiMarkdownInput({
         ) : undefined}
         {mode === "editor" ? (
           <SlateRichTextAdapter
+            mergeRemoteValues={mergeRemoteValues}
             localHistoryCacheId={
               localHistoryCachePrefix != null &&
               (undoMode === "local" || redoMode === "local")

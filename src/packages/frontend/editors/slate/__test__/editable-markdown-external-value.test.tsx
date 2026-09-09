@@ -29,6 +29,52 @@ function StreamingMarkdown({ value }: { value: string }) {
 }
 
 describe("EditableMarkdown external read-only values", () => {
+  it("merges collaborative value updates with an unsaved local buffer", async () => {
+    const controlRef: any = { current: null };
+    const getValueRef = { current: () => "" };
+    const setValue = jest.fn();
+    const props = {
+      mergeRemoteValues: true,
+      is_current: true,
+      controlRef,
+      getValueRef,
+      actions: { set_value: setValue } as any,
+      enableUpload: false,
+      minimal: true,
+      hidePath: true,
+      disableWindowing: true,
+      noVfill: true,
+      showEditBar: false,
+      height: "auto",
+    };
+    const { rerender } = render(
+      <EditableMarkdown
+        {...props}
+        value={"First paragraph.\n\nLast paragraph."}
+      />,
+    );
+    await act(async () => {
+      controlRef.current.setValueNow(
+        "Local first paragraph.\n\nLast paragraph.",
+      );
+    });
+    expect(getValueRef.current()).toContain("Local first paragraph.");
+    rerender(
+      <EditableMarkdown
+        {...props}
+        value={"First paragraph.\n\nRemote last paragraph."}
+      />,
+    );
+    await waitFor(() => {
+      expect(getValueRef.current()).toContain("Local first paragraph.");
+      expect(getValueRef.current()).toContain("Remote last paragraph.");
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Local first paragraph.")).toBeTruthy();
+      expect(screen.getByText("Remote last paragraph.")).toBeTruthy();
+    });
+  });
+
   it("pairs the document background with themed text", () => {
     const { container } = render(<StreamingMarkdown value="Theme check" />);
     expect(container.firstChild).toHaveStyle({

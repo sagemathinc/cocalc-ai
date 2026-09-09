@@ -176,6 +176,7 @@ export function MarkdownTextAdapter({
 }
 
 interface SlateRichTextAdapterProps {
+  mergeRemoteValues?: boolean;
   localHistoryCacheId?: string;
   selectionRef: MutableRefObject<SelectionController | null>;
   editorDivRef?: RefObject<HTMLDivElement>;
@@ -226,6 +227,7 @@ interface SlateRichTextAdapterProps {
 }
 
 export function SlateRichTextAdapter({
+  mergeRemoteValues,
   localHistoryCacheId,
   selectionRef,
   editorDivRef,
@@ -301,6 +303,7 @@ export function SlateRichTextAdapter({
       className={height != "auto" ? "smc-vfill" : undefined}
     >
       <EditableMarkdown
+        mergeRemoteValues={mergeRemoteValues}
         selectionRef={selectionRef}
         divRef={editorDivRef}
         noVfill={noVfill}
