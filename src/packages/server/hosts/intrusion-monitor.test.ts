@@ -761,6 +761,27 @@ describe("project-host intrusion monitor normalization", () => {
     });
   });
 
+  it.each([
+    ["127.0.0.1:32767", "unattributed", true],
+    ["127.0.0.1:32768", "unattributed", false],
+    ["[::1]:32767", "unattributed", true],
+    ["[::1]:32768", "unattributed", false],
+    ["127.0.0.1:40000", "unknown", true],
+    ["0.0.0.0:40000", "unattributed", true],
+    ["10.0.0.1:40000", "unattributed", true],
+    ["[::]:40000", "unattributed", true],
+    ["[2001:db8::1]:40000", "unattributed", true],
+  ])("classifies TCP listener %s (%s)", (local, process, actionable) => {
+    const listener = JSON.stringify(["tcp", process, local]);
+    const result = selectActionableHostIntrusionChanges({
+      added: { "network.listeners": [listener] },
+      removed: {},
+    });
+    expect(result.added["network.listeners"] ?? []).toEqual(
+      actionable ? [listener] : [],
+    );
+  });
+
   it("only promotes high-confidence changes to notifications", () => {
     const delta = {
       added: {
