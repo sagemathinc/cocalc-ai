@@ -5,6 +5,7 @@
 
 import {
   cancelChatSpeech,
+  measureChatSpeechAudioDuration,
   resetChatSpeechStateForTests,
   runProviderRequest,
   synthesizeWithOpenAI,
@@ -122,24 +123,48 @@ describe("OpenAI chat speech provider", () => {
 describe("chat speech request validation", () => {
   const webm = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0, 0, 0, 0, 0]);
 
+  function makeWav(durationSeconds: number): Uint8Array {
+    const sampleRate = 8_000;
+    const dataLength = sampleRate * durationSeconds;
+    const wav = new Uint8Array(44 + dataLength);
+    const view = new DataView(wav.buffer);
+    const writeAscii = (offset: number, value: string) => {
+      for (let i = 0; i < value.length; i++) {
+        wav[offset + i] = value.charCodeAt(i);
+      }
+    };
+    writeAscii(0, "RIFF");
+    view.setUint32(4, 36 + dataLength, true);
+    writeAscii(8, "WAVE");
+    writeAscii(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate, true);
+    view.setUint16(32, 1, true);
+    view.setUint16(34, 8, true);
+    writeAscii(36, "data");
+    view.setUint32(40, dataLength, true);
+    return wav;
+  }
+
   it("normalizes a supported recorder MIME type", () => {
     expect(
       validateChatSpeechAudio({
         contentType: "audio/webm;codecs=opus",
         audio: webm,
-        durationMs: 1_000,
       }),
     ).toBe("audio/webm");
   });
 
   it.each([
-    ["unsupported MIME", "audio/aac", webm, 1_000, 400],
-    ["invalid container", "audio/webm", new Uint8Array(12), 1_000, 400],
-    ["excessive duration", "audio/webm", webm, 90_001, 400],
-  ])("rejects %s", (_label, contentType, audio, durationMs, code) => {
-    expect(() =>
-      validateChatSpeechAudio({ contentType, audio, durationMs }),
-    ).toThrow(expect.objectContaining({ code }));
+    ["unsupported MIME", "audio/aac", webm, 400],
+    ["invalid container", "audio/webm", new Uint8Array(12), 400],
+  ])("rejects %s", (_label, contentType, audio, code) => {
+    expect(() => validateChatSpeechAudio({ contentType, audio })).toThrow(
+      expect.objectContaining({ code }),
+    );
   });
 
   it("rejects invalid speech options and bounds", () => {
@@ -168,6 +193,24 @@ describe("chat speech request validation", () => {
         speed: 1,
       }),
     ).toThrow(expect.objectContaining({ code: 400 }));
+  });
+
+  it("derives duration from the audio container instead of caller metadata", async () => {
+    await expect(
+      measureChatSpeechAudioDuration({
+        contentType: "audio/wav",
+        audio: makeWav(1),
+      }),
+    ).resolves.toBe(1_000);
+  });
+
+  it("enforces the duration limit using the uploaded audio", async () => {
+    await expect(
+      measureChatSpeechAudioDuration({
+        contentType: "audio/wav",
+        audio: makeWav(91),
+      }),
+    ).rejects.toMatchObject({ code: 400 });
   });
 });
 

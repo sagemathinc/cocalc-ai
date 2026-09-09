@@ -1395,6 +1395,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "Cloudflare tunnel/R2 configuration bootstrap with cloud token",
   },
+  "system.cancelChatSpeech": {
+    decision: "fresh-auth-not-required",
+    reason: "cancels only the signed-in account's active speech request",
+  },
   "system.clearAccountEntitlementOverride": {
     decision: "fresh-auth-required",
     reason: "admin entitlement mutation",

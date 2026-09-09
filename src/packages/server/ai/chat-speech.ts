@@ -15,7 +15,12 @@ import { isAiLaunchDisabled } from "@cocalc/server/launch/kill-switches";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getExternalCredentialRouted } from "@cocalc/server/external-credentials/routing";
 import { getAIUsageStatus } from "./usage-status";
-import { saveAIResponse } from "./save-response";
+import {
+  releaseChatSpeechUsage,
+  reserveChatSpeechUsage,
+  settleChatSpeechUsage,
+  type ChatSpeechUsageReservation,
+} from "./chat-speech-reservations";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
@@ -25,6 +30,20 @@ import {
 } from "@cocalc/util/ai/speech";
 
 const log = getLogger("server:ai:chat-speech");
+
+// Keep the ESM-only parser as a native lazy import in this CommonJS package.
+const importMusicMetadata = new Function(
+  "return import('music-metadata')",
+) as () => Promise<typeof import("music-metadata")>;
+
+async function parseAudioMetadata(audio: Uint8Array, contentType: string) {
+  const { parseBuffer } = await importMusicMetadata();
+  return await parseBuffer(
+    audio,
+    { mimeType: contentType, size: audio.length },
+    { duration: true, skipCovers: true },
+  );
+}
 
 export const CHAT_SPEECH_MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 export const CHAT_SPEECH_MAX_DURATION_MS = 90_000;
@@ -155,11 +174,9 @@ function signatureMatches(contentType: string, audio: Uint8Array): boolean {
 export function validateChatSpeechAudio({
   contentType,
   audio,
-  durationMs,
 }: {
   contentType: string;
   audio: Uint8Array;
-  durationMs?: number;
 }): string {
   const normalized = normalizeContentType(contentType);
   if (!(CHAT_SPEECH_CONTENT_TYPES as readonly string[]).includes(normalized)) {
@@ -174,15 +191,32 @@ export function validateChatSpeechAudio({
   if (!signatureMatches(normalized, audio)) {
     throw codedError("The audio data does not match its declared format.", 400);
   }
+  return normalized;
+}
+
+export async function measureChatSpeechAudioDuration({
+  contentType,
+  audio,
+}: {
+  contentType: string;
+  audio: Uint8Array;
+}): Promise<number> {
+  let duration: number | undefined;
+  try {
+    const metadata = await parseAudioMetadata(audio, contentType);
+    duration = metadata.format.duration;
+  } catch {
+    throw codedError("The audio recording could not be read.", 400);
+  }
+  const durationMs = Math.round((duration ?? 0) * 1_000);
   if (
-    typeof durationMs !== "number" ||
-    !Number.isFinite(durationMs) ||
+    !Number.isSafeInteger(durationMs) ||
     durationMs <= 0 ||
     durationMs > CHAT_SPEECH_MAX_DURATION_MS
   ) {
     throw codedError("The recording duration is invalid or too long.", 400);
   }
-  return normalized;
+  return durationMs;
 }
 
 export function validateChatSpeechText({
@@ -525,7 +559,22 @@ export async function synthesizeWithOpenAI({
   };
 }
 
-async function recordSiteFundedSpeechUsage({
+function speechCostMicrousd({
+  operation,
+  durationMs,
+}: {
+  operation: SpeechOperation;
+  durationMs: number;
+}): number {
+  const rate =
+    operation === "transcription"
+      ? TRANSCRIPTION_MICROUSD_PER_MINUTE
+      : SYNTHESIS_ESTIMATED_MICROUSD_PER_MINUTE;
+  return Math.max(1, Math.ceil((durationMs * rate) / 60_000));
+}
+
+async function settleSiteFundedSpeechUsage({
+  reservation,
   accountId,
   projectId,
   path,
@@ -537,6 +586,7 @@ async function recordSiteFundedSpeechUsage({
   providerRequestId,
   elapsedMs,
 }: {
+  reservation: ChatSpeechUsageReservation;
   accountId: string;
   projectId?: string;
   path?: string;
@@ -548,35 +598,21 @@ async function recordSiteFundedSpeechUsage({
   providerRequestId?: string;
   elapsedMs: number;
 }): Promise<void> {
-  const rate =
-    operation === "transcription"
-      ? TRANSCRIPTION_MICROUSD_PER_MINUTE
-      : SYNTHESIS_ESTIMATED_MICROUSD_PER_MINUTE;
-  const costMicrousd = Math.max(1, Math.ceil((durationMs * rate) / 60_000));
-  const saved = await saveAIResponse({
-    account_id: accountId,
-    analytics_cookie: undefined,
-    cost_microusd: costMicrousd,
-    funded_event_id: requestId,
-    history: [],
-    input: `[chat-speech-${operation}]`,
-    model: model as any,
-    output: "",
-    path,
-    project_id: projectId,
-    prompt_tokens: 0,
-    price_version: "openai-chat-speech-2026-09-08",
-    provider_request_id: providerRequestId,
-    system: "",
-    tag: `chat-speech-${operation}`,
-    total_time_s: Math.max(0, elapsedMs / 1_000),
-    total_tokens: 0,
-    usage_units: undefined,
-    media_operation: operation,
-    audio_duration_ms: Math.round(durationMs),
-    input_characters: inputCharacters,
-  });
-  if (!saved) {
+  const costMicrousd = speechCostMicrousd({ operation, durationMs });
+  try {
+    await settleChatSpeechUsage({
+      reservation,
+      projectId,
+      path,
+      operation,
+      model,
+      costMicrousd,
+      durationMs,
+      inputCharacters,
+      providerRequestId,
+      elapsedMs,
+    });
+  } catch (err) {
     log.error("failed to record site-funded chat speech usage", {
       account_id: accountId,
       project_id: projectId,
@@ -584,6 +620,22 @@ async function recordSiteFundedSpeechUsage({
       operation,
       model,
       cost_microusd: costMicrousd,
+      error: `${err}`,
+    });
+  }
+}
+
+async function releaseSiteFundedSpeechUsage(
+  reservation: ChatSpeechUsageReservation,
+): Promise<void> {
+  try {
+    await releaseChatSpeechUsage(reservation);
+  } catch (err) {
+    // A failed release leaves a conservative hold that expires automatically.
+    log.error("failed to release site-funded chat speech reservation", {
+      account_id: reservation.accountId,
+      request_id: reservation.requestId,
+      error: `${err}`,
     });
   }
 }
@@ -595,7 +647,6 @@ export async function transcribeChatAudio({
   path,
   content_type,
   audio,
-  duration_ms,
   language_hints,
 }: {
   account_id?: string;
@@ -614,9 +665,11 @@ export async function transcribeChatAudio({
   const contentType = validateChatSpeechAudio({
     contentType: content_type,
     audio,
-    durationMs: duration_ms,
   });
-  const durationMs = duration_ms as number;
+  const durationMs = await measureChatSpeechAudioDuration({
+    contentType,
+    audio,
+  });
   const settings = await speechSettings();
   if (!settings.inputEnabled)
     throw codedError("Chat dictation is disabled.", 403);
@@ -627,26 +680,46 @@ export async function transcribeChatAudio({
   });
   if (!resolved.credential)
     throw codedError(resolved.reason ?? "Speech unavailable.", 403);
+  const reservation =
+    resolved.credential.source === "site"
+      ? await reserveChatSpeechUsage({
+          accountId: account_id,
+          requestId: request_id,
+          operation: "transcription",
+          model: settings.transcriptionModel,
+          reservedMicrousd: speechCostMicrousd({
+            operation: "transcription",
+            durationMs,
+          }),
+        })
+      : undefined;
   const language =
     `${language_hints?.[0] ?? ""}`.trim().slice(0, 16) || undefined;
   const started = Date.now();
-  const provider = await runProviderRequest({
-    accountId: account_id,
-    requestId: request_id,
-    timeoutMs: TRANSCRIBE_TIMEOUT_MS,
-    run: async (signal) =>
-      await transcribeWithOpenAI({
-        apiKey: resolved.credential!.apiKey,
-        model: settings.transcriptionModel,
-        contentType,
-        filename: filenameForContentType(contentType),
-        audio,
-        language,
-        signal,
-      }),
-  });
-  if (resolved.credential.source === "site") {
-    await recordSiteFundedSpeechUsage({
+  let provider: ProviderResult<{ text: string; language?: string }>;
+  try {
+    provider = await runProviderRequest({
+      accountId: account_id,
+      requestId: request_id,
+      timeoutMs: TRANSCRIBE_TIMEOUT_MS,
+      run: async (signal) =>
+        await transcribeWithOpenAI({
+          apiKey: resolved.credential!.apiKey,
+          model: settings.transcriptionModel,
+          contentType,
+          filename: filenameForContentType(contentType),
+          audio,
+          language,
+          signal,
+        }),
+    });
+  } catch (err) {
+    if (reservation) await releaseSiteFundedSpeechUsage(reservation);
+    throw err;
+  }
+  if (reservation) {
+    await settleSiteFundedSpeechUsage({
+      reservation,
       accountId: account_id,
       projectId: project_id,
       path,
@@ -718,29 +791,49 @@ export async function synthesizeChatSpeech({
   });
   if (!resolved.credential)
     throw codedError(resolved.reason ?? "Speech unavailable.", 403);
+  const estimatedDurationMs = Math.max(
+    1_000,
+    (speechText.length / ESTIMATED_TTS_CHARACTERS_PER_MINUTE) *
+      (60_000 / speed),
+  );
+  const reservation =
+    resolved.credential.source === "site"
+      ? await reserveChatSpeechUsage({
+          accountId: account_id,
+          requestId: request_id,
+          operation: "speech",
+          model: settings.synthesisModel,
+          reservedMicrousd: speechCostMicrousd({
+            operation: "speech",
+            durationMs: estimatedDurationMs,
+          }),
+        })
+      : undefined;
   const started = Date.now();
-  const provider = await runProviderRequest({
-    accountId: account_id,
-    requestId: request_id,
-    timeoutMs: SYNTHESIZE_TIMEOUT_MS,
-    run: async (signal) =>
-      await synthesizeWithOpenAI({
-        apiKey: resolved.credential!.apiKey,
-        model: settings.synthesisModel,
-        text: speechText,
-        voice: selectedVoice,
-        instructions: chatSpeechAccentInstruction(accent),
-        speed,
-        signal,
-      }),
-  });
-  if (resolved.credential.source === "site") {
-    const estimatedDurationMs = Math.max(
-      1_000,
-      (speechText.length / ESTIMATED_TTS_CHARACTERS_PER_MINUTE) *
-        (60_000 / speed),
-    );
-    await recordSiteFundedSpeechUsage({
+  let provider: ProviderResult<Uint8Array>;
+  try {
+    provider = await runProviderRequest({
+      accountId: account_id,
+      requestId: request_id,
+      timeoutMs: SYNTHESIZE_TIMEOUT_MS,
+      run: async (signal) =>
+        await synthesizeWithOpenAI({
+          apiKey: resolved.credential!.apiKey,
+          model: settings.synthesisModel,
+          text: speechText,
+          voice: selectedVoice,
+          instructions: chatSpeechAccentInstruction(accent),
+          speed,
+          signal,
+        }),
+    });
+  } catch (err) {
+    if (reservation) await releaseSiteFundedSpeechUsage(reservation);
+    throw err;
+  }
+  if (reservation) {
+    await settleSiteFundedSpeechUsage({
+      reservation,
       accountId: account_id,
       projectId: project_id,
       path,
