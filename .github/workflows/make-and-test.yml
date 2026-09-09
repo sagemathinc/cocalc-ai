@@ -1,8 +1,8 @@
 name: Test
 
-# newer commits in the same PR abort running ones for the same workflow
+# Newer commits cancel superseded runs on the same PR or branch.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 on:
@@ -28,11 +28,13 @@ jobs:
       has_tests: ${{ steps.plan.outputs.has_tests }}
       mode: ${{ steps.plan.outputs.mode }}
       depcheck_packages: ${{ steps.plan.outputs.depcheck_packages }}
+      jest_cache_key: ${{ steps.jest-cache-key.outputs.key }}
 
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          # Only affected-package planning needs commit history.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
 
       - name: install pnpm
         uses: pnpm/action-setup@v4
@@ -44,6 +46,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+
+      - name: Compute Jest cache key
+        id: jest-cache-key
+        run: node src/scripts/ci-jest-cache-key.mjs --github-output
 
       - name: Plan test lanes
         id: plan
@@ -202,9 +208,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src/.cache/jest
-          key: jest-${{ runner.os }}-node24-${{ hashFiles('src/packages/pnpm-lock.yaml', 'src/packages/**/jest.config.*', 'src/packages/**/tsconfig.test.json') }}-${{ matrix.lane }}-${{ github.sha }}
+          key: jest-v2-${{ runner.os }}-node24-${{ needs.plan.outputs.jest_cache_key }}-${{ matrix.lane }}-${{ github.sha }}
           restore-keys: |
-            jest-${{ runner.os }}-node24-${{ hashFiles('src/packages/pnpm-lock.yaml', 'src/packages/**/jest.config.*', 'src/packages/**/tsconfig.test.json') }}-${{ matrix.lane }}-
+            jest-v2-${{ runner.os }}-node24-${{ needs.plan.outputs.jest_cache_key }}-${{ matrix.lane }}-
 
       - name: Cache pip
         if: matrix.lane == 'rest'
