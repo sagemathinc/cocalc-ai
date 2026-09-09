@@ -8,6 +8,8 @@ import type {
   CodexGoalAck,
 } from "@cocalc/util/ai/codex-goal";
 
+export * from "./artifacts";
+
 export const CHAT_SCHEMA_V2 = 2;
 export const CHAT_THREAD_META_ROW_DATE = "1970-01-01T00:00:00.000Z";
 export const CHAT_PRIMARY_KEYS = [

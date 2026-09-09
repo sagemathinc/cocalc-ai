@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { readFile } from "node:fs/promises";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -40,6 +41,65 @@ export function registerProjectChatCommands(
   } = deps;
 
   const chat = project.command("chat").description("project chat operations");
+
+  const artifact = chat
+    .command("artifact")
+    .description("experimental collaborative Markdown artifacts");
+  for (const action of ["create", "update", "read", "list"] as const) {
+    artifact
+      .command(action)
+      .requiredOption("--path <path>", "chat document path")
+      .requiredOption("--thread-id <id>", "originating thread")
+      .option("-w, --project <project>", "project id or name")
+      .option("--artifact-id <id>", "stable artifact id (required except list)")
+      .option("--operation-id <id>", "read an exact published snapshot")
+      .option("--file <path>", "JSON publication payload, or - for stdin")
+      .action(async (opts, command: Command) => {
+        await withContext(
+          command,
+          `project chat artifact ${action}`,
+          async (ctx) => {
+            if (action !== "list" && !opts.artifactId)
+              throw Error("--artifact-id is required");
+            let payload;
+            if (action === "create" || action === "update") {
+              if (!opts.file)
+                throw Error(
+                  "--file <path> (or --file - for stdin) is required",
+                );
+              let source: string;
+              if (opts.file === "-") {
+                const chunks: Buffer[] = [];
+                let size = 0;
+                for await (const chunk of process.stdin) {
+                  const buffer = Buffer.from(chunk);
+                  size += buffer.length;
+                  if (size > 128 * 1024)
+                    throw Error("artifact payload exceeds 128 KiB");
+                  chunks.push(buffer);
+                }
+                source = Buffer.concat(chunks).toString("utf8");
+              } else {
+                source = await readFile(opts.file, "utf8");
+              }
+              if (Buffer.byteLength(source) > 128 * 1024)
+                throw Error("artifact payload exceeds 128 KiB");
+              payload = JSON.parse(source);
+            }
+            return deps.projectChatArtifactData({
+              ctx,
+              action,
+              projectIdentifier: opts.project,
+              path: normalizePath(opts.path),
+              threadId: normalizeThreadId(opts.threadId),
+              artifactId: opts.artifactId,
+              operationId: opts.operationId,
+              payload,
+            });
+          },
+        );
+      });
+  }
 
   const thread = chat.command("thread").description("project chat threads");
 

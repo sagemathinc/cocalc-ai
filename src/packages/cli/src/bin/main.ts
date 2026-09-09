@@ -2407,6 +2407,7 @@ const {
 
 const {
   projectChatThreadCreateData,
+  projectChatArtifactData,
   projectChatThreadStatusData,
   projectChatAutomationData,
   projectChatActivityData,
@@ -2993,6 +2994,7 @@ const projectCommandDeps = {
   projectCodexAuthUploadFileData,
   resolveProjectConatClient,
   projectChatThreadCreateData,
+  projectChatArtifactData,
   projectChatThreadStatusData,
   projectChatAutomationData,
   projectChatActivityData,

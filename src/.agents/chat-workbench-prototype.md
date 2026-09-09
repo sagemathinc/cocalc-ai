@@ -1,6 +1,7 @@
 # Chat Workbench Prototype
 
-Status: proposed for maintainer review; not implemented. Updated 2026-09-09.
+Status: implementation in progress on `feature/chat-workbench-prototype`.
+Updated 2026-09-09. Not yet ready for the acceptance session.
 Revised to build on Patchflow syncdoc, the existing Slate Markdown editor,
 and CoCalc's key:value blob storage, rather than adding parallel infrastructure.
 
@@ -277,6 +278,30 @@ need their own bounded review. A trusted package does not make all its input
 features appropriate for the authenticated application origin.
 
 ## Delivery Checklist
+
+### Implementation Notes (2026-09-09)
+
+- Initial shared records and `project chat artifact create/read/update/list`
+  commands are implemented. JSON writes use `--file <path>` or `--file -`.
+  Explicit `--path`, `--thread-id`, and `--artifact-id` select the live document;
+  payloads include `message_id`, `operation_id`, `title`, and `markdown`.
+  Update additionally requires the exact `base` returned by read.
+- Markdown reuses the existing `input` string column. Publications use a
+  separate structured snapshot row, linked to an existing producing message.
+  Retries do not roll back later edits. Locally observed stale bases are rejected;
+  unseen concurrent changes still use Patchflow, not a claimed distributed CAS.
+- Initial inline cards and a Slate workbench frame are wired. The frame supports
+  current/published views and local edits. Feedback chips, selection anchoring,
+  agent runtime guidance, and the end-to-end acceptance session remain unfinished.
+- No ordinary chat exposes creation controls yet. Explicit experimental CLI
+  publication opts into the prototype; frame type is hidden from ordinary menus
+  and public editor selection. Confirm final opt-in behavior before a demo.
+- Validation so far: shared chat suite 75 tests; initial card interaction test;
+  chat, CLI, and frontend package typechecks; frontend lint. Repeat after further
+  changes. Browser integration, real Patchflow concurrent-client regression,
+  export/rotation retention, and real-agent testing are still required.
+
+### Remaining Milestones
 
 - [ ] P0: Resolve four integration questions; record schema, commands, attribution,
       experimental gate, and exact focused test commands in this file.

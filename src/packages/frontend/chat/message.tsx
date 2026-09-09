@@ -22,6 +22,7 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { codexAgentName } from "@cocalc/frontend/account/chatbot";
 import { CSS, useMemo, useRef, useState } from "@cocalc/frontend/app-framework";
 import { useNarrowChatViewport } from "./use-chat-viewport";
+import { ArtifactCards } from "./artifacts";
 import {
   DropdownMenu,
   Gap,
@@ -2572,6 +2573,11 @@ export default function Message({
             ? renderEditMessage()
             : renderMessageBody({ message_class })}
           {renderEditingMeta()}
+          <ArtifactCards
+            actions={actions}
+            threadId={field<string>(message, "thread_id")}
+            messageId={field<string>(message, "message_id")}
+          />
           {renderInterruptedControls()}
         </div>
         {renderHistory()}
