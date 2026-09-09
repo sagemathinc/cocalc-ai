@@ -148,6 +148,43 @@ still awaits interactive approval; a fresh `auth status --check` reports
 "interactive CLI sign-in is required".
 Actual staging host/runtime validation remains required before production.
 
+## Staging validation completed
+
+Staging2 tools rollout completed as deployment
+`20260909T040600Z-20260909T025724Z-4ed65040-20260908-4ed650408d-codex1534`.
+The tools smoke passed and both staging hosts report aligned installation.
+Host executable checksums match the published pair.
+
+Important: the production app-server path runs `/opt/cocalc/bin2/codex`
+inside the ordinary project container. Updating host tools does not refresh
+that existing container's immutable tools mount. The earlier sidecar lease
+observation does not describe this app-server path. Do not claim that merely
+starting a new turn upgrades an already-running project.
+
+In test project `d5b7644c-5e6f-482d-9246-b4529868b4c2`, the first test after host
+upgrade still ran the old executable (SHA256
+`f8786262ebc0fa1337448a2977332beadec66c8d0cda0ce973c7849766d7943c`)
+and imagegen timed out. It completed without retries. Only this designated
+smoke project was restarted; restart operation
+`0f6ef140-3c71-4dfa-86dd-37c0a35a5bfb` succeeded.
+
+After restart, both in-project hashes matched the patched pair. The running
+Codex executable hash was also checked via `/proc/<pid>/exe` on the host.
+The identical single-attempt Astra prompt then succeeded through CoCalc's
+project Codex/app-server service. Session:
+`01a0845e-078f-75c0-8902-1be9d9f9f2a9`. A project exec `file` check confirmed
+a 1536x1024 RGB PNG at
+`/home/user/.codex/generated_images/01a0845e-078f-75c0-8902-1be9d9f9f2a9/exec-8ca56c7c-9d23-411a-9220-330ee8c6fafe.png`.
+Logs: `/tmp/codex/staging-patched-imagegen.jsonl` (old mount) and
+`/tmp/codex/staging-patched-imagegen-after-restart.jsonl` (patched).
+
+Production elevation is expired. An interactive production bootstrap is
+pending; no production deployment has been performed. Production rollout must
+account for existing project mounts without indiscriminately restarting active
+user projects. Source integration into main also needs a clean, narrow branch;
+the deployed release branch has multiple merge bases with main and should not
+be submitted as a broad PR without separating this change-set.
+
 1. Build the ARM64 counterpart and assemble complete artifact provenance and
    checksums. Do not publish an incomplete two-architecture release.
 2. Validate runtime library compatibility in the actual supported host images.
