@@ -55,10 +55,24 @@ export function registerLegacyMigrationCommand(
       "admin: create the final cocalc.com archive snapshot and diff metadata for a restored project",
     )
     .option("--snapshot-name <name>", "snapshot name to create")
+    .option(
+      "--allow-failed-restore",
+      "prepare a failed import for inspection only; does not enable apply or overwrite live files",
+    )
+    .option(
+      "--reason <reason>",
+      "audit reason (required with --allow-failed-restore)",
+    )
+    .option("--support-reference <reference>", "support ticket or incident")
     .action(
       async (
         project_id: string,
-        opts: { snapshotName?: string },
+        opts: {
+          snapshotName?: string;
+          allowFailedRestore?: boolean;
+          reason?: string;
+          supportReference?: string;
+        },
         command: Command,
       ) => {
         await withContext(
@@ -68,6 +82,12 @@ export function registerLegacyMigrationCommand(
             if (!isValidUUID(project_id)) {
               throw new Error(`invalid project_id: ${project_id}`);
             }
+            const reason = `${opts.reason ?? ""}`.trim() || undefined;
+            if (opts.allowFailedRestore && !reason) {
+              throw new Error(
+                "--reason is required with --allow-failed-restore",
+              );
+            }
             return await hubCallByName(
               ctx,
               "legacyMigration.adminPrepareProjectRemediation",
@@ -76,6 +96,10 @@ export function registerLegacyMigrationCommand(
                   project_id,
                   snapshot_name:
                     `${opts.snapshotName ?? ""}`.trim() || undefined,
+                  allow_failed_restore: opts.allowFailedRestore,
+                  reason,
+                  support_reference:
+                    `${opts.supportReference ?? ""}`.trim() || undefined,
                 },
               ],
               ctx.timeoutMs,
