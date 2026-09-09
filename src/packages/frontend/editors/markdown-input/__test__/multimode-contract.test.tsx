@@ -157,6 +157,26 @@ describe("MultiMarkdownInput wrapper contract", () => {
     expect(onModeChange).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["editor", "markdown"] as const)(
+    "fills the remaining toolbar body in %s mode without subtracting its height twice",
+    (defaultMode) => {
+      render(
+        <MultiMarkdownInput
+          value="Text"
+          onChange={() => {}}
+          defaultMode={defaultMode}
+          height="100%"
+          modeSwitchPlacement="toolbar"
+        />,
+      );
+      expect(
+        defaultMode === "editor"
+          ? latestEditableProps.height
+          : latestMarkdownProps.height,
+      ).toBe("100%");
+    },
+  );
+
   it("renders the mode switch in a toolbar row when requested", () => {
     render(
       <MultiMarkdownInput
