@@ -1,11 +1,12 @@
 # Chat Workbench Prototype
 
 Status: proposed for maintainer review; not implemented. Updated 2026-09-09.
-This replaces the earlier two-renderer-first proposal in this file.
+Revised to build on Patchflow syncdoc, the existing Slate Markdown editor,
+and CoCalc's key:value blob storage, rather than adding parallel infrastructure.
 
 ## Decision In One Page
 
-Build a small shared text artifact inside an existing CoCalc agent chat.
+Build a small shared Markdown artifact inside an existing CoCalc agent chat.
 The person can open it beside the conversation, edit it, highlight a passage,
 comment on that passage, and have the agent update the same artifact in place.
 Reloading preserves the result and its history.
@@ -24,6 +25,12 @@ nor SageJS blocks delivery of the first usable text prototype.
 Do not build another inbox, notebook engine, dashboard builder, generic layout
 language, external-action system, or full artifact management application.
 
+The collaboration engine already exists. Chat, Jupyter, and whiteboards use
+CoCalc's syncdoc framework built on Patchflow: a distributed synchronized store
+with merge semantics, not a CRDT. Structured fields and three-way-merged string
+columns are sufficient building blocks here. This prototype adds artifact
+identity, presentation, and a narrow agent interface to that machinery.
+
 ## First Acceptance Session
 
 Use a disposable chat with fictional support questions:
@@ -40,8 +47,9 @@ Use a disposable chat with fictional support questions:
 6. The agent reads that exact revision and updates the same artifact. The frame
    displays the requested revision automatically when safe, rather than opening
    another artifact or requiring a refresh. Offer See changes / Previous.
-7. Edit the text directly, Save, then ask the agent to shorten the edited reply.
-   The agent uses the human-saved version, not its stale earlier draft.
+7. Edit the text directly using CoCalc's Slate editor, wait for its normal sync
+   acknowledgement, then ask the agent to shorten the edited reply. The agent
+   uses the live human-edited version, not its stale earlier draft.
 8. Close/reopen the frame and reload the chat. Saved text and prior revisions
    remain available without rerunning the agent.
 
@@ -60,9 +68,11 @@ feedback and revision routing do not count.
 - Store explicit project, chat path, thread, artifact, and revision identities.
   Two chat frames work independently. Switching threads does not redirect an
   already-open artifact's feedback to the newly selected thread.
-- Start with escaped plain text preserving whitespace. Edit uses a standard
-  multiline control with Save and Cancel, not a new rich-text editor. Markdown
-  formatting is a later renderer decision.
+- Reuse CoCalc's Slate WYSIWYG Markdown editor and its Markdown source mode.
+  Store Markdown in a mergeable string column, not serialized Slate nodes.
+  Reuse the established remote/local editing and save behavior, with compact
+  controls and a normal syncing/saved/error indicator. Do not introduce a
+  textarea-first editor or a separate Save/Cancel versioning workflow.
 - A visible Comment button supports selection and whole-artifact feedback.
   Preserve the selection when focus moves to the button. Keyboard selection,
   Comment, composer focus, chip removal, and return to the artifact must work.
@@ -76,48 +86,64 @@ feedback and revision routing do not count.
 Historical inline cards pin exact revisions. The open workbench follows the
 current artifact unless the user explicitly chooses a historical revision.
 
-Auto-display a completed agent revision only when following current, the update
-descends from the displayed revision, and there is no unsaved edit or active
-text selection. Do not stream partial rewrites into the document. Preserve focus
-and scroll where possible; do not force-scroll to the changed passage. See changes
-is an explicit action using existing diff primitives where practical.
+Publish a completed agent edit as one logical update, not token-by-token partial
+Markdown. The current view receives ordinary syncdoc updates; the existing
+editor owns remote/local text merging. Do not add a wrapper that writes incoming
+merged values back and creates synchronization feedback loops.
 
-Otherwise show a small New revision available action. An agent update cannot
-overwrite a draft, steal focus, or change a historical view. Multiple heads are
-a conflict, not permission to guess the preferred version.
+Preserve focus, selection, and scroll using the existing editor integration.
+If a read-only passage is selected for feedback, pin that displayed snapshot
+until the user dismisses the selection or chooses New revision available.
+This freezes a view, not the authoritative store or other collaborators.
+Historical views never silently switch to current. See changes is explicit,
+using existing diff/history primitives where practical.
 
-No live character-level collaborative editing is required. Save creates a
-revision; concurrent saves preserve both. Provide version selection and an
-explicit resolution path without building a general merge editor. Guard
-close/navigation when an unsaved draft would be discarded.
+Do not implement a second revision DAG, sibling-head picker, merge editor, or
+character synchronization protocol. Use Patchflow history and merge behavior.
+Exercise concurrent human/agent edits, including overlapping changes: convergence
+alone does not establish that an agent's stale rewrite preserved user intent.
+The agent interface must make its editing base explicit (below).
 
 ## Minimal Data Contract
 
-Use the existing live chat sync store for small self-contained artifact records.
+Use the existing live chat syncdb for artifact records and workbench references.
 Do not write chat files directly, create a second authoritative JSON file, or
 put authoritative content in localStorage.
 
 Proposed records, not existing API names:
 
-- Artifact revision: schema version, artifact ID, revision ID, parent revision
-  IDs, thread ID, title, kind (text initially), payload, attribution, timestamp,
-  and publication idempotency key.
-- Chat reference: artifact ID and exact revision ID attached to a message/turn.
-- Submitted context: artifact/revision plus selected text and offsets. Specify
-  offsets as UTF-16 code units into the exact stored string; verify the quote
-  matches. Bound selection to 8 KiB and reject excess rather than silently
-  truncating and claiming to include the complete selection.
+- Live artifact: schema version, stable artifact ID, owning thread ID, title,
+  kind (Markdown initially), mergeable Markdown string, and producing-turn
+  attribution. Keep structured metadata separate from the string column.
+- Chat reference: artifact ID and exact published snapshot/version attached to
+  a message/turn. A card can offer Open current while preserving what that turn
+  actually showed.
+- Workbench reference: project/chat/thread/artifact and current-versus-historical
+  view, using existing frame state conventions. Local view state is not content.
+- Submitted context: artifact and pinned snapshot plus selected quote and a
+  validated anchor. Slate/rendered-text selection offsets are NOT automatically
+  Markdown source offsets. Reuse an existing selection/source mapping if one is
+  available; otherwise store UTF-16 offsets into a canonical plain-text snapshot
+  alongside the exact Markdown snapshot. Disambiguate repeated passages rather
+  than silently attaching to the first match. Bound selection to 8 KiB and reject
+  excess rather than claiming a truncated selection is complete.
 
-Initial limits: 32 KiB text, 128 KiB serialized revision, bounded titles and
+Initial limits: 32 KiB Markdown, 128 KiB serialized snapshot, bounded titles and
 identifiers. Reject malformed/oversized data with useful errors. These are
 prototype defaults, not benchmarks; large documents are out of scope.
 
-Revisions are immutable by application convention, not tamper-proof records.
-Validate imported/restored content as untrusted. Updates name the parent actually
-read. Retain concurrent sibling revisions; a resolution revision may name both
-parents and contain the explicitly chosen text.
+Use existing syncdoc history for historical reads where its addressing and
+retention guarantees suffice. P0 must verify those guarantees, not assume a hash
+alone retrieves old content. If durable message references need additional
+snapshots, retain bounded immutable publication/context snapshots in the same
+store (or existing blob store). These are historical evidence, not a second
+mutable authority or collaboration engine. Never snapshot every keystroke.
 
-Persist revision before reference. Retry interrupted publication idempotently
+Snapshots are immutable by application convention, not tamper-proof records.
+Validate imported/restored content as untrusted. Attribution identifies the
+producing operation/turn; it does not certify model-authored claims as true.
+
+Persist snapshot before reference. Retry interrupted publication idempotently
 without duplicate cards or lost revisions. Missing data gets an unavailable
 state, never a substituted artifact or latest revision.
 
@@ -125,18 +151,56 @@ Saved results ride on normal chat synchronization. If the chat is readable, its
 self-contained artifact must not need Codex, a kernel, or another result service.
 This does not promise uncached offline access or new stopped-project access.
 
+Large static results belong in CoCalc's existing key:value blob machinery, as
+with Jupyter outputs, with small typed references in syncdb. Reuse authorization,
+loading, and export patterns; do not invent another blob service or store large
+plot arrays in chat rows. Before enabling blob-backed results, specify retention
+for referenced snapshots, copy/export behavior, and missing-blob UI. The small
+Markdown milestone does not require a new blob-backed payload implementation.
+
 ## Agent And Composer Integration
 
 Add a small typed interface to the existing project chat CLI/backend surface:
 
-- publish: explicit chat/thread/message-or-turn target, title, text, idempotency
-  key; optional artifact ID and parents for an update.
-- read: exact artifact/revision and current heads.
+- create: explicit chat/thread/message-or-turn target, title, Markdown, and
+  idempotency key; return stable artifact ID and published snapshot reference.
+- read: current live artifact or exact snapshot; return Markdown and an opaque
+  editing-base token usable by update. Read the live syncdoc, not its disk copy.
+- update: artifact ID, editing-base token, bounded replacement or explicit text
+  replacements, producing turn, and idempotency key; return the resulting
+  snapshot and whether the edit was applied, rebased, or needs a fresh read.
 - list: bounded artifacts in an explicitly named thread.
 
 These names are conceptual; record exact API/CLI spelling during P0. Use
 project-routed live chat operations, not browser scripting, scraped HTML, or
 special Markdown interpreted as commands.
+
+Start with a `project chat artifact` CLI command family backed by shared typed
+operations, callable through the existing CLI scripting API as well. Exact
+spelling is proposed, not implemented. Accept payloads through stdin or a file,
+not giant shell-quoted arguments. This should work without an open browser and
+without a separate model-specific tool transport. An agent-facing convenience
+tool can wrap the same operations later; do not expose arbitrary syncdb set/delete.
+
+### The Important Tool Boundary: Editing A Live Object
+
+1. Agent reads the live artifact and receives its content plus editing base.
+2. While it reasons, a human may edit that same artifact in Slate.
+3. Agent submits its intended edit relative to what it actually read.
+4. The adapter applies that base-aware edit through existing syncdoc/Patchflow
+   machinery, not a blind assignment of stale whole-document text to a newly
+   acquired current record. Prefer targeted replacements for local revisions.
+5. If the available API cannot safely express that base or the edit is ambiguous,
+   return a changed/needs-reread result. Do not silently overwrite intervening
+   edits or invent another merge algorithm. Return the actual resulting content
+   or snapshot so the agent does not assume its proposed text is the final state.
+
+P0 must identify the concrete existing base-aware API and its acknowledgement
+semantics. A frontend hash comparison is not a distributed compare-and-swap.
+Separate submitted, synchronized, and persisted states according to guarantees
+the store actually provides; do not label a queued local write durably saved.
+Use scoped idempotency keys for retries and verify no duplicate update/card after
+reconnect. Resolve any missing adapter capability before polishing the UI.
 
 Publication must associate with the producing turn. Establish how the agent
 gets its originating chat/thread/message-or-turn identity without borrowing
@@ -150,8 +214,10 @@ Unavailable context requires removal or retry, not silent substitution.
 Preserve attachments per thread through draft switching and failed Send; clear
 only after successful submission.
 
-Document one real tool recipe for publish/read/revise. Agent reads must see
-human-saved revisions. The artifact is authoritative, not the model's memory.
+Document one real CLI recipe for create/read/update/list and include it in the
+agent's runtime guidance. Agent reads must see synchronized human edits.
+The live artifact is authoritative, not the model's memory. Selection feedback
+includes its pinned historical context; an edit still starts with a current read.
 
 ## Integration Points And Bounded Investigation
 
@@ -166,9 +232,25 @@ Starting points inspected during planning:
   frame registration and frame-local chat actions.
 - src/packages/frontend/chat/message.tsx, chatroom.tsx, chatroom-thread-panel.tsx:
   inline rendering, thread identity, and composer.
+- src/packages/chat/src/index.ts and src/packages/frontend/chat/register.ts:
+  chat currently declares `input` as a string column. Use a consistent schema
+  across all clients when adding/reusing an artifact Markdown column; do not
+  configure merge behavior only in the agent process.
+- src/packages/frontend/frame-editors/whiteboard-editor/types.ts and
+  elements/text.tsx: structured `data`, diff-merged `str`, and the existing
+  MultiMarkdownInput remote/local merge integration. Reuse this pattern rather
+  than copying a buffered input that resets on every remote value change.
+- src/packages/frontend/editors/markdown-input/multimode and
+  src/packages/frontend/chat/git-commit/review-editors.tsx: Slate Markdown input
+  and compact review UI. Reuse controls, not a separate editor implementation.
+- src/packages/jupyter/redux/actions.ts: existing async key:value store (`akv`)
+  initialization and project-scoped notebook blob naming/options.
+- src/packages/cli/src/api/text.ts: an existing live-document agent API and
+  expected-hash error pattern; a reference, not proof of atomic syncdb updates.
 
-P0 answers only four integration questions: live-store record semantics, agent
-turn identity, typed composer attachment routing, and safe frame reuse. Include
+P0 answers four integration questions: base-aware agent edits and durable
+snapshot references using existing store APIs, agent turn identity, typed
+composer/Slate selection routing, and safe frame reuse. Include
 export/import, message-cache compatibility, retries, and multiple chat frames.
 Do not assume transactional compare-and-swap exists. If these records cannot
 safely use the store, record the specific problem and smallest alternative for
@@ -176,9 +258,13 @@ review rather than silently weakening persistence guarantees.
 
 ## Safety And Permissions
 
-The initial renderer is escaped text. No HTML, user SVG, JavaScript, external
-resources, or generic renderer props. Publishing and viewing never execute the
-contents. Validate on both write and read/render.
+The initial renderer/editor is existing Markdown/Slate under the untrusted,
+sanitized content policy, never inherited trusted project-file rendering.
+Formatting is supported; raw executable HTML, user SVG, JavaScript, and generic
+renderer props are not. Disable uploads and external image/resource embedding
+for this milestone; validate link protocols and pasted/imported content using
+existing policies. Publishing and viewing never execute document contents.
+Validate on both write and read/render, including historical snapshots.
 
 Use existing project authorization and explicit ownership routing. Artifact data
 uses the project data plane, not a new hub proxy. Read-only viewers cannot save
@@ -194,9 +280,10 @@ features appropriate for the authenticated application origin.
 
 - [ ] P0: Resolve four integration questions; record schema, commands, attribution,
       experimental gate, and exact focused test commands in this file.
-- [ ] P1: Implement publish/read/list and persistence. Demonstrate real agent
+- [ ] P1: Implement create/read/update/list on live syncdb. Demonstrate real agent
       publication into a disposable chat, including a retried publication.
-- [ ] P2: Add inline cards, text workbench, Edit/Save/Cancel, and revision history.
+- [ ] P2: Add inline cards, Markdown workbench using Slate and existing sync
+      behavior, and published-snapshot/history views.
 - [ ] P3: Add highlight/comment, thread-bound composer context, and safe in-place
       agent updates. Complete the acceptance session with a real agent.
 - [ ] P4: Validate reload/reconnect, concurrency, keyboard/focus, themes, narrow
@@ -212,8 +299,12 @@ and external support/email actions are not part of this plan.
 
 - Duplicate publication, interrupted reference attachment, concurrent saves,
   missing revisions, import/restore validation, and legacy chat compatibility.
+- Human edits while the agent reasons; independent and overlapping edits;
+  stale-base rejection/rebase behavior; two live Slate clients; no remote-update
+  echo loops or silent overwrite from a stale whole-document assignment.
 - Selected passage reaches the correct thread/revision after thread switching.
-  Unicode offsets are correct and hostile-looking text remains literal data.
+  Unicode, repeated passages, and rendered Markdown/source differences are
+  handled correctly; hostile-looking text remains non-executable content.
 - Agent updates the same artifact; unsaved drafts, selections, historical views,
   and existing terminal frames are preserved.
 - Scroll-away/remount, reload, and reconnect preserve saved results.
