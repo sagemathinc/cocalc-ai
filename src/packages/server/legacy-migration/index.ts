@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { preservePreparationAuditSql } from "./preparation-audit";
 import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getLogger from "@cocalc/backend/logger";
@@ -4673,7 +4674,7 @@ async function importOneProject({
           restore_finished=NULL,
           restore_lro_op_id=NULL,
           restore_progress=NULL,
-          restore_result=NULL,
+          restore_result=${preservePreparationAuditSql("legacy_migration_project_imports.restore_result", "NULL::jsonb")},
           rootfs_image=EXCLUDED.rootfs_image,
           rootfs_image_id=EXCLUDED.rootfs_image_id,
           updated=NOW()
