@@ -11,6 +11,7 @@ import { MessageList } from "./chat-log";
 import { getSortedDates } from "./sorted-dates";
 import type { ChatMessageTyped, ChatMessages } from "./types";
 import { firstHistory, historyArray, parentMessageId } from "./access";
+import { ReadonlyArtifactRows } from "./readonly-artifacts";
 
 interface ChatViewerThread {
   key: string;
@@ -146,12 +147,14 @@ export default function Viewer({
   readOnly = false,
   virtualized = true,
   showThreadList = false,
+  showArtifacts = false,
 }: {
   doc: () => Document | undefined;
   font_size?: number;
   readOnly?: boolean;
   virtualized?: boolean;
   showThreadList?: boolean;
+  showArtifacts?: boolean;
 }) {
   const { messages, threads } = useMemo(() => {
     return createChatViewerModel(doc());
@@ -181,17 +184,23 @@ export default function Viewer({
   }, [visibleMessages, account_id]);
 
   const messageList = (
-    <MessageList
-      messages={visibleMessages}
-      user_map={user_map}
-      account_id={account_id}
-      fontSize={font_size}
-      mode="standalone"
-      sortedDates={sortedDates}
-      numChildren={numChildren}
-      readOnly={readOnly}
-      virtualized={virtualized}
-    />
+    <ReadonlyArtifactRows.Provider
+      value={
+        showArtifacts ? Array.from(doc()?.get() ?? []).map(normalizeRow) : []
+      }
+    >
+      <MessageList
+        messages={visibleMessages}
+        user_map={user_map}
+        account_id={account_id}
+        fontSize={font_size}
+        mode="standalone"
+        sortedDates={sortedDates}
+        numChildren={numChildren}
+        readOnly={readOnly}
+        virtualized={virtualized}
+      />
+    </ReadonlyArtifactRows.Provider>
   );
 
   if (!showThreadList || threads.length <= 1) {

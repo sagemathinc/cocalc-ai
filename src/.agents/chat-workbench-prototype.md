@@ -398,7 +398,7 @@ including the current turn's context and a fresh read before its update.
       behavior, and published-snapshot/history views.
 - [x] P3: Add highlight/comment, thread-bound composer context, and safe in-place
       agent updates. Complete the acceptance session with a real agent.
-- [ ] P4: Validate reload/reconnect, concurrency, keyboard/focus, themes, narrow
+- [x] P4: Validate reload/reconnect, concurrency, keyboard/focus, themes, narrow
       layouts, virtualization, and multiple threads/frames.
 - [x] P5: Give the maintainer a runnable local/dev build, test chat link, and a
       three-step try-it recipe. Record findings before broadening scope.
@@ -434,8 +434,37 @@ loop has been exercised in the QA chat, including preservation of the human
 note. P4 now has live evidence for independent disconnected edits, same-position
 insertions, keyboard range selection and Comment focus traversal, cross-thread
 draft separation, theme switching, and rotation/history restoration (below).
-The live read-only collaborator case remains open. Do not infer authorization
-from a read_only prop test or unseen competing replacements from insertion tests.
+The live read-only collaborator case passed after the separate viewer renderer
+was integrated (below). Do not infer unseen competing replacement behavior from
+the insertion tests.
+
+### Final Viewer Acceptance (2026-09-09)
+
+Created a disposable project `250ac07f-6ce8-43f9-b845-0ffb10c4d041` and a
+temporary Workbench Viewer account with the `viewer` role. Copied the QA chat
+through project copy-path, leaving the maintainer's original chat untouched.
+An isolated browser used a normal password sign-in, not an admin impersonation
+session, for the final checks. The viewer can read all four publication cards.
+Native Enter activation opens both current and published documents; the first
+publication retains its original refresh advice, while current text includes
+the later human review note. No contenteditable elements or Edit/Comment/Send
+controls are exposed. A separate browser-approved CLI session for this viewer
+was denied publishing to the writable project API on a harmless `true` exec
+attempt; this was an actual project-host permission denial, not a disabled
+button test.
+
+The test found and fixed an integration gap: the separate read-only chat viewer
+previously omitted artifact rows. It now accepts an explicit opt-in from the
+authenticated viewer project shell and shows bounded, validated publication
+cards with sanitized current/historical Markdown disclosures. Public shares
+remain opted out. This does not enable live editing or agent execution for
+viewers, or introduce public artifact rendering.
+
+All prototype milestones now have recorded implementation and acceptance
+evidence. Plots, SageJS, public artifacts, and broader deployment remain outside
+this text prototype. Hosted CI on `acb231c9d3` passed build and all three test
+groups; its static-check job failed on inherited main's unrelated
+`server/cloud/cloudflare-blob-reconcile.ts` no-unsafe-finally violation.
 
 Real-renderer coverage supplements the mocked workbench behavior tests:
 `workbench-rendering.test.tsx` mounts current and historical documents beneath

@@ -8,6 +8,7 @@ import { Button, Space } from "antd";
 import { validateArtifactPublication } from "@cocalc/chat";
 import type { ChatActions } from "./actions";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { ReadonlyArtifactCards } from "./readonly-artifacts";
 
 export function useArtifactChanges(syncdb: any) {
   const [version, setVersion] = useState(0);
@@ -33,7 +34,9 @@ export function ArtifactCards({
   messageId?: string;
 }) {
   useArtifactChanges(actions?.syncdb);
-  if (!actions?.syncdb || !threadId || !messageId) return null;
+  if (!actions?.syncdb)
+    return <ReadonlyArtifactCards threadId={threadId} messageId={messageId} />;
+  if (!threadId || !messageId) return null;
   const found = actions.syncdb.get({
     event: "chat-artifact-publication",
     thread_id: threadId,

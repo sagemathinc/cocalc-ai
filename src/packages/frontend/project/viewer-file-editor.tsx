@@ -117,6 +117,7 @@ export default function ViewerFileEditor({
   return (
     <div style={{ height: "100%", overflow: "auto" }}>
       <PublicViewerFileContents
+        showChatArtifacts={!shareId && projectAccess.role === "viewer"}
         content={content}
         path={path}
         rawUrl={rawUrl ?? ""}
