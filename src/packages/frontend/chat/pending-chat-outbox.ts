@@ -20,6 +20,7 @@ const CHAT_PENDING_LEASE_TTL_MS = 30_000;
 const pendingChatBrowserSessionId = uuid();
 
 export type PendingChatSend = {
+  artifact_feedback?: import("@cocalc/chat").ArtifactFeedback;
   project_id: string;
   path: string;
   browser_session_id: string;

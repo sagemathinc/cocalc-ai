@@ -4,7 +4,36 @@ import {
   readArtifact,
   validateArtifact,
   validateArtifactPublication,
+  validateArtifactFeedback,
+  artifactFeedbackPrompt,
 } from "../artifacts";
+
+test("feedback validates rendered offsets and preserves the source snapshot", () => {
+  const feedback = {
+    schema_version: 1,
+    thread_id: "t",
+    artifact_id: "a",
+    title: "Draft",
+    markdown: "**same** same",
+    rendered_text: "same same",
+    start: 5,
+    end: 9,
+    quote: "same",
+  };
+  expect(validateArtifactFeedback(feedback)).toEqual(feedback);
+  expect(artifactFeedbackPrompt(validateArtifactFeedback(feedback))).toContain(
+    "Read the current live artifact",
+  );
+  expect(() => validateArtifactFeedback({ ...feedback, start: 4 })).toThrow(
+    /snapshot/,
+  );
+  expect(() => validateArtifactFeedback({ ...feedback, end: 100 })).toThrow(
+    /snapshot/,
+  );
+  expect(() =>
+    validateArtifactFeedback({ ...feedback, quote: "x".repeat(8193) }),
+  ).toThrow(/bytes/);
+});
 
 function store() {
   const rows = new Map<string, object>();

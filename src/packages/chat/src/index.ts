@@ -109,6 +109,7 @@ export interface InlineCodeLink {
 }
 
 export interface ChatMessage {
+  artifact_feedback?: import("./artifacts").ArtifactFeedback;
   event: "chat";
   sender_id: string;
   history: MessageHistory[];

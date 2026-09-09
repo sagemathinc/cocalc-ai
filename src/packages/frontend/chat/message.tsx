@@ -23,6 +23,7 @@ import { codexAgentName } from "@cocalc/frontend/account/chatbot";
 import { CSS, useMemo, useRef, useState } from "@cocalc/frontend/app-framework";
 import { useNarrowChatViewport } from "./use-chat-viewport";
 import { ArtifactCards } from "./artifacts";
+import { ArtifactFeedbackNotice } from "./artifact-feedback-notice";
 import {
   DropdownMenu,
   Gap,
@@ -2573,6 +2574,7 @@ export default function Message({
             ? renderEditMessage()
             : renderMessageBody({ message_class })}
           {renderEditingMeta()}
+          <ArtifactFeedbackNotice value={field(message, "artifact_feedback")} />
           <ArtifactCards
             actions={actions}
             threadId={field<string>(message, "thread_id")}

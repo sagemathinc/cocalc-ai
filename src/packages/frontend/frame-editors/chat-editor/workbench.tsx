@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ArtifactFeedback, ArtifactRecord } from "@cocalc/chat";
+import { captureArtifactSelection } from "@cocalc/frontend/chat/artifact-selection";
+import { focusChatFrameInput } from "./actions";
 import { Alert, Button, Space } from "antd";
 import {
   artifactKey,
@@ -34,7 +37,7 @@ export const workbench: EditorDescription = {
   component: (props) => <Workbench {...props} />,
 };
 
-function Workbench({
+export function Workbench({
   actions: frameActions,
   desc,
   read_only,
@@ -51,6 +54,37 @@ function Workbench({
   const [historical, setHistorical] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [pinned, setPinned] = useState<ArtifactRecord>();
+  const content = useRef<HTMLDivElement>(null);
+  const displayed = useRef<ArtifactRecord | undefined>(undefined);
+  const selectedFeedback = useRef<ArtifactFeedback | undefined>(undefined);
+  useEffect(() => {
+    const select = () => {
+      const selection = window.getSelection();
+      if (
+        !editing &&
+        content.current &&
+        displayed.current &&
+        selection &&
+        !selection.isCollapsed &&
+        content.current.contains(selection.anchorNode) &&
+        content.current.contains(selection.focusNode)
+      ) {
+        try {
+          selectedFeedback.current = captureArtifactSelection(
+            content.current,
+            displayed.current,
+            selection,
+          );
+          setPinned(displayed.current);
+        } catch (err) {
+          setError(String(err));
+        }
+      }
+    };
+    document.addEventListener("selectionchange", select);
+    return () => document.removeEventListener("selectionchange", select);
+  }, [editing]);
   const target = {
     thread_id: desc.get("data-thread"),
     artifact_id: desc.get("data-artifact"),
@@ -74,7 +108,8 @@ function Workbench({
   } catch {
     return <Alert type="warning" message="Artifact unavailable" />;
   }
-  const value = artifact;
+  const value = pinned ?? artifact;
+  displayed.current = value;
   return (
     <KeyboardBoundary
       className="smc-vfill"
@@ -100,18 +135,60 @@ function Workbench({
           <strong>{value.title}</strong>
           <Button
             size="small"
-            disabled={read_only || historical}
+            disabled={read_only || historical || !!pinned}
             onClick={() => setEditing(!editing)}
           >
             {editing ? "Read" : "Edit"}
           </Button>
           <Button
             size="small"
-            disabled={editing}
+            disabled={editing || !!pinned}
             onClick={() => setHistorical(!historical)}
           >
             {historical ? "Show current" : "Show published"}
           </Button>
+          <Button
+            size="small"
+            disabled={read_only || editing || !chat?.stageArtifactFeedback}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              if (!content.current || !chat?.stageArtifactFeedback) return;
+              try {
+                const feedback =
+                  selectedFeedback.current ??
+                  captureArtifactSelection(
+                    content.current,
+                    value,
+                    window.getSelection(),
+                  );
+                void chat
+                  .stageArtifactFeedback(feedback)
+                  .then(() => {
+                    actions.set_active_id(desc.get("data-origin"));
+                    focusChatFrameInput(desc.get("data-origin"));
+                  })
+                  .catch((err) => setError(String(err)));
+              } catch (err) {
+                setError(String(err));
+              }
+            }}
+          >
+            Comment
+          </Button>
+          {pinned && (
+            <Button
+              size="small"
+              onClick={() => {
+                window.getSelection()?.removeAllRanges();
+                selectedFeedback.current = undefined;
+                setPinned(undefined);
+              }}
+            >
+              {artifact.input !== pinned.input
+                ? "Show updated document"
+                : "Clear selection"}
+            </Button>
+          )}
           <span role="status">
             {saving
               ? "Syncing..."
@@ -158,7 +235,9 @@ function Workbench({
             }}
           />
         ) : (
-          <StaticMarkdown value={value.input} />
+          <div ref={content} tabIndex={0} aria-label="Artifact document">
+            <StaticMarkdown value={value.input} />
+          </div>
         )}
       </FileContext.Provider>
     </KeyboardBoundary>

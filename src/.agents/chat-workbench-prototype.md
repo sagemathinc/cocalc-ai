@@ -291,8 +291,11 @@ features appropriate for the authenticated application origin.
   Retries do not roll back later edits. Locally observed stale bases are rejected;
   unseen concurrent changes still use Patchflow, not a claimed distributed CAS.
 - Initial inline cards and a Slate workbench frame are wired. The frame supports
-  current/published views and local edits. Feedback chips, selection anchoring,
-  agent runtime guidance, and the end-to-end acceptance session remain unfinished.
+  current/published views and local edits. Selection feedback now pins rendered
+  text offsets and the source snapshot, stages a removable account-scoped draft,
+  and retains context on sent messages and in the pending-send outbox. The agent
+  prompt includes that bounded context. Agent runtime guidance and the
+  end-to-end acceptance session remain unfinished.
 - No ordinary chat exposes creation controls yet. Explicit experimental CLI
   publication opts into the prototype; frame type is hidden from ordinary menus
   and public editor selection. Confirm final opt-in behavior before a demo.
@@ -300,6 +303,11 @@ features appropriate for the authenticated application origin.
   chat, CLI, and frontend package typechecks; frontend lint. Repeat after further
   changes. Browser integration, real Patchflow concurrent-client regression,
   export/rotation retention, and real-agent testing are still required.
+- Selection and workbench regressions now cover repeated rendered passages,
+  Unicode offsets, out-of-artifact selections, background updates during a
+  selection, keyboard focus changes before Comment, thread-targeted draft
+  staging, removal, and sent-message thread validation. These are component
+  tests, not yet evidence of the complete live Slate/browser/agent loop.
 
 ### Remaining Milestones
 
