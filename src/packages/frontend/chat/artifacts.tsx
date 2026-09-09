@@ -62,7 +62,8 @@ export function ArtifactCards({
                 <Button
                   size="small"
                   disabled={!actions.frameTreeActions || !actions.frameId}
-                  onClick={() => {
+                  onClick={(event) => {
+                    event.stopPropagation();
                     const frames = actions.frameTreeActions;
                     const existing = frames
                       ?.get_frame_ids_in_order()

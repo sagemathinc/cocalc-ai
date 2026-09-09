@@ -196,7 +196,8 @@ export function Workbench({
           <Button
             size="small"
             disabled={!chat}
-            onClick={() => {
+            onClick={(event) => {
+              event.stopPropagation();
               try {
                 if (editing) flushEditor();
                 returnToChat();

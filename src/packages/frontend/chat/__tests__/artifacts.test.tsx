@@ -29,12 +29,15 @@ test.each([1024, 375])(
         get_frame_ids_in_order: () => [],
       },
     };
+    const activateParent = jest.fn();
     render(
-      <ArtifactCards
-        actions={actions}
-        threadId="thread-1"
-        messageId="message-1"
-      />,
+      <div onClick={activateParent}>
+        <ArtifactCards
+          actions={actions}
+          threadId="thread-1"
+          messageId="message-1"
+        />
+      </div>,
     );
     expect(screen.queryByRole("button", { name: "Open artifact" })).toBeNull();
     act(() => {
@@ -52,6 +55,7 @@ test.each([1024, 375])(
     button.focus();
     expect(document.activeElement).toBe(button);
     fireEvent.click(button);
+    expect(activateParent).not.toHaveBeenCalled();
     expect(split_frame).toHaveBeenCalledWith("col", "chat-frame", "workbench", {
       "data-artifact": "doc-1",
       "data-thread": "thread-1",
