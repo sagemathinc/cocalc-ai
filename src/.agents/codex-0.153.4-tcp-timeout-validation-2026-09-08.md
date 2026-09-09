@@ -141,8 +141,11 @@ The clean source release commit is `4ed650408d54`, pushed on
 from that commit, and raw hashes of both executables in both final tarballs
 match the manifest. Its immutable artifact id is
 `20260909T025724Z-4ed65040-20260908-4ed650408d-codex1534`, in
-`/tmp/cocalc-software/tools`. Software-store upload was started; inspect its
-status before retrying. Staging2 bootstrap still awaits interactive approval.
+`/tmp/cocalc-software/tools`. Software-store upload completed successfully;
+the remote artifact manifest was read back and matches commit and checksums.
+Do not repeat the upload or rebuild this immutable artifact. Staging2 bootstrap
+still awaits interactive approval; a fresh `auth status --check` reports
+"interactive CLI sign-in is required".
 Actual staging host/runtime validation remains required before production.
 
 1. Build the ARM64 counterpart and assemble complete artifact provenance and
