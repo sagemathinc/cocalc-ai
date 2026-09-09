@@ -138,6 +138,7 @@ function disposeAudio(): void {
 }
 
 async function generateChunk(index: number, token: number): Promise<string> {
+  if (token !== generation) throw new Error("Speech playback was stopped.");
   const existing = urls.get(index);
   if (existing) return existing;
   const pendingKey = `${token}:${index}`;
@@ -148,6 +149,9 @@ async function generateChunk(index: number, token: number): Promise<string> {
     const capabilities = await getChatSpeechCapabilities(
       startOptions!.projectId,
     );
+    // The lookup can outlive this playback. Do not use a replacement's state
+    // or submit provider work for a request that has already been stopped.
+    if (token !== generation) throw new Error("Speech playback was stopped.");
     if (!capabilities.output.enabled) {
       throw new Error(
         capabilities.output.reason ?? "Chat read aloud is unavailable.",

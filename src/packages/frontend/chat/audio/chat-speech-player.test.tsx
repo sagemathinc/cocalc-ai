@@ -131,6 +131,78 @@ describe("ChatSpeechPlayer", () => {
     jest.clearAllMocks();
   });
 
+  it.each([false, true])(
+    "does not synthesize a replacement twice when an old lookup resolves (replacement ready: %s)",
+    async (replacementReady) => {
+      let resolveFirst!: (value: any) => void;
+      let resolveSecond!: (value: any) => void;
+      jest
+        .mocked(getChatSpeechCapabilities)
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveFirst = resolve;
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveSecond = resolve;
+            }),
+        );
+      render(<ChatSpeechPlayer />);
+      await act(async () => {
+        const first = startChatSpeech({ markdown: "Answer A", messageId: "a" });
+        const second = startChatSpeech({
+          markdown: "Answer B",
+          messageId: "b",
+        });
+        if (replacementReady) {
+          resolveSecond(capabilities);
+          await second;
+        }
+        resolveFirst(capabilities);
+        await first;
+        expect(synthesizeChatSpeech).toHaveBeenCalledTimes(
+          replacementReady ? 1 : 0,
+        );
+        if (!replacementReady) {
+          resolveSecond(capabilities);
+          await second;
+        }
+      });
+      expect(synthesizeChatSpeech).toHaveBeenCalledTimes(1);
+      expect(synthesizeChatSpeech).toHaveBeenCalledWith(
+        expect.objectContaining({ message_id: "b", text: "Answer B" }),
+      );
+      expect(
+        screen.getByRole("button", { name: "Pause read aloud" }),
+      ).toBeTruthy();
+    },
+  );
+
+  it("does not synthesize after stopping during the capability lookup", async () => {
+    let resolveLookup!: (value: any) => void;
+    jest.mocked(getChatSpeechCapabilities).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveLookup = resolve;
+        }),
+    );
+    render(<ChatSpeechPlayer />);
+    await act(async () => {
+      const started = startChatSpeech({ markdown: "Answer A", messageId: "a" });
+      stopChatSpeech();
+      resolveLookup(capabilities);
+      await started;
+    });
+    expect(synthesizeChatSpeech).not.toHaveBeenCalled();
+    expect(newSpeechRequestId).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("region", { name: "Read aloud player" }),
+    ).toBeNull();
+  });
+
   it("exposes accessible persistent playback controls and disclosure", async () => {
     render(<ChatSpeechPlayer />);
 
