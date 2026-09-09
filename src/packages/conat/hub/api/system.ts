@@ -137,6 +137,10 @@ export const system = {
   setOpenAiApiKey: authFirstRequireAccount,
   deleteOpenAiApiKey: authFirstRequireAccount,
   getOpenAiApiKeyStatus: authFirstRequireAccount,
+  getChatSpeechCapabilities: authFirstRequireAccount,
+  transcribeChatAudio: authFirstRequireAccount,
+  synthesizeChatSpeech: authFirstRequireAccount,
+  cancelChatSpeech: authFirstRequireAccount,
   getCodexPaymentSource: authFirstRequireAccount,
   getSiteFundedCodexAdminStatus: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
@@ -223,6 +227,43 @@ export interface ExternalCredentialInfo {
   updated: Date;
   revoked?: Date | null;
   last_used?: Date | null;
+}
+
+export type ChatSpeechFundingSource = "project" | "account" | "site";
+
+export interface ChatSpeechCapabilities {
+  input: {
+    enabled: boolean;
+    reason?: string;
+    max_bytes: number;
+    max_duration_ms: number;
+    supported_content_types: string[];
+    model?: string;
+  };
+  output: {
+    enabled: boolean;
+    reason?: string;
+    max_characters: number;
+    voices: string[];
+    default_voice: string;
+    speeds: number[];
+    model?: string;
+  };
+  funding_source?: ChatSpeechFundingSource;
+}
+
+export interface ChatSpeechTranscriptionResult {
+  text: string;
+  model: string;
+  request_id: string;
+  detected_language?: string;
+}
+
+export interface ChatSpeechSynthesisResult {
+  audio: Uint8Array;
+  content_type: string;
+  model: string;
+  request_id: string;
 }
 
 export interface CloudflareBootstrapResult {
@@ -2751,6 +2792,43 @@ export interface System {
     account_id?: string;
     project_id?: string;
   }) => Promise<OpenAiApiKeyStatus>;
+
+  getChatSpeechCapabilities: (opts?: {
+    account_id?: string;
+    project_id?: string;
+  }) => Promise<ChatSpeechCapabilities>;
+
+  transcribeChatAudio: (opts: {
+    account_id?: string;
+    request_id: string;
+    project_id?: string;
+    path?: string;
+    thread_id?: string;
+    content_type: string;
+    filename: string;
+    audio: Uint8Array;
+    duration_ms?: number;
+    language_hints?: string[];
+    timeout?: number;
+  }) => Promise<ChatSpeechTranscriptionResult>;
+
+  synthesizeChatSpeech: (opts: {
+    account_id?: string;
+    request_id: string;
+    project_id?: string;
+    path?: string;
+    thread_id?: string;
+    message_id: string;
+    text: string;
+    voice?: string;
+    speed?: number;
+    timeout?: number;
+  }) => Promise<ChatSpeechSynthesisResult>;
+
+  cancelChatSpeech: (opts: {
+    account_id?: string;
+    request_id: string;
+  }) => Promise<{ canceled: boolean }>;
 
   getCodexPaymentSource: (opts: {
     account_id?: string;

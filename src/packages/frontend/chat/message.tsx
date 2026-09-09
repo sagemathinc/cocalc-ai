@@ -2314,7 +2314,15 @@ export default function Message({
             label: "Final response",
             accentColor: UI_COLORS.link,
             borderColor: UI_COLORS.infoBg,
-            action: <CodexFinalResponseCopy value={value} />,
+            action: (
+              <CodexFinalResponseCopy
+                value={value}
+                projectId={project_id}
+                path={path}
+                threadId={messageThreadId}
+                messageId={field<string>(message, "message_id") ?? `${date}`}
+              />
+            ),
             children: (
               <div onClickCapture={openCommitFromMessage}>
                 {messageBodyMode === "select" ? (
