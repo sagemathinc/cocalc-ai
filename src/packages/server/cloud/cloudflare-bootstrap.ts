@@ -4,7 +4,13 @@
  */
 
 import { createHash } from "node:crypto";
+import getLogger from "@cocalc/backend/logger";
 import { R2_REGIONS } from "@cocalc/util/consts/r2-regions";
+
+const logger = getLogger("server:cloud:cloudflare-bootstrap");
+
+// Only locally constructed, secret-free diagnostics may cross the RPC boundary.
+class BootstrapDiagnostic extends Error {}
 
 type CloudflareResponse<T> = {
   success?: boolean;
@@ -18,6 +24,8 @@ type CloudflareCapability = {
 };
 
 export type CloudflareBootstrapResult = {
+  failure?: string;
+  settings_status?: "not_saved" | "saved" | "unknown";
   permissions: string[];
   account_id?: string;
   account_name?: string;
@@ -43,6 +51,8 @@ type Zone = {
 type TokenVerifyResult = {
   id?: string;
   status?: string;
+  expires_on?: string;
+  not_before?: string;
 };
 
 type PermissionGroup = {
@@ -98,15 +108,22 @@ async function cloudflareRequest<T>(
   path: string,
   body?: Record<string, any>,
 ): Promise<T> {
-  const response = await fetch(`https://api.cloudflare.com/client/v4/${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(20_000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`https://api.cloudflare.com/client/v4/${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch {
+    throw new BootstrapDiagnostic(
+      "Cloudflare could not be reached or the request timed out. Check hub network connectivity and retry.",
+    );
+  }
   let payload: CloudflareResponse<T> | undefined;
   try {
     payload = (await response.json()) as CloudflareResponse<T>;
@@ -115,8 +132,14 @@ async function cloudflareRequest<T>(
   }
   if (!response.ok || !payload?.success) {
     // Do not propagate provider messages: they may echo request secrets.
-    throw new Error(
-      `Cloudflare ${method} ${path.split("?")[0]} failed (HTTP ${response.status}). Check the token permissions and expiry.`,
+    const codes = Array.isArray(payload?.errors)
+      ? payload.errors
+          .map((error) => error?.code)
+          .filter(Number.isSafeInteger)
+          .slice(0, 5)
+      : [];
+    throw new BootstrapDiagnostic(
+      `Cloudflare rejected the request (HTTP ${response.status}${codes.length ? `; codes ${codes.join(", ")}` : ""}). Check the token, permissions and validity dates. Cloudflare dates start at 00:00 UTC; an End Date of today is already expired.`,
     );
   }
   return payload.result as T;
@@ -128,8 +151,28 @@ async function verifyToken(token: string): Promise<TokenVerifyResult> {
     "GET",
     "user/tokens/verify",
   );
-  if (verified.status && verified.status !== "active") {
-    throw new Error(`Cloudflare token is ${verified.status}`);
+  if (
+    verified?.status === "expired" ||
+    (verified?.expires_on && Date.parse(verified.expires_on) <= Date.now())
+  ) {
+    throw new BootstrapDiagnostic(
+      "The bootstrap token has expired. Cloudflare dates start at 00:00 UTC; create a new token with a future End Date.",
+    );
+  }
+  if (verified?.status === "disabled") {
+    throw new BootstrapDiagnostic(
+      "The bootstrap token is disabled. Create a new active token.",
+    );
+  }
+  if (verified?.not_before && Date.parse(verified.not_before) > Date.now()) {
+    throw new BootstrapDiagnostic(
+      "The bootstrap token is not valid yet. Leave Start Date unset when creating its replacement.",
+    );
+  }
+  if (verified?.status !== "active") {
+    throw new BootstrapDiagnostic(
+      "Cloudflare did not confirm an active bootstrap token. Create a new user API token using the provided link.",
+    );
   }
   return verified;
 }
@@ -393,6 +436,7 @@ export async function bootstrapCloudflareConfiguration(opts: {
   }
   const notes: string[] = [];
   const result: CloudflareBootstrapResult = {
+    settings_status: "not_saved",
     permissions: [],
     values: {},
     notes,
@@ -557,6 +601,7 @@ export async function bootstrapCloudflareConfiguration(opts: {
         : {}),
     });
     saved = true;
+    result.settings_status = "saved";
     result.values = values;
     result.tunnel_token = {
       ok: true,
@@ -568,8 +613,14 @@ export async function bootstrapCloudflareConfiguration(opts: {
         ? "Bucket-scoped R2 S3 credentials created and saved server-side. Provision blob storage and run R2 diagnostics to verify access."
         : "Existing R2 S3 credentials preserved. Run R2 diagnostics to verify access.",
     };
-  } catch {
+  } catch (err) {
     // Neither provider nor database exceptions are safe to expose here.
+    result.settings_status = saveAttempted ? "unknown" : "not_saved";
+    result.failure = `Unable to ${stage}. ${err instanceof BootstrapDiagnostic ? err.message : "Check permissions, domain and expiry; retry with a new bootstrap token."}`;
+    logger.warn("bootstrap failed", {
+      diagnostic: result.failure,
+      settings_status: result.settings_status,
+    });
     if (stage.startsWith("create the bucket-scoped R2 S3 token") && !s3) {
       notes.push(
         `If Cloudflare created an R2 token but its response was lost, inspect API Tokens for "CoCalc R2 objects ${domain}" before retrying; an unknown token ID cannot be revoked automatically.`,
@@ -577,7 +628,7 @@ export async function bootstrapCloudflareConfiguration(opts: {
     }
     result.tunnel_token = {
       ok: false,
-      message: `Unable to ${stage}. Check permissions, domain and expiry; retry with a new bootstrap token.`,
+      message: result.failure,
     };
     if (saveAttempted && durable?.id) {
       notes.push(

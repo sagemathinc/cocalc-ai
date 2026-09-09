@@ -3,6 +3,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
+import { bootstrapTokenEndDate } from "./cloudflare-bootstrap";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -190,7 +191,10 @@ describe("CloudflareConfigWizard", () => {
       name: "CoCalc temporary bootstrap - cocalc.example.edu",
     });
     expect(link).toHaveAttribute("rel", "noreferrer");
-    expect(document.body).toHaveTextContent("Set the End Date to today");
+    expect(document.body).toHaveTextContent("Leave Start Date unset");
+    expect(document.body).toHaveTextContent(
+      `Set End Date to ${bootstrapTokenEndDate()} (tomorrow in UTC)`,
+    );
     expect(document.body).not.toHaveTextContent("15-60");
     fireEvent.change(screen.getByRole("textbox", { name: "Domain name" }), {
       target: { value: "example.edu&permissionGroupKeys=unexpected" },
@@ -299,6 +303,57 @@ describe("CloudflareConfigWizard", () => {
     expect(
       screen.getByRole("textbox", { name: "R2 bucket prefix" }),
     ).toBeDisabled();
+  });
+
+  it.each([
+    ["2026-09-08T17:49:00-07:00", "2026-09-10"],
+    ["2026-12-31T23:59:59Z", "2027-01-01"],
+  ])("recommends a future UTC expiry for %s", (now, expected) => {
+    expect(bootstrapTokenEndDate(new Date(now))).toBe(expected);
+  });
+
+  it("shows one verification failure instead of unrun capability errors", async () => {
+    const bootstrap = webapp_client.conat_client.hub.system
+      .bootstrapCloudflareConfiguration as jest.Mock;
+    bootstrap.mockResolvedValueOnce({
+      permissions: [],
+      values: {},
+      notes: [],
+      settings_status: "not_saved",
+      failure:
+        "Unable to verify the bootstrap token. The bootstrap token has expired.",
+      tunnel_token: { ok: false },
+      visitor_location_headers: { ok: false },
+      r2: { ok: false },
+    });
+    render(
+      <CloudflareConfigWizard
+        open
+        onClose={() => {}}
+        data={readyData}
+        isSet={readySecrets}
+        onApply={jest.fn()}
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Temporary bootstrap token" }),
+      { target: { value: "temporary" } },
+    );
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Bootstrap and save Cloudflare" }),
+      ),
+    );
+    expect(document.body).toHaveTextContent("The bootstrap token has expired");
+    expect(document.body).toHaveTextContent("No site settings were changed");
+    expect(document.body).toHaveTextContent(
+      "Later configuration checks were not run",
+    );
+    expect(screen.queryByText("Tunnel capability")).toBeNull();
+    expect(screen.queryByText("Durable token ID")).toBeNull();
+    expect(document.body).not.toHaveTextContent(
+      "Saving may have partially completed",
+    );
   });
 
   it("uses a five-minute timeout and resumes bootstrap only after fresh authentication", async () => {

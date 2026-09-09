@@ -5,6 +5,12 @@
 
 import { bootstrapCloudflareConfiguration } from "./cloudflare-bootstrap";
 import { createHash } from "node:crypto";
+import getLogger from "@cocalc/backend/logger";
+
+jest.mock("@cocalc/backend/logger", () => {
+  const logger = { warn: jest.fn() };
+  return { __esModule: true, default: () => logger };
+});
 
 const accountScope = "com.cloudflare.api.account";
 const zoneScope = "com.cloudflare.api.account.zone";
@@ -51,6 +57,7 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
   let save: jest.Mock;
   let fetchMock: jest.Mock;
   beforeEach(() => {
+    jest.clearAllMocks();
     save = jest.fn().mockResolvedValue(undefined);
     fetchMock = jest.fn(async (url: string, init: RequestInit) => {
       const path = url.replace("https://api.cloudflare.com/client/v4/", "");
@@ -170,6 +177,57 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
     expect(save).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("secret");
     expect(result.bootstrap_token_invalidated).toBe(true);
+    expect(result.settings_status).toBe("not_saved");
+    expect(result.failure).toContain("HTTP 403");
+  });
+
+  it.each([
+    [{ status: "expired" }, "has expired"],
+    [{ status: "disabled" }, "is disabled"],
+    [{ status: "active", expires_on: "2000-01-01T00:00:00Z" }, "has expired"],
+    [{ status: "active", not_before: "2999-01-01T00:00:00Z" }, "not valid yet"],
+    [{ status: "echo bootstrap-secret" }, "did not confirm"],
+  ])(
+    "reports token validity without running later steps: %j",
+    async (verification, message) => {
+      fetchMock.mockResolvedValueOnce(response(verification));
+      const result = await run(save);
+      expect(result.failure).toContain(message);
+      expect(result.settings_status).toBe("not_saved");
+      expect(save).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(result)).not.toContain("bootstrap-secret");
+      expect(
+        JSON.stringify((getLogger("").warn as jest.Mock).mock.calls),
+      ).not.toContain("bootstrap-secret");
+    },
+  );
+
+  it("exposes numeric provider diagnostics but never response text or network errors", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({
+        success: false,
+        errors: [
+          { code: 1000, message: "bootstrap-secret" },
+          { code: "bootstrap-secret", message: "bootstrap-secret" },
+        ],
+      }),
+    });
+    const rejected = await run(save);
+    expect(rejected.failure).toContain("HTTP 401; codes 1000");
+    fetchMock.mockRejectedValueOnce(new Error("network bootstrap-secret"));
+    const network = await run(save);
+    expect(network.failure).toContain("could not be reached");
+    expect(save).not.toHaveBeenCalled();
+    expect(
+      JSON.stringify([
+        rejected,
+        network,
+        (getLogger("").warn as jest.Mock).mock.calls,
+      ]),
+    ).not.toContain("bootstrap-secret");
   });
 
   it("reports revocation failure without leaking echoed secrets", async () => {
@@ -190,6 +248,7 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
     const result = await run(save);
     expect(result.tunnel_token.ok).toBe(false);
     expect(result.notes.join(" ")).toContain("durable-id");
+    expect(result.settings_status).toBe("unknown");
     expect(result.notes.join(" ")).toContain("s3-id");
     expect(JSON.stringify(result)).not.toContain("secret");
     expect(

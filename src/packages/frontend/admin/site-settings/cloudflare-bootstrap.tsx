@@ -6,6 +6,12 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import SecretSettingInput from "./secret-setting-input";
 import type { FreshAuthActionRunner } from "@cocalc/frontend/auth/fresh-auth";
 
+export function bootstrapTokenEndDate(now = new Date()): string {
+  const end = new Date(now);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return end.toISOString().slice(0, 10);
+}
+
 function bootstrapTokenUrl(domain: string): string {
   // Template URL format: https://developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template/
   // Do not substitute account_api_tokens, which manages account-owned tokens.
@@ -116,7 +122,8 @@ export default function CloudflareBootstrap({
         </Typography.Link>
         .
         <br />
-        Set the <strong>End Date</strong> to <strong>today</strong>.
+        Leave <strong>Start Date</strong> unset. Set <strong>End Date</strong>{" "}
+        to <strong>{bootstrapTokenEndDate()}</strong> (tomorrow in UTC).
         <br />
         Create the token with the prefilled permission, then paste it below.
       </Typography.Paragraph>
@@ -129,8 +136,19 @@ export default function CloudflareBootstrap({
           It is powerful: it can create other tokens, including tokens with R2
           access. CoCalc uses it only during setup and attempts to revoke it
           afterward. Cloudflare's form uses dates, not a duration in minutes;
-          setting the End Date to today limits its lifetime if cleanup fails.
-          Site-admin fresh authentication may be required.
+          the selected End Date means 00:00 UTC at the start of that day, so
+          today is already expired. Choose the next UTC date when creating the
+          token; if you leave this page open overnight, refresh it first. CoCalc
+          attempts immediate revocation after setup; the future End Date limits
+          its lifetime if cleanup fails.{" "}
+          <Typography.Link
+            href="https://developers.cloudflare.com/fundamentals/api/how-to/restrict-tokens/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Cloudflare token expiry documentation
+          </Typography.Link>
+          . Site-admin fresh authentication may be required.
         </Typography.Paragraph>
         <Typography.Text strong>What CoCalc does</Typography.Text>
         <ul>
@@ -242,41 +260,55 @@ export default function CloudflareBootstrap({
                   : "Cloudflare bootstrap needs attention"
               }
               description={
-                result.tunnel_token.ok
-                  ? "Automation and R2 credentials are saved server-side. Run provisioning and diagnostics to verify storage access; no secrets are returned to the browser."
-                  : "Review the cleanup notes and saved settings before retrying. Configuration may not have been saved. No returned tokens are applied by the browser."
+                result.tunnel_token.ok ? (
+                  "Automation and R2 credentials are saved server-side. Run provisioning and diagnostics to verify storage access; no secrets are returned to the browser."
+                ) : (
+                  <>
+                    <p>{result.failure ?? result.tunnel_token.message}</p>
+                    {result.settings_status === "not_saved"
+                      ? "No site settings were changed. Later configuration checks were not run. Review token cleanup below, then retry with a new bootstrap token."
+                      : "Saving may have partially completed. Review the cleanup notes and saved settings before retrying. No returned tokens are applied by the browser."}
+                  </>
+                )
               }
             />
-            <Descriptions column={1} size="small">
-              <Descriptions.Item label="Account">
-                {result.account_name} {result.account_id}
-              </Descriptions.Item>
-              <Descriptions.Item label="Zone">
-                {result.zone_name} {result.zone_id}
-              </Descriptions.Item>
-              <Descriptions.Item label="Durable token ID">
-                {result.durable_token_id}
-              </Descriptions.Item>
-              <Descriptions.Item label="Durable permissions">
-                {result.permissions?.join(", ")}
-              </Descriptions.Item>
-              <Descriptions.Item label="Tunnel capability">
-                {result.tunnel_token.ok ? "Ready" : "Needs attention"}{" "}
-                {result.tunnel_token.message}
-              </Descriptions.Item>
-              <Descriptions.Item label="Visitor location headers">
-                {result.visitor_location_headers.ok
-                  ? "Ready"
-                  : "Needs attention"}{" "}
-                {result.visitor_location_headers.message}
-              </Descriptions.Item>
-              <Descriptions.Item label="R2 administration">
-                {result.r2.ok ? "Ready" : "Needs attention"} {result.r2.message}
-              </Descriptions.Item>
-              <Descriptions.Item label="Notes">
+            {(result.tunnel_token.ok || result.durable_token_id) && (
+              <Descriptions column={1} size="small">
+                <Descriptions.Item label="Account">
+                  {result.account_name} {result.account_id}
+                </Descriptions.Item>
+                <Descriptions.Item label="Zone">
+                  {result.zone_name} {result.zone_id}
+                </Descriptions.Item>
+                <Descriptions.Item label="Durable token ID">
+                  {result.durable_token_id}
+                </Descriptions.Item>
+                <Descriptions.Item label="Durable permissions">
+                  {result.permissions?.join(", ")}
+                </Descriptions.Item>
+                <Descriptions.Item label="Tunnel capability">
+                  {result.tunnel_token.ok ? "Ready" : "Needs attention"}{" "}
+                  {result.tunnel_token.message}
+                </Descriptions.Item>
+                <Descriptions.Item label="Visitor location headers">
+                  {result.visitor_location_headers.ok
+                    ? "Ready"
+                    : result.tunnel_token.ok
+                      ? "Needs attention"
+                      : "Not run"}{" "}
+                  {result.visitor_location_headers.message}
+                </Descriptions.Item>
+                <Descriptions.Item label="R2 administration">
+                  {result.r2.ok ? "Ready" : "Needs attention"}{" "}
+                  {result.r2.message}
+                </Descriptions.Item>
+              </Descriptions>
+            )}
+            {result.notes.length > 0 && (
+              <Typography.Paragraph>
                 {result.notes.join(" ")}
-              </Descriptions.Item>
-            </Descriptions>
+              </Typography.Paragraph>
+            )}
             <Alert
               type={result.bootstrap_token_invalidated ? "success" : "warning"}
               title={

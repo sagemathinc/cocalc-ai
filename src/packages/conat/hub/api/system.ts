@@ -227,6 +227,8 @@ export interface ExternalCredentialInfo {
 }
 
 export interface CloudflareBootstrapResult {
+  failure?: string;
+  settings_status?: "not_saved" | "saved" | "unknown";
   permissions: string[];
   account_id?: string;
   account_name?: string;
