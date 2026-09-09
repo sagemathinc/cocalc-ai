@@ -9,6 +9,8 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { Tooltip } from "@cocalc/frontend/components/tip";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { startChatSpeech } from "./audio/chat-speech-player";
+import { useContext } from "react";
+import { SpeechPaneContext } from "./audio/speech-pane-context";
 
 const READ_ALOUD_DISCLOSURE_KEY = "cocalc-chat-speech-output-disclosed";
 
@@ -27,8 +29,10 @@ export function ChatReadAloudButton({
   messageId?: string;
   showLabel?: boolean;
 }) {
+  const paneId = useContext(SpeechPaneContext);
   const start = () =>
     startChatSpeech({
+      paneId,
       markdown: value,
       projectId,
       path,

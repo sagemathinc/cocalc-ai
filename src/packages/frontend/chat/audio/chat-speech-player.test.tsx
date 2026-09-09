@@ -11,6 +11,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import {
   ChatSpeechPlayer,
@@ -28,6 +29,8 @@ import {
   saveChatSpeechPreferences,
   saveChatSpeechSpeed,
 } from "./speech-preferences";
+import { SpeechPaneContext } from "./speech-pane-context";
+import { ChatReadAloudButton } from "../codex-final-response-copy";
 
 jest.mock("./api", () => ({
   cancelChatSpeech: jest.fn(async () => undefined),
@@ -298,4 +301,46 @@ describe("ChatSpeechPlayer", () => {
     owner.unmount();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:speech");
   });
+
+  it.each([0, 1])(
+    "owns playback in duplicate pane %s",
+    async (initiatingPane) => {
+      localStorage.setItem("cocalc-chat-speech-output-disclosed", "yes");
+      const context = {
+        projectId: "same-project",
+        path: "same.chat",
+        threadId: "same-thread",
+      };
+      const panes = [0, 1].map(() =>
+        render(
+          <SpeechPaneContext.Provider value={Symbol("pane")}>
+            <ChatReadAloudButton {...context} value="Read the same message." />
+            <ChatSpeechPlayer {...context} />
+          </SpeechPaneContext.Provider>,
+        ),
+      );
+      await act(async () => {
+        fireEvent.click(
+          within(panes[initiatingPane].container).getByRole("button", {
+            name: "Read this response aloud",
+          }),
+        );
+      });
+      expect(
+        screen.getAllByRole("region", { name: "Read aloud player" }),
+      ).toHaveLength(1);
+      expect(
+        within(panes[initiatingPane].container).getByRole("region", {
+          name: "Read aloud player",
+        }),
+      ).toBeTruthy();
+      panes[1 - initiatingPane].unmount();
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+      expect(FakeAudio.latest?.paused).toBe(false);
+      panes[initiatingPane].unmount();
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:speech");
+      expect(FakeAudio.latest?.paused).toBe(true);
+      localStorage.removeItem("cocalc-chat-speech-output-disclosed");
+    },
+  );
 });

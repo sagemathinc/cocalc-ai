@@ -55,6 +55,7 @@ describe("CodexFinalResponseCopy", () => {
     );
 
     expect(startChatSpeech).toHaveBeenCalledWith({
+      paneId: undefined,
       markdown: "**Final** response",
       projectId: "project-1",
       path: "chat.chat",

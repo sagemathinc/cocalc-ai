@@ -4,7 +4,8 @@
  */
 
 import { Button, Modal, Select, Slider, Space, Typography } from "antd";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useContext, useEffect, useState, useSyncExternalStore } from "react";
+import { SpeechPaneContext } from "./speech-pane-context";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
@@ -44,9 +45,11 @@ interface PlayerState {
   voices: string[];
   defaultVoice?: string;
   ownerId?: string;
+  paneId?: symbol;
 }
 
 interface StartOptions {
+  paneId?: symbol;
   markdown: string;
   title?: string;
   projectId?: string;
@@ -258,6 +261,7 @@ export async function startChatSpeech(options: StartOptions): Promise<void> {
     chunkCount: chunks.length,
     speed: preferences.speed,
     ownerId: ownerId(options),
+    paneId: options.paneId,
   });
   try {
     await playChunk(0, token, true);
@@ -268,8 +272,12 @@ export async function startChatSpeech(options: StartOptions): Promise<void> {
   }
 }
 
-export function stopChatSpeech(expectedOwnerId?: string): void {
+export function stopChatSpeech(
+  expectedOwnerId?: string,
+  expectedPaneId?: symbol,
+): void {
   if (expectedOwnerId != null && state.ownerId !== expectedOwnerId) return;
+  if (expectedOwnerId != null && state.paneId !== expectedPaneId) return;
   generation += 1;
   const requestIds = [...activeRequestIds];
   activeRequestIds.clear();
@@ -330,12 +338,20 @@ export function ChatSpeechPlayer({
   threadId?: string;
 }) {
   const player = useSyncExternalStore(subscribe, snapshot, snapshot);
+  const paneId = useContext(SpeechPaneContext);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draftVoice, setDraftVoice] = useState<string>();
   const [draftAccent, setDraftAccent] = useState<ChatSpeechAccent>("default");
   const playerOwnerId = ownerId({ projectId, path, threadId });
-  useEffect(() => () => stopChatSpeech(playerOwnerId), [playerOwnerId]);
-  if (player.status === "hidden" || player.ownerId !== playerOwnerId) {
+  useEffect(
+    () => () => stopChatSpeech(playerOwnerId, paneId),
+    [playerOwnerId, paneId],
+  );
+  if (
+    player.status === "hidden" ||
+    player.ownerId !== playerOwnerId ||
+    player.paneId !== paneId
+  ) {
     return null;
   }
   const openSettings = () => {

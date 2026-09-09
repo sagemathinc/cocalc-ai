@@ -189,6 +189,20 @@ export async function finishSiteFundedSpeechGlobalLocal({
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // period_start is immutable. Resolve it without a row lock so every
+    // mutation locks the pool before any reservation, just like admission.
+    const period = await client.query(
+      `SELECT period_start FROM site_ai_speech_reservations WHERE request_id=$1`,
+      [requestId],
+    );
+    if (!period.rows[0]) {
+      throw new Error("speech global reservation was not found");
+    }
+    await client.query(
+      `SELECT pool_id FROM site_ai_funding_periods
+       WHERE pool_id=$1 AND period_start=$2 FOR UPDATE`,
+      [SITE_AI_GLOBAL_POOL_ID, period.rows[0].period_start],
+    );
     const reservation = await client.query(
       `SELECT period_start, reserved_microusd, status
        FROM site_ai_speech_reservations WHERE request_id=$1 FOR UPDATE`,
@@ -204,11 +218,6 @@ export async function finishSiteFundedSpeechGlobalLocal({
     if (status === "committed" && costMicrousd > reservedMicrousd) {
       throw new Error("speech settlement exceeds its global reservation");
     }
-    await client.query(
-      `SELECT pool_id FROM site_ai_funding_periods
-       WHERE pool_id=$1 AND period_start=$2 FOR UPDATE`,
-      [SITE_AI_GLOBAL_POOL_ID, row.period_start],
-    );
     await client.query(
       `UPDATE site_ai_speech_reservations SET status=$2,
          committed_microusd=$3, completed_at=NOW()
