@@ -303,6 +303,11 @@ export type SiteSettingsExtrasKeys =
   | "email_smtp_password"
   | "openai_section"
   | "openai_api_key"
+  | "chat_speech_input_enabled"
+  | "chat_speech_output_enabled"
+  | "chat_speech_transcription_model"
+  | "chat_speech_synthesis_model"
+  | "chat_speech_default_voice"
   | "site_funded_codex_heading"
   | "site_funded_codex_enabled"
   | "site_funded_codex_model"
@@ -947,6 +952,53 @@ export const EXTRAS: SettingsExtras = {
     desc: "Optional site OpenAI API key from https://platform.openai.com/account/api-keys. Leave this blank if users will rely on their own subscriptions or API keys.",
     default: "",
     password: true,
+    tags: ["AI", "OpenAI"],
+    group: "AI & Agents",
+    subgroup: "OpenAI",
+  },
+  chat_speech_input_enabled: {
+    name: "Enable Chat Dictation",
+    desc: "Allow chat users with an eligible OpenAI credential or site-funded AI allowance to transcribe bounded microphone recordings.",
+    default: "yes",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["AI", "OpenAI"],
+    group: "AI & Agents",
+    subgroup: "OpenAI",
+  },
+  chat_speech_output_enabled: {
+    name: "Enable Chat Read Aloud",
+    desc: "Allow chat users with an eligible OpenAI credential or site-funded AI allowance to synthesize completed AI responses.",
+    default: "yes",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["AI", "OpenAI"],
+    group: "AI & Agents",
+    subgroup: "OpenAI",
+  },
+  chat_speech_transcription_model: {
+    name: "Chat Transcription Model",
+    desc: "OpenAI model used to transcribe chat dictation.",
+    default: "gpt-transcribe",
+    to_val: to_trimmed_str,
+    tags: ["AI", "OpenAI"],
+    group: "AI & Agents",
+    subgroup: "OpenAI",
+  },
+  chat_speech_synthesis_model: {
+    name: "Chat Speech Model",
+    desc: "OpenAI model used to read completed chat responses aloud.",
+    default: "gpt-4o-mini-tts",
+    to_val: to_trimmed_str,
+    tags: ["AI", "OpenAI"],
+    group: "AI & Agents",
+    subgroup: "OpenAI",
+  },
+  chat_speech_default_voice: {
+    name: "Chat Speech Default Voice",
+    desc: "Default OpenAI voice used for chat read aloud.",
+    default: "alloy",
+    to_val: to_trimmed_str,
     tags: ["AI", "OpenAI"],
     group: "AI & Agents",
     subgroup: "OpenAI",

@@ -24,6 +24,11 @@ import type {
 } from "@cocalc/conat/hub/api/admin-crashes";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
+import type {
+  ChatSpeechCapabilities,
+  ChatSpeechSynthesisResult,
+  ChatSpeechTranscriptionResult,
+} from "@cocalc/conat/hub/api/system";
 import type { ProjectRootfsStateEntry } from "@cocalc/util/rootfs-images";
 import type {
   ExternalCredentialSelector,
@@ -1364,6 +1369,41 @@ export interface AccountLocalCodexFreshAuthStatusResult {
   expires_at: Date | string | number;
 }
 
+export interface AccountLocalChatSpeechCapabilitiesRequest {
+  account_id: string;
+  project_id?: string;
+}
+
+export interface AccountLocalTranscribeChatAudioRequest {
+  account_id: string;
+  request_id: string;
+  project_id?: string;
+  path?: string;
+  thread_id?: string;
+  content_type: string;
+  filename: string;
+  audio: Uint8Array;
+  duration_ms?: number;
+  language_hints?: string[];
+}
+
+export interface AccountLocalSynthesizeChatSpeechRequest {
+  account_id: string;
+  request_id: string;
+  project_id?: string;
+  path?: string;
+  thread_id?: string;
+  message_id: string;
+  text: string;
+  voice?: string;
+  speed?: number;
+}
+
+export interface AccountLocalCancelChatSpeechRequest {
+  account_id: string;
+  request_id: string;
+}
+
 export interface AccountLocalRedeemVerifyEmailRequest {
   email_address: string;
   token: string;
@@ -2156,6 +2196,18 @@ export interface BayOpsSiteFundedCodexStatusRequest {
   reconcile?: boolean;
 }
 
+export interface BayOpsReserveSiteFundedSpeechRequest {
+  requestId: string;
+  accountId: string;
+  reservedMicrousd: number;
+}
+
+export interface BayOpsFinishSiteFundedSpeechRequest {
+  requestId: string;
+  status: "committed" | "released";
+  costMicrousd?: number;
+}
+
 export interface BayOpsCommercialOrdersRequest {
   action: string;
   actor_account_id: string;
@@ -2735,6 +2787,10 @@ export type AccountLocalMethod =
   | "create-cli-login-session"
   | "start-codex-fresh-auth"
   | "get-codex-fresh-auth-status"
+  | "get-chat-speech-capabilities"
+  | "transcribe-chat-audio"
+  | "synthesize-chat-speech"
+  | "cancel-chat-speech"
   | "redeem-verify-email"
   | "send-email-verification"
   | "admin-verify-email-address"
@@ -2897,6 +2953,8 @@ export type BayOpsMethod =
   | "record-site-funded-codex-usage"
   | "finish-site-funded-codex-turn"
   | "get-site-funded-codex-status"
+  | "reserve-site-funded-speech"
+  | "finish-site-funded-speech"
   | "commercial-orders"
   | "crm-outreach-ingest-zendesk-event-internal"
   | "crm-outreach-apply-opt-out-internal"
@@ -4178,6 +4236,18 @@ export interface InterBayAccountLocalApi {
   getCodexFreshAuthStatus: (
     opts: AccountLocalCodexFreshAuthStatusRequest,
   ) => Promise<AccountLocalCodexFreshAuthStatusResult>;
+  getChatSpeechCapabilities: (
+    opts: AccountLocalChatSpeechCapabilitiesRequest,
+  ) => Promise<ChatSpeechCapabilities>;
+  transcribeChatAudio: (
+    opts: AccountLocalTranscribeChatAudioRequest,
+  ) => Promise<ChatSpeechTranscriptionResult>;
+  synthesizeChatSpeech: (
+    opts: AccountLocalSynthesizeChatSpeechRequest,
+  ) => Promise<ChatSpeechSynthesisResult>;
+  cancelChatSpeech: (
+    opts: AccountLocalCancelChatSpeechRequest,
+  ) => Promise<{ canceled: boolean }>;
   redeemVerifyEmail: (
     opts: AccountLocalRedeemVerifyEmailRequest,
   ) => Promise<void>;
@@ -4642,6 +4712,16 @@ export interface InterBayBayOpsApi {
   getSiteFundedCodexStatus: (
     opts: BayOpsSiteFundedCodexStatusRequest,
   ) => Promise<SiteFundedCodexStatus>;
+  reserveSiteFundedSpeech: (
+    opts: BayOpsReserveSiteFundedSpeechRequest,
+  ) => Promise<{
+    requestId: string;
+    reservedMicrousd: number;
+    created: boolean;
+  }>;
+  finishSiteFundedSpeech: (
+    opts: BayOpsFinishSiteFundedSpeechRequest,
+  ) => Promise<void>;
   commercialOrders: (opts: BayOpsCommercialOrdersRequest) => Promise<unknown>;
   downloadCommercialQuoteInternal: (opts: {
     token: string;
@@ -6745,6 +6825,48 @@ export function createInterBayAccountLocalClient({
       method: "get-codex-fresh-auth-status",
     }),
   });
+  const getChatSpeechCapabilitiesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getChatSpeechCapabilities">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-chat-speech-capabilities",
+    }),
+  });
+  const transcribeChatAudioClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "transcribeChatAudio">
+  >({
+    ...serviceClientOptions({
+      client,
+      timeout: Math.max(timeout ?? 0, 125_000),
+    }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "transcribe-chat-audio",
+    }),
+  });
+  const synthesizeChatSpeechClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "synthesizeChatSpeech">
+  >({
+    ...serviceClientOptions({
+      client,
+      timeout: Math.max(timeout ?? 0, 125_000),
+    }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "synthesize-chat-speech",
+    }),
+  });
+  const cancelChatSpeechClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "cancelChatSpeech">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "cancel-chat-speech",
+    }),
+  });
   const redeemVerifyEmailClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "redeemVerifyEmail">
   >({
@@ -7889,6 +8011,14 @@ export function createInterBayAccountLocalClient({
       await startCodexFreshAuthClient.startCodexFreshAuth(opts),
     getCodexFreshAuthStatus: async (opts) =>
       await getCodexFreshAuthStatusClient.getCodexFreshAuthStatus(opts),
+    getChatSpeechCapabilities: async (opts) =>
+      await getChatSpeechCapabilitiesClient.getChatSpeechCapabilities(opts),
+    transcribeChatAudio: async (opts) =>
+      await transcribeChatAudioClient.transcribeChatAudio(opts),
+    synthesizeChatSpeech: async (opts) =>
+      await synthesizeChatSpeechClient.synthesizeChatSpeech(opts),
+    cancelChatSpeech: async (opts) =>
+      await cancelChatSpeechClient.cancelChatSpeech(opts),
     redeemVerifyEmail: async (opts) =>
       await redeemVerifyEmailClient.redeemVerifyEmail(opts),
     sendEmailVerification: async (opts) =>
@@ -8452,6 +8582,57 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getCodexFreshAuthStatus: async (opts) =>
           await impl.getCodexFreshAuthStatus(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getChatSpeechCapabilities">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-chat-speech-capabilities",
+      }),
+      impl: {
+        getChatSpeechCapabilities: async (opts) =>
+          await impl.getChatSpeechCapabilities(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "transcribeChatAudio">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "transcribe-chat-audio",
+      }),
+      impl: {
+        transcribeChatAudio: async (opts) =>
+          await impl.transcribeChatAudio(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "synthesizeChatSpeech">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "synthesize-chat-speech",
+        }),
+        impl: {
+          synthesizeChatSpeech: async (opts) =>
+            await impl.synthesizeChatSpeech(opts),
+        },
+      },
+    ),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "cancelChatSpeech">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "cancel-chat-speech",
+      }),
+      impl: {
+        cancelChatSpeech: async (opts) => await impl.cancelChatSpeech(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "redeemVerifyEmail">>({
@@ -10284,6 +10465,24 @@ export function createInterBayBayOpsClient({
       method: "get-site-funded-codex-status",
     }),
   });
+  const reserveSiteFundedSpeechClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "reserveSiteFundedSpeech">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "reserve-site-funded-speech",
+    }),
+  });
+  const finishSiteFundedSpeechClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "finishSiteFundedSpeech">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "finish-site-funded-speech",
+    }),
+  });
   const rootfsQuotaReportClient = createServiceClient<
     Pick<InterBayBayOpsApi, "getRootfsQuotaReport">
   >({
@@ -10562,6 +10761,10 @@ export function createInterBayBayOpsClient({
       await finishSiteFundedCodexTurnClient.finishSiteFundedCodexTurn(opts),
     getSiteFundedCodexStatus: async (opts) =>
       await siteFundedCodexStatusClient.getSiteFundedCodexStatus(opts),
+    reserveSiteFundedSpeech: async (opts) =>
+      await reserveSiteFundedSpeechClient.reserveSiteFundedSpeech(opts),
+    finishSiteFundedSpeech: async (opts) =>
+      await finishSiteFundedSpeechClient.finishSiteFundedSpeech(opts),
     commercialOrders: async (opts) =>
       await commercialOrdersClient.commercialOrders(opts),
     downloadCommercialQuoteInternal: async (opts) =>
@@ -10800,6 +11003,30 @@ export function createInterBayBayOpsHandlers({
       impl: {
         getSiteFundedCodexStatus: async (opts) =>
           await impl.getSiteFundedCodexStatus(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "reserveSiteFundedSpeech">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "reserve-site-funded-speech",
+      }),
+      impl: {
+        reserveSiteFundedSpeech: async (opts) =>
+          await impl.reserveSiteFundedSpeech(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "finishSiteFundedSpeech">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "finish-site-funded-speech",
+      }),
+      impl: {
+        finishSiteFundedSpeech: async (opts) =>
+          await impl.finishSiteFundedSpeech(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getMembershipTiers">>({

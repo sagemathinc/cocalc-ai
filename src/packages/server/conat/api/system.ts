@@ -97,6 +97,12 @@ import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import { aiUsageUnitsToMicrousd } from "@cocalc/server/ai/usage-units";
+import {
+  cancelChatSpeech as cancelChatSpeechLocal,
+  getChatSpeechCapabilities as getChatSpeechCapabilitiesLocal,
+  synthesizeChatSpeech as synthesizeChatSpeechLocal,
+  transcribeChatAudio as transcribeChatAudioLocal,
+} from "@cocalc/server/ai/chat-speech";
 import { getSiteFundedCodexConfiguration } from "@cocalc/server/ai/site-funded-codex-policy";
 import { getSiteFundedCodexPoolStatus } from "@cocalc/server/ai/site-funded-codex-reservations";
 import { reconcileSiteFundedCodexCosts } from "@cocalc/server/ai/site-funded-codex-reconciliation";
@@ -6482,6 +6488,64 @@ export async function getOpenAiApiKeyStatus({
     project: toExternalCredentialInfo(projectCredential),
     project_id,
   };
+}
+
+async function getChatSpeechHomeClient(account_id: string) {
+  const { home_bay_id } = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  if (home_bay_id === getConfiguredBayId()) return undefined;
+  return createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: home_bay_id,
+  });
+}
+
+export async function getChatSpeechCapabilities(
+  opts: Parameters<typeof getChatSpeechCapabilitiesLocal>[0],
+) {
+  if (!opts.account_id) throw Error("must be signed in");
+  const client = await getChatSpeechHomeClient(opts.account_id);
+  return client
+    ? await client.getChatSpeechCapabilities({
+        ...opts,
+        account_id: opts.account_id,
+      })
+    : await getChatSpeechCapabilitiesLocal(opts);
+}
+
+export async function transcribeChatAudio(
+  opts: Parameters<typeof transcribeChatAudioLocal>[0],
+) {
+  if (!opts.account_id) throw Error("must be signed in");
+  const client = await getChatSpeechHomeClient(opts.account_id);
+  return client
+    ? await client.transcribeChatAudio({ ...opts, account_id: opts.account_id })
+    : await transcribeChatAudioLocal(opts);
+}
+
+export async function synthesizeChatSpeech(
+  opts: Parameters<typeof synthesizeChatSpeechLocal>[0],
+) {
+  if (!opts.account_id) throw Error("must be signed in");
+  const client = await getChatSpeechHomeClient(opts.account_id);
+  return client
+    ? await client.synthesizeChatSpeech({
+        ...opts,
+        account_id: opts.account_id,
+      })
+    : await synthesizeChatSpeechLocal(opts);
+}
+
+export async function cancelChatSpeech(
+  opts: Parameters<typeof cancelChatSpeechLocal>[0],
+) {
+  if (!opts.account_id) throw Error("must be signed in");
+  const client = await getChatSpeechHomeClient(opts.account_id);
+  return client
+    ? await client.cancelChatSpeech({ ...opts, account_id: opts.account_id })
+    : await cancelChatSpeechLocal(opts);
 }
 
 export async function getCodexPaymentSource({

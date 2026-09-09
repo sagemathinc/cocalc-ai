@@ -100,6 +100,7 @@ describe("create and test a more complicated service", () => {
     interface Api {
       add: (a: number, b: number) => Promise<number>;
       concat: (a: Buffer, b: Buffer) => Promise<Buffer>;
+      echoBinary: (data: Uint8Array) => Promise<Uint8Array>;
       now: () => Promise<Date>;
       big: (n: number) => Promise<string>;
       len: (s: string) => Promise<number>;
@@ -115,6 +116,7 @@ describe("create and test a more complicated service", () => {
         // put any functions here that take/return MsgPack'able values
         add: async (a, b) => a + b,
         concat: async (a, b) => Buffer.concat([a, b]),
+        echoBinary: async (data) => data,
         now: async () => {
           await delay(5);
           return new Date();
@@ -147,6 +149,14 @@ describe("create and test a more complicated service", () => {
     expect((await client.big(n)).length).toBe(n);
 
     expect(await client.len("x".repeat(n))).toBe(n);
+
+    const binary = new Uint8Array(10 * 1024 * 1024);
+    for (let i = 0; i < binary.length; i += 1) {
+      binary[i] = i % 251;
+    }
+    const echoed = await client.echoBinary(binary);
+    expect(echoed).toBeInstanceOf(Uint8Array);
+    expect(Buffer.compare(Buffer.from(echoed), Buffer.from(binary))).toBe(0);
   });
 
   it("cleans up", async () => {

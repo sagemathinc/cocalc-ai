@@ -110,6 +110,16 @@ import {
   getCodexFreshAuthActionStatus,
   startCodexFreshAuthChallengeLocal,
 } from "@cocalc/server/auth/cli-auth";
+import {
+  cancelChatSpeech as cancelChatSpeechLocal,
+  getChatSpeechCapabilities as getChatSpeechCapabilitiesLocal,
+  synthesizeChatSpeech as synthesizeChatSpeechLocal,
+  transcribeChatAudio as transcribeChatAudioLocal,
+} from "@cocalc/server/ai/chat-speech";
+import {
+  finishSiteFundedSpeechGlobalLocal,
+  reserveSiteFundedSpeechGlobalLocal,
+} from "@cocalc/server/ai/site-funded-speech-reservations";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
@@ -796,6 +806,14 @@ async function startBayOpsService(): Promise<void> {
         await import("@cocalc/server/commercial-orders/public-quote");
       return await downloadPublicQuote(token);
     },
+    reserveSiteFundedSpeech: async (opts) => {
+      assertSiteFundedCodexSeedAuthority();
+      return await reserveSiteFundedSpeechGlobalLocal(opts);
+    },
+    finishSiteFundedSpeech: async (opts) => {
+      assertSiteFundedCodexSeedAuthority();
+      await finishSiteFundedSpeechGlobalLocal(opts);
+    },
     commercialOrders: async (opts) => {
       if (bay_id !== getConfiguredClusterSeedBayId()) {
         throw Error("commercial orders are authoritative on the seed bay");
@@ -1153,6 +1171,11 @@ async function startAccountLocalService(): Promise<void> {
         project_id,
         challenge_id,
       }),
+    getChatSpeechCapabilities: async (opts) =>
+      await getChatSpeechCapabilitiesLocal(opts),
+    transcribeChatAudio: async (opts) => await transcribeChatAudioLocal(opts),
+    synthesizeChatSpeech: async (opts) => await synthesizeChatSpeechLocal(opts),
+    cancelChatSpeech: async (opts) => await cancelChatSpeechLocal(opts),
     redeemVerifyEmail: async ({ email_address, token }) => {
       await redeemVerifyEmailLocal(email_address, token);
     },

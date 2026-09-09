@@ -1,303 +1,520 @@
-# OpenAI Chat Input Speech-to-Text Plan
+# Agent Chat Speech Input And Output Plan
 
-Status: implementation plan only
-Scope: chat composer microphone dictation using OpenAI speech-to-text
-Out of scope: browser-native Web Speech API, third-party STT providers, realtime voice assistant, speech output, non-chat editors
+Status: revised implementation plan
+Originally written: 2026-06-15
+Last reviewed: 2026-09-08
+Scope: speech input and read-aloud output in CoCalc agent chat on desktop and
+mobile web
 
-## Goal
+## Decision Summary
 
-Add a microphone button to the CoCalc chat input so a user can record a short
-audio clip and insert the OpenAI transcription into the current chat composer.
+Speech is now a baseline chat capability, not an optional dictation experiment.
+Implement it in two independently shippable paths:
 
-This is not a voice-agent feature. It is a text-entry feature:
+1. **Dictate** records a bounded clip, transcribes it, and inserts editable text
+   at the current composer selection. It never submits automatically.
+2. **Read aloud** converts a completed agent answer to speech and exposes a
+   persistent, compact playback bar with play/pause, stop, speed, and progress.
 
-1. User clicks/holds a microphone control in the chat composer.
-2. Browser records audio locally with `MediaRecorder`.
-3. Browser uploads the bounded audio blob to a CoCalc backend RPC.
-4. Backend calls OpenAI Audio transcriptions.
-5. Browser inserts returned text into the existing chat input draft.
-6. User reviews/edits text before sending.
+Do not start with a full-duplex voice agent. OpenAI Realtime over WebRTC is the
+right eventual architecture for low-latency conversation, but it introduces a
+second agent session, interruption semantics, transcript reconciliation, and a
+different cost and authorization surface. It should be a later product mode,
+not the implementation substrate for dictation or read-aloud.
 
-## OpenAI API Choice
+The first release should use OpenAI's request-based Audio APIs through CoCalc's
+backend:
 
-Use OpenAI request-based Audio transcriptions first, not Realtime transcription.
+- Speech input: `POST /v1/audio/transcriptions`, initially `gpt-transcribe`.
+- Speech output: `POST /v1/audio/speech`, initially `gpt-4o-mini-tts`.
+- Keep model names server-configurable and capability-reported. Do not bake a
+  model list into the frontend.
 
-OpenAI’s speech-to-text guide describes the Audio API `transcriptions` endpoint
-for bounded audio files and notes that file uploads are limited to 25 MB with
-formats including `mp3`, `mp4`, `mpeg`, `mpga`, `m4a`, `wav`, and `webm`.
-The same guide says Realtime transcription is for live transcript deltas from a
-microphone/media stream.
+Site-funded speech uses the site's OpenAI API key and consumes the same rolling
+AI allowance as Luna Medium. CoCalc's accounting conversion is 100 AI usage
+units per US dollar. Project and account OpenAI keys remain valid alternative
+credential sources, but they do not consume the site-funded allowance.
 
-For chat input, request-based transcription is the right first implementation:
+At prices checked on 2026-09-08, `gpt-transcribe` costs $0.0045 per input minute
+(0.45 AI usage units), while `gpt-4o-mini-tts` costs $0.60 per million input
+text tokens and $12 per million output audio tokens. OpenAI's approximate TTS
+pricing works out to roughly $0.015 per generated minute (about 1.5 AI usage
+units) under the standard audio-token estimate; actual TTS cost varies with the
+generated audio and speaking speed.
 
-- Simpler backend and frontend lifecycle.
-- Easy to review text before sending.
-- No persistent realtime session or websocket state.
-- No direct OpenAI credential exposure to the browser.
-- Compatible with `MediaRecorder` output, especially `audio/webm`.
+OpenAI's current transcription guide recommends `gpt-transcribe` for new
+general-purpose transcription. It accepts files up to 25 MB in `mp3`, `mp4`,
+`mpeg`, `mpga`, `m4a`, `wav`, and `webm` formats. The Speech API supports
+streamed output, and OpenAI requires a clear disclosure that its generated
+voice is artificial.
 
-Default model:
+Current references:
 
-- Use `gpt-4o-mini-transcribe` initially for lower cost.
-- Make the model server-configurable, with `gpt-4o-transcribe` as the higher
-  quality option.
-- Do not use diarization for chat input.
+- OpenAI speech-to-text guide:
+  `https://developers.openai.com/api/docs/guides/speech-to-text`
+- OpenAI text-to-speech guide:
+  `https://developers.openai.com/api/docs/guides/text-to-speech`
+- OpenAI Realtime WebRTC guide:
+  `https://developers.openai.com/api/docs/guides/realtime-webrtc`
 
-References:
+## Product Scope
 
-- OpenAI Speech to text guide: `https://developers.openai.com/api/docs/guides/speech-to-text`
-- OpenAI Realtime transcription guide: `https://developers.openai.com/api/docs/guides/realtime-transcription`
-- OpenAI Create transcription API reference: `https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create/`
+### Included
 
-## Product Behavior
+- The full chat UI in `src/packages/frontend/chat`, including project chat,
+  Codex/ACP threads, external side chat, Lite, and cocalc-plus.
+- iPhone Safari as a release-blocking target, plus iPad Safari, desktop Safari,
+  Chrome, Firefox, and Chromium-derived browsers.
+- Dictation into both rich-text and Markdown composer modes.
+- Read-aloud for completed agent/AI answers, beginning with the Codex final
+  response section.
+- Keyboard, screen-reader, dark-mode, narrow-width, and reduced-motion support.
+- Separate site kill switches for speech input and speech output.
 
-Composer UI:
+### Not Included In The First Release
 
-- Add a small microphone button near the existing chat composer buttons in
-  `src/packages/frontend/chat/composer.tsx`.
-- Hide the button when AI is disabled by policy for the project/account.
-- Disable the button when the browser lacks `navigator.mediaDevices` or
-  `MediaRecorder`.
-- Show a tooltip such as `Dictate message`.
-- While recording, show elapsed time and a clear stop/cancel affordance.
-- After recording stops, show a short `Transcribing...` state on the button.
-- Insert transcribed text into the existing draft, preserving existing text.
-- Never auto-submit the transcript.
+- Automatic submission after dictation.
+- Always-listening microphones, wake words, or background recording.
+- Full-duplex voice conversations or barge-in.
+- Recording collaborators or transcribing meetings.
+- Persisting source recordings or generated audio.
+- Speech controls in non-chat editors.
+- `packages/essential-frontend`. It intentionally does not have full chat
+  parity; do not duplicate this feature there or route users to it as a mobile
+  substitute.
+- Browser `SpeechRecognition` or `speechSynthesis` as a hidden fallback. Their
+  behavior, voices, privacy, and browser support differ enough that fallback
+  would create a second untested product.
 
-Insertion rule:
+## User Experience
 
-- If the composer is empty, set the draft to the transcript.
-- If the composer already has text and does not end in whitespace, append
-  `\n\n` plus the transcript.
-- If the composer already ends in whitespace, append the transcript directly.
-- Restore focus to the composer after insertion.
+### Dictation
 
-Failure behavior:
+Add an icon-only microphone control to the existing responsive composer action
+area in `src/packages/frontend/chat/composer.tsx`. It must not force the mobile
+composer to become narrower. On a narrow screen it belongs with the existing
+compact controls, not beside the full-width Send button.
 
-- Permission denied: show `Microphone access was denied.`
-- No supported recorder MIME type: hide or disable with a tooltip.
-- Backend/OpenAI error: show a specific error from the backend, not a generic
-  toast.
-- Empty transcript: show `No speech was detected.`
+States:
 
-## Security And Privacy
+- **Idle:** `Dictate message`.
+- **Requesting permission:** short pending state after the user's click.
+- **Recording:** unmistakable active state, elapsed time, Stop, and Cancel.
+- **Transcribing:** spinner/status while preserving the current draft.
+- **Inserted:** focus and selection restored around the inserted text.
+- **Error:** actionable message; the existing draft remains unchanged.
 
-Do not call OpenAI directly from the browser.
+Use click-to-start and click-to-stop. Do not require press-and-hold. Stop
+automatically at the configured duration limit and when the recorder reports a
+fatal interruption. Cancel must stop every `MediaStreamTrack`, discard chunks,
+and make no provider request.
 
-The browser should send audio only to CoCalc. The backend should:
+Insertion semantics:
 
-- Resolve credentials server-side using the existing OpenAI credential routing
-  model.
-- Enforce account/project AI policy before accepting audio.
-- Enforce file size and duration limits before forwarding to OpenAI.
-- Avoid storing audio blobs unless a future debugging mode explicitly opts in.
-- Never log audio bytes or full transcripts.
-- Log only metadata needed for observability and abuse control: account,
-  project, duration, byte size, model, success/failure class, and timing.
+- Capture the composer draft key, session token, editor mode, and selection
+  when recording starts.
+- On success, insert at the live selection when the same composer session is
+  still active.
+- If focus moved within the same draft and the original selection is no longer
+  valid, insert at the current selection.
+- If the user changed thread/draft while transcription was in flight, do not
+  put text into the new thread. Offer `Insert into current draft` and `Copy`
+  from a small recovery notice.
+- Normalize surrounding whitespace without destroying Markdown structure.
+- Never auto-send.
 
-Suggested limits for the first release:
+The current `ChatInputControl` only exposes `focus()`. Extend the editor control
+contract with a mode-independent operation such as:
 
-- Maximum duration: 60 seconds.
-- Maximum upload size: 10 MB, below OpenAI’s 25 MB file limit.
-- Accepted MIME types: `audio/webm`, `audio/mp4`, `audio/mpeg`, `audio/wav`,
-  with frontend preference for `audio/webm`.
-- One in-flight transcription per composer.
-- Conservative per-account/project rate limit, e.g. 20 transcription attempts
-  per 10 minutes initially.
+```ts
+interface ChatInputControl {
+  focus: () => boolean;
+  insertText: (text: string, selection?: unknown) => boolean;
+  captureSelection: () => unknown;
+}
+```
 
-## Architecture
+Implement this through the existing MultiMarkdownInput/Slate/CodeMirror
+selection bridges. Draft string concatenation is only a fallback for an empty
+composer, not the primary insertion mechanism.
 
-### Frontend
+Expected errors:
 
-Add a focused hook/component pair:
+- `Microphone access was denied.`
+- `No supported audio recording format is available in this browser.`
+- `No speech was detected.`
+- `The recording is too long.`
+- Credential, allowance, rate-limit, and provider-unavailable errors using the
+  same terminology as the rest of CoCalc AI settings.
 
-- `src/packages/frontend/chat/audio/use-chat-audio-recorder.ts`
-- `src/packages/frontend/chat/audio/dictate-button.tsx`
+### Read Aloud
 
-Responsibilities:
+Add a `Read aloud` action next to Copy on a completed Codex final response. Once
+the behavior is stable, expose the same action for other completed AI messages.
+Do not read tool activity, status events, diffs, or hidden agent context.
 
-- Detect browser support.
-- Pick a supported `MediaRecorder` MIME type.
-- Request microphone permission only when the user clicks the button.
-- Record audio chunks.
-- Stop automatically at max duration.
-- POST/RPC the audio blob to the backend.
-- Insert returned text into the existing composer draft through the same state
-  path as typing.
+Playback must not be tied to the visibility of the original message action.
+After activation, show a compact player anchored immediately above the chat
+composer:
 
-Do not embed transcription logic into generic markdown input components. This
-feature is chat-specific at first.
+- Play/pause.
+- Stop and release audio resources.
+- Progress and elapsed/remaining time when browser metadata permits it.
+- Playback speed with a small, bounded set such as 0.75x, 1x, 1.25x, 1.5x,
+  and 2x.
+- A short title derived from the message/thread, not the entire answer.
+- A visible and accessible `AI-generated voice` disclosure.
 
-### Backend RPC
+Only one chat speech player may be active per browser tab. Starting another
+message stops the first. Navigating to another project or closing the chat
+stops playback and revokes object URLs.
 
-Add a backend RPC such as:
+Do not send raw Markdown directly to TTS. Add a deterministic
+`markdownToSpeechText` transformation using the existing Markdown parser or
+syntax tree:
+
+- Preserve headings, paragraphs, list order, quotations, inline code, and link
+  labels in a speakable form.
+- Omit raw URLs when a link has a label.
+- Skip images and internal CoCalc URI targets.
+- Announce and omit long fenced code blocks by default; preserve short inline
+  code and short blocks.
+- Remove tool/activity chrome that is not part of the final answer.
+- Collapse visual-only punctuation without rewriting the answer's meaning.
+
+Speech endpoint input is bounded, so split long answers at paragraph or
+sentence boundaries. Generate one chunk at a time and prefetch at most the next
+chunk. This bounds memory and provider spend when a user stops early. Keep
+generated bytes only in memory for the current tab, keyed by message content,
+voice, speed/instructions, and model; revoke every object URL on eviction.
+
+Use a broadly playable response format such as MP3 for the first release.
+OpenAI can stream Speech API output, but a complete bounded chunk over typed
+Conat is simpler and should ship first. If measured time-to-first-audio is poor,
+add a purpose-built streaming response transport rather than encoding stream
+events into ordinary RPC results.
+
+iOS Safari may decline delayed playback after an asynchronous network request.
+The implementation must test this on a physical iPhone. If playback cannot
+begin from the original click, transition to an explicit `Ready - tap to play`
+control; do not use autoplay workarounds that create surprising audio.
+
+## Browser Recording
+
+Use `navigator.mediaDevices.getUserMedia({ audio: true })` and
+`MediaRecorder`. Request permission only from a direct user action.
+
+Negotiate the recorder format at runtime with `MediaRecorder.isTypeSupported`
+instead of assuming Chrome's WebM output. Prefer a small ordered set containing
+Opus/WebM and MP4/AAC candidates accepted by the backend. Send the actual MIME
+type and a matching extension.
+
+Initial CoCalc limits:
+
+- Maximum duration: 90 seconds. Show a countdown for the final 10 seconds.
+- Maximum encoded upload: 10 MB, checked in both browser and backend.
+- One recording and one transcription request per browser tab.
+- A server-side per-account rate limit, with project included in the audit
+  dimensions.
+
+Handle `visibilitychange`, track `ended`, recorder errors, route changes, and
+component unmount. An interrupted recording should be recoverable when a valid
+blob exists, but it must never continue invisibly.
+
+## Backend Architecture
+
+### Authority And API Placement
+
+Speech is an account-facing AI service. The account's home bay should own
+credential selection, allowance checks, provider calls, and usage recording.
+When a request carries a `project_id`, the service must route the project policy
+and collaborator authorization check to the project's owning bay. It must not
+assume the browser's connected bay has authoritative project state.
+
+Add authenticated typed methods to the browser-facing hub system API, with
+names along these lines:
 
 ```ts
 transcribeChatAudio({
   project_id?: string;
   path?: string;
   thread_id?: string;
-  filename: string;
   content_type: string;
-  audio: Uint8Array | base64 string;
+  filename: string;
+  audio: Uint8Array;
+  duration_ms?: number;
+  language_hints?: string[];
 }): Promise<{
   text: string;
   model: string;
-  duration_ms?: number;
-}>
+  detected_languages?: string[];
+}>;
+
+synthesizeChatSpeech({
+  project_id?: string;
+  path?: string;
+  thread_id?: string;
+  message_id: string;
+  text: string;
+  voice?: string;
+  speed?: number;
+}): Promise<{
+  audio: Uint8Array;
+  content_type: string;
+  model: string;
+}>;
 ```
 
-Likely placement:
+Use `Uint8Array`, not base64. Typed Conat's MessagePack transport preserves
+binary data and already falls back from its fast-RPC path when a request is too
+large. Keep each request comfortably bounded anyway. Do not put recordings in
+the project filesystem or durable blob store.
 
-- Prefer an existing server-side Conat API namespace used by browser-facing
-  account/project operations.
-- Keep the RPC backend-only for OpenAI access.
-- If implemented under system/account APIs, route project authorization through
-  the project’s owning bay, not through hub-local DB shortcuts.
+Conat core automatically chunks and reassembles messages larger than the
+server's per-packet payload. Typed services use fast RPC only up to 4 MiB and
+fall back to ordinary request transport for larger requests or responses. The
+real Conat service integration suite covers 10 MB payloads in both directions
+and includes a 10 MiB `Uint8Array` round trip. Retain a browser-path 10 MiB
+regression test when the speech API is added; custom application-level upload
+chunking is not needed.
 
-Authorization checks:
+Conat request cancellation is different: `Client.request` currently has a
+timeout but no `AbortSignal`, and abandoning a client promise does not cancel
+an active service handler or provider request. Give each speech operation an
+idempotency/request ID and add an explicit authenticated cancel method. The
+home-bay service should retain a bounded map from active request IDs to provider
+`AbortController`s. Cancel, route changes, and component unmount call the cancel
+method; server timeout aborts the same controller. Cancellation is best effort:
+once provider work has started it may still be billable, and the UI and usage
+accounting must not imply otherwise.
 
-- Require signed-in account.
-- If `project_id` is present, require collaborator access using the routed
-  project access helper, not a local-only project membership read.
-- Use existing AI policy checks or expose a server-side equivalent of
-  `projects.store.isAIAllowedByPolicy(project_id, "chat")`.
-- Reject if the site/account/project has AI disabled.
+### Credential And Funding Rules
 
-Credential resolution:
+Do not reuse `getCodexPaymentSource` blindly. It can select ChatGPT subscription
+OAuth, which is a Codex-specific credential and does not imply authorization to
+call OpenAI's Audio API.
 
-- Reuse the existing OpenAI credential precedence where practical:
-  project OpenAI API key, account OpenAI API key, then site OpenAI API key.
-- Do not use ChatGPT subscription auth for this feature unless a separate
-  product decision explicitly makes that valid for Audio API usage.
-- Update `last_used` on the selected credential via the existing routed
-  credential helpers.
+Create a speech-capability resolver that reports both availability and source:
 
-### OpenAI Call
+1. Project OpenAI API key, when a project context exists and policy allows it.
+2. Account OpenAI API key.
+3. Site OpenAI API key only when site-funded speech is explicitly enabled and
+   the account passes the normal rolling 5-hour and 7-day AI allowance policy
+   plus the site's global spending guard.
+4. Otherwise unavailable, with a setup action linking to AI settings.
 
-Backend implementation shape:
+The resolver must be shared by capability reporting and execution so the UI
+cannot advertise a path the backend later rejects. Update `last_used` through
+the existing routed secret helpers. Never expose a provider key to the browser.
+
+Site-funded speech consumes the existing AI allowance; do not create a separate
+speech balance. Existing site-funded Codex reservations are turn-oriented and
+should not be silently repurposed. Before starting provider work, perform the
+same per-account and global admission checks, with a conservative reservation
+derived from maximum recording duration or bounded TTS text. Reconcile that
+reservation after completion or failure.
+
+Record provider-reported cost/usage when available. Otherwise calculate from
+the documented model rate and measured input or generated-audio duration, and
+reconcile against provider billing aggregates. Record model, operation
+(`transcription` or `speech`), duration or character/token basis, project, and
+provider request ID. Extend the AI usage schema with media-specific dimensions
+instead of putting audio or full transcripts into log fields.
+
+### Provider Calls
+
+Put provider-specific code behind a small server interface so model changes do
+not leak through UI code:
 
 ```ts
-const transcription = await openai.audio.transcriptions.create({
-  file,
-  model: configuredModel ?? "gpt-4o-mini-transcribe",
-  response_format: "json",
-});
-return { text: transcription.text.trim(), model };
+interface ChatSpeechProvider {
+  transcribe(opts: TranscriptionRequest): Promise<TranscriptionResult>;
+  synthesize(opts: SpeechRequest): Promise<SpeechResult>;
+}
 ```
 
-Implementation detail:
+The OpenAI implementation should:
 
-- The OpenAI Node SDK expects a file-like upload object. Convert the received
-  bytes into a temporary file, `Blob`, or SDK-supported upload wrapper in the
-  server runtime.
-- Delete any temporary file in `finally`.
-- Set a backend timeout.
-- Return a normalized error message for common failure classes: no credential,
-  quota/rate limit, unsupported format, too large, provider unavailable.
+- Use SDK-supported upload objects with the real filename and content type.
+- Validate size, declared MIME type, detected container signature where
+  practical, duration, text length, voice, and speed server-side.
+- Use configured model aliases and explicit timeouts.
+- Return normalized error codes plus safe user-facing messages.
+- Dispose temporary files/buffers in `finally`.
+- Never log audio bytes, generated audio, full transcripts, or message text.
+- Log only operational metadata and redacted failure classes.
 
-## UI Details
+Generated speech must clearly be identified to the user as AI-generated. Keep
+that disclosure in UI copy even when a configured provider or voice changes.
 
-Initial UI:
+## Frontend Structure
 
-- Microphone icon button near Send/Queue/Steer.
-- Idle state: `Dictate`.
-- Recording state: red/danger or active styling with elapsed timer.
-- Stop state: same button stops recording.
-- Cancel can be a small secondary `x` while recording.
-- Transcribing state: spinner on the microphone button.
+Suggested modules:
 
-Text insertion should be obvious:
+- `src/packages/frontend/chat/audio/use-chat-audio-recorder.ts`
+- `src/packages/frontend/chat/audio/dictate-button.tsx`
+- `src/packages/frontend/chat/audio/use-chat-speech-player.ts`
+- `src/packages/frontend/chat/audio/chat-speech-player.tsx`
+- `src/packages/frontend/chat/audio/read-aloud-button.tsx`
+- `src/packages/frontend/chat/audio/markdown-to-speech.ts`
 
-- After insertion, optionally flash a subtle `Transcribed audio inserted`
-  message near the composer.
-- Keep cursor at the end of inserted text.
+Keep recording and playback state in a chat-level provider/controller, not in
+an individual message. Individual composers and messages invoke that
+controller. This is required for one-player-at-a-time behavior, navigation
+cleanup, and a player that remains visible after its source message scrolls
+away.
 
-Accessibility:
+Do not add speech logic to generic editor components. The only generic editor
+change should be the small selection/insertion control needed by chat and
+potentially useful elsewhere.
 
-- Button has `aria-label`.
-- Recording state announces elapsed time in the label/title.
-- Keyboard users can start/stop via the button.
-- Do not require press-and-hold; click-to-toggle is more accessible.
+The server should expose a lightweight capability result so the frontend knows
+whether input/output is enabled, which source will fund it, configured duration
+limits, supported MIME types, and allowed voice/speed values. Browser support
+is then intersected with server capability.
 
-## Lite / cocalc-plus
+## Privacy, Security, And Abuse Controls
 
-The first implementation should work in Lite/cocalc-plus if the backend has an
-OpenAI key path available, but it must not assume `/home/user` or a project-host
-file path.
+- Audio goes from the browser to CoCalc, then to the configured provider. The
+  browser never receives provider credentials.
+- Show concise first-use disclosure that recording audio is sent to the
+  configured AI provider for transcription.
+- Read-aloud sends the selected answer text to the speech provider again; state
+  this in the speech settings/help surface.
+- Do not retain source or generated audio. In-memory browser caching is allowed
+  only for the current tab/session.
+- Do not include transcript or message content in routine logs, analytics,
+  traces, crash reports, or usage records.
+- Enforce signed-in account, collaborator access, project/site AI policy,
+  funding eligibility, rate limits, byte limits, and timeouts on the server.
+- Treat client duration and MIME metadata as hints, not trusted facts.
+- Ensure repeated clicks and retries have request IDs so usage and errors can
+  be reconciled without accidental duplicate charging.
 
-Rules:
+## Accessibility And Mobile Requirements
 
-- The audio upload is an RPC payload, not a project file upload.
-- No dependency on project filesystem location.
-- If Lite lacks a configured OpenAI key, show the same credential/setup error
-  as other OpenAI-backed chat features.
+- Every icon control has a stable accessible name and exposed pressed/busy
+  state.
+- Announce recording start/stop, transcription completion/failure, and playback
+  readiness through a restrained live region.
+- Recording status cannot rely on color alone.
+- All actions work by keyboard without press-and-hold or drag.
+- Focus returns to the composer after insertion and to the invoking message
+  action after the player closes when that element still exists.
+- Controls reflow at 320 CSS pixels and at 200% zoom without reducing the text
+  composer width below its current mobile behavior.
+- Use Ant Design and `UI_COLORS`; verify light, dark, and slate modes.
+- Honor CoCalc's animation preference and reduced-motion behavior.
+- Test with the software keyboard open, browser chrome collapsed/expanded,
+  portrait/landscape rotation, an incoming call/audio interruption, and a
+  locked/unlocked device.
+
+Physical iPhone Safari is release-blocking. Chrome device emulation and
+`safaridriver` are useful regression tools but do not establish microphone,
+audio-session, or delayed-playback correctness on iOS.
 
 ## Tests
 
-Frontend unit tests:
+### Frontend Unit And Component Tests
 
-- Button hidden/disabled when browser recording APIs are unavailable.
-- Clicking starts recording only after user action.
-- Stop sends a blob and inserts returned text.
-- Existing draft insertion preserves text and appends with correct separator.
-- Cancel does not call backend and does not mutate draft.
-- Backend error leaves draft unchanged and shows specific error.
+- Capability intersection and unsupported-browser states.
+- Permission is requested only after activation.
+- MIME negotiation selects the first actually supported format.
+- Stop, duration limit, track interruption, Cancel, and unmount clean up all
+  media tracks and timers.
+- Successful transcription inserts at selection in rich-text and Markdown
+  modes without auto-sending.
+- A stale composer session never receives a late transcript.
+- Provider errors preserve the draft and expose a specific recovery path.
+- Markdown-to-speech fixtures cover headings, lists, links, quotations, math,
+  inline code, fenced code, images, and CoCalc links.
+- Only one player runs; stop/navigation revokes all object URLs.
+- Player controls have roles, names, keyboard behavior, focus restoration, and
+  live status.
 
-Backend tests:
+### Backend Tests
 
-- Reject unsigned requests.
-- Reject missing project access.
-- Reject AI-disabled policy.
-- Reject unsupported MIME type.
-- Reject oversized audio.
-- Calls OpenAI transcription with configured model and upload file.
-- Deletes temporary file after success and failure.
-- Uses routed credential selection and does not expose key in logs/errors.
+- Authentication and routed project collaborator/policy checks.
+- Capability and execution use the same credential/funding resolver.
+- ChatGPT OAuth alone is not reported as Audio API capability.
+- Unsupported MIME, invalid container, oversized body, excessive duration,
+  invalid voice/speed, excessive TTS text, and rate limits are rejected before
+  a provider call.
+- OpenAI transcription and speech calls receive bounded, correctly named
+  inputs.
+- Temporary resources are removed after success, timeout, cancellation, and
+  provider failure.
+- Usage is recorded exactly once without content or credential leakage.
+- Typed Conat binary round trips are tested above and below the fast-RPC
+  threshold.
 
-Integration/browser smoke:
+### Browser And Device Matrix
 
-- In a real browser session, microphone permission prompt appears only after
-  clicking the microphone button.
-- A mocked backend transcript inserts into the chat composer.
-- Send still uses the existing chat send path after insertion.
+- Desktop Chrome, Firefox, and Safari: permission, record, insert, generate,
+  play/pause, stop, and navigation cleanup.
+- iPhone Safari: the same flow with the software keyboard and real microphone.
+- iPad Safari in portrait and split view.
+- Narrow and desktop screenshots in light, dark, and slate modes.
+- Denied permission, missing key, exhausted allowance, offline transition, and
+  provider timeout.
 
-## Rollout Plan
+No automated test should upload real audio to OpenAI by default. Keep one
+explicitly invoked staging smoke that uses a short synthetic fixture and checks
+only the returned transcript/audio metadata.
 
-Phase 1: Backend and mockable frontend plumbing
+## Delivery Sequence
 
-- Add the backend RPC with OpenAI transcription behind a feature flag.
-- Add frontend recorder hook and tests with mocked media APIs.
-- Add composer button hidden unless feature flag and AI policy allow it.
+### Phase 0: Capability And Funding Foundation
 
-Phase 2: Internal dogfood
+- Add the speech capability resolver and separate input/output feature flags.
+- Reuse the normal AI allowance and global spending guard for site-funded
+  speech, with bounded reservations and usage reconciliation.
+- Add typed binary transport contract tests and provider fakes.
 
-- Enable for development/staging only.
-- Validate Chrome, Safari, Firefox, and mobile Safari recording format support.
-- Tune MIME type preference order.
-- Confirm transcription errors are actionable.
+### Phase 1: Dictation
 
-Phase 3: Limited production release
+- Extend the composer control with selection-aware insertion.
+- Add recorder lifecycle and dictation UI.
+- Ship behind the input flag to internal/staging users.
+- Validate physical iPhone Safari before production enablement.
 
-- Enable for logged-in users with OpenAI-backed AI enabled.
-- Keep max duration at 60 seconds.
-- Track usage and error rates.
-- Add a kill switch independent of general AI if needed.
+### Phase 2: Read Aloud
 
-Phase 4: Optional improvements
+- Add deterministic Markdown-to-speech conversion and chunking.
+- Add the Codex final-response action and persistent chat player.
+- Validate iOS delayed playback and fall back to explicit ready/play when
+  required.
+- Expand to other AI messages after the final-response path is stable.
 
-- Language hint selector only if real usage shows language detection problems.
-- Push-to-talk keyboard shortcut only after click-to-toggle is stable.
-- Realtime transcription only if users need live partial text; otherwise keep
-  request-based transcription.
+### Phase 3: Production Hardening
+
+- Tune limits using latency, error-class, and aggregate duration metrics.
+- Add settings for voice and default speed only after the basic controls are
+  stable; avoid a large settings surface initially.
+- Consider streamed TTS transport only if measured first-audio latency warrants
+  it.
+
+### Phase 4: Optional Realtime Voice Mode
+
+Evaluate an explicit voice-conversation mode using OpenAI Realtime over WebRTC.
+It requires a design for agent authority, tools, interruptions, transcript
+persistence, handoff back to text, and spending limits. Do not infer that this
+phase is complete merely because dictation and read-aloud exist.
 
 ## Acceptance Criteria
 
-- Users can dictate into the chat composer and review/edit before sending.
-- No OpenAI API key is ever exposed to the browser.
-- The feature respects site/account/project AI disablement.
-- Audio is bounded, transient, and not stored.
-- Failure messages are specific.
-- Works in ordinary chat rooms and external side chat without changing send
-  semantics.
-- Implementation does not introduce a general audio feature outside chat input.
+- A user can dictate into any supported chat composer, edit the result, and
+  send it through the unchanged chat submission path.
+- A user can read a completed Codex answer aloud and control playback after the
+  source action scrolls out of view.
+- Both paths work on a physical iPhone Safari and do not regress desktop chat.
+- No provider credential reaches the browser.
+- Audio and generated speech are bounded, transient, and absent from durable
+  storage and content logs.
+- Late transcription never enters the wrong thread or draft.
+- Capability reporting, authorization, funding, execution, and usage recording
+  agree on the same account/project authority.
+- ChatGPT subscription authentication is not mistaken for Audio API access.
+- The UI clearly discloses microphone data handling and AI-generated speech.
+- Input and output can be disabled independently without disabling text chat.
+- Full-duplex Realtime voice remains a separate, deliberate product decision.

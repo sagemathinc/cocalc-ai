@@ -24,6 +24,7 @@ import { ensureAiSessionsSchema } from "./acp-sessions";
 const logger = getLogger("server:ai:site-funded-codex-reservations");
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const GLOBAL_POOL_ID = "site-funded-codex-global" as const;
+export const SITE_AI_GLOBAL_POOL_ID = GLOBAL_POOL_ID;
 const TERMINAL_SESSION_GRACE_MS = 60_000;
 const STALE_RESERVATION_HEARTBEAT_MS = 2 * 60_000;
 const ORPHANED_RESERVATION_HEARTBEAT_MS = 5 * 60_000;
@@ -79,6 +80,13 @@ function periodBounds(now = new Date()): { start: Date; end: Date } {
   const end = new Date(start);
   end.setUTCDate(end.getUTCDate() + 7);
   return { start, end };
+}
+
+export function siteAiFundingPeriodBounds(now = new Date()): {
+  start: Date;
+  end: Date;
+} {
+  return periodBounds(now);
 }
 
 function reservationFromRow(row: any): SiteFundedCodexReservation {
@@ -176,6 +184,24 @@ export async function ensureSiteFundedCodexReservationTables(): Promise<void> {
       ON site_ai_turn_reservations(status, expires_at)
       WHERE status = 'active'`,
     `
+    CREATE TABLE IF NOT EXISTS site_ai_speech_reservations (
+      request_id UUID PRIMARY KEY,
+      account_id UUID NOT NULL,
+      period_start TIMESTAMPTZ NOT NULL,
+      reserved_microusd BIGINT NOT NULL CHECK (reserved_microusd > 0),
+      committed_microusd BIGINT NOT NULL DEFAULT 0
+        CHECK (committed_microusd >= 0),
+      status TEXT NOT NULL
+        CHECK (status IN ('active', 'committed', 'released', 'expired')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      completed_at TIMESTAMPTZ
+    )`,
+    `
+    CREATE INDEX IF NOT EXISTS site_ai_speech_reservations_active_idx
+      ON site_ai_speech_reservations(status, expires_at)
+      WHERE status = 'active'`,
+    `
     CREATE TABLE IF NOT EXISTS site_ai_account_holds (
       account_id UUID PRIMARY KEY,
       reason TEXT NOT NULL,
@@ -186,6 +212,35 @@ export async function ensureSiteFundedCodexReservationTables(): Promise<void> {
   ];
   for (const statement of statements) {
     await getPool().query(statement);
+  }
+}
+
+async function expireCurrentPeriodSpeechReservations({
+  client,
+  periodStart,
+}: {
+  client: DbClient;
+  periodStart: Date;
+}): Promise<void> {
+  const { rows } = await client.query(
+    `UPDATE site_ai_speech_reservations SET
+       status='expired', completed_at=NOW()
+     WHERE period_start=$1 AND status='active' AND expires_at<=NOW()
+     RETURNING reserved_microusd`,
+    [periodStart],
+  );
+  const released = rows.reduce(
+    (sum, row) => sum + int(row.reserved_microusd),
+    0,
+  );
+  if (released > 0) {
+    await client.query(
+      `UPDATE site_ai_funding_periods SET
+         reserved_microusd=GREATEST(0, reserved_microusd-$3),
+         updated_at=NOW()
+       WHERE pool_id=$1 AND period_start=$2`,
+      [GLOBAL_POOL_ID, periodStart, released],
+    );
   }
 }
 
@@ -460,6 +515,10 @@ export async function reserveSiteFundedCodexTurn(
         [poolId, start],
       );
     }
+    await expireCurrentPeriodSpeechReservations({
+      client,
+      periodStart: start,
+    });
     await expireCurrentPeriodReservations({
       client,
       poolId: opts.poolId,
@@ -842,6 +901,9 @@ export async function getSiteFundedCodexPoolStatus(): Promise<
         CASE WHEN p.pool_id = $2 THEN (
           SELECT COUNT(*)::int FROM site_ai_turn_reservations r
           WHERE r.period_start = p.period_start AND r.status = 'active'
+        ) + (
+          SELECT COUNT(*)::int FROM site_ai_speech_reservations s
+          WHERE s.period_start = p.period_start AND s.status = 'active'
         ) ELSE (
           SELECT COUNT(*)::int FROM site_ai_turn_reservations r
           WHERE r.pool_id = p.pool_id AND r.period_start = p.period_start

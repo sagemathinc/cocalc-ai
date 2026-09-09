@@ -136,7 +136,10 @@ import {
   trimCompletedCachedCodexActivityBlocks,
   type InlineCodexActivityBlock,
 } from "./message-state";
-import { CodexFinalResponseCopy } from "./codex-final-response-copy";
+import {
+  ChatReadAloudButton,
+  CodexFinalResponseCopy,
+} from "./codex-final-response-copy";
 
 const EDIT_MARKDOWN_MIN_HEIGHT = 120;
 
@@ -284,6 +287,15 @@ const THREAD_STYLE_TOP: CSS = {
 const MARGIN_TOP_VIEWER = "17px";
 
 const AVATAR_MARGIN_LEFTRIGHT = "15px";
+
+export const MESSAGE_ACTIONS_STYLE: CSS = {
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+  flexWrap: "wrap",
+  justifyContent: "flex-start",
+  marginTop: 4,
+};
 
 const VIEWER_MESSAGE_LEFT_MARGIN = "clamp(12px, 15%, 150px)";
 
@@ -520,8 +532,6 @@ export default function Message({
   const [autoFocusReply, setAutoFocusReply] = useState<boolean>(false);
   const [autoFocusEdit, setAutoFocusEdit] = useState<boolean>(false);
   const [elapsedMs, setElapsedMs] = useState<number>(0);
-  const [isHovered, setIsHovered] = useState<boolean>(false);
-  const [showTouchActions, setShowTouchActions] = useState<boolean>(false);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
   const messageRowRef = useRef<HTMLDivElement>(null);
   const zenTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -1146,8 +1156,6 @@ export default function Message({
 
   const feedbackMap = useMemo(() => field<any>(message, "feedback"), [message]);
 
-  const isActive =
-    selected || isHovered || replying || show_history || isEditing;
   const useSelectableMessageBody = shouldUseSelectableMessageBody({
     useCodexSelectToolbar,
     isEditing,
@@ -1490,24 +1498,40 @@ export default function Message({
   }
 
   function renderMessageHeader(lighten) {
-    const headerActions = renderHeaderActions();
     return (
       <div
         style={{
           ...lighten,
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
           marginBottom: "4px",
-          gap: "10px",
         }}
       >
         <Time
           message={message}
           edit={showEditButton ? edit_message : undefined}
         />
-        {headerActions}
       </div>
+    );
+  }
+
+  function renderReadAloudButton() {
+    if (
+      !msgWrittenByLLM ||
+      effectiveGenerating ||
+      !renderedMessageMarkdown.trim()
+    ) {
+      return null;
+    }
+    return (
+      <ChatReadAloudButton
+        key="read-aloud"
+        value={renderedMessageMarkdown}
+        projectId={project_id}
+        path={path}
+        threadId={messageThreadId}
+        messageId={field<string>(message, "message_id") ?? `${date}`}
+      />
     );
   }
 
@@ -1549,15 +1573,14 @@ export default function Message({
     }
   }
 
-  function renderHeaderActions() {
-    const showActions = isActive;
-    if (!showActions && !IS_TOUCH) {
-      return null;
-    }
+  function renderMessageActions() {
     if (useCodexSelectToolbar) {
-      return renderCodexHeaderActions();
+      return renderCodexMessageActions();
     }
     const buttons: ReactNode[] = [];
+
+    const readAloud = renderReadAloudButton();
+    if (readAloud) buttons.push(readAloud);
 
     const llmFeedbackButton = renderLLMFeedbackButtons();
     if (llmFeedbackButton) {
@@ -1697,64 +1720,14 @@ export default function Message({
       return null;
     }
 
-    if (IS_TOUCH) {
-      const toggle = (
-        <Button
-          size="small"
-          type="text"
-          aria-label="Message actions"
-          style={{ color: UI_COLORS.muted }}
-          onClick={() => setShowTouchActions((prev) => !prev)}
-        >
-          <Icon name="ellipsis-vertical" />
-        </Button>
-      );
-      return (
-        <div
-          style={{
-            position: "absolute",
-            right: 0,
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            justifyContent: "flex-end",
-          }}
-        >
-          {showTouchActions ? (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "row",
-                alignItems: "flex-end",
-                gap: "6px",
-              }}
-            >
-              {buttons}
-            </div>
-          ) : null}
-          {toggle}
-        </div>
-      );
-    }
-
     return (
-      <div
-        style={{
-          position: "absolute",
-          right: 0,
-          display: "flex",
-          alignItems: "center",
-          gap: "6px",
-          flexWrap: "wrap",
-          justifyContent: "flex-end",
-        }}
-      >
+      <div data-testid="chat-message-actions" style={MESSAGE_ACTIONS_STYLE}>
         {buttons}
       </div>
     );
   }
 
-  function renderCodexHeaderActions() {
+  function renderCodexMessageActions() {
     const hasVisibleCompletedActivity =
       inlineCodexActivityMode === "completed" &&
       Array.isArray(completedCodexActivityBlocks) &&
@@ -1790,6 +1763,8 @@ export default function Message({
         </Button>
       </Tooltip>,
     ];
+    const readAloud = renderReadAloudButton();
+    if (readAloud) buttons.unshift(readAloud);
     if (!read_only) {
       buttons.unshift(
         <Tooltip key="git-browser" placement="bottom" title="Open git browser">
@@ -1915,17 +1890,7 @@ export default function Message({
     }
 
     return (
-      <div
-        style={{
-          position: "absolute",
-          right: 0,
-          display: "flex",
-          alignItems: "center",
-          gap: "6px",
-          flexWrap: "wrap",
-          justifyContent: "flex-end",
-        }}
-      >
+      <div data-testid="chat-message-actions" style={MESSAGE_ACTIONS_STYLE}>
         {buttons}
       </div>
     );
@@ -2314,7 +2279,15 @@ export default function Message({
             label: "Final response",
             accentColor: UI_COLORS.link,
             borderColor: UI_COLORS.infoBg,
-            action: <CodexFinalResponseCopy value={value} />,
+            action: (
+              <CodexFinalResponseCopy
+                value={value}
+                projectId={project_id}
+                path={path}
+                threadId={messageThreadId}
+                messageId={field<string>(message, "message_id") ?? `${date}`}
+              />
+            ),
             children: (
               <div onClickCapture={openCommitFromMessage}>
                 {messageBodyMode === "select" ? (
@@ -2573,6 +2546,7 @@ export default function Message({
             : renderMessageBody({ message_class })}
           {renderEditingMeta()}
           {renderInterruptedControls()}
+          {renderMessageActions()}
         </div>
         {renderHistory()}
         {renderComposeReply()}
@@ -2968,13 +2942,7 @@ export default function Message({
   };
 
   return (
-    <Row
-      ref={messageRowRef}
-      tabIndex={-1}
-      style={getStyle()}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
+    <Row ref={messageRowRef} tabIndex={-1} style={getStyle()}>
       {renderCols()}
       {renderZenMessageDrawer()}
       <AcpPromptModal

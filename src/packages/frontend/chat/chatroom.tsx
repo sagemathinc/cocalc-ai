@@ -41,6 +41,8 @@ import { EditorComponentProps } from "../frame-editors/frame-tree/types";
 import type { ChatActions } from "./actions";
 import type { ChatComposerDraftAppendRequest } from "./composer-draft-types";
 import { ChatRoomComposer } from "./composer";
+import { ChatSpeechPlayer } from "./audio/chat-speech-player";
+import { SpeechPaneContext } from "./audio/speech-pane-context";
 import { ChatRoomLayout } from "./chatroom-layout";
 import { ChatRoomSidebarContent } from "./chatroom-sidebar";
 import { GitCommitDrawer } from "./git-commit-drawer";
@@ -650,7 +652,16 @@ export function chatActionsStoreName(
   return "";
 }
 
-export function ChatPanel({
+export function ChatPanel(props: ChatPanelProps) {
+  const [speechPaneId] = useState(() => Symbol("chat-speech-pane"));
+  return (
+    <SpeechPaneContext.Provider value={speechPaneId}>
+      <ChatPanelContent {...props} />
+    </SpeechPaneContext.Provider>
+  );
+}
+
+function ChatPanelContent({
   actions,
   project_id,
   path,
@@ -2857,6 +2868,11 @@ export function ChatPanel({
         readOnly={effectiveReadOnly}
       />
       {automationBanner}
+      <ChatSpeechPlayer
+        path={path}
+        projectId={project_id}
+        threadId={selectedThreadId ?? undefined}
+      />
       {selectedThreadResolved != null ? (
         <ResolvedThreadNotice resolved={selectedThreadResolved} />
       ) : !readOnly ? (

@@ -1419,6 +1419,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "seed implementation reached through authenticated inter-bay dispatch after entry-bay fresh auth",
   },
+  "system.cancelChatSpeech": {
+    decision: "fresh-auth-not-required",
+    reason: "cancels only the signed-in account's active speech request",
+  },
   "system.clearAccountEntitlementOverride": {
     decision: "fresh-auth-required",
     reason: "admin entitlement mutation",
