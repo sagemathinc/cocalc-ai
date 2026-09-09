@@ -17,12 +17,18 @@ documented, or referenced from code.
 
 `build-local-codex-binaries.sh` builds both Linux architectures by default.
 Set `CODEX_BUILD_PLATFORM=linux-x64` or `linux-arm64` to build only that
-architecture natively. The current release intentionally uses unmodified
-upstream Codex: remote compaction v2 uses the normal Responses stream and the
-legacy compact endpoint also has an upstream request timeout, so the former
-CoCalc TCP timeout patch is no longer applied. Normal CoCalc installations use
-the signed, statically linked binaries published by OpenAI; this local build
-and publishing workflow is retained only as an emergency fallback.
+architecture natively. The local build defaults to Codex 0.153.4 with the
+version-specific Linux TCP user-timeout patch in `patches/`. This restores the
+shared HTTP client's 300-second socket timeout, configurable with
+`CODEX_TCP_USER_TIMEOUT_MS` (a positive number of milliseconds). It is not a
+total HTTP request deadline or an app-server notification timeout. Changes to
+remote compaction deadlines do not establish that this transport mitigation
+is unnecessary for other endpoints, including image generation.
+
+The build manifest identifies the applied patch. Building or publishing a
+candidate does not change the sandbox installer pin or deploy it. Validate
+image generation and compaction before promoting a candidate; normal installs
+continue using the assets explicitly pinned in `backend/sandbox/install.ts`.
 
 ## Active Product And Release Workflows
 
