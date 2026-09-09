@@ -496,20 +496,36 @@ A subsequent controlled run activated each browser tab explicitly, waited for
 the cursor to settle, and inserted one string per tab. A visibly contained
 `[settled-A]` at the beginning before saving; B visibly contained `[settled-B]`
 at the end. After both clicked Read and eight seconds of synchronization, both
-rendered documents contained B but not A. This establishes a lost independent
-edit in the live workflow, beyond the earlier ambiguous rapid-typing result.
+rendered documents contained B but not A as intact marker substrings. This was
+initially recorded as a lost independent edit, but subsequent inspection found
+markers inserted inside other markers during cursor restoration. Substring
+absence alone does not establish that the underlying characters were lost.
 Single-edit delivery still works. Investigate the boundary between Slate's
 deferred remote merge and the workbench's whole-value `saveInput`/explicit getter
 flush: the latter reads the latest syncdb record but assigns the editor text
 without a corresponding editing base. Do not count P4 concurrency as passed.
 
 The first opt-in Slate merge change (`9e1f3abfd4`) passed component tests but the
-live two-tab case still lost A's edit. A follow-up supplies a live-record getter
+live two-tab case still failed the intact-A-marker check. A follow-up supplies a live-record getter
 at flush time, since the record may advance before its throttled React prop.
 The regression now covers that pre-render gap; live acceptance is still required.
 Playwright browser attachment became blocked by an unresponsive non-QA tab, but
 direct DevTools page connections continued working for the QA tabs. Do not
 restart or close the maintainer's other tab to work around this tooling issue.
+
+After moving the focus-settling delay before setting the DOM selection (rather
+than after it), the next live run inserted `QAalpha` at the beginning and
+`QAbeta` at the end. Both QA tabs now render both intact markers after Read.
+This is positive evidence for independent edits with the live getter, not proof
+of overlapping-edit behavior or the absence of echo loops. The QA document also
+contains many blank lines from the accumulated experiments; use a fresh artifact
+for further concurrency qualification instead of treating that fixture as clean.
+
+Workbench document access now uses the chat editor's shared syncdb independently
+of originating frame actions. A component regression verifies that a closed
+origin still permits reading/editing/saving, while Comment and Back to chat stay
+disabled with an explanation rather than silently targeting a different thread.
+Live origin-frame closure acceptance remains to be checked.
 
 Use one feature branch with coherent commits and a draft PR when implementation
 is requested. Keep behind an experimental feature gate. Production deployment

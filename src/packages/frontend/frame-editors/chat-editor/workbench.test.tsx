@@ -56,6 +56,7 @@ test("Back to chat renders the destination before requesting composer focus", ()
         {...({
           id: "artifact-frame",
           actions: {
+            getArtifactSyncdb: () => syncdb,
             getChatActions: () => ({ syncdb }),
             store: { getIn: () => "artifact-frame" },
             set_frame_full: () => setChatVisible(true),
@@ -104,6 +105,7 @@ test.each([false, true])(
     const stageArtifactFeedback = jest.fn(async () => {});
     const chat = { syncdb, stageArtifactFeedback };
     const actions = {
+      getArtifactSyncdb: () => syncdb,
       getChatActions: () => chat,
       set_active_id: jest.fn(),
       set_frame_full: jest.fn(),
@@ -163,52 +165,67 @@ test.each([false, true])(
   },
 );
 
-test("Read flushes pending editor text and edit mode requests full height", async () => {
-  const target = { thread_id: "thread", artifact_id: "artifact" };
-  let record = {
-    ...artifactKey(target),
-    ...target,
-    schema_version: 1,
-    kind: "markdown",
-    title: "Draft",
-    input: "Original",
-  };
-  const syncdb = Object.assign(new EventEmitter(), {
-    get_one: () => record,
-    get: () => [],
-    set: jest.fn((patch) => {
-      record = { ...record, ...patch };
-    }),
-    commit: jest.fn(),
-    save: jest.fn(async () => {}),
-  });
-  render(
-    <Workbench
-      {...({
-        actions: { getChatActions: () => ({ syncdb }) },
-        desc: fromJS({
-          "data-origin": "origin",
-          "data-thread": "thread",
-          "data-artifact": "artifact",
-        }),
-        read_only: false,
-        font_size: 14,
-      } as any)}
-    />,
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-  const editor = screen.getByRole("textbox", { name: "Edit artifact" });
-  expect(editor).toHaveAttribute("data-height", "100%");
-  expect(editor).toHaveAttribute("data-autogrow", "false");
-  fireEvent.change(editor, { target: { value: "Pending human edit" } });
-  expect(record.input).toBe("Original");
-  await act(async () => {
-    fireEvent.click(screen.getByRole("button", { name: "Read" }));
-  });
-  expect(record.input).toBe("Pending human edit");
-  expect(syncdb.save).toHaveBeenCalledTimes(1);
-  expect(screen.getByText("Pending human edit")).toBeTruthy();
-});
+test.each([false, true])(
+  "Read flushes pending editor text with origin closed=%s",
+  async (originClosed) => {
+    const target = { thread_id: "thread", artifact_id: "artifact" };
+    let record = {
+      ...artifactKey(target),
+      ...target,
+      schema_version: 1,
+      kind: "markdown",
+      title: "Draft",
+      input: "Original",
+    };
+    const syncdb = Object.assign(new EventEmitter(), {
+      get_one: () => record,
+      get: () => [],
+      set: jest.fn((patch) => {
+        record = { ...record, ...patch };
+      }),
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+    });
+    render(
+      <Workbench
+        {...({
+          actions: {
+            getArtifactSyncdb: () => syncdb,
+            getChatActions: () => (originClosed ? undefined : { syncdb }),
+          },
+          desc: fromJS({
+            "data-origin": "origin",
+            "data-thread": "thread",
+            "data-artifact": "artifact",
+          }),
+          read_only: false,
+          font_size: 14,
+        } as any)}
+      />,
+    );
+    if (originClosed) {
+      expect(
+        screen.getByRole("button", { name: "Back to chat" }),
+      ).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
+      expect(
+        screen.getByText(/The originating chat frame is closed/),
+      ).toBeTruthy();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const editor = screen.getByRole("textbox", { name: "Edit artifact" });
+    expect(editor).toHaveAttribute("data-height", "100%");
+    expect(editor).toHaveAttribute("data-autogrow", "false");
+    fireEvent.change(editor, { target: { value: "Pending human edit" } });
+    expect(record.input).toBe("Original");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Read" }));
+    });
+    expect(record.input).toBe("Pending human edit");
+    expect(syncdb.save).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Pending human edit")).toBeTruthy();
+  },
+);
 
 test("historical views stay pinned and See changes uses the preceding publication", async () => {
   const target = { thread_id: "thread", artifact_id: "artifact" };
@@ -241,6 +258,7 @@ test("historical views stay pinned and See changes uses the preceding publicatio
         : pubs.find((pub) => pub.sender_id === key.sender_id),
   });
   const actions = {
+    getArtifactSyncdb: () => syncdb,
     getChatActions: () => ({ syncdb }),
     set_frame_data: jest.fn(),
   };
@@ -292,7 +310,10 @@ test("read-only workbenches expose the document but cannot edit or stage feedbac
   render(
     <Workbench
       {...({
-        actions: { getChatActions: () => ({ syncdb, stageArtifactFeedback }) },
+        actions: {
+          getArtifactSyncdb: () => syncdb,
+          getChatActions: () => ({ syncdb, stageArtifactFeedback }),
+        },
         desc: fromJS({
           "data-origin": "origin",
           "data-thread": target.thread_id,

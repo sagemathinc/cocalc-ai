@@ -209,6 +209,10 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     });
   }
 
+  getArtifactSyncdb() {
+    return this._syncstring;
+  }
+
   getChatActions(
     frameId?,
     opts?: { allowMissingFrameType?: boolean },

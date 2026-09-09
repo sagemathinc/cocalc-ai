@@ -55,7 +55,7 @@ export function Workbench({
 }: EditorComponentProps) {
   const actions = frameActions as Actions;
   const chat = actions.getChatActions(desc.get("data-origin"));
-  const syncdb = chat?.syncdb;
+  const syncdb = actions.getArtifactSyncdb() ?? chat?.syncdb;
   useArtifactChanges(syncdb);
   const context = useFileContext();
   const [editing, setEditing] = useState(false);
@@ -312,6 +312,12 @@ export function Workbench({
                 : "Live document"}
           </span>
         </Space>
+        {!chat && (
+          <div role="status">
+            The originating chat frame is closed. Reopen this artifact from its
+            thread to comment; you can still read and edit it here.
+          </div>
+        )}
         {error && (
           <Alert
             type="error"
