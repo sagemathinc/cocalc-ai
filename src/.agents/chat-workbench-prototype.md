@@ -178,8 +178,8 @@ project-routed live chat operations, not browser scripting, scraped HTML, or
 special Markdown interpreted as commands.
 
 Start with a `project chat artifact` CLI command family backed by shared typed
-operations, callable through the existing CLI scripting API as well. Exact
-spelling is proposed, not implemented. Accept payloads through stdin or a file,
+operations, callable through the existing CLI scripting API as well. This
+command family is implemented; exact usage is recorded below. Accept payloads through stdin or a file,
 not giant shell-quoted arguments. This should work without an open browser and
 without a separate model-specific tool transport. An agent-facing convenience
 tool can wrap the same operations later; do not expose arbitrary syncdb set/delete.
@@ -385,18 +385,51 @@ including the current turn's context and a fresh read before its update.
 
 ### Remaining Milestones
 
-- [ ] P0: Resolve four integration questions; record schema, commands, attribution,
+- [x] P0: Resolve four integration questions; record schema, commands, attribution,
       experimental gate, and exact focused test commands in this file.
 - [x] P1: Implement create/read/update/list on live syncdb. Demonstrate real agent
       publication into a disposable chat, including a retried publication.
 - [x] P2: Add inline cards, Markdown workbench using Slate and existing sync
       behavior, and published-snapshot/history views.
-- [ ] P3: Add highlight/comment, thread-bound composer context, and safe in-place
+- [x] P3: Add highlight/comment, thread-bound composer context, and safe in-place
       agent updates. Complete the acceptance session with a real agent.
 - [ ] P4: Validate reload/reconnect, concurrency, keyboard/focus, themes, narrow
       layouts, virtualization, and multiple threads/frames.
 - [x] P5: Give the maintainer a runnable local/dev build, test chat link, and a
       three-step try-it recipe. Record findings before broadening scope.
+
+### Integration Decisions Resolved
+
+P0's four decisions are implemented, rather than awaiting new infrastructure:
+
+- Storage/base: `chat/src/artifacts.ts` validates live rows and publication rows,
+  reuses the chat `input` string column, and compares the exact read base before
+  an agent replacement. Known stale bases fail without mutation. Independent
+  unseen patches use existing Patchflow merging; this is not distributed CAS.
+  `6ac51fbe13` applies content and publication in one array-set local update.
+  The CLI's `acquireChatSyncDB` goes through `conat/sync-doc/immer-db.ts` to the
+  same `sync/editor/generic/sync-doc.ts` implementation, which calls
+  `set_doc(doc.set(records))`. Local application precedes caller commit/save.
+- Attribution: the explicit context command resolves the runtime message date
+  within its named thread; publication requires an existing producing message.
+  The live reused-runtime correction and subsequent agent publications are
+  recorded below. Browser selection is not used to infer the producing turn.
+- Feedback: `captureArtifactSelection` captures canonical rendered UTF-16 offsets
+  and exact source text; `useArtifactFeedbackDraft` stores account/thread-scoped
+  context, and send validation refuses cross-thread substitution. The actual
+  agent receives the pinned context and rereads current content before editing.
+- Frames: card navigation matches artifact/thread/origin and optionally exact
+  publication. Other frames are not repurposed; historical views stay pinned.
+  Closing the origin retains artifact data access without redirecting feedback.
+  Focus, narrow navigation, snapshot reuse, and origin closure have recorded
+  browser checks as well as focused regressions.
+
+P3's complete selection -> agent update -> human edit -> further agent update
+loop has been exercised in the QA chat, including preservation of the human
+note. P4 remains open for the extended matrix, notably simultaneous conflicting
+browser edits/reconnect, keyboard range selection/Tab traversal, and live
+multiple-thread/read-only collaborator cases. Do not infer these from the
+sequential browser edit test or the deterministic two-Slate regression.
 
 ### Live Acceptance Progress
 
