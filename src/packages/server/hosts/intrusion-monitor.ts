@@ -64,6 +64,7 @@ const DYNAMIC_LISTENER_PROCESSES = new Set([
   "sshpiperd",
 ]);
 const DYNAMIC_LISTENER_MIN_PORT = 10_000;
+const EPHEMERAL_LISTENER_MIN_PORT = 32_768;
 const NON_INTRUSION_KERNEL_SIGNALS = new Set(["oom", "tainted"]);
 const BACKUP_BROWSER_CGROUP = "/cocalc-backup-browsers/browser-*";
 const EXPECTED_IAP_SSH_USERS = new Set(["ubuntu", "user"]);
@@ -297,12 +298,23 @@ function isActionableListener(value: string): boolean {
   if (match[2] === "<dynamic>") return false;
   const host = match[1].replace(/^\[(.*)\]$/, "$1").toLowerCase();
   if (host === "localhost" || host === "::1" || host.startsWith("127.")) {
+    if (
+      process === "unattributed" &&
+      match[2] !== "<dynamic>" &&
+      Number(match[2]) >= EPHEMERAL_LISTENER_MIN_PORT
+    ) {
+      return false;
+    }
     return (
       typeof process !== "string" || !DYNAMIC_LISTENER_PROCESSES.has(process)
     );
   }
   const port = Number(match[2]);
-  if (protocol === "udp" && process === "unattributed" && port >= 32_768) {
+  if (
+    protocol === "udp" &&
+    process === "unattributed" &&
+    port >= EPHEMERAL_LISTENER_MIN_PORT
+  ) {
     return false;
   }
   return true;
