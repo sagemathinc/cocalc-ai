@@ -333,6 +333,19 @@ projectIdentifier })` over the same operations. Installed runtime validation
   authenticated Lite1b tab successfully opens the test project. Development
   build and real-agent acceptance are in progress; this is not yet live feature
   acceptance.
+- Full `pnpm -C src build:dev` completed. The disposable live chat is
+  `/home/user/chat-workbench-prototype-20260909.chat` in project
+  `1ce4fe78-19c7-40a8-a598-947975744cd9`, thread
+  `8852a851-d2cd-4a56-8e11-68df1c2c1de4`. It was created through the chat CLI
+  and opened in authenticated Chromium, not by writing chat JSON.
+- The tools bundle built and host upgrade operation
+  `471946eb-c686-4f09-a262-fb678d38e8d6` succeeded. The running project still
+  exposes its old September 4 CLI without artifact commands; awaiting a safe
+  project restart before claiming the prompt is usable. No agent publication
+  has yet been attempted in this disposable thread.
+- Read-only component coverage confirms document visibility with disabled edit
+  and feedback actions. This is UI regression coverage, not proof of backend
+  permission enforcement or the pending live collaborator test.
 
 ### Agent Recipe For The Dev Acceptance Run
 

@@ -157,3 +157,41 @@ test("historical views stay pinned and See changes uses the preceding publicatio
     "Old / New",
   );
 });
+
+test("read-only workbenches expose the document but cannot edit or stage feedback", () => {
+  const target = { thread_id: "thread", artifact_id: "artifact" };
+  const record = {
+    ...artifactKey(target),
+    ...target,
+    schema_version: 1,
+    kind: "markdown",
+    title: "Read-only draft",
+    input: "Visible content",
+  };
+  const stageArtifactFeedback = jest.fn();
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => record,
+    get: () => [],
+  });
+  render(
+    <Workbench
+      {...({
+        actions: { getChatActions: () => ({ syncdb, stageArtifactFeedback }) },
+        desc: fromJS({
+          "data-origin": "origin",
+          "data-thread": target.thread_id,
+          "data-artifact": target.artifact_id,
+        }),
+        read_only: true,
+        font_size: 14,
+      } as any)}
+    />,
+  );
+  expect(screen.getByText("Visible content")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
+  const comment = screen.getByRole("button", { name: "Comment" });
+  expect(comment).toBeDisabled();
+  fireEvent.click(comment);
+  expect(stageArtifactFeedback).not.toHaveBeenCalled();
+  expect(screen.queryByRole("textbox", { name: "Edit artifact" })).toBeNull();
+});
