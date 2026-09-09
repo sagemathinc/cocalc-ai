@@ -133,13 +133,7 @@ export class PageActions extends Actions<PageState> {
       return;
     }
 
-    if (page_store.get("last_project_tab") === project_id) {
-      // Do not resurrect a closed selection if it is later reopened in the
-      // background. Keep global pages open while choosing a remaining context.
-      this.setState({
-        last_project_tab: open_projects.find((id) => id !== project_id),
-      });
-    }
+    this.forget_project_context(project_id);
 
     if (this.session_manager != null) {
       this.session_manager.close_project(project_id);
@@ -172,6 +166,16 @@ export class PageActions extends Actions<PageState> {
     // if there happens to be a websocket to this project, get rid of it.
     // Nothing will be using it when the project is closed.
     disconnect_from_project(project_id);
+  }
+
+  public forget_project_context(project_id: string): void {
+    if (redux.getStore("page").get("last_project_tab") !== project_id) return;
+    this.setState({
+      last_project_tab: redux
+        .getStore("projects")
+        .get("open_projects")
+        .find((id) => id !== project_id),
+    });
   }
 
   set_active_tab = async (key, change_history = true): Promise<void> => {

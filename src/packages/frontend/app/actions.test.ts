@@ -204,6 +204,16 @@ describe("project context across global navigation", () => {
     expect(page().get("last_project_tab")).toBe(B);
   });
 
+  it("forgets reconciliation-removed context without changing the global route", async () => {
+    await actions.set_active_tab(B);
+    await actions.set_active_tab("account");
+    actions.forget_project_context(B);
+    expect(page().get("last_project_tab")).toBe(A);
+    expect(page().get("active_top_tab")).toBe("account");
+    redux.getActions("projects").setState({ open_projects: [A, B] });
+    expect(page().get("last_project_tab")).toBe(A);
+  });
+
   it("clears context when the last open project closes on Account", async () => {
     await actions.set_active_tab(B);
     await actions.set_active_tab("account");

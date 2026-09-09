@@ -1,6 +1,7 @@
 import { List as ImmutableList, Map as ImmutableMap } from "immutable";
 
 import { ProjectsActions } from "./actions";
+import { redux } from "@cocalc/frontend/app-framework";
 import { store } from "./store";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { isProjectRecentlyCreated } from "@cocalc/frontend/project/recently-created-project";
@@ -64,6 +65,21 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 
 const mockedStore = store as jest.Mocked<typeof store>;
 const mockedWebappClient = webapp_client as jest.Mocked<typeof webapp_client>;
+
+test("direct reconciliation closure invalidates remembered project context", () => {
+  const forget = jest.fn();
+  const getActions = jest.spyOn(redux, "getActions").mockReturnValue({
+    forget_project_context: forget,
+  } as any);
+  mockedStore.get.mockReturnValue(ImmutableList());
+  try {
+    const actions = new ProjectsActions("projects", {} as any);
+    actions.set_project_closed("removed-project");
+    expect(forget).toHaveBeenCalledWith("removed-project");
+  } finally {
+    getActions.mockRestore();
+  }
+});
 
 describe("ProjectsActions project metadata updates", () => {
   const project_id = "project-1";
