@@ -1,4 +1,5 @@
 import getLogger from "@cocalc/backend/logger";
+import { R2_REGIONS } from "@cocalc/util/consts/r2-regions";
 import {
   deleteR2Object,
   deleteR2ObjectsConcurrently,
@@ -12,7 +13,6 @@ import {
 
 const logger = getLogger("server:project-backup:r2");
 
-const R2_REGIONS = ["wnam", "enam", "weur", "eeur", "apac", "oc"] as const;
 const ENSURE_TTL_MS = 60 * 60 * 1000;
 
 let lastEnsureAt = 0;

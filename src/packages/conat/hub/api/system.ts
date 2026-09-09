@@ -162,6 +162,7 @@ export const system = {
   testCloudflareVisitorLocationHeaders: authFirstRequireAccount,
   applyCloudflareTunnelSettings: authFirstRequireAccount,
   bootstrapCloudflareConfiguration: authFirstRequireAccount,
+  reconcileCloudflareBlobs: authFirstRequireAccount,
   createCloudflareTeardownPlan: authFirstRequireAccount,
   getCloudflareTeardownPlan: authFirstRequireAccount,
   startCloudflareTeardownApply: authFirstRequireAccount,
@@ -226,6 +227,10 @@ export interface ExternalCredentialInfo {
 }
 
 export interface CloudflareBootstrapResult {
+  cleanup_required?: boolean;
+  failure?: string;
+  settings_status?: "not_saved" | "saved" | "unknown";
+  permissions: string[];
   account_id?: string;
   account_name?: string;
   zone_id?: string;
@@ -2936,8 +2941,19 @@ export interface System {
     tunnelPrefix?: string;
     hostSuffix?: string;
     r2BucketPrefix?: string;
-    invalidateBootstrapToken?: boolean;
   }) => Promise<CloudflareBootstrapResult>;
+
+  reconcileCloudflareBlobs: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+  }) => Promise<{
+    ok: boolean;
+    bucket?: string;
+    worker?: string;
+    public_url?: string;
+    message?: string;
+  }>;
 
   createCloudflareTeardownPlan: (opts: {
     account_id?: string;

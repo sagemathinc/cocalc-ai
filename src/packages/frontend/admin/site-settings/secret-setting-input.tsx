@@ -8,9 +8,10 @@ import type { ChangeEvent, CSSProperties } from "react";
 import Password, {
   PasswordTextArea,
 } from "@cocalc/frontend/components/password";
-import { COLORS } from "@cocalc/util/theme";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export interface SecretSettingInputProps {
+  id?: string;
   value: string;
   onChange: (value: string) => void;
   onBlur?: () => void;
@@ -25,6 +26,7 @@ export interface SecretSettingInputProps {
 }
 
 export default function SecretSettingInput({
+  id,
   value,
   onChange,
   onBlur,
@@ -56,6 +58,7 @@ export default function SecretSettingInput({
   const input =
     multiline != null ? (
       <PasswordTextArea
+        id={id}
         rows={isStored ? 1 : multiline}
         autoComplete="off"
         style={{
@@ -71,6 +74,7 @@ export default function SecretSettingInput({
       />
     ) : (
       <Password
+        id={id}
         autoComplete="off"
         style={effectiveInputStyle}
         value={value}
@@ -87,7 +91,7 @@ export default function SecretSettingInput({
       {input}
       {isStored ? (
         <Space>
-          <Typography.Text italic style={{ color: COLORS.ANTD_GREEN_D }}>
+          <Typography.Text italic style={{ color: UI_COLORS.success }}>
             Saved. Leave blank to keep the current value.
           </Typography.Text>
           {onClear ? (
