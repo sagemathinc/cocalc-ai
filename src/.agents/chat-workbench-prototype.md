@@ -492,6 +492,17 @@ selection restoration and pending remote updates with a stable starting document
 and capture each editor's text immediately before and after the remote change.
 Only the disposable QA artifact was modified; its test strings remain for audit.
 
+A subsequent controlled run activated each browser tab explicitly, waited for
+the cursor to settle, and inserted one string per tab. A visibly contained
+`[settled-A]` at the beginning before saving; B visibly contained `[settled-B]`
+at the end. After both clicked Read and eight seconds of synchronization, both
+rendered documents contained B but not A. This establishes a lost independent
+edit in the live workflow, beyond the earlier ambiguous rapid-typing result.
+Single-edit delivery still works. Investigate the boundary between Slate's
+deferred remote merge and the workbench's whole-value `saveInput`/explicit getter
+flush: the latter reads the latest syncdb record but assigns the editor text
+without a corresponding editing base. Do not count P4 concurrency as passed.
+
 Use one feature branch with coherent commits and a draft PR when implementation
 is requested. Keep behind an experimental feature gate. Production deployment
 and external support/email actions are not part of this plan.
