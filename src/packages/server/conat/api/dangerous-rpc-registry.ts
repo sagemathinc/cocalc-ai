@@ -344,6 +344,15 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "issues and stores an immutable customer-facing commercial quote",
   },
+  "commercialOrders.issueQuoteLink": {
+    decision: "fresh-auth-required",
+    reason:
+      "issues or replaces a bearer download link for a retained commercial quote",
+  },
+  "commercialOrders.revokeQuoteLink": {
+    decision: "fresh-auth-required",
+    reason: "revokes bearer download access to a retained commercial quote",
+  },
   "commercialOrders.issueManualInvoice": {
     decision: "fresh-auth-required",
     reason: "records an issued customer-facing manual institutional invoice",

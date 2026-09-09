@@ -180,6 +180,17 @@ function frontendFreshAuthProofOmissions(): string[] {
 }
 
 describe("dangerous hub RPC fresh-auth registry", () => {
+  it("requires fresh auth for issuing and revoking quote download links", () => {
+    for (const name of [
+      "commercialOrders.issueQuoteLink",
+      "commercialOrders.revokeQuoteLink",
+    ]) {
+      expect(DANGEROUS_RPC_DECISIONS[name]).toMatchObject({
+        decision: "fresh-auth-required",
+      });
+    }
+  });
+
   it("requires fresh auth for every Stripe quote mutation", () => {
     for (const name of [
       "commercialOrders.createStripeQuote",
