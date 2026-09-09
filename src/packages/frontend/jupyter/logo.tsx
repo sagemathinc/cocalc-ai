@@ -11,6 +11,7 @@ import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { filename_extension, getRandomColor } from "@cocalc/util/misc";
 import { CSSProperties, useEffect, useState } from "react";
 import useClientContext from "@cocalc/frontend/client/context";
+import { Icon } from "@cocalc/frontend/components";
 
 const DEFAULT_HEIGHT = 24; // this matches the rest of the status bar.
 
@@ -31,6 +32,14 @@ export default function Logo({
   const fileContext = useFileContext();
   if (project_id == null) {
     project_id = fileContext.project_id;
+  }
+
+  if (kernel?.startsWith("reflect-")) {
+    return (
+      <span role="img" aria-label="Remote kernel" style={style}>
+        <Icon name="server" style={{ fontSize: size }} />
+      </span>
+    );
   }
 
   if (!kernel || !project_id || !client) {

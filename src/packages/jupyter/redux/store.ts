@@ -352,13 +352,23 @@ export class JupyterStore extends Store<JupyterStoreState> {
 
     const cell_list = this.get("cell_list");
 
+    const kernel = this.get("kernel");
+    const info = this.get_kernel_info(kernel);
+    // Catalog lookup can lag registration or fail when a notebook moves to a
+    // different project. Never erase its explicit execution target on save.
+    const kernelspec = kernel
+      ? info?.name === kernel
+        ? info
+        : { name: kernel, display_name: kernel }
+      : undefined;
+
     // export_to_ipynb mutates its input... mostly not a problem, since
     // we're toJS'ing most of it, but be careful with more_output.
     return export_to_ipynb({
       cells: this.get("cells").toJS(),
       cell_list: cell_list.toJS(),
       metadata: this.get("metadata")?.toJS(), // custom metadata
-      kernelspec: this.get_kernel_info(this.get("kernel")),
+      kernelspec,
       language_info: this.get_language_info(),
       blob_store,
     });

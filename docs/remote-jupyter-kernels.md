@@ -1,0 +1,143 @@
+# Remote Jupyter Kernels
+
+Run a CoCalc notebook's Python kernel on a dedicated VM while retaining CoCalc's
+notebook editor, collaboration, outputs, and grading support. The same installed
+kernelspec also works in standard local Jupyter clients. No CoCalc runtime,
+Jupyter HTTP server, or Node installation is required on the VM.
+
+## Initial Supported Environment
+
+- Ubuntu 24.04 x86_64 dedicated VM, with one VM/Unix account per student.
+- Noninteractive SSH from the student's **CoCalc project**, with a verified host
+  key. Laptop SSH access alone is insufficient.
+- Outbound HTTPS for explicit Python/package preparation; kernel traffic uses
+  SSH port 22 only. No Jupyter ports need to be exposed publicly.
+- For the GPU recipe, working NVIDIA drivers and sufficient disk space for
+  several GB of PyTorch/CUDA packages. The validated device is an NVIDIA L40S
+  with driver 580.173.02; other provider images need separate validation.
+- An updated CoCalc project tools bundle containing `reflect`.
+
+The SSH transport is provider-independent. This does not imply that every GCP
+or Nebius GPU image/framework combination has been tested.
+
+## Instructor And Student Setup
+
+1. Provision each student's VM and give that student access to its Unix account.
+   Do not use a shared remote account as a substitute for student isolation.
+2. In the student's CoCalc project, create a dedicated SSH key and authorize its
+   public key on that VM using the normal VM access workflow. Verify the VM host
+   key through a trusted source. Keep private keys out of notebooks and chat.
+3. Configure an SSH alias in the project's `~/.ssh/config`, for example:
+
+   ```sshconfig
+   Host my-gpu
+       HostName vm-example.cocalc.ai
+       User user
+       IdentityFile ~/.ssh/my-gpu
+       IdentitiesOnly yes
+   ```
+
+4. Verify access from a project terminal:
+
+   ```sh
+   ssh -o BatchMode=yes -o StrictHostKeyChecking=yes my-gpu true
+   ```
+
+5. Open a notebook's kernel selector, choose **Remote kernel**, then enter a
+   kernel name, SSH destination/alias, and environment name. Choose either:
+   - **Prepare Python**, with Python or the PyTorch/CUDA recipe; or
+   - **Existing Python**, with an absolute remote interpreter path. This path
+     must already have `ipykernel` and `jupyter_client` installed.
+6. Register the kernel. Setup verifies a real Jupyter handshake before making the
+   kernelspec available. The registered kernel is selected in the notebook.
+
+Collaborators able to run code in a project share its execution authority,
+including SSH credentials accessible to that project. Use separate projects and
+VM accounts where that sharing is not appropriate. No site-admin role is required
+for setup from an otherwise authorized project.
+
+## Terminal Equivalent
+
+```sh
+# CPU environment:
+reflect jupyter setup --host my-gpu --target my-vm --environment teaching
+
+# Explicit GPU environment preparation; requires working NVIDIA drivers:
+reflect jupyter setup --host my-gpu --target my-vm \
+  --environment pytorch --recipe pytorch-cu128
+
+# Or retain an existing environment without modifying it:
+reflect jupyter setup --host my-gpu --target my-vm \
+  --environment existing --python /home/user/venv/bin/python
+
+jupyter console --kernel reflect-my-vm
+```
+
+Use one setup alternative, not all three for the same target/environment. The
+Python recipe pins `ipykernel` 6.30.1 and `ipywidgets` 8.1.7. The GPU recipe adds
+PyTorch 2.8.0/CUDA 12.8 and NumPy 2.2.6, and checks actual CUDA matrix computation.
+Preparation uses pinned, checksum-verified uv; it does not invoke sudo or modify
+system Python. Environments are published only after validation. Repeated setup
+checks an existing environment; changing recipes requires a new environment name.
+
+Validate GPU execution from the selected notebook:
+
+```python
+import socket, torch
+print(socket.gethostname(), torch.__version__)
+assert torch.cuda.is_available()
+x = torch.ones((1024, 1024), device="cuda")
+assert (x @ x)[0, 0].item() == 1024
+torch.cuda.synchronize()
+print(torch.cuda.get_device_name())
+```
+
+## Lifecycle And Diagnostics
+
+Each notebook launch has its own kernel. Multiple collaborators opening the same
+notebook continue using its project-owned session. Interrupt and normal restart
+operate on the remote process group; CoCalc waits for shutdown before admitting a
+replacement. Remote CPU/RAM readings are unavailable, not the local SSH process's
+usage.
+
+The supervisor has a 60-second default renewable lease. A separate guardian
+terminates the kernel group if its supervisor dies. Abrupt local process death
+falls back to lease expiry. A conventional client that forces SIGKILL may start
+a replacement before that lease expires; graceful restarts avoid this overlap.
+
+SSH reconnection reuses the same verified session and never replays execution.
+Output generated during disconnection may be lost and in-flight work uncertain.
+A VM reboot loses kernel memory and requires an explicit restart. Use a stable
+VM DNS name so new SSH connections resolve its current address. A changed host
+key requires explicit verification, not disabling host-key checking.
+
+```sh
+reflect jupyter targets
+reflect jupyter sessions
+reflect jupyter status SESSION_ID
+reflect jupyter interrupt SESSION_ID
+reflect jupyter stop SESSION_ID
+reflect jupyter remove --target my-vm
+```
+
+Session IDs appear in launcher diagnostics. Connection credentials are not part
+of ordinary status output. Removal is also available in **Remote kernel >
+Registered kernels**. It disables new launches, stops recorded sessions, then
+removes the local kernelspec/configuration. Failed removal remains disabled and
+can be retried when SSH connectivity returns.
+
+**Removing a target or stopping a kernel does not stop the VM or its billing.**
+It also does not delete the remote environment.
+
+## Files And Release Scope
+
+Kernel code sees the remote VM's filesystem. This feature does not synchronize
+files, translate paths, or copy datasets. Reflect file synchronization is a
+separate option, not a prerequisite for the kernel transport.
+
+The implementation is split between Reflect's reusable standard-kernelspec
+launcher and CoCalc's setup/lifecycle integration. Full and minimal tools builds
+include the same platform-independent JS bundle, pinned by commit and source
+archive SHA256 in `src/packages/project/sea/reflect-source.json`. Existing projects
+need an updated tools bundle (or an explicitly installed Reflect) before using
+the setup control.

@@ -54,6 +54,7 @@ export interface KernelSpec {
 }
 
 export type KernelMetadata = {
+  reflect?: { remote: boolean; protocol?: number };
   // top level could contain a "cocalc" key, containing special settings understood by cocalc
   cocalc?: {
     priority?: number; // level 10 means it is important, on short list of choices, etc. 1 is low priority, for older versions

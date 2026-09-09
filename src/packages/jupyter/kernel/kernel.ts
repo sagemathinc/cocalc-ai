@@ -30,6 +30,12 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { callback } from "awaiting";
 import type { MessageType } from "@cocalc/jupyter/zmq/types";
 import { jupyterSockets, type JupyterSockets } from "../zmq";
+import {
+  isReflectLauncher,
+  stopReflectLauncher,
+  trackKernelShutdown,
+  waitForKernelShutdown,
+} from "./remote-launcher";
 import { EventEmitter } from "node:events";
 import { existsSync, unlinkSync } from "node:fs";
 import {
@@ -319,6 +325,7 @@ export class JupyterKernel
   private kernel_state: KernelState;
   private spawn_timeout?: ReturnType<typeof setTimeout>;
   private close_wait?: Promise<void>;
+  private launch_wait?: Promise<SpawnedKernel>;
 
   constructor(
     name: string | undefined,
@@ -473,7 +480,13 @@ export class JupyterKernel
 
     try {
       dbg("launching Jupyter kernel");
-      this._kernel = await launchJupyterKernel(this.name, opts);
+      await waitForKernelShutdown(this._path);
+      if (this.isClosed()) return;
+      this.launch_wait = launchJupyterKernel(this.name, opts);
+      const launched = await this.launch_wait;
+      // close() owns cleanup when a launch finishes after this instance closed.
+      if (this.isClosed()) return;
+      this._kernel = launched;
       if (this._kernel.spawn.pid != null) {
         emitKernelLifecycle({
           event: "spawn",
@@ -500,6 +513,8 @@ export class JupyterKernel
   get_spawned_kernel = () => {
     return this._kernel;
   };
+
+  isRemote = (): boolean => isReflectLauncher(this._kernel);
 
   getConnectionFile = (): string | undefined => {
     return this._kernel?.connectionFile;
@@ -701,7 +716,23 @@ export class JupyterKernel
       path: this._path,
       pid: this.pid(),
     });
-    this.signal("SIGKILL");
+    const remoteLauncher = isReflectLauncher(this._kernel);
+    const pendingLaunch = this.launch_wait;
+    if (remoteLauncher || (!this._kernel && pendingLaunch)) {
+      const stopping = (async () => {
+        const launched = this._kernel ?? (await pendingLaunch);
+        if (!launched) return;
+        try {
+          if (isReflectLauncher(launched))
+            await stopReflectLauncher(launched.spawn);
+        } finally {
+          killKernel(launched);
+        }
+      })();
+      waits.push(stopping);
+      trackKernelShutdown(this._path, stopping);
+    }
+    if (!remoteLauncher) this.signal("SIGKILL");
     if (this.sockets != null) {
       const sockets = this.sockets;
       waits.push(sockets.waitUntilClosed());
@@ -719,7 +750,10 @@ export class JupyterKernel
     }
     this.removeAllListeners();
     if (this._kernel != null) {
-      killKernel(this._kernel);
+      const launched = this._kernel;
+      if (!remoteLauncher) {
+        killKernel(launched);
+      }
       delete this._kernel;
       delete this.sockets;
     }

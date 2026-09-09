@@ -1,8 +1,13 @@
 # Remote Jupyter Kernels Through Reflect
 
-Status: proposed, for maintainer review. No implementation or remote installation
-has been performed as part of this plan. Command names and API shapes below are
-proposals, not existing interfaces.
+Status: implementation is present on `feature/remote-jupyter-kernels` in CoCalc
+and Reflect, with live CPU/GPU and non-admin project execution validated.
+Student browser registration/removal, shared kernel state across browser refresh,
+and desktop/narrow light/dark UI checks passed. Disruptive-environment acceptance
+evidence remains pending; this is not blanket production signoff. See the
+[implementation evidence](remote-jupyter-kernels-validation-2026-09-09.md) and
+[setup guide](../../docs/remote-jupyter-kernels.md) for actual commands and limits.
+The architectural proposals below are retained as the design record.
 
 ## Motivation And Initial Customer Scope
 
@@ -349,7 +354,10 @@ part of this first implementation.
 
 ## Implementation Phases
 
-All phases below are pending approval and implementation.
+The phases below describe the approved implementation scope. Transport,
+Reflect lifecycle, CoCalc integration and GPU setup are implemented. Release
+acceptance is tracked separately in the evidence document, not inferred from a
+single successful cell.
 
 ### 1. CPU Transport And Lifecycle Spike
 

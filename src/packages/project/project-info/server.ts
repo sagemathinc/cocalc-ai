@@ -176,7 +176,7 @@ export class ProjectInfoServer extends EventEmitter {
     // project startup
     const { get_kernel_by_pid } = await import("@cocalc/jupyter/kernel");
     const jupyter_kernel = get_kernel_by_pid(pid);
-    if (jupyter_kernel != null) {
+    if (jupyter_kernel != null && !jupyter_kernel.isRemote()) {
       return { type: "jupyter", path: jupyter_kernel.get_path() };
     }
     const termpath = terminalPidToPath(pid);
