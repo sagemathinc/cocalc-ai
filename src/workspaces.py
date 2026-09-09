@@ -681,14 +681,20 @@ def build(args) -> None:
     v = [package for package in packages(args) if needs_build(package)]
     CUR = os.path.abspath('.')
 
-    def f(path: str) -> None:
-        if not args.parallel and path != 'packages/static':
-            # NOTE: in parallel mode we don't delete or there is no
-            # hope of this working.
+    if not args.parallel:
+        # Clean all selected outputs before any compiler runs. Project references
+        # may build a later package early; deleting it again discards that work.
+        for path in v:
+            if path == 'packages/static':
+                continue
             dist = os.path.join(CUR, path, 'dist')
             if os.path.exists(dist):
-                # clear dist/ dir
-                shutil.rmtree(dist, ignore_errors=True)
+                shutil.rmtree(dist)
+            tsinfo = os.path.join(CUR, path, 'tsconfig.tsbuildinfo')
+            if os.path.exists(tsinfo):
+                os.unlink(tsinfo)
+
+    def f(path: str) -> None:
         package_path = os.path.join(CUR, path)
         if not os.path.exists(package_path):
             # e.g., in some cases we delete packages entirely to speed

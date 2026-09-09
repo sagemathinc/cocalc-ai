@@ -68,7 +68,26 @@ steps now take about 0-1s each, versus roughly 30s each previously. The rest lan
 also passed; per-package reports identify database (113.8s) and backend (69.2s) as
 the largest components of its 399s test step. Those two packages account for about
 46% of the remaining-package test time and provide a measured partition boundary
-for a future separate lane. The server lane is still running at this update.
+for a future separate lane.
+
+The first hosted server lane eventually passed after retrying two failures
+(`inter-bay/accounts-ban.test.ts` and `conat/api/workspace-chat-store.test.ts`).
+Its first attempt took 745.589s of package time and the retry 23.517s; Jest itself
+reported 742.472s initially. Collaborators is confirmed at 10.670s versus the
+earlier 156.386s, but the whole run still took about 21 minutes. Do not claim an
+overall speedup from this batch: the cache namespace was cold, the test set grew
+from 465 to 469 server suites, and several other suites ran longer. The reports
+preserve both attempts instead of hiding that variability. This run predates
+frontend cleanup, server sharding, and build cleanup below.
+
+Sequential workspace builds now clean selected non-static `dist` directories
+and their matching `tsconfig.tsbuildinfo` files before any package builds, rather
+than deleting outputs package by package after references may have built them.
+Package hooks/order are unchanged, as are unselected/static outputs and the
+existing parallel-mode cleanup policy. A real two-project TypeScript fixture
+checks obsolete-file removal and verifies that a later dependency build reuses
+the output emitted by an earlier consumer build. Sixteen runner tests and mypy
+pass. A full clean hosted build remains the integration gate for this change.
 
 ## Recommendation
 

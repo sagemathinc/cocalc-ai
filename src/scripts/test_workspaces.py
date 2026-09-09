@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shlex
+import subprocess
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -203,6 +204,104 @@ class TestReportsTest(unittest.TestCase):
                 (Path(root) / 'packages-cli/attempt-0.json').read_text())
             self.assertEqual(metadata['elapsed_seconds'], 1.25)
             self.assertFalse(metadata['has_jest_report'])
+
+
+class BuildOutputsTest(unittest.TestCase):
+
+    def test_reuses_referenced_outputs_and_removes_obsolete_emits(self):
+        tsc = Path(__file__).resolve(
+        ).parents[1] / 'packages/node_modules/typescript/bin/tsc'
+        with tempfile.TemporaryDirectory() as root:
+            paths = ['packages/consumer', 'packages/producer']
+            consumer, producer = [Path(root) / path for path in paths]
+            for package in [consumer, producer]:
+                package.mkdir(parents=True)
+                (package / 'package.json').write_text(
+                    json.dumps({'scripts': {
+                        'build': 'tsc --build'
+                    }}))
+                config = {
+                    'compilerOptions': {
+                        'composite': True,
+                        'outDir': 'dist',
+                        'rootDir': '.',
+                        'skipLibCheck': True,
+                        'types': [],
+                    },
+                    'include': ['*.ts'],
+                }
+                if package == consumer:
+                    config['references'] = [{'path': '../producer'}]
+                (package / 'tsconfig.json').write_text(json.dumps(config))
+            (producer / 'index.ts').write_text('export const value = 1;')
+            (producer / 'obsolete.ts').write_text('export const obsolete = 1;')
+            (consumer /
+             'index.ts').write_text('export { value } from "../producer";')
+
+            def compile(package):
+                subprocess.run(
+                    ['node', str(tsc), '--build',
+                     str(package)],
+                    check=True,
+                    capture_output=True,
+                    text=True)
+
+            compile(consumer)
+            self.assertTrue((producer / 'dist/obsolete.js').exists())
+            (producer / 'obsolete.ts').unlink()
+            emitted_mtimes = []
+            hooks = []
+
+            def run(command, path):
+                if command.startswith('touch '):
+                    (Path(path) / workspaces.SUCCESSFUL_BUILD).touch()
+                    return
+                self.assertEqual(command, 'pnpm run build')
+                if hooks:
+                    self.assertTrue((producer / 'dist/index.js').exists())
+                compile(path)
+                hooks.append(path)
+                emitted_mtimes.append(
+                    (producer / 'dist/index.js').stat().st_mtime_ns)
+                self.assertFalse((producer / 'dist/obsolete.js').exists())
+
+            args = SimpleNamespace(parallel=False, dev=False, force=False)
+            with patch.object(workspaces, 'packages', return_value=paths), \
+                    patch.object(workspaces, 'needs_build', return_value=True), \
+                    patch.object(workspaces, 'cmd', side_effect=run):
+                with contextlib.chdir(root):
+                    workspaces.build(args)
+            self.assertEqual(hooks, [str(consumer), str(producer)])
+            self.assertEqual(emitted_mtimes[0], emitted_mtimes[1])
+            for package in [consumer, producer]:
+                self.assertTrue(
+                    (package / workspaces.SUCCESSFUL_BUILD).exists())
+
+    def test_preserves_static_unselected_and_parallel_outputs(self):
+        for parallel in [False, True]:
+            with self.subTest(
+                    parallel=parallel), tempfile.TemporaryDirectory() as root:
+                for name in ['example', 'static', 'unselected']:
+                    package = Path(root) / 'packages' / name
+                    (package / 'dist').mkdir(parents=True)
+                    (package / 'dist/old.js').touch()
+                    (package / 'tsconfig.tsbuildinfo').touch()
+                args = SimpleNamespace(parallel=parallel,
+                                       dev=False,
+                                       force=False)
+                with patch.object(workspaces, 'packages', return_value=['packages/example', 'packages/static']), \
+                        patch.object(workspaces, 'needs_build', return_value=True), \
+                        patch.object(workspaces, 'cmd'), \
+                        patch.object(workspaces, 'thread_map', side_effect=lambda f, v, *args: [f(p) for p in v]):
+                    with contextlib.chdir(root):
+                        workspaces.build(args)
+                for name in ['example', 'static', 'unselected']:
+                    package = Path(root) / 'packages' / name
+                    preserved = parallel or name != 'example'
+                    self.assertEqual((package / 'dist/old.js').exists(),
+                                     preserved)
+                    self.assertEqual(
+                        (package / 'tsconfig.tsbuildinfo').exists(), preserved)
 
 
 if __name__ == "__main__":
