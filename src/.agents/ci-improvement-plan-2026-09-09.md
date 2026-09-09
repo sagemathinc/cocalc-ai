@@ -8,8 +8,24 @@ before installation (about 35ms locally). Planner/cache-key tests now run in
 static checks. Per-attempt report retention and seven-day CI artifacts are also
 implemented, with unbuffered Python build logs. Runner tests, mypy, and a real
 notebook-package invocation validate local reporting behavior. Hosted timing
-validation, test lifecycle optimizations, sharding, and build deduplication remain
+validation, further test lifecycle optimizations, sharding, and build deduplication remain
 outstanding; the targets below are not yet achieved.
+
+The committed collaborators optimization (`5db6c45a47`) takes a different route
+from the initial diagnostic: retain per-test module resets and all real policy/SQL
+orchestration, but block unused storage/inter-bay transport dependencies. Its 62
+tests now take 5.329s locally (5.730s randomized without cache), versus the 95.787s
+baseline. All 89 collaborators/project-limit/project-usage tests pass together.
+A parallel run reported a worker-exit warning; an in-band `--detectOpenHandles`
+run passed and exited without reporting outstanding handles.
+
+Bay-backup similarly retains module resets and the local archive/restore logic.
+Mocking admin-alert delivery and the unused Google Compute SDK reduced its 24
+tests from 37.581s to 2.373s; health-check alert dispatch gained explicit coverage.
+All three bay-backup suites (38 tests), including the unchanged disposable cloud
+restore tests, passed randomized with no transform cache in 4.619s. Server
+TypeScript builds pass. Neither optimization deletes tests or changes production
+behavior; whole-CI savings still require a hosted run.
 
 ## Recommendation
 
