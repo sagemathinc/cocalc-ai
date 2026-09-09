@@ -72,6 +72,28 @@ Successful sessions:
 
 ## Release gates still outstanding
 
+### Release preparation checkpoint
+
+The narrow release worktree is `/home/user/cocalc-ai-release-20260908`, branch
+`release/codex-0.153.4`, based on deployed commit
+`2703fa81189a7889d7e8ca2b2161d44df04f2251`. Build restoration was cherry-picked
+as `177fb09862`; unrelated newer main changes are excluded.
+
+ARM64 cross-build prerequisites are installed locally (GCC cross compiler,
+Rust 1.95.0 ARM64 target, and qemu-user). Native ARM library packages from
+Ubuntu 24.04 were downloaded using isolated APT lists and extracted into
+`/tmp/codex/arm64-sysroot`; they were not installed over the machine's native
+libraries and its APT sources were not changed.
+
+- Build command: `bash /tmp/codex/build-arm64.sh`.
+- Log: `/tmp/codex/build-arm64.log`.
+- Output directory: `/tmp/codex/build-0.153.4/codex-rs/target/aarch64-unknown-linux-gnu/release`.
+- Build was started and observed compiling, not yet completed at this checkpoint.
+- Before resuming, inspect the live Cargo process and log; do not duplicate it.
+- Staging2 CLI authentication requires renewed interactive login. A normal
+  `auth bootstrap` was started using the exact installed CoCalc CLI and profile
+  `staging2`; no credentials were read or copied into the build worktree.
+
 1. Build the ARM64 counterpart and assemble complete artifact provenance and
    checksums. Do not publish an incomplete two-architecture release.
 2. Validate runtime library compatibility in the actual supported host images.
