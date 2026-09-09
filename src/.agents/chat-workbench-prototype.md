@@ -481,6 +481,15 @@ browser during a maintenance rotation; that distinction remains open.
 
 ### Open Live Collaboration Finding
 
+Keyboard activation was verified on the static build from `a00d3c9cd4` in the
+QA browser: focus Comment on Clean collaboration check and press Enter; the
+whole-document feedback chip appears and `Ask Codex...` receives focus. Focus
+Remove artifact feedback and press Enter; the chip disappears and that same
+composer retains focus. No message was sent and the composer remained empty.
+This specifically covers native key activation and resulting focus, not a full
+Tab-only traversal or keyboard text-range selection. The removal previously
+left focus on the document body; `a00d3c9cd4` fixes that observed regression.
+
 A fresh real-agent fixture was published in the QA thread in message
 `e6d210ae-5ba2-4822-94cb-8fcd821a258c`: artifact
 `clean-collaboration-20260909`, title Clean collaboration check, containing
