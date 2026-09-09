@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { artifactKey } from "@cocalc/chat";
 import { useArtifactFeedbackDraft } from "../use-artifact-feedback";
 import { writeChatComposerDraft } from "../use-chat-composer-draft";
 
@@ -38,8 +37,8 @@ beforeEach(() => {
 function setup(threadId = "t") {
   const actions: any = {
     syncdb: {
-      get_one: () => ({
-        ...artifactKey(feedback),
+      get_one: (key) => ({
+        ...key,
         artifact_id: "a",
         schema_version: 1,
         kind: "markdown",
@@ -50,19 +49,27 @@ function setup(threadId = "t") {
     setSelectedThread: jest.fn(),
   };
   let api: ReturnType<typeof useArtifactFeedbackDraft>;
-  function Test() {
+  function Test({ selectedThread = threadId, draftKey = 7 }) {
     api = useArtifactFeedbackDraft({
       actions,
-      threadId,
+      threadId: selectedThread,
       account_id: "user",
       project_id: "project",
       path: "x.chat",
-      composerDraftKey: 7,
+      composerDraftKey: draftKey,
     });
     return <>{api.control}</>;
   }
-  render(<Test />);
-  return { actions, read: () => api.read(), captureClear: () => api.clear };
+  const view = render(<Test />);
+  return {
+    actions,
+    read: () => api.read(),
+    captureClear: () => api.clear,
+    switchThread: (selectedThread: string, draftKey: number) =>
+      view.rerender(
+        <Test selectedThread={selectedThread} draftKey={draftKey} />,
+      ),
+  };
 }
 
 test("stages a pinned quote without sending, and supports removal", async () => {
@@ -117,4 +124,31 @@ test("delayed send completion does not clear newly staged feedback", async () =>
     await captureClear()(next);
   });
   expect(read()).toBeUndefined();
+});
+
+test("a send completing after a thread switch clears only its original draft", async () => {
+  const clearOld = jest.fn(async () => {});
+  const clearCurrent = jest.fn(async () => {});
+  let activeInput = JSON.stringify(feedback);
+  let clearComposerDraft = clearOld;
+  useChatComposerDraft.mockImplementation(() => ({
+    input: activeInput,
+    setInput: jest.fn(),
+    clearInput: jest.fn(),
+    clearComposerDraft,
+  }));
+  const { read, captureClear, switchThread } = setup();
+  const completeOriginalSend = captureClear();
+  const next = { ...feedback, thread_id: "other", title: "Other draft" };
+  activeInput = JSON.stringify(next);
+  clearComposerDraft = clearCurrent;
+  switchThread("other", 8);
+  expect(read()).toEqual(next);
+  await act(async () => {
+    await completeOriginalSend(feedback);
+  });
+  expect(clearOld).not.toHaveBeenCalled();
+  expect(clearCurrent).toHaveBeenCalledWith(7);
+  expect(clearCurrent).not.toHaveBeenCalledWith(8);
+  expect(read()).toEqual(next);
 });

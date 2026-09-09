@@ -395,7 +395,7 @@ including the current turn's context and a fresh read before its update.
       agent updates. Complete the acceptance session with a real agent.
 - [ ] P4: Validate reload/reconnect, concurrency, keyboard/focus, themes, narrow
       layouts, virtualization, and multiple threads/frames.
-- [ ] P5: Give the maintainer a runnable local/dev build, test chat link, and a
+- [x] P5: Give the maintainer a runnable local/dev build, test chat link, and a
       three-step try-it recipe. Record findings before broadening scope.
 
 ### Live Acceptance Progress
@@ -430,13 +430,14 @@ failed live: bubbling button clicks reactivated the pane being left, and focus
 was requested before the destination rendered. Commits `92e0efc98f` and
 `cf430d4902` fix these separately. The 600px live round trip now opens a visible
 artifact and returns focus to the `Ask Codex...` textbox. Closing the originating
-chat frame still remains unverified;
-the workbench currently obtains its syncdb through that frame's chat actions.
+chat frame still remains unverified live; `5ce0c46d78` removes the dependency on
+that frame's actions for document access, with a closed-origin save regression.
 
 Focused commands (run from `src/packages/frontend`):
 
 ```sh
 pnpm exec jest --runInBand chat/__tests__/artifact-merge.test.ts
+pnpm exec jest --runInBand chat/__tests__/artifact-feedback-draft.test.tsx chat/__tests__/send-chat-ids.test.ts
 pnpm exec jest --runInBand chat/__tests__/artifacts.test.tsx frame-editors/chat-editor/workbench.test.tsx
 pnpm exec jest --runInBand editors/markdown-input/__test__/multimode-contract.test.tsx editors/markdown-input/__test__/multimode-stale-callback.test.tsx
 pnpm exec tsc --build
@@ -448,6 +449,11 @@ The additional Patchflow regression checks that a received overlapping human
 edit invalidates the agent's old base without writing a publication, and that
 a fresh-read update preserves the human wording. It does not claim protection
 from an unseen simultaneous write or replace the connected-client test.
+
+Feedback-routing regression coverage also includes a send completing after a
+thread switch: cleanup calls the latest draft controller with the original
+thread's key and leaves the new thread's feedback intact. This is hook-level
+evidence; the browser-level multiple-thread acceptance remains open.
 
 Additional live acceptance (2026-09-09): with the account's Appearance preference
 left on System, browser media emulation switched the workbench between dark and
