@@ -9,12 +9,12 @@ import { R2_REGIONS } from "@cocalc/util/consts/r2-regions";
 
 const logger = getLogger("server:cloud:cloudflare-bootstrap");
 
-// Only locally constructed, secret-free diagnostics may cross the RPC boundary.
+// Only local or explicitly sanitized diagnostics may cross the RPC boundary.
 class BootstrapDiagnostic extends Error {}
 
 type CloudflareResponse<T> = {
   success?: boolean;
-  errors?: Array<{ code?: number; message?: string }>;
+  errors?: unknown;
   result?: T;
 };
 
@@ -131,18 +131,69 @@ async function cloudflareRequest<T>(
     payload = undefined;
   }
   if (!response.ok || !payload?.success) {
-    // Do not propagate provider messages: they may echo request secrets.
-    const codes = Array.isArray(payload?.errors)
-      ? payload.errors
-          .map((error) => error?.code)
-          .filter(Number.isSafeInteger)
-          .slice(0, 5)
-      : [];
+    const detail = cloudflareErrorDetail(payload?.errors, token);
     throw new BootstrapDiagnostic(
-      `Cloudflare rejected the request (HTTP ${response.status}${codes.length ? `; codes ${codes.join(", ")}` : ""}). Check the token, permissions and validity dates. Cloudflare dates start at 00:00 UTC; an End Date of today is already expired.`,
+      `Cloudflare rejected ${method} ${method === "DELETE" ? "user/tokens/[id]" : path.split("?")[0]} (HTTP ${response.status}).${detail ? ` ${detail}` : " No usable validation details were returned."}`,
     );
   }
   return payload.result as T;
+}
+
+// Project only bounded validation messages and numeric codes, never the response
+// body, request headers, result.value, or arbitrary exception text. A message
+// echoing the bearer credential is omitted entirely, not merely truncated.
+function cloudflareErrorDetail(errors: unknown, token: string): string {
+  const variants = [
+    token,
+    encodeURIComponent(token),
+    [...Buffer.from(token)]
+      .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
+      .join(""),
+    Buffer.from(token).toString("base64"),
+    Buffer.from(token).toString("base64url"),
+    Buffer.from(token).toString("hex"),
+    [...token]
+      .map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`)
+      .join(""),
+  ]
+    .filter(Boolean)
+    .map((value) => value.toLowerCase());
+  const details: string[] = [];
+  function visit(value: unknown, depth: number) {
+    if (!Array.isArray(value) || depth > 3) return;
+    for (const error of value.slice(0, 5)) {
+      if (details.length >= 8) return;
+      if (error == null || typeof error !== "object") continue;
+      const code = Number.isSafeInteger(error.code)
+        ? `Code ${error.code}: `
+        : "";
+      let message = "";
+      if (typeof error.message === "string") {
+        if (error.message.length > 4096) {
+          message = "[oversized provider message omitted]";
+        } else {
+          message = error.message.replace(
+            /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f]/g,
+            "",
+          );
+          if (
+            variants.some((secret) => message.toLowerCase().includes(secret))
+          ) {
+            message = "[credential-bearing provider message omitted]";
+          } else {
+            message = message
+              .replace(/Bearer\s+[^\s"',;]+/gi, "Bearer [redacted]")
+              .replace(/[a-zA-Z0-9_+\/%=-]{32,}/g, "[redacted]")
+              .slice(0, 512);
+          }
+        }
+      }
+      if (code || message) details.push(`${code}${message}`);
+      visit(error.error_chain, depth + 1);
+    }
+  }
+  visit(errors, 0);
+  return details.join("; ").slice(0, 2048);
 }
 
 async function verifyToken(token: string): Promise<TokenVerifyResult> {

@@ -203,7 +203,7 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
     },
   );
 
-  it("exposes numeric provider diagnostics but never response text or network errors", async () => {
+  it("exposes numeric provider diagnostics but omits echoed credentials and network errors", async () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,
       status: 401,
@@ -216,7 +216,8 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
       }),
     });
     const rejected = await run(save);
-    expect(rejected.failure).toContain("HTTP 401; codes 1000");
+    expect(rejected.failure).toContain("HTTP 401");
+    expect(rejected.failure).toContain("Code 1000");
     fetchMock.mockRejectedValueOnce(new Error("network bootstrap-secret"));
     const network = await run(save);
     expect(network.failure).toContain("could not be reached");
@@ -228,6 +229,118 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
         (getLogger("").warn as jest.Mock).mock.calls,
       ]),
     ).not.toContain("bootstrap-secret");
+  });
+
+  it("retains nested validation explanations without irrelevant expiry advice", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (init.method !== "POST") return normal(url, init);
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({
+          success: false,
+          result: { value: "must-never-return-response-secret" },
+          errors: [
+            {
+              code: 400,
+              message: "Invalid token policy",
+              error_chain: [
+                {
+                  code: 1001,
+                  message:
+                    "expires_on: expected timestamp without fractional seconds",
+                },
+              ],
+            },
+          ],
+        }),
+      };
+    });
+    const result = await run(save);
+    expect(result.failure).toContain("POST user/tokens (HTTP 400)");
+    expect(result.failure).toContain("Code 400: Invalid token policy");
+    expect(result.failure).toContain(
+      "Code 1001: expires_on: expected timestamp without fractional seconds",
+    );
+    expect(result.failure).not.toContain("today is already expired");
+    expect(result.settings_status).toBe("not_saved");
+    expect(save).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(
+      "must-never-return-response-secret",
+    );
+    expect(getLogger("").warn).toHaveBeenCalledWith(
+      "bootstrap failed",
+      expect.objectContaining({ diagnostic: result.failure }),
+    );
+  });
+
+  it.each([
+    (token: string) => token,
+    (token: string) => encodeURIComponent(token),
+    (token: string) =>
+      [...Buffer.from(token)]
+        .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
+        .join(""),
+    (token: string) => Buffer.from(token).toString("base64"),
+    (token: string) => Buffer.from(token).toString("base64url"),
+    (token: string) => Buffer.from(token).toString("hex"),
+    (token: string) =>
+      [...token]
+        .map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`)
+        .join(""),
+    (token: string) => token.split("").join("\u200b"),
+  ])("omits messages containing credential encodings %#", async (encode) => {
+    const token = "sample+private/token=keep-out";
+    const encoded = encode(token);
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        success: false,
+        errors: [{ code: 400, message: `bad credential: ${encoded}` }],
+      }),
+    });
+    const result = await bootstrapCloudflareConfiguration({
+      domain: "example.edu",
+      token,
+      r2BucketPrefix: "site",
+      save,
+    });
+    const output = JSON.stringify([
+      result,
+      (getLogger("").warn as jest.Mock).mock.calls,
+    ]);
+    expect(output).not.toContain(token);
+    expect(output).not.toContain(encoded);
+    expect(result.failure).toContain(
+      "credential-bearing provider message omitted",
+    );
+  });
+
+  it("bounds provider errors, strips control characters and redacts unknown token-shaped strings", async () => {
+    const unknownToken = "A".repeat(40);
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        errors: [
+          { message: `invalid\nfield ${unknownToken}` },
+          { message: "X".repeat(5000) },
+          { message: { secret: "never stringify me" } },
+          ...Array.from({ length: 50 }, () => ({
+            code: 1,
+            message: "a ".repeat(500),
+          })),
+        ],
+      }),
+    });
+    const result = await run(save);
+    expect(result.failure).toContain("invalidfield [redacted]");
+    expect(result.failure).toContain("oversized provider message omitted");
+    expect(result.failure).not.toContain(unknownToken);
+    expect(result.failure).not.toContain("never stringify me");
+    expect(result.failure!.length).toBeLessThan(2400);
   });
 
   it("reports revocation failure without leaking echoed secrets", async () => {
