@@ -2397,7 +2397,11 @@ export function ChatPanel({
   const sendGitBrowserAgentPrompt = useCallback(
     async (
       prompt: string,
-      options?: { title?: string; workingDirectory?: string },
+      options?: {
+        title?: string;
+        workingDirectory?: string;
+        preserveThread?: boolean;
+      },
     ) => {
       const targetThreadKey = gitBrowserThreadKey ?? selectedThreadKey;
       sendGitCommitAgentTurn({
@@ -2406,6 +2410,7 @@ export function ChatPanel({
         targetThreadKey,
         defaultNewThreadSetup,
         title: options?.title,
+        preserveThread: options?.preserveThread,
         workingDirectory: options?.workingDirectory ?? gitBrowserCwd,
       });
     },

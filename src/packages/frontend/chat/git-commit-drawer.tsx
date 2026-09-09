@@ -298,6 +298,7 @@ interface GitCommitDrawerProps {
     options?: {
       title?: string;
       workingDirectory?: string;
+      preserveThread?: boolean;
     },
   ) => void | Promise<void>;
   onDirectCommitLogged?: (info: {
@@ -2411,6 +2412,7 @@ export function GitCommitDrawer({
     try {
       await onRequestAgentTurn(prompt, {
         title: "Address commit review",
+        preserveThread: true,
         workingDirectory: repoRoot || cwd,
       });
       const now = Date.now();
@@ -2716,7 +2718,7 @@ export function GitCommitDrawer({
   };
 
   const requestAgentRepoSetup = async () => {
-    if (!onRequestAgentTurn) return;
+    if (!requestAgentTurn) return;
     const startedScope = repoBootstrapScopeRef.current;
     if (!startedScope) return;
     const actionToken = repoBootstrapActionTokenRef.current + 1;
@@ -2734,7 +2736,7 @@ export function GitCommitDrawer({
         "4. Create an initial commit with a clear message.",
         "5. Summarize exactly what you included/excluded.",
       ].join("\n");
-      await onRequestAgentTurn(prompt, {
+      await requestAgentTurn(prompt, {
         title: "Set up git repository",
         workingDirectory: cwd,
       });
@@ -3023,7 +3025,7 @@ export function GitCommitDrawer({
   }: {
     includeSummary: boolean;
   }) => {
-    if (!onRequestAgentTurn) {
+    if (!requestAgentTurn) {
       setHeadCommitError("No active codex thread available for this action.");
       return;
     }
@@ -3039,7 +3041,7 @@ export function GitCommitDrawer({
     setHeadCommitBusy(true);
     setHeadCommitError("");
     try {
-      await onRequestAgentTurn(prompt, {
+      await requestAgentTurn(prompt, {
         title: "Commit changes",
         workingDirectory: repoRoot || cwd,
       });
@@ -3549,7 +3551,7 @@ export function GitCommitDrawer({
             cwd={cwd}
             error={nonRepoError}
             busy={repoBootstrapBusy}
-            canAskAgent={Boolean(onRequestAgentTurn)}
+            canAskAgent={Boolean(requestAgentTurn)}
             onInitialize={() => {
               void initializeGitRepo();
             }}

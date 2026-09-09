@@ -71,6 +71,9 @@ jest.mock("antd", () => ({
 jest.mock("../git-commit/comparison-modal", () => ({
   ComparisonModal: () => null,
 }));
+jest.mock("../git-commit/feedback-destination", () => ({
+  useFeedbackDestination: () => ({ request: jest.fn(), modal: null }),
+}));
 jest.mock(
   "@cocalc/frontend/frame-editors/time-travel-editor/git-revision-modal",
   () => ({ GitRevisionModal: () => null }),

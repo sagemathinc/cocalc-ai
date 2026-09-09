@@ -186,11 +186,13 @@ function Tree({
           color: UI_COLORS.secondary,
         }}
       >
-        {overflow.below
-          ? "More files below"
-          : overflow.above
-            ? "More files above"
-            : ""}
+        {overflow.above && overflow.below
+          ? "More files before and after this section"
+          : overflow.below
+            ? "More files after this section"
+            : overflow.above
+              ? "More files before this section"
+              : ""}
       </div>
     </div>
   );

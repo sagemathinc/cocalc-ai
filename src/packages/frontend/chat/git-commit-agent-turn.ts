@@ -20,6 +20,7 @@ type GitCommitAgentTurnOptions = {
   defaultNewThreadSetup: NewThreadSetup;
   workingDirectory?: string;
   title?: string;
+  preserveThread?: boolean;
 };
 
 type GitCommitAgentTurnResult = {
@@ -113,6 +114,7 @@ export function sendGitCommitAgentTurn({
   defaultNewThreadSetup,
   workingDirectory,
   title,
+  preserveThread = false,
 }: GitCommitAgentTurnOptions): GitCommitAgentTurnResult {
   const trimmed = `${prompt ?? ""}`.trim();
   if (!trimmed) {
@@ -123,9 +125,21 @@ export function sendGitCommitAgentTurn({
   const metadata = threadId
     ? actions.getThreadMetadata?.(threadId, { threadId })
     : undefined;
-  // The review's location is context, not a request to move the conversation
-  // or change the existing agent's working directory.
-  if (threadId && threadSupportsCodex(metadata as any)) {
+  const requestedDirectory = normalizeWorkingDirectory(workingDirectory);
+  const effectiveConfig =
+    threadId && !preserveThread
+      ? (actions.getCodexConfig?.(threadId) ?? field(metadata, "acp_config"))
+      : undefined;
+  const threadDirectory = normalizeWorkingDirectory(
+    field<string>(effectiveConfig, "workingDirectory"),
+  );
+  // Only conversational feedback may reuse a thread in another checkout.
+  // Setup/commit requests must retain their requested repository routing.
+  const directoryMatches =
+    preserveThread ||
+    requestedDirectory == null ||
+    requestedDirectory === threadDirectory;
+  if (threadId && threadSupportsCodex(metadata as any) && directoryMatches) {
     const timestamp = actions.sendChat({
       extraInput: trimmed,
       reply_thread_id: threadId,

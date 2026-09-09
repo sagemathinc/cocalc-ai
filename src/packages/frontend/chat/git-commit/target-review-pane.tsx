@@ -265,6 +265,7 @@ export function TargetReviewPane({
         comparisonFeedbackPrompt(target, snapshot.body),
         {
           title: "Address comparison review",
+          preserveThread: true,
         },
       );
       sent = true;

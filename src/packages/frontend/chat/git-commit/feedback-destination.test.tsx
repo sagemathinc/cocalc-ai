@@ -81,11 +81,15 @@ test.each([false, true])(
     const selector = screen.getByRole("combobox", {
       name: "Recent agent sessions",
     });
+    await waitFor(() => expect(selector).toHaveFocus());
     if (createNewThread) await user.selectOptions(selector, "new");
     const send = screen.getByRole("button", { name: "Send feedback" });
     send.focus();
     await user.keyboard("{Enter}");
     await waitFor(() => expect(result).toHaveBeenCalledWith("sent"));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Send review" })).toHaveFocus(),
+    );
     expect(submitNavigatorPromptInWorkspaceChat).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: "Pinned review",
@@ -98,16 +102,27 @@ test.each([false, true])(
   },
 );
 
-test("Escape cancels without submitting feedback", async () => {
-  const user = userEvent.setup();
-  const result = jest.fn();
-  render(<Harness result={result} />);
-  await user.click(screen.getByRole("button", { name: "Send review" }));
-  screen.getByRole("button", { name: "Cancel" }).focus();
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(result).toHaveBeenCalledWith("cancelled"));
-  expect(submitNavigatorPromptInWorkspaceChat).not.toHaveBeenCalled();
-});
+test.each(["Escape", "Cancel"])(
+  "%s cancels without submitting feedback and restores focus",
+  async (method) => {
+    const user = userEvent.setup();
+    const result = jest.fn();
+    render(<Harness result={result} />);
+    await user.click(screen.getByRole("button", { name: "Send review" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "Recent agent sessions" }),
+      ).toHaveFocus(),
+    );
+    if (method === "Escape") await user.keyboard("{Escape}");
+    else await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(result).toHaveBeenCalledWith("cancelled"));
+    expect(submitNavigatorPromptInWorkspaceChat).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Send review" })).toHaveFocus(),
+    );
+  },
+);
 
 test("closing the review cancels destination selection", async () => {
   const user = userEvent.setup();

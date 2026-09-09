@@ -27,6 +27,7 @@ export function useFeedbackDestination(
   const current = useRef(pending);
   current.current = pending;
   const [busy, setBusy] = useState(false);
+  const modalContent = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
   const selection = usePersistentAgentSessionSelection({
     project_id: projectId ?? "",
@@ -63,6 +64,12 @@ export function useFeedbackDestination(
     modal: (
       <Modal
         title="Send review to agent"
+        afterOpenChange={(visible) => {
+          if (visible)
+            modalContent.current
+              ?.querySelector<HTMLElement>('[role="combobox"], select')
+              ?.focus();
+        }}
         modalRender={(node) => (
           <KeyboardBoundary boundary="git-review-feedback">
             {node}
@@ -105,13 +112,15 @@ export function useFeedbackDestination(
           }
         }}
       >
-        <AgentSessionSelect
-          selection={selection}
-          disabled={busy}
-          includeNewThreadOption
-        />
-        <AgentSessionError selection={selection} />
-        {error && <Alert type="error" title={error} />}
+        <div ref={modalContent}>
+          <AgentSessionSelect
+            selection={selection}
+            disabled={busy}
+            includeNewThreadOption
+          />
+          <AgentSessionError selection={selection} />
+          {error && <Alert type="error" title={error} />}
+        </div>
       </Modal>
     ),
   };

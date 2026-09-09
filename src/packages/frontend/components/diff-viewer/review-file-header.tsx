@@ -114,7 +114,7 @@ export function ReviewFileHeader({
     >
       <button
         type="button"
-        aria-label={`${copyLabel}: ${path}`}
+        aria-label={`${copyLabel}: ${path}${oldPath && oldPath !== path ? ` (renamed from ${oldPath})` : ""}`}
         title={[
           oldPath && oldPath !== path
             ? `${oldPath} → ${path}\n${copyLabel}`
@@ -153,7 +153,7 @@ export function ReviewFileHeader({
           onCopyPath();
         }}
       >
-        {path}
+        {oldPath && oldPath !== path ? `${oldPath} → ${path}` : path}
       </button>
       <div
         style={{

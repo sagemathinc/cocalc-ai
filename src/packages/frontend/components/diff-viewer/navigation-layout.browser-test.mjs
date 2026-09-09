@@ -89,7 +89,12 @@ try {
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await expect(page.getByText("100 changed files")).toBeVisible();
   const hint = page.getByRole("status", { name: "File tree scrolling" });
-  await expect(hint).toHaveText("More files below");
+  await expect(hint).toHaveText("More files after this section");
+  const scrollMiddle = page.locator("[data-file-tree-virtualized-scroll]");
+  await scrollMiddle.evaluate((node) => {
+    node.scrollTop = (node.scrollHeight - node.clientHeight) / 2;
+  });
+  await expect(hint).toHaveText("More files before and after this section");
   const aside = await page.locator("aside > div").boundingBox();
   const code = await page.locator("[data-code-viewport]").boundingBox();
   expect(Math.abs(aside.height - code.height)).toBeLessThan(2);
@@ -97,7 +102,7 @@ try {
   await scroll.evaluate((node) => {
     node.scrollTop = node.scrollHeight;
   });
-  await expect(hint).toHaveText("More files above");
+  await expect(hint).toHaveText("More files before this section");
   const filter = page.getByRole("searchbox", { name: "Filter changed files" });
   await filter.fill("file099");
   await expect(hint).toHaveText("");
@@ -106,7 +111,7 @@ try {
   await scroll.evaluate((node) => {
     node.scrollTop = 0;
   });
-  await expect(hint).toHaveText("More files below");
+  await expect(hint).toHaveText("More files after this section");
   const path = page.getByRole("button", {
     name: /^Copy repository-relative path:/,
   });
@@ -129,7 +134,7 @@ try {
   await page.setViewportSize({ width: 900, height: 650 });
   expect((await header.boundingBox()).height).toBe(37);
   await expect(primary).toBeVisible();
-  await expect(hint).toHaveText("More files below");
+  await expect(hint).toHaveText("More files after this section");
   await page.setViewportSize({ width: 1400, height: 3600 });
   await expect(hint).toHaveText("");
   expect(errors).toEqual([]);

@@ -21,6 +21,27 @@ function createActions({
 }
 
 describe("sendGitCommitAgentTurn", () => {
+  it("does not send a commit request to a thread in another repository", () => {
+    const actions = createActions({
+      metadata: {
+        agent_kind: "acp",
+        acp_config: { workingDirectory: "/other" },
+      },
+    });
+    const result = sendGitCommitAgentTurn({
+      actions,
+      prompt: "Commit all tracked changes",
+      targetThreadKey: "thread-1",
+      defaultNewThreadSetup: getDefaultNewThreadSetup(),
+      workingDirectory: "/intended",
+    });
+    expect(result.mode).toBe("created");
+    expect(
+      actions.sendChat.mock.calls[0][0].threadAgent.codexConfig
+        .workingDirectory,
+    ).toBe("/intended");
+    expect(actions.sendChat.mock.calls[0][0].reply_thread_id).toBeUndefined();
+  });
   it("sends into an existing Codex thread", () => {
     const actions = createActions({
       metadata: {
@@ -62,6 +83,7 @@ describe("sendGitCommitAgentTurn", () => {
       const result = sendGitCommitAgentTurn({
         actions,
         prompt: "Fix review feedback",
+        preserveThread: true,
         targetThreadKey: "busy-thread",
         defaultNewThreadSetup: getDefaultNewThreadSetup(),
         workingDirectory: "/home/user/project",
@@ -87,6 +109,7 @@ describe("sendGitCommitAgentTurn", () => {
     const result = sendGitCommitAgentTurn({
       actions,
       prompt: "Review",
+      preserveThread: true,
       targetThreadKey: "thread-1",
       defaultNewThreadSetup: getDefaultNewThreadSetup(),
       workingDirectory: "/matching ",

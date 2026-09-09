@@ -20,8 +20,9 @@ test("historical opening and working-copy editing are distinct intents", async (
     />,
   );
   const path = screen.getByRole("button", {
-    name: "Copy repository-relative path: new.ts",
+    name: "Copy repository-relative path: new.ts (renamed from old.ts)",
   });
+  expect(path.textContent).toContain("old.ts");
   path.focus();
   await user.keyboard("{Enter}");
   expect(copy).toHaveBeenCalledTimes(1);

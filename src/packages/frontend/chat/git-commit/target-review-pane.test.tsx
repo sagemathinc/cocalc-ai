@@ -173,6 +173,7 @@ test("saved comparison feedback sends by keyboard without worktree consent and c
   expect(send.mock.calls[0][0]).toContain(target.base);
   expect(send.mock.calls[0][1]).toEqual({
     title: "Address comparison review",
+    preserveThread: true,
   });
   await waitFor(() => expect(saveTargetReview).toHaveBeenCalled());
   expect(

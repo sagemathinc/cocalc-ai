@@ -2684,7 +2684,11 @@ export default function Message({
 
   function sendGitBrowserAgentPrompt(
     prompt: string,
-    options?: { title?: string; workingDirectory?: string },
+    options?: {
+      title?: string;
+      workingDirectory?: string;
+      preserveThread?: boolean;
+    },
   ) {
     if (actions == null) return;
     sendGitCommitAgentTurn({
@@ -2693,6 +2697,7 @@ export default function Message({
       targetThreadKey: messageThreadId,
       defaultNewThreadSetup: getDefaultNewThreadSetup(),
       title: options?.title,
+      preserveThread: options?.preserveThread,
       workingDirectory: options?.workingDirectory ?? activityBasePath,
     });
   }
