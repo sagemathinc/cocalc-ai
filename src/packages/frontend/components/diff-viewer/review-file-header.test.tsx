@@ -58,6 +58,12 @@ test("selecting path text suppresses copy activation and long paths remain conta
   expect(button.parentElement!.style.height).toBe(
     `${reviewFileHeaderHeight(20)}px`,
   );
+  expect(reviewFileHeaderHeight(14)).toBe(37);
+  expect(button.parentElement).toHaveStyle({
+    display: "flex",
+    alignItems: "center",
+  });
+  expect(button.style.flex).toBe("1 1 0%");
 });
 
 test("unavailable historical opening never falls back to working-copy opening", () => {
