@@ -122,7 +122,16 @@ export function useArtifactFeedbackDraft({
               : " (whole document)"}
           </span>
         )}
-        <Button size="small" onClick={() => void draft.clearInput()}>
+        <Button
+          size="small"
+          onClick={() => {
+            void draft.clearInput();
+            // The removal button disappears; leave the keyboard in this composer.
+            if (actions.frameId != null) {
+              actions.frameTreeActions?.focus(actions.frameId);
+            }
+          }}
+        >
           Remove artifact feedback
         </Button>
       </Space>

@@ -47,6 +47,8 @@ function setup(threadId = "t") {
       }),
     },
     setSelectedThread: jest.fn(),
+    frameId: "origin-frame",
+    frameTreeActions: { focus: jest.fn() },
   };
   let api: ReturnType<typeof useArtifactFeedbackDraft>;
   function Test({ selectedThread = threadId, draftKey = 7 }) {
@@ -86,6 +88,7 @@ test("stages a pinned quote without sending, and supports removal", async () => 
   expect(document.activeElement).toBe(remove);
   fireEvent.click(remove);
   expect(read()).toBeUndefined();
+  expect(actions.frameTreeActions.focus).toHaveBeenCalledWith("origin-frame");
   expect(actions.setSelectedThread).not.toHaveBeenCalled();
 });
 
