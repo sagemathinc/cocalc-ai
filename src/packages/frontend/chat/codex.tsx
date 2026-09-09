@@ -696,7 +696,11 @@ export function CodexConfigButton({
     : getCodexPaymentSourceShortLabel(paymentSource?.source);
   const sourceTooltip = getCodexPaymentSourceTooltip(paymentSource);
   const membershipNeedsNewThread =
-    hasEstablishedSession && paymentSource?.source !== "site-api-key";
+    hasEstablishedSession &&
+    paymentSource?.source !== "site-api-key" &&
+    getCodexPaymentSourceOptions(paymentSource).some(
+      (option) => option.value === "site-api-key" && !option.disabled,
+    );
   const membershipPolicy = paymentSource?.siteFundedCodex?.policy;
   const membershipThreadHelp =
     `CoCalc Membership uses ${membershipPolicy ? `${membershipPolicy.model} with ${membershipPolicy.reasoning} reasoning` : "a fixed model and reasoning level"}. ` +
@@ -734,10 +738,7 @@ export function CodexConfigButton({
   const paymentSourceOptions = getCodexPaymentSourceOptions(paymentSource).map(
     (option) => {
       if (!hasEstablishedSession) return option;
-      if (
-        option.value === "site-api-key" &&
-        paymentSource?.source !== "site-api-key"
-      ) {
+      if (option.value === "site-api-key" && membershipNeedsNewThread) {
         return {
           ...option,
           disabled: true,

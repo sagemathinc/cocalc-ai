@@ -174,31 +174,10 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 jest.mock("../use-codex-payment-source", () => ({
   getCodexPaymentSourceShortLabel: (source: string) =>
     source === "site-api-key" ? "Membership" : "ChatGPT",
-  getCodexPaymentSourceOptions: (source: any) => [
-    {
-      value: "auto",
-      label: "Automatic",
-      description: "Choose automatically",
-    },
-    ...(source?.hasSubscription
-      ? [
-          {
-            value: "subscription",
-            label: "ChatGPT Plan",
-            description: "Use ChatGPT",
-          },
-        ]
-      : []),
-    ...(source?.hasSiteApiKey
-      ? [
-          {
-            value: "site-api-key",
-            label: "CoCalc Membership",
-            description: "Use membership allowance",
-          },
-        ]
-      : []),
-  ],
+  getCodexPaymentSourceOptions: (...args: any[]) =>
+    jest
+      .requireActual("../use-codex-payment-source")
+      .getCodexPaymentSourceOptions(...args),
   getCodexPaymentSourceTooltip: () => "ChatGPT",
 }));
 
@@ -1329,6 +1308,52 @@ describe("CodexConfigButton", () => {
         expect.objectContaining({ paymentSource: "site-api-key" }),
       );
       expect(screen.queryByRole("dialog")).toBeNull();
+    },
+  );
+
+  it.each([
+    { hasSiteApiKey: false },
+    { siteAiUsageLimitPositive: false },
+    { siteFundedCodex: { enabled: false } },
+  ])(
+    "does not offer unavailable Membership as new-thread guidance (%j)",
+    async (unavailable) => {
+      const user = userEvent.setup();
+      const actions = {
+        getCodexConfig: jest.fn(),
+        setCodexConfig: jest.fn(),
+      } as any;
+      render(
+        <CodexConfigButton
+          threadKey="thread-1"
+          chatPath="foo.chat"
+          actions={actions}
+          threadConfig={{
+            model: "gpt-5.4",
+            paymentSource: "subscription",
+            sessionId: "existing",
+          }}
+          paymentSource={{
+            source: "subscription",
+            hasSubscription: true,
+            hasProjectApiKey: false,
+            hasAccountApiKey: false,
+            hasSiteApiKey: true,
+            siteAiUsageLimitPositive: true,
+            siteFundedCodex: { enabled: true },
+            sharedHomeMode: "disabled",
+            ...unavailable,
+          }}
+        />,
+      );
+      fireEvent.click(screen.getByTitle("Change Codex payment source"));
+      const membership = screen.getByRole("button", {
+        name: "CoCalc Membership",
+      });
+      expect(membership).toBeDisabled();
+      await user.click(membership);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(actions.setCodexConfig).not.toHaveBeenCalled();
     },
   );
 
