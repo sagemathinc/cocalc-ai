@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -38,6 +38,8 @@ import type {
   CommercialOrderTransitionRequest,
   CommercialOrderUpdateRequest,
   CommercialQuoteDocument,
+  CommercialQuoteLinkRequest,
+  CommercialQuoteLinkResult,
   CommercialQuoteDocumentRequest,
   CommercialQuoteIssueRequest,
   CommercialQuotePreview,
@@ -235,7 +237,13 @@ function normalizeContactRow(row: any): CommercialOrderContact {
 }
 
 function normalizeQuoteRow(row: any): CommercialQuote {
-  const { document_data: _documentData, ...metadata } = row;
+  const {
+    document_data: _documentData,
+    download_token_hash: _downloadTokenHash,
+    download_window_at: _downloadWindowAt,
+    download_window_count: _downloadWindowCount,
+    ...metadata
+  } = row;
   return {
     ...metadata,
     subtotal: money(row.subtotal),
@@ -1901,6 +1909,79 @@ export async function voidCommercialQuote(
       },
     };
   });
+}
+
+export async function issueCommercialQuoteLink(
+  opts: CommercialQuoteLinkRequest,
+): Promise<CommercialQuoteLinkResult> {
+  assertSeedAuthority();
+  let token: string | undefined;
+  const order = await mutateOrder(
+    "quote-link-issued",
+    opts,
+    async (client, before) => {
+      const quote = before.quotes.find(
+        (q) => q.id === opts.commercial_quote_id,
+      );
+      const expires = new Date(opts.expires_at).getTime();
+      if (
+        !quote ||
+        !["issued", "accepted"].includes(quote.status) ||
+        !quote.document_sha256
+      ) {
+        throw Error(
+          "only retained issued or accepted quote PDFs can be shared",
+        );
+      }
+      if (
+        !Number.isFinite(expires) ||
+        expires <= Date.now() ||
+        expires > Date.now() + 90 * 86_400_000 ||
+        expires > new Date(quote.valid_until).getTime()
+      ) {
+        throw Error(
+          "link expiration must be in the future, within 90 days and no later than quote expiration",
+        );
+      }
+      token = randomBytes(32).toString("hex");
+      await client.query(
+        `UPDATE commercial_quotes SET download_token_hash=$2, download_expires_at=$3,
+       download_window_at=NULL, download_window_count=0 WHERE id=$1`,
+        [
+          quote.id,
+          createHash("sha256").update(token).digest("hex"),
+          new Date(expires),
+        ],
+      );
+      return {
+        metadata: {
+          commercial_quote_id: quote.id,
+          expires_at: new Date(expires).toISOString(),
+        },
+      };
+    },
+  );
+  return { order, path: token ? `/commercial/quotes/download#${token}` : null };
+}
+
+export async function revokeCommercialQuoteLink(
+  opts: CommercialQuoteVoidRequest,
+): Promise<CommercialOrder> {
+  assertSeedAuthority();
+  return await mutateOrder(
+    "quote-link-revoked",
+    opts,
+    async (client, before) => {
+      if (!before.quotes.some((q) => q.id === opts.commercial_quote_id)) {
+        throw Error("commercial quote not found for this order");
+      }
+      await client.query(
+        "UPDATE commercial_quotes SET download_token_hash=NULL, download_expires_at=NULL WHERE id=$1",
+        [opts.commercial_quote_id],
+      );
+      return { metadata: { commercial_quote_id: opts.commercial_quote_id } };
+    },
+  );
 }
 
 export async function getCommercialQuoteDocument(

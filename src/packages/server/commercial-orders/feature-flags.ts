@@ -48,6 +48,8 @@ export const COMMERCIAL_ACTION_CAPABILITIES = {
   updateCollectionMode: "mutate",
   issueQuote: "mutate",
   voidQuote: "mutate",
+  issueQuoteLink: "mutate",
+  revokeQuoteLink: "mutate",
   uploadDocument: "mutate",
   voidDocument: "mutate",
   createStripeQuote: "stripeQuotes",

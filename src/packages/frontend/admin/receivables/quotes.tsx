@@ -18,7 +18,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import type {
   CommercialQuotePreview,
@@ -191,8 +191,38 @@ export function CommercialQuotesCard({
   const [stripeActionForm] = Form.useForm<StripeActionFormValues>();
   const acceptanceConfirmed =
     Form.useWatch("customer_acceptance_confirmed", stripeActionForm) ?? false;
-  const [selectedProvider, setSelectedProvider] =
+  const [providerChoice, setSelectedProvider] =
+    useState<CommercialQuoteProvider>();
+  const [defaultProvider, setDefaultProvider] =
     useState<CommercialQuoteProvider>("local");
+  const selectedProvider = providerChoice ?? defaultProvider;
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const result =
+          await webapp_client.conat_client.hub.system.getSiteSettings({
+            names: ["commercial_receivables_stripe_quotes_enabled"],
+          });
+        if (active)
+          setDefaultProvider(
+            result.settings.some(
+              (setting) =>
+                setting.name ===
+                  "commercial_receivables_stripe_quotes_enabled" &&
+                setting.value === true,
+            )
+              ? "stripe"
+              : "local",
+          );
+      } catch {
+        // Keep the local fallback if settings cannot be read; never change an explicit choice.
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
   const [previewProvider, setPreviewProvider] =
     useState<CommercialQuoteProvider>("local");
   const [preview, setPreview] = useState<QuotePreview | null>(null);
@@ -206,6 +236,7 @@ export function CommercialQuotesCard({
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function openIssue() {
+    setSelectedProvider(selectedProvider);
     setBusy(true);
     setError("");
     try {
