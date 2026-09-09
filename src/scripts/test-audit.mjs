@@ -91,6 +91,8 @@ Options:
                        default: /tmp/cocalc-test-audit-<timestamp>
   --keep-output        Keep previous output directory contents
   --list-packages      Print detected Jest-backed packages and exit
+  --report=path        Analyze an existing Jest JSON report without running tests
+                       repeat for multiple reports; each attempt stays separate
   --help              Show this help
 
 Examples:
@@ -112,6 +114,7 @@ function parseArgs(argv) {
     out: join(tmpdir(), `cocalc-test-audit-${Date.now()}`),
     keepOutput: false,
     listPackages: false,
+    reports: [],
   };
   for (const arg of argv) {
     if (arg === "--help" || arg === "-h") {
@@ -131,6 +134,10 @@ function parseArgs(argv) {
       throw new Error(`unknown argument ${arg}`);
     }
     switch (key) {
+      case "--report":
+        if (!value) throw new Error("--report requires a path");
+        opts.reports.push(resolve(value));
+        break;
       case "--packages":
         opts.packages = value
           .split(",")
@@ -365,7 +372,7 @@ function aggregate(results, opts) {
         testCount: suite.assertionResults?.length ?? 0,
       };
       files.push(fileRow);
-      if (suite.status !== "passed") {
+      if (suite.status === "failed") {
         nonPassedSuites += 1;
         failures.push(fileRow);
       }
@@ -471,6 +478,34 @@ function printSummary(summary, opts) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  if (opts.reports.length) {
+    // Do not discover packages, spawn commands, or clean --out in read-only mode.
+    const results = opts.reports.map((outputFile) => {
+      const data = readJsonResults(outputFile);
+      if (!data || data.parseError || !Array.isArray(data.testResults)) {
+        throw new Error(`invalid Jest JSON report: ${outputFile}`);
+      }
+      return {
+        package: basename(outputFile),
+        outputFile,
+        elapsedMs: 0,
+        code:
+          data.success === false ||
+          data.numFailedTests > 0 ||
+          data.numFailedTestSuites > 0 ||
+          data.testResults.some((suite) => suite.status === "failed")
+            ? 1
+            : 0,
+        timedOut: false,
+      };
+    });
+    printSummary(aggregate(results, opts), opts);
+    console.log(
+      "\nSaved attempts are reported separately; suite spans are not job wall times.",
+    );
+    if (results.some((result) => result.code !== 0)) process.exitCode = 1;
+    return;
+  }
   let packages = discoverPackages();
   if (opts.packages) {
     const selected = new Set(opts.packages);

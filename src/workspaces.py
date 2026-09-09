@@ -543,7 +543,7 @@ def test(args) -> None:
                 test_cmd = "pnpm run --if-present test"
             if args.report:
                 test_cmd += " --reporters=default --reporters=jest-junit"
-            if args.max_workers:
+            if args.max_workers and jest_backed:
                 test_cmd += f' --maxWorkers={args.max_workers} '
             if retry_paths:
                 quoted_paths = " ".join(shlex.quote(path)
@@ -934,7 +934,7 @@ def main() -> None:
         type=str,
         default='',
         help=
-        'optional maxWorkers argument to be passed to all all calls to pnpm test.  This can be helpful to prevent overly optimistic hyperthreading.'
+        'optional maxWorkers argument for Jest-backed packages only. Non-Jest test commands are unchanged.'
     )
     packages_arg(subparser)
     subparser.set_defaults(func=test)
