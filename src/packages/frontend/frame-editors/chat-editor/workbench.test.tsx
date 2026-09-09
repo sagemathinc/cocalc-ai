@@ -224,6 +224,21 @@ test.each([false, true])(
     expect(record.input).toBe("Pending human edit");
     expect(syncdb.save).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Pending human edit")).toBeTruthy();
+    // Explicit saves must reach syncdoc even if its local record already matches.
+    syncdb.save.mockRejectedValueOnce(Error("Temporary save failure"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Read" }));
+    });
+    expect(screen.getByText(/Temporary save failure/)).toBeTruthy();
+    expect(syncdb.save).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Read" }));
+    });
+    expect(syncdb.save).toHaveBeenCalledTimes(3);
+    expect(syncdb.set).toHaveBeenCalledTimes(1);
+    expect(record.input).toBe("Pending human edit");
   },
 );
 

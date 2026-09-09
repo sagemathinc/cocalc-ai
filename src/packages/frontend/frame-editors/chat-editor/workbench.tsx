@@ -144,12 +144,15 @@ export function Workbench({
           (latest?.snapshot.markdown === value.input ? 2 : 1)
       ];
   displayed.current = value;
-  const saveInput = (input: string) => {
+  const saveInput = (input: string, explicit = false) => {
     const current = readArtifact(syncdb, target).artifact;
     const next = validateArtifact({ ...current, input });
-    if (next.input === current.input) return;
-    syncdb.set({ ...artifactKey(target), input: next.input });
-    syncdb.commit();
+    if (next.input === current.input) {
+      if (!explicit) return;
+    } else {
+      syncdb.set({ ...artifactKey(target), input: next.input });
+      syncdb.commit();
+    }
     setSaving(true);
     void syncdb.save().then(
       () => setSaving(false),
@@ -159,7 +162,7 @@ export function Workbench({
       },
     );
   };
-  const flushEditor = () => saveInput(getEditorValue.current());
+  const flushEditor = () => saveInput(getEditorValue.current(), true);
   const returnToChat = () => {
     const origin = desc.get("data-origin");
     // The composer must be visible before focusing it, especially when maximized.
