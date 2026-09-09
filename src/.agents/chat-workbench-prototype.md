@@ -320,12 +320,12 @@ projectIdentifier })` over the same operations. Installed runtime validation
 - Portable export/import now includes validated artifact rows and feedback.
   Import remaps thread/message identities and preserves exact snapshots; a
   filesystem fixture round-trip passes. Rotation's non-chat row retention was
-  inspected, but a live rotation/artifact reload test is still outstanding.
+  inspected; the live rotation/artifact reload check is recorded below.
   The SQLite offload regression now also applies its live-callback delete/upsert
   operations to a real Patchflow document, with an artifact edit arriving after
   snapshot collection. The edit and publication survive while the producing
   message is archived; the callback leaves the source file untouched. All nine
-  offload tests pass. This does not substitute for the outstanding browser test.
+  offload tests pass. The separate browser test below supplements these checks.
 - Real Patchflow document-level tests now cover independent concurrent
   human/agent text patches and publication retention. Legacy SyncDB serialization
   preserves artifact records. These do not replace the pending two-connected-
@@ -480,6 +480,21 @@ A fresh primary-tab reload established hub and host WebSockets and displayed
 both merged edits, proving their persistence beyond that tab's prior runtime.
 Reloading the second tab likewise displayed the same combined document.
 The transient routing observation is not claimed fixed by the workbench.
+
+Live rotation acceptance: invoke the existing `projects.chatStoreRotate` API
+through its resolved project-host connection (the central hub correctly rejects
+direct maintenance). Scope it to the disposable QA chat and keep one recent
+message. Operation `d012d5cf-040b-470f-8280-53fc68d7d99a` completed, archiving six
+of eight messages and retaining two (including the thread root). All four open
+artifact views survive a full browser reload: current edits, Published 3, and
+Published 1's original text remain intact. Returning to the conversation and
+scrolling upward loads the archived producing messages with their publication
+cards. The original Support replies card still displays its initial preview;
+its Published version button opens/reuses the correct Published 1 view. Four
+publication buttons are present across the loaded history. The host's archived
+read API independently confirms the six message IDs moved to SQLite. This
+closes the live rotation/history-card restoration gate without modifying the
+maintainer's demo chat or writing live chat JSON directly.
 
 The same live partition procedure also tested overlapping insertion at offset
 zero. Before reconnect, the disconnected tab contained only its new
