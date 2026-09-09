@@ -529,7 +529,10 @@ export async function bootstrapCloudflareConfiguration(opts: {
       "user/tokens",
       {
         name: "CoCalc temporary zone discovery",
-        expires_on: new Date(Date.now() + 10 * 60_000).toISOString(),
+        // Cloudflare's token API rejects fractional seconds, including .000Z.
+        expires_on: new Date(Date.now() + 10 * 60_000)
+          .toISOString()
+          .replace(/\.\d{3}Z$/, "Z"),
         policies: [
           {
             effect: "allow",

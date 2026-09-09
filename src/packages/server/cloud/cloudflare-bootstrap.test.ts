@@ -132,7 +132,9 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
         ([url, init]) => url.endsWith("/user/tokens") && init.method === "POST",
       )
       .map(([, init]) => JSON.parse(init.body));
-    expect(policies[0].expires_on).toBeDefined();
+    expect(policies[0].expires_on).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,
+    );
     expect(policies[0].policies[0].permission_groups).toEqual([
       { id: "Zone Read" },
     ]);
@@ -163,6 +165,29 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
         .filter(([, init]) => init.method === "DELETE")
         .map(([url]) => url.split("/").pop()),
     ).toEqual(["discovery-id", "bootstrap-id"]);
+  });
+
+  it.each([
+    ["2026-09-09T04:24:09.788Z", "2026-09-09T04:34:09Z"],
+    ["2026-12-31T23:55:00.000Z", "2027-01-01T00:05:00Z"],
+  ])("sends a whole-second discovery expiry for %s", async (now, expected) => {
+    const clock = jest.spyOn(Date, "now").mockReturnValue(Date.parse(now));
+    try {
+      const result = await run(save);
+      expect(result.tunnel_token.ok).toBe(true);
+      const requests = fetchMock.mock.calls
+        .filter(
+          ([url, init]) =>
+            url.endsWith("/user/tokens") && init.method === "POST",
+        )
+        .map(([, init]) => JSON.parse(init.body));
+      expect(requests[0].expires_on).toBe(expected);
+      const ttl = Date.parse(requests[0].expires_on) - Date.parse(now);
+      expect(ttl).toBeGreaterThan(599_000);
+      expect(ttl).toBeLessThanOrEqual(600_000);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("redacts provider errors and saves nothing if creation fails", async () => {
