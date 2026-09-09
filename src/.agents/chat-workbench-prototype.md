@@ -481,6 +481,25 @@ browser during a maintenance rotation; that distinction remains open.
 
 ### Open Live Collaboration Finding
 
+A fresh real-agent fixture was published in the QA thread in message
+`e6d210ae-5ba2-4822-94cb-8fcd821a258c`: artifact
+`clean-collaboration-20260909`, title Clean collaboration check, containing
+exactly First/Middle/Last paragraph separated by blank lines. Both live Slate
+clients opened it. One inserted `Alpha: ` at the start; the other inserted
+` Beta.` at the end. After Read in each tab, both rendered exactly
+`Alpha: First paragraph.\n\nMiddle paragraph.\n\nLast paragraph. Beta.`.
+The second client had already received Alpha before its insertion, so this is
+clean live propagation/flush evidence, not simultaneous-conflict acceptance.
+The QA viewport override used to reveal the chat pane was restored afterward.
+
+The local installed CLI lacks artifact commands. Project-exec of the upgraded
+CLI exposed those commands but its standalone read timed out waiting for
+syncdoc `info` (with and without explicit project identity). No write was
+attempted through those reads. The actual agent runtime successfully published
+the fixture using its configured context; persisted chat activity confirmed
+completion. Do not conflate an operator project-exec environment with the
+working agent runtime, or repeat fixture creation because a read timed out.
+
 Published-card navigation was verified live on the static build from
 `6d65140049`: the first QA message's Published version action opened Published 1
 with the original "Please refresh the project" reply and Edit disabled. The
