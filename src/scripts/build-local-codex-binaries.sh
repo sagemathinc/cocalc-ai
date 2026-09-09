@@ -60,6 +60,10 @@ case "${LINUX_LIBC}" in
 esac
 
 if [[ "${LINUX_LIBC}" == "musl" ]]; then
+  if ! command -v readelf >/dev/null 2>&1; then
+    echo "Portable musl builds require readelf from binutils" >&2
+    exit 1
+  fi
   case "${BUILD_PLATFORM}:${HOST_ARCH}" in
     linux-x64:x86_64 | linux-arm64:aarch64 | linux-arm64:arm64) ;;
     all:*)

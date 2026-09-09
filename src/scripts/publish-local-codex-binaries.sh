@@ -31,6 +31,11 @@ for path in \
   fi
 done
 
+if ! command -v readelf >/dev/null 2>&1; then
+  echo "Publishing Codex binaries requires readelf from binutils" >&2
+  exit 1
+fi
+
 verify_portable_linux_binary() {
   local binary="$1"
   if readelf -l "${binary}" | grep -q 'Requesting program interpreter'; then
