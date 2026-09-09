@@ -26,6 +26,7 @@ import {
 import {
   readChatSpeechPreferences,
   saveChatSpeechPreferences,
+  saveChatSpeechSpeed,
 } from "./speech-preferences";
 
 jest.mock("./api", () => ({
@@ -37,15 +38,19 @@ jest.mock("./api", () => ({
 }));
 
 jest.mock("./speech-preferences", () => ({
+  CHAT_SPEECH_SPEEDS: [0.75, 1, 1.25, 1.5, 2],
   readChatSpeechPreferences: jest.fn(() => ({
     voice: undefined,
     accent: "default",
+    speed: 1,
   })),
   saveChatSpeechPreferences: jest.fn(),
+  saveChatSpeechSpeed: jest.fn(),
 }));
 
 class FakeAudio {
   static rejectPlay = false;
+  static latest: FakeAudio | undefined;
   currentTime = 0;
   duration = 12;
   ended = false;
@@ -55,7 +60,9 @@ class FakeAudio {
   onloadedmetadata: (() => void) | null = null;
   ontimeupdate: (() => void) | null = null;
 
-  constructor(public src: string) {}
+  constructor(public src: string) {
+    FakeAudio.latest = this;
+  }
 
   async play() {
     if (FakeAudio.rejectPlay) throw new Error("gesture required");
@@ -91,6 +98,7 @@ const capabilities = {
 describe("ChatSpeechPlayer", () => {
   beforeEach(() => {
     FakeAudio.rejectPlay = false;
+    FakeAudio.latest = undefined;
     Object.defineProperty(globalThis, "Audio", {
       configurable: true,
       value: FakeAudio,
@@ -176,6 +184,48 @@ describe("ChatSpeechPlayer", () => {
       accent: "default",
     });
     expect(readChatSpeechPreferences).toHaveBeenCalled();
+  });
+
+  it("restores the account-wide playback speed", async () => {
+    jest.mocked(readChatSpeechPreferences).mockReturnValueOnce({
+      voice: undefined,
+      accent: "default",
+      speed: 1.5,
+    });
+    render(<ChatSpeechPlayer />);
+
+    await act(async () => {
+      await startChatSpeech({
+        markdown: "Listen faster.",
+        messageId: "message-speed",
+      });
+    });
+
+    expect(
+      screen.getByRole("combobox", { name: "Playback speed" }),
+    ).toBeTruthy();
+    expect(FakeAudio.latest?.playbackRate).toBe(1.5);
+    expect(saveChatSpeechSpeed).not.toHaveBeenCalled();
+  });
+
+  it("allows seeking through the current speech segment", async () => {
+    render(<ChatSpeechPlayer />);
+    await act(async () => {
+      await startChatSpeech({
+        markdown: "Seek through this answer.",
+        messageId: "message-seek",
+      });
+    });
+
+    const slider = screen.getByRole("slider", { name: "Seek read aloud" });
+    slider.focus();
+    fireEvent.keyDown(slider, {
+      key: "ArrowRight",
+      code: "ArrowRight",
+      keyCode: 39,
+      which: 39,
+    });
+    expect(FakeAudio.latest?.currentTime).toBeGreaterThan(0);
   });
 
   it("falls back to an explicit play control when iOS blocks delayed playback", async () => {

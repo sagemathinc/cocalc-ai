@@ -86,6 +86,7 @@ export interface AccountState {
     codex_max_concurrent_subagents?: number;
     chat_speech_voice?: string;
     chat_speech_accent?: ChatSpeechAccent;
+    chat_speech_speed?: number;
   }>;
   stripe_customer?: TypedMap<{
     subscriptions: { data: Map<string, any> };

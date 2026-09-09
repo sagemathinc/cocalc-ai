@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Modal, Progress, Select, Space, Typography } from "antd";
+import { Button, Modal, Select, Slider, Space, Typography } from "antd";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -16,8 +16,11 @@ import {
 } from "./api";
 import { markdownToSpeechText, splitSpeechText } from "./markdown-to-speech";
 import {
+  CHAT_SPEECH_SPEEDS,
+  type ChatSpeechSpeed,
   readChatSpeechPreferences,
   saveChatSpeechPreferences,
+  saveChatSpeechSpeed,
 } from "./speech-preferences";
 import type { ChatSpeechAccent } from "@cocalc/util/ai/speech";
 
@@ -234,7 +237,8 @@ export async function startChatSpeech(options: StartOptions): Promise<void> {
   const speechText = markdownToSpeechText(options.markdown);
   chunks = splitSpeechText(speechText);
   if (chunks.length === 0) throw new Error("There is no text to read aloud.");
-  startOptions = { ...options, ...readChatSpeechPreferences() };
+  const preferences = readChatSpeechPreferences();
+  startOptions = { ...options, ...preferences };
   const token = ++generation;
   emit({
     ...INITIAL_STATE,
@@ -242,6 +246,7 @@ export async function startChatSpeech(options: StartOptions): Promise<void> {
     status: "loading",
     title: options.title?.trim() || "Final response",
     chunkCount: chunks.length,
+    speed: preferences.speed,
   });
   try {
     await playChunk(0, token, true);
@@ -282,10 +287,17 @@ async function togglePlayback(): Promise<void> {
   }
 }
 
-function setSpeed(speed: number): void {
-  if (![0.75, 1, 1.25, 1.5, 2].includes(speed)) return;
+function setSpeed(speed: ChatSpeechSpeed): void {
   if (audio) audio.playbackRate = speed;
   emit({ speed });
+  saveChatSpeechSpeed(speed);
+}
+
+function seekPlayback(currentTime: number): void {
+  if (!audio || !Number.isFinite(currentTime) || state.duration <= 0) return;
+  const boundedTime = Math.max(0, Math.min(currentTime, state.duration));
+  audio.currentTime = boundedTime;
+  emit({ currentTime: boundedTime });
 }
 
 function formatTime(seconds: number): string {
@@ -301,8 +313,6 @@ export function ChatSpeechPlayer() {
   const [draftAccent, setDraftAccent] = useState<ChatSpeechAccent>("default");
   useEffect(() => stopChatSpeech, []);
   if (player.status === "hidden") return null;
-  const progress =
-    player.duration > 0 ? (player.currentTime / player.duration) * 100 : 0;
   const openSettings = () => {
     const preferences = readChatSpeechPreferences();
     setDraftVoice(
@@ -350,11 +360,16 @@ export function ChatSpeechPlayer() {
         >
           {player.error ?? player.title}
         </Typography.Text>
-        <Progress
-          percent={progress}
-          showInfo={false}
-          size="small"
-          status={player.status === "error" ? "exception" : "normal"}
+        <Slider
+          ariaLabelForHandle="Seek read aloud"
+          disabled={player.duration <= 0 || player.status === "error"}
+          max={player.duration || 1}
+          min={0}
+          onChange={seekPlayback}
+          step={0.1}
+          style={{ margin: "2px 6px" }}
+          tooltip={{ formatter: (value) => formatTime(value ?? 0) }}
+          value={player.currentTime}
         />
       </div>
       <Typography.Text
@@ -372,7 +387,7 @@ export function ChatSpeechPlayer() {
       <Select
         aria-label="Playback speed"
         onChange={setSpeed}
-        options={[0.75, 1, 1.25, 1.5, 2].map((value) => ({
+        options={CHAT_SPEECH_SPEEDS.map((value) => ({
           value,
           label: `${value}x`,
         }))}
