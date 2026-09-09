@@ -9,6 +9,7 @@ import {
   resetChatSpeechStateForTests,
   runProviderRequest,
   synthesizeWithOpenAI,
+  transcribeChatAudio,
   transcribeWithOpenAI,
   validateChatSpeechAudio,
   validateChatSpeechText,
@@ -276,5 +277,25 @@ describe("chat speech cancellation and idempotency", () => {
         run: async () => "duplicate",
       }),
     ).rejects.toMatchObject({ code: 409 });
+  });
+
+  it("rate-limits before parsing an uploaded audio container", async () => {
+    for (let i = 0; i < 30; i++) {
+      await runProviderRequest({
+        accountId,
+        requestId: `00000000-0000-4000-8000-${`${i}`.padStart(12, "0")}`,
+        timeoutMs: 10_000,
+        run: async () => undefined,
+      });
+    }
+    await expect(
+      transcribeChatAudio({
+        account_id: accountId,
+        request_id: "33333333-3333-4333-8333-333333333333",
+        content_type: "audio/webm",
+        filename: "malformed.webm",
+        audio: new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0, 0, 0, 0, 0]),
+      }),
+    ).rejects.toMatchObject({ code: 429 });
   });
 });

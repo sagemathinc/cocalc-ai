@@ -24,6 +24,7 @@ import {
 } from "./chat-speech-reservations";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { isValidUUID } from "@cocalc/util/misc";
+import LRU from "lru-cache";
 import {
   chatSpeechAccentInstruction,
   isChatSpeechAccent,
@@ -100,8 +101,14 @@ interface ProviderResult<T> {
 }
 
 const activeRequests = new Map<string, AbortController>();
-const recentRequests = new Map<string, number[]>();
-const usedRequestIds = new Map<string, number>();
+const recentRequests = new LRU<string, number[]>({
+  max: 50_000,
+  ttl: RATE_WINDOW_MS,
+});
+const usedRequestIds = new LRU<string, number>({
+  max: 100_000,
+  ttl: REQUEST_ID_TTL_MS,
+});
 
 function codedError(message: string, code: number | string): Error {
   const err = new Error(message);
@@ -275,9 +282,6 @@ function checkRateLimit(accountId: string): void {
 
 function claimRequestId(accountId: string, requestId: string): void {
   const now = Date.now();
-  for (const [key, usedAt] of usedRequestIds) {
-    if (now - usedAt >= REQUEST_ID_TTL_MS) usedRequestIds.delete(key);
-  }
   const key = activeRequestKey(accountId, requestId);
   if (usedRequestIds.has(key)) {
     throw codedError("This speech request ID has already been used.", 409);
@@ -675,85 +679,90 @@ export async function transcribeChatAudio({
     contentType: content_type,
     audio,
   });
-  const durationMs = await measureChatSpeechAudioDuration({
-    contentType,
-    audio,
-  });
-  const settings = await speechSettings();
-  if (!settings.inputEnabled)
-    throw codedError("Chat dictation is disabled.", 403);
-  const resolved = await resolveSpeechCredential({
+  return await runProviderRequest({
     accountId: account_id,
-    projectId: project_id,
-    touchLastUsed: true,
-  });
-  if (!resolved.credential)
-    throw codedError(resolved.reason ?? "Speech unavailable.", 403);
-  const reservation =
-    resolved.credential.source === "site"
-      ? await reserveChatSpeechUsage({
-          accountId: account_id,
-          requestId: request_id,
-          operation: "transcription",
-          model: settings.transcriptionModel,
-          reservedMicrousd: speechCostMicrousd({
-            operation: "transcription",
-            durationMs,
-          }),
-        })
-      : undefined;
-  const language =
-    `${language_hints?.[0] ?? ""}`.trim().slice(0, 16) || undefined;
-  const started = Date.now();
-  let provider: ProviderResult<{ text: string; language?: string }>;
-  try {
-    provider = await runProviderRequest({
-      accountId: account_id,
-      requestId: request_id,
-      timeoutMs: TRANSCRIBE_TIMEOUT_MS,
-      run: async (signal) =>
-        await transcribeWithOpenAI({
-          apiKey: resolved.credential!.apiKey,
+    requestId: request_id,
+    timeoutMs: TRANSCRIBE_TIMEOUT_MS,
+    run: async (signal) => {
+      // Admission wraps metadata parsing, credential lookup, reservations and
+      // provider work. Malformed containers cannot bypass account controls.
+      const durationMs = await measureChatSpeechAudioDuration({
+        contentType,
+        audio,
+      });
+      if (signal.aborted)
+        throw codedError("The speech request was canceled.", 408);
+      const settings = await speechSettings();
+      if (!settings.inputEnabled)
+        throw codedError("Chat dictation is disabled.", 403);
+      const resolved = await resolveSpeechCredential({
+        accountId: account_id,
+        projectId: project_id,
+        touchLastUsed: true,
+      });
+      if (!resolved.credential)
+        throw codedError(resolved.reason ?? "Speech unavailable.", 403);
+      const reservation =
+        resolved.credential.source === "site"
+          ? await reserveChatSpeechUsage({
+              accountId: account_id,
+              requestId: request_id,
+              operation: "transcription",
+              model: settings.transcriptionModel,
+              reservedMicrousd: speechCostMicrousd({
+                operation: "transcription",
+                durationMs,
+              }),
+            })
+          : undefined;
+      const language =
+        `${language_hints?.[0] ?? ""}`.trim().slice(0, 16) || undefined;
+      const started = Date.now();
+      let provider: ProviderResult<{ text: string; language?: string }>;
+      try {
+        provider = await transcribeWithOpenAI({
+          apiKey: resolved.credential.apiKey,
           model: settings.transcriptionModel,
           contentType,
           filename: filenameForContentType(contentType),
           audio,
           language,
           signal,
-        }),
-    });
-  } catch (err) {
-    if (reservation) await releaseSiteFundedSpeechUsage(reservation);
-    throw err;
-  }
-  if (reservation) {
-    await settleSiteFundedSpeechUsage({
-      reservation,
-      accountId: account_id,
-      projectId: project_id,
-      path,
-      requestId: request_id,
-      operation: "transcription",
-      model: settings.transcriptionModel,
-      durationMs,
-      providerRequestId: provider.providerRequestId,
-      elapsedMs: Date.now() - started,
-    });
-  }
-  log.debug("chat audio transcribed", {
-    account_id,
-    project_id,
-    request_id,
-    funding_source: resolved.credential.source,
-    duration_ms: durationMs,
-    bytes: audio.length,
+        });
+      } catch (err) {
+        if (reservation) await releaseSiteFundedSpeechUsage(reservation);
+        throw err;
+      }
+      if (reservation) {
+        await settleSiteFundedSpeechUsage({
+          reservation,
+          accountId: account_id,
+          projectId: project_id,
+          path,
+          requestId: request_id,
+          operation: "transcription",
+          model: settings.transcriptionModel,
+          durationMs,
+          providerRequestId: provider.providerRequestId,
+          elapsedMs: Date.now() - started,
+        });
+      }
+      log.debug("chat audio transcribed", {
+        account_id,
+        project_id,
+        request_id,
+        funding_source: resolved.credential.source,
+        duration_ms: durationMs,
+        bytes: audio.length,
+      });
+      return {
+        text: provider.value.text,
+        model: settings.transcriptionModel,
+        request_id,
+        detected_language: provider.value.language,
+      };
+    },
   });
-  return {
-    text: provider.value.text,
-    model: settings.transcriptionModel,
-    request_id,
-    detected_language: provider.value.language,
-  };
 }
 
 export async function synthesizeChatSpeech({
@@ -780,95 +789,96 @@ export async function synthesizeChatSpeech({
 }): Promise<ChatSpeechSynthesisResult> {
   if (!account_id) throw codedError("Must be signed in.", 401);
   validateRequestId(request_id);
-  const settings = await speechSettings();
-  if (!settings.outputEnabled)
-    throw codedError("Chat read aloud is disabled.", 403);
-  const selectedVoice = `${voice ?? settings.defaultVoice}`
-    .trim()
-    .toLowerCase();
-  const speechText = validateChatSpeechText({
-    text,
-    messageId: message_id,
-    voice: selectedVoice,
-    accent,
-    speed,
-  });
-  const resolved = await resolveSpeechCredential({
+  return await runProviderRequest({
     accountId: account_id,
-    projectId: project_id,
-    touchLastUsed: true,
-  });
-  if (!resolved.credential)
-    throw codedError(resolved.reason ?? "Speech unavailable.", 403);
-  const estimatedDurationMs = Math.max(
-    1_000,
-    (speechText.length / ESTIMATED_TTS_CHARACTERS_PER_MINUTE) *
-      (60_000 / speed),
-  );
-  const reservation =
-    resolved.credential.source === "site"
-      ? await reserveChatSpeechUsage({
-          accountId: account_id,
-          requestId: request_id,
-          operation: "speech",
-          model: settings.synthesisModel,
-          reservedMicrousd: speechCostMicrousd({
-            operation: "speech",
-            durationMs: estimatedDurationMs,
-          }),
-        })
-      : undefined;
-  const started = Date.now();
-  let provider: ProviderResult<Uint8Array>;
-  try {
-    provider = await runProviderRequest({
-      accountId: account_id,
-      requestId: request_id,
-      timeoutMs: SYNTHESIZE_TIMEOUT_MS,
-      run: async (signal) =>
-        await synthesizeWithOpenAI({
-          apiKey: resolved.credential!.apiKey,
+    requestId: request_id,
+    timeoutMs: SYNTHESIZE_TIMEOUT_MS,
+    run: async (signal) => {
+      const settings = await speechSettings();
+      if (!settings.outputEnabled)
+        throw codedError("Chat read aloud is disabled.", 403);
+      const selectedVoice = `${voice ?? settings.defaultVoice}`
+        .trim()
+        .toLowerCase();
+      const speechText = validateChatSpeechText({
+        text,
+        messageId: message_id,
+        voice: selectedVoice,
+        accent,
+        speed,
+      });
+      const resolved = await resolveSpeechCredential({
+        accountId: account_id,
+        projectId: project_id,
+        touchLastUsed: true,
+      });
+      if (!resolved.credential)
+        throw codedError(resolved.reason ?? "Speech unavailable.", 403);
+      const estimatedDurationMs = Math.max(
+        1_000,
+        (speechText.length / ESTIMATED_TTS_CHARACTERS_PER_MINUTE) *
+          (60_000 / speed),
+      );
+      const reservation =
+        resolved.credential.source === "site"
+          ? await reserveChatSpeechUsage({
+              accountId: account_id,
+              requestId: request_id,
+              operation: "speech",
+              model: settings.synthesisModel,
+              reservedMicrousd: speechCostMicrousd({
+                operation: "speech",
+                durationMs: estimatedDurationMs,
+              }),
+            })
+          : undefined;
+      const started = Date.now();
+      let provider: ProviderResult<Uint8Array>;
+      try {
+        provider = await synthesizeWithOpenAI({
+          apiKey: resolved.credential.apiKey,
           model: settings.synthesisModel,
           text: speechText,
           voice: selectedVoice,
           instructions: chatSpeechAccentInstruction(accent),
           speed,
           signal,
-        }),
-    });
-  } catch (err) {
-    if (reservation) await releaseSiteFundedSpeechUsage(reservation);
-    throw err;
-  }
-  if (reservation) {
-    await settleSiteFundedSpeechUsage({
-      reservation,
-      accountId: account_id,
-      projectId: project_id,
-      path,
-      requestId: request_id,
-      operation: "speech",
-      model: settings.synthesisModel,
-      durationMs: estimatedDurationMs,
-      inputCharacters: speechText.length,
-      providerRequestId: provider.providerRequestId,
-      elapsedMs: Date.now() - started,
-    });
-  }
-  log.debug("chat speech synthesized", {
-    account_id,
-    project_id,
-    request_id,
-    funding_source: resolved.credential.source,
-    input_characters: speechText.length,
-    output_bytes: provider.value.length,
+        });
+      } catch (err) {
+        if (reservation) await releaseSiteFundedSpeechUsage(reservation);
+        throw err;
+      }
+      if (reservation) {
+        await settleSiteFundedSpeechUsage({
+          reservation,
+          accountId: account_id,
+          projectId: project_id,
+          path,
+          requestId: request_id,
+          operation: "speech",
+          model: settings.synthesisModel,
+          durationMs: estimatedDurationMs,
+          inputCharacters: speechText.length,
+          providerRequestId: provider.providerRequestId,
+          elapsedMs: Date.now() - started,
+        });
+      }
+      log.debug("chat speech synthesized", {
+        account_id,
+        project_id,
+        request_id,
+        funding_source: resolved.credential.source,
+        input_characters: speechText.length,
+        output_bytes: provider.value.length,
+      });
+      return {
+        audio: provider.value,
+        content_type: "audio/mpeg",
+        model: settings.synthesisModel,
+        request_id,
+      };
+    },
   });
-  return {
-    audio: provider.value,
-    content_type: "audio/mpeg",
-    model: settings.synthesisModel,
-    request_id,
-  };
 }
 
 export async function cancelChatSpeech({
