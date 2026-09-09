@@ -473,6 +473,25 @@ and exact original publication. All eight offload tests pass via
 `src/packages/lite`. This tests actual rotation and disk reload, not a connected
 browser during a maintenance rotation; that distinction remains open.
 
+### Open Live Collaboration Finding
+
+Two QA browser tabs were opened in Slate on Current document. A single-tab
+append (`Client B verification.`) was visible before Read, survived Read, and
+arrived intact in the other still-open Slate editor after six seconds.
+
+Rapid two-tab typing is not accepted yet. In one run the A prefix survived but
+the intended B suffix did not; that run did not capture B's text before Read,
+so it does not establish where the suffix was lost. A second run explicitly
+captured text before flushing: typing `Round2-A ` at Control+Home yielded
+`RClient A: ound2-A Notebook does not open` before Read, while B's `Round2-B`
+appeared next to the earlier verification line rather than the document end.
+Both views subsequently converged. This is evidence of a cursor/edit interaction
+during rapid live updates, not proof that the sync store dropped a valid patch.
+Do not mark two-client editing complete from convergence alone. Next isolate
+selection restoration and pending remote updates with a stable starting document
+and capture each editor's text immediately before and after the remote change.
+Only the disposable QA artifact was modified; its test strings remain for audit.
+
 Use one feature branch with coherent commits and a draft PR when implementation
 is requested. Keep behind an experimental feature gate. Production deployment
 and external support/email actions are not part of this plan.
