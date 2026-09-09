@@ -2185,6 +2185,18 @@ export interface BayOpsSiteFundedCodexStatusRequest {
   reconcile?: boolean;
 }
 
+export interface BayOpsReserveSiteFundedSpeechRequest {
+  requestId: string;
+  accountId: string;
+  reservedMicrousd: number;
+}
+
+export interface BayOpsFinishSiteFundedSpeechRequest {
+  requestId: string;
+  status: "committed" | "released";
+  costMicrousd?: number;
+}
+
 export interface BayOpsCommercialOrdersRequest {
   action: string;
   actor_account_id: string;
@@ -2927,6 +2939,8 @@ export type BayOpsMethod =
   | "record-site-funded-codex-usage"
   | "finish-site-funded-codex-turn"
   | "get-site-funded-codex-status"
+  | "reserve-site-funded-speech"
+  | "finish-site-funded-speech"
   | "commercial-orders"
   | "crm-outreach-ingest-zendesk-event-internal"
   | "crm-outreach-apply-opt-out-internal"
@@ -4677,6 +4691,16 @@ export interface InterBayBayOpsApi {
   getSiteFundedCodexStatus: (
     opts: BayOpsSiteFundedCodexStatusRequest,
   ) => Promise<SiteFundedCodexStatus>;
+  reserveSiteFundedSpeech: (
+    opts: BayOpsReserveSiteFundedSpeechRequest,
+  ) => Promise<{
+    requestId: string;
+    reservedMicrousd: number;
+    created: boolean;
+  }>;
+  finishSiteFundedSpeech: (
+    opts: BayOpsFinishSiteFundedSpeechRequest,
+  ) => Promise<void>;
   commercialOrders: (opts: BayOpsCommercialOrdersRequest) => Promise<unknown>;
   ingestCrmOutreachZendeskEventInternal: (
     opts: BayOpsCrmOutreachZendeskEventRequest,
@@ -10393,6 +10417,24 @@ export function createInterBayBayOpsClient({
       method: "get-site-funded-codex-status",
     }),
   });
+  const reserveSiteFundedSpeechClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "reserveSiteFundedSpeech">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "reserve-site-funded-speech",
+    }),
+  });
+  const finishSiteFundedSpeechClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "finishSiteFundedSpeech">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "finish-site-funded-speech",
+    }),
+  });
   const rootfsQuotaReportClient = createServiceClient<
     Pick<InterBayBayOpsApi, "getRootfsQuotaReport">
   >({
@@ -10662,6 +10704,10 @@ export function createInterBayBayOpsClient({
       await finishSiteFundedCodexTurnClient.finishSiteFundedCodexTurn(opts),
     getSiteFundedCodexStatus: async (opts) =>
       await siteFundedCodexStatusClient.getSiteFundedCodexStatus(opts),
+    reserveSiteFundedSpeech: async (opts) =>
+      await reserveSiteFundedSpeechClient.reserveSiteFundedSpeech(opts),
+    finishSiteFundedSpeech: async (opts) =>
+      await finishSiteFundedSpeechClient.finishSiteFundedSpeech(opts),
     commercialOrders: async (opts) =>
       await commercialOrdersClient.commercialOrders(opts),
     ingestCrmOutreachZendeskEventInternal: async (opts) =>
@@ -10858,6 +10904,30 @@ export function createInterBayBayOpsHandlers({
       impl: {
         getSiteFundedCodexStatus: async (opts) =>
           await impl.getSiteFundedCodexStatus(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "reserveSiteFundedSpeech">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "reserve-site-funded-speech",
+      }),
+      impl: {
+        reserveSiteFundedSpeech: async (opts) =>
+          await impl.reserveSiteFundedSpeech(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "finishSiteFundedSpeech">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "finish-site-funded-speech",
+      }),
+      impl: {
+        finishSiteFundedSpeech: async (opts) =>
+          await impl.finishSiteFundedSpeech(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getMembershipTiers">>({

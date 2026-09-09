@@ -2853,7 +2853,11 @@ export function ChatPanel({
         readOnly={effectiveReadOnly}
       />
       {automationBanner}
-      <ChatSpeechPlayer />
+      <ChatSpeechPlayer
+        path={path}
+        projectId={project_id}
+        threadId={selectedThreadId ?? undefined}
+      />
       {selectedThreadResolved != null ? (
         <ResolvedThreadNotice resolved={selectedThreadResolved} />
       ) : !readOnly ? (

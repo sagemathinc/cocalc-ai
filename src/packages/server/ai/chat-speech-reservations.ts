@@ -8,6 +8,10 @@ import { ensureAccountUsageWindowsForEvent } from "@cocalc/server/membership/usa
 import { AI_USAGE_UNITS_PER_DOLLAR } from "./usage-units";
 import { ensureExactAIUsageSchema } from "./save-response";
 import { getAIUsageStatus } from "./usage-status";
+import {
+  finishSiteFundedSpeechGlobal,
+  reserveSiteFundedSpeechGlobal,
+} from "./site-funded-speech-reservations";
 
 const RESERVATION_TAG = "chat-speech-reservation";
 const RESERVATION_TTL_MS = 5 * 60_000;
@@ -58,6 +62,12 @@ export async function reserveChatSpeechUsage({
   ) {
     throw codedError("Your site-funded AI allowance is exhausted.", 403);
   }
+
+  const globalReservation = await reserveSiteFundedSpeechGlobal({
+    accountId,
+    requestId,
+    reservedMicrousd,
+  });
 
   const pool = getPool();
   const client = await pool.connect();
@@ -122,6 +132,12 @@ export async function reserveChatSpeechUsage({
     return { accountId, requestId, reservedMicrousd };
   } catch (err) {
     await client.query("ROLLBACK");
+    if (globalReservation.created) {
+      await finishSiteFundedSpeechGlobal({
+        requestId,
+        status: "released",
+      }).catch(() => undefined);
+    }
     throw err;
   } finally {
     client.release();
@@ -158,6 +174,11 @@ export async function settleChatSpeechUsage({
   ) {
     throw new Error("speech settlement exceeds its reservation");
   }
+  await finishSiteFundedSpeechGlobal({
+    requestId: reservation.requestId,
+    status: "committed",
+    costMicrousd,
+  });
   const { rows } = await getPool().query(
     `UPDATE ai_usage_log SET
        input=$3, tag=$4, cost_microusd=$5, project_id=$6, path=$7,
@@ -188,9 +209,19 @@ export async function settleChatSpeechUsage({
 export async function releaseChatSpeechUsage(
   reservation: ChatSpeechUsageReservation,
 ): Promise<void> {
-  await getPool().query(
-    `DELETE FROM ai_usage_log
-     WHERE account_id=$1 AND funded_event_id=$2 AND tag=$3`,
-    [reservation.accountId, reservation.requestId, RESERVATION_TAG],
+  const results = await Promise.allSettled([
+    finishSiteFundedSpeechGlobal({
+      requestId: reservation.requestId,
+      status: "released",
+    }),
+    getPool().query(
+      `DELETE FROM ai_usage_log
+       WHERE account_id=$1 AND funded_event_id=$2 AND tag=$3`,
+      [reservation.accountId, reservation.requestId, RESERVATION_TAG],
+    ),
+  ]);
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
   );
+  if (failure) throw failure.reason;
 }

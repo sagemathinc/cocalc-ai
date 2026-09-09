@@ -43,6 +43,7 @@ interface PlayerState {
   speed: number;
   voices: string[];
   defaultVoice?: string;
+  ownerId?: string;
 }
 
 interface StartOptions {
@@ -54,6 +55,14 @@ interface StartOptions {
   messageId: string;
   voice?: string;
   accent?: ChatSpeechAccent;
+}
+
+function ownerId({
+  projectId,
+  path,
+  threadId,
+}: Pick<StartOptions, "projectId" | "path" | "threadId">): string {
+  return JSON.stringify([projectId ?? null, path ?? null, threadId ?? null]);
 }
 
 const INITIAL_STATE: PlayerState = {
@@ -87,9 +96,9 @@ let startOptions: StartOptions | undefined;
 let chunks: string[] = [];
 let audio: HTMLAudioElement | undefined;
 let generation = 0;
-let activeRequestId: string | undefined;
+const activeRequestIds = new Set<string>();
 const urls = new Map<number, string>();
-const pending = new Map<number, Promise<string>>();
+const pending = new Map<string, Promise<string>>();
 const listeners = new Set<() => void>();
 
 function emit(patch: Partial<PlayerState>): void {
@@ -128,7 +137,8 @@ function disposeAudio(): void {
 async function generateChunk(index: number, token: number): Promise<string> {
   const existing = urls.get(index);
   if (existing) return existing;
-  const existingPromise = pending.get(index);
+  const pendingKey = `${token}:${index}`;
+  const existingPromise = pending.get(pendingKey);
   if (existingPromise) return await existingPromise;
   if (!startOptions) throw new Error("No speech request is active.");
   const promise = (async () => {
@@ -150,7 +160,7 @@ async function generateChunk(index: number, token: number): Promise<string> {
       defaultVoice: capabilities.output.default_voice,
     });
     const requestId = newSpeechRequestId();
-    activeRequestId = requestId;
+    activeRequestIds.add(requestId);
     let result;
     try {
       result = await synthesizeChatSpeech({
@@ -165,7 +175,7 @@ async function generateChunk(index: number, token: number): Promise<string> {
         speed: 1,
       });
     } finally {
-      if (activeRequestId === requestId) activeRequestId = undefined;
+      activeRequestIds.delete(requestId);
     }
     if (token !== generation) throw new Error("Speech playback was stopped.");
     const url = URL.createObjectURL(
@@ -174,9 +184,9 @@ async function generateChunk(index: number, token: number): Promise<string> {
     urls.set(index, url);
     return url;
   })().finally(() => {
-    pending.delete(index);
+    pending.delete(pendingKey);
   });
-  pending.set(index, promise);
+  pending.set(pendingKey, promise);
   return await promise;
 }
 
@@ -247,6 +257,7 @@ export async function startChatSpeech(options: StartOptions): Promise<void> {
     title: options.title?.trim() || "Final response",
     chunkCount: chunks.length,
     speed: preferences.speed,
+    ownerId: ownerId(options),
   });
   try {
     await playChunk(0, token, true);
@@ -257,11 +268,14 @@ export async function startChatSpeech(options: StartOptions): Promise<void> {
   }
 }
 
-export function stopChatSpeech(): void {
+export function stopChatSpeech(expectedOwnerId?: string): void {
+  if (expectedOwnerId != null && state.ownerId !== expectedOwnerId) return;
   generation += 1;
-  const requestId = activeRequestId;
-  activeRequestId = undefined;
-  if (requestId) void cancelChatSpeech(requestId).catch(() => undefined);
+  const requestIds = [...activeRequestIds];
+  activeRequestIds.clear();
+  for (const requestId of requestIds) {
+    void cancelChatSpeech(requestId).catch(() => undefined);
+  }
   disposeAudio();
   revokeUrls();
   chunks = [];
@@ -306,13 +320,24 @@ function formatTime(seconds: number): string {
   return `${Math.floor(rounded / 60)}:${`${rounded % 60}`.padStart(2, "0")}`;
 }
 
-export function ChatSpeechPlayer() {
+export function ChatSpeechPlayer({
+  projectId,
+  path,
+  threadId,
+}: {
+  projectId?: string;
+  path?: string;
+  threadId?: string;
+}) {
   const player = useSyncExternalStore(subscribe, snapshot, snapshot);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draftVoice, setDraftVoice] = useState<string>();
   const [draftAccent, setDraftAccent] = useState<ChatSpeechAccent>("default");
-  useEffect(() => stopChatSpeech, []);
-  if (player.status === "hidden") return null;
+  const playerOwnerId = ownerId({ projectId, path, threadId });
+  useEffect(() => () => stopChatSpeech(playerOwnerId), [playerOwnerId]);
+  if (player.status === "hidden" || player.ownerId !== playerOwnerId) {
+    return null;
+  }
   const openSettings = () => {
     const preferences = readChatSpeechPreferences();
     setDraftVoice(
@@ -399,7 +424,7 @@ export function ChatSpeechPlayer() {
         <Button
           aria-label="Stop read aloud"
           icon={<Icon name="times" />}
-          onClick={stopChatSpeech}
+          onClick={() => stopChatSpeech()}
           size="small"
         />
       </Tooltip>

@@ -264,6 +264,19 @@ export function useChatAudioRecorder<T>({
           chunksRef.current.push(data);
         };
         recorder.onerror = () => {
+          canceledRef.current = true;
+          const requestId = requestIdRef.current;
+          if (requestId)
+            void cancelChatSpeech(requestId).catch(() => undefined);
+          chunksRef.current = [];
+          encodedBytesRef.current = 0;
+          if (recorder.state !== "inactive") {
+            try {
+              recorder.stop();
+            } catch {
+              // Some browsers stop the recorder before dispatching onerror.
+            }
+          }
           releaseMedia();
           releaseActiveOperation();
           if (!mountedRef.current) return;

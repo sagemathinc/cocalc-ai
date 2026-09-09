@@ -165,6 +165,27 @@ describe("useChatAudioRecorder", () => {
     expect(media.track.stop).toHaveBeenCalled();
   });
 
+  it("does not transcribe buffered audio after a recorder error", async () => {
+    const media = makeMedia();
+    const hook = renderHook(() =>
+      useChatAudioRecorder({ onTranscript: jest.fn() }),
+    );
+    await waitFor(() => expect(hook.result.current.status).toBe("idle"));
+
+    await act(async () => {
+      await hook.result.current.start({ session: 1 });
+    });
+    const recorder = FakeMediaRecorder.instances[0];
+    recorder.ondataavailable?.({
+      data: new Blob([new Uint8Array([1])], { type: "audio/webm" }),
+    } as BlobEvent);
+    act(() => recorder.onerror?.(new Event("error")));
+
+    expect(hook.result.current.status).toBe("error");
+    expect(media.track.stop).toHaveBeenCalled();
+    expect(transcribeChatAudio).not.toHaveBeenCalled();
+  });
+
   it("cancels an in-flight transcription before another recorder starts", async () => {
     makeMedia();
     let resolveTranscription:

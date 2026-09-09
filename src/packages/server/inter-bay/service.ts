@@ -116,6 +116,10 @@ import {
   synthesizeChatSpeech as synthesizeChatSpeechLocal,
   transcribeChatAudio as transcribeChatAudioLocal,
 } from "@cocalc/server/ai/chat-speech";
+import {
+  finishSiteFundedSpeechGlobalLocal,
+  reserveSiteFundedSpeechGlobalLocal,
+} from "@cocalc/server/ai/site-funded-speech-reservations";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
@@ -780,6 +784,14 @@ async function startBayOpsService(): Promise<void> {
           ? await reconcileSiteFundedCodexCosts(pools)
           : undefined,
       };
+    },
+    reserveSiteFundedSpeech: async (opts) => {
+      assertSiteFundedCodexSeedAuthority();
+      return await reserveSiteFundedSpeechGlobalLocal(opts);
+    },
+    finishSiteFundedSpeech: async (opts) => {
+      assertSiteFundedCodexSeedAuthority();
+      await finishSiteFundedSpeechGlobalLocal(opts);
     },
     commercialOrders: async (opts) => {
       if (bay_id !== getConfiguredClusterSeedBayId()) {

@@ -260,4 +260,42 @@ describe("ChatSpeechPlayer", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:speech");
     expect(synthesizeChatSpeech).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps shared playback alive when an unrelated chatroom unmounts", async () => {
+    const owner = render(
+      <ChatSpeechPlayer
+        projectId="project-1"
+        path="owner.chat"
+        threadId="thread-1"
+      />,
+    );
+    const unrelated = render(
+      <ChatSpeechPlayer
+        projectId="project-2"
+        path="other.chat"
+        threadId="thread-2"
+      />,
+    );
+    await act(async () => {
+      await startChatSpeech({
+        markdown: "Keep playing.",
+        messageId: "message-owner",
+        projectId: "project-1",
+        path: "owner.chat",
+        threadId: "thread-1",
+      });
+    });
+
+    expect(
+      screen.getAllByRole("region", { name: "Read aloud player" }),
+    ).toHaveLength(1);
+    unrelated.unmount();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("region", { name: "Read aloud player" }),
+    ).toBeTruthy();
+
+    owner.unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:speech");
+  });
 });
