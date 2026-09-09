@@ -9,7 +9,10 @@ CODEX_VERSION="${CODEX_VERSION:-0.153.4}"
 CODEX_TAG="rust-v${CODEX_VERSION}"
 CODEX_BRANCH="cocalc-upstream-build-v${CODEX_VERSION}"
 # Keep the transport fix scoped to the source version it was validated against.
-PATCH_FILES=("${SCRIPT_DIR}/patches/codex-rust-v${CODEX_VERSION}-tcp-user-timeout.patch")
+PATCH_FILES=(
+  "${SCRIPT_DIR}/patches/codex-rust-v${CODEX_VERSION}-tcp-user-timeout.patch"
+  "${SCRIPT_DIR}/patches/codex-rust-v${CODEX_VERSION}-lock-version.patch"
+)
 LOCAL_BIN_ROOT="${COCALC_CODEX_LOCAL_BIN_DIR:-${REPO_ROOT}/src/.cache/codex-binaries}"
 CARGO_MANIFEST="${UPSTREAM_DIR}/codex-rs/Cargo.toml"
 HOST_ARCH="$(uname -m)"
@@ -203,6 +206,11 @@ recover_previous_patch_application() {
 
 configure_musl_build() {
   local target="$1"
+  rustup target add "${target}" --toolchain "${RUST_TOOLCHAIN}"
+  if ! command -v zig >/dev/null 2>&1; then
+    echo "Musl builds require Zig 0.14.0 on PATH, as in upstream release builds" >&2
+    exit 1
+  fi
   local helper="${UPSTREAM_DIR}/.github/scripts/install-musl-build-tools.sh"
   if [[ ! -x "${helper}" && ! -f "${helper}" ]]; then
     echo "Missing upstream musl setup helper at ${helper}" >&2
@@ -384,6 +392,10 @@ build_arm64() {
     "${CODEX_ARM64_STRIP_TOOL:-}" aarch64-linux-gnu-strip strip llvm-strip
   strip_binary_if_available "${ARM64_DEST}/codex-code-mode-host" "linux-arm64 codex-code-mode-host" \
     "${CODEX_ARM64_STRIP_TOOL:-}" aarch64-linux-gnu-strip strip llvm-strip
+  if [[ "${LINUX_LIBC}" == "musl" ]]; then
+    verify_portable_linux_binary "${ARM64_DEST}/codex"
+    verify_portable_linux_binary "${ARM64_DEST}/codex-code-mode-host"
+  fi
 }
 
 case "${BUILD_PLATFORM}" in
@@ -424,7 +436,7 @@ cat > "${MANIFEST_PATH}" <<EOF
   "branch": "${CODEX_BRANCH}",
   "upstream_head": "${UPSTREAM_HEAD}",
   "source_description": "upstream release with CoCalc Linux TCP user timeout override",
-  "patches": ["$(basename "${PATCH_FILES[0]}")"],
+  "patches": ["$(basename "${PATCH_FILES[0]}")", "$(basename "${PATCH_FILES[1]}")"],
   "build_platform": "${BUILD_PLATFORM}",
   "host_arch": "${HOST_ARCH}",
   "linux_libc": "${LINUX_LIBC}",

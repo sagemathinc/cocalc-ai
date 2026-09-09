@@ -1,0 +1,41 @@
+name: Build patched Codex musl
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/codex-1534-transport]
+    paths:
+      - .github/workflows/build-patched-codex.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out pinned upstream release
+        run: git clone --depth 1 --branch rust-v0.153.4 https://github.com/openai/codex.git "$RUNNER_TEMP/codex-upstream"
+      - name: Install Rust
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.14.0
+          use-cache: false
+      - name: Build patched CLI and code-mode companion
+        env:
+          CODEX_UPSTREAM_DIR: ${{ runner.temp }}/codex-upstream
+          COCALC_CODEX_LOCAL_BIN_DIR: ${{ runner.temp }}/codex-binaries
+          CODEX_BUILD_JOBS: 2
+        run: bash src/scripts/build-local-codex-binaries.sh
+      - name: Verify startup and archive executable modes
+        run: |
+          "$RUNNER_TEMP/codex-binaries/0.153.4/linux-arm64/codex" --version
+          tar -C "$RUNNER_TEMP/codex-binaries" -czf "$RUNNER_TEMP/codex-musl-arm64.tar.gz" 0.153.4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-musl-arm64
+          path: ${{ runner.temp }}/codex-musl-arm64.tar.gz
+          retention-days: 7
