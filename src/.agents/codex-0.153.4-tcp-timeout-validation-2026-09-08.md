@@ -132,6 +132,15 @@ its companion is
 The build and local startup gates are complete, but actual staging host/runtime
 validation and artifact publication remain required before production rollout.
 
+The initially published binaries are a transitional GNU build requiring glibc
+2.39. Production project images are Ubuntu 26.04 and satisfy that requirement,
+but these assets are not portable to older or minimal custom rootfs images.
+Future publication is guarded by the build scripts: each architecture must be
+built natively for musl, and publishing rejects an ELF interpreter or shared
+library dependency. Replace the transitional asset hashes after those musl
+builds are validated; do not run that expensive rebuild as part of this source
+review.
+
 1. Build the ARM64 counterpart and assemble complete artifact provenance and
    checksums. Do not publish an incomplete two-architecture release.
 2. Validate runtime library compatibility in the actual supported host images.

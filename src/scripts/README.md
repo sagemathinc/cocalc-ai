@@ -15,19 +15,26 @@ documented, or referenced from code.
 - `export-api-doc.ts`: export API documentation JSON.
 - `run-ci.sh`: local full clean/build/test helper.
 
-`build-local-codex-binaries.sh` builds both Linux architectures by default.
-Set `CODEX_BUILD_PLATFORM=linux-x64` or `linux-arm64` to build only that
-architecture natively. The local build defaults to Codex 0.153.4 with the
-version-specific Linux TCP user-timeout patch in `patches/`. This restores the
-shared HTTP client's 300-second socket timeout, configurable with
+`build-local-codex-binaries.sh` defaults to portable musl binaries. Build each
+architecture natively by setting `CODEX_BUILD_PLATFORM=linux-x64` or
+`linux-arm64`; a portable two-architecture release intentionally cannot be
+built with `CODEX_BUILD_PLATFORM=all`. The upstream musl setup helper installs
+its build prerequisites, so run this only on a disposable build machine with
+passwordless sudo. The local build defaults to Codex 0.153.4 with the
+version-specific Linux TCP user-timeout patch in `patches/`. It removes that
+patch on exit and can recover an interrupted prior run when the patch is the
+only tracked change. This restores the shared HTTP client's 300-second socket
+timeout, configurable with
 `CODEX_TCP_USER_TIMEOUT_MS` (a positive number of milliseconds). It is not a
 total HTTP request deadline or an app-server notification timeout. Changes to
 remote compaction deadlines do not establish that this transport mitigation
 is unnecessary for other endpoints, including image generation.
 
-The build manifest identifies the applied patch. Building or publishing a
-candidate does not change the sandbox installer pin or deploy it. Validate
-image generation and compaction before promoting a candidate; normal installs
+The build manifest identifies the applied patch and libc target. Publication
+fails unless all four Linux executables are musl binaries with no ELF
+interpreter or shared-library dependencies. Building or publishing a candidate
+does not change the sandbox installer pin or deploy it. Validate image
+generation and compaction before promoting a candidate; normal installs
 continue using the assets explicitly pinned in `backend/sandbox/install.ts`.
 
 ## Active Product And Release Workflows

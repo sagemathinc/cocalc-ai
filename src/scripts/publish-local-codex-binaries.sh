@@ -31,6 +31,26 @@ for path in \
   fi
 done
 
+verify_portable_linux_binary() {
+  local binary="$1"
+  if readelf -l "${binary}" | grep -q 'Requesting program interpreter'; then
+    echo "Refusing dynamically linked release binary with an ELF interpreter: ${binary}" >&2
+    exit 1
+  fi
+  if readelf -d "${binary}" 2>/dev/null | grep -q '(NEEDED)'; then
+    echo "Refusing release binary with shared-library dependencies: ${binary}" >&2
+    exit 1
+  fi
+}
+
+for binary in \
+  "${X64_SOURCE}" \
+  "${ARM64_SOURCE}" \
+  "${X64_HOST_SOURCE}" \
+  "${ARM64_HOST_SOURCE}"; do
+  verify_portable_linux_binary "${binary}"
+done
+
 if ! command -v gh >/dev/null 2>&1; then
   echo "Missing gh CLI" >&2
   exit 1
@@ -70,6 +90,11 @@ fi
 UPSTREAM_HEAD="$(get_manifest_field upstream_head)"
 BUILD_TIMESTAMP="$(get_manifest_field built_at_utc)"
 SOURCE_DESCRIPTION="$(get_manifest_field source_description)"
+LINUX_LIBC="$(get_manifest_field linux_libc)"
+if [[ "${LINUX_LIBC}" != "musl" ]]; then
+  echo "Refusing to publish non-musl Linux release artifacts (linux_libc=${LINUX_LIBC})" >&2
+  exit 1
+fi
 RELEASE_TARGET="${CODEX_RELEASE_TARGET:-main}"
 STAGING_DIR="$(mktemp -d)"
 trap 'rm -rf "${STAGING_DIR}"' EXIT
