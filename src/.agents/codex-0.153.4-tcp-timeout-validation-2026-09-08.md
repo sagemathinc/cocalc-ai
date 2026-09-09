@@ -88,8 +88,8 @@ libraries and its APT sources were not changed.
 - Build command: `bash /tmp/codex/build-arm64.sh`.
 - Log: `/tmp/codex/build-arm64.log`.
 - Output directory: `/tmp/codex/build-0.153.4/codex-rs/target/aarch64-unknown-linux-gnu/release`.
-- Build was started and observed compiling, not yet completed at this checkpoint.
-- Before resuming, inspect the live Cargo process and log; do not duplicate it.
+- Build completed successfully in 35m07s. Both ARM64 binaries start under
+  qemu-user with the isolated Ubuntu 24.04 runtime libraries.
 - Staging2 CLI authentication requires renewed interactive login. A normal
   `auth bootstrap` was started using the exact installed CoCalc CLI and profile
   `staging2`; no credentials were read or copied into the build worktree.
@@ -114,6 +114,23 @@ Installer requirement: official and patched executables both report version
 including its companion, rather than treating the version string and companion
 existence as sufficient. Include a regression test for replacing same-version
 stock binaries. Preserve download checksum verification before installation.
+
+The installer now targets the patched release assets, verifies compressed and
+uncompressed SHA256 values, and checks both installed binaries before accepting
+an existing installation (also for cross-builds). Backend typecheck and 12
+focused installer/integrity tests pass. Local archive installation is exercised
+by `/tmp/codex/test-installer.cjs`, with a curl fixture substituting local
+archives for transport; this is not yet verification of GitHub downloads.
+
+Complete artifacts are under `/tmp/codex/release-binaries/0.153.4`, including
+`manifest.json` with raw hashes and source provenance. Compressed archives are
+under `/tmp/codex/release-assets/0.153.4`. Compression is xz 5.8.3, `-T2 -9`.
+ARM64 Codex SHA256 is
+`3dbad13d4ce6a24e29fcd8281df6337a1ad4d70f4986485c39713cc33265f5ac`;
+its companion is
+`334ca593a4be06e5cf82dc4863eaf96b97e417671f99d56ede9d15b8b2fa080e`.
+The build and local startup gates are complete, but actual staging host/runtime
+validation and artifact publication remain required before production rollout.
 
 1. Build the ARM64 counterpart and assemble complete artifact provenance and
    checksums. Do not publish an incomplete two-architecture release.
