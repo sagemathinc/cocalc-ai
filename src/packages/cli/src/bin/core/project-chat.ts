@@ -171,6 +171,28 @@ export function mergeThreadConfigRecord(opts: {
   });
 }
 
+export function resolveArtifactMessage(
+  rows: any[],
+  threadId: string,
+  messageDate: string,
+): string {
+  const timestamp = new Date(messageDate).valueOf();
+  if (!threadId.trim() || !Number.isFinite(timestamp))
+    throw Error("explicit thread and valid message date are required");
+  const matches = rows.filter(
+    (row) =>
+      row.event === "chat" &&
+      row.thread_id === threadId &&
+      new Date(row.date).valueOf() === timestamp &&
+      typeof row.message_id === "string",
+  );
+  if (matches.length !== 1)
+    throw Error(
+      "producing message is missing or ambiguous; do not substitute the latest message",
+    );
+  return matches[0].message_id;
+}
+
 async function withProjectChatFile<Ctx, Project extends ProjectIdentity, T>({
   deps,
   ctx,
@@ -230,15 +252,17 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     action,
     artifactId,
     operationId,
+    messageDate,
     payload,
   }: {
     ctx: Ctx;
     projectIdentifier?: string;
     path: string;
     threadId: string;
-    action: "create" | "update" | "read" | "list";
+    action: "create" | "update" | "read" | "list" | "context";
     artifactId?: string;
     operationId?: string;
+    messageDate?: string;
     payload?: PublishArtifactInput;
   }) {
     return await withProjectChatFile({
@@ -246,7 +270,19 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
       ctx,
       projectIdentifier,
       chatPath: path,
-      fn: async ({ syncdb, rows }) => {
+      fn: async ({ syncdb, rows, project }) => {
+        if (action === "context") {
+          return {
+            project_id: project.project_id,
+            path,
+            thread_id: threadId,
+            message_id: resolveArtifactMessage(
+              rows,
+              threadId,
+              messageDate ?? "",
+            ),
+          };
+        }
         if (action === "list") {
           return rows
             .filter(

@@ -11,6 +11,86 @@ import type {
 } from "@cocalc/chat";
 
 import { importChatBundle } from "./chat-import";
+import { collectChatExport } from "./chat";
+import { publishArtifact, buildChatMessageRecordV2 } from "@cocalc/chat";
+
+test("artifacts and pinned feedback survive a portable export/import with new identities", async () => {
+  const tmp = await mkdtemp("chat-artifact-roundtrip-");
+  try {
+    const rows: any[] = [];
+    const publication = publishArtifact(
+      { get_one: () => undefined, set: (row) => rows.push(row) },
+      {
+        thread_id: "old-thread",
+        artifact_id: "artifact",
+        operation_id: "op",
+        message_id: "old-message",
+        title: "Draft",
+        markdown: "Original **text**",
+      },
+    );
+    const feedback = {
+      schema_version: 1,
+      thread_id: "old-thread",
+      artifact_id: "artifact",
+      title: "Draft",
+      markdown: "Original **text**",
+      rendered_text: "Original text",
+      start: 0,
+      end: 8,
+      quote: "Original",
+    };
+    rows.push({
+      ...buildChatMessageRecordV2({
+        sender_id: "user",
+        date: "2026-09-09T00:00:00Z",
+        prevHistory: [],
+        content: "Please edit",
+        message_id: "old-message",
+        thread_id: "old-thread",
+        generating: false,
+      }),
+      artifact_feedback: feedback,
+    });
+    const chatPath = path.join(tmp, "source.chat");
+    await writeJsonl(chatPath, rows);
+    const bundle = await collectChatExport({
+      chatPath,
+      scope: "all-threads",
+      includeBlobs: false,
+      includeCodexContext: false,
+    });
+    const bundleDir = path.join(tmp, "bundle");
+    await writeJson(path.join(bundleDir, "manifest.json"), bundle.manifest);
+    for (const file of bundle.files) {
+      const filename = path.join(bundleDir, file.path);
+      await fs.mkdir(path.dirname(filename), { recursive: true });
+      await fs.writeFile(filename, file.content);
+    }
+    const targetPath = path.join(tmp, "imported.chat");
+    const result = await importChatBundle({
+      sourcePath: bundleDir,
+      targetPath,
+    });
+    const imported = await readJsonl(targetPath);
+    const artifact = imported.find((row) => row.event === "chat-artifact");
+    const snapshot = imported.find(
+      (row) => row.event === "chat-artifact-publication",
+    );
+    const message = imported.find((row) => row.event === "chat");
+    expect(artifact.input).toBe("Original **text**");
+    expect(snapshot.snapshot).toEqual(publication.publication.snapshot);
+    expect(snapshot.thread_id).toBe(result.thread_ids[0]);
+    expect(snapshot.message_id).toBe(message.message_id);
+    expect(snapshot.message_id).not.toBe("old-message");
+    expect(message.artifact_feedback).toEqual({
+      ...feedback,
+      thread_id: result.thread_ids[0],
+    });
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
 
 async function mkdtemp(prefix: string): Promise<string> {
   return await fs.mkdtemp(path.join(os.tmpdir(), prefix));

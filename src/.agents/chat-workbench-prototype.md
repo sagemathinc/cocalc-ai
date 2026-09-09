@@ -308,6 +308,44 @@ features appropriate for the authenticated application origin.
   selection, keyboard focus changes before Comment, thread-targeted draft
   staging, removal, and sent-message thread validation. These are component
   tests, not yet evidence of the complete live Slate/browser/agent loop.
+- Agent context discovery is implemented as `project chat artifact context`
+  with explicit `--message-date`; it rejects missing/ambiguous matches rather
+  than choosing the latest message. Runtime guidance describes these commands.
+  Backend scripting exposes `api.artifacts.open({ path, threadId,
+projectIdentifier })` over the same operations. Installed runtime validation
+  is still pending; source/build tests do not prove deployment.
+- Portable export/import now includes validated artifact rows and feedback.
+  Import remaps thread/message identities and preserves exact snapshots; a
+  filesystem fixture round-trip passes. Rotation's non-chat row retention was
+  inspected, but a live rotation/artifact reload test is still outstanding.
+
+### Agent Recipe For The Dev Acceptance Run
+
+After upgrading the test runtime, confirm `exec-api` includes `api.artifacts`.
+Use the runtime-provided exact CLI command with `exec --stdin` and this script
+inside an actual agent turn in the disposable test chat:
+
+```js
+const doc = api.artifacts.open({
+  path: process.env.COCALC_CODEX_CHAT_PATH,
+  threadId: process.env.COCALC_CODEX_THREAD_ID,
+  projectIdentifier: process.env.COCALC_PROJECT_ID,
+});
+const context = await doc.context(process.env.COCALC_CODEX_MESSAGE_DATE);
+return await doc.create("support-replies", {
+  message_id: context.message_id,
+  operation_id: "initial-draft",
+  title: "Support replies",
+  markdown: "## Course question\n\nWhich course are you using CoCalc for?",
+});
+```
+
+The follow-up turn must obtain its own context, `await doc.read("support-replies")`,
+and call `doc.update` with that read's `base`, the same artifact ID, its own
+producing message ID, and a fresh operation ID. Retry an interrupted operation
+with the same payload and operation ID. Do not reuse the initial turn's message
+ID for a new revision. This recipe has not yet been exercised against the live
+agent runtime.
 
 ### Remaining Milestones
 

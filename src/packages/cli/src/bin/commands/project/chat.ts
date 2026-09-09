@@ -45,7 +45,13 @@ export function registerProjectChatCommands(
   const artifact = chat
     .command("artifact")
     .description("experimental collaborative Markdown artifacts");
-  for (const action of ["create", "update", "read", "list"] as const) {
+  for (const action of [
+    "create",
+    "update",
+    "read",
+    "list",
+    "context",
+  ] as const) {
     artifact
       .command(action)
       .requiredOption("--path <path>", "chat document path")
@@ -53,13 +59,17 @@ export function registerProjectChatCommands(
       .option("-w, --project <project>", "project id or name")
       .option("--artifact-id <id>", "stable artifact id (required except list)")
       .option("--operation-id <id>", "read an exact published snapshot")
+      .option(
+        "--message-date <date>",
+        "exact producing message timestamp for context",
+      )
       .option("--file <path>", "JSON publication payload, or - for stdin")
       .action(async (opts, command: Command) => {
         await withContext(
           command,
           `project chat artifact ${action}`,
           async (ctx) => {
-            if (action !== "list" && !opts.artifactId)
+            if (action !== "list" && action !== "context" && !opts.artifactId)
               throw Error("--artifact-id is required");
             let payload;
             if (action === "create" || action === "update") {
@@ -94,6 +104,7 @@ export function registerProjectChatCommands(
               threadId: normalizeThreadId(opts.threadId),
               artifactId: opts.artifactId,
               operationId: opts.operationId,
+              messageDate: opts.messageDate,
               payload,
             });
           },

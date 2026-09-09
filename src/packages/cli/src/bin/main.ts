@@ -3255,6 +3255,7 @@ const workspacesApi = createWorkspacesApi<
 });
 
 const execCommandDeps = {
+  projectChatArtifactData,
   withContext,
   tasksApi,
   textApi,

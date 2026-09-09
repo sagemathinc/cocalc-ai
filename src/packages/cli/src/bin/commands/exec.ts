@@ -9,6 +9,7 @@ import type { TimeTravelApi } from "../../api/timetravel";
 import type { WorkspacesApi } from "../../api/workspaces";
 
 export type ExecCommandDeps = {
+  projectChatArtifactData?: (options: any) => Promise<any>;
   withContext: any;
   tasksApi: TasksApi<any, any>;
   textApi: TextApi<any, any>;
@@ -230,6 +231,16 @@ export interface TaskImportResult {
 }
 
 export interface BackendExecApi {
+  /** Experimental live chat artifacts; uses the collaborative store. */
+  artifacts: {
+    open(options: { path: string; threadId: string; projectIdentifier?: string }): {
+      context(messageDate: string): Promise<{ project_id: string; path: string; thread_id: string; message_id: string }>;
+      list(): Promise<Array<{ artifact_id: string; thread_id: string; title: string; input: string }>>;
+      read(artifactId: string): Promise<{ artifact: { artifact_id: string; thread_id: string; title: string; input: string }; base: string }>;
+      create(artifactId: string, payload: { message_id: string; operation_id: string; title: string; markdown: string }): Promise<unknown>;
+      update(artifactId: string, payload: { message_id: string; operation_id: string; title: string; markdown: string; base: string }): Promise<unknown>;
+    };
+  };
   tasks: {
     /**
      * Open a live collaborative .tasks document.
@@ -622,8 +633,35 @@ async function readExecScriptFromStdin(): Promise<string> {
   });
 }
 
-function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
+export function createBackendExecApi(ctx: any, deps: ExecCommandDeps) {
   return {
+    artifacts: {
+      open(options: {
+        path: string;
+        threadId: string;
+        projectIdentifier?: string;
+      }) {
+        const call = (action: string, extra: object = {}) => {
+          if (!deps.projectChatArtifactData)
+            throw Error("artifact API is unavailable in this runtime");
+          return deps.projectChatArtifactData({
+            ctx,
+            ...options,
+            action,
+            ...extra,
+          });
+        };
+        return {
+          context: (messageDate: string) => call("context", { messageDate }),
+          list: () => call("list"),
+          read: (artifactId: string) => call("read", { artifactId }),
+          create: (artifactId: string, payload: object) =>
+            call("create", { artifactId, payload }),
+          update: (artifactId: string, payload: object) =>
+            call("update", { artifactId, payload }),
+        };
+      },
+    },
     tasks: {
       open(options: {
         path: string;
