@@ -2,15 +2,72 @@
 
 Date: 2026-09-09. Scope: measured investigation and staged implementation.
 
+## Measured outcome
+
+Full standard-runner [run 34407182769](https://github.com/sagemathinc/cocalc-ai/actions/runs/34407182769)
+at `3f0bf25ac0` passed in **12m11s**, versus **21m34s** for the original main
+baseline: about **44% less elapsed time**. All **34 recorded package/shard
+attempts passed first time**. No tests were deleted or disabled, and no
+larger/paid runners were introduced. The code is published in
+[PR 513](https://github.com/sagemathinc/cocalc-ai/pull/513); this final results-only
+documentation update is committed locally to avoid another redundant full run.
+
+| Measurement                | Original main baseline | Intermediate run |    Latest run |
+| -------------------------- | ---------------------: | ---------------: | ------------: |
+| Whole workflow             |                 21m34s |           14m42s |        12m11s |
+| Plan job                   |                  1m39s |              40s |           40s |
+| Build job                  |                  5m57s |            5m11s |         5m24s |
+| Server test jobs           |                 13m49s |    5m44s / 5m30s | 4m39s / 5m04s |
+| Frontend test job          |                  8m04s |            7m11s |         5m57s |
+| Remaining-package test job |                  8m51s |            8m42s |         5m11s |
+| Backend/database test job  |           Part of rest |     Part of rest |         3m58s |
+
+Summed job elapsed time fell from 40.23 to 34.75 to **32.73 runner-minutes**
+despite the extra lanes. This is a utilization comparison, not a billing
+calculation (queue time, billing rounding, and repository allowances are separate).
+Clean Build steps in the last two runs took 4m32s and 4m43s, compared with 5m57s
+in the first trial before the upfront-cleanup fix. The frontend is now the
+longest test job. Treat these as measured samples, not a stable median/p95 or a
+guarantee that every run will take twelve minutes.
+
+Latest reports contain all 469 server suites (3,544 passed tests and 14 existing
+skips), all 972 frontend suites (5,295 passed tests), and both backend/database
+packages (2,168 passed tests and one existing skip). The previous hosted shard
+union was explicitly compared with the complete local discovery: no omissions
+or duplicates. Latest server package times are 208.088s and 246.375s; frontend is
+263.606s. The isolated server suites take 5.820s for collaborators, 3.186s for
+local bay-backup, 3.125s for account-ban routing, and 0.568s for workspace-chat.
+
+In [intermediate run 34405735389](https://github.com/sagemathinc/cocalc-ai/actions/runs/34405735389),
+the rest job had become the critical path. Its backend and database packages
+took 68.2s and 118.9s; the latest layout moves these complete suites to their own
+lane, without changing affected-package selection.
+
+Retained reports also expose flakiness: that run's server shard 1 retried workspace-chat's
+five-second import timeout (260.120s first attempt + 3.610s retry), and frontend
+retried the receivables draft-edit UI test (346.508s + 28.007s). Server shard 2
+passed first attempt in 255.870s. All remaining packages passed first attempt.
+Do not report that intermediate green workflow as retry-free. The latest batch
+fixes workspace-chat's dependency boundary. Receivables also passed first time
+in the latest run, but its earlier timeout remains a follow-up risk.
+
+A focused receivables run with four-CPU affinity passes all 16 tests in 26.269s;
+the failing hosted draft-edit case takes 2.871s locally. It emits thousands of
+lines of Ant Design deprecation warnings, including `Modal.bodyStyle` from the
+documents panel. Investigate unnecessary render work and migrate deprecated
+props; do not globally silence console errors or discard the reviewed-action
+assertions. This local pass does not establish that the hosted timeout is fixed.
+
+## Implementation record
+
 Implementation follow-up (2026-09-09): `58f60b3a57` adds branch/PR concurrency,
 shallow checkout for full plans, and a tracked-input Jest digest computed once
 before installation (about 35ms locally). Planner/cache-key tests now run in
 static checks. Per-attempt report retention and seven-day CI artifacts are also
 implemented, with unbuffered Python build logs. Runner tests, mypy, and a real
 notebook-package invocation validate local reporting behavior. Hosted timing
-validation, further test lifecycle optimizations, and build deduplication remain
-outstanding; sharding is now implemented locally as described below. The targets
-below are not yet achieved.
+validation and further test lifecycle optimizations are recorded below. Sharding
+and build deduplication are now implemented and hosted validation has passed.
 
 The committed collaborators optimization (`5db6c45a47`) takes a different route
 from the initial diagnostic: retain per-test module resets and all real policy/SQL
@@ -26,7 +83,7 @@ tests from 37.581s to 2.373s; health-check alert dispatch gained explicit covera
 All three bay-backup suites (38 tests), including the unchanged disposable cloud
 restore tests, passed randomized with no transform cache in 4.619s. Server
 TypeScript builds pass. Neither optimization deletes tests or changes production
-behavior; whole-CI savings still require a hosted run.
+behavior; hosted measurements are recorded above and below.
 
 Frontend teardown now disconnects only clients already present in Jest's module
 cache, instead of loading the full application in every suite. A regression test
@@ -41,10 +98,10 @@ full run emitted listener-count warnings but exited successfully.
 
 The first changes are published for standard-runner validation in
 [PR 513](https://github.com/sagemathinc/cocalc-ai/pull/513). Run 34403505423 built
-successfully and started all three test lanes. Its separate checks job reported
+successfully and passed all three test lanes. Its separate checks job reported
 `music-metadata` as unused because depcheck cannot inspect the native dynamic
 import in `server/ai/chat-speech.ts`; a narrow depcheck exception fixes that
-locally. Hosted before/after timings remain pending. The frontend teardown change
+and in the next hosted run. The frontend teardown change
 and depcheck exception were held until this measurement finished to avoid
 cancelling it under the new concurrency policy.
 
@@ -68,7 +125,7 @@ steps now take about 0-1s each, versus roughly 30s each previously. The rest lan
 also passed; per-package reports identify database (113.8s) and backend (69.2s) as
 the largest components of its 399s test step. Those two packages account for about
 46% of the remaining-package test time and provide a measured partition boundary
-for a future separate lane.
+for a separate lane.
 
 The first hosted server lane eventually passed after retrying two failures
 (`inter-bay/accounts-ban.test.ts` and `conat/api/workspace-chat-store.test.ts`).
@@ -87,23 +144,22 @@ Package hooks/order are unchanged, as are unselected/static outputs and the
 existing parallel-mode cleanup policy. A real two-project TypeScript fixture
 checks obsolete-file removal and verifies that a later dependency build reuses
 the output emitted by an earlier consumer build. Sixteen runner tests and mypy
-pass. A full clean hosted build remains the integration gate for this change.
+pass. The subsequent full clean hosted build and downstream tests passed.
 
 Follow-up run 34405735389 at `9a449e80b6` includes the build cleanup, frontend
-teardown, server sharding, and depcheck fix. Its plan passed and build/checks are
-running. The repeated workspace chat-store timeout was also investigated locally:
+teardown, server sharding, and depcheck fix. All jobs passed. The repeated
+workspace chat-store timeout was also investigated locally:
 mock unused filesystem transport, notebook conversion, and blob-service imports
 while keeping the real sandbox and path mapping. The two tests take 0.871s versus
 3.780s before isolation. Both chat-store and workspace-filesystem suites pass
 together (10 tests), randomized without transform cache and with open-handle
-detection; the server TypeScript build passes. That test-only follow-up is held
-for the next push so run 34405735389 can finish.
+detection; the server TypeScript build passes. That test-only follow-up is now
+published in run 34407182769.
 
 That follow-up run's clean Build step succeeded in 4m32s, compared with 5m57s in
 the first run. In particular, the later server and database hooks now reuse
 reference-built outputs (about 0.5s each), instead of compiling again (about 22s
-and 4s previously). All package build hooks still execute. The full test lanes
-are still running; checks passed.
+and 4s previously). All package build hooks still execute; checks and tests passed.
 
 The other first-run timeout, `inter-bay/accounts-ban.test.ts`, performed a real
 legacy-table existence query before reaching its mocked signup-domain rejection.
@@ -123,7 +179,7 @@ command passed with retries disabled and CPU affinity restricted to four local
 CPUs: 219 suites passed, one existing suite skipped, 2,166 tests passed, three
 existing tests skipped. Total package-runner time was 155.406s. Backend reported
 a worker-teardown warning; database retains its pre-existing `--forceExit`.
-These follow-ups are held for the next push to avoid cancelling the hosted run.
+These follow-ups were pushed after the prior hosted run finished.
 
 ## Recommendation
 
@@ -494,12 +550,13 @@ The successful server run initially failed `projects/create.start-lro.test.ts` a
 overhead was about 12s, not the main 21-minute explanation. Still fix real-time
 waits/races with deterministic signals or clocks, not only larger timeouts.
 
-Before tuning further, persist every Jest JSON attempt, Node test-runner summaries,
-package wall times, build-hook times, runner CPU/RAM, peak RSS, worker restarts,
-cache hit/size/timing, and queue duration. Current `workspaces.py` cleans successful
-temporary results, including results preceding a successful retry, and CI uploads
-only the build artifact. Reuse `test-audit.mjs` for analysis rather than introducing
-another slow test pass. Keep short-retention timing artifacts, including failures.
+Every Jest JSON attempt and package wall time is now retained with seven-day CI
+artifacts, including failures before successful retries. Build logs are timestamped.
+The original runner discarded those successful-run temporary results and uploaded
+only build outputs. Further diagnostics can add peak RSS and worker restarts;
+cache and queue timings are available in GitHub job metadata/logs. Reuse
+`test-audit.mjs --report=<downloaded-jest-results.json>` for analysis rather than
+introducing another slow test pass.
 
 Recommended independently reviewable changes:
 
@@ -517,15 +574,17 @@ Recommended independently reviewable changes:
 7. **Rest balance and test retirement:** partition based on updated timings, prune
    agreed low-value cases, and only then consider database snapshots/native PG.
 
-Stages 2 and 3 have local experimental evidence; stages 4 and 5 need CI validation.
-Run A/B tests on the same pinned revision and runner class, with both cold and warm
+Stages 1-4 and the conservative upfront-cleanup part of stage 5 now have hosted
+validation, as does stage 7's lane rebalance. The broader
+single-solution build, database fixture work, and test retirements remain optional
+follow-ups. Run A/B tests on the same pinned revision and runner class, with cold and warm
 caches. Record median and slowest runs from at least three repeats, first-attempt
 pass rate, total runner minutes, and wall-clock completion. Larger samples are
 needed before claiming a stable p95. Do not add the separate estimates together:
 as server improves, rest/frontend/build become the critical path.
 
 Keep full coverage on main and conservative dependency-aware PR selection.
-Add `test:ci-plan` to routine checks; it currently is not in `test:checks`. Before
+`test:ci-plan` is now in routine `test:checks`. Before
 expanding selection, cover deleted files (direct git diff currently uses ACMR),
 renames, lock/config changes, new packages, cycles, transitive consumers, generated
 inputs, and an unavailable comparison base. Do not arbitrarily skip integration
