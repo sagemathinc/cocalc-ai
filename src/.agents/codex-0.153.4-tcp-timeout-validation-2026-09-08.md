@@ -129,8 +129,21 @@ ARM64 Codex SHA256 is
 `3dbad13d4ce6a24e29fcd8281df6337a1ad4d70f4986485c39713cc33265f5ac`;
 its companion is
 `334ca593a4be06e5cf82dc4863eaf96b97e417671f99d56ede9d15b8b2fa080e`.
-The build and local startup gates are complete, but actual staging host/runtime
-validation and artifact publication remain required before production rollout.
+The build and local startup gates are complete. The artifact release is now
+published at https://github.com/sagemathinc/codex/releases/tag/v0.153.4
+(GitHub release id `385195172`). All six uploaded asset digests were verified.
+Actual GitHub download/install tests also pass for both architectures, with
+compressed and raw checksums verified; the x64 test replaces the same-version
+stock CLI. No production deployment has occurred.
+
+The clean source release commit is `4ed650408d54`, pushed on
+`origin/release/codex-0.153.4`. The full two-architecture tools bundle was built
+from that commit, and raw hashes of both executables in both final tarballs
+match the manifest. Its immutable artifact id is
+`20260909T025724Z-4ed65040-20260908-4ed650408d-codex1534`, in
+`/tmp/cocalc-software/tools`. Software-store upload was started; inspect its
+status before retrying. Staging2 bootstrap still awaits interactive approval.
+Actual staging host/runtime validation remains required before production.
 
 1. Build the ARM64 counterpart and assemble complete artifact provenance and
    checksums. Do not publish an incomplete two-architecture release.
