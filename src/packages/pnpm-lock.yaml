@@ -22,7 +22,6 @@ overrides:
   loader-utils@<1.4.1: '>=1.4.1'
   json5@<1.0.2: '>=1.0.2'
   cookie@<0.7.0: '>=0.7.0'
-  csv-parse@<7.0.2: ^7.0.2
   min-document@<=2.19.0: '>=2.19.1'
   js-yaml@<4.3.2: ^4.3.2
   glob@>=10.2.0 <10.5.0: '>=10.5.0'
@@ -1925,8 +1924,8 @@ importers:
         specifier: workspace:*
         version: link:../database
       '@cocalc/gcloud-pricing-calculator':
-        specifier: ^1.17.0
-        version: 1.17.0
+        specifier: ^1.18.2
+        version: 1.18.2
       '@cocalc/jupyter':
         specifier: workspace:*
         version: link:../jupyter
@@ -2961,8 +2960,8 @@ packages:
   '@cocalc/diff-match-patch@1.0.1':
     resolution: {integrity: sha512-sF55A4FvQLSA3GukGjlprMkAYvD89Q2HbqmAI1Pannqa1BePjhKkGIAM2DTMu+v/UHDjJJNgP7AxUQcMOc/gBg==}
 
-  '@cocalc/gcloud-pricing-calculator@1.17.0':
-    resolution: {integrity: sha512-sQ/76dIdQZMhth+4H8l8+BwkgsFMxb+Lxgpz7gqK0y3whQhkUpEltoZCrc0bHNacy3uxZMOVJhEmT4iZ0pmaBg==}
+  '@cocalc/gcloud-pricing-calculator@1.18.2':
+    resolution: {integrity: sha512-7gdJrT8DhwoY6yRXbWN1FrLz8ykRamTMw6KRV3zZzLk7Grjd/thKYo+mZEIePOYh2x8MQg5vo1GCInMHCVyo/A==}
     engines: {node: '>=0.18.0'}
 
   '@cocalc/local-storage-lru@2.5.0':
@@ -12381,7 +12380,7 @@ snapshots:
 
   '@cocalc/diff-match-patch@1.0.1': {}
 
-  '@cocalc/gcloud-pricing-calculator@1.17.0':
+  '@cocalc/gcloud-pricing-calculator@1.18.2':
     dependencies:
       awaiting: 3.0.0
       cheerio: 1.0.0-rc.12

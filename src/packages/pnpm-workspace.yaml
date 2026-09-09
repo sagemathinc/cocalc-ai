@@ -29,7 +29,6 @@ overrides:
   "loader-utils@<1.4.1": ">=1.4.1"
   "json5@<1.0.2": ">=1.0.2"
   "cookie@<0.7.0": ">=0.7.0"
-  "csv-parse@<7.0.2": "^7.0.2"
   "min-document@<=2.19.0": ">=2.19.1"
   "js-yaml@<4.3.2": "^4.3.2"
   "glob@>=10.2.0 <10.5.0": ">=10.5.0"
@@ -118,6 +117,8 @@ minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   # Maintainer-approved exact-version exception; review in .agents/git-review-modernization.md.
   - "@pierre/diffs@1.4.1"
+  # CoCalc-owned upstream package; fresh releases are reviewed here before use.
+  - "@cocalc/gcloud-pricing-calculator"
   - "@cocalc/xterm"
   - patchflow
   - "@nebius/js-sdk"
