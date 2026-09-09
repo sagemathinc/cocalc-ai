@@ -446,6 +446,27 @@ events. Chromium left the selection empty. Keyboard-only text selection is
 not established by this probe; native browser caret-navigation behavior and
 the complete keyboard path still need validation. No artifact text was changed.
 
+Live disconnected independent edits were exercised on the same QA artifact.
+After enabling the CDP Page domain, a temporary new-document WebSocket wrapper
+tracked the primary QA tab's two sockets. Set that tab offline and close those
+sockets; type `Isolated-A: ` at the start and click Read. The connected second
+tab did not receive that prefix. Append ` Online-B.` in the second tab and
+click Read: the disconnected first tab still lacked that suffix. Restore
+networking: both tabs converge to text containing both edits. This establishes
+an actual partition, independent edits from the shared base, and reconnect
+merging; it does not establish overlapping-edit conflict behavior.
+
+Earlier attempts using only network emulation did not interrupt existing
+sockets and are explicitly not disconnect evidence (the fixture retains their
+`Offline-A:` and `Disconnected-A:` diagnostic prefixes). All network emulation
+was restored and the temporary WebSocket instrumentation removed afterward.
+The first subsequent reload stalled at Connecting, despite successful HTTP
+requests. Runtime reported unavailable project-host routing for ProjectActions.fs.
+A fresh primary-tab reload established hub and host WebSockets and displayed
+both merged edits, proving their persistence beyond that tab's prior runtime.
+Reloading the second tab likewise displayed the same combined document.
+The transient routing observation is not claimed fixed by the workbench.
+
 ### Live Acceptance Progress
 
 The maintainer tried the prototype and confirmed the instant-opening shared
