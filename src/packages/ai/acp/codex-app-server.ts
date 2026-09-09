@@ -2718,6 +2718,18 @@ export class CodexAppServerAgent implements AcpAgent {
         ...(spawned.runtimeEnv ?? {}),
       }).filter(([, value]) => typeof value === "string" && !!`${value}`),
     ) as Record<string, string>;
+    // A reused process retains its first turn's environment. Chat attribution
+    // must follow this request, without overriding launcher-owned credentials.
+    for (const key of [
+      "COCALC_CODEX_CHAT_PATH",
+      "COCALC_CODEX_THREAD_ID",
+      "COCALC_CODEX_MESSAGE_DATE",
+      "COCALC_BROWSER_ID",
+    ]) {
+      const value = request.runtime_env?.[key];
+      // Empty overrides also clear a value inherited from process startup.
+      turnEnv[key] = typeof value === "string" ? value : "";
+    }
     // Goal lifecycle belongs to Codex and explicit user actions. Starting a
     // chat or automation turn must not clear this or other threads' goals.
     const errors: string[] = [];

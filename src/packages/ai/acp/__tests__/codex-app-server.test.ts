@@ -3923,6 +3923,10 @@ describe("CodexAppServerAgent", () => {
           COCALC_BEARER_TOKEN: "project-token",
           COCALC_AGENT_TOKEN: "project-token",
           PATH: "/root/.local/bin:/usr/bin",
+          COCALC_CODEX_CHAT_PATH: "/old.chat",
+          COCALC_CODEX_THREAD_ID: "old-thread",
+          COCALC_CODEX_MESSAGE_DATE: "2026-09-08T00:00:00Z",
+          COCALC_BROWSER_ID: "old-browser",
         },
         appServerLogin: {
           type: "apiKey",
@@ -3940,6 +3944,9 @@ describe("CodexAppServerAgent", () => {
         COCALC_PROJECT_ID: "00000000-0000-4000-8000-000000000000",
         COCALC_BROWSER_ID: "browser-1",
         COCALC_API_URL: "https://lite3.cocalc.ai",
+        COCALC_CODEX_CHAT_PATH: "/new.chat",
+        COCALC_CODEX_THREAD_ID: "new-thread",
+        COCALC_CODEX_MESSAGE_DATE: "2026-09-09T00:00:00Z",
       },
       stream: async () => {},
       config: {
@@ -3956,6 +3963,9 @@ describe("CodexAppServerAgent", () => {
       COCALC_BEARER_TOKEN: "project-token",
       COCALC_AGENT_TOKEN: "project-token",
       PATH: "/root/.local/bin:/usr/bin",
+      COCALC_CODEX_CHAT_PATH: "/new.chat",
+      COCALC_CODEX_THREAD_ID: "new-thread",
+      COCALC_CODEX_MESSAGE_DATE: "2026-09-09T00:00:00Z",
     });
     expect(turnStartParams?.approvalPolicy).toBe("never");
     expect(turnStartParams?.sandboxPolicy).toEqual({
