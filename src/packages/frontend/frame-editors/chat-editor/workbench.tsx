@@ -4,6 +4,7 @@
  */
 
 import { Suspense, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { ArtifactFeedback, ArtifactRecord } from "@cocalc/chat";
 import { captureArtifactSelection } from "@cocalc/frontend/chat/artifact-selection";
 import { focusChatFrameInput } from "./actions";
@@ -161,14 +162,17 @@ export function Workbench({
   const flushEditor = () => saveInput(getEditorValue.current());
   const returnToChat = () => {
     const origin = desc.get("data-origin");
-    if (
-      window.innerWidth < 768 ||
-      actions.store?.getIn(["local_view_state", "full_id"]) === id
-    ) {
-      actions.set_frame_full(origin);
-    } else {
-      actions.set_active_id(origin);
-    }
+    // The composer must be visible before focusing it, especially when maximized.
+    flushSync(() => {
+      if (
+        window.innerWidth < 768 ||
+        actions.store?.getIn(["local_view_state", "full_id"]) === id
+      ) {
+        actions.set_frame_full(origin);
+      } else {
+        actions.set_active_id(origin);
+      }
+    });
     focusChatFrameInput(origin);
   };
   return (

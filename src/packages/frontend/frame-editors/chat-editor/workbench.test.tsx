@@ -1,4 +1,5 @@
 import { EventEmitter } from "events";
+import { useState } from "react";
 import { fromJS } from "immutable";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { artifactKey, artifactPublicationKey } from "@cocalc/chat";
@@ -32,6 +33,57 @@ jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
     />
   ),
 }));
+
+test("Back to chat renders the destination before requesting composer focus", () => {
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => ({
+      ...artifactKey({ thread_id: "thread", artifact_id: "artifact" }),
+      thread_id: "thread",
+      artifact_id: "artifact",
+      schema_version: 1,
+      kind: "markdown",
+      title: "Draft",
+      input: "Text",
+    }),
+    get: () => [],
+  });
+  function Harness() {
+    const [chatVisible, setChatVisible] = useState(false);
+    return chatVisible ? (
+      <input aria-label="Restored composer" />
+    ) : (
+      <Workbench
+        {...({
+          id: "artifact-frame",
+          actions: {
+            getChatActions: () => ({ syncdb }),
+            store: { getIn: () => "artifact-frame" },
+            set_frame_full: () => setChatVisible(true),
+          },
+          desc: fromJS({
+            "data-origin": "origin",
+            "data-thread": "thread",
+            "data-artifact": "artifact",
+          }),
+          read_only: false,
+          font_size: 14,
+          project_id: "p",
+          path: "x.chat",
+        } as any)}
+      />
+    );
+  }
+  jest.mocked(focusChatFrameInput).mockImplementationOnce(() => {
+    screen.getByRole("textbox", { name: "Restored composer" }).focus();
+    return true;
+  });
+  render(<Harness />);
+  fireEvent.click(screen.getByRole("button", { name: "Back to chat" }));
+  expect(document.activeElement).toBe(
+    screen.getByRole("textbox", { name: "Restored composer" }),
+  );
+  screen.getByRole("textbox", { name: "Restored composer" }).blur();
+});
 
 test.each([false, true])(
   "selected text stays pinned and Comment returns to chat (maximized=%s)",
@@ -77,6 +129,7 @@ test.each([false, true])(
     const range = document.createRange();
     range.selectNodeContents(screen.getByText("Original passage"));
     act(() => {
+      window.getSelection()!.removeAllRanges();
       window.getSelection()!.addRange(range);
       document.dispatchEvent(new Event("selectionchange"));
     });
