@@ -32,9 +32,11 @@ describe("EditableMarkdown external read-only values", () => {
   it("merges collaborative value updates with an unsaved local buffer", async () => {
     const controlRef: any = { current: null };
     const getValueRef = { current: () => "" };
+    let remote = "First paragraph.\n\nLast paragraph.";
     const setValue = jest.fn();
     const props = {
       mergeRemoteValues: true,
+      getRemoteValue: () => remote,
       is_current: true,
       controlRef,
       getValueRef,
@@ -59,6 +61,10 @@ describe("EditableMarkdown external read-only values", () => {
       );
     });
     expect(getValueRef.current()).toContain("Local first paragraph.");
+    remote = "First paragraph.\n\nRemote last paragraph.";
+    // The backing record can change before the throttled React value prop.
+    expect(getValueRef.current()).toContain("Local first paragraph.");
+    expect(getValueRef.current()).toContain("Remote last paragraph.");
     rerender(
       <EditableMarkdown
         {...props}

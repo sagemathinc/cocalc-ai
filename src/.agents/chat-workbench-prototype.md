@@ -503,6 +503,14 @@ deferred remote merge and the workbench's whole-value `saveInput`/explicit gette
 flush: the latter reads the latest syncdb record but assigns the editor text
 without a corresponding editing base. Do not count P4 concurrency as passed.
 
+The first opt-in Slate merge change (`9e1f3abfd4`) passed component tests but the
+live two-tab case still lost A's edit. A follow-up supplies a live-record getter
+at flush time, since the record may advance before its throttled React prop.
+The regression now covers that pre-render gap; live acceptance is still required.
+Playwright browser attachment became blocked by an unresponsive non-QA tab, but
+direct DevTools page connections continued working for the QA tabs. Do not
+restart or close the maintainer's other tab to work around this tooling issue.
+
 Use one feature branch with coherent commits and a draft PR when implementation
 is requested. Keep behind an experimental feature gate. Production deployment
 and external support/email actions are not part of this plan.

@@ -44,6 +44,7 @@ export interface MultiMarkdownInputProps {
   cacheId?: string;
   value?: string;
   mergeRemoteValues?: boolean;
+  getRemoteValue?: () => string;
   defaultMode?: Mode;
   fixedMode?: Mode;
   onChange: (value: string) => void;

@@ -429,6 +429,7 @@ interface Props {
   saveDebounceMs?: number;
   remoteMergeIdleMs?: number;
   mergeRemoteValues?: boolean; // Opt in when value comes from a collaborative record.
+  getRemoteValue?: () => string;
   ignoreRemoteMergesWhileFocused?: boolean;
   noVfill?: boolean;
   divRef?: RefObject<HTMLDivElement>;
@@ -513,6 +514,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     saveDebounceMs = SAVE_DEBOUNCE_MS,
     remoteMergeIdleMs,
     mergeRemoteValues = false,
+    getRemoteValue,
     ignoreRemoteMergesWhileFocused,
     selectionRef,
     style,
@@ -548,6 +550,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   );
   const valueRef = useRef<string | undefined>(value);
   const reconciledValueRef = useRef<string | undefined>(value);
+  const getRemoteValueRef = useRef(getRemoteValue);
+  getRemoteValueRef.current = getRemoteValue;
   valueRef.current = value;
   const remoteMergeConfig =
     typeof window === "undefined"
@@ -630,13 +634,15 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     };
 
     if (getValueRef != null) {
-      getValueRef.current = () =>
-        mergeRemoteValues && valueRef.current !== reconciledValueRef.current
+      getValueRef.current = () => {
+        const remote = getRemoteValueRef.current?.() ?? valueRef.current;
+        return mergeRemoteValues && remote !== reconciledValueRef.current
           ? mergeHelperRef.current.previewMerge({
-              remote: valueRef.current ?? "",
+              remote: remote ?? "",
               local: ed.getMarkdownValue(),
             }).merged
           : ed.getMarkdownValue();
+      };
     }
 
     ed.getPlainValue = (fragment?) => {
@@ -1395,10 +1401,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
+    const remote = getRemoteValueRef.current?.() ?? valueRef.current;
     const markdown =
-      mergeRemoteValues && valueRef.current !== reconciledValueRef.current
+      mergeRemoteValues && remote !== reconciledValueRef.current
         ? mergeHelperRef.current.previewMerge({
-            remote: valueRef.current ?? "",
+            remote: remote ?? "",
             local: editor.getMarkdownValue(),
           }).merged
         : editor.getMarkdownValue();

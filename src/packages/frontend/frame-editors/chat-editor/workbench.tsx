@@ -341,6 +341,7 @@ export function Workbench({
               cacheId={`artifact:${project_id}:${path}:${target.thread_id}:${target.artifact_id}`}
               value={value.input}
               mergeRemoteValues
+              getRemoteValue={() => readArtifact(syncdb, target).artifact.input}
               fontSize={font_size}
               height="100%"
               autoGrow={false}
