@@ -295,8 +295,8 @@ features appropriate for the authenticated application origin.
   current/published views and local edits. Selection feedback now pins rendered
   text offsets and the source snapshot, stages a removable account-scoped draft,
   and retains context on sent messages and in the pending-send outbox. The agent
-  prompt includes that bounded context. Agent runtime guidance is implemented;
-  the end-to-end acceptance session remains unfinished.
+  prompt includes that bounded context. The real-agent selection/update/human
+  edit loop is verified below; extended acceptance remains open.
 - No ordinary chat exposes creation controls. CLI create/update require
   `--experimental`; scripting requires `experimental: true` in open options.
   The gate is checked before opening the document. The frame type is hidden
@@ -304,19 +304,19 @@ features appropriate for the authenticated application origin.
   not an authorization boundary for project code that can already edit files.
 - Validation so far: shared chat suite and initial card interaction test;
   chat, CLI, and frontend package typechecks; frontend lint. Repeat after further
-  changes. Browser integration, connected-client concurrency,
-  rotation retention, and real-agent testing are still required.
+  changes. Connected-client overlapping edits and rotation retention still
+  require validation. Browser integration and real-agent evidence appear below.
 - Selection and workbench regressions now cover repeated rendered passages,
   Unicode offsets, out-of-artifact selections, background updates during a
   selection, keyboard focus changes before Comment, thread-targeted draft
   staging, removal, and sent-message thread validation. These are component
-  tests, not yet evidence of the complete live Slate/browser/agent loop.
+  tests; the live Slate/browser/agent evidence below supplements them.
 - Agent context discovery is implemented as `project chat artifact context`
   with explicit `--message-date`; it rejects missing/ambiguous matches rather
   than choosing the latest message. Runtime guidance describes these commands.
   Backend scripting exposes `api.artifacts.open({ path, threadId,
 projectIdentifier })` over the same operations. Installed runtime validation
-  is still pending; source/build tests do not prove deployment.
+  is recorded below; source/build tests alone do not prove deployment.
 - Portable export/import now includes validated artifact rows and feedback.
   Import remaps thread/message identities and preserves exact snapshots; a
   filesystem fixture round-trip passes. Rotation's non-chat row retention was
@@ -332,8 +332,7 @@ projectIdentifier })` over the same operations. Installed runtime validation
   historical comparisons remain pinned during live updates.
 - The maintainer's local Chromium is reachable via CDP on port 9222. Its
   authenticated Lite1b tab successfully opens the test project. Development
-  build and real-agent acceptance are in progress; this is not yet live feature
-  acceptance.
+  build and real-agent acceptance evidence are recorded below.
 - Full `pnpm -C src build:dev` completed. The disposable live chat is
   `/home/user/chat-workbench-prototype-20260909.chat` in project
   `1ce4fe78-19c7-40a8-a598-947975744cd9`, thread
@@ -381,8 +380,8 @@ The follow-up turn must obtain its own context, `await doc.read("support-replies
 and call `doc.update` with that read's `base`, the same artifact ID, its own
 producing message ID, and a fresh operation ID. Retry an interrupted operation
 with the same payload and operation ID. Do not reuse the initial turn's message
-ID for a new revision. This recipe has not yet been exercised against the live
-agent runtime.
+ID for a new revision. The QA agent exercised this API against the live runtime,
+including the current turn's context and a fresh read before its update.
 
 ### Remaining Milestones
 
@@ -421,6 +420,31 @@ typed line immediately after clicking Read. This proves that particular flush
 path, not all simultaneous-edit or disconnect races. The remaining P4 matrix
 is still open; the maintainer explicitly regards polished multi-user editing
 as beyond the first prototype, but reported rough edges are retained here.
+
+Follow-up verification: selecting Published 1 displayed the initial text rather
+than the current human/agent-edited document. Commit `f8326a9424` removes a second
+toolbar-height subtraction in the Markdown wrapper; live DOM measurements put
+the editor bottom 12px above the frame bottom, exactly its outer padding. Both
+Markdown adapter modes have regression coverage. Narrow navigation has component
+coverage, but the attempted live narrow-screen run timed out and is not counted
+as acceptance. Closing the originating chat frame also remains unverified;
+the workbench currently obtains its syncdb through that frame's chat actions.
+
+Focused commands (run from `src/packages/frontend`):
+
+```sh
+pnpm exec jest --runInBand chat/__tests__/artifact-merge.test.ts
+pnpm exec jest --runInBand chat/__tests__/artifacts.test.tsx frame-editors/chat-editor/workbench.test.tsx
+pnpm exec jest --runInBand editors/markdown-input/__test__/multimode-contract.test.tsx editors/markdown-input/__test__/multimode-stale-callback.test.tsx
+pnpm exec tsc --build
+```
+
+From the repository root, run `pnpm -C src lint:frontend` and explicitly rebuild
+the dev browser bundle with `pnpm -C src/packages/static build:dev` when needed.
+The additional Patchflow regression checks that a received overlapping human
+edit invalidates the agent's old base without writing a publication, and that
+a fresh-read update preserves the human wording. It does not claim protection
+from an unseen simultaneous write or replace the connected-client test.
 
 Use one feature branch with coherent commits and a draft PR when implementation
 is requested. Keep behind an experimental feature gate. Production deployment
