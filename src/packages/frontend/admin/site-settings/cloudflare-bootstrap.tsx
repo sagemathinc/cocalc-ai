@@ -1,9 +1,10 @@
-import { Alert, Button, Descriptions, Form, Typography } from "antd";
+import { Alert, Button, Form, Typography } from "antd";
 import { useEffect, useRef, useState } from "react";
 import type { CloudflareBootstrapResult } from "@cocalc/conat/hub/api/system";
 import { handleErrorMessage } from "@cocalc/conat/util";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import SecretSettingInput from "./secret-setting-input";
+import CloudflareBootstrapResultView from "./cloudflare-bootstrap-result";
 import type { FreshAuthActionRunner } from "@cocalc/frontend/auth/fresh-auth";
 
 export function bootstrapTokenEndDate(now = new Date()): string {
@@ -230,7 +231,7 @@ export default function CloudflareBootstrap({
       >
         Bootstrap and save Cloudflare
       </Button>
-      <div role="status" aria-live="polite">
+      <div role="status" aria-live="polite" style={{ marginTop: 16 }}>
         {busy && (
           <Typography.Paragraph>
             Creating and saving the durable automation token...
@@ -250,80 +251,7 @@ export default function CloudflareBootstrap({
             description="The temporary token input has been cleared. Paste the token again to retry while it is still valid, or delete it in Cloudflare."
           />
         )}
-        {result && (
-          <>
-            <Alert
-              type={result.tunnel_token.ok ? "success" : "warning"}
-              title={
-                result.tunnel_token.ok
-                  ? "Durable Cloudflare configuration saved server-side"
-                  : "Cloudflare bootstrap needs attention"
-              }
-              description={
-                result.tunnel_token.ok ? (
-                  "Automation and R2 credentials are saved server-side. Run provisioning and diagnostics to verify storage access; no secrets are returned to the browser."
-                ) : (
-                  <>
-                    <p>{result.failure ?? result.tunnel_token.message}</p>
-                    {result.settings_status === "not_saved"
-                      ? "No site settings were changed. Later configuration checks were not run. Review token cleanup below, then retry with a new bootstrap token."
-                      : "Saving may have partially completed. Review the cleanup notes and saved settings before retrying. No returned tokens are applied by the browser."}
-                  </>
-                )
-              }
-            />
-            {(result.tunnel_token.ok || result.durable_token_id) && (
-              <Descriptions column={1} size="small">
-                <Descriptions.Item label="Account">
-                  {result.account_name} {result.account_id}
-                </Descriptions.Item>
-                <Descriptions.Item label="Zone">
-                  {result.zone_name} {result.zone_id}
-                </Descriptions.Item>
-                <Descriptions.Item label="Durable token ID">
-                  {result.durable_token_id}
-                </Descriptions.Item>
-                <Descriptions.Item label="Durable permissions">
-                  {result.permissions?.join(", ")}
-                </Descriptions.Item>
-                <Descriptions.Item label="Tunnel capability">
-                  {result.tunnel_token.ok ? "Ready" : "Needs attention"}{" "}
-                  {result.tunnel_token.message}
-                </Descriptions.Item>
-                <Descriptions.Item label="Visitor location headers">
-                  {result.visitor_location_headers.ok
-                    ? "Ready"
-                    : result.tunnel_token.ok
-                      ? "Needs attention"
-                      : "Not run"}{" "}
-                  {result.visitor_location_headers.message}
-                </Descriptions.Item>
-                <Descriptions.Item label="R2 administration">
-                  {result.r2.ok ? "Ready" : "Needs attention"}{" "}
-                  {result.r2.message}
-                </Descriptions.Item>
-              </Descriptions>
-            )}
-            {result.notes.length > 0 && (
-              <Typography.Paragraph>
-                {result.notes.join(" ")}
-              </Typography.Paragraph>
-            )}
-            <Alert
-              type={result.bootstrap_token_invalidated ? "success" : "warning"}
-              title={
-                result.bootstrap_token_invalidated
-                  ? "Temporary bootstrap token revoked"
-                  : "Delete the temporary bootstrap token manually in Cloudflare"
-              }
-              description={
-                result.bootstrap_token_id
-                  ? `Bootstrap token ID: ${result.bootstrap_token_id}`
-                  : "Check Cloudflare API Tokens for temporary tokens requiring cleanup."
-              }
-            />
-          </>
-        )}
+        {result && <CloudflareBootstrapResultView result={result} />}
       </div>
     </section>
   );

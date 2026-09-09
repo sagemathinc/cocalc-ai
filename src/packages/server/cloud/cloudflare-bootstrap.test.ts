@@ -376,9 +376,24 @@ describe("Cloudflare bootstrap secret lifecycle", () => {
     const result = await run(save);
     expect(result.tunnel_token.ok).toBe(true);
     expect(result.bootstrap_token_invalidated).toBe(false);
+    expect(result.cleanup_required).toBe(true);
     expect(result.notes.join(" ")).toContain("discovery-id");
     expect(result.bootstrap_token_invalidation_error).toContain("manually");
     expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("flags child-token cleanup even if bootstrap revocation succeeds", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) =>
+      init.method === "DELETE" && url.endsWith("/discovery-id")
+        ? response({}, 403)
+        : normal(url, init),
+    );
+    const result = await run(save);
+    expect(result.tunnel_token.ok).toBe(true);
+    expect(result.bootstrap_token_invalidated).toBe(true);
+    expect(result.cleanup_required).toBe(true);
+    expect(result.notes.join(" ")).toContain("discovery-id");
   });
 
   it("keeps a possibly saved token usable after ambiguous persistence failure", async () => {

@@ -227,6 +227,7 @@ export interface ExternalCredentialInfo {
 }
 
 export interface CloudflareBootstrapResult {
+  cleanup_required?: boolean;
   failure?: string;
   settings_status?: "not_saved" | "saved" | "unknown";
   permissions: string[];

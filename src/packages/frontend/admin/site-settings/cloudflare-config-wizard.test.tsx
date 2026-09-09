@@ -403,7 +403,7 @@ describe("CloudflareConfigWizard", () => {
     );
     expect(bootstrap).toHaveBeenCalledTimes(2);
     expect(
-      screen.getByText("Durable Cloudflare configuration saved server-side"),
+      screen.getByText("Cloudflare configuration saved"),
     ).toBeInTheDocument();
     expect(bootstrap.mock.calls[0][0].token).toBe("");
   });
@@ -745,7 +745,7 @@ describe("CloudflareConfigWizard", () => {
       screen.getByText("Cloudflare bootstrap needs attention"),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("Durable Cloudflare configuration saved server-side"),
+      screen.queryByText("Cloudflare configuration saved"),
     ).not.toBeInTheDocument();
     expect(document.body).toHaveTextContent(
       "Delete discovery token discovery-id",

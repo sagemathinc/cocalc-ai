@@ -24,6 +24,7 @@ type CloudflareCapability = {
 };
 
 export type CloudflareBootstrapResult = {
+  cleanup_required?: boolean;
   failure?: string;
   settings_status?: "not_saved" | "saved" | "unknown";
   permissions: string[];
@@ -702,10 +703,12 @@ export async function bootstrapCloudflareConfiguration(opts: {
         token,
         tokenId: child.id,
       });
-      if (!cleanup.invalidated)
+      if (!cleanup.invalidated) {
+        result.cleanup_required = true;
         notes.push(
           `Delete temporary or unsaved Cloudflare token ${child.id} manually in API Tokens.`,
         );
+      }
     }
     const cleanup = await invalidateBootstrapToken({
       token,
@@ -713,6 +716,7 @@ export async function bootstrapCloudflareConfiguration(opts: {
     });
     result.bootstrap_token_invalidated = cleanup.invalidated;
     if (!cleanup.invalidated) {
+      result.cleanup_required = true;
       result.bootstrap_token_invalidation_error =
         "Delete the bootstrap token manually in Cloudflare API Tokens.";
       notes.push(result.bootstrap_token_invalidation_error);

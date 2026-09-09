@@ -10,6 +10,7 @@ export default function CloudflareCredentialRotationHelp() {
   return (
     <>
       <Button
+        type="link"
         onClick={() => setOpen(true)}
         style={{ whiteSpace: "normal", height: "auto" }}
       >
