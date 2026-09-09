@@ -425,9 +425,12 @@ Follow-up verification: selecting Published 1 displayed the initial text rather
 than the current human/agent-edited document. Commit `f8326a9424` removes a second
 toolbar-height subtraction in the Markdown wrapper; live DOM measurements put
 the editor bottom 12px above the frame bottom, exactly its outer padding. Both
-Markdown adapter modes have regression coverage. Narrow navigation has component
-coverage, but the attempted live narrow-screen run timed out and is not counted
-as acceptance. Closing the originating chat frame also remains unverified;
+Markdown adapter modes have regression coverage. Narrow navigation initially
+failed live: bubbling button clicks reactivated the pane being left, and focus
+was requested before the destination rendered. Commits `92e0efc98f` and
+`cf430d4902` fix these separately. The 600px live round trip now opens a visible
+artifact and returns focus to the `Ask Codex...` textbox. Closing the originating
+chat frame still remains unverified;
 the workbench currently obtains its syncdb through that frame's chat actions.
 
 Focused commands (run from `src/packages/frontend`):
@@ -445,6 +448,21 @@ The additional Patchflow regression checks that a received overlapping human
 edit invalidates the agent's old base without writing a publication, and that
 a fresh-read update preserves the human wording. It does not claim protection
 from an unseen simultaneous write or replace the connected-client test.
+
+Additional live acceptance (2026-09-09): with the account's Appearance preference
+left on System, browser media emulation switched the workbench between dark and
+light without changing its contents. Computed dark text/surface colors were
+`rgb(230, 232, 235)` / `rgb(34, 37, 41)`; light was `rgb(48, 48, 48)` / white.
+The dark Slate editor was also inspected visually and retained full height.
+Media emulation was restored afterward. Screenshots inspected during this run:
+`/tmp/workbench-light-acceptance.png`, `/tmp/workbench-dark-editor.png` (local
+ephemeral evidence, not repository assets).
+
+Closing the QA artifact frame removed its document surface. Reopening from the
+latest chat card recreated the frame with byte-for-byte identical rendered text,
+including the human note and two-tab test line. The revision menu still offered
+all three publications. This verifies artifact-frame remount, not closing the
+originating chat frame or chat-log rotation.
 
 Use one feature branch with coherent commits and a draft PR when implementation
 is requested. Keep behind an experimental feature gate. Production deployment
