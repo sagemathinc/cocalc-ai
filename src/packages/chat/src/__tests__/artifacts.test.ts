@@ -150,3 +150,37 @@ test("markup is data, not a tool command", () => {
     markdown,
   );
 });
+
+test("bounds JSON-escaped publication size before mutating the store", () => {
+  const db = store();
+  // Each NUL is one UTF-8 byte but becomes six bytes in JSON.
+  expect(() =>
+    publishArtifact(db, {
+      ...input,
+      markdown: "\u0000".repeat(24 * 1024),
+    }),
+  ).toThrow(/serialized snapshot/);
+  expect(db.rows.size).toBe(0);
+  expect(
+    publishArtifact(db, {
+      ...input,
+      markdown: "a".repeat(32 * 1024),
+    }).artifact.input.length,
+  ).toBe(32 * 1024);
+});
+
+test("bounds the combined feedback snapshot, not only each field", () => {
+  expect(() =>
+    validateArtifactFeedback({
+      schema_version: 1,
+      thread_id: "t",
+      artifact_id: "a",
+      title: "Draft",
+      markdown: "a".repeat(32 * 1024),
+      rendered_text: "a".repeat(100 * 1024),
+      quote: "",
+      start: 0,
+      end: 0,
+    }),
+  ).toThrow(/serialized snapshot/);
+});

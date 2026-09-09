@@ -1,5 +1,6 @@
 /** Typed Markdown artifacts in the existing Patchflow chat document. */
 export const ARTIFACT_TEXT_LIMIT = 32 * 1024;
+export const ARTIFACT_SNAPSHOT_LIMIT = 128 * 1024;
 const DATE = "1970-01-01T00:00:00.000Z";
 
 export interface ArtifactTarget {
@@ -59,7 +60,7 @@ export function validateArtifactFeedback(value: unknown): ArtifactFeedback {
   ) {
     throw Error("artifact selection does not match its snapshot");
   }
-  return {
+  return boundedSnapshot<ArtifactFeedback>({
     schema_version: 1,
     thread_id: id(row.thread_id, "thread id"),
     artifact_id: id(row.artifact_id, "id"),
@@ -69,7 +70,7 @@ export function validateArtifactFeedback(value: unknown): ArtifactFeedback {
     start: row.start,
     end: row.end,
     quote,
-  };
+  });
 }
 
 export function artifactFeedbackPrompt(feedback: ArtifactFeedback): string {
@@ -95,6 +96,11 @@ function text(value: unknown, name: string, limit: number): string {
   ) {
     throw Error(`artifact ${name} must be a string of at most ${limit} bytes`);
   }
+  return value;
+}
+
+function boundedSnapshot<T>(value: T): T {
+  text(JSON.stringify(value), "serialized snapshot", ARTIFACT_SNAPSHOT_LIMIT);
   return value;
 }
 
@@ -163,7 +169,7 @@ export function validateArtifactPublication(
   ) {
     throw Error("invalid artifact publication time");
   }
-  return {
+  return boundedSnapshot<ArtifactPublication>({
     ...key,
     artifact_id: row.artifact_id,
     schema_version: 1,
@@ -174,7 +180,7 @@ export function validateArtifactPublication(
       title: text(row.snapshot?.title, "title", 256),
       markdown: text(row.snapshot?.markdown, "Markdown", ARTIFACT_TEXT_LIMIT),
     },
-  };
+  });
 }
 
 // Exact content, not a collision-prone hash or a distributed CAS claim.
