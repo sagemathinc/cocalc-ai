@@ -263,6 +263,10 @@ import {
   type PasswordFreshAuthFactorLevel,
 } from "@cocalc/server/auth/auth-sessions";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
+import {
+  impersonationReason,
+  impersonationSupportContext,
+} from "@cocalc/util/impersonation-audit";
 import { upsertAccountImpersonationGrantDirectory } from "@cocalc/server/auth/impersonation-grant-directory";
 import {
   getPrivateAppRouteByHostname as getPrivateAppRouteByHostnameRaw,
@@ -5106,13 +5110,17 @@ export async function createImpersonationGrant({
   session_hash,
   subject_account_id,
   reason,
+  support_ticket_id,
+  consent_reference,
   lang_temp,
 }: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
   subject_account_id: string;
-  reason?: string | null;
+  reason: string;
+  support_ticket_id?: number;
+  consent_reference?: string;
   lang_temp?: string | null;
 }): Promise<{
   grant_id: string;
@@ -5138,6 +5146,11 @@ export async function createImpersonationGrant({
   });
   const cleanedSessionHash = `${session_hash ?? ""}`.trim();
   const cleanedBrowserId = `${browser_id ?? ""}`.trim();
+  const auditReason = impersonationReason(reason);
+  const supportContext = impersonationSupportContext({
+    support_ticket_id,
+    consent_reference,
+  });
   const location = await resolveAccountHomeBay({
     account_id,
     user_account_id: subjectAccountId,
@@ -5154,9 +5167,15 @@ export async function createImpersonationGrant({
     actor_factor_verified_at: session.factor_verified_at ?? null,
     actor_fresh_auth_until: session.fresh_auth_until ?? null,
     actor_factor_level: passwordFreshAuthFactorLevel(session.factor_level),
-    reason,
+    reason: auditReason,
     metadata: {
-      created_via: "admin-ui",
+      created_via:
+        support_ticket_id != null
+          ? "support-cli"
+          : cleanedBrowserId
+            ? "admin-ui"
+            : "admin-cli",
+      ...supportContext,
       browser_id: cleanedBrowserId || undefined,
       cli_session_hash: cleanedSessionHash || undefined,
     },

@@ -14,6 +14,11 @@ import {
   isValidUUID,
 } from "@cocalc/util/misc";
 
+import {
+  SUPPORT_CONTENT_CONSENT_VERSION,
+  SUPPORT_CONTENT_CONSENT_LABEL,
+  SUPPORT_CONTENT_CONSENT_DESCRIPTION,
+} from "@cocalc/util/support-content-consent";
 const log = getLogger("support:create-ticket");
 const MAX_FILES = 5;
 const MAX_SUBJECT_LENGTH = 200;
@@ -29,6 +34,7 @@ const MAX_CONTEXT_LENGTH = 4_096;
 
 interface Options {
   email: string;
+  support_content_consent?: boolean;
   account_id?: string;
   ip_address?: string;
   files?: { project_id: string; path?: string }[];
@@ -106,6 +112,10 @@ export default async function createTicket(options: Options): Promise<string> {
   body += "\n\n\nUSER:\n\n";
   body += `\n\n- account_id="${account_id}"`;
   body += `\n\n- email="${email}"`;
+  body += supportContentConsentRecord(
+    normalized.support_content_consent === true,
+    account_id,
+  );
   if (body.length > MAX_FINAL_BODY_LENGTH) {
     throw Error(`support ticket body must be at most ${MAX_FINAL_BODY_LENGTH}`);
   }
@@ -121,6 +131,11 @@ export default async function createTicket(options: Options): Promise<string> {
       subject,
       type,
       requester: { name, email },
+      tags: [
+        normalized.support_content_consent === true
+          ? "support_content_consent_yes"
+          : "support_content_consent_no",
+      ],
     },
   } as CreateOrUpdateTicket; // ATTN: this is somehow necessary, no idea why
 
@@ -167,6 +182,12 @@ export function normalizeSupportTicketOptions(
     subject,
     body,
   };
+  if (options.support_content_consent != null) {
+    if (typeof options.support_content_consent !== "boolean") {
+      throw Error("support_content_consent must be a boolean");
+    }
+    normalized.support_content_consent = options.support_content_consent;
+  }
   if (options.account_id != null) normalized.account_id = options.account_id;
   if (options.ip_address != null) normalized.ip_address = options.ip_address;
   if (options.type != null) normalized.type = options.type;
@@ -174,6 +195,21 @@ export function normalizeSupportTicketOptions(
   if (files != null) normalized.files = files;
   if (info != null) normalized.info = info;
   return normalized;
+}
+
+export function supportContentConsentRecord(
+  consent: boolean,
+  accountId?: string,
+): string {
+  return `\n\nSUPPORT PROJECT-CONTENT PERMISSION (form record):\n${JSON.stringify(
+    {
+      consent,
+      version: SUPPORT_CONTENT_CONSENT_VERSION,
+      recorded_at: new Date().toISOString(),
+      authenticated_account_id: accountId ?? null,
+      scope: "Projects involved in this support request only",
+    },
+  )}\n${SUPPORT_CONTENT_CONSENT_LABEL}\n${SUPPORT_CONTENT_CONSENT_DESCRIPTION}\n${consent ? "Opted in. Confirm identity, scope, and any later withdrawal before access; this is not an access credential." : "Not granted. Do not infer consent from submitting this ticket or linking a file."}\n`;
 }
 
 function normalizeFiles(files: Options["files"]): Options["files"] {

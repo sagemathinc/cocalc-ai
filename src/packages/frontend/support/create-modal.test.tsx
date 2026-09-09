@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import api from "@cocalc/frontend/client/api";
 import { uploadBlobImage } from "@cocalc/frontend/blobs/upload-image";
 import SupportCreateModal from "./create-modal";
@@ -111,10 +112,18 @@ describe("SupportCreateModal", () => {
 
     render(<SupportCreateModal />);
     expect(
-      screen.getByText(/AI-assisted support tools may review/),
+      screen.getByRole("checkbox", {
+        name: /Allow support, possibly including AI/,
+      }),
     ).not.toBeNull();
     expect(screen.getByRole("link", { name: "Privacy Policy" })).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Add image" }));
+    expect(screen.queryByRole("button", { name: "Add file" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /Allow support, possibly including AI/,
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Add file" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Create support ticket" }),
@@ -125,6 +134,7 @@ describe("SupportCreateModal", () => {
         options: expect.objectContaining({
           body: expect.stringContaining("![Image](/blobs/paste.png?uuid=123)"),
           email: "user@example.com",
+          support_content_consent: true,
           files: [{ project_id: "p".repeat(36), path: "a.ipynb" }],
           subject: "Notebook issue",
           type: "problem",
@@ -204,6 +214,73 @@ describe("SupportCreateModal", () => {
     expect(mockPageSetState).toHaveBeenNthCalledWith(2, {
       supportModalHidden: false,
     });
+  });
+
+  it("requires a fresh opt-in, supports keyboard toggling, and does not persist consent", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<SupportCreateModal />);
+    const checkbox = screen.getByRole("checkbox", {
+      name: /Allow support, possibly including AI/,
+    });
+    expect((checkbox as HTMLInputElement).checked).toBe(false);
+    checkbox.focus();
+    await user.keyboard(" ");
+    expect((checkbox as HTMLInputElement).checked).toBe(true);
+    expect(document.activeElement).toBe(checkbox);
+    mockedApi.mockResolvedValue({ error: "Try again" });
+    await user.click(
+      screen.getByRole("button", { name: "Create support ticket" }),
+    );
+    await waitFor(() =>
+      expect(mockedApi).toHaveBeenCalledWith("support/create-ticket", {
+        options: expect.objectContaining({ support_content_consent: true }),
+      }),
+    );
+    unmount();
+    render(<SupportCreateModal />);
+    expect(
+      (
+        screen.getByRole("checkbox", {
+          name: /Allow support, possibly including AI/,
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /Allow support, possibly including AI/,
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Clear draft" }));
+    expect(
+      (
+        screen.getByRole("checkbox", {
+          name: /Allow support, possibly including AI/,
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
+  });
+
+  it("clears selected files when consent is withdrawn and still allows submission", async () => {
+    mockedApi.mockResolvedValue({ url: "https://example.test/ticket" });
+    render(<SupportCreateModal />);
+    const checkbox = screen.getByRole("checkbox", {
+      name: /Allow support, possibly including AI/,
+    });
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole("button", { name: "Add file" }));
+    fireEvent.click(checkbox);
+    expect(screen.queryByRole("button", { name: "Add file" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create support ticket" }),
+    );
+    await waitFor(() =>
+      expect(mockedApi).toHaveBeenCalledWith("support/create-ticket", {
+        options: expect.objectContaining({
+          support_content_consent: false,
+          files: [],
+        }),
+      }),
+    );
   });
 
   it("persists the draft until it is explicitly cleared", async () => {

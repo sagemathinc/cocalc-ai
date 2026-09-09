@@ -236,6 +236,8 @@ export default function SupportCreateModal() {
   const [email, setEmail] = useState(accountEmail);
   const [files, setFiles] = useState<SupportFileRef[]>([]);
   const [includeScreenshot, setIncludeScreenshot] = useState(false);
+  // Consent is per request, never restored from localStorage or initial options.
+  const [contentConsent, setContentConsent] = useState(false);
   const [lastImageUrl, setLastImageUrl] = useState("");
   const [subject, setSubject] = useState(initialOptions.subject ?? "");
   const [submitError, setSubmitError] = useState("");
@@ -260,8 +262,9 @@ export default function SupportCreateModal() {
         initialOptions.body ??
         defaultBodyForType(normalizeType(initialOptions.type)),
     );
-    setFiles(draft?.files ?? []);
+    setFiles([]);
     setIncludeScreenshot(draft?.includeScreenshot ?? false);
+    setContentConsent(false);
     setLastImageUrl("");
     setSubject(draft?.subject ?? initialOptions.subject ?? "");
     setSubmitError("");
@@ -372,8 +375,9 @@ export default function SupportCreateModal() {
       const result = await api("support/create-ticket", {
         options: {
           body: normalizedBody,
+          support_content_consent: contentConsent,
           email,
-          files,
+          files: contentConsent ? files : [],
           info: {
             browser: navigator.userAgent,
             context: initialOptions.context,
@@ -401,6 +405,7 @@ export default function SupportCreateModal() {
   }
 
   function clearDraft(): void {
+    setContentConsent(false);
     try {
       window.localStorage.removeItem(draftStorageKey);
     } catch {
@@ -581,14 +586,27 @@ export default function SupportCreateModal() {
       >
         Include a screenshot when I submit this ticket
       </Checkbox>
-      <div>
-        <Text strong>Relevant files</Text>
-        <div style={{ marginTop: 8 }}>
-          <RecentFiles disabled={submitting} onChange={setFiles} />
-        </div>
-      </div>
       <Divider style={{ margin: 0 }} />
-      <SupportSubmissionNotice />
+      <SupportSubmissionNotice
+        contentConsent={contentConsent}
+        onContentConsentChange={(value) => {
+          setContentConsent(value);
+          if (!value) setFiles([]);
+        }}
+        disabled={submitting}
+      />
+      {contentConsent && (
+        <div>
+          <Text strong>Relevant files</Text>
+          <Paragraph>
+            Optional starting points for support. We may also inspect other
+            relevant content in the projects involved in this request.
+          </Paragraph>
+          <div style={{ marginTop: 8 }}>
+            <RecentFiles disabled={submitting} onChange={setFiles} />
+          </div>
+        </div>
+      )}
       <Space style={{ justifyContent: "space-between", width: "100%" }} wrap>
         <Space wrap>
           <Button onClick={() => clearDraft()}>Clear draft</Button>

@@ -17,6 +17,7 @@ import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import type { AuthSessionFactorLevel } from "@cocalc/server/auth/auth-sessions";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import { isValidUUID } from "@cocalc/util/misc";
+import { impersonationReason } from "@cocalc/util/impersonation-audit";
 
 const IMPERSONATION_GRANT_TTL_MS = 10 * 60_000;
 const IMPERSONATION_STATUS_ACTIVE = "active";
@@ -76,11 +77,6 @@ function ensureUuid(name: string, value: string): string {
     throw new Error(`${name} must be a uuid`);
   }
   return normalized;
-}
-
-function normalizeReason(value?: string | null): string | null {
-  const reason = `${value ?? ""}`.trim();
-  return reason ? reason.slice(0, 512) : null;
 }
 
 function normalizeMetadata(
@@ -177,7 +173,7 @@ export async function createImpersonationGrantLocal({
     actor_factor_verified_at: actor_factor_verified_at ?? null,
     actor_fresh_auth_until: actor_fresh_auth_until ?? null,
     actor_factor_level: actor_factor_level ?? "none",
-    reason: normalizeReason(reason),
+    reason: impersonationReason(reason),
     metadata: normalizeMetadata(metadata),
   };
   await withAccountRehomeWriteFence({
@@ -256,6 +252,8 @@ export async function createImpersonationGrantLocal({
       grant_id: grant.id,
       subject_home_bay_id: homeBayId,
       reason: grant.reason,
+      support_ticket_id: grant.metadata?.support_ticket_id,
+      consent_reference: grant.metadata?.consent_reference,
     },
   });
   return grant;
@@ -433,6 +431,9 @@ export async function createImpersonationSessionLocal({
       subject_account_id: grant.subject_account_id,
       grant_id: grant.id,
       session_hash: sessionHash,
+      reason: grant.reason,
+      support_ticket_id: grant.metadata?.support_ticket_id,
+      consent_reference: grant.metadata?.consent_reference,
     },
   });
 }

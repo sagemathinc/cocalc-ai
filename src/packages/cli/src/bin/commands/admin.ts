@@ -1,4 +1,8 @@
 import { Command } from "commander";
+import {
+  impersonationReason,
+  impersonationSupportContext,
+} from "@cocalc/util/impersonation-audit";
 import { createHash } from "node:crypto";
 import { ADMIN_SEARCH_LIMIT } from "@cocalc/util/db-schema/accounts";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
@@ -3962,38 +3966,82 @@ Merge comments are private unless their corresponding --*-comment-public flag is
     .description(
       "create an impersonation sign-in link for a user (account id, email, or name query)",
     )
-    .action(async (user: string, _opts: {}, command: Command) => {
-      await withContext(
-        command,
-        "admin user issue-impersonation-link",
-        async (ctx) => {
-          const identifier = `${user ?? ""}`.trim();
-          if (!identifier) {
-            throw new Error("user identifier must be non-empty");
-          }
+    .requiredOption(
+      "--reason <reason>",
+      "purpose and authorization for impersonation, retained in the audit record",
+    )
+    .action(
+      async (user: string, opts: { reason: string }, command: Command) => {
+        await withContext(
+          command,
+          "admin user issue-impersonation-link",
+          async (ctx) => {
+            const identifier = `${user ?? ""}`.trim();
+            if (!identifier) {
+              throw new Error("user identifier must be non-empty");
+            }
 
-          const resolved = isValidUUID(identifier)
-            ? { account_id: identifier }
-            : await resolveAccountByIdentifier(ctx, identifier);
-          const userAccountId = `${resolved?.account_id ?? ""}`.trim();
-          if (!userAccountId) {
-            throw new Error(`unable to resolve account for '${identifier}'`);
-          }
+            const resolved = isValidUUID(identifier)
+              ? { account_id: identifier }
+              : await resolveAccountByIdentifier(ctx, identifier);
+            const userAccountId = `${resolved?.account_id ?? ""}`.trim();
+            if (!userAccountId) {
+              throw new Error(`unable to resolve account for '${identifier}'`);
+            }
 
+            const grant = await ctx.hub.system.createImpersonationGrant({
+              subject_account_id: userAccountId,
+              reason: impersonationReason(opts.reason),
+            });
+
+            return {
+              user_account_id: userAccountId,
+              grant_id: grant.grant_id,
+              subject_home_bay_id: grant.subject_home_bay_id,
+              url: grant.url,
+              expires_at: grant.expires_at,
+            };
+          },
+        );
+      },
+    );
+
+  adminSupport
+    .command("impersonate <user>")
+    .description(
+      "issue an audited support impersonation link; does not open a browser or access project content",
+    )
+    .requiredOption("--ticket-id <id>", "support ticket number")
+    .requiredOption(
+      "--reason <reason>",
+      "specific investigation purpose and scope",
+    )
+    .requiredOption(
+      "--consent-reference <reference>",
+      "where explicit customer consent and operator approval are recorded; an attestation, not automatic verification",
+    )
+    .action(
+      async (
+        user: string,
+        opts: { ticketId: string; reason: string; consentReference: string },
+        command: Command,
+      ) => {
+        const reason = impersonationReason(opts.reason);
+        const context = impersonationSupportContext({
+          support_ticket_id: Number(opts.ticketId),
+          consent_reference: opts.consentReference,
+        });
+        await withContext(command, "admin support impersonate", async (ctx) => {
+          const subject_account_id = await resolveTargetAccountId(ctx, user);
           const grant = await ctx.hub.system.createImpersonationGrant({
-            subject_account_id: userAccountId,
+            subject_account_id,
+            reason,
+            ...context,
           });
-
-          return {
-            user_account_id: userAccountId,
-            grant_id: grant.grant_id,
-            subject_home_bay_id: grant.subject_home_bay_id,
-            url: grant.url,
-            expires_at: grant.expires_at,
-          };
-        },
-      );
-    });
+          return { ...grant, reason, ...context };
+        });
+      },
+    );
 
   adminEntitlementOverride
     .command("schema")
