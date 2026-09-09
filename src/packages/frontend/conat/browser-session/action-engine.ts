@@ -1288,10 +1288,17 @@ export async function executeBrowserAction({
       element instanceof HTMLInputElement ||
       element instanceof HTMLTextAreaElement
     ) {
-      if (clear) {
-        element.value = "";
-      }
-      element.value = append ? `${element.value}${text}` : text;
+      // React tracks assignments through an instance setter. Use the native
+      // setter so the input event is recognized as a user value change.
+      const prototype =
+        element instanceof HTMLInputElement
+          ? HTMLInputElement.prototype
+          : HTMLTextAreaElement.prototype;
+      const setValue = Object.getOwnPropertyDescriptor(
+        prototype,
+        "value",
+      )!.set!;
+      setValue.call(element, append ? `${element.value}${text}` : text);
       element.dispatchEvent(new Event("input", { bubbles: true }));
       element.dispatchEvent(new Event("change", { bubbles: true }));
       if (typeof element.setSelectionRange === "function") {

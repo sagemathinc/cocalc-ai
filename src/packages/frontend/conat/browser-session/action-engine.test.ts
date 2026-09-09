@@ -1,6 +1,39 @@
 /** @jest-environment jsdom */
 
 import { executeBrowserAction } from "./action-engine";
+import { createElement, useState } from "react";
+import { act, render, screen } from "@testing-library/react";
+
+it.each(["input", "textarea"])(
+  "updates React controlled %s values through typed actions",
+  async (tag) => {
+    function Controlled() {
+      const [value, setValue] = useState("before");
+      return createElement(tag, {
+        "aria-label": "Controlled input",
+        value,
+        onChange: (event) => setValue(event.target.value),
+      });
+    }
+    const view = render(createElement(Controlled));
+    for (const [text, append, expected] of [
+      ["after", false, "after"],
+      [" appended", true, "after appended"],
+    ] as const) {
+      await act(async () => {
+        await executeBrowserAction({
+          project_id: "94ee01cf-2d7a-4e56-b8af-76d9a697877b",
+          action: { name: "type", selector: tag, text, append },
+        });
+      });
+      view.rerender(createElement(Controlled));
+      expect(
+        (screen.getByLabelText("Controlled input") as HTMLInputElement).value,
+      ).toBe(expected);
+    }
+    view.unmount();
+  },
+);
 
 describe("browser action-engine contenteditable typing", () => {
   beforeEach(() => {
