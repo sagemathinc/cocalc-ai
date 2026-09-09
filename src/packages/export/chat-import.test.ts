@@ -19,7 +19,10 @@ test("artifacts and pinned feedback survive a portable export/import with new id
   try {
     const rows: any[] = [];
     const publication = publishArtifact(
-      { get_one: () => undefined, set: (row) => rows.push(row) },
+      {
+        get_one: () => undefined,
+        set: (row) => rows.push(...(Array.isArray(row) ? row : [row])),
+      },
       {
         thread_id: "old-thread",
         artifact_id: "artifact",

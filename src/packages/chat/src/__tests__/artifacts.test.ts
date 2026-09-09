@@ -41,7 +41,10 @@ function store() {
     JSON.stringify([row.event, row.sender_id, row.thread_id, row.date]);
   return {
     get_one: (where: object) => rows.get(key(where)),
-    set: (row: object) => rows.set(key(row), row),
+    set: (value: object) => {
+      for (const row of Array.isArray(value) ? value : [value])
+        rows.set(key(row), row);
+    },
     rows,
   };
 }
@@ -66,6 +69,25 @@ test("publishes typed data and an exact historical snapshot", () => {
   expect(next.artifact.input).toBe("New");
   expect(first.publication.snapshot.markdown).toBe(input.markdown);
   expect(db.rows.size).toBe(3);
+});
+
+test("publication is one local store update and a failed update can be retried", () => {
+  const db = store();
+  const set = jest.fn(db.set).mockImplementationOnce(() => {
+    throw Error("Store not ready");
+  });
+  const failing = { ...db, set };
+  expect(() => publishArtifact(failing, input)).toThrow("Store not ready");
+  expect(db.rows.size).toBe(0);
+  publishArtifact(failing, input);
+  expect(set).toHaveBeenCalledTimes(2);
+  expect(set.mock.calls[1][0]).toEqual([
+    expect.objectContaining({ event: "chat-artifact" }),
+    expect.objectContaining({ event: "chat-artifact-publication" }),
+  ]);
+  expect(db.rows.size).toBe(2);
+  expect(publishArtifact(failing, input).replayed).toBe(true);
+  expect(set).toHaveBeenCalledTimes(2);
 });
 
 test("retry does not roll back a later human edit", () => {

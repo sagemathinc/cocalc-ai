@@ -31,6 +31,7 @@ export interface ArtifactPublication extends ArtifactTarget {
 
 export interface ArtifactStore {
   get_one(key: object): unknown;
+  /** SyncDB supports a record or an array applied as one local document update. */
   set(row: object): unknown;
 }
 
@@ -253,8 +254,7 @@ export function publishArtifact(
   }
   // No await between the base check and mutation. Unseen concurrent remote
   // edits still use Patchflow's input string merge, just like human edits.
-  store.set(artifact);
-  store.set(publication);
+  store.set([artifact, publication]);
   return {
     artifact,
     base: artifactBase(artifact),

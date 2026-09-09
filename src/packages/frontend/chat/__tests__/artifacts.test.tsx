@@ -12,7 +12,7 @@ test.each([1024, 375])(
     const records: any[] = [];
     const syncdb = Object.assign(new EventEmitter(), {
       get_one: () => undefined,
-      set: (row) => records.push(row),
+      set: (row) => records.push(...(Array.isArray(row) ? row : [row])),
       get: (where) =>
         records.filter((row) =>
           Object.entries(where).every(([key, value]) => row[key] === value),
@@ -97,7 +97,7 @@ test.each([
     const rows: any[] = [];
     const syncdb = Object.assign(new EventEmitter(), {
       get_one: () => undefined,
-      set: (row) => rows.push(row),
+      set: (row) => rows.push(...(Array.isArray(row) ? row : [row])),
       get: (where) =>
         rows.filter((row) =>
           Object.entries(where).every(([key, value]) => row[key] === value),

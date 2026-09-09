@@ -72,7 +72,7 @@ describe("chat offload sqlite store", () => {
         records.find((row) =>
           Object.entries(key).every(([k, v]) => row[k] === v),
         ),
-      set: (row) => records.push(row),
+      set: (row) => records.push(...(Array.isArray(row) ? row : [row])),
     };
     const target = { thread_id: "thread-1", artifact_id: "reply" };
     const publication = publishArtifact(store, {
