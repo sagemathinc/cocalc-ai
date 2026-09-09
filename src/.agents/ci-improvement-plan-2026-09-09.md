@@ -1,6 +1,6 @@
 # CI build and test improvement plan
 
-Date: 2026-09-09. Scope: investigation and implementation plan, not a workflow rollout.
+Date: 2026-09-09. Scope: measured investigation and staged implementation.
 
 Implementation follow-up (2026-09-09): `58f60b3a57` adds branch/PR concurrency,
 shallow checkout for full plans, and a tracked-input Jest digest computed once
@@ -26,6 +26,26 @@ All three bay-backup suites (38 tests), including the unchanged disposable cloud
 restore tests, passed randomized with no transform cache in 4.619s. Server
 TypeScript builds pass. Neither optimization deletes tests or changes production
 behavior; whole-CI savings still require a hosted run.
+
+Frontend teardown now disconnects only clients already present in Jest's module
+cache, instead of loading the full application in every suite. A regression test
+checks that an unused client stays unloaded, a loaded client is disconnected only
+once through its two exports, and the global teardown hook still runs cleanup.
+All 972 frontend suites (5,295 tests) pass locally in 196.021s. This is validation,
+not a whole-suite A/B measurement: there is no matching local full-suite baseline,
+and the TypeScript build overlapped part of the run. The same three-test pure
+markdown-to-speech probe takes 0.814s, versus the original warm 1.990s. Frontend
+lint, the TypeScript build, and the focused `--detectOpenHandles` run pass. The
+full run emitted listener-count warnings but exited successfully.
+
+The first changes are published for standard-runner validation in
+[PR 513](https://github.com/sagemathinc/cocalc-ai/pull/513). Run 34403505423 built
+successfully and started all three test lanes. Its separate checks job reported
+`music-metadata` as unused because depcheck cannot inspect the native dynamic
+import in `server/ai/chat-speech.ts`; a narrow depcheck exception fixes that
+locally. Hosted before/after timings remain pending. The frontend teardown change
+and depcheck exception are held for the next push so this measurement is not
+cancelled by the new concurrency policy.
 
 ## Recommendation
 
