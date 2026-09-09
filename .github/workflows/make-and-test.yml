@@ -242,12 +242,17 @@ jobs:
           COCALC_RUNTIME_STORAGE_ALLOW_DIRECT: "yes"
           COCALC_TEST_REPORT_DIR: ${{ github.workspace }}/src/.cache/test-reports
           TEST_PACKAGES: ${{ matrix.packages }}
+          TEST_SHARD: ${{ matrix.shard }}
         run: |
           if [[ "${{ matrix.lane }}" == "rest" ]]; then
             source venv/bin/activate
           fi
           cd src
-          ./workspaces.py test --packages="$TEST_PACKAGES"
+          test_args=(--packages="$TEST_PACKAGES")
+          if [[ -n "$TEST_SHARD" ]]; then
+            test_args+=(--shard="$TEST_SHARD")
+          fi
+          ./workspaces.py test "${test_args[@]}"
 
       - name: Upload test attempts and timings
         if: always()

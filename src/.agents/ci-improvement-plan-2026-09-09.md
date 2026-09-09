@@ -8,8 +8,9 @@ before installation (about 35ms locally). Planner/cache-key tests now run in
 static checks. Per-attempt report retention and seven-day CI artifacts are also
 implemented, with unbuffered Python build logs. Runner tests, mypy, and a real
 notebook-package invocation validate local reporting behavior. Hosted timing
-validation, further test lifecycle optimizations, sharding, and build deduplication remain
-outstanding; the targets below are not yet achieved.
+validation, further test lifecycle optimizations, and build deduplication remain
+outstanding; sharding is now implemented locally as described below. The targets
+below are not yet achieved.
 
 The committed collaborators optimization (`5db6c45a47`) takes a different route
 from the initial diagnostic: retain per-test module resets and all real policy/SQL
@@ -46,6 +47,28 @@ import in `server/ai/chat-speech.ts`; a narrow depcheck exception fixes that
 locally. Hosted before/after timings remain pending. The frontend teardown change
 and depcheck exception are held for the next push so this measurement is not
 cancelled by the new concurrency policy.
+
+Server sharding is now implemented as `server-1` and `server-2` matrix lanes,
+each running four Jest workers. `workspaces.py test --shard=INDEX/COUNT` requires
+exactly one Jest-backed package. Retries with a usable report run all failed paths
+without reapplying the shard; retries without a report keep the original shard.
+Local reports are placed in shard-specific directories; CI artifact and cache
+names use the distinct lane names. Unsharded local commands are unchanged.
+
+Both actual workspace-runner invocations passed with retries disabled: shard 1
+took 159.224s and shard 2 took 144.468s. The saved reports cover exactly the 469
+discovered server suites, without overlap: 3,544 tests passed and the 14 existing
+skips (including one skipped suite) remain. Shard 2 emitted a worker-exit warning.
+Fourteen runner tests, nine planner/cache tests, mypy, and all static checks pass.
+These are local validation times, not a hosted speedup claim.
+
+The first hosted frontend lane passed 971 suites / 5,294 tests in 394.249s of
+package time (before the teardown optimization). Its cache restore and post-save
+steps now take about 0-1s each, versus roughly 30s each previously. The rest lane
+also passed; per-package reports identify database (113.8s) and backend (69.2s) as
+the largest components of its 399s test step. Those two packages account for about
+46% of the remaining-package test time and provide a measured partition boundary
+for a future separate lane. The server lane is still running at this update.
 
 ## Recommendation
 

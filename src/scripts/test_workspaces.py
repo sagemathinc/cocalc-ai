@@ -21,7 +21,12 @@ SPEC.loader.exec_module(workspaces)
 
 class WorkerOptionsTest(unittest.TestCase):
 
-    def command(self, script, workers="4", path="packages/example"):
+    def command(self,
+                script,
+                workers="4",
+                path="packages/example",
+                shard='',
+                selected=None):
         with tempfile.TemporaryDirectory() as root:
             package = Path(root) / path
             package.mkdir(parents=True)
@@ -30,10 +35,11 @@ class WorkerOptionsTest(unittest.TestCase):
                     "test": script
                 }}))
             args = SimpleNamespace(max_workers=workers,
+                                   shard=shard,
                                    report=False,
                                    retries=0,
                                    test_github_ci=False)
-            with patch.object(workspaces, "packages", return_value=[path]), \
+            with patch.object(workspaces, "packages", return_value=selected if selected is not None else [path]), \
                     patch.object(workspaces, "cmd") as cmd, \
                     patch.object(workspaces, "is_github_ci", return_value=False), \
                     patch.object(workspaces, "write_github_summary"), \
@@ -62,10 +68,54 @@ class WorkerOptionsTest(unittest.TestCase):
     def test_default_keeps_package_worker_policy(self):
         self.assertNotIn("--maxWorkers", self.command("jest", workers=""))
 
+    def test_shard_is_forwarded_to_jest(self):
+        self.assertIn('--shard=2/3', self.command('jest', shard='2/3'))
+
+    def test_sharding_non_jest_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'Jest-backed'):
+            self.command('node --test', shard='1/2')
+
+    def test_sharding_multiple_packages_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'exactly one'):
+            self.command('jest',
+                         shard='1/2',
+                         selected=['packages/example', 'packages/another'])
+
+    def test_empty_sharded_selection_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'exactly one'):
+            self.command('jest', shard='1/2', selected=[])
+
+    def test_shard_validation(self):
+        self.assertEqual(workspaces.parse_jest_shard('2/3'), '2/3')
+        for value in [
+                '0/2', '3/2', '1/0', '-1/2', '1', '1/2/3', 'a/2', '1.5/2'
+        ]:
+            with self.subTest(value=value), self.assertRaises(
+                    workspaces.argparse.ArgumentTypeError):
+                workspaces.parse_jest_shard(value)
+
+    def test_cli_without_shard_keeps_existing_behavior(self):
+        with patch.object(workspaces.sys, 'argv',
+                          ['workspaces.py', 'test', '--packages=server']), \
+                patch.object(workspaces, 'node_version_check'), \
+                patch.object(workspaces, 'pnpm_version_check'), \
+                patch.object(workspaces, 'test') as run:
+            workspaces.main()
+        self.assertIsNone(run.call_args.args[0].shard)
+
 
 class TestReportsTest(unittest.TestCase):
 
     def test_retry_preserves_both_reports_before_temporary_cleanup(self):
+        self.check_retry('')
+
+    def test_sharded_retry_runs_all_failed_paths_without_resharding(self):
+        self.check_retry('1/2')
+
+    def test_sharded_retry_without_report_keeps_original_shard(self):
+        self.check_retry('2/2', write_report=False)
+
+    def check_retry(self, shard, write_report=True):
         with tempfile.TemporaryDirectory() as root:
             package = Path(root) / 'packages/example'
             package.mkdir(parents=True)
@@ -83,19 +133,21 @@ class TestReportsTest(unittest.TestCase):
                 output = Path(argv[argv.index('--outputFile') + 1])
                 temporary_dirs.append(output.parent)
                 failed = len(commands) == 1
-                output.write_text(
-                    json.dumps({
-                        'testResults': [{
-                            'name':
-                            str(package / 'example.test.ts'),
-                            'status':
-                            'failed' if failed else 'passed',
-                        }]
-                    }))
+                if write_report:
+                    output.write_text(
+                        json.dumps({
+                            'testResults': [{
+                                'name':
+                                str(package / 'example.test.ts'),
+                                'status':
+                                'failed' if failed else 'passed',
+                            }]
+                        }))
                 if failed:
                     raise RuntimeError('first attempt failed')
 
             args = SimpleNamespace(max_workers='',
+                                   shard=shard,
                                    report=False,
                                    retries=1,
                                    test_github_ci=False)
@@ -112,19 +164,35 @@ class TestReportsTest(unittest.TestCase):
                 finally:
                     os.chdir(cwd)
             self.assertEqual(len(commands), 2)
-            self.assertIn('--runTestsByPath', commands[1])
+            if shard:
+                self.assertIn('--shard=' + shard, commands[0])
+            if write_report:
+                self.assertIn('--runTestsByPath', commands[1])
+                self.assertNotIn('--shard', commands[1])
+                self.assertIn(str(package / 'example.test.ts'), commands[1])
+            else:
+                self.assertNotIn('--runTestsByPath', commands[1])
+                self.assertIn('--shard=' + shard, commands[1])
             self.assertTrue(
                 all(not directory.exists() for directory in temporary_dirs))
             for attempt, status in enumerate(['failed', 'passed']):
-                directory = reports / 'packages-example'
+                if shard:
+                    directory = reports / ('shard-' +
+                                           shard.replace('/', '-of-'))
+                else:
+                    directory = reports
+                directory = directory / 'packages-example'
                 metadata = json.loads(
                     (directory / f'attempt-{attempt}.json').read_text())
                 self.assertEqual(metadata['status'], status)
                 self.assertGreaterEqual(metadata['elapsed_seconds'], 0)
-                self.assertTrue(metadata['has_jest_report'])
-                result = json.loads(
-                    (directory / f'jest-results-{attempt}.json').read_text())
-                self.assertEqual(result['testResults'][0]['status'], status)
+                self.assertEqual(metadata['has_jest_report'], write_report)
+                if write_report:
+                    result = json.loads(
+                        (directory /
+                         f'jest-results-{attempt}.json').read_text())
+                    self.assertEqual(result['testResults'][0]['status'],
+                                     status)
 
     def test_attempt_without_jest_report_still_has_timing(self):
         with tempfile.TemporaryDirectory() as root:

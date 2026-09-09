@@ -492,11 +492,28 @@ def write_github_summary(success: List[str], flaky: List[str],
         print(f"Warning: Could not write GitHub summary: {e}")
 
 
+def parse_jest_shard(value: str) -> str:
+    try:
+        index, count = map(int, value.split('/'))
+        if not 1 <= index <= count:
+            raise ValueError()
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            'shard must be INDEX/COUNT with 1 <= INDEX <= COUNT')
+    return f'{index}/{count}'
+
+
 def test(args) -> None:
     CUR = os.path.abspath('.')
+    shard = getattr(args, 'shard', '')
+    if shard:
+        shard = parse_jest_shard(shard)
     report_root = os.environ.get("COCALC_TEST_REPORT_DIR")
     if report_root:
         report_root = os.path.abspath(report_root)
+        if shard:
+            report_root = os.path.join(report_root,
+                                       'shard-' + shard.replace('/', '-of-'))
     jest_cache_root = os.environ.get("COCALC_JEST_CACHE_DIR",
                                      os.path.join(CUR, ".cache", "jest"))
     flaky: List[str] = []
@@ -541,6 +558,8 @@ def test(args) -> None:
 
     v = packages(args)
     v.sort()
+    if shard and len(v) != 1:
+        raise ValueError('--shard requires exactly one Jest-backed package')
     n = 0
     for path in v:
         n += 1
@@ -551,6 +570,8 @@ def test(args) -> None:
             package_data = json.load(package_file)
         package_scripts = package_data.get("scripts", {})
         jest_backed = is_jest_backed_package(package_data, path)
+        if shard and not jest_backed:
+            raise ValueError('--shard requires a Jest-backed package')
         jest_cache_path = os.path.join(
             jest_cache_root,
             path.strip("/").replace("/", "-"),
@@ -560,6 +581,8 @@ def test(args) -> None:
             print("\n" * 3)
             print("*" * 40)
             print(f"TESTING {n}/{len(v)}: {path}")
+            if shard:
+                print(f"Jest shard: {shard}")
             status(path)
             print("*" * 40)
             sys.stdout.flush(
@@ -578,6 +601,10 @@ def test(args) -> None:
                 quoted_paths = " ".join(
                     shlex.quote(path) for path in retry_paths)
                 test_cmd += f" --runTestsByPath {quoted_paths}"
+            elif shard:
+                # Retrying explicit failures must not re-shard that smaller list.
+                # Without a usable report, retry the same original shard instead.
+                test_cmd += f" --shard={shard}"
             report_path = os.path.join(tmpdir, f"jest-results-{attempt}.json")
             if jest_backed:
                 os.makedirs(jest_cache_path, exist_ok=True)
@@ -971,6 +998,11 @@ def main() -> None:
         help=
         'optional maxWorkers argument for Jest-backed packages only. Non-Jest test commands are unchanged.'
     )
+    subparser.add_argument(
+        '--shard',
+        type=parse_jest_shard,
+        default=None,
+        help='Jest INDEX/COUNT shard; requires exactly one selected package')
     packages_arg(subparser)
     subparser.set_defaults(func=test)
 
