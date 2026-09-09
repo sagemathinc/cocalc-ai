@@ -2,7 +2,7 @@
 
 Status: implementation in progress on `feature/chat-workbench-prototype`.
 Draft PR: https://github.com/sagemathinc/cocalc-ai/pull/509
-Updated 2026-09-09. Not yet ready for the acceptance session.
+Updated 2026-09-09. Usable text prototype; extended acceptance checks remain.
 Revised to build on Patchflow syncdoc, the existing Slate Markdown editor,
 and CoCalc's key:value blob storage, rather than adding parallel infrastructure.
 
@@ -388,9 +388,9 @@ agent runtime.
 
 - [ ] P0: Resolve four integration questions; record schema, commands, attribution,
       experimental gate, and exact focused test commands in this file.
-- [ ] P1: Implement create/read/update/list on live syncdb. Demonstrate real agent
+- [x] P1: Implement create/read/update/list on live syncdb. Demonstrate real agent
       publication into a disposable chat, including a retried publication.
-- [ ] P2: Add inline cards, Markdown workbench using Slate and existing sync
+- [x] P2: Add inline cards, Markdown workbench using Slate and existing sync
       behavior, and published-snapshot/history views.
 - [ ] P3: Add highlight/comment, thread-bound composer context, and safe in-place
       agent updates. Complete the acceptance session with a real agent.
@@ -398,6 +398,29 @@ agent runtime.
       layouts, virtualization, and multiple threads/frames.
 - [ ] P5: Give the maintainer a runnable local/dev build, test chat link, and a
       three-step try-it recipe. Record findings before broadening scope.
+
+### Live Acceptance Progress
+
+The maintainer tried the prototype and confirmed the instant-opening shared
+document experience. They reported imperfect flushing and an edit-mode height
+regression. Commit `56ecf91fc5` gives the editor a flex-filled full-height layout
+and explicitly flushes its current value on Read and Ctrl+S. Focused tests and
+frontend typecheck/lint pass; an explicit static rebuild served this change.
+Chromium inspection confirmed the full-height scrollable edit surface.
+
+In the QA chat above, the real agent updated the selected notebook reply in
+the same artifact. A human then appended a note through Slate; it survived a
+full reload. A subsequent real-agent turn shortened another reply while
+preserving the human note exactly and attached the publication to its new
+response. A reused-runtime attribution issue discovered during this test was
+fixed in `d661b868ed`, covered by all 70 app-server tests, and deployed with
+host operation `a1ddc2a8-976b-4f74-b37b-b8eec2ceefc5`.
+
+Two independent Chromium tabs of the QA chat also verified delivery of a final
+typed line immediately after clicking Read. This proves that particular flush
+path, not all simultaneous-edit or disconnect races. The remaining P4 matrix
+is still open; the maintainer explicitly regards polished multi-user editing
+as beyond the first prototype, but reported rough edges are retained here.
 
 Use one feature branch with coherent commits and a draft PR when implementation
 is requested. Keep behind an experimental feature gate. Production deployment
