@@ -492,7 +492,6 @@ export function ChatRoomComposer({
           </Tooltip>
         )}
         <div
-          className="cocalc-chat-composer-meta"
           style={{
             display: "flex",
             alignItems: "center",
