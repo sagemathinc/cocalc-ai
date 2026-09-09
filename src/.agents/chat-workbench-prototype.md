@@ -1,278 +1,264 @@
-# Chat Workbench: First Usable Prototype
+# Chat Workbench Prototype
 
-Status: proposed implementation plan, not implemented. Written 2026-09-08.
+Status: proposed for maintainer review; not implemented. Updated 2026-09-09.
+This replaces the earlier two-renderer-first proposal in this file.
 
-## Product Question
+## Decision In One Page
 
-Can an agent and a person work together on a concrete result without leaving
-their conversation or operating another application?
+Build a small shared text artifact inside an existing CoCalc agent chat.
+The person can open it beside the conversation, edit it, highlight a passage,
+comment on that passage, and have the agent update the same artifact in place.
+Reloading preserves the result and its history.
 
-Chat remains the narrative and command surface. A named result is something we
-can inspect, select, revise, and discuss together. A frame is an optional larger
-view of that result, not an inbox, dashboard, or notebook programmed in English.
+The maintainer's Claude test is the interaction reference, not a specification
+of Claude's internals. Their ChatGPT visualization test instead produced useful
+interactive output but disconnected replacements on follow-up. Both patterns
+have value; this prototype tests the shared-object pattern first.
 
-The first version must let a real agent publish a plot or text, let the user
-interact with it, and let the agent revise that same object in response. A
-hardcoded UI fixture alone does not satisfy this plan.
+The first milestone is deliberately text-only and must work with a real agent,
+not just mocked messages. Once the maintainer can try that loop, add a bounded
+2D plot through the same identity, revision, frame, and selection mechanisms.
+Then separately qualify one browser-local SageJS experiment. Neither plotting
+nor SageJS blocks delivery of the first usable text prototype.
 
-## Scope And Explicit Non-Goals
+Do not build another inbox, notebook engine, dashboard builder, generic layout
+language, external-action system, or full artifact management application.
 
-Implement two result types:
+## First Acceptance Session
 
-- `plot2d`: bounded line/scatter series, labeled linear axes, point inspection,
-  selection, and reset view. Enough for a function plot or a small matrix's
-  eigenvalues in the complex plane.
-- `text`: plain text with a title, readable inline preview, and an explicit
-  Edit / Save / Cancel flow in the workbench. Enough for a proposed reply,
-  explanation, or short draft. No actual email or support integration.
+Use a disposable chat with fictional support questions:
 
-Both support revisions, inline presentation, opening in a chat frame, and an
-explicit selection attachment to the composer. Source provenance is optional
-but visible when provided. Existing execution tools produce the data; publishing
-a result never executes code.
+1. Ask the agent: "Draft three short replies as an editable artifact. Do not
+   send anything; I want to discuss and revise them with you."
+2. The agent publishes a named artifact. Its message contains a compact card
+   with a preview and Open action. Normal conversational explanation remains.
+3. Open it in a right-hand chat frame. An existing terminal is not replaced.
+4. Highlight a sentence and choose Comment. Focus moves to the originating
+   thread's composer, with a removable chip identifying the artifact, revision,
+   and passage. Existing composer text is preserved. Nothing sends yet.
+5. Type "Ask which course they mean instead of promising a fix" and Send.
+6. The agent reads that exact revision and updates the same artifact. The frame
+   displays the requested revision automatically when safe, rather than opening
+   another artifact or requiring a refresh. Offer See changes / Previous.
+7. Edit the text directly, Save, then ask the agent to shorten the edited reply.
+   The agent uses the human-saved version, not its stale earlier draft.
+8. Close/reopen the frame and reload the chat. Saved text and prior revisions
+   remain available without rerunning the agent.
 
-Do not include arbitrary HTML, user-authored SVG, raw Plotly specifications,
-custom JavaScript, arbitrary layout descriptions, external image URLs, widget
-module loading, external action execution/approval, or a new notebook engine.
-Do not implement 3D, linked multi-view dashboards, a diagram editor, PiP, an
-artifact browser, or a generalized task/progress system for this milestone.
+Success is this complete conversational loop. Beautiful cards without reliable
+feedback and revision routing do not count.
 
-Standard ipywidgets and local SageJS controls are plausible follow-ups, not
-rejected directions. They must not delay the basic publish/inspect/revise loop.
+## UI Decisions
 
-## Two Acceptance Stories
+- Inline card: title, revision, short plain-text preview, Open. Keep inline
+  height bounded so updates do not shift the conversation being read.
+- Workbench: one artifact, compact title/revision bar, Edit, and More. Use
+  existing frame controls for resizing, expansion, and closing.
+- Add a workbench frame to the existing chat frame editor. Explicit Open may
+  reuse that chat frame's available workbench, but never replace an unrelated
+  frame or discard an unsaved edit. Agent output does not rearrange the layout.
+- Store explicit project, chat path, thread, artifact, and revision identities.
+  Two chat frames work independently. Switching threads does not redirect an
+  already-open artifact's feedback to the newly selected thread.
+- Start with escaped plain text preserving whitespace. Edit uses a standard
+  multiline control with Save and Cancel, not a new rich-text editor. Markdown
+  formatting is a later renderer decision.
+- A visible Comment button supports selection and whole-artifact feedback.
+  Preserve the selection when focus moves to the button. Keyboard selection,
+  Comment, composer focus, chip removal, and return to the artifact must work.
+- Comment attaches context; it does not approve or execute anything. There are
+  no email-send, ticket-close, or external approval controls.
+- Use existing Ant Design controls, UI_COLORS, and keyboard boundaries. Dark
+  mode is required. On narrow screens use one pane with a clear return to chat.
 
-### Plot
+### In-Place Updates Without Losing Work
 
-1. In a real agent thread, ask: "Plot this function" or "Help me understand the
-   spectrum of this small matrix."
-2. The agent computes using existing project execution/Jupyter tools, publishes
-   a typed plot, and refers to the resulting inline card in its response.
-3. The user reads it inline, then chooses Open in workbench. Chat stays visible.
-4. The user selects points and chooses Ask about selection. A removable composer
-   chip identifies the result, revision, and selection; nothing is sent yet.
-5. The user asks a follow-up. The agent receives the exact selected IDs/values,
-   reads the referenced result if needed, and publishes a revision of the same
-   result rather than an unrelated second plot.
-6. Earlier cards retain their original revisions. The workbench offers the new
-   revision without interrupting active inspection.
-7. Reload the chat. The plot and revision references still work without rerunning
-   the computation or starting Codex.
+Historical inline cards pin exact revisions. The open workbench follows the
+current artifact unless the user explicitly chooses a historical revision.
 
-### Text
+Auto-display a completed agent revision only when following current, the update
+descends from the displayed revision, and there is no unsaved edit or active
+text selection. Do not stream partial rewrites into the document. Preserve focus
+and scroll where possible; do not force-scroll to the changed passage. See changes
+is an explicit action using existing diff primitives where practical.
 
-1. The agent publishes a proposed reply as a text result, with fictional data.
-2. The user opens it in the workbench, edits a sentence, and saves a revision.
-3. The user selects text, attaches it to chat, and asks for a warmer tone.
-4. The agent reads the saved revision and proposes an updated revision.
-5. An unsaved user edit is never overwritten by an agent update or frame switch.
-6. There is no Send email, Approve, or Execute button. This story tests shared
-   drafting, not an external-action system masquerading as a text editor.
+Otherwise show a small New revision available action. An agent update cannot
+overwrite a draft, steal focus, or change a historical view. Multiple heads are
+a conflict, not permission to guess the preferred version.
 
-## Minimal UX Contract
+No live character-level collaborative editing is required. Save creates a
+revision; concurrent saves preserve both. Provide version selection and an
+explicit resolution path without building a general merge editor. Guard
+close/navigation when an unsaved draft would be discarded.
 
-- An inline result card has a compact title, revision indicator, useful preview,
-  and Open in workbench. Additional provenance/download actions belong in More.
-- Reuse the chat editor's existing frame tree. Add one `workbench` frame type.
-  Explicit opening can create an adjacent split or reuse that chat frame's
-  unpinned workbench. Never replace a terminal or another pinned resource.
-- The frame is associated with its originating chat frame and thread. Two chat
-  frames can inspect different threads/results without a global active target.
-- The workbench shows one result at a time. Do not build tabs or a sidebar of all
-  results yet. Existing frame controls provide resizing, closing, and expansion.
-- Inline cards pin a revision. The workbench also pins a revision; show a small
-  "New revision available" action rather than replacing what the user is reading.
-  Human Save may select the just-saved revision, as an explicit user action.
-- Result data/state is independent of React mounting. Opening a frame must not
-  restart computation. View state (camera/range and selection) is local to the
-  viewing session and keyed by result/revision, not a shared collaborator cursor.
-- For a text selection, preserve offsets and exact selected text. For a plot,
-  preserve stable series/point IDs and coordinates. Selection alone does not
-  invoke the agent or grant permission for any action.
-- Ask about selection adds a removable attachment to the originating thread's
-  composer. It preserves the existing draft and waits for Send. Bind the pending
-  attachment to that thread; do not leak it into another thread after navigation.
-- Closing/reopening frames or virtualizing chat messages cannot discard saved
-  results. Warn before discarding an unsaved text edit; agent updates do not steal
-  focus, change scroll position, or resize an existing card unexpectedly.
-- Use current CoCalc typography, Ant Design controls, `UI_COLORS`, keyboard
-  boundaries, and appearance settings. On narrow screens use a single-pane
-  result view with a clear return to chat rather than forcing three columns.
+## Minimal Data Contract
 
-## Data And Persistence
+Use the existing live chat sync store for small self-contained artifact records.
+Do not write chat files directly, create a second authoritative JSON file, or
+put authoritative content in localStorage.
 
-Use explicit, versioned result records in the existing live chat sync store.
-Small self-contained payloads avoid an additional blob service for this trial.
-Do not write chat files directly or create a second authoritative JSON store.
+Proposed records, not existing API names:
 
-Proposed records (names are new, not existing APIs):
+- Artifact revision: schema version, artifact ID, revision ID, parent revision
+  IDs, thread ID, title, kind (text initially), payload, attribution, timestamp,
+  and publication idempotency key.
+- Chat reference: artifact ID and exact revision ID attached to a message/turn.
+- Submitted context: artifact/revision plus selected text and offsets. Specify
+  offsets as UTF-16 code units into the exact stored string; verify the quote
+  matches. Bound selection to 8 KiB and reject excess rather than silently
+  truncating and claiming to include the complete selection.
 
-- Revision: schema version, result ID, revision ID, parent revision IDs, thread
-  ID, title, kind, payload, timestamp, actor/provenance, idempotency key.
-- Chat reference: result ID plus exact revision ID, attached to a message/turn.
-- Composer context: result/revision identity and bounded typed selection. Persist
-  the reference and resolved selection in the submitted message for later audit.
+Initial limits: 32 KiB text, 128 KiB serialized revision, bounded titles and
+identifiers. Reject malformed/oversized data with useful errors. These are
+prototype defaults, not benchmarks; large documents are out of scope.
 
-Revisions are immutable at the application level. Treat them as untrusted project
-content, not tamper-proof audit records. A source path is provenance, not an
-instruction to fetch or execute it; a snapshot remains usable if the source moves.
+Revisions are immutable by application convention, not tamper-proof records.
+Validate imported/restored content as untrusted. Updates name the parent actually
+read. Retain concurrent sibling revisions; a resolution revision may name both
+parents and contain the explicitly chosen text.
 
-Prefer deriving current heads from immutable parent-linked revisions. Concurrent
-edits produce sibling revisions, never last-writer-wins destruction. Show a
-conflict and let the user choose a version to continue from; preserving both is
-sufficient for the prototype. Do not implement collaborative character editing.
-Update requests name the parent revision they actually read.
+Persist revision before reference. Retry interrupted publication idempotently
+without duplicate cards or lost revisions. Missing data gets an unavailable
+state, never a substituted artifact or latest revision.
 
-Initial payload limits: 128 KiB serialized per revision, 32 KiB text, 8 series and
-2,000 total points per plot. Require finite numbers, bounded labels, unique point
-IDs, and known fields/enums. Reject unsupported kinds and oversized data with
-actionable errors. These limits are prototype defaults, not performance claims.
+Saved results ride on normal chat synchronization. If the chat is readable, its
+self-contained artifact must not need Codex, a kernel, or another result service.
+This does not promise uncached offline access or new stopped-project access.
 
-The publication operation must be idempotent across tool retries. Persist the
-revision before attaching its chat reference. Retry a missing reference without
-duplicating the revision/card. Handle an interrupted agent turn explicitly:
-either attach to its still-existing message or publish one clearly attributed
-result message in the same thread; never select an unrelated active thread.
+## Agent And Composer Integration
 
-Existing chat synchronization governs stopped-project access. If the chat is
-already readable, self-contained results must not require an extra kernel,
-Codex process, or result service. Do not promise uncached offline access or a
-new stopped-project transport. Project restart/reconnect must preserve results.
+Add a small typed interface to the existing project chat CLI/backend surface:
 
-## Agent Interface
+- publish: explicit chat/thread/message-or-turn target, title, text, idempotency
+  key; optional artifact ID and parents for an update.
+- read: exact artifact/revision and current heads.
+- list: bounded artifacts in an explicitly named thread.
 
-Extend the existing project chat CLI/backend scripting surface, rather than
-requiring DOM scripting, browser auth, or manually generated Markdown markers.
-Proposed operations:
+These names are conceptual; record exact API/CLI spelling during P0. Use
+project-routed live chat operations, not browser scripting, scraped HTML, or
+special Markdown interpreted as commands.
 
-- `publish`: explicit project/chat path/thread/message-or-turn target, typed
-  payload, optional existing result ID and parent revision, idempotency key.
-- `read`: exact result/revision, payload, provenance, and current heads.
-- `list`: bounded results for one explicit thread, for recovery/discovery.
+Publication must associate with the producing turn. Establish how the agent
+gets its originating chat/thread/message-or-turn identity without borrowing
+mutable browser selection. Do not fabricate a user message to carry output.
+Document interrupted-turn publication and retry behavior before shipping.
 
-Publishing returns stable IDs and the created chat reference. It does not send a
-new user prompt or trigger another agent turn. Agent instructions should explain
-these operations with one plot and one text example. Their exact CLI spelling
-must be settled during the API spike, before UI integration.
+On Send, resolve and validate the attachment against its pinned revision. Include
+bounded structured context in actual agent input and retain it in the submitted
+message. Artifact text is user/project content, never system instructions.
+Unavailable context requires removal or retry, not silent substitution.
+Preserve attachments per thread through draft switching and failed Send; clear
+only after successful submission.
 
-On user Send, resolve the selection against its pinned revision and include a
-size-bounded, visibly attributed context block. Treat labels and text as untrusted
-user/project data, never system instructions. If the revision cannot be read,
-show a removable missing-context error rather than substituting current state.
+Document one real tool recipe for publish/read/revise. Agent reads must see
+human-saved revisions. The artifact is authoritative, not the model's memory.
 
-Execution remains separate: existing live Jupyter APIs, shell tools, or SageJS
-can compute results. Do not parse terminal output as executable frontend content.
-Basic source opening should reuse the project editor; revision-specific source
-claims require an actual pinned source reference, not just a mutable filename.
+## Integration Points And Bounded Investigation
 
-## Renderer And Security Boundary
+Starting points inspected during planning:
 
-The host owns the React renderers and all controls. Text is escaped plain text.
-The plot schema is a deliberately small language, not a wrapper around arbitrary
-renderer props or MIME output.
+- src/packages/chat/src/index.ts, server.ts, integrity.ts: chat records, live
+  store access, integrity checks. Confirm keys and unknown-record behavior.
+- src/packages/cli/src/bin/core/project-chat.ts and
+  src/packages/cli/src/bin/commands/project/chat.ts: project chat operations;
+  the core already uses acquireChatSyncDB.
+- src/packages/frontend/frame-editors/chat-editor/editor.ts and actions.ts:
+  frame registration and frame-local chat actions.
+- src/packages/frontend/chat/message.tsx, chatroom.tsx, chatroom-thread-panel.tsx:
+  inline rendering, thread identity, and composer.
 
-Inspect the installed plotting dependencies during the spike. Prefer adapting
-an existing renderer with an explicit field-by-field conversion and fixed host
-configuration. If this cannot be kept auditable and small, implement the limited
-2D plot with host-generated SVG/canvas. Host-generated SVG is not user SVG input.
-Do not expose HTML labels, images, URLs, templates, plugins, arbitrary config,
-or callbacks. Do not pass the payload through with `{...payload}`.
+P0 answers only four integration questions: live-store record semantics, agent
+turn identity, typed composer attachment routing, and safe frame reuse. Include
+export/import, message-cache compatibility, retries, and multiple chat frames.
+Do not assume transactional compare-and-swap exists. If these records cannot
+safely use the store, record the specific problem and smallest alternative for
+review rather than silently weakening persistence guarantees.
 
-Validate both before persistence and on rendering old/imported records. No new
-runtime CDN dependencies or account-origin CSP relaxations. Set resource limits,
-contain renderer errors, and provide a readable failure state without breaking
-the conversation. A trusted library still processes untrusted inputs; this is
-not a claim that typing eliminates renderer vulnerabilities.
+## Safety And Permissions
 
-Use existing project authorization and live-store access. Route by explicit
-project ownership; steady-state result data follows the project data plane, not
-a new hub proxy. Read-only viewers may inspect/select locally but not save
-revisions or invoke an agent without existing permission. Public rendering is
-not enabled in this milestone; unsupported clients show a safe placeholder.
+The initial renderer is escaped text. No HTML, user SVG, JavaScript, external
+resources, or generic renderer props. Publishing and viewing never execute the
+contents. Validate on both write and read/render.
 
-## Code Map And Required Spike
+Use existing project authorization and explicit ownership routing. Artifact data
+uses the project data plane, not a new hub proxy. Read-only viewers cannot save
+or invoke agents without existing permissions. Do not enable new public artifact
+rendering or relax CSP. Older clients must not corrupt artifact records; confirm
+their actual behavior in P0 rather than assuming they can render placeholders.
 
-Inspected starting points:
+No new third-party dependency is expected for text. Later renderers/runtimes
+need their own bounded review. A trusted package does not make all its input
+features appropriate for the authenticated application origin.
 
-- `src/packages/chat/src/index.ts`, `server.ts`, `integrity.ts`: chat records,
-  live-store access, and integrity validation.
-- `src/packages/cli/src/bin/core/project-chat.ts` and
-  `src/packages/cli/src/bin/commands/project/chat.ts`: existing project-routed
-  chat operations. The core already uses `acquireChatSyncDB`.
-- `src/packages/frontend/frame-editors/chat-editor/editor.ts` and `actions.ts`:
-  frame registration and frame-scoped chat actions. Existing frame types include
-  chatroom, terminal, TimeTravel, and search.
-- `src/packages/frontend/chat/message.tsx`, `chatroom.tsx`, and
-  `chatroom-thread-panel.tsx`: inline rendering, thread identity, and composer.
-- `src/packages/frontend/components/plotly.tsx`: existing lazy Plotly wrapper;
-  its generic prop spreading is not the proposed result security boundary.
-- `/home/user/upstream/sagejs/website/live/README.md`, `cell-controller.mjs`,
-  `widget-manager.mjs`: later session/widget integration. The staged widget
-  runtime uses `@cocalc/widgets`; do not vendor the SageJS application into chat.
+## Delivery Checklist
 
-Before coding the main feature, resolve and record:
+- [ ] P0: Resolve four integration questions; record schema, commands, attribution,
+      experimental gate, and exact focused test commands in this file.
+- [ ] P1: Implement publish/read/list and persistence. Demonstrate real agent
+      publication into a disposable chat, including a retried publication.
+- [ ] P2: Add inline cards, text workbench, Edit/Save/Cancel, and revision history.
+- [ ] P3: Add highlight/comment, thread-bound composer context, and safe in-place
+      agent updates. Complete the acceptance session with a real agent.
+- [ ] P4: Validate reload/reconnect, concurrency, keyboard/focus, themes, narrow
+      layouts, virtualization, and multiple threads/frames.
+- [ ] P5: Give the maintainer a runnable local/dev build, test chat link, and a
+      three-step try-it recipe. Record findings before broadening scope.
 
-1. How additional records survive sync-store primary keys, integrity checks,
-   export/import, message caches, unknown clients, and multiple chat frames.
-2. How an agent invocation supplies stable originating thread and message/turn
-   identity without borrowing mutable browser selection.
-3. How to append idempotently and preserve concurrent revisions under the actual
-   store semantics. Do not claim transactional compare-and-swap unless supported.
-4. Which existing composer attachment mechanism can carry typed context, or the
-   smallest explicit extension needed. Check submission and retry paths.
-5. Which plot adapter can meet the constrained schema and accessible point
-   selection requirements without adding a broad dependency/runtime surface.
+Use one feature branch with coherent commits and a draft PR when implementation
+is requested. Keep behind an experimental feature gate. Production deployment
+and external support/email actions are not part of this plan.
 
-These are bounded implementation questions, not a license to build a generic
-artifact framework. If a constraint fails, record the specific blocker and a
-smaller alternative instead of weakening persistence or authority boundaries.
+### Required Regression Evidence
 
-## Implementation Sequence
+- Duplicate publication, interrupted reference attachment, concurrent saves,
+  missing revisions, import/restore validation, and legacy chat compatibility.
+- Selected passage reaches the correct thread/revision after thread switching.
+  Unicode offsets are correct and hostile-looking text remains literal data.
+- Agent updates the same artifact; unsaved drafts, selections, historical views,
+  and existing terminal frames are preserved.
+- Scroll-away/remount, reload, and reconnect preserve saved results.
+- Keyboard-only edit/comment/send, focus restoration, and no shortcut leakage.
+- Relevant shared/CLI/frontend tests, typechecks, frontend lint, and a real
+  authenticated browser session. A fixture alone does not prove integration.
 
-- [ ] P0: Complete the spike above; settle schema, renderer, and CLI contract.
-- [ ] P1: Implement validated revision storage and publish/read/list operations;
-      exercise real publication into a disposable test chat without a browser.
-- [ ] P2: Render plot/text inline cards and add the optional workbench frame;
-      preserve per-frame identity and render useful failure/loading states.
-- [ ] P3: Implement text revision editing, plot/text selection, composer context,
-      and agent revisions. Complete both real end-to-end stories.
-- [ ] P4: Test refresh/reconnect, concurrency, safety, accessibility, themes,
-      narrow layouts, and virtualization. Record evidence and known limitations.
-- [ ] P5: Have the maintainer use it on an actual task and assess whether the
-      conversation is easier, not just whether the controls technically work.
+Done means the maintainer can perform the text loop and judge whether it feels
+as direct as their Claude experiment. No plot or widget is required to complete
+this first milestone.
 
-Keep this under a developer/experimental feature gate until P4 passes. Record
-the actual gate name and test commands in this file during implementation.
-This plan authorizes neither production deployment nor external email actions.
+## Immediate Follow-Ups, Separately Gated
 
-## Tests And Definition Of Done
+### Bounded Plot
 
-- Schema rejection: unknown fields/kinds, hostile strings, URLs in disallowed
-  fields, nonfinite values, excessive payloads, malformed references.
-- Persistence: idempotent retries, interrupted publication, sibling revisions,
-  reload/reconnect, safe old-client behavior, and unchanged legacy chat messages.
-- UI: user edits survive agent updates, selections bind to the correct revision
-  and thread, references survive scrolling away/back, opening a result preserves
-  the terminal, two chat frames do not cross-route, and close does not lose data.
-- Accessibility: keyboard-only open/edit/save/cancel/context removal; accessible
-  alternative to pointer-only point selection (e.g. a bounded data table);
-  focus restoration, light/dark, narrow-screen and zoom checks.
-- Live acceptance: a real agent publishes and revises a real computed plot; the
-  user edits and discusses a text result. No source copying between separate apps.
-- Run focused shared/CLI/frontend tests, relevant typechecks, and frontend lint.
-  Use an authenticated browser for end-to-end evidence; fixtures alone do not
-  demonstrate agent-to-chat integration. Do not send real support/email data.
+Add plot2d through the same protocol: at most 8 series and 2,000 points, finite
+coordinates, plain labels, stable point IDs. Use a fixed trusted renderer with
+explicit field mapping, never arbitrary Plotly props. The existing
+src/packages/frontend/components/plotly.tsx is a candidate adapter, not already
+this validation boundary. Host-generated SVG/canvas is another option.
 
-Done means the two acceptance stories work durably and the user can judge the
-interaction. It does not mean a general widget platform has been implemented.
+Selections attach IDs/values to chat, with a keyboard-accessible data-table
+alternative. Test a real spectrum and revision of that same plot. Some simple
+illustrations can remain independent inline outputs; not every answer needs a
+persistent workbench.
 
-## After The Prototype, Not Before
+### One Browser-Local SageJS Experiment
 
-Evaluate a result-owned SageJS session with approved standard widget controls,
-client-only parameter updates, and explicit lifecycle/resource limits. Evaluate
-execution-backed task cards whose progress comes from measured events, not model
-guesswork. Consider diagrams/whiteboards and full notebook source opening.
+Use /home/user/upstream/sagejs/website/live/README.md, cell-controller.mjs, and
+widget-manager.mjs as references. Its embed already has session lifecycle
+operations and uses @cocalc/widgets. Review current interfaces rather than
+copying the standalone app into CoCalc.
 
-Support/email proposals need a separate action contract: exact payload revision,
-recipients, authorization, approval invalidation, idempotent execution, and real
-receipts. A plain text result must never imply that any of those exist already.
+Qualify one result-owned runtime with approved controls, explicit Run/Resume and
+Interrupt, and local parameter computation without another agent turn. Separate
+saved preview from live session. Preserve controls and bound workers/memory; do
+not allocate a runtime for every historical output.
+
+Prepare/cache a pinned runtime when the agent chooses SageJS, overlapping
+download/initialization with answer generation. Do not preload on unrelated
+chats. Measure cold preparation, warm preparation, and interaction separately.
+The maintainer observed a 70-second ChatGPT visualization turn; that motivates
+overlap, not a claim about measured SageJS loading time.
+
+WASM is not an XSS boundary. Choose restricted typed output or a separate-origin
+runtime surface before enabling rich output or widget callbacks. General widget
+compatibility, arbitrary HTML, task dashboards, and external action approval/
+execution are separate milestones, not requirements hidden in this prototype.
