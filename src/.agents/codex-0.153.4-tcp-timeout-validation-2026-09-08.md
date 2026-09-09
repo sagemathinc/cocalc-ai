@@ -94,6 +94,27 @@ libraries and its APT sources were not changed.
   `auth bootstrap` was started using the exact installed CoCalc CLI and profile
   `staging2`; no credentials were read or copied into the build worktree.
 
+Additional checks completed while ARM64 was compiling:
+
+- CoCalc adapter suite: `pnpm -C src/packages/ai test --runInBand
+acp/__tests__/codex-app-server.test.ts`, 70/70 passing in the release worktree.
+- Both x86_64 binaries start using Ubuntu 24.04's glibc 2.39 loader and runtime
+  libraries extracted under `/tmp/codex/amd64-runtime` (not installed over the
+  local system libraries).
+- Live patched app-server passed goal set/get/clear, a normal shell-tool turn,
+  explicit compaction, marker recall after compaction, and interruption of an
+  active sleep command. Evidence: `/tmp/codex/protocol-smoke.log`; harness:
+  `/tmp/codex/protocol-smoke.cjs`; session:
+  `01a083f7-4d9e-7511-bb3b-2e3e198f3d10`.
+- These are local protocol checks, not substitutes for staging integration or
+  a long-running compaction stress test.
+
+Installer requirement: official and patched executables both report version
+0.153.4. `alreadyInstalled("codex")` must verify the pinned patched contents,
+including its companion, rather than treating the version string and companion
+existence as sufficient. Include a regression test for replacing same-version
+stock binaries. Preserve download checksum verification before installation.
+
 1. Build the ARM64 counterpart and assemble complete artifact provenance and
    checksums. Do not publish an incomplete two-architecture release.
 2. Validate runtime library compatibility in the actual supported host images.
