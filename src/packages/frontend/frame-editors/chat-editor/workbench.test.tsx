@@ -215,6 +215,9 @@ test.each([false, true])(
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     const editor = screen.getByRole("textbox", { name: "Edit artifact" });
     expect(editor).toHaveAttribute("data-height", "100%");
+    expect(
+      editor.closest('[data-cocalc-keyboard-boundary="overlay"]'),
+    ).toHaveStyle({ paddingBottom: "0px" });
     expect(editor).toHaveAttribute("data-autogrow", "false");
     fireEvent.change(editor, { target: { value: "Pending human edit" } });
     expect(record.input).toBe("Original");
@@ -224,6 +227,11 @@ test.each([false, true])(
     expect(record.input).toBe("Pending human edit");
     expect(syncdb.save).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Pending human edit")).toBeTruthy();
+    expect(
+      screen
+        .getByLabelText("Artifact document")
+        .closest('[data-cocalc-keyboard-boundary="overlay"]'),
+    ).toHaveStyle({ paddingBottom: "12px" });
     // Explicit saves must reach syncdoc even if its local record already matches.
     syncdb.save.mockRejectedValueOnce(Error("Temporary save failure"));
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));

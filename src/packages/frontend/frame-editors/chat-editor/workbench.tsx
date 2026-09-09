@@ -184,6 +184,7 @@ export function Workbench({
       style={{
         overflow: "auto",
         padding: 12,
+        paddingBottom: editing && !read_only && !showChanges ? 0 : 12,
         color: UI_COLORS.text,
         background: UI_COLORS.surface,
       }}
