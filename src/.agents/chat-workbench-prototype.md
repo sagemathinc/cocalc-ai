@@ -464,6 +464,15 @@ including the human note and two-tab test line. The revision menu still offered
 all three publications. This verifies artifact-frame remount, not closing the
 originating chat frame or chat-log rotation.
 
+Rotation integration now has direct filesystem/SQLite coverage in
+`packages/lite/hub/acp/__tests__/chat-offload.test.ts`: rotate a three-message
+thread down to its retained root/recent message, confirm the producing middle
+message is archived, reopen the head file, and validate the human-edited artifact
+and exact original publication. All eight offload tests pass via
+`pnpm exec jest --runInBand hub/acp/__tests__/chat-offload.test.ts` from
+`src/packages/lite`. This tests actual rotation and disk reload, not a connected
+browser during a maintenance rotation; that distinction remains open.
+
 Use one feature branch with coherent commits and a draft PR when implementation
 is requested. Keep behind an experimental feature gate. Production deployment
 and external support/email actions are not part of this plan.
