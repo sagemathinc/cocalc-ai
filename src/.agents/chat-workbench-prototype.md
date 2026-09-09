@@ -1,6 +1,7 @@
 # Chat Workbench Prototype
 
 Status: implementation in progress on `feature/chat-workbench-prototype`.
+Draft PR: https://github.com/sagemathinc/cocalc-ai/pull/509
 Updated 2026-09-09. Not yet ready for the acceptance session.
 Revised to build on Patchflow syncdoc, the existing Slate Markdown editor,
 and CoCalc's key:value blob storage, rather than adding parallel infrastructure.
@@ -340,9 +341,16 @@ projectIdentifier })` over the same operations. Installed runtime validation
   and opened in authenticated Chromium, not by writing chat JSON.
 - The tools bundle built and host upgrade operation
   `471946eb-c686-4f09-a262-fb678d38e8d6` succeeded. The running project still
-  exposes its old September 4 CLI without artifact commands; awaiting a safe
-  project restart before claiming the prompt is usable. No agent publication
-  has yet been attempted in this disposable thread.
+  initially exposed its old September 4 CLI. After the maintainer-approved
+  restart (operation `93b99ae5-474b-4e83-83dd-81a418a045ad`), remote CLI help
+  confirmed all artifact commands are available.
+- A separate real-agent QA chat is `/home/user/chat-workbench-agent-qa-20260909.chat`,
+  thread `9382a253-236b-4a0e-8c54-4f5a83c46ad9`, in that same project. The
+  agent created `support-replies`; its card opened the workbench beside chat.
+  It reported `replayed: true` for the identical retry. Browser selection of
+  the first paragraph staged the exact passage chip and focused the originating
+  composer. A follow-up was sent and its same-artifact update is under test.
+  These observations do not yet complete the full acceptance matrix.
 - Read-only component coverage confirms document visibility with disabled edit
   and feedback actions. This is UI regression coverage, not proof of backend
   permission enforcement or the pending live collaborator test.
