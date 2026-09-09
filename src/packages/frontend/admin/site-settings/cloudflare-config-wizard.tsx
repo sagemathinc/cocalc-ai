@@ -506,6 +506,16 @@ export default function CloudflareConfigWizard({
                 <WizardStep title="Step 3 - Cloudflare Tokens">
                   {open && (
                     <CloudflareBootstrap
+                      savedCredentials={{
+                        "automation token":
+                          !!savedIsSet.project_hosts_cloudflare_tunnel_api_token,
+                        "R2 administration token": !!savedIsSet.r2_api_token,
+                        "R2 S3 access key ID": !!trimOrEmpty(
+                          savedData.r2_access_key_id,
+                        ),
+                        "R2 S3 secret access key":
+                          !!savedIsSet.r2_secret_access_key,
+                      }}
                       disabled={applying || provisioning || tunnelApplying}
                       runFreshAuthAction={runFreshAuthAction}
                       token={bootstrapToken}

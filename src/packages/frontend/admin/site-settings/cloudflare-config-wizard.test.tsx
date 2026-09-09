@@ -1,6 +1,13 @@
 /** @jest-environment jsdom */
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  within,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
 import { bootstrapTokenEndDate } from "./cloudflare-bootstrap";
@@ -110,6 +117,56 @@ describe("CloudflareConfigWizard", () => {
     },
   };
 
+  it.each([
+    ["none", baseData, {}, "Cloudflare credentials not configured"],
+    ["complete", readyData, readySecrets, "Cloudflare credentials saved"],
+    [
+      "partial",
+      readyData,
+      { r2_api_token: true },
+      "Cloudflare credential configuration is incomplete",
+    ],
+    [
+      "missing S3 ID",
+      baseData,
+      readySecrets,
+      "Cloudflare credential configuration is incomplete",
+    ],
+  ])(
+    "shows %s saved credential state when reopening setup",
+    async (_label, data, isSet, title) => {
+      const props = { onClose: jest.fn(), data, isSet, onApply: jest.fn() };
+      const { rerender } = render(<CloudflareConfigWizard {...props} open />);
+      const status = () =>
+        screen.getByRole("alert", {
+          name: "Saved Cloudflare credential status",
+        });
+      await waitFor(() =>
+        expect(within(status()).getByText(title)).toBeVisible(),
+      );
+      fireEvent.change(screen.getByRole("textbox", { name: "Domain name" }), {
+        target: { value: "unsaved.example.edu" },
+      });
+      expect(within(status()).getByText(title)).toBeVisible();
+      rerender(<CloudflareConfigWizard {...props} open={false} />);
+      rerender(<CloudflareConfigWizard {...props} open />);
+      await waitFor(() =>
+        expect(within(status()).getByText(title)).toBeVisible(),
+      );
+      if (_label === "complete") {
+        expect(status()).toHaveTextContent(
+          "Run diagnostics below to verify access",
+        );
+        expect(status()).toHaveTextContent("existing R2 S3 keys are preserved");
+      }
+      if (_label === "missing S3 ID") {
+        expect(status()).toHaveTextContent(
+          "Missing saved credentials: R2 S3 access key ID.",
+        );
+      }
+    },
+  );
+
   it("configures S3 from bootstrap without manual keys or a second settings save", async () => {
     const onApply = jest.fn();
     const bootstrap = webapp_client.conat_client.hub.system
@@ -156,6 +213,14 @@ describe("CloudflareConfigWizard", () => {
       "R2 credentials are saved. No keys to paste",
     );
     expect(document.body).not.toHaveTextContent("must-not-apply");
+    expect(
+      screen.queryByRole("alert", {
+        name: "Saved Cloudflare credential status",
+      }),
+    ).toBeNull();
+    expect(screen.getAllByText("Cloudflare configuration saved")).toHaveLength(
+      1,
+    );
     expect(onApply).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("radio", { name: "Advanced manual setup" }),

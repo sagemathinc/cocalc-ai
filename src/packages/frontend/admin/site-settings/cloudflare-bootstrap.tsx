@@ -36,6 +36,7 @@ export default function CloudflareBootstrap({
   setToken,
   runFreshAuthAction,
   disabled,
+  savedCredentials,
 }: {
   domain: string;
   tunnelPrefix: string;
@@ -47,7 +48,13 @@ export default function CloudflareBootstrap({
   setToken: (token: string) => void;
   runFreshAuthAction: FreshAuthActionRunner;
   disabled: boolean;
+  savedCredentials: Record<string, boolean>;
 }) {
+  const missingCredentials = Object.keys(savedCredentials).filter(
+    (name) => !savedCredentials[name],
+  );
+  const configured = missingCredentials.length === 0;
+  const partiallyConfigured = Object.values(savedCredentials).some(Boolean);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
   const [cancelled, setCancelled] = useState(false);
@@ -106,6 +113,30 @@ export default function CloudflareBootstrap({
 
   return (
     <section aria-label="Cloudflare bootstrap">
+      {!result && !busy && !error && (
+        <Alert
+          aria-label="Saved Cloudflare credential status"
+          showIcon
+          style={{ marginBottom: 16 }}
+          type={
+            configured ? "success" : partiallyConfigured ? "warning" : "info"
+          }
+          title={
+            configured
+              ? "Cloudflare credentials saved"
+              : partiallyConfigured
+                ? "Cloudflare credential configuration is incomplete"
+                : "Cloudflare credentials not configured"
+          }
+          description={
+            configured
+              ? "You can skip bootstrap. Run diagnostics below to verify access with the saved credentials. To replace administration credentials, run bootstrap again; existing R2 S3 keys are preserved."
+              : partiallyConfigured
+                ? `Missing saved credentials: ${missingCredentials.join(", ")}. Bootstrap preserves an existing complete R2 S3 key pair; an incomplete pair must be resolved before retrying.`
+                : "Complete bootstrap below to create and save Cloudflare credentials for this site."
+          }
+        />
+      )}
       <Typography.Paragraph type="secondary">
         Give CoCalc a temporary token to configure Cloudflare automatically.
         CoCalc saves narrower automation and R2 credentials for ongoing use, not
