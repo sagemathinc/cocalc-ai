@@ -10,6 +10,7 @@ import {
   requireAccount,
 } from "./util";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
+import type { ChatSpeechAccent } from "@cocalc/util/ai/speech";
 import type {
   ApiKey,
   Action as ApiKeyAction,
@@ -2821,6 +2822,7 @@ export interface System {
     message_id: string;
     text: string;
     voice?: string;
+    accent?: ChatSpeechAccent;
     speed?: number;
     timeout?: number;
   }) => Promise<ChatSpeechSynthesisResult>;

@@ -23,6 +23,10 @@ import {
   newSpeechRequestId,
   synthesizeChatSpeech,
 } from "./api";
+import {
+  readChatSpeechPreferences,
+  saveChatSpeechPreferences,
+} from "./speech-preferences";
 
 jest.mock("./api", () => ({
   cancelChatSpeech: jest.fn(async () => undefined),
@@ -30,6 +34,14 @@ jest.mock("./api", () => ({
   getChatSpeechCapabilities: jest.fn(),
   newSpeechRequestId: jest.fn(() => "request-1"),
   synthesizeChatSpeech: jest.fn(),
+}));
+
+jest.mock("./speech-preferences", () => ({
+  readChatSpeechPreferences: jest.fn(() => ({
+    voice: undefined,
+    accent: "default",
+  })),
+  saveChatSpeechPreferences: jest.fn(),
 }));
 
 class FakeAudio {
@@ -70,7 +82,7 @@ const capabilities = {
   output: {
     enabled: true,
     max_characters: 4_096,
-    voices: ["alloy"],
+    voices: ["alloy", "coral"],
     default_voice: "alloy",
     speeds: [1],
   },
@@ -137,6 +149,33 @@ describe("ChatSpeechPlayer", () => {
       ).toBeNull(),
     );
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:speech");
+  });
+
+  it("opens account-wide voice and accent settings from the disclosure", async () => {
+    render(<ChatSpeechPlayer />);
+    await act(async () => {
+      await startChatSpeech({
+        markdown: "Choose a voice.",
+        messageId: "message-settings",
+      });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "AI-generated voice" }));
+    expect(await screen.findByText("Read aloud voice")).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(
+      screen.getByRole("combobox", { name: "Read aloud voice" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("combobox", { name: "Read aloud accent" }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(saveChatSpeechPreferences).toHaveBeenCalledWith({
+      voice: undefined,
+      accent: "default",
+    });
+    expect(readChatSpeechPreferences).toHaveBeenCalled();
   });
 
   it("falls back to an explicit play control when iOS blocks delayed playback", async () => {

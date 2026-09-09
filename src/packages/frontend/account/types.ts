@@ -18,6 +18,7 @@ import {
 import type { MarketingEmailConsentRecord } from "@cocalc/util/notification-preferences";
 import type { ProjectOnboardingIntent } from "@cocalc/util/accounts/onboarding-intent";
 import type { CodexReasoningId, CodexSessionMode } from "@cocalc/util/ai/codex";
+import type { ChatSpeechAccent } from "@cocalc/util/ai/speech";
 import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
 
 // this is incomplete...
@@ -83,6 +84,8 @@ export interface AccountState {
       sessionMode: CodexSessionMode;
     };
     codex_max_concurrent_subagents?: number;
+    chat_speech_voice?: string;
+    chat_speech_accent?: ChatSpeechAccent;
   }>;
   stripe_customer?: TypedMap<{
     subscriptions: { data: Map<string, any> };

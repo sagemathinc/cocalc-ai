@@ -18,6 +18,11 @@ import { getAIUsageStatus } from "./usage-status";
 import { saveAIResponse } from "./save-response";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  chatSpeechAccentInstruction,
+  isChatSpeechAccent,
+  type ChatSpeechAccent,
+} from "@cocalc/util/ai/speech";
 
 const log = getLogger("server:ai:chat-speech");
 
@@ -184,11 +189,13 @@ export function validateChatSpeechText({
   text,
   messageId,
   voice,
+  accent,
   speed,
 }: {
   text: string;
   messageId: string;
   voice: string;
+  accent?: ChatSpeechAccent;
   speed: number;
 }): string {
   const speechText = `${text ?? ""}`.trim();
@@ -201,6 +208,9 @@ export function validateChatSpeechText({
   }
   if (!(CHAT_SPEECH_VOICES as readonly string[]).includes(voice)) {
     throw codedError("Unsupported speech voice.", 400);
+  }
+  if (accent != null && !isChatSpeechAccent(accent)) {
+    throw codedError("Unsupported speech accent.", 400);
   }
   if (!(CHAT_SPEECH_SPEEDS as readonly number[]).includes(speed)) {
     throw codedError("Unsupported speech speed.", 400);
@@ -474,6 +484,7 @@ export async function synthesizeWithOpenAI({
   model,
   text,
   voice,
+  instructions,
   speed,
   signal,
   fetchImpl = fetch,
@@ -482,6 +493,7 @@ export async function synthesizeWithOpenAI({
   model: string;
   text: string;
   voice: string;
+  instructions?: string;
   speed: number;
   signal: AbortSignal;
   fetchImpl?: typeof fetch;
@@ -496,6 +508,7 @@ export async function synthesizeWithOpenAI({
       model,
       input: text,
       voice,
+      ...(instructions ? { instructions } : {}),
       speed,
       response_format: "mp3",
     }),
@@ -669,6 +682,7 @@ export async function synthesizeChatSpeech({
   message_id,
   text,
   voice,
+  accent,
   speed = 1,
 }: {
   account_id?: string;
@@ -679,6 +693,7 @@ export async function synthesizeChatSpeech({
   message_id: string;
   text: string;
   voice?: string;
+  accent?: ChatSpeechAccent;
   speed?: number;
 }): Promise<ChatSpeechSynthesisResult> {
   if (!account_id) throw codedError("Must be signed in.", 401);
@@ -693,6 +708,7 @@ export async function synthesizeChatSpeech({
     text,
     messageId: message_id,
     voice: selectedVoice,
+    accent,
     speed,
   });
   const resolved = await resolveSpeechCredential({
@@ -713,6 +729,7 @@ export async function synthesizeChatSpeech({
         model: settings.synthesisModel,
         text: speechText,
         voice: selectedVoice,
+        instructions: chatSpeechAccentInstruction(accent),
         speed,
         signal,
       }),

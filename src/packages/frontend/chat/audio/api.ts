@@ -9,6 +9,7 @@ import type {
   ChatSpeechTranscriptionResult,
 } from "@cocalc/conat/hub/api/system";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { ChatSpeechAccent } from "@cocalc/util/ai/speech";
 
 const capabilityCache = new Map<
   string,
@@ -63,6 +64,7 @@ export async function synthesizeChatSpeech(opts: {
   message_id: string;
   text: string;
   voice?: string;
+  accent?: ChatSpeechAccent;
   speed?: number;
 }): Promise<ChatSpeechSynthesisResult> {
   return await webapp_client.conat_client.hub.system.synthesizeChatSpeech({

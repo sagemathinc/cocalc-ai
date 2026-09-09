@@ -65,6 +65,7 @@ describe("OpenAI chat speech provider", () => {
         model: "gpt-4o-mini-tts",
         input: "Read this",
         voice: "alloy",
+        instructions: "Speak with a natural British English accent.",
         speed: 1.25,
         response_format: "mp3",
       });
@@ -79,6 +80,7 @@ describe("OpenAI chat speech provider", () => {
       model: "gpt-4o-mini-tts",
       text: "Read this",
       voice: "alloy",
+      instructions: "Speak with a natural British English accent.",
       speed: 1.25,
       signal: new AbortController().signal,
       fetchImpl: fetchImpl as typeof fetch,
@@ -157,6 +159,15 @@ describe("chat speech request validation", () => {
         speed: 1,
       }),
     ).toThrow(expect.objectContaining({ code: 413 }));
+    expect(() =>
+      validateChatSpeechText({
+        text: "read this",
+        messageId: "message-1",
+        voice: "alloy",
+        accent: "unsupported" as any,
+        speed: 1,
+      }),
+    ).toThrow(expect.objectContaining({ code: 400 }));
   });
 });
 

@@ -3,8 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Progress, Select, Typography } from "antd";
-import { useEffect, useSyncExternalStore } from "react";
+import { Button, Modal, Progress, Select, Space, Typography } from "antd";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
@@ -15,6 +15,11 @@ import {
   synthesizeChatSpeech,
 } from "./api";
 import { markdownToSpeechText, splitSpeechText } from "./markdown-to-speech";
+import {
+  readChatSpeechPreferences,
+  saveChatSpeechPreferences,
+} from "./speech-preferences";
+import type { ChatSpeechAccent } from "@cocalc/util/ai/speech";
 
 type PlayerStatus =
   | "hidden"
@@ -33,6 +38,8 @@ interface PlayerState {
   currentTime: number;
   duration: number;
   speed: number;
+  voices: string[];
+  defaultVoice?: string;
 }
 
 interface StartOptions {
@@ -42,6 +49,8 @@ interface StartOptions {
   path?: string;
   threadId?: string;
   messageId: string;
+  voice?: string;
+  accent?: ChatSpeechAccent;
 }
 
 const INITIAL_STATE: PlayerState = {
@@ -52,7 +61,23 @@ const INITIAL_STATE: PlayerState = {
   currentTime: 0,
   duration: 0,
   speed: 1,
+  voices: [],
 };
+
+const ACCENT_OPTIONS: { value: ChatSpeechAccent; label: string }[] = [
+  { value: "default", label: "Automatic" },
+  { value: "american", label: "American English" },
+  { value: "british", label: "British English" },
+  { value: "australian", label: "Australian English" },
+  { value: "canadian", label: "Canadian English" },
+  { value: "indian", label: "Indian English" },
+  { value: "irish", label: "Irish English" },
+  { value: "scottish", label: "Scottish English" },
+];
+
+function voiceLabel(voice: string): string {
+  return voice ? `${voice[0].toUpperCase()}${voice.slice(1)}` : voice;
+}
 
 let state = INITIAL_STATE;
 let startOptions: StartOptions | undefined;
@@ -112,6 +137,15 @@ async function generateChunk(index: number, token: number): Promise<string> {
         capabilities.output.reason ?? "Chat read aloud is unavailable.",
       );
     }
+    const selectedVoice = capabilities.output.voices.includes(
+      startOptions!.voice ?? "",
+    )
+      ? startOptions!.voice!
+      : capabilities.output.default_voice;
+    emit({
+      voices: capabilities.output.voices,
+      defaultVoice: capabilities.output.default_voice,
+    });
     const requestId = newSpeechRequestId();
     activeRequestId = requestId;
     let result;
@@ -123,7 +157,8 @@ async function generateChunk(index: number, token: number): Promise<string> {
         thread_id: startOptions!.threadId,
         message_id: startOptions!.messageId,
         text: chunks[index],
-        voice: capabilities.output.default_voice,
+        voice: selectedVoice,
+        accent: startOptions!.accent,
         speed: 1,
       });
     } finally {
@@ -199,7 +234,7 @@ export async function startChatSpeech(options: StartOptions): Promise<void> {
   const speechText = markdownToSpeechText(options.markdown);
   chunks = splitSpeechText(speechText);
   if (chunks.length === 0) throw new Error("There is no text to read aloud.");
-  startOptions = options;
+  startOptions = { ...options, ...readChatSpeechPreferences() };
   const token = ++generation;
   emit({
     ...INITIAL_STATE,
@@ -261,10 +296,23 @@ function formatTime(seconds: number): string {
 
 export function ChatSpeechPlayer() {
   const player = useSyncExternalStore(subscribe, snapshot, snapshot);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [draftVoice, setDraftVoice] = useState<string>();
+  const [draftAccent, setDraftAccent] = useState<ChatSpeechAccent>("default");
   useEffect(() => stopChatSpeech, []);
   if (player.status === "hidden") return null;
   const progress =
     player.duration > 0 ? (player.currentTime / player.duration) * 100 : 0;
+  const openSettings = () => {
+    const preferences = readChatSpeechPreferences();
+    setDraftVoice(
+      player.voices.includes(preferences.voice ?? "")
+        ? preferences.voice
+        : undefined,
+    );
+    setDraftAccent(preferences.accent);
+    setSettingsOpen(true);
+  };
   return (
     <div
       aria-label="Read aloud player"
@@ -340,11 +388,69 @@ export function ChatSpeechPlayer() {
           size="small"
         />
       </Tooltip>
-      <Typography.Text
-        style={{ color: UI_COLORS.secondary, flexBasis: "100%", fontSize: 10 }}
+      <div style={{ flexBasis: "100%" }}>
+        <Button
+          aria-haspopup="dialog"
+          onClick={openSettings}
+          size="small"
+          style={{ fontSize: 10, height: "auto", padding: 0 }}
+          type="link"
+        >
+          AI-generated voice
+        </Button>
+      </div>
+      <Modal
+        cancelText="Cancel"
+        okText="Save"
+        onCancel={() => setSettingsOpen(false)}
+        onOk={() => {
+          saveChatSpeechPreferences({
+            voice: draftVoice,
+            accent: draftAccent,
+          });
+          setSettingsOpen(false);
+        }}
+        open={settingsOpen}
+        title="Read aloud voice"
       >
-        AI-generated voice
-      </Typography.Text>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            These account-wide settings apply the next time you choose Read
+            aloud.
+          </Typography.Text>
+          <label>
+            <Typography.Text strong>Voice</Typography.Text>
+            <Select
+              aria-label="Read aloud voice"
+              onChange={(voice) =>
+                setDraftVoice(voice === "site-default" ? undefined : voice)
+              }
+              options={[
+                {
+                  value: "site-default",
+                  label: `Site default (${voiceLabel(player.defaultVoice ?? "")})`,
+                },
+                ...player.voices.map((voice) => ({
+                  value: voice,
+                  label: voiceLabel(voice),
+                })),
+              ]}
+              style={{ display: "block", marginTop: 6, width: "100%" }}
+              value={draftVoice ?? "site-default"}
+            />
+          </label>
+          <label>
+            <Typography.Text strong>Accent</Typography.Text>
+            <Select
+              aria-label="Read aloud accent"
+              onChange={setDraftAccent}
+              options={ACCENT_OPTIONS}
+              style={{ display: "block", marginTop: 6, width: "100%" }}
+              value={draftAccent}
+            />
+          </label>
+        </Space>
+      </Modal>
     </div>
   );
 }
