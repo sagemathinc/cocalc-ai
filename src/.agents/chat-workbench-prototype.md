@@ -431,10 +431,20 @@ P0's four decisions are implemented, rather than awaiting new infrastructure:
 
 P3's complete selection -> agent update -> human edit -> further agent update
 loop has been exercised in the QA chat, including preservation of the human
-note. P4 remains open for the extended matrix, notably simultaneous conflicting
-browser edits/reconnect, keyboard range selection/Tab traversal, and live
-read-only collaborator cases. Do not infer these from the
-sequential browser edit test or the deterministic two-Slate regression.
+note. P4 now has live evidence for independent disconnected edits, same-position
+insertions, keyboard range selection and Comment focus traversal, cross-thread
+draft separation, theme switching, and rotation/history restoration (below).
+The live read-only collaborator case remains open. Do not infer authorization
+from a read_only prop test or unseen competing replacements from insertion tests.
+
+Real-renderer coverage supplements the mocked workbench behavior tests:
+`workbench-rendering.test.tsx` mounts current and historical documents beneath
+an inherited trusted FileContext. Headings render, executable links/scripts are
+removed, external images remain blocked, and Edit/Comment are disabled for a
+read-only view. The shared image renderer omits an explicitly empty transformed
+src rather than passing it to React. Eleven focused rendering/workbench tests
+pass without the prior empty-src warning. This does not replace the live
+collaborator authorization check.
 
 Live cross-thread routing passed on the `afcd8b32de` development build:
 in the disposable QA chat, select `Feedback routing QA` (thread

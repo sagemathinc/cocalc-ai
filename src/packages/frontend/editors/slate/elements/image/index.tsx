@@ -94,7 +94,7 @@ register({
       <img
         {...attributes}
         src={
-          safeSrc == null
+          safeSrc == null || safeSrc === ""
             ? undefined
             : safeSrc + (reloadImages ? `?${Math.random()}` : "")
         }
