@@ -2,10 +2,6 @@ name: Build patched Codex musl
 
 on:
   workflow_dispatch:
-  push:
-    branches: [fix/codex-1534-transport]
-    paths:
-      - .github/workflows/build-patched-codex.yml
 
 permissions:
   contents: read

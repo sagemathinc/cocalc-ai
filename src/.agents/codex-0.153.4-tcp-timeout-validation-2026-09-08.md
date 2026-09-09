@@ -1,5 +1,10 @@
 # Codex 0.153.4 TCP timeout restoration
 
+Historical record of the initial GNU build and timeout diagnosis. PR #510 now
+pins the subsequently built static musl artifacts; see
+[musl validation](codex-0.153.4-musl-validation-2026-09-09.md) for current
+artifacts, portability checks, and staging results.
+
 ## Scope and source
 
 Local Linux x86_64 validation, September 8, 2026 (Pacific time).
@@ -135,11 +140,12 @@ validation and artifact publication remain required before production rollout.
 The initially published binaries are a transitional GNU build requiring glibc
 2.39. Production project images are Ubuntu 26.04 and satisfy that requirement,
 but these assets are not portable to older or minimal custom rootfs images.
-Future publication is guarded by the build scripts: each architecture must be
+Subsequent publication is guarded by the build scripts: each architecture must be
 built natively for musl, and publishing rejects an ELF interpreter or shared
-library dependency. Replace the transitional asset hashes after those musl
-builds are validated; do not run that expensive rebuild as part of this source
-review.
+library dependency. The musl rebuild and replacement pins are recorded in the
+2026-09-09 validation report linked above.
+
+The following was the original rollout checklist for the GNU build:
 
 1. Build the ARM64 counterpart and assemble complete artifact provenance and
    checksums. Do not publish an incomplete two-architecture release.
