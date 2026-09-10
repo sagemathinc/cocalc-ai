@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260904-v52"
+HELPER_SCHEMA_VERSION = "20260910-v53"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -392,8 +392,7 @@ def established_endpoints(fields):
     return fields[local_index], fields[peer_index]
 
 
-def collect_network(host_pids):
-    listener_lines = run("network_listeners", ["/usr/bin/ss", "-H", "-lntup"], max_lines=5000)
+def parse_listener_lines(listener_lines, host_pids):
     listener_counts = collections.Counter()
     listening_ports = set()
     for line in listener_lines:
@@ -408,6 +407,24 @@ def collect_network(host_pids):
         local = clean(fields[4], 256)
         listener_counts[(clean(fields[0], 16), process, local)] += 1
         listening_ports.add(local.rsplit(":", 1)[-1])
+    return listener_counts, listening_ports
+
+
+def collect_network(host_pids):
+    listener_lines = run("network_listeners", ["/usr/bin/ss", "-H", "-lntup"], max_lines=5000)
+    listener_counts, listening_ports = parse_listener_lines(listener_lines, host_pids)
+    if any(key[1] == "unattributed" for key in listener_counts):
+        # ss can observe a pasta forwarding socket while its owning process is
+        # exiting, after the users/PID metadata has already disappeared. Use a
+        # second complete sample so persistent unattributed sockets remain
+        # visible while teardown races do not become security alerts.
+        time.sleep(0.2)
+        listener_lines = run(
+            "network_listeners_resample",
+            ["/usr/bin/ss", "-H", "-lntup"],
+            max_lines=5000,
+        )
+        listener_counts, listening_ports = parse_listener_lines(listener_lines, host_pids)
     listeners = [
         {"count": count, "protocol": key[0], "process": key[1], "local": key[2]}
         for key, count in listener_counts.most_common(200)
@@ -445,6 +462,49 @@ def collect_network(host_pids):
     if len(connection_counts) > len(established):
         truncated["network_established"] = True
     return {"listeners": listeners, "established": established}
+
+
+def snap_mount_unit(name, revision):
+    # systemd path escaping uses '-' as the path separator, so literal hyphens
+    # in snap names are escaped in generated mount unit names.
+    escaped_name = name.replace("-", "\\x2d")
+    return f"snap-{escaped_name}-{revision}.mount"
+
+
+def collect_snap_mount_units(snap_root="/snap", snap_state_root="/var/lib/snapd/snaps"):
+    units = []
+    try:
+        snap_directories = sorted(pathlib.Path(snap_root).iterdir())
+    except OSError:
+        return units
+    for snap_directory in snap_directories:
+        name = snap_directory.name
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", name):
+            continue
+        try:
+            revision_directories = sorted(snap_directory.iterdir())
+        except OSError:
+            continue
+        for revision_directory in revision_directories:
+            revision = revision_directory.name
+            if not re.fullmatch(r"[1-9][0-9]*", revision):
+                continue
+            if not os.path.ismount(revision_directory):
+                continue
+            backing_image = pathlib.Path(snap_state_root) / f"{name}_{revision}.snap"
+            try:
+                info = backing_image.lstat()
+            except OSError:
+                continue
+            if (
+                info.st_uid != 0
+                or info.st_gid != 0
+                or not stat.S_ISREG(info.st_mode)
+                or stat.S_IMODE(info.st_mode) & 0o022
+            ):
+                continue
+            units.append(snap_mount_unit(name, revision))
+    return sorted(set(units))[:MAX_ITEMS]
 
 
 def collect_authentication():
@@ -569,6 +629,7 @@ def main():
         max_lines=200,
     )
     accounts = collect_accounts()
+    snap_mount_units = collect_snap_mount_units()
     network = collect_network(host_pids)
     authentication = collect_authentication()
     kernel_signals = collect_kernel_signals()
@@ -590,6 +651,7 @@ def main():
             "capabilities": capabilities,
         },
         "services": {"enabled": enabled, "failed": failed},
+        "snap_mount_units": snap_mount_units,
         "network": network,
         "authentication_7d": authentication,
         "kernel_signals_7d": kernel_signals,

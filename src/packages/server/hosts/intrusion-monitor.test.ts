@@ -761,6 +761,69 @@ describe("project-host intrusion monitor normalization", () => {
     });
   });
 
+  it("suppresses add-only mount records only for verified active snaps", () => {
+    const unit = "snap-core24-2124.mount";
+    const mountRecord = JSON.stringify([
+      `/etc/systemd/system/${unit}`,
+      0,
+      0,
+      "0644",
+      "file",
+      "a".repeat(64),
+    ]);
+    const multiUserLink = JSON.stringify([
+      `/etc/systemd/system/multi-user.target.wants/${unit}`,
+      0,
+      0,
+      "0777",
+      "symlink",
+      null,
+    ]);
+    const snapdLink = JSON.stringify([
+      `/etc/systemd/system/snapd.mounts.target.wants/${unit}`,
+      0,
+      0,
+      "0777",
+      "symlink",
+      null,
+    ]);
+    const delta = {
+      added: {
+        "persistence.files": [mountRecord, multiUserLink, snapdLink],
+        "services.enabled": [`${unit} enabled enabled`],
+      },
+      removed: {},
+    } satisfies Parameters<typeof selectActionableHostIntrusionChanges>[0];
+
+    expect(selectActionableHostIntrusionChanges(delta)).toEqual(delta);
+    expect(
+      selectActionableHostIntrusionChanges(delta, {
+        installedSnapMountUnits: [unit],
+      }),
+    ).toEqual({ added: {}, removed: {} });
+
+    const unexpectedPath = JSON.stringify([
+      `/etc/systemd/system/unexpected/${unit}`,
+      0,
+      0,
+      "0644",
+      "file",
+      "b".repeat(64),
+    ]);
+    expect(
+      selectActionableHostIntrusionChanges(
+        {
+          added: { "persistence.files": [unexpectedPath] },
+          removed: {},
+        },
+        { installedSnapMountUnits: [unit] },
+      ),
+    ).toEqual({
+      added: { "persistence.files": [unexpectedPath] },
+      removed: {},
+    });
+  });
+
   it.each([
     ["127.0.0.1:32767", "unattributed", true],
     ["127.0.0.1:32768", "unattributed", false],

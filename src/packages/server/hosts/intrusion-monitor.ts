@@ -323,6 +323,7 @@ function isActionableListener(value: string): boolean {
 type SnapRevisionSignal = {
   key: string;
   revision: string;
+  unit: string;
 };
 
 function snapRevisionSignal(
@@ -335,6 +336,7 @@ function snapRevisionSignal(
     return {
       key: value.replace(match[0], `snap-${match[1]}-<revision>.mount`),
       revision: match[2],
+      unit: match[0],
     };
   }
   if (category === "persistence.files") {
@@ -349,16 +351,68 @@ function snapRevisionSignal(
     );
     // Revision-specific mount unit content changes along with its filename.
     fields[5] = null;
-    return { key: encode(fields), revision: match[2] };
+    return { key: encode(fields), revision: match[2], unit: match[0] };
   }
   return;
 }
 
-function routineSnapRevisionChanges(delta: HostIntrusionSnapshotDelta): {
+function isVerifiedSnapMountAddition({
+  category,
+  value,
+  delta,
+  installedUnits,
+}: {
+  category: "persistence.files" | "services.enabled";
+  value: string;
+  delta: HostIntrusionSnapshotDelta;
+  installedUnits: Set<string>;
+}): boolean {
+  const signal = snapRevisionSignal(category, value);
+  if (!signal || !installedUnits.has(signal.unit)) return false;
+  // A same-revision removal indicates content or metadata changed, rather than
+  // snapd adding a newly active mount. Keep that transition actionable.
+  if (
+    (delta.removed[category] ?? []).some((removed) => {
+      const previous = snapRevisionSignal(category, removed);
+      return previous?.unit === signal.unit;
+    })
+  ) {
+    return false;
+  }
+  if (category === "services.enabled") {
+    return value === `${signal.unit} enabled enabled`;
+  }
+  const fields = decodeSignal(value);
+  if (!fields || fields.length !== 6) return false;
+  const [path, uid, gid, mode, type, sha256] = fields;
+  if (uid !== 0 || gid !== 0 || typeof path !== "string") return false;
+  if (path === `/etc/systemd/system/${signal.unit}`) {
+    return (
+      mode === "0644" &&
+      type === "file" &&
+      typeof sha256 === "string" &&
+      /^[a-f0-9]{64}$/.test(sha256)
+    );
+  }
+  return (
+    (path === `/etc/systemd/system/multi-user.target.wants/${signal.unit}` ||
+      path ===
+        `/etc/systemd/system/snapd.mounts.target.wants/${signal.unit}`) &&
+    mode === "0777" &&
+    type === "symlink" &&
+    sha256 == null
+  );
+}
+
+function routineSnapRevisionChanges(
+  delta: HostIntrusionSnapshotDelta,
+  installedSnapMountUnits: string[] = [],
+): {
   added: Set<string>;
   removed: Set<string>;
 } {
   const routine = { added: new Set<string>(), removed: new Set<string>() };
+  const installedUnits = new Set(installedSnapMountUnits);
   for (const category of ["persistence.files", "services.enabled"] as const) {
     const removedByKey = new Map<string, Array<[string, string]>>();
     for (const value of delta.removed[category] ?? []) {
@@ -379,6 +433,18 @@ function routineSnapRevisionChanges(delta: HostIntrusionSnapshotDelta): {
       const [[, removed]] = candidates.splice(matchIndex, 1);
       routine.added.add(value);
       routine.removed.add(removed);
+    }
+    for (const value of delta.added[category] ?? []) {
+      if (
+        isVerifiedSnapMountAddition({
+          category,
+          value,
+          delta,
+          installedUnits,
+        })
+      ) {
+        routine.added.add(value);
+      }
     }
   }
   return routine;
@@ -548,9 +614,13 @@ export function hasHostIntrusionSnapshotChanges(
 
 export function selectActionableHostIntrusionChanges(
   delta: HostIntrusionSnapshotDelta,
+  { installedSnapMountUnits = [] }: { installedSnapMountUnits?: string[] } = {},
 ): HostIntrusionSnapshotDelta {
   const actionable: HostIntrusionSnapshotDelta = { added: {}, removed: {} };
-  const routineSnap = routineSnapRevisionChanges(delta);
+  const routineSnap = routineSnapRevisionChanges(
+    delta,
+    installedSnapMountUnits,
+  );
   for (const [category, values] of Object.entries(delta.added) as Array<
     [MonitoredCategory, string[]]
   >) {
@@ -1049,7 +1119,9 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
           ? undefined
           : alertMode === "all"
             ? delta
-            : selectActionableHostIntrusionChanges(delta);
+            : selectActionableHostIntrusionChanges(delta, {
+                installedSnapMountUnits: source.snap_mount_units,
+              });
       const changedDelta =
         alertDelta != null && hasHostIntrusionSnapshotChanges(alertDelta)
           ? alertDelta

@@ -263,6 +263,9 @@ export interface HostIntrusionSnapshotResponse {
     enabled: string[];
     failed: string[];
   };
+  // Mount units backed by active, root-owned snap images. Optional while
+  // project hosts roll forward to collectors that provide this evidence.
+  snap_mount_units?: string[];
   network: {
     listeners: Array<{
       count: number;

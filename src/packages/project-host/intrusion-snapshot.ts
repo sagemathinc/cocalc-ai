@@ -87,6 +87,9 @@ export function parseIntrusionSnapshot(
     !isRecord(parsed.services) ||
     !Array.isArray(parsed.services.enabled) ||
     !Array.isArray(parsed.services.failed) ||
+    (parsed.snap_mount_units != null &&
+      (!Array.isArray(parsed.snap_mount_units) ||
+        parsed.snap_mount_units.some((unit) => typeof unit !== "string"))) ||
     !isRecord(parsed.network) ||
     !Array.isArray(parsed.network.listeners) ||
     !Array.isArray(parsed.network.established) ||
