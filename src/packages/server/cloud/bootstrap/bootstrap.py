@@ -12290,6 +12290,40 @@ Type=simple
         log_line(cfg, "bootstrap: cloudflared config unchanged; keeping tunnel running")
 
 
+def preserve_newer_nvidia_toolkit(cfg: BootstrapConfig) -> bool:
+    policy = run_cmd(
+        cfg, ["apt-cache", "policy", "nvidia-container-toolkit"],
+        "inspect nvidia toolkit versions",
+        timeout=30, env={**os.environ, "LC_ALL": "C"},
+    )
+    versions = {}
+    for line in policy.stdout.splitlines():
+        key, sep, value = line.strip().partition(":")
+        if sep and key in ("Installed", "Candidate"):
+            versions[key] = value.strip()
+    installed = versions.get("Installed")
+    candidate = versions.get("Candidate")
+    if not installed or not candidate:
+        raise RuntimeError("unable to determine nvidia toolkit package versions")
+    if installed == "(none)":
+        return False
+    newer = candidate == "(none)"
+    if not newer:
+        comparison = run_cmd(
+            cfg, ["dpkg", "--compare-versions", installed, "gt", candidate],
+            "compare nvidia toolkit versions", check=False, timeout=10,
+        )
+        if comparison.returncode not in (0, 1):
+            raise RuntimeError("unable to compare nvidia toolkit package versions")
+        newer = comparison.returncode == 0
+    if newer:
+        # Provider images may pin an older repository version. Do not downgrade
+        # a working, newer toolkit (and its tightly coupled base package).
+        run_cmd(cfg, ["nvidia-ctk", "--version"], "verify installed nvidia toolkit", timeout=30)
+        log_line(cfg, f"bootstrap: preserving nvidia toolkit {installed}; apt candidate is {candidate}")
+    return newer
+
+
 def install_gpu_support(cfg: BootstrapConfig) -> None:
     if not cfg.has_gpu:
         return
@@ -12318,6 +12352,12 @@ def install_gpu_support(cfg: BootstrapConfig) -> None:
         "write nvidia repo",
     )
     apt_run(cfg, ["apt-get", "-y", "update"], "apt-get update (nvidia)", retries=3, timeout=60)
+    if not preserve_newer_nvidia_toolkit(cfg):
+        install_nvidia_toolkit_package(cfg)
+    configure_nvidia_toolkit(cfg)
+
+
+def install_nvidia_toolkit_package(cfg: BootstrapConfig) -> None:
     apt_run(
         cfg,
         [
@@ -12331,6 +12371,9 @@ def install_gpu_support(cfg: BootstrapConfig) -> None:
         retries=3,
         timeout=180,
     )
+
+
+def configure_nvidia_toolkit(cfg: BootstrapConfig) -> None:
     run_best_effort(cfg, ["ldconfig"], "ldconfig")
     install_nvidia_cdi_normalizer()
     run_best_effort(cfg, ["nvidia-ctk", "cdi", "generate", "--output=/etc/cdi/nvidia.yaml"], "nvidia cdi generate")
