@@ -5711,7 +5711,9 @@ devices:
             original_run_best_effort = bootstrap.run_best_effort
             original_write_text = bootstrap.Path.write_text
             original_chmod = bootstrap.os.chmod
+            original_preserve = bootstrap.preserve_newer_nvidia_toolkit
             try:
+                bootstrap.preserve_newer_nvidia_toolkit = lambda _cfg: False
                 bootstrap.apt_run = (
                     lambda _cfg, args, desc, **kwargs: recorded.append((args, desc))
                 )
@@ -5730,6 +5732,7 @@ devices:
                 bootstrap.run_best_effort = original_run_best_effort
                 bootstrap.Path.write_text = original_write_text
                 bootstrap.os.chmod = original_chmod
+                bootstrap.preserve_newer_nvidia_toolkit = original_preserve
 
             self.assertIn(
                 (
@@ -5751,6 +5754,32 @@ devices:
                 ),
                 recorded,
             )
+
+
+class NvidiaToolkitVersionTest(unittest.TestCase):
+    def test_version_selection(self):
+        for installed, candidate, compare_code, expected in [
+            ("(none)", "1.18.0-1", 1, False),
+            ("1.17.0-1", "1.18.0-1", 1, False),
+            ("1.18.0-1", "1.18.0-1", 1, False),
+            ("1.18.0-1", "1.17.0-1", 0, True),
+            ("1.18.0-1", "(none)", 1, True),
+        ]:
+            with self.subTest(installed=installed, candidate=candidate), tempfile.TemporaryDirectory() as tmpdir:
+                def run(_cfg, args, _desc, **kwargs):
+                    if args[0] == "apt-cache":
+                        return subprocess.CompletedProcess(args, 0, f"Installed: {installed}\nCandidate: {candidate}\n")
+                    return subprocess.CompletedProcess(args, compare_code if args[0] == "dpkg" else 0, "")
+                with mock.patch.object(bootstrap, "run_cmd", side_effect=run) as command:
+                    self.assertEqual(bootstrap.preserve_newer_nvidia_toolkit(make_cfg(tmpdir)), expected)
+                    self.assertEqual(any(call.args[1] == ["nvidia-ctk", "--version"] for call in command.call_args_list), expected)
+
+    def test_unknown_policy_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            bootstrap, "run_cmd", return_value=subprocess.CompletedProcess([], 0, "")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "unable to determine"):
+                bootstrap.preserve_newer_nvidia_toolkit(make_cfg(tmpdir))
 
 
 class AptBootstrapTest(unittest.TestCase):

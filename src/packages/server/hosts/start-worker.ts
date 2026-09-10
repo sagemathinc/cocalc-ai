@@ -219,7 +219,11 @@ async function loadHostStatus(id: string) {
   return rows[0];
 }
 
-function parseTimestampMs(value?: string): number | undefined {
+function parseTimestampMs(value?: string | Date): number | undefined {
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) ? ms : undefined;
+  }
   const text = `${value ?? ""}`.trim();
   if (!text) return undefined;
   const ms = new Date(text).getTime();
@@ -393,6 +397,7 @@ async function waitForHostStatus({
   allowDeleted,
   onUpdate,
   bootstrapFailureSince,
+  heartbeatSince,
   shouldCancel,
   loadStatus = loadHostStatus,
   delayFn = delay,
@@ -404,6 +409,7 @@ async function waitForHostStatus({
   allowDeleted?: boolean;
   onUpdate: (status: string, metadata?: any) => Promise<void>;
   bootstrapFailureSince?: number;
+  heartbeatSince?: number;
   shouldCancel?: () => Promise<boolean>;
   loadStatus?: typeof loadHostStatus;
   delayFn?: (ms: number) => Promise<void>;
@@ -434,15 +440,21 @@ async function waitForHostStatus({
       lastStatus = status;
       await onUpdate(status, row.metadata ?? {});
     }
-    if (desired.includes(status)) {
-      return { status, metadata: row.metadata ?? {} };
-    }
     const bootstrapFailure = currentBootstrapFailure({
       row,
       since: bootstrapFailureSince,
     });
     if (bootstrapFailure) {
       throw new Error(bootstrapFailure);
+    }
+    // Provider RUNNING does not mean the project-host application has booted.
+    const lastSeen = parseTimestampMs(row.last_seen);
+    if (
+      desired.includes(status) &&
+      (heartbeatSince == null ||
+        (lastSeen != null && lastSeen >= heartbeatSince))
+    ) {
+      return { status, metadata: row.metadata ?? {} };
     }
     if (failOn && failOn.includes(status)) {
       const lastError = row.metadata?.last_error;
@@ -2464,14 +2476,14 @@ async function handleOp(op: LroSummary): Promise<void> {
       throw new HostOpCanceledError();
     }
 
+    const bootstrapFailureSince =
+      kind === "host-start" || kind === "host-restart" ? Date.now() : undefined;
     const actionResult = await runHostAction(kind, host_id, account_id, input, {
       shouldCancel,
       progressStep,
     });
 
     const wait = waitConfig(kind);
-    const bootstrapFailureSince =
-      kind === "host-start" || kind === "host-restart" ? Date.now() : undefined;
     await progressStep("waiting", wait.message, { host_id });
     const final = await waitForHostStatus({
       host_id,
@@ -2480,6 +2492,7 @@ async function handleOp(op: LroSummary): Promise<void> {
       allowDeleted: wait.allowDeleted,
       shouldCancel,
       bootstrapFailureSince,
+      heartbeatSince: bootstrapFailureSince == null ? undefined : Date.now(),
       onUpdate: async (status, metadata) => {
         logger.debug("host op status update", {
           op_id,

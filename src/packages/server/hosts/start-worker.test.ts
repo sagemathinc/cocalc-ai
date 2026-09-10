@@ -210,6 +210,43 @@ describe("hosts start-worker project-host upgrade convergence detection", () => 
 });
 
 describe("hosts start-worker wait cancellation", () => {
+  test("running requires a heartbeat from this start attempt", async () => {
+    const since = Date.now();
+    const rows = [undefined, new Date(since - 1000), new Date(since + 1)];
+    let reads = 0;
+    await __test__.waitForHostStatus({
+      host_id: "host-1",
+      desired: ["running"],
+      heartbeatSince: since,
+      onUpdate: async () => {},
+      loadStatus: async () => ({ status: "running", last_seen: rows[reads++] }),
+      delayFn: async () => {},
+    });
+    expect(reads).toBe(3);
+  });
+
+  test("bootstrap errors take precedence over provider running status", async () => {
+    const since = Date.now();
+    await expect(
+      __test__.waitForHostStatus({
+        host_id: "host-1",
+        desired: ["running"],
+        bootstrapFailureSince: since,
+        onUpdate: async () => {},
+        loadStatus: async () => ({
+          status: "running",
+          metadata: {
+            bootstrap: {
+              status: "error",
+              updated_at: new Date(since).toISOString(),
+              message: "toolkit install failed",
+            },
+          },
+        }),
+      }),
+    ).rejects.toThrow("toolkit install failed");
+  });
+
   test("stops waiting when the host op is canceled mid-wait", async () => {
     let checks = 0;
     await expect(
