@@ -250,21 +250,25 @@ export interface ArtifactGitHubPR {
   local?: { path: string; common_directory: string };
 }
 export interface ArtifactPayload {
+  theme?: { title: string; description: string; color: string | null; accent_color: string | null; icon: string | null; image_blob: string | null };
+  commit?: { sha: string; path: string; common_directory: string; branch?: string };
   message_id: string;
   operation_id: string;
   title: string;
   markdown: string;
-  /** Choose at most one object type; omit all three for a Markdown document. */
+  /** Choose at most one object type; omit all for a Markdown document. */
   file?: { path: string };
   actions?: ArtifactAction[];
   github_pr?: ArtifactGitHubPR;
 }
 export interface ArtifactObject {
+  theme?: ArtifactPayload["theme"];
+  commit?: ArtifactPayload["commit"];
   artifact_id: string;
   thread_id: string;
   title: string;
   input: string;
-  kind: "markdown" | "file" | "actions" | "github-pr";
+  kind: "markdown" | "file" | "actions" | "github-pr" | "commit";
   file?: { path: string };
   actions?: ArtifactAction[];
   github_pr?: ArtifactGitHubPR;

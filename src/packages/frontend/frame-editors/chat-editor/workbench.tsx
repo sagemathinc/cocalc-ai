@@ -39,6 +39,12 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { FileArtifact } from "./file-artifact";
 import { GitHubPRArtifact } from "./github-pr-artifact";
 import { ActionListArtifact } from "./action-list-artifact";
+import { CommitArtifact } from "./commit-artifact";
+import { ArtifactIdentity } from "@cocalc/frontend/chat/artifact-card";
+const AppearanceEditor = lazyWithRetry(
+  () => import("@cocalc/frontend/chat/artifact-appearance-editor"),
+  "artifact appearance",
+);
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { sendArtifactReviewToThread } from "@cocalc/frontend/chat/artifact-review-agent";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
@@ -56,8 +62,81 @@ export const workbench: EditorDescription = {
   icon: "file",
   hide_public: true,
   hide_frame_type: true,
-  component: (props) => <Workbench {...props} />,
+  component: (props) => <WorkbenchSurface {...props} />,
 };
+
+export function WorkbenchSurface(props: EditorComponentProps) {
+  const actions = props.actions as Actions;
+  const syncdb = actions.getArtifactSyncdb();
+  useArtifactChanges(syncdb);
+  const [edit, setEdit] = useState(false);
+  let record: ArtifactRecord | undefined;
+  try {
+    record = readArtifact(syncdb, {
+      thread_id: props.desc.get("data-thread"),
+      artifact_id: props.desc.get("data-artifact"),
+    }).artifact;
+  } catch {
+    /* Loading or removed. */
+  }
+  const title = record?.theme?.title || record?.title;
+  const theme = record?.theme;
+  useEffect(() => {
+    if (!title) return;
+    const label =
+      title + (props.desc.get("data-version") ? " (published)" : "");
+    if (
+      props.desc.get("data-tabLabel") !== label ||
+      props.desc.get("data-tabColor") !== theme?.color ||
+      props.desc.get("data-tabIcon") !== theme?.icon
+    )
+      actions.set_frame_data({
+        id: props.id,
+        tabLabel: label,
+        tabColor: theme?.color,
+        tabIcon: theme?.icon,
+      });
+  }, [title, theme?.color, theme?.icon, props.desc, props.id, actions]);
+  return (
+    <div className="smc-vfill" style={{ minHeight: 0 }}>
+      {record && (
+        <div
+          style={{
+            padding: "8px 12px",
+            borderBottom: `2px solid ${theme?.color ?? UI_COLORS.border}`,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <ArtifactIdentity title={record.title} theme={theme} />
+          </div>
+          {!props.read_only && (
+            <Button
+              size="small"
+              onClick={() => setEdit(true)}
+              aria-label="Edit Artifact Appearance"
+            >
+              Appearance
+            </Button>
+          )}
+        </div>
+      )}
+      <Workbench {...props} />
+      {edit && record && (
+        <Suspense fallback={<div role="status">Loading appearance...</div>}>
+          <AppearanceEditor
+            artifact={record}
+            syncdb={syncdb}
+            projectId={props.project_id}
+            onClose={() => setEdit(false)}
+          />
+        </Suspense>
+      )}
+    </div>
+  );
+}
 
 export function Workbench({
   actions: frameActions,
@@ -154,7 +233,10 @@ export function Workbench({
               : "markdown",
         github_pr: pub.snapshot.github_pr,
         file: pub.snapshot.file,
+        commit: pub.snapshot.commit,
+        theme: pub.snapshot.theme,
       };
+      if (pub.snapshot.commit) artifact.kind = "commit";
     }
   } catch {
     return <Alert type="warning" title="Artifact unavailable" />;
@@ -238,6 +320,27 @@ export function Workbench({
             : async (feedback) => {
                 await stageFeedback(feedback);
                 returnToChat();
+              }
+        }
+      />
+    );
+  if (artifact.kind === "commit")
+    return (
+      <CommitArtifact
+        artifact={artifact}
+        projectId={project_id}
+        sourcePath={path}
+        readOnly={read_only}
+        onRequestAgentTurn={
+          read_only || !chat
+            ? undefined
+            : (prompt, options) => {
+                sendArtifactReviewToThread({
+                  actions: chat,
+                  threadId: artifact.thread_id,
+                  prompt,
+                  workingDirectory: options?.workingDirectory,
+                });
               }
         }
       />

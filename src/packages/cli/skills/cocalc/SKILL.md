@@ -288,6 +288,23 @@ Choose the supported object that fits the task:
 
 ### Discover And Publish
 
+For a specific commit, prefer a typed `commit` artifact over relying on a
+Markdown hash being recognized as a link. Supply `sha` (full 40-character SHA),
+`path` (absolute worktree/repository path), `common_directory` (absolute output
+of `git rev-parse --path-format=absolute --git-common-dir` in that worktree), and
+optional `branch` context. Include the subject in `title` and useful description
+in `markdown`. Review verifies the repository and commit, never follows a moved
+branch, and returns comments to the originating thread.
+
+All artifact kinds accept an optional shared `theme`: `title`, `description`,
+`color`, `accent_color`, `icon`, and `image_blob`. Colors are hex or null; images
+are uploaded CoCalc blob UUIDs, never external URLs. Users can edit appearance
+from the card's More menu or the workbench. The card and workbench/tab use this
+same appearance. Omit `theme` on content updates to preserve the user's choice.
+Use the existing artifact ID for a long-lived item, not a new card identity for
+every revision. Theme metadata is durable but is not a promise of standalone
+artifact export or historical file-byte preservation.
+
 In the examples below, replace `cocalc` with the exact CLI command supplied by
 the runtime (for example, `"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"`).
 Inspect the installed interface before constructing payloads:
@@ -308,7 +325,7 @@ text/file links; never modify the `.chat` file directly.
 Create/update take `--path`, `--thread-id`, `--artifact-id`, `--experimental`, and
 `--file <JSON path>` (or `--file -` for stdin). Payloads include `message_id`,
 `operation_id`, `title`, and `markdown`; for other kinds, include exactly one of
-`file`, `actions`, or `github_pr` according to the installed `exec-api` types.
+`file`, `actions`, `github_pr`, or `commit` according to the installed `exec-api` types.
 For example, a file reference has `file: { path: "/home/user/policy.md" }`;
 it references a real file, not an embedded editable copy. Unsupported previews
 should remain file links, not arbitrary HTML, SVG input, apps, or widget code.

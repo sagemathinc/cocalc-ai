@@ -372,6 +372,34 @@ verify approval invalidation. PR scenario: preview a known PR, review its exact
 commits locally, and handle a newer remote head without silently switching the
 review under the reader.
 
+### Themed Cards And Commit Artifacts (2026-09-10)
+
+Artifacts now accept the shared EntityTheme shape, also used by the existing
+appearance editor. The canonical type lives in util and is re-exported by the
+frontend theme module. The live artifact owns its editable appearance; a
+publication retains a theme snapshot. Content updates without a theme preserve
+the user's choice, and appearance edits write only theme data with a stale-theme
+check. Cards show current content and indicate changes since publication; the
+overflow menu retains access to the original publication. Workbench headers and
+native frame tabs follow the same title, icon, and color metadata.
+
+Commit artifacts store a full SHA, absolute worktree/repository path, absolute
+common Git directory, and optional branch context. Opening review checks the
+directory identity and commit availability, then uses the existing Git reviewer
+without inferred worktree routing, fetches, or checkout. Feedback returns through
+the origin-thread path with the opened commit identity. Missing repositories or
+commits produce a visible error instead of silently switching targets.
+
+Live owner QA created `qa-commit-themed-20260910` through the typed backend API,
+verified identical retry, and opened commit
+`7f83541fa1808e3860df5692371a792934f3a8e2` with the expected four changed files.
+Editing its title through Edit Artifact Appearance updated both its chat card
+and workbench header. Desktop screenshots were inspected. These checks do not
+establish read-only viewer acceptance or standalone artifact export.
+The edited title survived reload; the commit workbench was also visually
+checked at 375px in dark mode, then the prior System appearance was restored.
+Production startup budgets pass unchanged (lightweight chat: 547.5 KiB Brotli).
+
 ### Live PR Refresh Acceptance (2026-09-10)
 
 After the maintainer installed and authenticated project-side `gh`, the owner

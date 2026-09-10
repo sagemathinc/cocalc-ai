@@ -4,10 +4,9 @@
  */
 
 import { useEffect, useState } from "react";
-import { Button, Space } from "antd";
-import { validateArtifactPublication } from "@cocalc/chat";
+import { readArtifact, validateArtifactPublication } from "@cocalc/chat";
 import type { ChatActions } from "./actions";
-import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { ArtifactCard } from "./artifact-card";
 import { ReadonlyArtifactCards } from "./readonly-artifacts";
 
 export function artifactSyncdbReady(syncdb: any): boolean {
@@ -58,6 +57,12 @@ export function ArtifactCards({
       {rows.map((row) => {
         try {
           const publication = validateArtifactPublication(row);
+          let current;
+          try {
+            current = readArtifact(actions.syncdb!, publication).artifact;
+          } catch {
+            /* Historical publication only. */
+          }
           const open = (version?: string) => {
             const frames = actions.frameTreeActions;
             const workbench = frames
@@ -100,67 +105,16 @@ export function ArtifactCards({
               frames?.set_frame_full(opened);
           };
           return (
-            <div
+            <ArtifactCard
               key={publication.operation_id}
-              style={{
-                border: `1px solid ${UI_COLORS.border}`,
-                borderRadius: 6,
-                padding: 10,
-                marginTop: 8,
-                background: UI_COLORS.surface,
-                color: UI_COLORS.text,
-              }}
-            >
-              <Space wrap>
-                <strong>{publication.snapshot.title}</strong>
-                {publication.snapshot.actions && (
-                  <span>
-                    {publication.snapshot.actions.length} proposed actions
-                  </span>
-                )}
-                {publication.snapshot.github_pr && (
-                  <span>
-                    #{publication.snapshot.github_pr.number} ·{" "}
-                    {publication.snapshot.github_pr.state} · Checks:{" "}
-                    {publication.snapshot.github_pr.checks}
-                  </span>
-                )}
-                <Button
-                  size="small"
-                  disabled={!actions.frameTreeActions || !actions.frameId}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    open();
-                  }}
-                >
-                  Open artifact
-                </Button>
-                <Button
-                  size="small"
-                  type="text"
-                  disabled={!actions.frameTreeActions || !actions.frameId}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    open(publication.operation_id);
-                  }}
-                >
-                  {publication.snapshot.file
-                    ? "Published reference"
-                    : "Published version"}
-                </Button>
-              </Space>
-              <div
-                style={{
-                  maxHeight: 60,
-                  overflow: "hidden",
-                  whiteSpace: "pre-wrap",
-                  marginTop: 6,
-                }}
-              >
-                {publication.snapshot.file?.path ??
-                  publication.snapshot.markdown.slice(0, 240)}
-              </div>
-            </div>
+              publication={publication}
+              current={current}
+              syncdb={actions.syncdb}
+              projectId={actions.store?.get("project_id")}
+              open={
+                actions.frameTreeActions && actions.frameId ? open : undefined
+              }
+            />
           );
         } catch {
           return (

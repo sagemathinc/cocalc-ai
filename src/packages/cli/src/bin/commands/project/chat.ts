@@ -45,7 +45,7 @@ export function registerProjectChatCommands(
   const artifact = chat
     .command("artifact")
     .description(
-      "experimental Markdown, file-reference, proposed-action, and GitHub PR artifacts",
+      "experimental Markdown, file-reference, proposed-action, GitHub PR, and commit artifacts with shared appearance",
     );
   for (const action of [
     "create",
@@ -67,7 +67,7 @@ export function registerProjectChatCommands(
       )
       .option(
         "--file <path>",
-        "JSON publication payload (Markdown, or one of file, actions, github_pr); - for stdin. See exec-api for payload types",
+        "JSON publication payload (Markdown, or one of file, actions, github_pr, commit; optional theme); - for stdin. See exec-api for payload types",
       )
       .option("--experimental", "opt into prototype artifact writes")
       .action(async (opts, command: Command) => {

@@ -223,15 +223,23 @@ export function TabsContainer({
         return {
           key: String(i),
           label: (
-            <DraggableTabLabel
-              frameId={frameId}
-              frameType={type}
-              label={label}
-              iconName={iconName}
-              tabsId={tabsId}
-              childIds={childIds}
-              onClose={() => actions.close_frame(frameId)}
-            />
+            <span
+              style={{
+                borderBottom: child.get("data-tabColor")
+                  ? `2px solid ${child.get("data-tabColor")}`
+                  : undefined,
+              }}
+            >
+              <DraggableTabLabel
+                frameId={frameId}
+                frameType={type}
+                label={label}
+                iconName={child.get("data-tabIcon") || iconName}
+                tabsId={tabsId}
+                childIds={childIds}
+                onClose={() => actions.close_frame(frameId)}
+              />
+            </span>
           ),
           children: null,
         };

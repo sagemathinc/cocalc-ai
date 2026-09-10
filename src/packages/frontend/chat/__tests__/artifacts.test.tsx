@@ -84,7 +84,7 @@ test.each([1024, 375])(
         />
       </div>,
     );
-    expect(screen.queryByRole("button", { name: "Open artifact" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Open artifact:/ })).toBeNull();
     act(() => {
       publishArtifact(syncdb, {
         thread_id: "thread-1",
@@ -96,7 +96,7 @@ test.each([1024, 375])(
       });
       syncdb.emit("change");
     });
-    const button = screen.getByRole("button", { name: "Open artifact" });
+    const button = screen.getByRole("button", { name: /Open artifact:/ });
     button.focus();
     expect(document.activeElement).toBe(button);
     fireEvent.click(button);
@@ -112,7 +112,12 @@ test.each([1024, 375])(
     if (width < 768)
       expect(set_frame_full).toHaveBeenCalledWith("artifact-frame");
     else expect(set_frame_full).not.toHaveBeenCalled();
-    const published = screen.getByRole("button", { name: "Published version" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "More options for Replies" }),
+    );
+    const published = screen.getByRole("menuitem", {
+      name: "Published version",
+    });
     published.focus();
     expect(document.activeElement).toBe(published);
     fireEvent.click(published);
@@ -181,7 +186,7 @@ test.each([
         messageId="message-1"
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Open artifact" }));
+    fireEvent.click(screen.getByRole("button", { name: /Open artifact:/ }));
     if (reuse) {
       expect(frames.move_frame).not.toHaveBeenCalled();
       expect(frames.set_active_id).toHaveBeenCalledWith("existing-artifact");
@@ -210,7 +215,12 @@ test.each([
     expect(existing.version).toBe("old-publication");
     frames.split_frame.mockClear();
     frames.set_active_id.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "Published version" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "More options for Replies" }),
+    );
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Published version" }),
+    );
     expect(frames.split_frame).toHaveBeenCalledWith(
       "col",
       "chat-frame",
@@ -226,7 +236,10 @@ test.each([
       existing.version = "publication-1";
       frames.split_frame.mockClear();
       fireEvent.click(
-        screen.getByRole("button", { name: "Published version" }),
+        screen.getByRole("button", { name: "More options for Replies" }),
+      );
+      fireEvent.click(
+        screen.getByRole("menuitem", { name: "Published version" }),
       );
       expect(frames.split_frame).not.toHaveBeenCalled();
       expect(frames.set_active_id).toHaveBeenCalledWith("existing-artifact");

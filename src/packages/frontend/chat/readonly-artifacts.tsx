@@ -5,6 +5,7 @@ import {
   validateArtifactPublication,
 } from "@cocalc/chat";
 import type { ArtifactPublication } from "@cocalc/chat";
+import { ArtifactCard } from "./artifact-card";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -69,6 +70,13 @@ function PublishedObject({
 }) {
   return (
     <>
+      {snapshot.commit && (
+        <div>
+          <code>{snapshot.commit.sha}</code>
+          <div>{snapshot.commit.path}</div>
+          <div>{snapshot.commit.branch}</div>
+        </div>
+      )}
       {snapshot.github_pr && (
         <div>
           <a
@@ -166,11 +174,7 @@ export function ReadonlyArtifactCards({
                   background: UI_COLORS.surface,
                 }}
               >
-                <strong>{publication.snapshot.title}</strong>
-                <div style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>
-                  {publication.snapshot.file?.path ??
-                    publication.snapshot.markdown.slice(0, 240)}
-                </div>
+                <ArtifactCard publication={publication} current={current} />
                 {publication.snapshot.file ? (
                   <ReadonlyFilePreview publication={publication} />
                 ) : current && current.kind !== "file" ? (
@@ -188,6 +192,8 @@ export function ReadonlyArtifactCards({
                         markdown: current.input,
                         actions: current.actions,
                         github_pr: current.github_pr,
+                        commit: current.commit,
+                        theme: current.theme,
                       }}
                     />
                   </details>

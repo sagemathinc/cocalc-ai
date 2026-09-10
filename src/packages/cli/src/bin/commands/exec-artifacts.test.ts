@@ -3,6 +3,22 @@ import test from "node:test";
 import { createBackendExecApi } from "./exec";
 
 for (const [kind, object] of Object.entries({
+  commit: {
+    commit: {
+      sha: "a".repeat(40),
+      path: "/repo",
+      common_directory: "/repo/.git",
+      branch: "main",
+    },
+    theme: {
+      title: "Review",
+      description: "",
+      color: "#123456",
+      accent_color: null,
+      icon: "git",
+      image_blob: null,
+    },
+  },
   file: { file: { path: "/home/user/policy.md" } },
   actions: {
     actions: [

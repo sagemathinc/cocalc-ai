@@ -1,6 +1,12 @@
 /** Typed Markdown artifacts in the existing Patchflow chat document. */
 import { validateArtifactGitHubPR } from "./artifact-github";
 import type { ArtifactGitHubPR } from "./artifact-github";
+import { validateArtifactTheme } from "./artifact-appearance";
+import type { EntityTheme } from "./artifact-appearance";
+import { validateArtifactCommit } from "./artifact-commit";
+import type { ArtifactCommit } from "./artifact-commit";
+export * from "./artifact-appearance";
+export * from "./artifact-commit";
 export * from "./artifact-github";
 import {
   validateProposedActions,
@@ -40,7 +46,9 @@ export interface ArtifactRecord extends ArtifactTarget {
   sender_id: string;
   date: string;
   schema_version: 1;
-  kind: "markdown" | "file" | "github-pr" | "actions";
+  kind: "markdown" | "file" | "github-pr" | "actions" | "commit";
+  theme?: EntityTheme;
+  commit?: ArtifactCommit;
   actions?: ProposedAction[];
   github_pr?: ArtifactGitHubPR;
   file?: ArtifactFile;
@@ -57,6 +65,8 @@ export interface ArtifactPublication extends ArtifactTarget {
   operation_id: string;
   message_id: string;
   snapshot: {
+    theme?: EntityTheme;
+    commit?: ArtifactCommit;
     title: string;
     markdown: string;
     file?: ArtifactFile;
@@ -185,7 +195,7 @@ export function validateArtifact(value: unknown): ArtifactRecord {
   if (
     row?.event !== "chat-artifact" ||
     row.schema_version !== 1 ||
-    !["markdown", "file", "github-pr", "actions"].includes(row.kind)
+    !["markdown", "file", "github-pr", "actions", "commit"].includes(row.kind)
   ) {
     throw Error("unsupported or missing artifact");
   }
@@ -197,6 +207,12 @@ export function validateArtifact(value: unknown): ArtifactRecord {
     artifact_id: row.artifact_id,
     schema_version: 1,
     kind: row.kind,
+    ...(row.theme === undefined
+      ? {}
+      : { theme: validateArtifactTheme(row.theme) }),
+    ...(row.kind === "commit"
+      ? { commit: validateArtifactCommit(row.commit) }
+      : {}),
     ...(row.kind === "actions"
       ? { actions: validateProposedActions(row.actions) }
       : {}),
@@ -218,9 +234,12 @@ export function validateArtifactPublication(
   }
   const key = artifactPublicationKey(row, row.operation_id);
   if (
-    [row.snapshot?.file, row.snapshot?.github_pr, row.snapshot?.actions].filter(
-      (x) => x !== undefined,
-    ).length > 1
+    [
+      row.snapshot?.file,
+      row.snapshot?.github_pr,
+      row.snapshot?.actions,
+      row.snapshot?.commit,
+    ].filter((x) => x !== undefined).length > 1
   )
     throw Error("artifact publication cannot mix object types");
   if (row.sender_id !== key.sender_id || row.date !== DATE)
@@ -241,6 +260,12 @@ export function validateArtifactPublication(
     published_at: row.published_at,
     message_id: id(row.message_id, "message id"),
     snapshot: {
+      ...(row.snapshot?.theme === undefined
+        ? {}
+        : { theme: validateArtifactTheme(row.snapshot.theme) }),
+      ...(row.snapshot?.commit === undefined
+        ? {}
+        : { commit: validateArtifactCommit(row.snapshot.commit) }),
       title: text(row.snapshot?.title, "title", 256),
       markdown: text(row.snapshot?.markdown, "Markdown", ARTIFACT_TEXT_LIMIT),
       ...(row.snapshot?.actions === undefined
@@ -258,6 +283,13 @@ export function validateArtifactPublication(
 
 // Exact content, not a collision-prone hash or a distributed CAS claim.
 export function artifactBase(record: ArtifactRecord): string {
+  if (record.theme !== undefined)
+    return JSON.stringify([
+      artifactBase({ ...record, theme: undefined }),
+      record.theme,
+    ]);
+  if (record.kind === "commit")
+    return JSON.stringify([record.title, record.input, record.commit]);
   if (record.kind === "actions")
     return JSON.stringify([record.title, record.input, record.actions]);
   if (record.kind === "github-pr")
@@ -275,6 +307,8 @@ export function readArtifact(store: ArtifactStore, target: ArtifactTarget) {
 }
 
 export interface PublishArtifactInput extends ArtifactTarget {
+  theme?: EntityTheme;
+  commit?: ArtifactCommit;
   actions?: ProposedAction[];
   operation_id: string;
   message_id: string;
@@ -291,9 +325,23 @@ export function publishArtifact(
   store: ArtifactStore,
   input: PublishArtifactInput,
 ) {
+  const previous = store.get_one(
+    artifactPublicationKey(input, input.operation_id),
+  );
+  const current = store.get_one(artifactKey(input));
+  // Content updates keep user appearance unless the publisher explicitly changes it.
+  // A retry uses its original publication, not a theme edited since that write.
+  const theme =
+    input.theme ??
+    (previous != null
+      ? validateArtifactPublication(previous).snapshot.theme
+      : current != null
+        ? validateArtifact(current).theme
+        : undefined);
   if (
-    [input.file, input.github_pr, input.actions].filter((x) => x !== undefined)
-      .length > 1
+    [input.file, input.github_pr, input.actions, input.commit].filter(
+      (x) => x !== undefined,
+    ).length > 1
   )
     throw Error("artifact cannot mix object types");
   const artifact = validateArtifact({
@@ -301,14 +349,18 @@ export function publishArtifact(
     artifact_id: input.artifact_id,
     schema_version: 1,
     kind:
-      input.actions !== undefined
-        ? "actions"
-        : input.github_pr !== undefined
-          ? "github-pr"
-          : input.file === undefined
-            ? "markdown"
-            : "file",
+      input.commit !== undefined
+        ? "commit"
+        : input.actions !== undefined
+          ? "actions"
+          : input.github_pr !== undefined
+            ? "github-pr"
+            : input.file === undefined
+              ? "markdown"
+              : "file",
     github_pr: input.github_pr,
+    commit: input.commit,
+    theme,
     actions: input.actions,
     file: input.file,
     title: input.title,
@@ -324,14 +376,13 @@ export function publishArtifact(
     snapshot: {
       title: artifact.title,
       markdown: artifact.input,
+      ...(artifact.theme ? { theme: artifact.theme } : {}),
+      ...(artifact.commit ? { commit: artifact.commit } : {}),
       ...(artifact.file ? { file: artifact.file } : {}),
       ...(artifact.github_pr ? { github_pr: artifact.github_pr } : {}),
       ...(artifact.actions ? { actions: artifact.actions } : {}),
     },
   });
-  const previous = store.get_one(
-    artifactPublicationKey(input, input.operation_id),
-  );
   if (previous != null) {
     const prior = validateArtifactPublication(previous);
     if (
@@ -346,7 +397,6 @@ export function publishArtifact(
       replayed: true,
     };
   }
-  const current = store.get_one(artifactKey(input));
   if (
     current == null
       ? input.base !== undefined

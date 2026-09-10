@@ -83,7 +83,7 @@ test("read-only cards expose sanitized current and historical text without actio
   expect(summary.tagName).toBe("SUMMARY");
   expect(summary.parentElement?.tagName).toBe("DETAILS");
   expect(screen.getByText("Current heading")).toBeTruthy();
-  expect(screen.getByText("Original heading")).toBeTruthy();
+  expect(screen.getAllByText("Original heading").length).toBeGreaterThan(0);
   expect(
     screen.getByText("unsafe link").closest("a")?.getAttribute("href"),
   ).toBeNull();
