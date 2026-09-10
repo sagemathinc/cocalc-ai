@@ -106,6 +106,7 @@ test.each([1024, 375])(
       "data-thread": "thread-1",
       "data-origin": "chat-frame",
       "data-publication": "op-1",
+      "data-tabLabel": "Replies",
     });
     expect(screen.getByText("Hello")).toBeTruthy();
     if (width < 768)
@@ -125,6 +126,7 @@ test.each([1024, 375])(
         "data-origin": "chat-frame",
         "data-publication": "op-1",
         "data-version": "op-1",
+        "data-tabLabel": "Replies (published)",
       },
     );
     expect(activateParent).not.toHaveBeenCalled();
@@ -158,6 +160,9 @@ test.each([
     });
     const existing = { artifact, thread, origin, version: "old-publication" };
     const frames = {
+      _get_frame_type: (id) =>
+        id === "existing-artifact" ? "workbench" : "terminal",
+      move_frame: jest.fn(),
       get_frame_ids_in_order: () => ["terminal", "existing-artifact"],
       _get_frame_data: (id, key) =>
         id === "existing-artifact" ? existing[key] : undefined,
@@ -178,9 +183,15 @@ test.each([
     );
     fireEvent.click(screen.getByRole("button", { name: "Open artifact" }));
     if (reuse) {
+      expect(frames.move_frame).not.toHaveBeenCalled();
       expect(frames.set_active_id).toHaveBeenCalledWith("existing-artifact");
       expect(frames.split_frame).not.toHaveBeenCalled();
     } else {
+      expect(frames.move_frame).toHaveBeenCalledWith(
+        "new-artifact",
+        "existing-artifact",
+        "tab",
+      );
       expect(frames.split_frame).toHaveBeenCalledWith(
         "col",
         "chat-frame",

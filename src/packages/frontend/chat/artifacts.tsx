@@ -60,6 +60,9 @@ export function ArtifactCards({
           const publication = validateArtifactPublication(row);
           const open = (version?: string) => {
             const frames = actions.frameTreeActions;
+            const workbench = frames
+              ?.get_frame_ids_in_order()
+              .find((id) => frames._get_frame_type?.(id) === "workbench");
             const existing = frames
               ?.get_frame_ids_in_order()
               .find(
@@ -85,9 +88,14 @@ export function ArtifactCards({
                 "data-thread": threadId,
                 "data-origin": actions.frameId,
                 "data-publication": publication.operation_id,
+                "data-tabLabel":
+                  publication.snapshot.title + (version ? " (published)" : ""),
                 ...(version === undefined ? {} : { "data-version": version }),
               },
             );
+            if (opened && frames) {
+              if (workbench) frames.move_frame(opened, workbench, "tab");
+            }
             if (opened && window.innerWidth < 768)
               frames?.set_frame_full(opened);
           };

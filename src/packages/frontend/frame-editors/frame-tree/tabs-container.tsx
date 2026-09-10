@@ -209,13 +209,15 @@ export function TabsContainer({
         const spec = editor_spec?.[type];
         const rawLabel = spec?.short ?? spec?.name ?? type;
         const childPath: string | undefined = child.get("path");
-        const label = childPath
-          ? path_split(childPath).tail || type
-          : type === "node"
-            ? "Split"
-            : isIntlMessage(rawLabel)
-              ? rawLabel.defaultMessage
-              : rawLabel;
+        const label =
+          child.get("data-tabLabel") ??
+          (childPath
+            ? path_split(childPath).tail || type
+            : type === "node"
+              ? "Split"
+              : isIntlMessage(rawLabel)
+                ? rawLabel.defaultMessage
+                : rawLabel);
         const iconName: IconName =
           type === "node" ? "column-width" : (spec?.icon ?? "file");
         return {
