@@ -6,6 +6,12 @@ import { artifactKey, artifactPublicationKey } from "@cocalc/chat";
 import { Workbench } from "./workbench";
 import { focusChatFrameInput } from "./actions";
 import { refreshPR } from "./github-pr-operations";
+import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
+import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
+import userEvent from "@testing-library/user-event";
+jest.mock("@cocalc/frontend/chat/use-chat-composer-draft", () => ({
+  writeChatComposerDraft: jest.fn().mockResolvedValue(""),
+}));
 jest.mock("./github-pr-operations", () => ({ refreshPR: jest.fn() }));
 
 jest.mock("./actions", () => ({ focusChatFrameInput: jest.fn() }));
@@ -35,6 +41,72 @@ jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
     />
   ),
 }));
+
+test("maximized action review stages a draft while the composer hook is unmounted", async () => {
+  jest.mocked(writeChatComposerDraft).mockClear();
+  const target = { thread_id: "thread", artifact_id: "actions" };
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => ({
+      ...artifactKey(target),
+      ...target,
+      schema_version: 1,
+      kind: "actions",
+      title: "Replies",
+      input: "",
+      actions: [
+        { id: "reply", title: "Reply", target: "Ticket", draft: "Draft reply" },
+      ],
+    }),
+    get: () => [],
+  });
+  const setSelectedThread = jest.fn();
+  const set_frame_full = jest.fn();
+  render(
+    <Workbench
+      {...({
+        id: "artifact-frame",
+        actions: {
+          getArtifactSyncdb: () => syncdb,
+          getChatActions: () => ({ syncdb, setSelectedThread }),
+          store: { getIn: () => "artifact-frame" },
+          set_frame_full,
+        },
+        desc: fromJS({
+          "data-origin": "origin",
+          "data-thread": "thread",
+          "data-artifact": "actions",
+        }),
+        read_only: false,
+        font_size: 14,
+        project_id: "p",
+        path: "x.chat",
+      } as any)}
+    />,
+  );
+  expect(
+    screen.getByRole("textbox", { name: "Draft for Reply" }),
+  ).toBeEnabled();
+  const button = screen.getByRole("button", {
+    name: "Return decisions to agent",
+  });
+  button.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  expect(writeChatComposerDraft).toHaveBeenCalledWith(
+    expect.objectContaining({
+      project_id: "p",
+      path: "x.chat",
+      suffix: "artifact-feedback",
+      composerDraftKey: stableDraftKeyFromThreadKey("thread"),
+    }),
+  );
+  const feedback = JSON.parse(
+    jest.mocked(writeChatComposerDraft).mock.calls[0][0].text,
+  );
+  expect(feedback.action_review[0].proposal.draft).toBe("Draft reply");
+  expect(feedback.thread_id).toBe("thread");
+  expect(setSelectedThread).toHaveBeenCalledWith("thread");
+  expect(set_frame_full).toHaveBeenCalledWith("origin");
+});
 
 test("Back to chat renders the destination before requesting composer focus", () => {
   const syncdb = Object.assign(new EventEmitter(), {

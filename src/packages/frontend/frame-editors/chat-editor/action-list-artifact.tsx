@@ -162,7 +162,9 @@ export function ActionListArtifact({
                 marginTop: 12,
               }}
             >
-              <strong>{proposal.title}</strong>
+              <strong style={{ display: "block", marginBottom: 8 }}>
+                {proposal.title}
+              </strong>
               {changed && (
                 <Alert
                   type="warning"
@@ -183,7 +185,7 @@ export function ActionListArtifact({
                   }
                 />
               )}
-              <label>
+              <label style={{ display: "block", marginBottom: 8 }}>
                 Target
                 <Input
                   aria-label={`Target for ${proposal.title}`}
@@ -197,7 +199,7 @@ export function ActionListArtifact({
                   }
                 />
               </label>
-              <label>
+              <label style={{ display: "block" }}>
                 Draft
                 <Input.TextArea
                   aria-label={`Draft for ${proposal.title}`}

@@ -172,6 +172,17 @@ acceptance matrix remain unverified. Do not infer completion from this checkpoin
 
 ## Acceptance
 
+320px action-list acceptance found a functional maximization bug: hiding the
+composer removes its staging hook, disabling all proposal controls. Workbench
+feedback now falls back to the existing persistent composer-draft writer when
+the origin chat exists but its composer is unmounted. It validates the artifact,
+targets the exact thread/suffix, and persists before returning/focusing chat.
+Mounted composers retain their existing hook path. Also separated proposal
+headings from Target labels. The new keyboard test covers action editing and
+staging without a mounted hook; both focused suites pass (16 tests), with
+frontend typecheck/lint passing. Live narrow-layout verification of this fix
+remains pending; do not mark the previous disabled screenshot as acceptance.
+
 Confirmed the QA project has neither `gh` on its full command PATH nor a GitHub
 CLI configuration; successful credentialed PR refresh remains a prerequisite
 gap, not an unexplained PATH mismatch. No credentials were copied or changed.

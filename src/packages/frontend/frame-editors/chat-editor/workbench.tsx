@@ -18,6 +18,7 @@ import {
   artifactBase,
   readArtifact,
   validateArtifact,
+  validateArtifactFeedback,
   validateArtifactPublication,
   artifactPublicationKey,
 } from "@cocalc/chat";
@@ -40,6 +41,8 @@ import { GitHubPRArtifact } from "./github-pr-artifact";
 import { ActionListArtifact } from "./action-list-artifact";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { sendArtifactReviewToThread } from "@cocalc/frontend/chat/artifact-review-agent";
+import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
+import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 
 const DocumentDiff = lazyWithRetry(
   () => import("@cocalc/frontend/components/diff-viewer/document-diff"),
@@ -187,6 +190,26 @@ export function Workbench({
     );
   };
   const flushEditor = () => saveInput(getEditorValue.current(), true);
+  const stageFeedback = async (value: ArtifactFeedback) => {
+    if (!chat || read_only) throw Error("Chat feedback is unavailable");
+    if (chat.stageArtifactFeedback) {
+      await chat.stageArtifactFeedback(value);
+      return;
+    }
+    // Maximizing the workbench unmounts the composer and its staging hook.
+    // Persist to the same thread draft before bringing that composer back.
+    const feedback = validateArtifactFeedback(value);
+    readArtifact(syncdb, feedback);
+    await writeChatComposerDraft({
+      account_id: accountId,
+      project_id,
+      path,
+      composerDraftKey: stableDraftKeyFromThreadKey(feedback.thread_id),
+      suffix: "artifact-feedback",
+      text: JSON.stringify(feedback),
+    });
+    chat.setSelectedThread?.(feedback.thread_id);
+  };
   const returnToChat = () => {
     const origin = desc.get("data-origin");
     // The composer must be visible before focusing it, especially when maximized.
@@ -210,10 +233,10 @@ export function Workbench({
         artifact={artifact}
         historical={historical}
         onComment={
-          read_only || !chat?.stageArtifactFeedback
+          read_only || !chat
             ? undefined
             : async (feedback) => {
-                await chat.stageArtifactFeedback?.(feedback);
+                await stageFeedback(feedback);
                 returnToChat();
               }
         }
@@ -274,10 +297,10 @@ export function Workbench({
             : undefined
         }
         onReview={
-          read_only || !chat?.stageArtifactFeedback
+          read_only || !chat
             ? undefined
             : async (feedback) => {
-                await chat.stageArtifactFeedback?.(feedback);
+                await stageFeedback(feedback);
                 returnToChat();
               }
         }
@@ -369,15 +392,10 @@ export function Workbench({
           </Button>
           <Button
             size="small"
-            disabled={
-              read_only ||
-              editing ||
-              showChanges ||
-              !chat?.stageArtifactFeedback
-            }
+            disabled={read_only || editing || showChanges || !chat}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
-              if (!content.current || !chat?.stageArtifactFeedback) return;
+              if (!content.current || !chat) return;
               try {
                 const feedback =
                   selectedFeedback.current ??
@@ -386,8 +404,7 @@ export function Workbench({
                     value,
                     window.getSelection(),
                   );
-                void chat
-                  .stageArtifactFeedback(feedback)
+                void stageFeedback(feedback)
                   .then(() => {
                     returnToChat();
                   })
