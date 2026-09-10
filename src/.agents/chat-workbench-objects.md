@@ -146,6 +146,17 @@ matrix remain open.
 
 ## Live Acceptance Checkpoint (2026-09-10)
 
+Hosted run `34462407685` completed: build, checks, frontend, both server shards,
+and backend/database passed. The rest lane stopped at the lightweight Codex
+chat budget (550.3 KiB Brotli against 550 KiB), before its package tests ran.
+Reproduced locally and separated `@cocalc/chat/core` from the default artifact
+exports for the lightweight chat client. The default API remains compatible.
+Local production measurement now passes every existing budget, including
+Codex chat at 547.5 KiB Brotli, without changing limits. Shared-chat tests (101),
+chat-client tests (26), package typechecks, and frontend lint pass. New hosted
+verification is required for the fix; the failed rest lane was not a passing
+package-test result.
+
 Action source-revision acceptance on merged build `52778b23b3`: used the
 authenticated CLI/backend artifact update path to revise only Alex's fictional
 proposal in `qa-actions-20260910`, with the observed base and operation ID

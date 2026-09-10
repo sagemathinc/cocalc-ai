@@ -2,6 +2,10 @@
 
 Shared chat schema/types/helpers used by frontend and lite backend.
 
+Lightweight clients can import `@cocalc/chat/core` for message, thread, and ACP
+helpers without loading workbench artifact validation. The default
+`@cocalc/chat` entry point preserves the complete API, including artifacts.
+
 ## Schema v2
 
 Chat schema v2 introduces explicit records:
@@ -11,7 +15,7 @@ Chat schema v2 introduces explicit records:
 - `chat-thread-config` (title/icon/color/pin/codex config, archive metadata)
 - `chat-thread-state` (runtime state: queued/running/interrupted/etc.)
 
-`schema_version` is defined by `CHAT_SCHEMA_V2` in [src/packages/chat/src/index.ts](./src/index.ts).
+`schema_version` is defined by `CHAT_SCHEMA_V2` in [src/core.ts](./src/core.ts).
 
 ## One-Off Migration (v1 -> v2)
 

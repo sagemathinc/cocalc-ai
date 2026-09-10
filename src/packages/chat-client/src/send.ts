@@ -11,7 +11,7 @@ import {
   normalizeCodexMention,
   type ChatMessage,
   type ChatThreadConfigRecord,
-} from "@cocalc/chat";
+} from "@cocalc/chat/core";
 import { interruptAcp, steerAcp, streamAcp } from "@cocalc/conat/ai/acp/client";
 import type {
   AcpInterruptRequest,
