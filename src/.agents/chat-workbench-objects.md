@@ -171,6 +171,15 @@ acceptance matrix remain unverified. Do not infer completion from this checkpoin
 
 ## Acceptance
 
+Read-only file cards now offer an on-demand current-saved-file preview using
+the existing file renderer and the host project context. No file is loaded
+until the native disclosure is expanded; collapsing unmounts the preview.
+The publication locator is preserved and explicitly not described as historical
+file bytes. No feedback callback or writable chat actions are supplied. This
+viewer presentation is inline because read-only chat has no live workbench
+frame actions. Focused read-only card and file renderer suites pass (16 tests),
+as do frontend typecheck and lint. Live viewer validation remains outstanding.
+
 For each object: CLI create/read/update/retry, current vs publication view,
 reload, thread/frame routing, keyboard navigation, light/dark and narrow layout,
 missing source, permissions, and malformed payload tests. Preserve existing

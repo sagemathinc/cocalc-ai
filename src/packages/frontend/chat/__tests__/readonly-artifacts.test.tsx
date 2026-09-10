@@ -1,8 +1,53 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { artifactKey, artifactPublicationKey } from "@cocalc/chat";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { ArtifactCards } from "../artifacts";
 import { ReadonlyArtifactRows } from "../readonly-artifacts";
+
+jest.mock("@cocalc/frontend/project/context", () => ({
+  useProjectContext: () => mockProjectContext,
+}));
+const mockProjectContext = { project_id: "project", actions: {} };
+const mockFilePreview = jest.fn((props) => (
+  <div role="document">{props.artifact.file.path}</div>
+));
+jest.mock("@cocalc/frontend/frame-editors/chat-editor/file-artifact", () => ({
+  FileArtifact: (props) => mockFilePreview(props),
+}));
+
+test("read-only file preview loads on request in the host project without feedback", async () => {
+  mockFilePreview.mockClear();
+  render(
+    <ReadonlyArtifactRows.Provider
+      value={[
+        {
+          ...publication,
+          snapshot: { title: "Plan", markdown: "", file: { path: "/plan.md" } },
+        },
+      ]}
+    >
+      <ArtifactCards threadId="thread" messageId="message" />
+    </ReadonlyArtifactRows.Provider>,
+  );
+  expect(mockFilePreview).not.toHaveBeenCalled();
+  const summary = screen.getByText("Preview current saved file");
+  summary.focus();
+  expect(document.activeElement).toBe(summary);
+  expect(summary.tagName).toBe("SUMMARY");
+  const details = summary.parentElement! as HTMLDetailsElement;
+  details.open = true;
+  fireEvent(details, new Event("toggle"));
+  expect(await screen.findByRole("document")).toHaveTextContent("/plan.md");
+  expect(mockFilePreview.mock.calls[0][0]).toMatchObject({
+    projectId: "project",
+    historical: true,
+    artifact: { file: { path: "/plan.md" } },
+  });
+  expect(mockFilePreview.mock.calls[0][0].onComment).toBeUndefined();
+  details.open = false;
+  fireEvent(details, new Event("toggle"));
+  expect(screen.queryByRole("document")).toBeNull();
+});
 
 const target = { thread_id: "thread", artifact_id: "artifact" };
 const publication = {

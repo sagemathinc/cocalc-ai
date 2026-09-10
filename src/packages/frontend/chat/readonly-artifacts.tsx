@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext, lazy, Suspense, useContext, useState } from "react";
 import {
   artifactGitHubPRUrl,
   validateArtifact,
@@ -8,9 +8,59 @@ import type { ArtifactPublication } from "@cocalc/chat";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { useProjectContext } from "@cocalc/frontend/project/context";
+
+const FileArtifact = lazy(() =>
+  import("@cocalc/frontend/frame-editors/chat-editor/file-artifact").then(
+    ({ FileArtifact }) => ({ default: FileArtifact }),
+  ),
+);
 
 // Read-only viewers have document rows, not live ChatActions or a writable syncdb.
 export const ReadonlyArtifactRows = createContext<any[]>([]);
+
+function ReadonlyFilePreview({
+  publication,
+}: {
+  publication: ArtifactPublication;
+}) {
+  const [open, setOpen] = useState(false);
+  const { project_id, actions } = useProjectContext();
+  return (
+    <>
+      <div role="note">
+        This card stores a file reference, not historical file contents.
+      </div>
+      {project_id && actions && (
+        <details onToggle={(event) => setOpen(event.currentTarget.open)}>
+          <summary>Preview current saved file</summary>
+          {open && (
+            <div className="smc-vfill" style={{ height: "min(65vh, 640px)" }}>
+              <Suspense fallback={<div role="status">Loading preview...</div>}>
+                <FileArtifact
+                  projectId={project_id}
+                  historical
+                  artifact={{
+                    event: "chat-artifact",
+                    schema_version: 1,
+                    thread_id: publication.thread_id,
+                    artifact_id: publication.artifact_id,
+                    sender_id: publication.sender_id,
+                    date: publication.date,
+                    kind: "file",
+                    title: publication.snapshot.title,
+                    input: publication.snapshot.markdown,
+                    file: publication.snapshot.file,
+                  }}
+                />
+              </Suspense>
+            </div>
+          )}
+        </details>
+      )}
+    </>
+  );
+}
 
 function PublishedObject({
   snapshot,
@@ -122,11 +172,7 @@ export function ReadonlyArtifactCards({
                     publication.snapshot.markdown.slice(0, 240)}
                 </div>
                 {publication.snapshot.file ? (
-                  <div role="note">
-                    File reference only. Open the file through the project file
-                    browser; no historical file contents are stored in this
-                    card.
-                  </div>
+                  <ReadonlyFilePreview publication={publication} />
                 ) : current && current.kind !== "file" ? (
                   <details>
                     <summary>
