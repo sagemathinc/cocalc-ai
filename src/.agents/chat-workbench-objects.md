@@ -39,8 +39,9 @@ Refresh and Open file. Refresh retains the mounted preview; missing/read errors
 retain the previous text with a stale warning. A 1 MiB text size gate applies.
 Raster images and PDFs use the existing authenticated project-host preview URL
 and read-only renderer. Selection feedback is implemented below; active formats,
-live file updates and live acceptance are not yet completed. Viewer-only cards currently display locators, not file
-contents. Do not mark the file milestone complete from this initial slice.
+live file updates and full live acceptance are not yet completed. Viewer-only
+cards offer an on-demand current-file preview (see acceptance below). Do not
+mark the file milestone complete from this initial slice.
 
 Reuse typed CLI/backend artifact publication with explicit thread/turn identity,
 observed-base checks, idempotent retries, and immutable publication records.
@@ -170,6 +171,21 @@ reload, viewer file previews, keyboard/theme/narrow layout and the rest of the
 acceptance matrix remain unverified. Do not infer completion from this checkpoint.
 
 ## Acceptance
+
+Live build `38056890f6` acceptance: after browser reload (new browser ID
+`G67DCMTM72`), Alex's edited draft and Approve exact draft decision both restored.
+The PR comparison displayed origin-thread routing without worktree consent.
+Saved the disposable `WB-20260910-PR` acknowledgement-only review and sent it
+once. Authenticated live SyncDB inspection confirmed message
+`c359257e-ea6a-4c7a-9af9-161e642d7923` in the original QA thread
+`9382a253-236b-4a0e-8c54-4f5a83c46ad9`, including PR URL, requested base,
+resolved merge base, head and source directory as context only. Agent reply
+`40ca73a9-92bd-44be-a443-9157ce39f2be` acknowledged those revisions in the same
+thread. The test explicitly prohibited commands, edits and external actions;
+the agent reported none. A browser transport timeout during the initial save
+was inspected before retrying; no send was attempted until save was verified.
+Successful PR refresh still needs project-side gh availability; viewer file,
+theme/narrow layout, and remaining matrix checks are not implied by this test.
 
 Further live PR acceptance: the missing-commit guard retained the card, explicit
 Fetch PR commits succeeded, and Review locally opened the pinned merge-base
