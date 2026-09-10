@@ -210,6 +210,284 @@ describe("hosts start-worker project-host upgrade convergence detection", () => 
 });
 
 describe("hosts start-worker wait cancellation", () => {
+  test("completion is scoped to the exact queued work, host and action", async () => {
+    const attempt = {
+      ...__test__.hostReadinessAttempt(
+        "host-start",
+        {},
+        { metadata: { machine: { cloud: "gcp" } } },
+        1000,
+      )!,
+      workId: "work-new",
+    };
+    const query = jest.fn(async () => ({
+      rows: [{ state: "done", updated_at: new Date(2001) }],
+    }));
+    expect(await __test__.loadHostActionCompletion("h", attempt, query)).toBe(
+      2001,
+    );
+    expect(query.mock.calls[0]).toEqual([
+      expect.stringContaining("WHERE id=$1 AND vm_id=$2 AND action=$3"),
+      ["work-new", "h", "start"],
+    ]);
+    for (const state of ["queued", "in_progress"]) {
+      expect(
+        await __test__.loadHostActionCompletion("h", attempt, async () => ({
+          rows: [{ state, updated_at: new Date(2001) }],
+        })),
+      ).toBeUndefined();
+    }
+    await expect(
+      __test__.loadHostActionCompletion("h", attempt, async () => ({
+        rows: [{ state: "failed", error: "provider failed" }],
+      })),
+    ).rejects.toThrow("provider failed");
+    await expect(
+      __test__.loadHostActionCompletion("h", attempt, async () => ({
+        rows: [],
+      })),
+    ).rejects.toThrow("work not found");
+  });
+
+  test("work failure is surfaced even while host status remains starting", async () => {
+    const readinessAttempt = __test__.hostReadinessAttempt(
+      "host-start",
+      {},
+      { metadata: { machine: { cloud: "gcp" } } },
+      1000,
+    )!;
+    await expect(
+      __test__.waitForHostStatus({
+        host_id: "h",
+        desired: ["running"],
+        readinessAttempt,
+        loadStatus: async () => ({ status: "starting" }),
+        loadActionCompletion: async () => {
+          throw new Error("provider failed");
+        },
+        onUpdate: async () => {},
+      }),
+    ).rejects.toThrow("provider failed");
+  });
+
+  test("cancellation interrupts the managed readiness wait", async () => {
+    const readinessAttempt = __test__.hostReadinessAttempt(
+      "host-start",
+      {},
+      { metadata: { machine: { cloud: "gcp" } } },
+      1000,
+    )!;
+    let checks = 0;
+    await expect(
+      __test__.waitForHostStatus({
+        host_id: "h",
+        desired: ["running"],
+        readinessAttempt,
+        loadStatus: async () => ({ status: "running", last_seen: new Date() }),
+        loadActionCompletion: async () => undefined,
+        shouldCancel: async () => ++checks >= 2,
+        onUpdate: async () => {},
+        delayFn: async () => {},
+      }),
+    ).rejects.toMatchObject({ code: "host-op-canceled" });
+  });
+
+  test("retry ignores an old lifecycle error despite new request timestamps", async () => {
+    const since = Date.now();
+    const old = new Date(since - 1000).toISOString();
+    const fresh = new Date(since + 1).toISOString();
+    let reads = 0;
+    const loadStatus = async () => {
+      if (++reads > 2) throw new Error("unexpected extra poll");
+      return {
+        status: reads === 1 ? "starting" : "running",
+        metadata: {
+          last_action_at: fresh,
+          bootstrap: { status: "queued", updated_at: fresh },
+          bootstrap_lifecycle: {
+            summary_status: "error",
+            last_error: "old toolkit error",
+            last_reconcile_started_at: old,
+            last_reconcile_finished_at: old,
+          },
+        },
+      };
+    };
+    await __test__.waitForHostStatus({
+      host_id: "h",
+      desired: ["running"],
+      bootstrapFailureSince: since,
+      loadStatus,
+      onUpdate: async () => {},
+      delayFn: async () => {},
+    });
+    expect(reads).toBe(2);
+  });
+
+  test("late completion of an older lifecycle attempt is not a new failure", () => {
+    expect(
+      __test__.currentBootstrapFailure({
+        since: 2000,
+        row: {
+          metadata: {
+            bootstrap_lifecycle: {
+              summary_status: "error",
+              last_error: "old error",
+              last_reconcile_started_at: new Date(1000).toISOString(),
+              last_reconcile_finished_at: new Date(3000).toISOString(),
+            },
+          },
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  test("running provider cannot hide a current bootstrap failure", async () => {
+    await expect(
+      __test__.waitForHostStatus({
+        host_id: "h",
+        desired: ["running"],
+        bootstrapFailureSince: 1000,
+        onUpdate: async () => {},
+        loadStatus: async () => ({
+          status: "running",
+          metadata: {
+            bootstrap: {
+              status: "error",
+              updated_at: new Date(2000).toISOString(),
+              message: "new error",
+            },
+          },
+        }),
+      }),
+    ).rejects.toThrow("new error");
+  });
+
+  test("restart waits for its work completion and a different VM boot", async () => {
+    const attempt = __test__.hostReadinessAttempt(
+      "host-restart",
+      {},
+      {
+        metadata: {
+          machine: { cloud: "gcp" },
+          host_boot_id: "old-boot",
+          host_session_id: "old-session",
+        },
+      },
+      1000,
+    )!;
+    const rows = [
+      { last_seen: new Date(2001), metadata: { host_boot_id: "old-boot" } },
+      {
+        last_seen: new Date(2002),
+        metadata: { host_boot_id: "old-boot", host_session_id: "new-session" },
+      },
+      { last_seen: new Date(2003), metadata: { host_boot_id: "new-boot" } },
+    ];
+    let reads = 0;
+    await __test__.waitForHostStatus({
+      host_id: "h",
+      desired: ["running"],
+      readinessAttempt: attempt,
+      loadStatus: async () => {
+        if (reads >= rows.length) throw new Error("unexpected extra poll");
+        return { status: "running", ...rows[reads++] };
+      },
+      loadActionCompletion: async () => (reads === 1 ? undefined : 2000),
+      onUpdate: async () => {},
+      delayFn: async () => {},
+    });
+    expect(reads).toBe(3);
+  });
+
+  test("start permits an unchanged boot but requires a post-completion heartbeat", () => {
+    const attempt = __test__.hostReadinessAttempt(
+      "host-start",
+      {},
+      { metadata: { machine: { cloud: "gcp" } } },
+      1000,
+    )!;
+    for (const last_seen of [
+      undefined,
+      "invalid",
+      new Date(1999),
+      new Date(2000),
+    ]) {
+      expect(__test__.hostApplicationReady({ last_seen }, attempt, 2000)).toBe(
+        false,
+      );
+    }
+    expect(
+      __test__.hostApplicationReady(
+        { last_seen: new Date(2001) },
+        attempt,
+        2000,
+      ),
+    ).toBe(true);
+    expect(
+      __test__.hostApplicationReady({ last_seen: new Date(2001) }, attempt),
+    ).toBe(false);
+  });
+
+  test("self-host restart requires a replacement process, not a physical reboot", () => {
+    const attempt = __test__.hostReadinessAttempt(
+      "host-restart",
+      { mode: "hard" },
+      {
+        metadata: {
+          machine: { cloud: "self-host" },
+          host_boot_id: "same-boot",
+          host_session_id: "old",
+        },
+      },
+      1000,
+    )!;
+    expect(attempt.action).toBe("hard_restart");
+    for (const host_session_id of [undefined, "old", "new"]) {
+      expect(
+        __test__.hostApplicationReady(
+          {
+            last_seen: new Date(2001),
+            metadata: {
+              host_boot_id: "same-boot",
+              host_session_id,
+            },
+          },
+          attempt,
+          2000,
+        ),
+      ).toBe(host_session_id === "new");
+    }
+  });
+
+  test("legacy hosts need the completion barrier even without a baseline identity", () => {
+    const attempt = __test__.hostReadinessAttempt(
+      "host-restart",
+      {},
+      { metadata: { machine: { cloud: "gcp" } } },
+      1000,
+    )!;
+    const row = { last_seen: new Date(2001) };
+    expect(__test__.hostApplicationReady(row, attempt)).toBe(false);
+    expect(__test__.hostApplicationReady(row, attempt, 2000)).toBe(true);
+  });
+
+  test("local and no-provider no-op paths do not require a boot change", () => {
+    for (const cloud of [undefined, "local"]) {
+      expect(
+        __test__.hostReadinessAttempt(
+          "host-restart",
+          {},
+          { metadata: { machine: { cloud } } },
+          1000,
+        ),
+      ).toBeUndefined();
+    }
+    expect(
+      __test__.hostReadinessAttempt("host-stop", {}, {}, 1000),
+    ).toBeUndefined();
+  });
+
   test("stops waiting when the host op is canceled mid-wait", async () => {
     let checks = 0;
     await expect(

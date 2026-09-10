@@ -219,7 +219,10 @@ async function loadHostStatus(id: string) {
   return rows[0];
 }
 
-function parseTimestampMs(value?: string): number | undefined {
+function parseTimestampMs(value?: string | Date): number | undefined {
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.getTime() : undefined;
+  }
   const text = `${value ?? ""}`.trim();
   if (!text) return undefined;
   const ms = new Date(text).getTime();
@@ -241,7 +244,8 @@ function currentBootstrapFailure({
   const bootstrapMessage = `${bootstrap.message ?? ""}`.trim() || undefined;
   if (
     bootstrapStatus === "error" &&
-    (bootstrapUpdatedMs == null || bootstrapUpdatedMs >= since)
+    bootstrapUpdatedMs != null &&
+    bootstrapUpdatedMs >= since
   ) {
     return bootstrapMessage ?? "host bootstrap failed";
   }
@@ -257,12 +261,11 @@ function currentBootstrapFailure({
   );
   if (
     lifecycleStatus === "error" &&
-    [
-      lifecycleStartedMs,
-      lifecycleFinishedMs,
-      bootstrapUpdatedMs,
-      parseTimestampMs(metadata.last_action_at),
-    ].some((value) => value != null && value >= since)
+    // A queued request can update bootstrap/last_action while retaining an old
+    // lifecycle error. Only the lifecycle attempt's own timestamps count.
+    (lifecycleStartedMs != null
+      ? lifecycleStartedMs >= since
+      : lifecycleFinishedMs != null && lifecycleFinishedMs >= since)
   ) {
     return (
       `${lifecycle.last_error ?? ""}`.trim() ||
@@ -386,6 +389,90 @@ async function waitForCompletedProjectHostUpgrade({
   });
 }
 
+interface HostReadinessAttempt {
+  workId?: string;
+  since: number;
+  action: "start" | "restart" | "hard_restart";
+  provider: string;
+  previousBootId?: string;
+  previousSessionId?: string;
+}
+
+function hostReadinessAttempt(
+  kind: HostOpKind,
+  input: any,
+  row: any,
+  since: number,
+): HostReadinessAttempt | undefined {
+  if (kind !== "host-start" && kind !== "host-restart") return;
+  const metadata = row?.metadata ?? {};
+  const provider = `${metadata.machine?.cloud ?? ""}`.trim();
+  // Local/no-provider hosts deliberately simulate lifecycle without a VM.
+  if (!provider || provider === "local") return;
+  return {
+    since,
+    action:
+      kind === "host-start"
+        ? "start"
+        : input?.mode === "hard"
+          ? "hard_restart"
+          : "restart",
+    provider,
+    previousBootId: metadata.host_boot_id,
+    previousSessionId: metadata.host_session_id,
+  };
+}
+
+async function loadHostActionCompletion(
+  host_id: string,
+  attempt: HostReadinessAttempt,
+  query: (sql: string, params: any[]) => Promise<{ rows: any[] }> = (
+    sql,
+    params,
+  ) => getPool().query(sql, params),
+): Promise<number | undefined> {
+  if (!attempt.workId)
+    throw new Error("missing cloud work identity for host readiness");
+  const { rows } = await query(
+    `SELECT state, error, updated_at FROM cloud_vm_work
+     WHERE id=$1 AND vm_id=$2 AND action=$3`,
+    [attempt.workId, host_id, attempt.action],
+  );
+  const work = rows[0];
+  if (!work) throw new Error("host lifecycle work not found");
+  if (work.state === "failed" || (work.state === "done" && work.error)) {
+    throw new Error(work.error || "host lifecycle work failed");
+  }
+  return work.state === "done" ? parseTimestampMs(work.updated_at) : undefined;
+}
+
+function hostApplicationReady(
+  row: any,
+  attempt: HostReadinessAttempt,
+  completedAt?: number,
+): boolean {
+  const lastSeen = parseTimestampMs(row.last_seen);
+  // A provider-completion barrier prevents heartbeats from satisfying a queued
+  // request, including legacy hosts where no pre-restart identity is available.
+  if (completedAt == null || lastSeen == null || lastSeen <= completedAt)
+    return false;
+  if (attempt.action === "start") return true;
+  const metadata = row.metadata ?? {};
+  if (attempt.provider !== "self-host" && attempt.previousBootId) {
+    return (
+      !!metadata.host_boot_id &&
+      metadata.host_boot_id !== attempt.previousBootId
+    );
+  }
+  if (attempt.previousSessionId) {
+    return (
+      !!metadata.host_session_id &&
+      metadata.host_session_id !== attempt.previousSessionId
+    );
+  }
+  return true;
+}
+
 async function waitForHostStatus({
   host_id,
   desired,
@@ -393,6 +480,8 @@ async function waitForHostStatus({
   allowDeleted,
   onUpdate,
   bootstrapFailureSince,
+  readinessAttempt,
+  loadActionCompletion = loadHostActionCompletion,
   shouldCancel,
   loadStatus = loadHostStatus,
   delayFn = delay,
@@ -404,6 +493,8 @@ async function waitForHostStatus({
   allowDeleted?: boolean;
   onUpdate: (status: string, metadata?: any) => Promise<void>;
   bootstrapFailureSince?: number;
+  readinessAttempt?: HostReadinessAttempt;
+  loadActionCompletion?: typeof loadHostActionCompletion;
   shouldCancel?: () => Promise<boolean>;
   loadStatus?: typeof loadHostStatus;
   delayFn?: (ms: number) => Promise<void>;
@@ -434,15 +525,22 @@ async function waitForHostStatus({
       lastStatus = status;
       await onUpdate(status, row.metadata ?? {});
     }
-    if (desired.includes(status)) {
-      return { status, metadata: row.metadata ?? {} };
-    }
     const bootstrapFailure = currentBootstrapFailure({
       row,
       since: bootstrapFailureSince,
     });
     if (bootstrapFailure) {
       throw new Error(bootstrapFailure);
+    }
+    const completedAt = readinessAttempt
+      ? await loadActionCompletion(host_id, readinessAttempt)
+      : undefined;
+    if (
+      desired.includes(status) &&
+      (!readinessAttempt ||
+        hostApplicationReady(row, readinessAttempt, completedAt))
+    ) {
+      return { status, metadata: row.metadata ?? {} };
     }
     if (failOn && failOn.includes(status)) {
       const lastError = row.metadata?.last_error;
@@ -1542,19 +1640,32 @@ async function runHostAction(
   },
 ) {
   switch (kind) {
-    case "host-start":
-      await startHostInternal({ account_id, id: host_id });
-      return undefined;
+    case "host-start": {
+      let cloudWorkId: string | undefined;
+      await startHostInternal({
+        account_id,
+        id: host_id,
+        onWorkQueued: (id) => {
+          cloudWorkId = id;
+        },
+      });
+      return { cloudWorkId };
+    }
     case "host-stop":
       await stopHostInternal({ account_id, id: host_id });
       return undefined;
-    case "host-restart":
+    case "host-restart": {
+      let cloudWorkId: string | undefined;
       await restartHostInternal({
         account_id,
         id: host_id,
         mode: input?.mode === "hard" ? "hard" : "reboot",
+        onWorkQueued: (id) => {
+          cloudWorkId = id;
+        },
       });
-      return undefined;
+      return { cloudWorkId };
+    }
     case "host-drain":
       const drain = await drainHostInternal({
         account_id,
@@ -2464,14 +2575,29 @@ async function handleOp(op: LroSummary): Promise<void> {
       throw new HostOpCanceledError();
     }
 
+    const beforeAction =
+      kind === "host-start" || kind === "host-restart"
+        ? await loadHostStatus(host_id)
+        : undefined;
+    const bootstrapFailureSince =
+      kind === "host-start" || kind === "host-restart" ? Date.now() : undefined;
+    const readinessAttempt = hostReadinessAttempt(
+      kind,
+      input,
+      beforeAction,
+      bootstrapFailureSince ?? Date.now(),
+    );
     const actionResult = await runHostAction(kind, host_id, account_id, input, {
       shouldCancel,
       progressStep,
     });
+    if (readinessAttempt) {
+      readinessAttempt.workId = (
+        actionResult as { cloudWorkId?: string }
+      )?.cloudWorkId;
+    }
 
     const wait = waitConfig(kind);
-    const bootstrapFailureSince =
-      kind === "host-start" || kind === "host-restart" ? Date.now() : undefined;
     await progressStep("waiting", wait.message, { host_id });
     const final = await waitForHostStatus({
       host_id,
@@ -2480,6 +2606,7 @@ async function handleOp(op: LroSummary): Promise<void> {
       allowDeleted: wait.allowDeleted,
       shouldCancel,
       bootstrapFailureSince,
+      readinessAttempt,
       onUpdate: async (status, metadata) => {
         logger.debug("host op status update", {
           op_id,
@@ -2701,6 +2828,9 @@ export function startHostLroWorker({
 }
 
 export const __test__ = {
+  loadHostActionCompletion,
+  hostReadinessAttempt,
+  hostApplicationReady,
   currentBootstrapFailure,
   completedProjectHostUpgradeVersion,
   requestedProjectHostUpgradeVersion,

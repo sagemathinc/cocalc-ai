@@ -540,6 +540,7 @@ export async function createHostInternalHelper({
 export async function startHostInternalHelper({
   account_id,
   id,
+  onWorkQueued,
   loadHostForStartStop,
   markHostActionPending,
   logStatusUpdate,
@@ -547,6 +548,7 @@ export async function startHostInternalHelper({
 }: {
   account_id?: string;
   id: string;
+  onWorkQueued?: (workId: string) => void;
   loadHostForStartStop: (id: string, account_id?: string) => Promise<any>;
   markHostActionPending: (id: string, action: string) => Promise<void>;
   logStatusUpdate: (id: string, status: string, source: string) => void;
@@ -698,11 +700,12 @@ export async function startHostInternalHelper({
     );
   } else {
     await markHostActionPending(id, "start");
-    await enqueueCloudVmWork({
+    const workId = await enqueueCloudVmWork({
       vm_id: id,
       action: "start",
       payload: { provider: machineCloud },
     });
+    onWorkQueued?.(workId);
   }
   const { rows } = await pool().query(
     `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
@@ -763,6 +766,7 @@ export async function restartHostInternalHelper({
   account_id,
   id,
   mode,
+  onWorkQueued,
   loadHostForStartStop,
   markHostActionPending,
   logStatusUpdate,
@@ -771,6 +775,7 @@ export async function restartHostInternalHelper({
   account_id?: string;
   id: string;
   mode?: "reboot" | "hard";
+  onWorkQueued?: (workId: string) => void;
   loadHostForStartStop: (id: string, account_id?: string) => Promise<any>;
   markHostActionPending: (id: string, action: string) => Promise<void>;
   logStatusUpdate: (id: string, status: string, source: string) => void;
@@ -825,11 +830,12 @@ export async function restartHostInternalHelper({
       id,
       mode === "hard" ? "hard_restart" : "restart",
     );
-    await enqueueCloudVmWork({
+    const workId = await enqueueCloudVmWork({
       vm_id: id,
       action: mode === "hard" ? "hard_restart" : "restart",
       payload: { provider: machineCloud },
     });
+    onWorkQueued?.(workId);
   }
   const { rows } = await pool().query(
     `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
