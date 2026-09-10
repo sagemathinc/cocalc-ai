@@ -67,6 +67,13 @@ of notebook cells, HTML, SVG, or services from previewing. Start with text,
 Markdown, raster images and PDF where existing preview policies are suitable;
 unsupported formats retain Open file.
 
+File feedback now pins the displayed text and file locator in the existing
+thread-bound feedback schema. Selection survives refresh as an explicit pinned
+snapshot; the agent prompt requires rereading the real file before editing.
+The existing feedback size limits still apply. Component tests cover selecting
+old text, refreshing to new text, and commenting with the old quote and source.
+Live browser acceptance remains outstanding.
+
 ## Acceptance
 
 For each object: CLI create/read/update/retry, current vs publication view,

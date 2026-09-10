@@ -69,6 +69,7 @@ export function captureArtifactSelection(
     end = start + (range.cloneContents().textContent?.length ?? 0);
   }
   return validateArtifactFeedback({
+    ...(artifact.file ? { file: artifact.file } : {}),
     schema_version: 1,
     artifact_id: artifact.artifact_id,
     thread_id: artifact.thread_id,

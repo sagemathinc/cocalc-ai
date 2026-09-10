@@ -1,6 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Space } from "antd";
-import type { ArtifactRecord } from "@cocalc/chat";
+import { ARTIFACT_TEXT_LIMIT } from "@cocalc/chat";
+import type { ArtifactFeedback, ArtifactRecord } from "@cocalc/chat";
+import {
+  captureArtifactSelection,
+  extendArtifactSelection,
+} from "@cocalc/frontend/chat/artifact-selection";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import PublicViewerFileContents from "@cocalc/frontend/public-viewer/file-contents";
@@ -36,9 +42,11 @@ export function fileArtifactPreviewSupported(path: string) {
 export function FileArtifact({
   artifact,
   historical,
+  onComment,
 }: {
   artifact: ArtifactRecord;
   historical: boolean;
+  onComment?: (feedback: ArtifactFeedback) => Promise<void>;
 }) {
   const { actions } = useProjectContext();
   const context = useFileContext();
@@ -47,6 +55,44 @@ export function FileArtifact({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [selection, setSelection] = useState<ArtifactFeedback>();
+  const displayedRef = useRef<{ path: string; content: string } | undefined>(
+    undefined,
+  );
+  displayedRef.current = loaded;
+  useEffect(() => {
+    const capture = () => {
+      const value = displayedRef.current;
+      const range = window.getSelection();
+      if (
+        !value ||
+        value.path !== path ||
+        !contentRef.current ||
+        !range ||
+        range.isCollapsed ||
+        !contentRef.current.contains(range.anchorNode) ||
+        !contentRef.current.contains(range.focusNode)
+      )
+        return;
+      try {
+        setSelection(
+          captureArtifactSelection(
+            contentRef.current,
+            { ...artifact, input: value.content },
+            range,
+          ),
+        );
+      } catch (err) {
+        setError(String(err));
+      }
+    };
+    document.addEventListener("selectionchange", capture);
+    return () => document.removeEventListener("selectionchange", capture);
+  }, [path, artifact]);
+  useEffect(() => {
+    setSelection(undefined);
+  }, [path]);
   const supported = fileArtifactPreviewSupported(path);
   useEffect(() => {
     let cancelled = false;
@@ -78,7 +124,7 @@ export function FileArtifact({
     };
   }, [actions, path, refresh, supported]);
   return (
-    <div
+    <KeyboardBoundary
       className="smc-vfill"
       style={{
         minHeight: 0,
@@ -104,10 +150,52 @@ export function FileArtifact({
         >
           Refresh
         </Button>
+        <Button
+          disabled={
+            !onComment ||
+            loaded?.path !== path ||
+            new TextEncoder().encode(loaded?.content ?? "").length >
+              ARTIFACT_TEXT_LIMIT
+          }
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            if (!onComment || !contentRef.current || loaded?.path !== path)
+              return;
+            try {
+              const feedback =
+                selection ??
+                captureArtifactSelection(
+                  contentRef.current,
+                  { ...artifact, input: loaded.content },
+                  window.getSelection(),
+                );
+              void onComment(feedback).catch((err) => setError(String(err)));
+            } catch (err) {
+              setError(String(err));
+            }
+          }}
+        >
+          Comment
+        </Button>
+        {selection && (
+          <Button
+            onClick={() => {
+              setSelection(undefined);
+              window.getSelection()?.removeAllRanges();
+            }}
+          >
+            Clear selection
+          </Button>
+        )}
         <span role="status">
           {loading ? "Loading current saved file..." : "Current saved file"}
         </span>
       </Space>
+      {selection && (
+        <div role="note">
+          Comment uses the selected saved-file snapshot, even after refresh.
+        </div>
+      )}
       <div style={{ overflowWrap: "anywhere", flexShrink: 0 }}>{path}</div>
       {historical && (
         <div role="note">
@@ -131,7 +219,26 @@ export function FileArtifact({
           Preview is not yet supported for this file type. Use Open file.
         </div>
       )}
-      <div style={{ overflow: "auto", flex: "1 1 0", minHeight: 0 }}>
+      <div
+        ref={contentRef}
+        role="document"
+        aria-label="File preview"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (
+            event.target === event.currentTarget &&
+            event.shiftKey &&
+            extendArtifactSelection(
+              event.currentTarget,
+              window.getSelection(),
+              event.key,
+              event.ctrlKey || event.metaKey,
+            )
+          )
+            event.preventDefault();
+        }}
+        style={{ overflow: "auto", flex: "1 1 0", minHeight: 0 }}
+      >
         <FileContext.Provider
           value={{
             ...context,
@@ -161,6 +268,6 @@ export function FileArtifact({
           )}
         </FileContext.Provider>
       </div>
-    </div>
+    </KeyboardBoundary>
   );
 }

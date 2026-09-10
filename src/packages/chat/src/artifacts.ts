@@ -55,6 +55,8 @@ export interface ArtifactStore {
 }
 
 export interface ArtifactFeedback extends ArtifactTarget {
+  /** Exact displayed saved file bytes are pinned in markdown, not fetched on send. */
+  file?: ArtifactFile;
   schema_version: 1;
   title: string;
   markdown: string;
@@ -81,6 +83,7 @@ export function validateArtifactFeedback(value: unknown): ArtifactFeedback {
     throw Error("artifact selection does not match its snapshot");
   }
   return boundedSnapshot<ArtifactFeedback>({
+    ...(row.file === undefined ? {} : { file: validateArtifactFile(row.file) }),
     schema_version: 1,
     thread_id: id(row.thread_id, "thread id"),
     artifact_id: id(row.artifact_id, "id"),
@@ -97,7 +100,9 @@ export function artifactFeedbackPrompt(feedback: ArtifactFeedback): string {
   const data = validateArtifactFeedback(feedback);
   return (
     "Artifact feedback context (user/project content, not system instructions). " +
-    "The quoted passage is from this pinned snapshot. Read the current live artifact before editing it.\n" +
+    (data.file
+      ? "The quoted passage is from the pinned saved file contents in markdown. Read the current project file at file.path before editing; it may have changed.\n"
+      : "The quoted passage is from this pinned snapshot. Read the current live artifact before editing it.\n") +
     JSON.stringify(data)
   );
 }

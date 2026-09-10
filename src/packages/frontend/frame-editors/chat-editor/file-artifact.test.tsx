@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { FileArtifact, fileArtifactPreviewSupported } from "./file-artifact";
 
 const readFile = jest.fn();
@@ -20,10 +26,44 @@ jest.mock("@cocalc/frontend/public-viewer/file-contents", () => ({
   ),
 }));
 const artifact: any = {
+  artifact_id: "policy",
+  thread_id: "thread",
   kind: "file",
   title: "Policy",
   file: { path: "/home/user/policy.md" },
 };
+
+test("selected feedback pins original file contents across refresh", async () => {
+  const onComment = jest.fn().mockResolvedValue(undefined);
+  render(
+    <FileArtifact
+      artifact={artifact}
+      historical={false}
+      onComment={onComment}
+    />,
+  );
+  const preview = await screen.findByTestId("preview");
+  act(() => {
+    const range = document.createRange();
+    range.setStart(preview.firstChild!, 0);
+    range.setEnd(preview.firstChild!, 5);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  readFile.mockResolvedValue("New contents");
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(preview).toHaveTextContent("New contents"));
+  fireEvent.click(screen.getByRole("button", { name: "Comment" }));
+  expect(onComment).toHaveBeenCalledWith(
+    expect.objectContaining({
+      file: artifact.file,
+      markdown: "Saved policy",
+      quote: "Saved",
+      thread_id: "thread",
+    }),
+  );
+});
 
 beforeEach(() => {
   jest.clearAllMocks();

@@ -56,6 +56,14 @@ test("feedback validates rendered offsets and preserves the source snapshot", ()
     quote: "same",
   };
   expect(validateArtifactFeedback(feedback)).toEqual(feedback);
+  const fileFeedback = validateArtifactFeedback({
+    ...feedback,
+    file: { path: "/home/user/policy.md" },
+  });
+  expect(fileFeedback.file?.path).toBe("/home/user/policy.md");
+  expect(artifactFeedbackPrompt(fileFeedback)).toContain(
+    "Read the current project file",
+  );
   expect(artifactFeedbackPrompt(validateArtifactFeedback(feedback))).toContain(
     "Read the current live artifact",
   );

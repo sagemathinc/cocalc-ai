@@ -138,8 +138,6 @@ export function Workbench({
   } catch {
     return <Alert type="warning" title="Artifact unavailable" />;
   }
-  if (artifact.kind === "file")
-    return <FileArtifact artifact={artifact} historical={historical} />;
   const value = pinned ?? artifact;
   const selectedIndex = publications.findIndex(
     (pub) => pub.operation_id === version,
@@ -186,6 +184,22 @@ export function Workbench({
     });
     focusChatFrameInput(origin);
   };
+  if (artifact.kind === "file")
+    return (
+      <FileArtifact
+        key={`${artifact.thread_id}:${artifact.artifact_id}`}
+        artifact={artifact}
+        historical={historical}
+        onComment={
+          read_only || !chat?.stageArtifactFeedback
+            ? undefined
+            : async (feedback) => {
+                await chat.stageArtifactFeedback?.(feedback);
+                returnToChat();
+              }
+        }
+      />
+    );
   return (
     <KeyboardBoundary
       className="smc-vfill"
