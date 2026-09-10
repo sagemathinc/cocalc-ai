@@ -146,6 +146,16 @@ matrix remain open.
 
 ## Live Acceptance Checkpoint (2026-09-10)
 
+Cross-object regression pass after `acac1173c7`: 13 frontend suites (84 tests)
+cover artifact cards, read-only presentation, file/action/PR workbench views,
+feedback drafts and origin routing, merge/selection behavior, and focus. Three
+shared-schema suites pass (32 tests). The CLI and shared package builds pass;
+the CLI test compilation and four artifact scripting tests pass. CLI coverage
+now explicitly checks create/read/update/retry forwarding for file, actions,
+and GitHub PR payloads with unchanged project/thread/message/operation context
+and observed editing base. These are protocol forwarding tests, not evidence
+of external execution or live viewer authorization.
+
 Viewer prerequisites rechecked after `53f93ff3a5`: the `workbench-viewer-qa`
 profile has no active credentials (`auth status --check`), and the owner browser
 session list contains only the dedicated owner QA browser. Do not count owner
