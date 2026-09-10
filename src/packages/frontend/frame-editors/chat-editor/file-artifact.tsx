@@ -63,7 +63,16 @@ function BinaryPreview({
     <PublicViewerFileContents
       path={path}
       rawUrl={url}
-      style={{ height: "100%" }}
+      style={
+        path.toLowerCase().endsWith(".pdf")
+          ? { height: "100%" }
+          : {
+              width: "auto",
+              height: "auto",
+              maxHeight: "100%",
+              objectFit: "contain",
+            }
+      }
       fileContext={{ noSanitize: false }}
     />
   ) : (

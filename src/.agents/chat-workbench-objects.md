@@ -172,6 +172,14 @@ acceptance matrix remain unverified. Do not infer completion from this checkpoin
 
 ## Acceptance
 
+Live sizing check found the raster preview stretched a 1400x933 image to
+302x666 because it inherited the PDF's full-height style. Image previews now
+use intrinsic sizing bounded by the frame, while PDF keeps its full-height
+viewport. Rebuilt and reloaded; browser `X2Q2YQQ9T5` measured 302.44x201.56,
+preserving the original aspect ratio. The 13 focused file-preview tests,
+frontend typecheck/lint, and static build pass. PDF live rendering remains
+unverified; this sizing fix does not establish PDF acceptance.
+
 Published `qa-image-20260910` through the artifact API with an identical retry
 (replayed, editing base unchanged). Opened its card in browser `8LZYATQUBD`;
 the existing `/home/user/cocalc-ai/src/.agents/scalable-bay.png` loaded through

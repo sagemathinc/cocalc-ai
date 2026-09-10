@@ -24,11 +24,12 @@ jest.mock("@cocalc/frontend/project/context", () => ({
 }));
 jest.mock("@cocalc/frontend/public-viewer/file-contents", () => ({
   __esModule: true,
-  default: ({ content, fileContext, rawUrl }) => (
+  default: ({ content, fileContext, rawUrl, style }) => (
     <div
       data-testid="preview"
       data-sanitized={String(fileContext.noSanitize === false)}
       data-raw-url={rawUrl}
+      style={style}
     >
       {content}
     </div>
@@ -135,6 +136,15 @@ test.each(["plot.png", "report.pdf"])(
     expect(fileArtifactPreviewSupported(path)).toBe(true);
     expect(readFile).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
+    expect(screen.getByTestId("preview")).toHaveStyle({
+      height: path.endsWith(".pdf") ? "100%" : "auto",
+    });
+    if (path.endsWith(".png"))
+      expect(screen.getByTestId("preview")).toHaveStyle({
+        width: "auto",
+        maxHeight: "100%",
+        objectFit: "contain",
+      });
   },
 );
 
