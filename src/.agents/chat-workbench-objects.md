@@ -371,3 +371,19 @@ scenario: revise one fictional reply, approve only that version, change it and
 verify approval invalidation. PR scenario: preview a known PR, review its exact
 commits locally, and handle a newer remote head without silently switching the
 review under the reader.
+
+### Live PR Refresh Acceptance (2026-09-10)
+
+After the maintainer installed and authenticated project-side `gh`, the owner
+QA browser successfully refreshed `qa-pr-20260910` through the card's Refresh
+button. At 18:44:46 UTC, cached fixture metadata was replaced with PR #509's
+actual title, description, draft/open status, passing checks, base
+`209529099bde33eec3d008c0f1d7f88cdf0e7d77`, and head
+`c472681e57008088c76cf0c43b9d0525b895e87f`. No credentials were copied and no
+external GitHub mutation was performed. This closes the project-side GitHub
+refresh prerequisite and successful-refresh acceptance gap, not authenticated
+read-only viewer acceptance or refresh-with-an-already-open-review validation.
+
+Hosted CI run `34463989320` passed on `c472681e57`, including the lightweight
+chat startup budget after the core-entry split. The PR remains draft pending
+the remaining acceptance checks.
