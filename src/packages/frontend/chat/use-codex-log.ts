@@ -17,6 +17,7 @@ import {
 } from "@cocalc/frontend/conat/project-dstream";
 import type { RegisteredReconnectResource } from "@cocalc/frontend/conat/reconnect-coordinator";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { LiveLogReplay } from "./live-log-replay";
 
 // Backend batches live ACP log pubsub at 100ms and AKV persistence at 250ms in
 // lite/hub/acp.ts. We delay the initial AKV fetch to let the first persisted
@@ -61,13 +62,6 @@ function cachedLiveStreamSeq(
   return cached != null && cached.liveStreamName === liveLogStream
     ? cached.liveStreamSeq
     : undefined;
-}
-
-function latestDStreamSeq(stream: DStream<any>): number | undefined {
-  const seqs = stream.seqs?.();
-  if (!Array.isArray(seqs) || seqs.length === 0) return undefined;
-  const seq = seqs[seqs.length - 1];
-  return typeof seq === "number" && Number.isFinite(seq) ? seq : undefined;
 }
 
 function maxStreamSeq(
@@ -367,6 +361,9 @@ export function useCodexLog({
     ),
   );
   const pendingLiveStreamSeqRef = useRef<number | undefined>(undefined);
+  const liveReplayRef = useRef(
+    new LiveLogReplay(appliedLiveStreamSeqRef.current),
+  );
   const reconnectResourceRef = useRef<RegisteredReconnectResource | null>(null);
   const lastLiveReceiptAtRef = useRef(Date.now());
   const mountedRef = useRef<boolean>(true);
@@ -493,6 +490,7 @@ export function useCodexLog({
       }
       setAkvLoaded(false);
     }
+    liveReplayRef.current = new LiveLogReplay(appliedLiveStreamSeqRef.current);
   }, [cacheKey, liveLogStream, liveStreamIsProjection, logSubject]);
 
   const fetchPersistedLog = useCallback(
@@ -641,6 +639,7 @@ export function useCodexLog({
             return;
           }
           const liveStream = liveStreamRef.current;
+          const replayTracker = liveReplayRef.current;
           if (liveStream != null) {
             try {
               await liveStream.recoverNow({
@@ -648,16 +647,20 @@ export function useCodexLog({
                 priority: "foreground",
                 reason: "codex_log_reconnect",
               });
-              if (!mountedRef.current) return;
-              const replay = liveStream
-                .getAll()
-                .flatMap((payload) =>
-                  normalizeLiveStreamPayload(payload as any),
-                );
+              if (
+                !mountedRef.current ||
+                liveReplayRef.current !== replayTracker ||
+                liveStreamRef.current !== liveStream
+              )
+                return;
+              const unseen = replayTracker.read(liveStream);
+              const replay = unseen.payloads.flatMap((payload) =>
+                normalizeLiveStreamPayload(payload as any),
+              );
               if (replay.length > 0) {
                 appliedLiveStreamSeqRef.current = maxStreamSeq(
                   appliedLiveStreamSeqRef.current,
-                  latestDStreamSeq(liveStream),
+                  unseen.through,
                 );
                 setLiveLog((prev) => mergeLogs(prev ?? [], replay));
               }
@@ -795,6 +798,7 @@ export function useCodexLog({
           ) => {
             if (stopped) return;
             lastLiveReceiptAtRef.current = Date.now();
+            if (!liveReplayRef.current.accept(seq)) return;
             const events = normalizeLiveStreamPayload(payload);
             if (events.length === 0) return;
             pendingLiveStreamSeqRef.current = maxStreamSeq(
@@ -819,16 +823,17 @@ export function useCodexLog({
             scheduleBufferedFlush(immediate);
           };
           // DStream already bridges the backlog/live-update race internally.
-          // Register the listener before reading getAll() so local hook state
+          // Register the listener before reading the snapshot so local hook state
           // can't miss a late event that arrives between these two steps.
           liveStream.on("change", liveStreamListener);
-          const initial = liveStream
-            .getAll()
-            .flatMap((payload) => normalizeLiveStreamPayload(payload as any));
+          const unseen = liveReplayRef.current.read(liveStream);
+          const initial = unseen.payloads.flatMap((payload) =>
+            normalizeLiveStreamPayload(payload as any),
+          );
           if (!stopped && initial.length > 0) {
             appliedLiveStreamSeqRef.current = maxStreamSeq(
               appliedLiveStreamSeqRef.current,
-              latestDStreamSeq(liveStream),
+              unseen.through,
             );
             setLiveLog((prev) => mergeLogs(prev ?? [], initial));
           }
