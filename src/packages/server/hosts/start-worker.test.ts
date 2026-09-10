@@ -460,16 +460,146 @@ describe("hosts start-worker wait cancellation", () => {
     }
   });
 
-  test("legacy hosts need the completion barrier even without a baseline identity", () => {
+  test.each(["gcp", "hyperstack", "lambda"])(
+    "%s reboot fails before dispatch without a boot baseline",
+    (cloud) => {
+      for (const host_boot_id of [undefined, "", "   "]) {
+        expect(() =>
+          __test__.hostReadinessAttempt(
+            "host-restart",
+            { mode: "hard" },
+            {
+              metadata: {
+                machine: { cloud },
+                host_boot_id,
+                host_session_id: "old-session",
+              },
+            },
+            1000,
+          ),
+        ).toThrow("no reboot queued");
+      }
+    },
+  );
+
+  test("Lambda start of an existing VM rejects old-process heartbeats after API acknowledgement", () => {
+    const row = {
+      metadata: {
+        machine: { cloud: "lambda" },
+        runtime: { instance_id: "vm" },
+        host_boot_id: "old-boot",
+        host_session_id: "old-session",
+      },
+    };
+    const attempt = __test__.hostReadinessAttempt("host-start", {}, row, 1000)!;
+    expect(attempt.action).toBe("start");
+    expect(attempt.requiresIdentityChange).toBe(true);
+    expect(
+      __test__.hostApplicationReady(
+        { ...row, last_seen: new Date(2001) },
+        attempt,
+        2000,
+      ),
+    ).toBe(false);
+    expect(
+      __test__.hostApplicationReady(
+        {
+          last_seen: new Date(2001),
+          metadata: {
+            host_boot_id: "old-boot",
+            host_session_id: "new-session",
+          },
+        },
+        attempt,
+        2000,
+      ),
+    ).toBe(false);
+    expect(
+      __test__.hostApplicationReady(
+        {
+          last_seen: new Date(2001),
+          metadata: {
+            host_boot_id: "new-boot",
+            host_session_id: "new-session",
+          },
+        },
+        attempt,
+        2000,
+      ),
+    ).toBe(true);
+    expect(() =>
+      __test__.hostReadinessAttempt(
+        "host-start",
+        {},
+        {
+          metadata: { ...row.metadata, host_boot_id: undefined },
+        },
+        1000,
+      ),
+    ).toThrow("no reboot queued");
+  });
+
+  test("Hyperstack acknowledgement alone is insufficient even with fresh session telemetry", () => {
     const attempt = __test__.hostReadinessAttempt(
       "host-restart",
-      {},
-      { metadata: { machine: { cloud: "gcp" } } },
+      { mode: "hard" },
+      {
+        metadata: { machine: { cloud: "hyperstack" }, host_boot_id: "old" },
+      },
       1000,
     )!;
-    const row = { last_seen: new Date(2001) };
-    expect(__test__.hostApplicationReady(row, attempt)).toBe(false);
-    expect(__test__.hostApplicationReady(row, attempt, 2000)).toBe(true);
+    for (const host_boot_id of [undefined, "old", "new"]) {
+      expect(
+        __test__.hostApplicationReady(
+          {
+            last_seen: new Date(2001),
+            metadata: {
+              host_boot_id,
+              host_session_id: "new-session",
+            },
+          },
+          attempt,
+          2000,
+        ),
+      ).toBe(host_boot_id === "new");
+    }
+    // Defense in depth if a caller bypasses preflight validation.
+    expect(
+      __test__.hostApplicationReady(
+        { last_seen: new Date(2001) },
+        {
+          ...attempt,
+          previousBootId: undefined,
+        },
+        2000,
+      ),
+    ).toBe(false);
+  });
+
+  test("Lambda new provisioning and explicit reprovision do not require a prior identity", () => {
+    for (const metadata of [
+      { machine: { cloud: "lambda" } },
+      {
+        machine: { cloud: "lambda" },
+        runtime: { instance_id: "old" },
+        reprovision_required: true,
+      },
+    ]) {
+      const attempt = __test__.hostReadinessAttempt(
+        "host-start",
+        {},
+        { metadata },
+        1000,
+      )!;
+      expect(attempt.requiresIdentityChange).toBe(false);
+      expect(
+        __test__.hostApplicationReady(
+          { last_seen: new Date(2001) },
+          attempt,
+          2000,
+        ),
+      ).toBe(true);
+    }
   });
 
   test("local and no-provider no-op paths do not require a boot change", () => {

@@ -394,6 +394,7 @@ interface HostReadinessAttempt {
   since: number;
   action: "start" | "restart" | "hard_restart";
   provider: string;
+  requiresIdentityChange: boolean;
   previousBootId?: string;
   previousSessionId?: string;
 }
@@ -409,6 +410,24 @@ function hostReadinessAttempt(
   const provider = `${metadata.machine?.cloud ?? ""}`.trim();
   // Local/no-provider hosts deliberately simulate lifecycle without a VM.
   if (!provider || provider === "local") return;
+  // Lambda starts an existing instance by requesting a reboot. New-instance
+  // provisioning and genuine starts on other providers need no identity change.
+  const requiresIdentityChange =
+    kind === "host-restart" ||
+    (provider === "lambda" &&
+      !!metadata.runtime?.instance_id &&
+      !metadata.reprovision_required);
+  const previousBootId = `${metadata.host_boot_id ?? ""}`.trim() || undefined;
+  const previousSessionId =
+    `${metadata.host_session_id ?? ""}`.trim() || undefined;
+  if (
+    requiresIdentityChange &&
+    !(provider === "self-host" ? previousSessionId : previousBootId)
+  ) {
+    throw new Error(
+      `cannot verify ${provider} reboot: missing pre-operation ${provider === "self-host" ? "host session" : "boot"} identity; refresh host telemetry before retrying (no reboot queued)`,
+    );
+  }
   return {
     since,
     action:
@@ -418,8 +437,9 @@ function hostReadinessAttempt(
           ? "hard_restart"
           : "restart",
     provider,
-    previousBootId: metadata.host_boot_id,
-    previousSessionId: metadata.host_session_id,
+    requiresIdentityChange,
+    previousBootId,
+    previousSessionId,
   };
 }
 
@@ -452,11 +472,11 @@ function hostApplicationReady(
   completedAt?: number,
 ): boolean {
   const lastSeen = parseTimestampMs(row.last_seen);
-  // A provider-completion barrier prevents heartbeats from satisfying a queued
-  // request, including legacy hosts where no pre-restart identity is available.
+  // Work completion only proves the provider call returned. Asynchronous reboot
+  // APIs may still be running the old VM, so reboot paths also require identity.
   if (completedAt == null || lastSeen == null || lastSeen <= completedAt)
     return false;
-  if (attempt.action === "start") return true;
+  if (!attempt.requiresIdentityChange) return true;
   const metadata = row.metadata ?? {};
   if (attempt.provider !== "self-host" && attempt.previousBootId) {
     return (
@@ -464,13 +484,13 @@ function hostApplicationReady(
       metadata.host_boot_id !== attempt.previousBootId
     );
   }
-  if (attempt.previousSessionId) {
+  if (attempt.provider === "self-host" && attempt.previousSessionId) {
     return (
       !!metadata.host_session_id &&
       metadata.host_session_id !== attempt.previousSessionId
     );
   }
-  return true;
+  return false;
 }
 
 async function waitForHostStatus({
