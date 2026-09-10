@@ -7,6 +7,7 @@ import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import type { ArtifactReviewRequest } from "@cocalc/frontend/chat/artifact-review-agent";
 import {
   fetchPRCommits,
   refreshPR,
@@ -28,12 +29,14 @@ export function GitHubPRArtifact({
   historical,
   readOnly = false,
   onRefresh,
+  onRequestAgentTurn,
 }: {
   artifact: ArtifactRecord;
   projectId: string;
   sourcePath: string;
   historical: boolean;
   readOnly?: boolean;
+  onRequestAgentTurn?: ArtifactReviewRequest;
   onRefresh?: (
     next: Awaited<ReturnType<typeof refreshPR>>,
     expected: ArtifactRecord,
@@ -174,6 +177,19 @@ export function GitHubPRArtifact({
               base: reviewTarget.base_sha,
               head: reviewTarget.head_sha,
             }}
+            onRequestAgentTurn={
+              readOnly || !onRequestAgentTurn
+                ? undefined
+                : (prompt, options) =>
+                    onRequestAgentTurn(
+                      [
+                        `Review of ${artifactGitHubPRUrl(reviewTarget)}`,
+                        `Base: ${reviewTarget.base_sha}; head: ${reviewTarget.head_sha}`,
+                        prompt,
+                      ].join("\n\n"),
+                      options,
+                    )
+            }
           />
         </Suspense>
       )}

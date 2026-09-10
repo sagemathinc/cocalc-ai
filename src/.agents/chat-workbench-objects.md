@@ -105,8 +105,14 @@ endpoint for exact base/head SHAs and a separate check rollup query. Check resul
 are accepted only for the same head; unavailable checks remain unknown. Both
 commands were exercised against PR 509. Component/helper tests cover identity
 mismatch, missing objects, explicit fetch, refresh and pinned open comparisons.
-Origin-thread review feedback, viewer-only PR presentation and live browser
-acceptance remain incomplete.
+PR review feedback now uses an explicit originating-thread sender rather than
+the Git helper that may create another thread for a different directory. It
+preserves the existing thread configuration and composer draft; the reviewed
+directory is included as context only. Feedback includes the pinned PR revisions
+even after metadata refresh. Missing source threads fail rather than spawning a
+new conversation. Viewer-only cards display current and published cached PR data
+with canonical external links and no refresh/fetch controls. Live browser
+acceptance remains incomplete.
 
 ## Action List Implementation Progress
 
@@ -127,8 +133,10 @@ Returning decisions stages the exact drafts in the originating chat, without
 sending a message or executing an external action. The composer and sent-message
 notice expose decision counts and expandable exact review snapshots. The CLI
 exec API declaration describes all three new object payloads. Focused schema,
-workbench and composer tests cover these paths. Read-only object presentation,
-live browser/agent acceptance and the complete acceptance matrix remain open.
+workbench and composer tests cover these paths. Viewer-only action cards now
+display current proposals and published drafts without editable controls or
+approval actions. Live browser/agent acceptance and the complete acceptance
+matrix remain open.
 
 ## Acceptance
 

@@ -12,7 +12,19 @@ jest.mock("./github-pr-operations", () => ({
 }));
 jest.mock("@cocalc/frontend/chat/git-commit-drawer", () => ({
   GitCommitDrawer: (props) => (
-    <div data-testid="review">{JSON.stringify(props.initialComparison)}</div>
+    <div data-testid="review">
+      {JSON.stringify(props.initialComparison)}
+      <button
+        disabled={!props.onRequestAgentTurn}
+        onClick={() =>
+          props.onRequestAgentTurn?.("Review feedback", {
+            workingDirectory: "/other-worktree",
+          })
+        }
+      >
+        Send review feedback
+      </button>
+    </div>
   ),
 }));
 jest.mock("@cocalc/frontend/editors/slate/static-markdown", () => ({
@@ -40,12 +52,14 @@ beforeEach(() => {
   (verifyPRCommits as jest.Mock).mockResolvedValue(pr);
 });
 test("opens an explicit comparison and keeps it pinned across metadata refresh", async () => {
+  const request = jest.fn();
   const { rerender } = render(
     <GitHubPRArtifact
       artifact={artifact}
       projectId="p"
       sourcePath="x.chat"
       historical={false}
+      onRequestAgentTurn={request}
     />,
   );
   expect(screen.getByRole("link", { name: "GitHub" })).toHaveAttribute(
@@ -63,10 +77,16 @@ test("opens an explicit comparison and keeps it pinned across metadata refresh",
       projectId="p"
       sourcePath="x.chat"
       historical={false}
+      onRequestAgentTurn={request}
     />,
   );
   expect(screen.getByTestId("review")).toHaveTextContent(pr.head_sha);
   expect(screen.getByTestId("review")).not.toHaveTextContent("c".repeat(40));
+  fireEvent.click(screen.getByRole("button", { name: "Send review feedback" }));
+  expect(request).toHaveBeenCalledWith(expect.stringContaining(pr.head_sha), {
+    workingDirectory: "/other-worktree",
+  });
+  expect(request.mock.calls[0][0]).not.toContain("c".repeat(40));
 });
 test("missing local repository leaves external browsing available", () => {
   render(

@@ -36,6 +36,7 @@ import { FileArtifact } from "./file-artifact";
 import { GitHubPRArtifact } from "./github-pr-artifact";
 import { ActionListArtifact } from "./action-list-artifact";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { sendArtifactReviewToThread } from "@cocalc/frontend/chat/artifact-review-agent";
 
 const DocumentDiff = lazyWithRetry(
   () => import("@cocalc/frontend/components/diff-viewer/document-diff"),
@@ -223,6 +224,18 @@ export function Workbench({
         sourcePath={path}
         historical={historical}
         readOnly={read_only}
+        onRequestAgentTurn={
+          read_only || !chat
+            ? undefined
+            : (prompt, options) => {
+                sendArtifactReviewToThread({
+                  actions: chat,
+                  threadId: artifact.thread_id,
+                  prompt,
+                  workingDirectory: options?.workingDirectory,
+                });
+              }
+        }
         onRefresh={
           read_only || historical
             ? undefined

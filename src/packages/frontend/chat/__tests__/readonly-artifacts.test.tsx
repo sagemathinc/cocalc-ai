@@ -67,3 +67,72 @@ test("publication remains readable when current row is absent, and is scoped to 
   );
   expect(screen.queryByText("Published version")).toBeNull();
 });
+
+test("read-only action lists distinguish current proposals from published drafts", () => {
+  const proposal = {
+    id: "reply",
+    title: "Reply",
+    target: "Ticket 123",
+    draft: "Original proposal",
+  };
+  const { container } = render(
+    <ReadonlyArtifactRows.Provider
+      value={[
+        {
+          ...current,
+          kind: "actions",
+          input: "",
+          actions: [{ ...proposal, draft: "Updated proposal" }],
+        },
+        {
+          ...publication,
+          snapshot: { title: "Replies", markdown: "", actions: [proposal] },
+        },
+      ]}
+    >
+      <ArtifactCards threadId="thread" messageId="message" />
+    </ReadonlyArtifactRows.Provider>,
+  );
+  expect(screen.getByText("Current proposals")).toBeTruthy();
+  expect(screen.getByText("Updated proposal")).toBeTruthy();
+  expect(screen.getByText("Original proposal")).toBeTruthy();
+  expect(screen.queryByRole("button")).toBeNull();
+  expect(container.querySelector("input,textarea,select")).toBeNull();
+});
+
+test("read-only PR cards display cached metadata and a canonical external link", () => {
+  const pr = {
+    repository: "sagemathinc/cocalc-ai",
+    number: 509,
+    state: "open",
+    draft: true,
+    checks: "unknown",
+    fetched_at: "2026-09-10T00:00:00Z",
+    base_sha: "a".repeat(40),
+    head_sha: "b".repeat(40),
+  };
+  render(
+    <ReadonlyArtifactRows.Provider
+      value={[
+        {
+          ...publication,
+          snapshot: { title: "PR", markdown: "Description", github_pr: pr },
+        },
+      ]}
+    >
+      <ArtifactCards threadId="thread" messageId="message" />
+    </ReadonlyArtifactRows.Provider>,
+  );
+  expect(screen.getByText(/Cached metadata retrieved/)).toBeTruthy();
+  // Expand the native details element before querying its accessible link.
+  screen.getByText("Published version").parentElement!.setAttribute("open", "");
+  expect(
+    screen.getByRole("link", { name: "sagemathinc/cocalc-ai #509" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/sagemathinc/cocalc-ai/pull/509",
+  );
+  expect(
+    screen.queryByRole("button", { name: /Refresh|Fetch|Review/ }),
+  ).toBeNull();
+});
