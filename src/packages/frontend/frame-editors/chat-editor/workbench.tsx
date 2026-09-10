@@ -223,7 +223,7 @@ export function Workbench({
         actions.set_active_id(origin);
       }
     });
-    focusChatFrameInput(origin);
+    focusChatFrameInput(origin, { waitForInput: true });
   };
   if (artifact.kind === "file")
     return (

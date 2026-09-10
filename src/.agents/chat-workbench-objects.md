@@ -141,6 +141,24 @@ matrix remain open.
 
 ## Live Acceptance Checkpoint (2026-09-10)
 
+Maximized action review at 320x812 is verified on dedicated browser
+`HH3NHQMY82` (spawn `workbench-layout-20260910`). Build `c1354bb1cb` enabled
+review while the originating composer was unmounted. Editing Alex's fictional
+draft, approving it, and returning decisions staged one approved and one
+unreviewed action in the original QA thread without sending a message. Reload
+preserved the exact edited draft and decision. Native screenshot inspection
+confirmed readable labels and controls without horizontal overflow.
+
+That live check exposed a delayed-composer focus race: focus remained on the
+restored frame. The follow-up waits for the editable input with a bounded
+MutationObserver, ignores read-only Slate messages, and cancels when the user
+moves focus elsewhere. After rebuilding with this follow-up, the same live
+return flow focused the `Ask Codex...` textbox and retained staged decisions.
+The focused workbench/focus suites pass (21 tests), frontend typecheck and lint
+pass, and the development static build passes. No QA action was executed or
+feedback message sent. This does not establish viewer permissions, successful
+project-side GitHub refresh, or the remaining full acceptance matrix.
+
 Built frontend revision `92d3b04c00` and restored the stopped local seed hub
 (port 9100); other bays were left running. Dedicated browser `8QDTTQAT9G`
 (spawn `workbench-objects-20260910`) is usable, unlike the older Chromium QA

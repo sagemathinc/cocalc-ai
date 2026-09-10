@@ -240,7 +240,9 @@ test.each([false, true])(
         quote: "Original passage",
       }),
     );
-    expect(focusChatFrameInput).toHaveBeenCalledWith("origin");
+    expect(focusChatFrameInput).toHaveBeenCalledWith("origin", {
+      waitForInput: true,
+    });
     if (maximized)
       expect(actions.set_frame_full).toHaveBeenCalledWith("origin");
     else expect(actions.set_active_id).toHaveBeenCalledWith("origin");
