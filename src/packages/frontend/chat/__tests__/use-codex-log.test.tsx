@@ -95,6 +95,10 @@ class FakeDstream extends EventEmitter {
 
   close = jest.fn();
   getAll = jest.fn(() => [...this.messages]);
+  get = jest.fn((index: number) => this.messages[index]);
+  get length() {
+    return this.messages.length;
+  }
   seqs = jest.fn(() => [...this.transportSeqs]);
   getRecoveryState = jest.fn(() => this.recoveryState);
   recoverNow = jest.fn(async () => {
@@ -642,7 +646,7 @@ describe("useCodexLog", () => {
     });
   });
 
-  it("restores a running preview from memory and resumes after its stream sequence", async () => {
+  it("restores a running preview without inferring a consumed prefix from its highest sequence", async () => {
     const first = new FakeDstream(
       [
         {
@@ -707,14 +711,51 @@ describe("useCodexLog", () => {
     expect(dstreamMock.mock.calls[1][0]).toEqual(
       expect.objectContaining({
         name: "preview-stream-resume",
-        start_seq: 42,
       }),
     );
+    expect(dstreamMock.mock.calls[1][0]).not.toHaveProperty("start_seq");
     await waitFor(() => {
       expect(screen.getByTestId("live-response").textContent).toBe(
         "Already visible output. Newly missed output.",
       );
     });
+  });
+
+  it("does not cache a buffered receipt as applied before its text is flushed", async () => {
+    const initial = { type: "status", seq: 1, time: 10, status: "running" };
+    const pending = {
+      type: "event",
+      seq: 2,
+      time: 20,
+      event: { type: "message", text: "Buffered text", delta: true },
+    };
+    const first = new FakeDstream([initial], "ready", [1]);
+    const second = new FakeDstream([pending], "ready", [2]);
+    dstreamMock.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    let latest: any[] = [];
+    function Probe() {
+      const { events } = useCodexLog({
+        enabled: true,
+        generating: true,
+        projectId: "project-1",
+        logStore: "acp-log",
+        logKey: "log-buffered-resume",
+        liveLogStream: "stream-buffered-resume",
+        liveStreamIsProjection: true,
+      });
+      latest = events ?? [];
+      return null;
+    }
+    const view = render(<Probe />);
+    await waitFor(() => expect(latest.map((event) => event.seq)).toEqual([1]));
+    act(() => first.push(pending, 2));
+    expect(latest.map((event) => event.seq)).toEqual([1]);
+    view.unmount();
+    render(<Probe />);
+    await waitFor(() =>
+      expect(latest.map((event) => event.seq)).toEqual([1, 2]),
+    );
+    expect(dstreamMock.mock.calls[1][0]).toHaveProperty("start_seq", 2);
   });
 
   it("restores a preview when its stream reference changes while offline", async () => {
@@ -1122,6 +1163,143 @@ describe("useCodexLog", () => {
       resetBackoff: true,
     });
   });
+
+  it("does not replay coalesced text or rebuild old payloads on repeated recovery", async () => {
+    const stream = new FakeDstream(
+      [
+        {
+          type: "event",
+          seq: 10,
+          time: 10,
+          event: { type: "message", text: "Hel", delta: true },
+        },
+        {
+          type: "event",
+          seq: 11,
+          time: 20,
+          event: { type: "message", text: "lo", delta: true },
+        },
+      ],
+      "ready",
+      [41, 42],
+    );
+    dstreamMock.mockResolvedValue(stream);
+    render(
+      <LiveResponseComponent
+        generating
+        liveStreamIsProjection
+        logKey="log-recovery-coalesced"
+        liveLogStream="stream-recovery-coalesced"
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("live-response").textContent).toBe("Hello"),
+    );
+    const reconnect = reconnectRegisterMock.mock.calls[0][0].reconnect;
+    stream.get.mockClear();
+    stream.getAll.mockClear();
+    await act(async () => {
+      await reconnect();
+      await reconnect();
+    });
+    expect(screen.getByTestId("live-response").textContent).toBe("Hello");
+    expect(stream.get).not.toHaveBeenCalled();
+    expect(stream.getAll).not.toHaveBeenCalled();
+  });
+
+  it("recovers a missed batch before a newer live receipt without replaying that receipt", async () => {
+    const batch = (seq: number) => ({
+      type: "status",
+      seq,
+      time: seq,
+      status: "running",
+    });
+    const stream = new FakeDstream([batch(1)], "ready", [101]);
+    dstreamMock.mockResolvedValue(stream);
+    let latest: any[] = [];
+    function Probe() {
+      const { events } = useCodexLog({
+        enabled: true,
+        generating: true,
+        projectId: "project-1",
+        logStore: "acp-log",
+        logKey: "log-recovery-gap",
+        liveLogStream: "stream-recovery-gap",
+        liveStreamIsProjection: true,
+      });
+      latest = events ?? [];
+      return null;
+    }
+    render(<Probe />);
+    await waitFor(() => expect(latest.map((event) => event.seq)).toEqual([1]));
+    stream.pushSilently(batch(2), 102);
+    act(() => stream.push(batch(3), 103));
+    await waitFor(() =>
+      expect(latest.map((event) => event.seq)).toEqual([1, 3]),
+    );
+    stream.get.mockClear();
+    await act(async () => reconnectRegisterMock.mock.calls[0][0].reconnect());
+    expect(latest.map((event) => event.seq)).toEqual([1, 2, 3]);
+    expect(stream.get.mock.calls).toEqual([[1]]);
+  });
+
+  it.each(["change", "snapshot", "cached resume"])(
+    "preserves a snapshot gap through %s",
+    async (delivery) => {
+      const batch = (seq: number) => ({
+        type: "status",
+        seq,
+        time: seq,
+        status: "running",
+      });
+      const stream = new FakeDstream(
+        [batch(40), batch(42)],
+        "recovering",
+        [40, 42],
+      );
+      dstreamMock.mockResolvedValue(stream);
+      let latest: any[] = [];
+      function Probe() {
+        const { events } = useCodexLog({
+          enabled: true,
+          generating: true,
+          projectId: "project-1",
+          logStore: "acp-log",
+          logKey: `log-partial-${delivery}`,
+          liveLogStream: `stream-partial-${delivery}`,
+          liveStreamIsProjection: true,
+        });
+        latest = events ?? [];
+        return null;
+      }
+      const view = render(<Probe />);
+      await waitFor(() =>
+        expect(latest.map((event) => event.seq)).toEqual([40, 42]),
+      );
+      if (delivery === "change") {
+        act(() => stream.push(batch(41), 41));
+      } else if (delivery === "snapshot") {
+        stream.pushSilently(batch(41), 41);
+        await act(async () =>
+          reconnectRegisterMock.mock.calls[0][0].reconnect(),
+        );
+      } else {
+        view.unmount();
+        const restored = new FakeDstream(
+          [batch(40), batch(41), batch(42)],
+          "ready",
+          [40, 41, 42],
+        );
+        dstreamMock.mockResolvedValue(restored);
+        render(<Probe />);
+        await waitFor(() => expect(dstreamMock).toHaveBeenCalledTimes(2));
+        expect(dstreamMock.mock.calls[1][0]).not.toHaveProperty("start_seq");
+      }
+      await waitFor(() =>
+        expect(latest.map((event) => event.seq)).toEqual([40, 41, 42]),
+      );
+    },
+  );
 
   it("reconciles hook state after forcing a ready-looking dstream recovery", async () => {
     const stream = new FakeDstream([
