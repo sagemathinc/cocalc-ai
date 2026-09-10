@@ -307,6 +307,7 @@ export function ActiveUsersMapAdmin() {
   const [hideGmail, setHideGmail] = useState(readHideGmail);
   const liveRequest = useRef(0);
   const detailsRequest = useRef(0);
+  const detailsHideGmail = useRef<boolean | undefined>(undefined);
   const userRequest = useRef(0);
   const userTriggerRef = useRef<HTMLElement | null>(null);
   const snapshotRequest = useRef(0);
@@ -364,9 +365,23 @@ export function ActiveUsersMapAdmin() {
             ? { excluded_email_domains: [GMAIL_DOMAIN] }
             : undefined),
         });
-      if (request === detailsRequest.current) setDetails(next);
+      if (request === detailsRequest.current) {
+        setDetails(next);
+        detailsHideGmail.current = hideGmail;
+      }
     } catch (err) {
-      if (request === detailsRequest.current) setDetailsError(`${err}`);
+      if (request === detailsRequest.current) {
+        setDetailsError(`${err}`);
+        const appliedHideGmail = detailsHideGmail.current;
+        if (appliedHideGmail != null && appliedHideGmail !== hideGmail) {
+          setHideGmail(appliedHideGmail);
+          try {
+            persistHideGmail(appliedHideGmail);
+          } catch {
+            // The displayed chart and in-memory preference still agree.
+          }
+        }
+      }
     } finally {
       if (request === detailsRequest.current) setDetailsLoading(false);
     }
@@ -530,6 +545,7 @@ export function ActiveUsersMapAdmin() {
   function selectLiveGroup(group?: string) {
     detailsRequest.current += 1;
     setDetails(undefined);
+    detailsHideGmail.current = undefined;
     setDetailsLoading(false);
     setDetailsError(undefined);
     setSelectedGroup(group);

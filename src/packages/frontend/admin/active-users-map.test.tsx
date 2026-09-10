@@ -340,6 +340,42 @@ describe("ActiveUsersMapAdmin", () => {
     ).toBeChecked();
   });
 
+  it("restores the applied filter when a chart refresh fails", async () => {
+    render(<ActiveUsersMapAdmin />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Select map location" }),
+    );
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "Hide gmail.com from chart",
+    });
+    expect(checkbox).not.toBeChecked();
+
+    mockGetActiveUserMapDetails.mockRejectedValueOnce(Error("bay offline"));
+    fireEvent.click(checkbox);
+
+    await waitFor(() =>
+      expect(mockGetActiveUserMapDetails).toHaveBeenCalledWith({
+        active_minutes: 15,
+        group_by: "country",
+        scope: "group",
+        group_id: "CA",
+        excluded_email_domains: ["gmail.com"],
+      }),
+    );
+    await waitFor(() => expect(checkbox).not.toBeChecked());
+    expect(
+      window.localStorage.getItem("cocalc:admin:activeUsersMapHideGmail"),
+    ).toBe("false");
+    await waitFor(() =>
+      expect(mockGetActiveUserMapDetails).toHaveBeenLastCalledWith({
+        active_minutes: 15,
+        group_by: "country",
+        scope: "group",
+        group_id: "CA",
+      }),
+    );
+  });
+
   it("warns when a detail fetch is missing a bay", async () => {
     mockGetActiveUserMapDetails.mockResolvedValue({
       checked_at: "2026-08-27T00:00:00.000Z",
