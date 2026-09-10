@@ -146,6 +146,18 @@ matrix remain open.
 
 ## Live Acceptance Checkpoint (2026-09-10)
 
+Action source-revision acceptance on merged build `52778b23b3`: used the
+authenticated CLI/backend artifact update path to revise only Alex's fictional
+proposal in `qa-actions-20260910`, with the observed base and operation ID
+`qa-source-revision-20260910`. Retrying the identical operation returned
+`replayed: true`. Reopening the card on `WRMYM7B97U` retained the prior reviewed
+draft but disabled both its editing and Return decisions. Explicitly choosing
+Use updated proposal loaded the revised draft and reset the decision to Not
+reviewed. No feedback was sent and no external action was performed. This
+checks stale review restoration/adoption; it does not assert a live update
+while the card stayed mounted. Hosted run `34462407685` now has successful plan
+and checks jobs; build remains in progress.
+
 Merged build `52778b23b3` passes the development static build. On dedicated
 browser `WRMYM7B97U`, inspected native screenshots at 320x812 in dark mode:
 action draft/target/comment fields and decisions remain readable and usable;
