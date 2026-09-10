@@ -111,7 +111,9 @@ export async function fetchPRCommits(
 
 export async function refreshPR(projectId: string, value: ArtifactGitHubPR) {
   const pr = validateArtifactGitHubPR(value);
-  const text = await run(projectId, pr.local?.path ?? ".", "gh", [
+  // GitHub requests identify the repository explicitly; a local worktree may
+  // have been removed since publication and is needed only for local review.
+  const text = await run(projectId, ".", "gh", [
     "api",
     "--hostname",
     "github.com",
@@ -128,7 +130,7 @@ export async function refreshPR(projectId: string, value: ArtifactGitHubPR) {
   let checks: any[] = [];
   try {
     const rollup = JSON.parse(
-      await run(projectId, pr.local?.path ?? ".", "gh", [
+      await run(projectId, ".", "gh", [
         "pr",
         "view",
         String(pr.number),

@@ -111,6 +111,38 @@ test("refresh normalizes GitHub metadata and conservatively reports pending chec
   expect(exec.mock.calls[0][0].args).toContain(
     "repos/sagemathinc/cocalc-ai/pulls/509",
   );
+  expect(exec.mock.calls.every(([options]) => options.path === ".")).toBe(true);
+});
+
+test("remote refresh does not require the associated worktree to still exist", async () => {
+  exec.mockImplementation(async ({ path, command, args }) => {
+    if (path === pr.local.path) throw Error("worktree was removed");
+    expect(command).toBe("gh");
+    return {
+      exit_code: 0,
+      stdout: JSON.stringify(
+        args[0] === "api"
+          ? {
+              title: "Still available on GitHub",
+              body: null,
+              state: "open",
+              draft: false,
+              base_sha: pr.base_sha,
+              head_sha: pr.head_sha,
+            }
+          : {
+              headRefOid: pr.head_sha,
+              statusCheckRollup: [{ conclusion: "SUCCESS" }],
+            },
+      ),
+    };
+  });
+  const refreshed = await refreshPR("project", pr);
+  expect(refreshed).toMatchObject({
+    title: "Still available on GitHub",
+    github_pr: { checks: "passing", local: pr.local },
+  });
+  expect(exec).toHaveBeenCalledTimes(2);
 });
 
 test("checks for a newer head are not attributed to the fetched PR revision", async () => {

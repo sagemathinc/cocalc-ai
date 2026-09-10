@@ -99,6 +99,11 @@ common directory, a matching GitHub fetch remote and both pinned commit objects.
 An explicit fetch retrieves those SHAs without checking out or updating a branch.
 Refresh uses the project's existing gh credentials, validates remote data, and
 saves against the observed artifact base. Publication snapshots remain unchanged.
+Remote metadata and check requests run from the project default directory,
+not the associated worktree. A removed worktree therefore does not prevent
+refreshing the online PR; local review still independently verifies the saved
+repository association and commit availability. A regression covers a missing
+worktree with successful metadata/check requests and preserves that association.
 The UI discloses that refreshed metadata is visible to chat collaborators.
 
 The installed gh version lacks baseRefOid in pr view, so refresh uses the PR REST
@@ -140,6 +145,14 @@ approval actions. Live browser/agent acceptance and the complete acceptance
 matrix remain open.
 
 ## Live Acceptance Checkpoint (2026-09-10)
+
+Viewer prerequisites rechecked after `53f93ff3a5`: the `workbench-viewer-qa`
+profile has no active credentials (`auth status --check`), and the owner browser
+session list contains only the dedicated owner QA browser. Do not count owner
+preview tests as viewer acceptance. A new authenticated viewer session is still
+needed. PR operation/component suites pass (13 tests) after decoupling remote
+refresh from the local worktree; frontend typecheck and lint pass. Successful
+live project-side GitHub refresh remains unverified.
 
 Maximized action review at 320x812 is verified on dedicated browser
 `HH3NHQMY82` (spawn `workbench-layout-20260910`). Build `c1354bb1cb` enabled
