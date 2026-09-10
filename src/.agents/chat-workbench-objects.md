@@ -172,6 +172,16 @@ acceptance matrix remain unverified. Do not infer completion from this checkpoin
 
 ## Acceptance
 
+Built `020aeaf0b4` and reloaded the previously crashed QA browser. New session
+`8LZYATQUBD` rendered the chat and artifact cards without the readiness crash or
+stuck loading state. Opened the README file card, then Open file; typed browser
+file listing confirmed `/home/user/cocalc-ai/README.md` opened in the normal
+editor while the chat remained open. The workbench preview occupied the full
+available frame (844 px; content area 758 px at 1400x950). Captured and inspected
+dark-mode file preview in `/tmp/workbench-file-dark.png`, using DOM capture of
+`#cocalc-webapp-container`. Restored the account's original System appearance.
+This verifies the text-file path, not binary/viewer/narrow-layout acceptance.
+
 File-selection smoke check on `G67DCMTM72`: after closing Git dialogs, selecting
 README text and invoking Comment staged artifact feedback and focused Ask Codex.
 No feedback message was sent. Open file and visual layout remain unverified.
