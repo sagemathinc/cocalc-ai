@@ -26,7 +26,10 @@ import type {
   EditorDescription,
 } from "../frame-tree/types";
 import type { Actions } from "./actions";
-import { useArtifactChanges } from "@cocalc/frontend/chat/artifacts";
+import {
+  artifactSyncdbReady,
+  useArtifactChanges,
+} from "@cocalc/frontend/chat/artifacts";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
@@ -115,7 +118,8 @@ export function Workbench({
   let artifact;
   let publications: ReturnType<typeof validateArtifactPublication>[] = [];
   try {
-    if (!syncdb) return <div role="status">Loading artifact...</div>;
+    if (!artifactSyncdbReady(syncdb))
+      return <div role="status">Loading artifact...</div>;
     artifact = readArtifact(syncdb, target).artifact;
     const rows = syncdb.get({
       event: "chat-artifact-publication",

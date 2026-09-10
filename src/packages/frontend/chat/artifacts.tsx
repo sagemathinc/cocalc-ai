@@ -10,15 +10,23 @@ import type { ChatActions } from "./actions";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { ReadonlyArtifactCards } from "./readonly-artifacts";
 
+export function artifactSyncdbReady(syncdb: any): boolean {
+  return !!syncdb && (!syncdb.get_state || syncdb.get_state() === "ready");
+}
+
 export function useArtifactChanges(syncdb: any) {
   const [version, setVersion] = useState(0);
   useEffect(() => {
     if (!syncdb) return;
     const changed = () => setVersion((n) => n + 1);
     syncdb.on("change", changed);
+    syncdb.on("ready", changed);
+    syncdb.on("closed", changed);
     changed();
     return () => {
       syncdb.removeListener("change", changed);
+      syncdb.removeListener("ready", changed);
+      syncdb.removeListener("closed", changed);
     };
   }, [syncdb]);
   return version;
@@ -37,6 +45,8 @@ export function ArtifactCards({
   if (!actions?.syncdb)
     return <ReadonlyArtifactCards threadId={threadId} messageId={messageId} />;
   if (!threadId || !messageId) return null;
+  if (!artifactSyncdbReady(actions.syncdb))
+    return <div role="status">Loading artifacts...</div>;
   const found = actions.syncdb.get({
     event: "chat-artifact-publication",
     thread_id: threadId,

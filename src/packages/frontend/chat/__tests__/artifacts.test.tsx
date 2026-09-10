@@ -5,6 +5,51 @@ import { ArtifactCards } from "../artifacts";
 
 afterEach(() => jest.restoreAllMocks());
 
+test("cards wait for SyncDB readiness and recover without a change event", () => {
+  let state = "init";
+  const rows: any[] = [];
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_state: () => state,
+    get_one: () => undefined,
+    set: (row) => rows.push(...(Array.isArray(row) ? row : [row])),
+    get: jest.fn(() => {
+      if (state !== "ready") throw Error("must be ready -- get");
+      return rows.filter((row) => row.event === "chat-artifact-publication");
+    }),
+  });
+  publishArtifact(syncdb, {
+    thread_id: "thread",
+    artifact_id: "file",
+    operation_id: "op",
+    message_id: "message",
+    title: "File",
+    markdown: "",
+    file: { path: "/plan.md" },
+  });
+  const { unmount } = render(
+    <ArtifactCards
+      actions={{ syncdb } as any}
+      threadId="thread"
+      messageId="message"
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Loading artifacts");
+  expect(syncdb.get).not.toHaveBeenCalled();
+  act(() => {
+    state = "ready";
+    syncdb.emit("ready");
+  });
+  expect(screen.getByText("/plan.md")).toBeTruthy();
+  act(() => {
+    state = "closed";
+    syncdb.emit("closed");
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("Loading artifacts");
+  unmount();
+  for (const event of ["ready", "closed", "change"])
+    expect(syncdb.listenerCount(event)).toBe(0);
+});
+
 test.each([1024, 375])(
   "publication card preserves frames and opens appropriately at width %i",
   (width) => {

@@ -172,6 +172,19 @@ acceptance matrix remain unverified. Do not infer completion from this checkpoin
 
 ## Acceptance
 
+File-selection smoke check on `G67DCMTM72`: after closing Git dialogs, selecting
+README text and invoking Comment staged artifact feedback and focused Ask Codex.
+No feedback message was sent. Open file and visual layout remain unverified.
+
+Fresh browser `GPB9TDP768` (spawn `workbench-layout-20260910`) exposed a startup
+crash: ArtifactCards called SyncDB.get before ready. Artifact cards and the
+workbench now guard readiness, and the shared subscription listens for ready
+and closed as well as change. Regression coverage exercises initialization,
+ready without change, close, and listener cleanup. Native screenshots work
+with selector `#cocalc-webapp-container`; body and html have zero layout height.
+The older spawn's browser-ID mapping became stale after reload. Latest crash
+fix still requires rebuilding and fresh-browser acceptance.
+
 Live build `38056890f6` acceptance: after browser reload (new browser ID
 `G67DCMTM72`), Alex's edited draft and Approve exact draft decision both restored.
 The PR comparison displayed origin-thread routing without worktree consent.
