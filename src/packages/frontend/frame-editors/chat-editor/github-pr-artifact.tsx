@@ -170,6 +170,7 @@ export function GitHubPRArtifact({
             sourcePath={sourcePath}
             cwdOverride={reviewTarget.local.path}
             inferCommitWorktree={false}
+            feedbackToOriginThread
             commitHash={reviewTarget.head_sha}
             initialComparison={{
               commonDirectory: reviewTarget.local.common_directory,

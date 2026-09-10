@@ -12,7 +12,7 @@ jest.mock("./github-pr-operations", () => ({
 }));
 jest.mock("@cocalc/frontend/chat/git-commit-drawer", () => ({
   GitCommitDrawer: (props) => (
-    <div data-testid="review">
+    <div data-testid="review" data-origin-thread={props.feedbackToOriginThread}>
       {JSON.stringify(props.initialComparison)}
       <button
         disabled={!props.onRequestAgentTurn}
@@ -71,6 +71,10 @@ test("opens an explicit comparison and keeps it pinned across metadata refresh",
   expect(document.activeElement).toBe(button);
   fireEvent.click(button);
   expect(await screen.findByTestId("review")).toHaveTextContent(pr.head_sha);
+  expect(screen.getByTestId("review")).toHaveAttribute(
+    "data-origin-thread",
+    "true",
+  );
   rerender(
     <GitHubPRArtifact
       artifact={{ ...artifact, github_pr: { ...pr, head_sha: "c".repeat(40) } }}

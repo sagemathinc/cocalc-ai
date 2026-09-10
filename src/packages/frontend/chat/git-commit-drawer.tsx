@@ -285,6 +285,7 @@ interface GitCommitDrawerProps {
   inferCommitWorktree?: boolean;
   initialHistory?: GitReviewHistoryRoute;
   initialComparison?: GitComparisonRoute;
+  feedbackToOriginThread?: boolean;
   onComparisonChange?: (route?: GitComparisonRoute) => void;
   commitHash?: string;
   commitSelectionRequestToken?: number;
@@ -478,6 +479,7 @@ export function GitCommitDrawer({
   cwdOverride,
   initialHistory,
   initialComparison,
+  feedbackToOriginThread = false,
   onComparisonChange,
   commitHash,
   commitSelectionRequestToken = 0,
@@ -3898,6 +3900,7 @@ export function GitCommitDrawer({
           accountId={accountId}
           fontSize={effectiveFontSize}
           onRequestAgentTurn={requestAgentTurn}
+          feedbackToOriginThread={feedbackToOriginThread}
           onClose={() => {
             setComparisonOpen(false);
             onComparisonChange?.(undefined);

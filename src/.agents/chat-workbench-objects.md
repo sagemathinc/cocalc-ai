@@ -171,6 +171,16 @@ acceptance matrix remain unverified. Do not infer completion from this checkpoin
 
 ## Acceptance
 
+Further live PR acceptance: the missing-commit guard retained the card, explicit
+Fetch PR commits succeeded, and Review locally opened the pinned merge-base
+comparison (50 changed files). The rendered comparison exposed an inherited
+worktree-consent/HEAD-equality restriction on feedback. PR cards now explicitly
+route comparison feedback to their existing origin-thread callback, retaining
+saved-review conflict checks and revision context without requiring a checkout.
+Other Git callers retain their worktree dispatch checks. Three focused suites
+pass (18 tests), with frontend typecheck and lint passing. Live feedback
+submission with this fix remains to be checked; no QA message was sent here.
+
 Read-only file cards now offer an on-demand current-saved-file preview using
 the existing file renderer and the host project context. No file is loaded
 until the native disclosure is expanded; collapsing unmounts the preview.

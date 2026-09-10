@@ -32,6 +32,7 @@ export function ComparisonModal({
   initialComparison,
   onTargetChange,
   onRequestAgentTurn,
+  feedbackToOriginThread = false,
 }: {
   repository: RepositoryContext;
   commit: string;
@@ -42,6 +43,7 @@ export function ComparisonModal({
   initialComparison?: GitComparisonRoute;
   onTargetChange?: (route: GitComparisonRoute) => void;
   onRequestAgentTurn?: RequestComparisonAgentTurn;
+  feedbackToOriginThread?: boolean;
 }) {
   const [target, setTarget] = useState<ImmutableReviewTarget>();
   const [layoutReady, setLayoutReady] = useState(false);
@@ -128,6 +130,7 @@ export function ComparisonModal({
               onEditing={setEditing}
               onLeave={onClose}
               onRequestAgentTurn={onRequestAgentTurn}
+              feedbackToOriginThread={feedbackToOriginThread}
             />
           </Suspense>
         )}

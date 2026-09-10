@@ -59,6 +59,7 @@ export function TargetReviewPane({
   onEditing,
   onLeave,
   onRequestAgentTurn,
+  feedbackToOriginThread = false,
 }: {
   target: ImmutableReviewTarget;
   accountId: string;
@@ -67,6 +68,7 @@ export function TargetReviewPane({
   onEditing: (editing: boolean) => void;
   onLeave: () => void;
   onRequestAgentTurn?: RequestComparisonAgentTurn;
+  feedbackToOriginThread?: boolean;
 }) {
   const scope = reviewTargetKey(target);
   const activeScope = useRef(scope);
@@ -244,7 +246,7 @@ export function TargetReviewPane({
   const submit = async () => {
     if (
       !onRequestAgentTurn ||
-      !agentConsent ||
+      (!feedbackToOriginThread && !agentConsent) ||
       !ready ||
       dirty ||
       saving.current ||
@@ -267,30 +269,42 @@ export function TargetReviewPane({
           "The saved review changed. Reload and reconcile before sending feedback.",
         );
       const head = target.kind === "commit" ? target.commit : target.head;
-      await dispatchWorktreeFeedback({
-        prompt: comparisonFeedbackPrompt(target, snapshot.body),
-        title: "Address comparison review",
-        send: onRequestAgentTurn,
-        isCurrent: () => mounted.current && activeScope.current === scope,
-        validate: async () => {
-          projectGitReader.invalidateDiscovery(target.repository.projectId);
-          const discovered = await projectGitReader.discover(
-            target.repository.projectId,
-            target.repository.locator,
-          );
-          const tree = discovered.worktrees.find(
-            (tree) => tree.path === target.repository.locator,
-          );
-          return validateAgentWorktree(
-            projectGitReader,
-            target.repository,
-            target.repository.locator,
-            head,
-            head,
-            tree?.branch,
-          );
-        },
-      });
+      if (feedbackToOriginThread) {
+        if (!mounted.current || activeScope.current !== scope)
+          throw Error("The review target changed before sending feedback.");
+        // This callback addresses an existing thread, not a worktree mutation.
+        await onRequestAgentTurn(
+          comparisonFeedbackPrompt(target, snapshot.body),
+          {
+            title: "Address comparison review",
+            workingDirectory: target.repository.locator,
+          },
+        );
+      } else
+        await dispatchWorktreeFeedback({
+          prompt: comparisonFeedbackPrompt(target, snapshot.body),
+          title: "Address comparison review",
+          send: onRequestAgentTurn,
+          isCurrent: () => mounted.current && activeScope.current === scope,
+          validate: async () => {
+            projectGitReader.invalidateDiscovery(target.repository.projectId);
+            const discovered = await projectGitReader.discover(
+              target.repository.projectId,
+              target.repository.locator,
+            );
+            const tree = discovered.worktrees.find(
+              (tree) => tree.path === target.repository.locator,
+            );
+            return validateAgentWorktree(
+              projectGitReader,
+              target.repository,
+              target.repository.locator,
+              head,
+              head,
+              tree?.branch,
+            );
+          },
+        });
       sent = true;
       const now = Date.now();
       const submissionId = `git-comparison-${crypto.randomUUID()}`;
@@ -540,19 +554,21 @@ export function TargetReviewPane({
       </Button>{" "}
       {onRequestAgentTurn && (
         <>
-          <WorktreeAgentConsent
-            path={target.repository.locator}
-            checked={agentConsent}
-            disabled={busy}
-            onChange={setAgentConsent}
-          />
+          {!feedbackToOriginThread && (
+            <WorktreeAgentConsent
+              path={target.repository.locator}
+              checked={agentConsent}
+              disabled={busy}
+              onChange={setAgentConsent}
+            />
+          )}
           <Button
             disabled={
               !ready ||
               busy ||
               dirty ||
               Boolean(editor) ||
-              !agentConsent ||
+              (!feedbackToOriginThread && !agentConsent) ||
               heads.length !== 1 ||
               (!draft.body.note.trim() &&
                 !Object.values(draft.body.comments).some(
@@ -564,7 +580,9 @@ export function TargetReviewPane({
             Send saved review to agent
           </Button>
           <div>
-            The working copy must still be at the comparison's head revision.
+            {feedbackToOriginThread
+              ? "Feedback returns to the originating chat thread with these pinned revisions. No branch is changed."
+              : "The working copy must still be at the comparison's head revision."}
           </div>
         </>
       )}

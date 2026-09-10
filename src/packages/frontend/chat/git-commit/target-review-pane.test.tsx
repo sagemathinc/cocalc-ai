@@ -180,6 +180,33 @@ test("saved comparison feedback requires keyboard opt-in and carries pinned endp
   ).toEqual(expect.any(Number));
 });
 
+test("origin-thread feedback works without worktree consent or matching HEAD", async () => {
+  savedFeedback();
+  jest.mocked(validateAgentWorktree).mockRejectedValue(Error("HEAD differs"));
+  const send = jest.fn();
+  const user = userEvent.setup();
+  render(
+    <TargetReviewPane
+      {...props}
+      feedbackToOriginThread
+      onRequestAgentTurn={send}
+    />,
+  );
+  const button = await screen.findByRole("button", {
+    name: "Send saved review to agent",
+  });
+  await waitFor(() => expect(button).toBeEnabled());
+  expect(
+    screen.queryByRole("checkbox", { name: /Send agent feedback in/ }),
+  ).toBeNull();
+  button.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+  expect(send.mock.calls[0][0]).toContain(target.base);
+  expect(send.mock.calls[0][0]).toContain(target.head);
+  expect(validateAgentWorktree).not.toHaveBeenCalled();
+});
+
 test("changed saved heads prevent comparison dispatch", async () => {
   savedFeedback();
   const send = jest.fn();
