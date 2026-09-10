@@ -32,6 +32,7 @@ import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { FileArtifact } from "./file-artifact";
+import { GitHubPRArtifact } from "./github-pr-artifact";
 
 const DocumentDiff = lazyWithRetry(
   () => import("@cocalc/frontend/components/diff-viewer/document-diff"),
@@ -131,7 +132,12 @@ export function Workbench({
         ...artifact,
         title: pub.snapshot.title,
         input: pub.snapshot.markdown,
-        kind: pub.snapshot.file ? "file" : "markdown",
+        kind: pub.snapshot.github_pr
+          ? "github-pr"
+          : pub.snapshot.file
+            ? "file"
+            : "markdown",
+        github_pr: pub.snapshot.github_pr,
         file: pub.snapshot.file,
       };
     }
@@ -199,6 +205,16 @@ export function Workbench({
                 returnToChat();
               }
         }
+      />
+    );
+  if (artifact.kind === "github-pr")
+    return (
+      <GitHubPRArtifact
+        key={`${artifact.thread_id}:${artifact.artifact_id}`}
+        artifact={artifact}
+        projectId={project_id}
+        sourcePath={path}
+        historical={historical}
       />
     );
   return (

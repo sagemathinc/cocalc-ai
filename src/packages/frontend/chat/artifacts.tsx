@@ -95,6 +95,13 @@ export function ArtifactCards({
             >
               <Space wrap>
                 <strong>{publication.snapshot.title}</strong>
+                {publication.snapshot.github_pr && (
+                  <span>
+                    #{publication.snapshot.github_pr.number} ·{" "}
+                    {publication.snapshot.github_pr.state} · Checks:{" "}
+                    {publication.snapshot.github_pr.checks}
+                  </span>
+                )}
                 <Button
                   size="small"
                   disabled={!actions.frameTreeActions || !actions.frameId}

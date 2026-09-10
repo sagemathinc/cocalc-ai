@@ -1,4 +1,7 @@
 /** Typed Markdown artifacts in the existing Patchflow chat document. */
+import { validateArtifactGitHubPR } from "./artifact-github";
+import type { ArtifactGitHubPR } from "./artifact-github";
+export * from "./artifact-github";
 export const ARTIFACT_TEXT_LIMIT = 32 * 1024;
 export const ARTIFACT_SNAPSHOT_LIMIT = 128 * 1024;
 const DATE = "1970-01-01T00:00:00.000Z";
@@ -31,7 +34,8 @@ export interface ArtifactRecord extends ArtifactTarget {
   sender_id: string;
   date: string;
   schema_version: 1;
-  kind: "markdown" | "file";
+  kind: "markdown" | "file" | "github-pr";
+  github_pr?: ArtifactGitHubPR;
   file?: ArtifactFile;
   title: string;
   input: string;
@@ -45,7 +49,12 @@ export interface ArtifactPublication extends ArtifactTarget {
   schema_version: 1;
   operation_id: string;
   message_id: string;
-  snapshot: { title: string; markdown: string; file?: ArtifactFile };
+  snapshot: {
+    title: string;
+    markdown: string;
+    file?: ArtifactFile;
+    github_pr?: ArtifactGitHubPR;
+  };
 }
 
 export interface ArtifactStore {
@@ -159,7 +168,7 @@ export function validateArtifact(value: unknown): ArtifactRecord {
   if (
     row?.event !== "chat-artifact" ||
     row.schema_version !== 1 ||
-    (row.kind !== "markdown" && row.kind !== "file")
+    !["markdown", "file", "github-pr"].includes(row.kind)
   ) {
     throw Error("unsupported or missing artifact");
   }
@@ -171,6 +180,9 @@ export function validateArtifact(value: unknown): ArtifactRecord {
     artifact_id: row.artifact_id,
     schema_version: 1,
     kind: row.kind,
+    ...(row.kind === "github-pr"
+      ? { github_pr: validateArtifactGitHubPR(row.github_pr) }
+      : {}),
     ...(row.kind === "file" ? { file: validateArtifactFile(row.file) } : {}),
     title: text(row.title, "title", 256),
     input: text(row.input, "Markdown", ARTIFACT_TEXT_LIMIT),
@@ -185,6 +197,8 @@ export function validateArtifactPublication(
     throw Error("unsupported or missing artifact publication");
   }
   const key = artifactPublicationKey(row, row.operation_id);
+  if (row.snapshot?.file !== undefined && row.snapshot?.github_pr !== undefined)
+    throw Error("artifact publication cannot mix object types");
   if (row.sender_id !== key.sender_id || row.date !== DATE)
     throw Error("invalid publication key");
   if (
@@ -205,6 +219,9 @@ export function validateArtifactPublication(
     snapshot: {
       title: text(row.snapshot?.title, "title", 256),
       markdown: text(row.snapshot?.markdown, "Markdown", ARTIFACT_TEXT_LIMIT),
+      ...(row.snapshot?.github_pr === undefined
+        ? {}
+        : { github_pr: validateArtifactGitHubPR(row.snapshot.github_pr) }),
       ...(row.snapshot?.file === undefined
         ? {}
         : { file: validateArtifactFile(row.snapshot.file) }),
@@ -214,6 +231,8 @@ export function validateArtifactPublication(
 
 // Exact content, not a collision-prone hash or a distributed CAS claim.
 export function artifactBase(record: ArtifactRecord): string {
+  if (record.kind === "github-pr")
+    return JSON.stringify([record.title, record.input, record.github_pr]);
   return JSON.stringify(
     record.kind === "file"
       ? [record.title, record.input, record.file]
@@ -232,6 +251,7 @@ export interface PublishArtifactInput extends ArtifactTarget {
   title: string;
   markdown: string;
   file?: ArtifactFile;
+  github_pr?: ArtifactGitHubPR;
   /** Required for updates; obtained from readArtifact. */
   base?: string;
 }
@@ -241,11 +261,19 @@ export function publishArtifact(
   store: ArtifactStore,
   input: PublishArtifactInput,
 ) {
+  if (input.file !== undefined && input.github_pr !== undefined)
+    throw Error("artifact cannot mix object types");
   const artifact = validateArtifact({
     ...artifactKey(input),
     artifact_id: input.artifact_id,
     schema_version: 1,
-    kind: input.file === undefined ? "markdown" : "file",
+    kind:
+      input.github_pr !== undefined
+        ? "github-pr"
+        : input.file === undefined
+          ? "markdown"
+          : "file",
+    github_pr: input.github_pr,
     file: input.file,
     title: input.title,
     input: input.markdown,
@@ -261,6 +289,7 @@ export function publishArtifact(
       title: artifact.title,
       markdown: artifact.input,
       ...(artifact.file ? { file: artifact.file } : {}),
+      ...(artifact.github_pr ? { github_pr: artifact.github_pr } : {}),
     },
   });
   const previous = store.get_one(

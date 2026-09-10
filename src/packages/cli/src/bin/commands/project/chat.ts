@@ -44,7 +44,9 @@ export function registerProjectChatCommands(
 
   const artifact = chat
     .command("artifact")
-    .description("experimental Markdown and file-reference artifacts");
+    .description(
+      "experimental Markdown, file-reference, and GitHub PR artifacts",
+    );
   for (const action of [
     "create",
     "update",

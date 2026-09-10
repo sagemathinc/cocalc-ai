@@ -13,6 +13,12 @@ Patchflow, the existing artifact tools, or CoCalc's editors.
       comments, exact-version approval/rejection, and separate execution outcomes.
       Acceptance uses fictional support replies first, then an explicitly authorized
       real workflow. Never automatically send mail or update tickets during QA.
+      Maintainer decision: approve drafts and return exact decisions to the
+      originating agent, not dedicated email/Zendesk execution integrations.
+      Approval is not execution; no external executor is part of this version.
+      The agent subsequently uses cocalc-cli and appropriate temporary fresh
+      auth to call the existing hub Zendesk service, which records the reason
+      and audit trail. Card decisions do not replace service authorization.
 - [ ] GitHub PR: cached metadata with retrieval time, external link, refresh,
       and local review with explicit repository and base/head SHAs. No checkout,
       worktree creation, or remote mutation when opening a card. Issues are a later
@@ -30,9 +36,10 @@ locator. File content is not copied into chat records.
 
 The workbench supports saved Markdown and source/text previews with an explicit
 Refresh and Open file. Refresh retains the mounted preview; missing/read errors
-retain the previous text with a stale warning. A 1 MiB size gate applies. Active
-formats, images/PDF, selection feedback, live file updates and live acceptance
-are not yet completed. Viewer-only cards currently display locators, not file
+retain the previous text with a stale warning. A 1 MiB text size gate applies.
+Raster images and PDFs use the existing authenticated project-host preview URL
+and read-only renderer. Selection feedback is implemented below; active formats,
+live file updates and live acceptance are not yet completed. Viewer-only cards currently display locators, not file
 contents. Do not mark the file milestone complete from this initial slice.
 
 Reuse typed CLI/backend artifact publication with explicit thread/turn identity,
@@ -73,6 +80,22 @@ snapshot; the agent prompt requires rereading the real file before editing.
 The existing feedback size limits still apply. Component tests cover selecting
 old text, refreshing to new text, and commenting with the old quote and source.
 Live browser acceptance remains outstanding.
+
+## PR Implementation Progress
+
+`github_pr` publication data now carries repository/number, cached status and
+checks, retrieval time, full base/head SHAs, and optional absolute local
+repository/common-directory paths. Title and Markdown description use the
+existing fields. Metadata changes participate in observed-base validation;
+publication rows retain their original metadata. Unknown extra fields are not
+persisted. Only github.com PR URLs are constructed from validated identity.
+
+The workbench preview shows cached status and description, links to GitHub, and
+opens the existing review drawer with a pinned merge-base comparison. An already
+open review retains its SHAs when artifact metadata changes. No checkout or
+worktree creation is triggered. Remote identity verification, authenticated
+refresh/fetch, origin-thread review feedback, viewer-only PR presentation and
+live acceptance remain incomplete.
 
 ## Acceptance
 
