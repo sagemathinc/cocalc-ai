@@ -97,6 +97,12 @@ import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import { aiUsageUnitsToMicrousd } from "@cocalc/server/ai/usage-units";
+import {
+  cancelChatSpeech as cancelChatSpeechLocal,
+  getChatSpeechCapabilities as getChatSpeechCapabilitiesLocal,
+  synthesizeChatSpeech as synthesizeChatSpeechLocal,
+  transcribeChatAudio as transcribeChatAudioLocal,
+} from "@cocalc/server/ai/chat-speech";
 import { getSiteFundedCodexConfiguration } from "@cocalc/server/ai/site-funded-codex-policy";
 import { getSiteFundedCodexPoolStatus } from "@cocalc/server/ai/site-funded-codex-reservations";
 import { reconcileSiteFundedCodexCosts } from "@cocalc/server/ai/site-funded-codex-reconciliation";
@@ -263,6 +269,10 @@ import {
   type PasswordFreshAuthFactorLevel,
 } from "@cocalc/server/auth/auth-sessions";
 import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
+import {
+  impersonationReason,
+  impersonationSupportContext,
+} from "@cocalc/util/impersonation-audit";
 import { upsertAccountImpersonationGrantDirectory } from "@cocalc/server/auth/impersonation-grant-directory";
 import {
   getPrivateAppRouteByHostname as getPrivateAppRouteByHostnameRaw,
@@ -5106,13 +5116,17 @@ export async function createImpersonationGrant({
   session_hash,
   subject_account_id,
   reason,
+  support_ticket_id,
+  consent_reference,
   lang_temp,
 }: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
   subject_account_id: string;
-  reason?: string | null;
+  reason: string;
+  support_ticket_id?: number;
+  consent_reference?: string;
   lang_temp?: string | null;
 }): Promise<{
   grant_id: string;
@@ -5138,6 +5152,11 @@ export async function createImpersonationGrant({
   });
   const cleanedSessionHash = `${session_hash ?? ""}`.trim();
   const cleanedBrowserId = `${browser_id ?? ""}`.trim();
+  const auditReason = impersonationReason(reason);
+  const supportContext = impersonationSupportContext({
+    support_ticket_id,
+    consent_reference,
+  });
   const location = await resolveAccountHomeBay({
     account_id,
     user_account_id: subjectAccountId,
@@ -5154,9 +5173,15 @@ export async function createImpersonationGrant({
     actor_factor_verified_at: session.factor_verified_at ?? null,
     actor_fresh_auth_until: session.fresh_auth_until ?? null,
     actor_factor_level: passwordFreshAuthFactorLevel(session.factor_level),
-    reason,
+    reason: auditReason,
     metadata: {
-      created_via: "admin-ui",
+      created_via:
+        support_ticket_id != null
+          ? "support-cli"
+          : cleanedBrowserId
+            ? "admin-ui"
+            : "admin-cli",
+      ...supportContext,
       browser_id: cleanedBrowserId || undefined,
       cli_session_hash: cleanedSessionHash || undefined,
     },
@@ -6465,6 +6490,64 @@ export async function getOpenAiApiKeyStatus({
   };
 }
 
+async function getChatSpeechHomeClient(account_id: string) {
+  const { home_bay_id } = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  if (home_bay_id === getConfiguredBayId()) return undefined;
+  return createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: home_bay_id,
+  });
+}
+
+export async function getChatSpeechCapabilities(
+  opts: Parameters<typeof getChatSpeechCapabilitiesLocal>[0],
+) {
+  if (!opts.account_id) throw Error("must be signed in");
+  const client = await getChatSpeechHomeClient(opts.account_id);
+  return client
+    ? await client.getChatSpeechCapabilities({
+        ...opts,
+        account_id: opts.account_id,
+      })
+    : await getChatSpeechCapabilitiesLocal(opts);
+}
+
+export async function transcribeChatAudio(
+  opts: Parameters<typeof transcribeChatAudioLocal>[0],
+) {
+  if (!opts.account_id) throw Error("must be signed in");
+  const client = await getChatSpeechHomeClient(opts.account_id);
+  return client
+    ? await client.transcribeChatAudio({ ...opts, account_id: opts.account_id })
+    : await transcribeChatAudioLocal(opts);
+}
+
+export async function synthesizeChatSpeech(
+  opts: Parameters<typeof synthesizeChatSpeechLocal>[0],
+) {
+  if (!opts.account_id) throw Error("must be signed in");
+  const client = await getChatSpeechHomeClient(opts.account_id);
+  return client
+    ? await client.synthesizeChatSpeech({
+        ...opts,
+        account_id: opts.account_id,
+      })
+    : await synthesizeChatSpeechLocal(opts);
+}
+
+export async function cancelChatSpeech(
+  opts: Parameters<typeof cancelChatSpeechLocal>[0],
+) {
+  if (!opts.account_id) throw Error("must be signed in");
+  const client = await getChatSpeechHomeClient(opts.account_id);
+  return client
+    ? await client.cancelChatSpeech({ ...opts, account_id: opts.account_id })
+    : await cancelChatSpeechLocal(opts);
+}
+
 export async function getCodexPaymentSource({
   account_id,
   project_id,
@@ -7597,6 +7680,147 @@ export async function testCloudflareVisitorLocationHeaders({
   }
 }
 
+// Both provisioning paths mutate the same Cloudflare resources and settings.
+// Hold a dedicated seed Postgres session across provisioning and propagation.
+async function withCloudflareProvisioningLock<T>(
+  run: () => Promise<T>,
+): Promise<T> {
+  if (getConfiguredBayId() !== getConfiguredClusterSeedBayId()) {
+    throw Error("Cloudflare provisioning must run on the seed bay");
+  }
+  const client = await getPool().connect();
+  let locked = false;
+  try {
+    const { rows } = await client.query(
+      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+      ["cocalc:cloudflare-provisioning"],
+    );
+    locked = rows[0]?.locked === true;
+    if (!locked) {
+      throw Error(
+        "Cloudflare provisioning is already running; retry when it completes",
+      );
+    }
+    return await run();
+  } finally {
+    try {
+      if (locked) {
+        await client.query("SELECT pg_advisory_unlock(hashtext($1))", [
+          "cocalc:cloudflare-provisioning",
+        ]);
+      }
+    } finally {
+      // Never return a session with an uncertain advisory-lock state to the pool.
+      client.release(true);
+    }
+  }
+}
+
+// Check every registered bay, including temporarily unavailable bays, before writes.
+async function preflightCloudflareBays(): Promise<void> {
+  const { assertManagedBlobEnvironment } =
+    await import("@cocalc/server/cloud/cloudflare-blob-preflight");
+  assertManagedBlobEnvironment();
+  const bays = await listClusterBayRegistry();
+  for (const bayId of [...new Set(bays.map(({ bay_id }) => bay_id))]) {
+    if (bayId === getConfiguredBayId()) continue;
+    let ok = false;
+    try {
+      const result = await getInterBayBridge()
+        .bayOps(bayId, { timeout_ms: 15_000 })
+        .checkCloudflareBlobEnvironment();
+      ok = result?.ok === true;
+    } catch {
+      // Old/unreachable bays must not be mistaken for a clean environment.
+    }
+    if (!ok)
+      throw Error(
+        `Cloudflare preflight failed for bay '${bayId}'. Ensure every bay is upgraded, reachable, and has no COCALC_BLOB_* environment overrides, then retry. No provisioning or settings writes were performed. Delete any unused temporary bootstrap token in Cloudflare.`,
+      );
+  }
+}
+
+// Private inter-bay entry: the entry bay has already authorized the operator.
+export async function bootstrapCloudflareConfigurationOnSeed({
+  account_id,
+  source_bay_id,
+  ...options
+}: import("@cocalc/conat/inter-bay/api").BayOpsCloudflareBootstrapRequest): Promise<CloudflareBootstrapResult> {
+  return await withCloudflareProvisioningLock(async () => {
+    await preflightCloudflareBays();
+    const { resolveBlobStorageConfig } =
+      await import("@cocalc/server/blobs/config");
+    const previousBlobConfig = await resolveBlobStorageConfig();
+    const previousSettings = await getServerSettings();
+    let pinnedToPostgres = false;
+    let propagationFailed = false;
+    const result = await bootstrapCloudflareConfiguration0({
+      ...options,
+      existingR2: {
+        accountId: `${previousSettings.r2_account_id || previousSettings.project_hosts_cloudflare_tunnel_account_id || ""}`,
+        accessKey: `${previousSettings.r2_access_key_id ?? ""}`,
+        secretKey: `${previousSettings.r2_secret_access_key ?? ""}`,
+        bucketPrefix: `${previousSettings.r2_bucket_prefix ?? ""}`,
+        blobBucket: `${previousSettings.blob_r2_bucket ?? ""}`,
+        blobPublicUrl: `${previousSettings.blob_r2_public_url ?? ""}`,
+      },
+      save: async (values) => {
+        const nextSettings = { ...previousSettings, ...values };
+        const nextAccount = `${nextSettings.r2_account_id ?? ""}`.trim();
+        const nextBucket =
+          `${nextSettings.blob_r2_bucket || (nextSettings.r2_bucket_prefix ? `${nextSettings.r2_bucket_prefix}-blobs` : "")}`.trim();
+        const sameBlobTarget =
+          previousBlobConfig.r2?.auth.endpoint ===
+            `https://${nextAccount}.r2.cloudflarestorage.com` &&
+          previousBlobConfig.r2?.auth.bucket === nextBucket &&
+          `${previousSettings.dns ?? ""}`.trim().toLowerCase() ===
+            `${nextSettings.dns ?? ""}`.trim().toLowerCase();
+        // Bootstrap must not redirect an active blob store to a new account,
+        // bucket, or domain before explicit blob reconciliation succeeds.
+        pinnedToPostgres =
+          previousBlobConfig.activeBackend === "postgres" || !sameBlobTarget;
+        const sync = await setSiteSettingsOnSeed({
+          account_id,
+          source_bay_id,
+          settings: Object.entries({
+            ...values,
+            ...(pinnedToPostgres ? { blob_storage_backend: "postgres" } : {}),
+          }).map(([name, value]) => ({ name, value })),
+        });
+        propagationFailed = sync.bays.some((bay) => bay.status === "failed");
+        if (propagationFailed)
+          throw Error("Cloudflare settings propagation failed");
+      },
+    });
+    if (propagationFailed) {
+      result.settings_status = "saved";
+      result.failure =
+        "Credentials were saved on the seed bay, but propagation to other bays failed. Keep both old and new credentials active. Repair bay connectivity and synchronize site settings before retrying diagnostics; do not bootstrap again just to retry propagation.";
+      result.tunnel_token.ok = false;
+      result.tunnel_token.message = result.failure;
+    }
+    if (result.tunnel_token.ok) {
+      const previousTokenId =
+        `${previousSettings.cloudflare_automation_token_id ?? ""}`.trim();
+      if (
+        previousTokenId &&
+        result.durable_token_id &&
+        previousTokenId !== result.durable_token_id
+      ) {
+        result.notes.push(
+          `Previous automation token ${previousTokenId} remains active. Delete it in Cloudflare API Tokens when it is no longer used; it may be shared by other services.`,
+        );
+      }
+      if (pinnedToPostgres && previousBlobConfig.activeBackend === "r2") {
+        result.notes.push(
+          "The blob account, bucket, or domain changed. Blob storage is pinned to Postgres until blob reconciliation succeeds; existing R2 data has not been moved.",
+        );
+      }
+    }
+    return result;
+  });
+}
+
 export async function bootstrapCloudflareConfiguration({
   account_id,
   browser_id,
@@ -7606,7 +7830,6 @@ export async function bootstrapCloudflareConfiguration({
   tunnelPrefix,
   hostSuffix,
   r2BucketPrefix,
-  invalidateBootstrapToken,
 }: {
   account_id?: string;
   browser_id?: string | null;
@@ -7616,7 +7839,6 @@ export async function bootstrapCloudflareConfiguration({
   tunnelPrefix?: string;
   hostSuffix?: string;
   r2BucketPrefix?: string;
-  invalidateBootstrapToken?: boolean;
 }): Promise<CloudflareBootstrapResult> {
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
@@ -7627,14 +7849,88 @@ export async function bootstrapCloudflareConfiguration({
     session_hash,
     require_second_factor: true,
   });
-  return await bootstrapCloudflareConfiguration0({
+  const options = {
+    account_id,
     domain,
     token,
     tunnelPrefix,
     hostSuffix,
     r2BucketPrefix,
-    invalidateBootstrapToken,
+  };
+  const seedBayId = getConfiguredClusterSeedBayId();
+  const localBayId = getConfiguredBayId();
+  if (localBayId !== seedBayId) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 600_000 })
+      .bootstrapCloudflareConfiguration({
+        ...options,
+        source_bay_id: localBayId,
+      });
+  }
+  return await bootstrapCloudflareConfigurationOnSeed(options);
+}
+
+// Private inter-bay entry; do not re-check an entry-bay session against seed DB.
+export async function reconcileCloudflareBlobsOnSeed({
+  account_id,
+  source_bay_id,
+}: import("@cocalc/conat/inter-bay/api").BayOpsCloudflareReconcileRequest) {
+  return await withCloudflareProvisioningLock(async () => {
+    await preflightCloudflareBays();
+    const { reconcileCloudflareBlobs: reconcile } =
+      await import("@cocalc/server/cloud/cloudflare-blob-reconcile");
+    let propagationFailed = false;
+    const result = await reconcile(
+      await getServerSettings(),
+      async (values) => {
+        const sync = await setSiteSettingsOnSeed({
+          account_id,
+          source_bay_id,
+          settings: Object.entries(values).map(([name, value]) => ({
+            name,
+            value,
+          })),
+        });
+        propagationFailed = sync.bays.some((bay) => bay.status === "failed");
+        if (propagationFailed)
+          throw Error("Cloudflare settings propagation failed");
+      },
+    );
+    if (propagationFailed) {
+      return {
+        ok: false,
+        message:
+          "Blob settings were saved on the seed bay, but propagation to other bays failed. Repair bay connectivity, synchronize site settings, then retry reconciliation. Do not remove old credentials or storage.",
+      };
+    }
+    return result;
   });
+}
+
+export async function reconcileCloudflareBlobs({
+  account_id,
+  browser_id,
+  session_hash,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+}) {
+  await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
+  const seedBayId = getConfiguredClusterSeedBayId();
+  const localBayId = getConfiguredBayId();
+  if (localBayId !== seedBayId) {
+    return await getInterBayBridge()
+      .bayOps(seedBayId, { timeout_ms: 600_000 })
+      .reconcileCloudflareBlobs({ account_id, source_bay_id: localBayId });
+  }
+  return await reconcileCloudflareBlobsOnSeed({ account_id });
 }
 
 export async function applyCloudflareTunnelSettings({

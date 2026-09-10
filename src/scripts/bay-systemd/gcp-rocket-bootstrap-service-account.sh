@@ -21,8 +21,9 @@ END_MARKER="=== COCALC ROCKET GCP BOOTSTRAP KEY END ==="
 ROLES=(
   roles/compute.instanceAdmin.v1
   roles/compute.networkUser
-  roles/iam.serviceAccountUser
 )
+
+LEGACY_PROJECT_ROLE="roles/iam.serviceAccountUser"
 
 FIREWALL_PERMISSIONS=(
   compute.firewalls.create
@@ -67,7 +68,12 @@ The generated service account is intended for:
 Default roles granted on the project:
   - roles/compute.instanceAdmin.v1
   - roles/compute.networkUser
-  - roles/iam.serviceAccountUser
+
+Bay VMs are created without an attached service account by default. If you
+explicitly pass --service-account to gcp-bootstrap-dogfood-bay.sh, grant this
+bootstrap identity a custom role containing only iam.serviceAccounts.actAs,
+bound on that one target service account. Do not grant project-wide
+roles/iam.serviceAccountUser.
 
 Environment:
   PROJECT_ID                 required unless entered interactively
@@ -150,6 +156,14 @@ add_project_binding() {
   return 1
 }
 
+has_project_binding() {
+  local role="$1"
+  gcloud projects get-iam-policy "$PROJECT_ID" \
+    --flatten="bindings[].members" \
+    --filter="bindings.role=${role} AND bindings.members=serviceAccount:${SA_EMAIL}" \
+    --format="value(bindings.role)" | grep -qx "$role"
+}
+
 custom_role_name() {
   printf 'projects/%s/roles/%s' "$PROJECT_ID" "$FIREWALL_ROLE_ID"
 }
@@ -216,6 +230,19 @@ for role in "${ROLES[@]}"; do
     exit 1
   fi
 done
+
+# Older versions granted project-wide service-account impersonation because
+# gcloud implicitly attached the default Compute identity to new bay VMs. The
+# bootstrap helper now explicitly creates VMs without an identity by default.
+if has_project_binding "$LEGACY_PROJECT_ROLE"; then
+  log "Removing legacy project-wide ${LEGACY_PROJECT_ROLE}"
+  gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="$LEGACY_PROJECT_ROLE" \
+    --condition=None \
+    --quiet \
+    >/dev/null
+fi
 
 if [[ "$INCLUDE_FIREWALL_ADMIN" != "0" ]]; then
   ensure_firewall_custom_role

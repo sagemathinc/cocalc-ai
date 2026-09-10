@@ -14,6 +14,7 @@ export * from "./hosts";
 export * from "./jupyter";
 export * from "./migration";
 export * from "./projects";
+export * from "./research";
 export * from "./self-hosting";
 export * from "./teaching";
 export * from "./terminal";

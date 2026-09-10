@@ -146,6 +146,19 @@ matrix remain open.
 
 ## Live Acceptance Checkpoint (2026-09-10)
 
+Integrated `origin/main` at `209529099b` after GitHub reported PR merge
+conflicts and no current test run. Main now routes ordinary comparison feedback
+to the selected/originating thread using `preserveThread`; removed the
+workbench-specific `feedbackToOriginThread` flag rather than restoring obsolete
+worktree-consent checks. The PR card still wraps feedback with its pinned
+repository/revision context. Eighteen focused comparison/card/routing tests,
+frontend typecheck, and frontend lint pass on the combined tree.
+
+The previous hosted dependency-check failure was reproduced in Lite: a test
+imports `@cocalc/sync` without declaring it. Added the workspace dev dependency
+with only its three-line lockfile entry; Lite depcheck and a frozen-lockfile
+install now pass. Hosted CI for the merged head must be checked separately.
+
 Cross-object regression pass after `acac1173c7`: 13 frontend suites (84 tests)
 cover artifact cards, read-only presentation, file/action/PR workbench views,
 feedback drafts and origin routing, merge/selection behavior, and focus. Three

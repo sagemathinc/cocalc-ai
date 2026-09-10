@@ -4,35 +4,79 @@
  */
 
 export const COLLABORATORS_BODY = String.raw`
-## What collaborators are for
+## Choose the access needed
 
-Collaborators are people who can work in the same CoCalc project. They can edit
-files together, share terminals and notebooks, use chat, and see the same
-project state.
+Use project access to bring a coauthor or reviewer into the same workspace.
+Choose the role before inviting them:
 
-## Add a collaborator
+| Access | Use it when | What it allows |
+| --- | --- | --- |
+| Collaborator | A coauthor needs to edit or rerun the work. | Normal read/write access, project runtimes, terminals, SSH, and project tools. |
+| Viewer | A reviewer needs to read saved files and results. | Read-only access to allowed files, without editing, code execution, terminals, SSH, or project management. |
+| Published file share | You want an unlisted link to selected material. | Signed-in viewers can read and copy the shared content. See [Publish project files](/docs/projects/publish-files). |
 
-1. Open the project.
-2. Open **Settings**.
-3. Go to **People**.
-4. Invite a user by email or account.
-5. Review pending invitations and access rules.
+For an end-to-end example, see [Start and hand off a research task](/docs/projects/research-handoff).
+
+## Invite a collaborator or viewer
+
+1. Open the project and go to **Settings -> People**.
+2. Find and select an existing account, or enter the recipient's email address.
+3. Under **Access level**, choose **Collaborator** or **Viewer**. The form
+   starts with collaborator access; select viewer access explicitly for a
+   read-only review.
+4. For a viewer, set **Viewer file access** as described below.
+5. For an email invitation, select **Require acceptance using the invited email
+   address** when the recipient must accept with that exact verified address.
+6. Use **Invite selected user** or **Send Invitation**, as appropriate. Review
+   the delivery result; if CoCalc provides a link for manual delivery, copy it
+   and send it to the intended recipient.
+7. After acceptance, check the person's role in the project member list. For a
+   viewer, also check the file-access summary beside their name.
 
 For courses, add students through the course interface instead of manually
 sharing every project.
 
-## Work together
+## Select the files a viewer can read
 
-Collaboration is realtime across documents, notebooks, terminals, chat, course
-management files, and many project workflows. Use side chat when the discussion
-is tied to a specific file or activity.
+**Viewer file access** offers **Full project, excluding sensitive paths** and
+**Selected files and directories only**. The full-project option excludes
+\`.snapshots\`, \`.ssh\`, and \`.local/share/cocalc\`; selecting particular
+files keeps the review focused on the material you intend to share.
 
-## Why this matters in CoCalc
+For selected access, replace the example entries with one project-relative
+file, directory, or glob per line. For example:
 
-CoCalc treats collaboration as part of the computational workspace rather than a
-separate sharing layer. Students, instructors, researchers, and agents can work
-inside the same project while the backend keeps execution and file state
-durable.
+~~~text
+README.md
+review/
+~~~
+
+A trailing slash includes the directory's contents. The default exclusions
+remain in effect. Include any figures or supporting files needed to read the
+report, and check that the selected paths exist. The invitation form requires
+at least one include rule for selected access; it does not check whether the
+paths exist or whether exclusions prevent access to every selected path.
+
+Ask the reviewer to open the intended report or notebook and confirm that its
+saved results are readable. A viewer cannot rerun a notebook; choose
+collaborator access when that is part of the review.
+
+## Change access when the work changes
+
+In **Settings -> People**, use **Make viewer** beside a collaborator to choose
+a read policy and confirm the change. Use **Make collaborator** beside a viewer
+only when they need normal write and runtime access, then confirm the change.
+Check the resulting role in the member list.
+
+Use **Remove** and confirm when an existing member no longer needs project
+access. For an invitation that has not been accepted, open **Pending
+Invitations** and use **Revoke**. These controls depend on your permission to
+manage collaborators; the project owner can help when they are unavailable.
+
+Keep the paths to the report, saved results, and next steps in the
+[research handoff](/docs/projects/research-handoff). For coauthors editing
+together, use [chat](/docs/collaboration/chat) beside the relevant files to
+record questions and decisions.
 `;
 
 export const CHAT_BODY = String.raw`

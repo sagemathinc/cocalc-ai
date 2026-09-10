@@ -174,7 +174,12 @@ these project-level roles:
 
 - `roles/compute.instanceAdmin.v1`
 - `roles/compute.networkUser`
-- `roles/iam.serviceAccountUser`
+
+The bootstrap creates bay VMs without an attached service account by default,
+so the bootstrap identity does not need project-wide
+`roles/iam.serviceAccountUser`. If an attached VM identity is explicitly
+required, define a custom role containing only `iam.serviceAccounts.actAs` and
+bind it on that specific identity.
 
 Paste only the JSON between the output markers into a CoCalc project secret,
 then pass the mounted secret file to `gcp-bootstrap-dogfood-bay.sh --key-file`.

@@ -256,6 +256,48 @@ cocalc admin receivables collection mode AR-2026-000123 \
   --expected-version 8 --commit --json
 ```
 
+## Customer PDF Links
+
+After finalizing a Stripe quote (or issuing a local PDF quote), an admin with
+fresh authentication can issue a private download link:
+
+```sh
+cocalc admin receivables quote share AR-2026-000123 --quote-id <uuid> \
+  --expires-at 2026-10-01T00:00:00Z --reason "Send reviewed quote to customer"
+# Review, then repeat with --expected-version <version> --commit.
+cocalc admin receivables quote revoke-link AR-2026-000123 --quote-id <uuid> \
+  --reason "Revoke previously shared link"
+# Review, then repeat with --expected-version <version> --commit.
+```
+
+Send the returned URL through Zendesk. Anyone holding it can download this one
+PDF without a CoCalc account. Expiration must be within 90 days and no later
+than quote expiration. Issuing another link replaces the previous link;
+revocation does not void the quote. Voiding/cancelling the quote also blocks
+downloads. Revocation cannot recall copies already downloaded or a response
+already in flight.
+
+The token is returned once and only its SHA-256 hash is retained. An idempotent
+retry returns no URL and does not rotate the link. If the response was lost,
+issue a replacement using the current version and a new idempotency key.
+Do not paste these bearer URLs into public issues or audit reasons.
+
+The URL fragment keeps the token out of HTTP access logs. The public landing
+page removes the fragment from browser history and submits the token in a POST
+body when the recipient clicks Download. Do not enable request-body logging
+for this endpoint. Responses use no-store, no-referrer, nosniff and a restrictive
+CSP. JavaScript is required. The page loads no third-party assets.
+
+These small, retained billing documents are seed-owned, not project files;
+serving them through the hub is an intentional control-plane exception. Any
+receiving bay routes downloads to the seed over a narrow internal method that
+returns only the PDF and filename. The seed checks expiry/revocation and the
+2 MiB bound and verifies the retained digest; it never contacts Stripe.
+Each hub limits ingress to 30 requests/IP/minute and 200 requests/minute total.
+The seed atomically limits each link to 20 PDF downloads/minute across hubs.
+Invalid, expired, revoked and per-link-throttled requests get the same generic
+unavailable response. Disabling receivables visibility stops public downloads.
+
 ## Recovery And Idempotency
 
 Stripe calls and database commits cannot form one transaction. Provider

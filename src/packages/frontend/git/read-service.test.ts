@@ -207,7 +207,7 @@ describe("read-only Git fixtures", () => {
     expect(unique).toMatchObject({
       kind: "unique",
       commit: mainTip,
-      selection: { worktree: main, ref: "refs/heads/main" },
+      selection: { worktree: main, ref: "refs/heads/main", firstParent: false },
       tip: mergeTip,
     });
     const tree = git(main, ["rev-parse", `${root}^{tree}`]).trim();
@@ -390,24 +390,49 @@ describe("read-only Git fixtures", () => {
   });
 
   test("history pins the chosen tip, includes merges and supports parent traversal and pages", async () => {
-    const firstParent = await service.history(repository, mergeTip);
+    const firstParent = await service.history(repository, mergeTip, {
+      firstParent: true,
+    });
     expect(firstParent.map((x) => x.commit)).toEqual([mergeTip, mainTip, root]);
     expect(firstParent[0].parents).toEqual([mainTip, featureTip]);
-    const all = await service.history(repository, mergeTip, {
-      firstParent: false,
-    });
+    const all = await service.history(repository, mergeTip);
     expect(all.map((x) => x.commit)).toContain(featureTip);
     expect(
-      (await service.history(repository, mergeTip, { skip: 1, count: 1 }))[0]
-        .commit,
+      (
+        await service.history(repository, mergeTip, {
+          skip: 1,
+          count: 1,
+          firstParent: true,
+        })
+      )[0].commit,
     ).toBe(mainTip);
   });
 
   test("hiding merges filters before pagination without changing traversal or the tip", async () => {
     const hidden = await service.history(repository, mergeTip, {
       showMerges: false,
+      firstParent: true,
     });
     expect(hidden.map((entry) => entry.commit)).toEqual([mainTip, root]);
+    expect(
+      (
+        await service.history(repository, mergeTip, {
+          showMerges: false,
+          firstParent: true,
+          skip: 1,
+          count: 1,
+        })
+      ).map((entry) => entry.commit),
+    ).toEqual([root]);
+    const all = await service.history(repository, mergeTip, {
+      showMerges: false,
+    });
+    expect(all.map((entry) => entry.commit)).toContain(featureTip);
+    expect(all.map((entry) => entry.commit)).toEqual(
+      git(main, ["log", "--no-merges", "--format=%H", mergeTip, "--"])
+        .trim()
+        .split("\n"),
+    );
     expect(
       (
         await service.history(repository, mergeTip, {
@@ -416,12 +441,7 @@ describe("read-only Git fixtures", () => {
           count: 1,
         })
       ).map((entry) => entry.commit),
-    ).toEqual([root]);
-    const all = await service.history(repository, mergeTip, {
-      firstParent: false,
-      showMerges: false,
-    });
-    expect(all.map((entry) => entry.commit)).toContain(featureTip);
+    ).toEqual(all.slice(1, 2).map((entry) => entry.commit));
     expect(all.every((entry) => entry.parents.length < 2)).toBe(true);
     expect((await service.history(repository, mergeTip))[0].commit).toBe(
       mergeTip,

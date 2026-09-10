@@ -50,6 +50,120 @@ function adminDeps(overrides: Record<string, any> = {}) {
   };
 }
 
+test("support impersonation requires and forwards structured consent evidence without accessing content", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      system: {
+        createImpersonationGrant: async (opts: any) => {
+          captured = opts;
+          return { grant_id: "grant", url: "https://example.test/grant" };
+        },
+      },
+    }) as any,
+  );
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "support",
+    "impersonate",
+    "alice@example.com",
+    "--ticket-id",
+    "123",
+    "--reason",
+    " Inspect notebook build ",
+    "--consent-reference",
+    " Customer comment 456 and operator approval ",
+  ]);
+  assert.deepEqual(captured, {
+    subject_account_id: "22222222-2222-4222-8222-222222222222",
+    reason: "Inspect notebook build",
+    support_ticket_id: 123,
+    consent_reference: "Customer comment 456 and operator approval",
+  });
+});
+
+test("generic impersonation forwards a required audit reason", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      system: {
+        createImpersonationGrant: async (opts: any) => {
+          captured = opts;
+          return {};
+        },
+      },
+    }) as any,
+  );
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "user",
+    "issue-impersonation-link",
+    "alice@example.com",
+    "--reason",
+    " Approved operational investigation ",
+  ]);
+  assert.equal(captured.reason, "Approved operational investigation");
+});
+
+test("support impersonation fails closed on missing or invalid audit context", async () => {
+  for (const args of [
+    [],
+    ["--ticket-id", "123", "--reason", "Investigate"],
+    [
+      "--ticket-id",
+      "-1",
+      "--reason",
+      "Investigate",
+      "--consent-reference",
+      "customer reply",
+    ],
+    [
+      "--ticket-id",
+      "123",
+      "--reason",
+      " ",
+      "--consent-reference",
+      "customer reply",
+    ],
+  ]) {
+    let called = false;
+    const program = new Command()
+      .exitOverride()
+      .configureOutput({ writeErr: () => {} });
+    registerAdminCommand(
+      program,
+      adminDeps({
+        system: {
+          createImpersonationGrant: async () => {
+            called = true;
+            return {};
+          },
+        },
+      }) as any,
+    );
+    await assert.rejects(
+      program.parseAsync([
+        "node",
+        "test",
+        "admin",
+        "support",
+        "impersonate",
+        "alice@example.com",
+        ...args,
+      ]),
+    );
+    assert.equal(called, false);
+  }
+});
+
 test("admin user ban resolves the target and forwards the audit reason", async () => {
   let captured: any;
   const program = new Command();

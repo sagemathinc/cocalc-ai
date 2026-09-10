@@ -11,18 +11,47 @@ documented, or referenced from code.
 - `build-local-codex-binaries.sh`: build upstream Codex binaries locally or
   for one native Linux architecture.
 - `publish-local-codex-binaries.sh`: publish Codex binary assets.
+- `assemble-local-codex-manifest.cjs`: combine matching native build manifests.
 - `check_doc_urls.py` and `check_doc_urls.skip`: documentation/link checker.
 - `export-api-doc.ts`: export API documentation JSON.
 - `run-ci.sh`: local full clean/build/test helper.
 
-`build-local-codex-binaries.sh` builds both Linux architectures by default.
-Set `CODEX_BUILD_PLATFORM=linux-x64` or `linux-arm64` to build only that
-architecture natively. The current release intentionally uses unmodified
-upstream Codex: remote compaction v2 uses the normal Responses stream and the
-legacy compact endpoint also has an upstream request timeout, so the former
-CoCalc TCP timeout patch is no longer applied. Normal CoCalc installations use
-the signed, statically linked binaries published by OpenAI; this local build
-and publishing workflow is retained only as an emergency fallback.
+`build-local-codex-binaries.sh` defaults to portable musl binaries. Build each
+architecture natively by setting `CODEX_BUILD_PLATFORM=linux-x64` or
+`linux-arm64`; a portable two-architecture release intentionally cannot be
+built with `CODEX_BUILD_PLATFORM=all`. The upstream musl setup helper installs
+its build prerequisites, so run this only on a disposable build machine with
+passwordless sudo and Zig 0.14.0 on PATH. The local build defaults to Codex
+0.153.4 with the version-specific Linux TCP user-timeout patch and a
+workspace-version-only lockfile correction in `patches/`. It removes the
+patches on exit and can recover an interrupted prior run when those patches
+are the only tracked changes. This restores the shared HTTP client's 300-second socket
+timeout, configurable with
+`CODEX_TCP_USER_TIMEOUT_MS` (a positive number of milliseconds). It is not a
+total HTTP request deadline or an app-server notification timeout. Changes to
+remote compaction deadlines do not establish that this transport mitigation
+is unnecessary for other endpoints, including image generation.
+
+The build manifest identifies the applied patch and libc target. Publication
+fails unless all four Linux executables are musl binaries with no ELF
+interpreter or shared-library dependencies. Building or publishing a candidate
+does not change the sandbox installer pin or deploy it. Validate image
+generation and compaction before promoting a candidate; normal installs
+continue using the assets explicitly pinned in `backend/sandbox/install.ts`.
+
+Collect both native output directories and their `manifest-linux-*.json`
+files beneath the same version directory, then run:
+
+```sh
+node src/scripts/assemble-local-codex-manifest.cjs /path/to/binaries/0.153.4
+COCALC_CODEX_LOCAL_BIN_DIR=/path/to/binaries bash src/scripts/publish-local-codex-binaries.sh
+```
+
+Assembly rejects differing upstream commits, patches, toolchains, or libc
+targets and records hashes of all four binaries. `CODEX_PUBLISH_RELEASE=1`
+performs this assembly after a native build when both architectures have
+already been collected. The default release tag is
+`v0.153.4-cocalc-musl-1`; it preserves the earlier GNU release assets.
 
 ## Active Product And Release Workflows
 

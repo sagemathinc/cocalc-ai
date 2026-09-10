@@ -115,7 +115,7 @@ export function readGitReviewRoute(url: URL): GitReviewRoute | undefined {
   if (tip == null)
     return { commit, cwd, ...(comparison ? { comparison } : {}) };
   const ref = url.searchParams.get("git-ref") ?? "HEAD";
-  const ancestry = url.searchParams.get("git-ancestry") ?? "first-parent";
+  const ancestry = url.searchParams.get("git-ancestry") ?? "all";
   if (
     !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(tip) ||
     !ref ||

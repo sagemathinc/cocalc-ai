@@ -17,6 +17,8 @@ import {
   getCommercialOrderDocument,
   getCommercialOrderDiagnostics,
   getCommercialQuoteDocument,
+  issueCommercialQuoteLink,
+  revokeCommercialQuoteLink,
   issueCommercialQuote,
   issueManualCommercialInvoice,
   listCommercialOrderEvents,
@@ -134,6 +136,10 @@ export async function dispatchCommercialSeedRequest(
       return await voidCommercialQuote(opts);
     case "quoteDocument":
       return await getCommercialQuoteDocument(opts);
+    case "issueQuoteLink":
+      return await issueCommercialQuoteLink(opts);
+    case "revokeQuoteLink":
+      return await revokeCommercialQuoteLink(opts);
     case "stripeQuotePreview":
       return await commercialStripeQuotePreview(opts);
     case "createStripeQuote":

@@ -380,11 +380,36 @@ additional Worker permissions needed for public blob delivery. It also tends
 to produce either underpowered tokens that fail later or overpowered tokens
 that remain stored long term.
 
-Use a one-time bootstrap-token flow as the recommended configuration path.
-Keep manual token entry only as an advanced fallback for operators who already
-understand Cloudflare API permissions.
+Use a one-time bootstrap-token flow as the only wizard configuration path.
+Underlying site settings remain operator recovery/customization escape hatches,
+not a second guided workflow. Do not duplicate permission instructions there.
 
 #### Intended admin experience
+
+Implementation clarification (September 2026): use Cloudflare's **Create
+additional tokens** template with only **User / API Tokens / Edit**. This
+permission is unavailable in the custom-token builder. The template token
+cannot itself discover zones. CoCalc therefore creates a temporary Zone Read
+token across the user's zones (10-minute expiry), uses it only to find the
+matching domain/account, then deletes it. The durable automation token is
+scoped to that single account and zone. This temporary discovery scope must be
+explained in the wizard. See [Cloudflare's token creation documentation](https://developers.cloudflare.com/fundamentals/api/how-to/create-via-api/).
+
+The browser submits the bootstrap secret once and clears its input immediately.
+The server saves the durable secret through the existing encrypted site-setting
+path; RPC responses contain identifiers, permission names, and non-secret
+settings only. Provisioning is a separate retryable action using saved
+credentials. Operations execute on the seed bay and share a lock.
+
+If saving throws after it may have written some settings, keep the automation
+token active and report its ID for operator inspection. Revoking it in this
+ambiguous case could invalidate credentials already in use. Temporary token
+cleanup is still attempted. Expiry protects the read-only discovery token if
+the hub stops unexpectedly; the user must give the bootstrap token a short TTL.
+
+The legacy same-origin blob route checks Worker availability before redirecting,
+so PostgreSQL-only images remain accessible while backfill is pending. This
+adds a HEAD request for compatibility URLs; direct Worker URLs bypass the hub.
 
 1. The admin enters the external domain and CoCalc resource prefix.
 2. The wizard explains, in plain text, that the next Cloudflare token is a
@@ -461,13 +486,100 @@ dynamically, as the existing bootstrap code already does, instead of hardcoding
 ids. The wizard should display the resulting human-readable permission names
 before or immediately after creation so admins can audit what CoCalc requested.
 
-Initially, keep R2 S3 object credentials (`r2_access_key_id` and
-`r2_secret_access_key`) as a separate credential class. The Cloudflare REST API
-token can administer buckets and deploy the Worker, but server-side object
-PUT/GET currently uses the S3-compatible R2 credentials. Only fold S3
-credential creation into the bootstrap flow after the implementation verifies a
-Cloudflare API path that returns exactly the needed access key id and secret
-with a narrow bucket/object scope.
+R2 S3 object credentials (`r2_access_key_id` and `r2_secret_access_key`) remain
+a separate credential class, but bootstrap now creates them automatically.
+Cloudflare documents this path in [R2 authentication](https://developers.cloudflare.com/r2/api/tokens/):
+create a user token with `Workers R2 Storage Bucket Item Write`, use its `id`
+as the access key, and SHA-256 of its `value` as the secret key. Never reuse
+the broader REST automation token as the S3 token.
+
+The new token includes only exact default-jurisdiction bucket resources for
+the configured prefix's six regional backup buckets and the configured blob
+bucket (default `<prefix>-blobs`). It has no bucket-administration, DNS,
+Workers, or token-management permission. Names also cover buckets provisioned
+later. Additional/custom backup buckets or jurisdictions need explicit manual
+credentials; do not silently widen the S3 policy to all account buckets.
+
+The seed bay loads existing credentials under the provisioning lock. Complete
+credentials for the same account/prefix are preserved, not rotated; incomplete
+pairs or account/prefix changes fail before saving settings. Credentials are
+saved through encrypted site settings, and only the nonsecret access-key/token
+ID is returned to the wizard. Unsaved child tokens are revoked on failure;
+ambiguous persistence failures preserve possibly saved tokens and report IDs
+for manual inspection. Creation is not a health check: blob provisioning must
+still verify S3 PUT/GET and Worker delivery, and backup diagnostics remain
+available. R2 must already be enabled in the Cloudflare account.
+
+The wizard has no manual key entry step or advanced workflow. Underlying site
+settings remain available for deliberate operator recovery. Before merging,
+manually verify creation and S3 access on lite4b, repeat bootstrap to confirm
+preservation, and confirm neither new credential secret appears in browser
+responses. This is in addition to the mocked policy/derivation/cleanup tests.
+
+#### Credential rotation: next implementation gate
+
+Status: design only; not implemented by the bootstrap-only wizard change.
+Re-running bootstrap currently refreshes REST automation permissions but
+preserves S3 credentials and leaves the previous REST token active. It is not
+a complete compromise-recovery or credential-rotation operation.
+
+Rotation changes Cloudflare authentication, not rustic repository encryption
+passwords, repository IDs, bucket names, paths, or backup data. No data copy
+or re-encryption should be needed. Keep REST-token replacement and S3-key
+replacement distinct internally, even if one guided action orchestrates both.
+
+Existing code that must participate:
+
+- `server/project-backup/index.ts` builds new TOML and index-store config from
+  current site settings; `DEFAULT_BACKUP_TTL_SECONDS` is 12 hours.
+- `project-host/file-server.ts` caches that config and writes local rustic
+  profiles. Its invalidation RPC clears caches but does not drain running
+  rustic processes or prove they no longer hold old credentials.
+- `server/project-host/client.ts` and the inter-bay service already route
+  invalidation to the host's authoritative bay. Use this path, not a local-only
+  host loop or a best-effort publish as evidence of adoption.
+- Bay backups, blob readers/writers, backup-index stores, external migration
+  jobs, stored bucket credential fallbacks and persisted export configurations
+  also need an inventory. Do not assume project-host cache invalidation covers
+  all consumers. Worker R2 bindings are distinct from S3 keys.
+
+Implement a durable seed-owned rotation operation with an encrypted pending
+credential set, credential generation, per-bay/host adoption status, retained
+old token IDs and explicit cleanup state. Never persist the bootstrap token.
+Repeated calls and disconnect recovery must resume the operation without minting
+unbounded replacement tokens.
+
+1. Require fresh admin authentication and a new temporary bootstrap token.
+   Discover and display the current resource set, including custom/legacy
+   backup buckets; rotation must neither lose existing coverage nor silently
+   broaden it to other sites. Keep account, domain and bucket names fixed.
+2. Create separate replacement REST and S3 tokens. Validate required REST
+   capabilities without replacing unrelated resources. Verify a bounded unique
+   S3 canary PUT/GET/DELETE in each required existing bucket and representative
+   rustic metadata reads before switching. Clean up failed candidates; report
+   uncertain provider responses without logging token material.
+3. Switch the active credential pair and generation coherently on the seed,
+   propagate to bays, and require acknowledgements. A pair must never be read
+   as the old access key plus the new secret. Retain the previous pair during
+   the controlled handoff, not indefinitely as an invisible fallback.
+4. Invalidate host profiles through ownership-aware RPC and require generation
+   acknowledgement before new operations. Track/drain old-generation rustic
+   jobs and other consumers. Offline hosts must refresh before storage work
+   when returning. A timer or TTL alone does not prove completion.
+5. Recheck backup reads/writes and blob delivery, then present explicit old-token
+   retirement. Do not revoke credentials shared outside this site automatically.
+   Cleanup failure must leave visible, retryable pending work; do not claim
+   successful rotation while known old tokens remain active.
+6. Offer a separately confirmed emergency revoke mode for suspected compromise:
+   retire old tokens immediately, disclose that running/offline jobs may fail,
+   and retry recoverable work with the new generation. This is intentionally
+   different from routine low-disruption rotation.
+
+Acceptance tests: multibay partial propagation, offline hosts, a long-running
+backup/restore during handoff, stale profiles, mixed-pair prevention, custom
+bucket coverage, failed canary cleanup, operation restart/resume, repeated
+revocation and emergency-mode interruption. Manually exercise at least one
+real rustic restore across rotation before exposing this as a security action.
 
 #### Site settings shape
 
@@ -530,10 +642,12 @@ summary before submission:
 - discover the matching zone and account for the configured domain;
 - enumerate Cloudflare permission groups so a narrow token can be constructed;
 - create one durable CoCalc automation token for this site;
+- create separate bucket-scoped R2 S3 credentials if none are configured;
 - optionally enable visitor location headers;
 - provision R2 and Worker resources needed by configured features;
 - attempt to delete the bootstrap token; and
-- store only the durable token and non-secret resource identifiers.
+- store only the durable automation token, R2 S3 credentials, and non-secret
+  resource identifiers; never the bootstrap or discovery token.
 
 It should also include a "What CoCalc will not do" summary:
 
@@ -1105,8 +1219,8 @@ Gate: focused tests cover every producer and multibay authorization path.
 
 ### Phase 2: staging bucket and Worker
 
-- Replace the screenshot/manual-token Cloudflare wizard with the recommended
-  bootstrap-token flow and an advanced manual fallback.
+- Replace the screenshot/manual-token Cloudflare wizard with the single
+  bootstrap-token flow.
 - Extend durable-token creation to include the Worker and Worker-route
   permissions needed for public blob delivery.
 - Add an idempotent server-side Cloudflare blob Worker reconciliation API that
@@ -1116,7 +1230,7 @@ Gate: focused tests cover every producer and multibay authorization path.
 - Exercise cold/warm reads at representative sizes and malformed/miss load.
 - Confirm no public bucket/list/write path exists.
 
-Gate: the wizard creates and stores only the durable token, the bootstrap token
+Gate: the wizard creates and stores only durable automation/S3 credentials, the bootstrap token
 is invalidated or explicitly flagged for manual deletion, and staging cost,
 cache, and security behavior is understood under load.
 

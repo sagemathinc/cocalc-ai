@@ -74,13 +74,6 @@ type GitCommitDrawerTitleProps = {
   onGitLogFetchCountChange: (value: number) => void;
   showOnlyUnreviewedCommits: boolean;
   onToggleShowOnlyUnreviewed: (value: boolean) => void;
-  diffFindInputRef: any;
-  diffFindQuery: string;
-  onDiffFindQueryChange: (value: string) => void;
-  onNextDiffFindMatch: () => void;
-  onPreviousDiffFindMatch: () => void;
-  diffFindMatchesLength: number;
-  activeDiffFindMatchIndex: number;
   canGoNewer: boolean;
   canGoOlder: boolean;
   onGoNewer: () => void;
@@ -114,13 +107,6 @@ export function GitCommitDrawerTitle({
   onGitLogFetchCountChange,
   showOnlyUnreviewedCommits,
   onToggleShowOnlyUnreviewed,
-  diffFindInputRef,
-  diffFindQuery,
-  onDiffFindQueryChange,
-  onNextDiffFindMatch,
-  onPreviousDiffFindMatch,
-  diffFindMatchesLength,
-  activeDiffFindMatchIndex,
   canGoNewer,
   canGoOlder,
   onGoNewer,
@@ -328,48 +314,6 @@ export function GitCommitDrawerTitle({
               </Popover>
             </Space>
           </details>
-          <Space.Compact size="small">
-            <Input
-              ref={diffFindInputRef}
-              size="small"
-              allowClear
-              value={diffFindQuery}
-              placeholder="Find in diff"
-              style={{ width: 160 }}
-              onChange={(evt) => onDiffFindQueryChange(evt.target.value)}
-              onPressEnter={(evt) => {
-                if ((evt as any)?.shiftKey) {
-                  onPreviousDiffFindMatch();
-                } else {
-                  onNextDiffFindMatch();
-                }
-              }}
-            />
-            <Button
-              size="small"
-              disabled={diffFindMatchesLength === 0}
-              onClick={onPreviousDiffFindMatch}
-            >
-              Prev
-            </Button>
-            <Button
-              size="small"
-              disabled={diffFindMatchesLength === 0}
-              onClick={onNextDiffFindMatch}
-            >
-              Next
-            </Button>
-          </Space.Compact>
-          {diffFindQuery.trim() ? (
-            <Typography.Text
-              type="secondary"
-              style={{ fontSize: 12, whiteSpace: "nowrap" }}
-            >
-              {diffFindMatchesLength === 0
-                ? "0 matches"
-                : `${activeDiffFindMatchIndex + 1} / ${diffFindMatchesLength}`}
-            </Typography.Text>
-          ) : null}
           {canFindInChat ? (
             <Button
               size="small"

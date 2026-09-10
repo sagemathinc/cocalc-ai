@@ -110,6 +110,16 @@ import {
   getCodexFreshAuthActionStatus,
   startCodexFreshAuthChallengeLocal,
 } from "@cocalc/server/auth/cli-auth";
+import {
+  cancelChatSpeech as cancelChatSpeechLocal,
+  getChatSpeechCapabilities as getChatSpeechCapabilitiesLocal,
+  synthesizeChatSpeech as synthesizeChatSpeechLocal,
+  transcribeChatAudio as transcribeChatAudioLocal,
+} from "@cocalc/server/ai/chat-speech";
+import {
+  finishSiteFundedSpeechGlobalLocal,
+  reserveSiteFundedSpeechGlobalLocal,
+} from "@cocalc/server/ai/site-funded-speech-reservations";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
@@ -498,6 +508,8 @@ import { getProjectCollaboratorInviteUsage } from "@cocalc/server/membership/pro
 import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
 import {
   BAY_OPS_INTERNAL_AUTH,
+  bootstrapCloudflareConfigurationOnSeed,
+  reconcileCloudflareBlobsOnSeed,
   getAcpAdmissionDenialReport,
   getBayBackups,
   getBayLoad,
@@ -722,7 +734,16 @@ async function startBayOpsService(): Promise<void> {
     setServerSetting: async (opts) => {
       await callback2(db().set_server_setting, opts);
     },
+    checkCloudflareBlobEnvironment: async () => {
+      const { checkCloudflareBlobEnvironment } =
+        await import("@cocalc/server/cloud/cloudflare-blob-preflight");
+      return checkCloudflareBlobEnvironment();
+    },
     setSiteSettings: async (opts) => await setSiteSettingsOnSeed(opts),
+    bootstrapCloudflareConfiguration: async (opts) =>
+      await bootstrapCloudflareConfigurationOnSeed(opts),
+    reconcileCloudflareBlobs: async (opts) =>
+      await reconcileCloudflareBlobsOnSeed(opts),
     getSiteSettings: async (opts) =>
       await getSiteSettingsOnSeed({ names: opts.names }),
     syncSiteSettings: async (opts) =>
@@ -774,6 +795,24 @@ async function startBayOpsService(): Promise<void> {
           ? await reconcileSiteFundedCodexCosts(pools)
           : undefined,
       };
+    },
+    downloadCommercialQuoteInternal: async ({ token }) => {
+      if (bay_id !== getConfiguredClusterSeedBayId()) {
+        throw Error(
+          "commercial quote documents are authoritative on the seed bay",
+        );
+      }
+      const { downloadPublicQuote } =
+        await import("@cocalc/server/commercial-orders/public-quote");
+      return await downloadPublicQuote(token);
+    },
+    reserveSiteFundedSpeech: async (opts) => {
+      assertSiteFundedCodexSeedAuthority();
+      return await reserveSiteFundedSpeechGlobalLocal(opts);
+    },
+    finishSiteFundedSpeech: async (opts) => {
+      assertSiteFundedCodexSeedAuthority();
+      await finishSiteFundedSpeechGlobalLocal(opts);
     },
     commercialOrders: async (opts) => {
       if (bay_id !== getConfiguredClusterSeedBayId()) {
@@ -1132,6 +1171,11 @@ async function startAccountLocalService(): Promise<void> {
         project_id,
         challenge_id,
       }),
+    getChatSpeechCapabilities: async (opts) =>
+      await getChatSpeechCapabilitiesLocal(opts),
+    transcribeChatAudio: async (opts) => await transcribeChatAudioLocal(opts),
+    synthesizeChatSpeech: async (opts) => await synthesizeChatSpeechLocal(opts),
+    cancelChatSpeech: async (opts) => await cancelChatSpeechLocal(opts),
     redeemVerifyEmail: async ({ email_address, token }) => {
       await redeemVerifyEmailLocal(email_address, token);
     },

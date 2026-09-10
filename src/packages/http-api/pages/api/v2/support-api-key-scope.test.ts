@@ -144,4 +144,34 @@ describe("/api/v2/support API-key scope", () => {
       ip_address: req.ip ?? req.socket?.remoteAddress,
     });
   });
+
+  it.each(["acct-1", undefined])(
+    "uses authenticated identity %p for consent, never a submitted account id",
+    async (accountId) => {
+      mockGetAccountId.mockResolvedValue(accountId);
+      const { req, res } = createMocks({
+        method: "POST",
+        body: {
+          options: {
+            email: "user@example.com",
+            subject: "Support consent",
+            body: "Please investigate this issue.",
+            support_content_consent: true,
+            account_id: "submitted-account",
+          },
+        },
+      });
+      const { default: handler } = await import("./support/create-ticket");
+      await handler(req, res);
+      expect(mockCreateSupportTicket).toHaveBeenCalledWith(
+        expect.objectContaining({
+          support_content_consent: true,
+          account_id: accountId,
+        }),
+      );
+      expect(res._getJSONData()).toEqual({
+        url: "https://support.example.com/tickets/123",
+      });
+    },
+  );
 });

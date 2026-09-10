@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { preservePreparationAuditSql } from "./preparation-audit";
 import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getLogger from "@cocalc/backend/logger";
@@ -69,6 +70,7 @@ import type {
   LegacyMigrationAdminAccountSearchResponse,
   LegacyMigrationAdminAccountSummary,
   LegacyMigrationAdminApplyProjectRemediationOptions,
+  LegacyMigrationAdminPrepareProjectRemediationOptions,
   LegacyMigrationAdminLinkedProjectsOptions,
   LegacyMigrationAdminLinkedProjectsResponse,
   LegacyMigrationAdminLinkLegacyAccountOptions,
@@ -4672,7 +4674,7 @@ async function importOneProject({
           restore_finished=NULL,
           restore_lro_op_id=NULL,
           restore_progress=NULL,
-          restore_result=NULL,
+          restore_result=${preservePreparationAuditSql("legacy_migration_project_imports.restore_result", "NULL::jsonb")},
           rootfs_image=EXCLUDED.rootfs_image,
           rootfs_image_id=EXCLUDED.rootfs_image_id,
           updated=NOW()
@@ -5071,6 +5073,15 @@ type ProjectRemediationApplyEvent = {
 };
 
 type ProjectRemediationMetadata = {
+  prepared_from_failed_restore?: boolean;
+  prepare_events?: {
+    prepared_at: string;
+    actor_account_id: string;
+    reason: string;
+    support_reference?: string;
+    snapshot_name: string;
+    restore_status: string;
+  }[];
   prepared_at?: string | null;
   applied_at?: string | null;
   dismissed_at?: string | null;
@@ -5254,6 +5265,8 @@ function remediationResponse(
     applied_at: meta.applied_at ?? null,
     dismissed_forever: !!meta.dismissed_forever,
     safety_snapshot_name: meta.safety_snapshot_name ?? null,
+    preparation_only:
+      row.restore_status === "failed" && !!meta.prepared_from_failed_restore,
   };
 }
 
@@ -5480,18 +5493,43 @@ function assertProjectNeedsRemediation(row: ProjectRemediationRow): void {
   }
 }
 
+export function assertProjectCanPrepareRemediation(
+  row: ProjectRemediationRow,
+  override?: { reason?: string },
+): void {
+  if (override == null) {
+    assertProjectNeedsRemediation(row);
+    return;
+  }
+  if (!clean(override.reason)) {
+    throw new Error("a reason is required to prepare a failed restore");
+  }
+  if (row.restore_status !== "failed") {
+    throw new Error("allow_failed_restore requires a failed restore");
+  }
+  if (!legacyArchiveAvailable(row)) {
+    throw new Error("final legacy archive is not available");
+  }
+}
+
 async function prepareProjectRemediationForRow({
   account_id,
   row,
   snapshot_name,
   allow_custom_snapshot_name = false,
+  failed_restore_override,
 }: {
   account_id: string;
   row: ProjectRemediationRow;
   snapshot_name?: string;
   allow_custom_snapshot_name?: boolean;
+  failed_restore_override?: {
+    actor_account_id: string;
+    reason: string;
+    support_reference?: string;
+  };
 }): Promise<LegacyMigrationProjectRemediationStatusResponse> {
-  assertProjectNeedsRemediation(row);
+  assertProjectCanPrepareRemediation(row, failed_restore_override);
   const requestedSnapshotName = clean(snapshot_name);
   if (
     requestedSnapshotName &&
@@ -5535,10 +5573,23 @@ async function prepareProjectRemediationForRow({
     },
   });
   const current = remediationMetadata(row);
+  const preparedAt = new Date().toISOString();
   const metadata: ProjectRemediationMetadata = {
     ...current,
     dismissed_forever: false,
-    prepared_at: new Date().toISOString(),
+    prepared_at: preparedAt,
+    prepared_from_failed_restore: failed_restore_override != null,
+    prepare_events: failed_restore_override
+      ? [
+          ...(current.prepare_events ?? []),
+          {
+            prepared_at: preparedAt,
+            ...failed_restore_override,
+            snapshot_name: result.snapshot_name,
+            restore_status: "failed",
+          },
+        ]
+      : current.prepare_events,
     snapshot_name: result.snapshot_name,
     snapshot_path: result.snapshot_path,
     diff_counts: result.diff_counts,
@@ -5607,7 +5658,10 @@ export async function adminPrepareProjectRemediation({
   account_id,
   project_id,
   snapshot_name,
-}: LegacyMigrationPrepareProjectRemediationOptions): Promise<LegacyMigrationPrepareProjectRemediationResponse> {
+  allow_failed_restore,
+  reason,
+  support_reference,
+}: LegacyMigrationAdminPrepareProjectRemediationOptions): Promise<LegacyMigrationPrepareProjectRemediationResponse> {
   await assertLegacyMigrationEnabled();
   if (!account_id) {
     throw Error("account_id is required");
@@ -5621,6 +5675,14 @@ export async function adminPrepareProjectRemediation({
     row,
     snapshot_name,
     allow_custom_snapshot_name: true,
+    failed_restore_override:
+      allow_failed_restore === true
+        ? {
+            actor_account_id: account_id,
+            reason: clean(reason) ?? "",
+            support_reference: clean(support_reference),
+          }
+        : undefined,
   });
 }
 

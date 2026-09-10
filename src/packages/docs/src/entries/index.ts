@@ -65,6 +65,7 @@ const DOCS_ENTRY_IDS = [
   "admin.managed-egress",
   "admin.sso",
   "projects.create-project",
+  "projects.research-handoff",
   "projects.project-secrets",
   "ai.connect-credentials",
   "cli.use-cocalc-cli",

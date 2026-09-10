@@ -71,6 +71,7 @@ describe("admin maintenance dangerous-session auth", () => {
         account_id: ACCOUNT_ID,
         browser_id: "browser-1",
         subject_account_id: SUBJECT_ACCOUNT_ID,
+        reason: "Support investigation authorized in ticket 123",
       }),
     ).rejects.toThrow("fresh auth is required");
 
@@ -101,6 +102,39 @@ describe("admin maintenance dangerous-session auth", () => {
       require_second_factor: true,
       allow_actor_impersonation: false,
     });
+  });
+
+  it("rejects missing reasons and incomplete consent context even after fresh auth", async () => {
+    requireDangerousSessionAuthMock.mockResolvedValue({
+      session_hash: "actor-session",
+    });
+    const { createImpersonationGrant } = await import("./system");
+    for (const reason of [undefined, "", " ", "x".repeat(513)]) {
+      await expect(
+        createImpersonationGrant({
+          account_id: ACCOUNT_ID,
+          subject_account_id: SUBJECT_ACCOUNT_ID,
+          reason: reason as any,
+        }),
+      ).rejects.toThrow(/reason/i);
+    }
+    await expect(
+      createImpersonationGrant({
+        account_id: ACCOUNT_ID,
+        subject_account_id: SUBJECT_ACCOUNT_ID,
+        reason: "Investigate notebook",
+        support_ticket_id: 123,
+      }),
+    ).rejects.toThrow("consent reference");
+    await expect(
+      createImpersonationGrant({
+        account_id: ACCOUNT_ID,
+        subject_account_id: SUBJECT_ACCOUNT_ID,
+        reason: "Investigate notebook",
+        support_ticket_id: -1,
+        consent_reference: "customer reply",
+      }),
+    ).rejects.toThrow("positive integer");
   });
 
   it("requires centralized recent 2FA fresh auth before banning an account", async () => {

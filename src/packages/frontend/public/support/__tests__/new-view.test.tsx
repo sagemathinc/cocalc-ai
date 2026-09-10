@@ -51,11 +51,25 @@ describe("SupportNew", () => {
       screen.getByText("Something is not working the way I think it should."),
     ).not.toBeNull();
     expect(screen.getByText("Helpful links")).not.toBeNull();
-    expect(screen.getByText("Relevant files")).not.toBeNull();
+    expect(screen.queryByText("Relevant files")).toBeNull();
+    expect(screen.queryByText("Recent files picker")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /Allow support, possibly including AI/,
+      }),
+    );
     expect(screen.getByText("Recent files picker")).not.toBeNull();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /Allow support, possibly including AI/,
+      }),
+    );
+    expect(screen.queryByText("Recent files picker")).toBeNull();
     expect(screen.getByText("Enter a valid email address")).not.toBeNull();
     expect(
-      screen.getByText(/AI-assisted support tools may review/),
+      screen.getByRole("checkbox", {
+        name: /Allow support, possibly including AI/,
+      }),
     ).not.toBeNull();
     expect(screen.getByRole("link", { name: "Privacy Policy" })).not.toBeNull();
   });
@@ -144,6 +158,12 @@ describe("SupportNew", () => {
     expect(
       await screen.findByText("Successfully created support ticket"),
     ).not.toBeNull();
+    expect(mockedApi).toHaveBeenCalledWith("support/create-ticket", {
+      options: expect.objectContaining({
+        support_content_consent: false,
+        files: [],
+      }),
+    });
     expect(
       screen.getByText("https://example.zendesk.com/requests/123"),
     ).not.toBeNull();

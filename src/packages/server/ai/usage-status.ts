@@ -150,7 +150,9 @@ async function recentUsageUnitsInFixedWindow({
      FROM ai_usage_log
      WHERE account_id=$1
        AND time >= $2
-       AND time < $3`,
+       AND time < $3
+       AND (tag IS DISTINCT FROM 'chat-speech-reservation'
+            OR time >= NOW() - INTERVAL '5 minutes')`,
     [
       account_id,
       usageWindow.starts_at,
@@ -176,13 +178,13 @@ async function recentUsageUnits({
   let query;
   let args: string[] = [];
   if (account_id) {
-    query = `SELECT SUM(COALESCE(cost_microusd * ${AI_USAGE_UNITS_PER_DOLLAR}::numeric / 1000000, usage_units, 0)) AS usage FROM ai_usage_log WHERE account_id=$1 AND time >= NOW() - INTERVAL '${period}'`;
+    query = `SELECT SUM(COALESCE(cost_microusd * ${AI_USAGE_UNITS_PER_DOLLAR}::numeric / 1000000, usage_units, 0)) AS usage FROM ai_usage_log WHERE account_id=$1 AND time >= NOW() - INTERVAL '${period}' AND (tag IS DISTINCT FROM 'chat-speech-reservation' OR time >= NOW() - INTERVAL '5 minutes')`;
     args = [account_id];
   } else if (analytics_cookie) {
-    query = `SELECT SUM(COALESCE(cost_microusd * ${AI_USAGE_UNITS_PER_DOLLAR}::numeric / 1000000, usage_units, 0)) AS usage FROM ai_usage_log WHERE analytics_cookie=$1 AND time >= NOW() - INTERVAL '${period}'`;
+    query = `SELECT SUM(COALESCE(cost_microusd * ${AI_USAGE_UNITS_PER_DOLLAR}::numeric / 1000000, usage_units, 0)) AS usage FROM ai_usage_log WHERE analytics_cookie=$1 AND time >= NOW() - INTERVAL '${period}' AND (tag IS DISTINCT FROM 'chat-speech-reservation' OR time >= NOW() - INTERVAL '5 minutes')`;
     args = [analytics_cookie];
   } else {
-    query = `SELECT SUM(COALESCE(cost_microusd * ${AI_USAGE_UNITS_PER_DOLLAR}::numeric / 1000000, usage_units, 0)) AS usage FROM ai_usage_log WHERE time >= NOW() - INTERVAL '${period}'`;
+    query = `SELECT SUM(COALESCE(cost_microusd * ${AI_USAGE_UNITS_PER_DOLLAR}::numeric / 1000000, usage_units, 0)) AS usage FROM ai_usage_log WHERE time >= NOW() - INTERVAL '${period}' AND (tag IS DISTINCT FROM 'chat-speech-reservation' OR time >= NOW() - INTERVAL '5 minutes')`;
   }
   const { rows } = await pool.query(query, args);
   return Number(rows[0]?.["usage"] ?? 0);

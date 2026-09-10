@@ -64,6 +64,8 @@ import {
   createPreview,
   createInvoiceDraft,
   issueManualInvoice,
+  issueQuoteLink,
+  revokeQuoteLink,
   list,
   listAssignees,
   provision,
@@ -105,6 +107,34 @@ describe("commercial orders public Conat API", () => {
     expect(mockDispatchCommercialSeedRequest).not.toHaveBeenCalled();
     expect(mockGetInterBayBridge).not.toHaveBeenCalled();
   });
+
+  it.each([issueQuoteLink, revokeQuoteLink])(
+    "requires fresh non-impersonated admin auth for link mutations",
+    async (method) => {
+      const opts = {
+        ...BASE,
+        id: "order",
+        commercial_quote_id: "quote",
+        expires_at: "2026-10-01",
+      };
+      mockIsAdmin.mockResolvedValue(false);
+      await expect(method(opts as any)).rejects.toThrow("admin privileges");
+      expect(mockDispatchCommercialSeedRequest).not.toHaveBeenCalled();
+      mockIsAdmin.mockResolvedValue(true);
+      mockRequireDangerousSessionAuth.mockRejectedValueOnce(
+        Error("fresh auth required"),
+      );
+      await expect(method(opts as any)).rejects.toThrow("fresh auth");
+      expect(mockDispatchCommercialSeedRequest).not.toHaveBeenCalled();
+      await method(opts as any);
+      expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith(
+        expect.objectContaining({ allow_actor_impersonation: false }),
+      );
+      expect(mockAssertCommercialReceivablesCapability).toHaveBeenCalledWith(
+        "mutate",
+      );
+    },
+  );
 
   it("dispatches admin reads locally to the seed without session credentials", async () => {
     await list({

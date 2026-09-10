@@ -761,6 +761,27 @@ describe("project-host intrusion monitor normalization", () => {
     });
   });
 
+  it.each([
+    ["127.0.0.1:32767", "unattributed", true],
+    ["127.0.0.1:32768", "unattributed", false],
+    ["[::1]:32767", "unattributed", true],
+    ["[::1]:32768", "unattributed", false],
+    ["127.0.0.1:40000", "unknown", true],
+    ["0.0.0.0:40000", "unattributed", true],
+    ["10.0.0.1:40000", "unattributed", true],
+    ["[::]:40000", "unattributed", true],
+    ["[2001:db8::1]:40000", "unattributed", true],
+  ])("classifies TCP listener %s (%s)", (local, process, actionable) => {
+    const listener = JSON.stringify(["tcp", process, local]);
+    const result = selectActionableHostIntrusionChanges({
+      added: { "network.listeners": [listener] },
+      removed: {},
+    });
+    expect(result.added["network.listeners"] ?? []).toEqual(
+      actionable ? [listener] : [],
+    );
+  });
+
   it("only promotes high-confidence changes to notifications", () => {
     const delta = {
       added: {
@@ -772,6 +793,10 @@ describe("project-host intrusion monitor normalization", () => {
           '["tcp","rustic","127.0.0.1:<dynamic>"]',
           '["tcp","project-host:ac","0.0.0.0:<dynamic>"]',
           '["udp","unattributed","0.0.0.0:46482"]',
+          '["tcp","unattributed","127.0.0.1:38839"]',
+          '["tcp","unattributed","localhost:53839"]',
+          '["tcp","unattributed","[::1]:53840"]',
+          '["tcp","unattributed","127.0.0.1:4444"]',
           '["tcp","unknown","127.0.0.1:4444"]',
           '["tcp","unknown","0.0.0.0:4444"]',
         ],
@@ -795,6 +820,7 @@ describe("project-host intrusion monitor normalization", () => {
       added: {
         "host_processes.findings": ['[0,"unknown","/tmp/run"]'],
         "network.listeners": [
+          '["tcp","unattributed","127.0.0.1:4444"]',
           '["tcp","unknown","127.0.0.1:4444"]',
           '["tcp","unknown","0.0.0.0:4444"]',
         ],

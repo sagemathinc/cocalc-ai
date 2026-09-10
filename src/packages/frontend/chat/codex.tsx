@@ -510,6 +510,8 @@ export function CodexConfigButton({
   ]);
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(chatPath);
   const [open, setOpen] = useState(false);
+  const [membershipHelpOpen, setMembershipHelpOpen] = useState(false);
+  const paymentSourceButtonRef = React.useRef<HTMLButtonElement>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [form] = Form.useForm();
@@ -693,6 +695,17 @@ export function CodexConfigButton({
     ? "Checking…"
     : getCodexPaymentSourceShortLabel(paymentSource?.source);
   const sourceTooltip = getCodexPaymentSourceTooltip(paymentSource);
+  const membershipNeedsNewThread =
+    hasEstablishedSession &&
+    paymentSource?.source !== "site-api-key" &&
+    getCodexPaymentSourceOptions(paymentSource).some(
+      (option) => option.value === "site-api-key" && !option.disabled,
+    );
+  const membershipPolicy = paymentSource?.siteFundedCodex?.policy;
+  const membershipThreadHelp =
+    `CoCalc Membership uses ${membershipPolicy ? `${membershipPolicy.model} with ${membershipPolicy.reasoning} reasoning` : "a fixed model and reasoning level"}. ` +
+    "An existing thread using a different model cannot switch to this profile because its conversation may exceed the model's context size. " +
+    "Start a new thread and choose CoCalc Membership before sending your first message, or continue a thread already using CoCalc Membership. Your current thread and messages will remain unchanged.";
   const chatgptAccount = getChatGptAccountInfo(codexUsageStatus);
   const sourceTooltipDetails =
     paymentSource?.source === "site-api-key" ? (
@@ -725,15 +738,11 @@ export function CodexConfigButton({
   const paymentSourceOptions = getCodexPaymentSourceOptions(paymentSource).map(
     (option) => {
       if (!hasEstablishedSession) return option;
-      if (
-        option.value === "site-api-key" &&
-        paymentSource?.source !== "site-api-key"
-      ) {
+      if (option.value === "site-api-key" && membershipNeedsNewThread) {
         return {
           ...option,
           disabled: true,
-          description:
-            "Start a new chat to use your CoCalc Membership; its constrained model profile may not fit this existing session.",
+          description: membershipThreadHelp,
         };
       }
       if (option.value === "auto" && selectedPaymentSource !== "auto") {
@@ -1111,12 +1120,19 @@ export function CodexConfigButton({
     items: paymentSourceOptions.map((option) => ({
       key: option.value,
       label: option.label,
-      disabled: option.disabled,
+      disabled:
+        option.value === "site-api-key" && membershipNeedsNewThread
+          ? false
+          : option.disabled,
       title: option.description,
     })),
     onClick: ({ domEvent, key }) => {
       domEvent.stopPropagation();
       const next = key as CodexPaymentSourcePreference;
+      if (next === "site-api-key" && membershipNeedsNewThread) {
+        setMembershipHelpOpen(true);
+        return;
+      }
       applyQuickConfigPatch(paymentSourcePatch(next));
     },
   };
@@ -1284,6 +1300,7 @@ export function CodexConfigButton({
                   >
                     <Dropdown menu={paymentSourceMenu} trigger={["click"]}>
                       <button
+                        ref={paymentSourceButtonRef}
                         type="button"
                         aria-label={
                           chatgptAccount?.email
@@ -1437,6 +1454,17 @@ export function CodexConfigButton({
         )}
       </div>
       <Modal
+        open={membershipHelpOpen}
+        title="Start a new thread to use CoCalc Membership"
+        onCancel={() => setMembershipHelpOpen(false)}
+        afterClose={() => paymentSourceButtonRef.current?.focus()}
+        footer={
+          <Button onClick={() => setMembershipHelpOpen(false)}>Got it</Button>
+        }
+      >
+        <p>{membershipThreadHelp}</p>
+      </Modal>
+      <Modal
         open={open}
         title="Codex settings"
         okText="Save"
@@ -1570,6 +1598,15 @@ export function CodexConfigButton({
                       }}
                     />
                   </Form.Item>
+                  {membershipNeedsNewThread ? (
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginTop: 10 }}
+                      title="Start a new thread to use CoCalc Membership"
+                      description={membershipThreadHelp}
+                    />
+                  ) : null}
                   {selectedPaymentSource === "subscription" &&
                   paymentSource?.source === "none" ? (
                     <Alert

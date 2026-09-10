@@ -12,13 +12,13 @@ jest.mock("./github-pr-operations", () => ({
 }));
 jest.mock("@cocalc/frontend/chat/git-commit-drawer", () => ({
   GitCommitDrawer: (props) => (
-    <div data-testid="review" data-origin-thread={props.feedbackToOriginThread}>
+    <div data-testid="review">
       {JSON.stringify(props.initialComparison)}
       <button
         disabled={!props.onRequestAgentTurn}
         onClick={() =>
           props.onRequestAgentTurn?.("Review feedback", {
-            workingDirectory: "/other-worktree",
+            preserveThread: true,
           })
         }
       >
@@ -71,10 +71,6 @@ test("opens an explicit comparison and keeps it pinned across metadata refresh",
   expect(document.activeElement).toBe(button);
   fireEvent.click(button);
   expect(await screen.findByTestId("review")).toHaveTextContent(pr.head_sha);
-  expect(screen.getByTestId("review")).toHaveAttribute(
-    "data-origin-thread",
-    "true",
-  );
   rerender(
     <GitHubPRArtifact
       artifact={{ ...artifact, github_pr: { ...pr, head_sha: "c".repeat(40) } }}
@@ -88,7 +84,7 @@ test("opens an explicit comparison and keeps it pinned across metadata refresh",
   expect(screen.getByTestId("review")).not.toHaveTextContent("c".repeat(40));
   fireEvent.click(screen.getByRole("button", { name: "Send review feedback" }));
   expect(request).toHaveBeenCalledWith(expect.stringContaining(pr.head_sha), {
-    workingDirectory: "/other-worktree",
+    preserveThread: true,
   });
   expect(request.mock.calls[0][0]).not.toContain("c".repeat(40));
 });

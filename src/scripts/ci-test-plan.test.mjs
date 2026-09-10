@@ -39,7 +39,8 @@ test("groups affected tests into controlled lanes", () => {
   });
   assert.equal(plan.mode, "affected");
   assert.deepEqual(plan.lanes, [
-    { lane: "server", packages: "server" },
+    { lane: "server-1", packages: "server", shard: "1/2" },
+    { lane: "server-2", packages: "server", shard: "2/2" },
     { lane: "frontend", packages: "frontend" },
     { lane: "rest", packages: "chat,util" },
   ]);
@@ -53,4 +54,40 @@ test("full plans retain every test-bearing workspace", () => {
   assert.ok(plan.selectedPackages.includes("notebook"));
   assert.ok(plan.selectedPackages.includes("project-host"));
   assert.ok(plan.depcheckPackages.includes("tasks"));
+  assert.equal(
+    new Set(plan.lanes.map(({ lane }) => lane)).size,
+    plan.lanes.length,
+  );
+  assert.deepEqual(
+    [
+      ...new Set(plan.lanes.flatMap(({ packages }) => packages.split(","))),
+    ].sort(),
+    plan.selectedPackages,
+  );
+  const scheduled = plan.lanes.flatMap(({ packages }) => packages.split(","));
+  for (const name of plan.selectedPackages) {
+    assert.equal(
+      scheduled.filter((packageName) => packageName === name).length,
+      name === "server" ? 2 : 1,
+      name,
+    );
+  }
+});
+
+test("does not schedule server shards for unrelated affected packages", () => {
+  const plan = createPlan({ workspaces, affectedPackages: ["frontend"] });
+  assert.deepEqual(plan.lanes, [{ lane: "frontend", packages: "frontend" }]);
+});
+
+test("balances database and backend without expanding affected selection", () => {
+  for (const heavy of [["backend"], ["database"], ["backend", "database"]]) {
+    const plan = createPlan({
+      workspaces,
+      affectedPackages: [...heavy, "cli"],
+    });
+    assert.deepEqual(plan.lanes, [
+      { lane: "backend-database", packages: heavy.join(",") },
+      { lane: "rest", packages: "cli" },
+    ]);
+  }
 });

@@ -67,17 +67,14 @@ import {
   isGitDiffFindTargetRendered,
 } from "./git-commit/diff-find";
 import { ReviewDiffPanel } from "./git-commit/review-diff-panel";
+import { GitDiffFind } from "./git-commit/diff-find-control";
 import { GitHistoryControls } from "./git-commit/history-controls";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
 import { currentHistorySelection } from "@cocalc/frontend/git/history-selection";
 import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
 import { useCommitWorktree } from "@cocalc/frontend/git/use-commit-worktree";
-import {
-  validateAgentWorktree,
-  dispatchWorktreeFeedback,
-} from "@cocalc/frontend/git/agent-worktree";
-import { WorktreeAgentConsent } from "./git-commit/worktree-agent-consent";
+import { useFeedbackDestination } from "./git-commit/feedback-destination";
 import type {
   GitReviewHistoryRoute,
   GitComparisonRoute,
@@ -285,7 +282,6 @@ interface GitCommitDrawerProps {
   inferCommitWorktree?: boolean;
   initialHistory?: GitReviewHistoryRoute;
   initialComparison?: GitComparisonRoute;
-  feedbackToOriginThread?: boolean;
   onComparisonChange?: (route?: GitComparisonRoute) => void;
   commitHash?: string;
   commitSelectionRequestToken?: number;
@@ -302,6 +298,7 @@ interface GitCommitDrawerProps {
     options?: {
       title?: string;
       workingDirectory?: string;
+      preserveThread?: boolean;
     },
   ) => void | Promise<void>;
   onDirectCommitLogged?: (info: {
@@ -479,7 +476,6 @@ export function GitCommitDrawer({
   cwdOverride,
   initialHistory,
   initialComparison,
-  feedbackToOriginThread = false,
   onComparisonChange,
   commitHash,
   commitSelectionRequestToken = 0,
@@ -520,6 +516,10 @@ export function GitCommitDrawer({
   const [loadedCommit, setLoadedCommit] = useState<string | undefined>(
     undefined,
   );
+  const [loadedDiffScope, setLoadedDiffScope] = useState<string>();
+  const loadedDiffRequestRef = useRef<
+    { scope: string; commit: string } | undefined
+  >(undefined);
   const [repoRoot, setRepoRoot] = useState<string>("");
   const [gitLog, setGitLog] = useState<GitLogEntry[]>([]);
   const [gitLogError, setGitLogError] = useState<string>("");
@@ -719,6 +719,17 @@ export function GitCommitDrawer({
       ? repositoryDiscovery.discovery
       : undefined;
   const cwd = selectedHistory?.selection.worktree ?? originCwd;
+  // Worktrees share committed objects. Background checkout discovery must not
+  // reload an immutable diff, its comments, or its reading position.
+  const diffCwd = isHeadSelected ? cwd : originCwd;
+  const diffRepoRoot = isHeadSelected ? repoRoot : "";
+  const diffRequestScope = JSON.stringify([
+    projectId,
+    diffCwd,
+    diffRepoRoot,
+    contextLines,
+    reloadCounter,
+  ]);
   const commitContextKey = JSON.stringify([
     repositoryScope,
     commitSelectionRequestToken,
@@ -733,7 +744,10 @@ export function GitCommitDrawer({
       (!cwdOverride || inferCommitWorktree) &&
       !initialHistory &&
       !selectedHistory &&
-      commit === parseCommitHash(commitHash),
+      (commit === incomingCommit ||
+        (incomingCommit &&
+          data?.summary.commit === commit &&
+          commit?.startsWith(incomingCommit))),
     ),
     blocked: Boolean(
       activeInlineDraft ||
@@ -746,13 +760,15 @@ export function GitCommitDrawer({
     ),
     origin: originDiscovery,
     commit: commitHash,
-    onSelect: (result) =>
+    onSelect: (result) => {
+      setRepoRoot(result.selection.worktree);
       setHistorySelection({
         scope: repositoryScope,
         requestToken: commitSelectionRequestToken,
         selection: result.selection,
         tip: result.tip,
-      }),
+      });
+    },
   });
   const comparisonRepository = useMemo(
     () =>
@@ -783,70 +799,20 @@ export function GitCommitDrawer({
     crossWorktree ||
     Boolean(contextNotice?.historicalOnly) ||
     Boolean(originDiscovery?.worktrees.find((tree) => tree.path === cwd)?.bare);
-  const expectedAgentBranch = selectedHistory?.selection.ref.startsWith(
-    "refs/heads/",
-  )
-    ? selectedHistory.selection.ref
-    : originDiscovery?.worktrees.find((tree) => tree.path === cwd)?.branch;
-  const agentRoutingScope = JSON.stringify([
-    repositoryScope,
-    cwd,
-    commit,
-    selectedHistory?.tip,
-    expectedAgentBranch,
-    commitSelectionRequestToken,
-  ]);
-  const [agentWorktreeConsent, setAgentWorktreeConsent] = useState<string>();
-  const agentRoutingCurrent = useRef<string | undefined>(undefined);
-  agentRoutingCurrent.current =
-    open && agentWorktreeConsent === agentRoutingScope
-      ? agentRoutingScope
-      : undefined;
-  useEffect(
-    () => () => {
-      agentRoutingCurrent.current = undefined;
-    },
-    [],
+  const feedbackDestination = useFeedbackDestination(
+    projectId,
+    sourcePath,
+    open,
   );
-  const canRouteWorktree = Boolean(
-    crossWorktree &&
-    !isHeadSelected &&
-    originDiscovery &&
-    selectedHistory &&
-    requestAgentTurn,
-  );
-  // Direct staging/commit controls remain read-only. Agent feedback has its own
-  // explicit opt-in and is revalidated immediately before creating a turn.
-  const onRequestAgentTurn = !readOnlyWorktree
-    ? requestAgentTurn
-    : canRouteWorktree && agentWorktreeConsent === agentRoutingScope
-      ? async (
-          prompt: string,
-          options?: { title?: string; workingDirectory?: string },
-        ) => {
-          await dispatchWorktreeFeedback({
-            prompt,
-            title: options?.title,
-            isCurrent: () => agentRoutingCurrent.current === agentRoutingScope,
-            send: requestAgentTurn!,
-            validate: () =>
-              validateAgentWorktree(
-                projectGitReader,
-                originDiscovery!.repository,
-                cwd,
-                selectedHistory!.tip,
-                commit!,
-                expectedAgentBranch,
-              ),
-          });
-        }
-      : undefined;
+  // Feedback is conversational, not a direct working-copy mutation. Keep the
+  // staging/commit guards above, but do not reroute the source conversation.
+  const onRequestAgentTurn = requestAgentTurn ?? feedbackDestination.request;
   const historyControlsSelection = useMemo<GitHistorySelection>(
     () =>
       selectedHistory?.selection ?? {
         worktree: originDiscovery?.repository.locator ?? originCwd,
         ref: "HEAD",
-        firstParent: true,
+        firstParent: false,
       },
     [selectedHistory, originDiscovery, originCwd],
   );
@@ -864,9 +830,9 @@ export function GitCommitDrawer({
   }, [inlineCommentPendingKey]);
   const scrollStorageId = useMemo(() => {
     const commitKey = `${commit ?? HEAD_REF}`.toLowerCase();
-    const raw = `${projectId ?? "no-project"}|${sourcePath ?? ""}|${cwd}|${commitKey}`;
+    const raw = `${projectId ?? "no-project"}|${sourcePath ?? ""}|${diffCwd}|${commitKey}`;
     return hashGitCommitValue(raw);
-  }, [projectId, sourcePath, cwd, commit]);
+  }, [projectId, sourcePath, diffCwd, commit]);
   useEffect(() => {
     setHistoricalFile(undefined);
   }, [open, scrollStorageId]);
@@ -877,9 +843,9 @@ export function GitCommitDrawer({
     }
     drawerViewWasOpenRef.current = open;
     drawerViewScopeRef.current = open
-      ? `${drawerViewSessionEpochRef.current}:${scrollStorageId}`
+      ? `${drawerViewSessionEpochRef.current}:${scrollStorageId}:${cwd}`
       : undefined;
-  }, [open, scrollStorageId]);
+  }, [open, scrollStorageId, cwd]);
 
   useEffect(() => {
     if (!open) return;
@@ -959,9 +925,11 @@ export function GitCommitDrawer({
     setInlineCommentPendingKey("");
   }, [open, commit, contextLines, reloadCounter]);
 
-  const currentData = shouldDisplayGitCommitData({ commit, loadedCommit })
-    ? data
-    : undefined;
+  const currentData =
+    loadedDiffScope === diffRequestScope &&
+    shouldDisplayGitCommitData({ commit, loadedCommit })
+      ? data
+      : undefined;
 
   const diffFindMatches = useMemo(
     () =>
@@ -1126,7 +1094,7 @@ export function GitCommitDrawer({
             {
               skip: history.length,
               count,
-              firstParent: selectedHistory?.selection.firstParent ?? true,
+              firstParent: selectedHistory?.selection.firstParent ?? false,
               showMerges,
             },
           );
@@ -1266,23 +1234,6 @@ export function GitCommitDrawer({
 
   useEffect(() => {
     if (
-      !open ||
-      !commit ||
-      isHeadSelected ||
-      navigableGitLog.length === 0 ||
-      commitIndex >= 0
-    )
-      return;
-    const prefixMatches = navigableGitLog.filter((entry) =>
-      entry.hash.startsWith(commit),
-    );
-    if (prefixMatches.length === 1) {
-      setSelectedCommit(prefixMatches[0].hash);
-    }
-  }, [open, commit, isHeadSelected, navigableGitLog, commitIndex]);
-
-  useEffect(() => {
-    if (
       !shouldFallbackToFirstVisibleGitCommit({
         open,
         showOnlyUnreviewedCommits,
@@ -1311,6 +1262,7 @@ export function GitCommitDrawer({
     if (nonRepoError) {
       setError("");
       setLoading(false);
+      loadedDiffRequestRef.current = undefined;
       setData(undefined);
       setLoadedCommit(undefined);
     }
@@ -1600,7 +1552,7 @@ export function GitCommitDrawer({
           resolveCommit: async (input) => {
             const { repository } = await projectGitReader.discover(
               projectId!,
-              cwd,
+              originCwd,
             );
             return projectGitReader.resolveCommit(repository, input);
           },
@@ -1646,7 +1598,7 @@ export function GitCommitDrawer({
         setReviewLoading(false);
       }
     })();
-  }, [open, accountId, commit, reviewReloadCounter, projectId, cwd]);
+  }, [open, accountId, commit, reviewReloadCounter, projectId, originCwd]);
 
   useEffect(() => {
     if (
@@ -2448,7 +2400,9 @@ export function GitCommitDrawer({
     };
     const prompt = [
       "Please review and address these inline commit comments.",
+      `Reviewed repository/worktree: ${JSON.stringify(repoRoot || cwd)}`,
       `Target diff: ${gitCommand}`,
+      "Use the pinned commit and reviewed location, not an inferred diff in your current directory. Check the working copy before editing; do not switch branches or commit unless separately requested.",
       "Return what you changed and any follow-up questions.",
       "```json",
       JSON.stringify(payload, null, 2),
@@ -2458,6 +2412,7 @@ export function GitCommitDrawer({
     try {
       await onRequestAgentTurn(prompt, {
         title: "Address commit review",
+        preserveThread: true,
         workingDirectory: repoRoot || cwd,
       });
       const now = Date.now();
@@ -2567,6 +2522,7 @@ export function GitCommitDrawer({
   useEffect(() => {
     if (!open) return;
     if (nonRepoError) {
+      loadedDiffRequestRef.current = undefined;
       setLoading(false);
       setError("");
       setData(undefined);
@@ -2574,20 +2530,31 @@ export function GitCommitDrawer({
       return;
     }
     if (!projectId) {
+      loadedDiffRequestRef.current = undefined;
       setError("Invalid commit or missing project.");
       setData(undefined);
       setLoadedCommit(undefined);
       return;
     }
     if (!commit) {
+      loadedDiffRequestRef.current = undefined;
       setLoading(false);
       setError("");
       setData(undefined);
       setLoadedCommit(undefined);
       return;
     }
+    // Canonicalizing a short link to the full, Git-resolved object ID is not a
+    // new review. Keep the same parsed files and mounted renderer.
+    if (
+      !isHeadSelected &&
+      loadedDiffRequestRef.current?.scope === diffRequestScope &&
+      loadedDiffRequestRef.current.commit === commit
+    )
+      return;
     let cancelled = false;
     const requestedCommit = commit;
+    loadedDiffRequestRef.current = undefined;
     setLoading(true);
     setError("");
     setData(undefined);
@@ -2595,7 +2562,7 @@ export function GitCommitDrawer({
     (async () => {
       try {
         if (!isHeadSelected) {
-          const discovery = await projectGitReader.discover(projectId, cwd);
+          const discovery = await projectGitReader.discover(projectId, diffCwd);
           const target = await projectGitReader.pinCommit(
             discovery.repository,
             commit,
@@ -2606,8 +2573,14 @@ export function GitCommitDrawer({
             contextLines,
           );
           if (!cancelled) {
+            loadedDiffRequestRef.current = {
+              scope: diffRequestScope,
+              commit: target.commit,
+            };
+            setSelectedCommit(target.commit);
             setData(parsed);
-            setLoadedCommit(requestedCommit);
+            setLoadedDiffScope(diffRequestScope);
+            setLoadedCommit(target.commit);
             setError("");
           }
           return;
@@ -2619,7 +2592,7 @@ export function GitCommitDrawer({
         });
         const showResult = await runGitCommand({
           projectId,
-          cwd: repoRoot || cwd,
+          cwd: diffRepoRoot || diffCwd,
           args,
         });
         if (showResult.exit_code !== 0) {
@@ -2633,10 +2606,11 @@ export function GitCommitDrawer({
         }
         const parsed = parseGitShowOutput(
           showResult.stdout ?? "",
-          repoRoot || undefined,
+          diffRepoRoot || undefined,
         );
         if (!cancelled) {
           setData(parsed);
+          setLoadedDiffScope(diffRequestScope);
           setLoadedCommit(requestedCommit);
           setError("");
         }
@@ -2656,8 +2630,9 @@ export function GitCommitDrawer({
   }, [
     open,
     projectId,
-    cwd,
-    repoRoot,
+    diffCwd,
+    diffRepoRoot,
+    diffRequestScope,
     commit,
     contextLines,
     isHeadSelected,
@@ -2743,7 +2718,7 @@ export function GitCommitDrawer({
   };
 
   const requestAgentRepoSetup = async () => {
-    if (!onRequestAgentTurn) return;
+    if (!requestAgentTurn) return;
     const startedScope = repoBootstrapScopeRef.current;
     if (!startedScope) return;
     const actionToken = repoBootstrapActionTokenRef.current + 1;
@@ -2761,7 +2736,7 @@ export function GitCommitDrawer({
         "4. Create an initial commit with a clear message.",
         "5. Summarize exactly what you included/excluded.",
       ].join("\n");
-      await onRequestAgentTurn(prompt, {
+      await requestAgentTurn(prompt, {
         title: "Set up git repository",
         workingDirectory: cwd,
       });
@@ -3050,7 +3025,7 @@ export function GitCommitDrawer({
   }: {
     includeSummary: boolean;
   }) => {
-    if (!onRequestAgentTurn) {
+    if (!requestAgentTurn) {
       setHeadCommitError("No active codex thread available for this action.");
       return;
     }
@@ -3066,7 +3041,7 @@ export function GitCommitDrawer({
     setHeadCommitBusy(true);
     setHeadCommitError("");
     try {
-      await onRequestAgentTurn(prompt, {
+      await requestAgentTurn(prompt, {
         title: "Commit changes",
         workingDirectory: repoRoot || cwd,
       });
@@ -3209,7 +3184,7 @@ export function GitCommitDrawer({
     () =>
       buildGitReviewEditorScope({
         accountId,
-        commitSha: reviewStateCommit ?? currentReviewCommit,
+        commitSha: currentReviewCommit ?? reviewStateCommit,
       }),
     [accountId, reviewStateCommit, currentReviewCommit],
   );
@@ -3386,13 +3361,6 @@ export function GitCommitDrawer({
       onGitLogFetchCountChange={handleGitLogFetchCountChange}
       showOnlyUnreviewedCommits={showOnlyUnreviewedCommits}
       onToggleShowOnlyUnreviewed={handleToggleShowOnlyUnreviewed}
-      diffFindInputRef={diffFindInputRef}
-      diffFindQuery={diffFindQuery}
-      onDiffFindQueryChange={setDiffFindQuery}
-      onNextDiffFindMatch={goToNextDiffFindMatch}
-      onPreviousDiffFindMatch={goToPreviousDiffFindMatch}
-      diffFindMatchesLength={diffFindMatches.length}
-      activeDiffFindMatchIndex={activeDiffFindMatchIndex}
       canGoNewer={canGoNewer}
       canGoOlder={canGoOlder}
       onGoNewer={goNewer}
@@ -3428,6 +3396,7 @@ export function GitCommitDrawer({
       className="git-review-drawer"
       title={
         <GitReviewTitle
+          worktreeNotice={contextNotice}
           subject={
             isHeadSelected
               ? "Uncommitted changes"
@@ -3530,8 +3499,6 @@ export function GitCommitDrawer({
               headStatusAction,
             )}
             onApply={(selection, discovery, tip) => {
-              setData(undefined);
-              setLoadedCommit(undefined);
               setRepoRoot(discovery.repository.locator);
               setHistorySelection({
                 scope: repositoryScope,
@@ -3544,19 +3511,6 @@ export function GitCommitDrawer({
           />
         )}
         {navigation}
-        {canRouteWorktree && (
-          <WorktreeAgentConsent
-            path={cwd}
-            checked={agentWorktreeConsent === agentRoutingScope}
-            disabled={reviewSubmitBusy}
-            onChange={(checked) =>
-              setAgentWorktreeConsent(checked ? agentRoutingScope : undefined)
-            }
-          />
-        )}
-        {contextNotice && (
-          <Alert type="info" title={contextNotice.message} showIcon />
-        )}
         {gitLogError ? (
           <Alert
             type="warning"
@@ -3597,7 +3551,7 @@ export function GitCommitDrawer({
             cwd={cwd}
             error={nonRepoError}
             busy={repoBootstrapBusy}
-            canAskAgent={Boolean(onRequestAgentTurn)}
+            canAskAgent={Boolean(requestAgentTurn)}
             onInitialize={() => {
               void initializeGitRepo();
             }}
@@ -3764,9 +3718,8 @@ export function GitCommitDrawer({
                   expansionScope={JSON.stringify([
                     accountId,
                     projectId,
-                    originDiscovery?.repository.commonDirectory ?? originCwd,
-                    cwd,
-                    reviewStateCommit ?? currentReviewCommit,
+                    diffCwd,
+                    currentReviewCommit ?? reviewStateCommit,
                   ])}
                   files={navigationFiles}
                   activeId={
@@ -3777,6 +3730,17 @@ export function GitCommitDrawer({
                   onSelect={(id) => scrollToDiffFile(Number(id), "auto")}
                 >
                   <ReviewDiffPanel
+                    findControl={
+                      <GitDiffFind
+                        inputRef={diffFindInputRef}
+                        query={diffFindQuery}
+                        onChange={setDiffFindQuery}
+                        onNext={goToNextDiffFindMatch}
+                        onPrevious={goToPreviousDiffFindMatch}
+                        count={diffFindMatches.length}
+                        index={activeDiffFindMatchIndex}
+                      />
+                    }
                     navigationRef={pierreNavigationRef}
                     onClaimScrollRestoration={() => {
                       pendingScrollRestoreRef.current = null;
@@ -3785,9 +3749,8 @@ export function GitCommitDrawer({
                     scrollScope={JSON.stringify([
                       accountId,
                       projectId,
-                      originDiscovery?.repository.commonDirectory ?? originCwd,
-                      cwd,
-                      reviewStateCommit ?? currentReviewCommit,
+                      diffCwd,
+                      currentReviewCommit ?? reviewStateCommit,
                     ])}
                     onActiveFile={(index) =>
                       setActiveNavigationFile({
@@ -3899,8 +3862,7 @@ export function GitCommitDrawer({
           commit={commit ?? "HEAD"}
           accountId={accountId}
           fontSize={effectiveFontSize}
-          onRequestAgentTurn={requestAgentTurn}
-          feedbackToOriginThread={feedbackToOriginThread}
+          onRequestAgentTurn={onRequestAgentTurn}
           onClose={() => {
             setComparisonOpen(false);
             onComparisonChange?.(undefined);
@@ -3919,6 +3881,7 @@ export function GitCommitDrawer({
         onClose={() => setHistoricalFile(undefined)}
         fontSize={effectiveFontSize}
       />
+      {feedbackDestination.modal}
     </Drawer>
   );
 }
