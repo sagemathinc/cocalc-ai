@@ -6,7 +6,42 @@ import {
   validateArtifactPublication,
   validateArtifactFeedback,
   artifactFeedbackPrompt,
+  validateArtifactFile,
 } from "../artifacts";
+
+test.each([
+  "",
+  "../private",
+  "/home/user/../secret",
+  "https://example.com/x",
+  "a\\b",
+  "x\u0000y",
+])("rejects invalid file locator %s", (path) => {
+  expect(() => validateArtifactFile({ path })).toThrow();
+});
+
+test("file publications pin locators and include locator changes in editing bases", () => {
+  const db = store();
+  const initial = { ...input, file: { path: "/home/user/policy.md" } };
+  const first = publishArtifact(db, initial);
+  expect(first.artifact.kind).toBe("file");
+  expect(publishArtifact(db, initial).replayed).toBe(true);
+  const next = publishArtifact(db, {
+    ...initial,
+    file: { path: "/home/user/revised.md" },
+    base: first.base,
+    operation_id: "move",
+  });
+  expect(next.base).not.toBe(first.base);
+  expect(first.publication.snapshot.file?.path).toBe(initial.file.path);
+  expect(() =>
+    publishArtifact(db, {
+      ...initial,
+      base: first.base,
+      operation_id: "stale",
+    }),
+  ).toThrow();
+});
 
 test("feedback validates rendered offsets and preserves the source snapshot", () => {
   const feedback = {

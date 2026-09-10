@@ -44,7 +44,7 @@ export function registerProjectChatCommands(
 
   const artifact = chat
     .command("artifact")
-    .description("experimental collaborative Markdown artifacts");
+    .description("experimental Markdown and file-reference artifacts");
   for (const action of [
     "create",
     "update",
@@ -63,7 +63,10 @@ export function registerProjectChatCommands(
         "--message-date <date>",
         "exact producing message timestamp for context",
       )
-      .option("--file <path>", "JSON publication payload, or - for stdin")
+      .option(
+        "--file <path>",
+        "JSON publication payload (optional file: {path} for a file reference), or - for stdin",
+      )
       .option("--experimental", "opt into prototype artifact writes")
       .action(async (opts, command: Command) => {
         await withContext(

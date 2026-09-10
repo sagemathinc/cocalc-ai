@@ -114,7 +114,9 @@ export function ArtifactCards({
                     open(publication.operation_id);
                   }}
                 >
-                  Published version
+                  {publication.snapshot.file
+                    ? "Published reference"
+                    : "Published version"}
                 </Button>
               </Space>
               <div
@@ -125,7 +127,8 @@ export function ArtifactCards({
                   marginTop: 6,
                 }}
               >
-                {publication.snapshot.markdown.slice(0, 240)}
+                {publication.snapshot.file?.path ??
+                  publication.snapshot.markdown.slice(0, 240)}
               </div>
             </div>
           );

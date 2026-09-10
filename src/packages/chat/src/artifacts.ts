@@ -3,6 +3,24 @@ export const ARTIFACT_TEXT_LIMIT = 32 * 1024;
 export const ARTIFACT_SNAPSHOT_LIMIT = 128 * 1024;
 const DATE = "1970-01-01T00:00:00.000Z";
 
+/** A locator, not a snapshot of the file contents. Relative to the chat project. */
+export interface ArtifactFile {
+  path: string;
+}
+
+export function validateArtifactFile(value: unknown): ArtifactFile {
+  const row = plain(value);
+  const path = text(row?.path, "file path", 4096);
+  if (
+    !path ||
+    /[\x00-\x1f\x7f\\]/.test(path) ||
+    path.split("/").some((part) => part === "..") ||
+    /^[a-z][a-z0-9+.-]*:/i.test(path)
+  )
+    throw Error("invalid artifact file path");
+  return { path };
+}
+
 export interface ArtifactTarget {
   thread_id: string;
   artifact_id: string;
@@ -13,7 +31,8 @@ export interface ArtifactRecord extends ArtifactTarget {
   sender_id: string;
   date: string;
   schema_version: 1;
-  kind: "markdown";
+  kind: "markdown" | "file";
+  file?: ArtifactFile;
   title: string;
   input: string;
 }
@@ -26,7 +45,7 @@ export interface ArtifactPublication extends ArtifactTarget {
   schema_version: 1;
   operation_id: string;
   message_id: string;
-  snapshot: { title: string; markdown: string };
+  snapshot: { title: string; markdown: string; file?: ArtifactFile };
 }
 
 export interface ArtifactStore {
@@ -135,7 +154,7 @@ export function validateArtifact(value: unknown): ArtifactRecord {
   if (
     row?.event !== "chat-artifact" ||
     row.schema_version !== 1 ||
-    row.kind !== "markdown"
+    (row.kind !== "markdown" && row.kind !== "file")
   ) {
     throw Error("unsupported or missing artifact");
   }
@@ -146,7 +165,8 @@ export function validateArtifact(value: unknown): ArtifactRecord {
     ...key,
     artifact_id: row.artifact_id,
     schema_version: 1,
-    kind: "markdown",
+    kind: row.kind,
+    ...(row.kind === "file" ? { file: validateArtifactFile(row.file) } : {}),
     title: text(row.title, "title", 256),
     input: text(row.input, "Markdown", ARTIFACT_TEXT_LIMIT),
   };
@@ -180,13 +200,20 @@ export function validateArtifactPublication(
     snapshot: {
       title: text(row.snapshot?.title, "title", 256),
       markdown: text(row.snapshot?.markdown, "Markdown", ARTIFACT_TEXT_LIMIT),
+      ...(row.snapshot?.file === undefined
+        ? {}
+        : { file: validateArtifactFile(row.snapshot.file) }),
     },
   });
 }
 
 // Exact content, not a collision-prone hash or a distributed CAS claim.
 export function artifactBase(record: ArtifactRecord): string {
-  return JSON.stringify([record.title, record.input]);
+  return JSON.stringify(
+    record.kind === "file"
+      ? [record.title, record.input, record.file]
+      : [record.title, record.input],
+  );
 }
 
 export function readArtifact(store: ArtifactStore, target: ArtifactTarget) {
@@ -199,6 +226,7 @@ export interface PublishArtifactInput extends ArtifactTarget {
   message_id: string;
   title: string;
   markdown: string;
+  file?: ArtifactFile;
   /** Required for updates; obtained from readArtifact. */
   base?: string;
 }
@@ -212,7 +240,8 @@ export function publishArtifact(
     ...artifactKey(input),
     artifact_id: input.artifact_id,
     schema_version: 1,
-    kind: "markdown",
+    kind: input.file === undefined ? "markdown" : "file",
+    file: input.file,
     title: input.title,
     input: input.markdown,
   });
@@ -223,7 +252,11 @@ export function publishArtifact(
     operation_id: input.operation_id,
     published_at: new Date().toISOString(),
     message_id: input.message_id,
-    snapshot: { title: artifact.title, markdown: artifact.input },
+    snapshot: {
+      title: artifact.title,
+      markdown: artifact.input,
+      ...(artifact.file ? { file: artifact.file } : {}),
+    },
   });
   const previous = store.get_one(
     artifactPublicationKey(input, input.operation_id),

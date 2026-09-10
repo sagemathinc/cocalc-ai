@@ -64,9 +64,16 @@ export function ReadonlyArtifactCards({
               >
                 <strong>{publication.snapshot.title}</strong>
                 <div style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>
-                  {publication.snapshot.markdown.slice(0, 240)}
+                  {publication.snapshot.file?.path ??
+                    publication.snapshot.markdown.slice(0, 240)}
                 </div>
-                {current ? (
+                {publication.snapshot.file ? (
+                  <div role="note">
+                    File reference only. Open the file through the project file
+                    browser; no historical file contents are stored in this
+                    card.
+                  </div>
+                ) : current?.kind === "markdown" ? (
                   <details>
                     <summary>Current document</summary>
                     <StaticMarkdown value={current.input} />
@@ -74,10 +81,12 @@ export function ReadonlyArtifactCards({
                 ) : (
                   <div role="status">Current document unavailable</div>
                 )}
-                <details>
-                  <summary>Published version</summary>
-                  <StaticMarkdown value={publication.snapshot.markdown} />
-                </details>
+                {!publication.snapshot.file && (
+                  <details>
+                    <summary>Published version</summary>
+                    <StaticMarkdown value={publication.snapshot.markdown} />
+                  </details>
+                )}
               </section>
             );
           } catch {

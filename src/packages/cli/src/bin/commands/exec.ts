@@ -237,8 +237,8 @@ export interface BackendExecApi {
       context(messageDate: string): Promise<{ project_id: string; path: string; thread_id: string; message_id: string }>;
       list(): Promise<Array<{ artifact_id: string; thread_id: string; title: string; input: string }>>;
       read(artifactId: string): Promise<{ artifact: { artifact_id: string; thread_id: string; title: string; input: string }; base: string }>;
-      create(artifactId: string, payload: { message_id: string; operation_id: string; title: string; markdown: string }): Promise<unknown>;
-      update(artifactId: string, payload: { message_id: string; operation_id: string; title: string; markdown: string; base: string }): Promise<unknown>;
+      create(artifactId: string, payload: { message_id: string; operation_id: string; title: string; markdown: string; file?: { path: string } }): Promise<unknown>;
+      update(artifactId: string, payload: { message_id: string; operation_id: string; title: string; markdown: string; file?: { path: string }; base: string }): Promise<unknown>;
     };
   };
   tasks: {

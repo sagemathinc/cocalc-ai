@@ -1,0 +1,73 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { FileArtifact, fileArtifactPreviewSupported } from "./file-artifact";
+
+const readFile = jest.fn();
+const stat = jest.fn();
+const open_file = jest.fn().mockResolvedValue(undefined);
+const actions = { fs: () => ({ stat, readFile }), open_file };
+jest.mock("@cocalc/frontend/project/context", () => ({
+  useProjectContext: () => ({ actions }),
+}));
+jest.mock("@cocalc/frontend/public-viewer/file-contents", () => ({
+  __esModule: true,
+  default: ({ content, fileContext }) => (
+    <div
+      data-testid="preview"
+      data-sanitized={String(fileContext.noSanitize === false)}
+    >
+      {content}
+    </div>
+  ),
+}));
+const artifact: any = {
+  kind: "file",
+  title: "Policy",
+  file: { path: "/home/user/policy.md" },
+};
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  stat.mockResolvedValue({ size: 10 });
+  readFile.mockResolvedValue("Saved policy");
+});
+
+test("previews saved text, opens the real file, and keeps the preview mounted on refresh", async () => {
+  render(<FileArtifact artifact={artifact} historical />);
+  const preview = await screen.findByTestId("preview");
+  expect(preview).toHaveTextContent("Saved policy");
+  expect(preview.dataset.sanitized).toBe("true");
+  expect(screen.getByRole("note")).toHaveTextContent(
+    "not a historical snapshot",
+  );
+  const open = screen.getByRole("button", { name: "Open file" });
+  open.focus();
+  expect(document.activeElement).toBe(open);
+  fireEvent.click(open);
+  expect(open_file).toHaveBeenCalledWith({ path: artifact.file.path });
+  readFile.mockResolvedValue("Updated policy");
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(preview).toHaveTextContent("Updated policy"));
+  expect(screen.getByTestId("preview")).toBe(preview);
+});
+
+test("does not fetch unsupported active formats or oversized files", async () => {
+  const { rerender } = render(
+    <FileArtifact
+      artifact={{ ...artifact, file: { path: "app.html" } }}
+      historical={false}
+    />,
+  );
+  expect(screen.getByText(/Preview is not yet supported/)).toBeTruthy();
+  expect(readFile).not.toHaveBeenCalled();
+  stat.mockResolvedValue({ size: 2 * 1024 * 1024 });
+  rerender(<FileArtifact artifact={artifact} historical={false} />);
+  await screen.findByText(/File exceeds the 1 MiB preview limit/);
+  expect(readFile).not.toHaveBeenCalled();
+});
+
+test.each(["x.html", "x.svg", "x.ipynb"])(
+  "does not select active renderer for %s",
+  (path) => {
+    expect(fileArtifactPreviewSupported(path)).toBe(false);
+  },
+);

@@ -31,6 +31,7 @@ import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { FileArtifact } from "./file-artifact";
 
 const DocumentDiff = lazyWithRetry(
   () => import("@cocalc/frontend/components/diff-viewer/document-diff"),
@@ -130,11 +131,15 @@ export function Workbench({
         ...artifact,
         title: pub.snapshot.title,
         input: pub.snapshot.markdown,
+        kind: pub.snapshot.file ? "file" : "markdown",
+        file: pub.snapshot.file,
       };
     }
   } catch {
     return <Alert type="warning" title="Artifact unavailable" />;
   }
+  if (artifact.kind === "file")
+    return <FileArtifact artifact={artifact} historical={historical} />;
   const value = pinned ?? artifact;
   const selectedIndex = publications.findIndex(
     (pub) => pub.operation_id === version,
