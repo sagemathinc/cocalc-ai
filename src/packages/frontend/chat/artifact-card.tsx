@@ -10,6 +10,7 @@ import type {
   EntityTheme,
 } from "@cocalc/chat";
 const Appearance = lazy(() => import("./artifact-appearance-editor"));
+const Thumbnail = lazy(() => import("./artifact-thumbnail"));
 
 export function ArtifactIdentity({
   title,
@@ -246,6 +247,19 @@ export function ArtifactCard({
               Current saved file, not historical contents
             </div>
           </div>
+        )}
+        {(theme?.image_blob ||
+          (projectId &&
+            s.file &&
+            /\.(png|jpe?g|gif|webp)$/i.test(s.file.path))) && (
+          <Suspense fallback={<div style={{ height: 180 }} />}>
+            <Thumbnail
+              imageBlob={theme?.image_blob}
+              path={s.file?.path}
+              projectId={projectId}
+              title={title}
+            />
+          </Suspense>
         )}
         {s.actions && (
           <Tag>{s.actions.length} proposed actions · Review drafts</Tag>
