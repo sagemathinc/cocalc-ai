@@ -5311,6 +5311,21 @@ class BootstrapModesTest(unittest.TestCase):
                 any("bootstrap: acquired lifecycle lock" in event for event in events)
             )
 
+    def test_bootstrap_failure_reports_error_before_first_heartbeat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            error = "Podman cannot load libgpgme.so.11"
+            for mode, runner in (([], "run_bootstrap"), (["reconcile"], "run_reconcile")):
+                with self.subTest(mode=mode), \
+                    mock.patch.object(bootstrap, "load_config", return_value=cfg), \
+                    mock.patch.object(bootstrap, "bootstrap_operation_lock"), \
+                    mock.patch.object(bootstrap, "log_line"), \
+                    mock.patch.object(bootstrap, runner, side_effect=RuntimeError(error)), \
+                    mock.patch.object(bootstrap, "report_bootstrap_status") as report:
+                    result = bootstrap.main(mode + ["--bootstrap-dir", cfg.bootstrap_dir])
+                    self.assertEqual(result, 1)
+                    report.assert_called_once_with(cfg, "error", error)
+
     def test_reconcile_mode_runs_under_lifecycle_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)

@@ -12732,6 +12732,9 @@ def main(argv: list[str]) -> int:
             return run_bootstrap(cfg)
     except Exception as exc:
         log_line(cfg, f"bootstrap: failed: {exc}")
+        # Bootstrap may fail before the host can heartbeat its local state.
+        # Do not leave the control plane displaying the last running phase.
+        report_bootstrap_status(cfg, "error", str(exc))
         return 1
 
 
