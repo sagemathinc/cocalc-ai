@@ -187,6 +187,7 @@ export function Workbench({
   if (artifact.kind === "file")
     return (
       <FileArtifact
+        projectId={project_id}
         key={`${artifact.thread_id}:${artifact.artifact_id}`}
         artifact={artifact}
         historical={historical}

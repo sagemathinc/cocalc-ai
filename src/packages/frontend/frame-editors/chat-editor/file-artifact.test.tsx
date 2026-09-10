@@ -11,6 +11,12 @@ const readFile = jest.fn();
 const stat = jest.fn();
 const open_file = jest.fn().mockResolvedValue(undefined);
 const actions = { fs: () => ({ stat, readFile }), open_file };
+jest.mock("@cocalc/frontend/project/use-project-host-authed-url", () => ({
+  useProjectHostAuthedUrl: ({ url }) => url,
+}));
+jest.mock("@cocalc/frontend/project/viewer-file-editor", () => ({
+  viewerRawFileUrl: ({ project_id, path }) => `/files/${project_id}/${path}`,
+}));
 jest.mock("@cocalc/frontend/project/context", () => ({
   useProjectContext: () => ({ actions }),
 }));
@@ -109,5 +115,21 @@ test.each(["x.html", "x.svg", "x.ipynb"])(
   "does not select active renderer for %s",
   (path) => {
     expect(fileArtifactPreviewSupported(path)).toBe(false);
+  },
+);
+
+test.each(["plot.png", "report.pdf"])(
+  "supports binary %s without reading as text",
+  (path) => {
+    render(
+      <FileArtifact
+        artifact={{ ...artifact, file: { path } }}
+        historical={false}
+        projectId="project"
+      />,
+    );
+    expect(fileArtifactPreviewSupported(path)).toBe(true);
+    expect(readFile).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
   },
 );

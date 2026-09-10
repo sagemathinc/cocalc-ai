@@ -11,6 +11,10 @@ import { useProjectContext } from "@cocalc/frontend/project/context";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import PublicViewerFileContents from "@cocalc/frontend/public-viewer/file-contents";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
+import { viewerRawFileUrl } from "@cocalc/frontend/project/viewer-file-editor";
+
+const BINARY_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "pdf"]);
 
 const TEXT_EXTENSIONS = new Set([
   "md",
@@ -36,25 +40,38 @@ const TEXT_EXTENSIONS = new Set([
   "log",
 ]);
 export function fileArtifactPreviewSupported(path: string) {
-  return TEXT_EXTENSIONS.has(path.split(".").pop()?.toLowerCase() ?? "");
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  return TEXT_EXTENSIONS.has(ext) || BINARY_EXTENSIONS.has(ext);
 }
 
 export function FileArtifact({
   artifact,
   historical,
   onComment,
+  projectId,
 }: {
   artifact: ArtifactRecord;
   historical: boolean;
+  projectId?: string;
   onComment?: (feedback: ArtifactFeedback) => Promise<void>;
 }) {
-  const { actions } = useProjectContext();
+  const { actions, projectAccess } = useProjectContext();
   const context = useFileContext();
   const path = artifact.file!.path;
   const [loaded, setLoaded] = useState<{ path: string; content: string }>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const binary = BINARY_EXTENSIONS.has(
+    path.split(".").pop()?.toLowerCase() ?? "",
+  );
+  const binaryUrl = useProjectHostAuthedUrl({
+    project_id: projectId ?? "",
+    url:
+      binary && projectId
+        ? `${viewerRawFileUrl({ project_id: projectId, path, viewer: projectAccess?.role === "viewer" })}${projectAccess?.role === "viewer" ? "&" : "?"}artifactRefresh=${refresh}`
+        : undefined,
+  });
   const contentRef = useRef<HTMLDivElement>(null);
   const [selection, setSelection] = useState<ArtifactFeedback>();
   const displayedRef = useRef<{ path: string; content: string } | undefined>(
@@ -97,7 +114,10 @@ export function FileArtifact({
   useEffect(() => {
     let cancelled = false;
     setError("");
-    if (!supported) return;
+    if (!supported || binary) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     void (async () => {
       try {
@@ -122,7 +142,7 @@ export function FileArtifact({
     return () => {
       cancelled = true;
     };
-  }, [actions, path, refresh, supported]);
+  }, [actions, path, refresh, supported, binary]);
   return (
     <KeyboardBoundary
       className="smc-vfill"
@@ -153,6 +173,7 @@ export function FileArtifact({
         <Button
           disabled={
             !onComment ||
+            binary ||
             loaded?.path !== path ||
             new TextEncoder().encode(loaded?.content ?? "").length >
               ARTIFACT_TEXT_LIMIT
@@ -250,7 +271,18 @@ export function FileArtifact({
                 : context.urlTransform?.(url, tag),
           }}
         >
-          {loaded?.path === path && (
+          {binary && !binaryUrl && (
+            <div role="status">Preparing file preview...</div>
+          )}
+          {binary && binaryUrl && (
+            <PublicViewerFileContents
+              path={path}
+              rawUrl={binaryUrl}
+              style={{ height: "100%" }}
+              fileContext={{ noSanitize: false }}
+            />
+          )}
+          {!binary && loaded?.path === path && (
             <PublicViewerFileContents
               content={loaded.content}
               path={path}
