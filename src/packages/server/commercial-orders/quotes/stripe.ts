@@ -23,6 +23,7 @@ import type {
 } from "@cocalc/util/commercial-orders";
 import {
   moneyCompare,
+  moneySubtract,
   moneyToDbString,
   stripeToMoney,
 } from "@cocalc/util/money";
@@ -48,6 +49,7 @@ import {
   quoteValidUntil,
 } from "../store";
 import { requireReason } from "../state";
+import { commercialTaxPolicy, assertCommercialAutomaticTax } from "../tax";
 
 const logger = getLogger("server:commercial-orders:stripe-quotes");
 const FLOW = "commercial_quote";
@@ -191,9 +193,12 @@ async function quotePreviewForOrder(
   if (text.footer.length > 500) {
     blockers.push("the Stripe quote footer must be at most 500 characters");
   }
-  if (moneyCompare(order.agreed_subtotal, order.agreed_total) !== 0) {
+  if (
+    !commercialTaxPolicy(order.terms_snapshot).enabled &&
+    moneyCompare(order.agreed_subtotal, order.agreed_total) !== 0
+  ) {
     blockers.push(
-      "agreed_total must equal agreed_subtotal until reviewed institutional tax handling is configured",
+      "agreed_total must equal agreed_subtotal unless reviewed automatic tax is enabled",
     );
   }
   for (const item of order.items) {
@@ -250,6 +255,8 @@ async function quotePreviewForOrder(
   }
   return {
     ...base,
+    automatic_tax: commercialTaxPolicy(order.terms_snapshot).enabled,
+    tax_code: commercialTaxPolicy(order.terms_snapshot).taxCode,
     stripe_mode: stripeMode(stripe),
     stripe_customer_id: customerId,
     collection_method: "send_invoice",
@@ -298,19 +305,23 @@ async function resolveProduct(opts: {
   stripe: StripeConnection;
   item: CommercialOrderItem;
   site: string;
+  taxCode?: string;
 }): Promise<string> {
   const explicit = explicitProductId(opts.item);
   if (explicit) {
     const product = await opts.stripe.products.retrieve(explicit);
     assertProductMode(opts.stripe, product);
     assertProductDescription(product, opts.item.description);
+    if (opts.taxCode && stripeId(product.tax_code) !== opts.taxCode) {
+      throw Error("Stripe product tax code does not match reviewed terms");
+    }
     return explicit;
   }
   if (!PRODUCT_NAMES[opts.item.product_kind]) {
     throw Error(itemProductBlocker(opts.item));
   }
   const descriptionHash = createHash("sha256")
-    .update(opts.item.description)
+    .update(opts.item.description + (opts.taxCode ? `:${opts.taxCode}` : ""))
     .digest("hex");
   const query = [
     `metadata['flow']:'${FLOW}'`,
@@ -329,12 +340,16 @@ async function resolveProduct(opts: {
   if (products[0]) {
     assertProductMode(opts.stripe, products[0]);
     assertProductDescription(products[0], opts.item.description);
+    if (opts.taxCode && stripeId(products[0].tax_code) !== opts.taxCode) {
+      throw Error("Stripe product tax code does not match reviewed terms");
+    }
     return products[0].id;
   }
   const product = await opts.stripe.products.create(
     {
       // Stripe Quote line descriptions are derived from the Product name.
       name: opts.item.description,
+      ...(opts.taxCode ? { tax_code: opts.taxCode } : {}),
       metadata: {
         flow: FLOW,
         purpose: "commercial_quote_line_product",
@@ -465,13 +480,13 @@ async function assertQuoteMatchesOrder(opts: {
   }
   if (
     quoteCustomerId(opts.quote) !== opts.customerId ||
-    opts.quote?.collection_method !== "send_invoice" ||
-    opts.quote?.automatic_tax?.enabled === true
+    opts.quote?.collection_method !== "send_invoice"
   ) {
     throw Error(
       "Stripe quote delivery or customer does not match reviewed terms",
     );
   }
+  assertCommercialAutomaticTax(opts.quote, opts.order);
   const expectedExpiresAt = Math.floor(
     new Date(opts.localQuote.valid_until).getTime() / 1000,
   );
@@ -507,6 +522,14 @@ async function assertQuoteMatchesOrder(opts: {
     expected.set(signature, (expected.get(signature) ?? 0) + 1);
   }
   for (const line of lines) {
+    const taxPolicy = commercialTaxPolicy(opts.order.terms_snapshot);
+    if (
+      taxPolicy.enabled &&
+      (line?.price?.tax_behavior !== "exclusive" ||
+        stripeId(line?.price?.product?.tax_code) !== taxPolicy.taxCode)
+    ) {
+      throw Error("Stripe quote line tax settings do not match reviewed terms");
+    }
     const signature = lineSignature({
       product: stripeId(line?.price?.product) ?? "",
       description: `${line?.description ?? ""}`,
@@ -562,6 +585,7 @@ async function resolveProducts(opts: {
         stripe: opts.stripe,
         item,
         site: opts.site,
+        taxCode: commercialTaxPolicy(opts.order.terms_snapshot).taxCode,
       }),
       description: item.description,
       quantity: Number(item.quantity),
@@ -652,9 +676,14 @@ export async function createStripeCommercialQuote(
               currency: preview.currency,
               product: product.provider_product_id,
               unit_amount: product.unit_amount,
+              ...(commercialTaxPolicy(order.terms_snapshot).enabled
+                ? { tax_behavior: "exclusive" as const }
+                : {}),
             },
           })),
-          automatic_tax: { enabled: false },
+          automatic_tax: {
+            enabled: commercialTaxPolicy(order.terms_snapshot).enabled,
+          },
           description: preview.description,
           header: preview.header,
           // An explicit empty footer suppresses account-level Stripe defaults.
@@ -1029,6 +1058,8 @@ function invoiceProviderSnapshot(invoice: any): Record<string, unknown> {
     due_date: invoice?.due_date,
     collection_method: invoice?.collection_method,
     auto_advance: invoice?.auto_advance,
+    automatic_tax: invoice?.automatic_tax,
+    total_taxes: invoice?.total_taxes,
     custom_fields: invoice?.custom_fields,
     description: invoice?.description,
     payment_settings: invoice?.payment_settings,
@@ -1079,7 +1110,9 @@ async function normalizeAcceptedInvoice(opts: {
       description:
         approvedInvoiceTerms(opts.order).memo ??
         `${opts.order.organization_name}: ${opts.order.order_number}`,
-      automatic_tax: { enabled: false },
+      automatic_tax: {
+        enabled: commercialTaxPolicy(opts.order.terms_snapshot).enabled,
+      },
       payment_settings: {
         payment_method_types: [...PAYMENT_METHOD_TYPES],
       },
@@ -1157,6 +1190,7 @@ async function normalizeAcceptedInvoice(opts: {
   ) {
     throw Error("accepted quote invoice does not match the commercial order");
   }
+  assertCommercialAutomaticTax(invoice, opts.order);
   return invoice;
 }
 
@@ -1307,7 +1341,12 @@ async function acceptOrAdoptStripeQuote(opts: {
       quote_document_data: quoteDocument,
       invoice_provider_snapshot: invoiceProviderSnapshot(stripeInvoice),
       subtotal: fromStripeAmount(stripeInvoice.subtotal),
-      tax: "0.0000000000",
+      tax: moneyToDbString(
+        moneySubtract(
+          fromStripeAmount(stripeInvoice.total),
+          fromStripeAmount(stripeInvoice.subtotal),
+        ),
+      ),
       total: fromStripeAmount(stripeInvoice.total),
       amount_due: fromStripeAmount(stripeInvoice.amount_due),
       due_at: timestamp(stripeInvoice.due_date),

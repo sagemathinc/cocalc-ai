@@ -406,6 +406,159 @@ describe("commercial Stripe invoices", () => {
     );
   });
 
+  function enableReviewedTax(total = 468000) {
+    const terms = {
+      automatic_tax: true,
+      tax_code: "txcd_10103000",
+      billing_address: { country: "GB" },
+    };
+    const invoice = invoiceFixture({
+      status: "draft",
+      total: `${total / 100}`,
+    });
+    const order = orderFixture({
+      terms_snapshot: { invoice: terms },
+      agreed_total: `${total / 100}`,
+      invoices: [invoice],
+    });
+    const provider = stripeInvoiceFixture({
+      automatic_tax: { enabled: true, status: "complete" },
+      total,
+      amount_due: total,
+      amount_remaining: total,
+      total_taxes: [{ amount: total - 390000 }],
+    });
+    mockGetCommercialOrder.mockResolvedValue(order);
+    mockGetCommercialInvoice.mockResolvedValue(invoice);
+    mockCreateCommercialInvoiceIntent.mockResolvedValue({ order, invoice });
+    stripe.customers.retrieve.mockResolvedValue(
+      customerFixture({ address: { country: "GB" } }),
+    );
+    stripe.invoices.create.mockResolvedValue(provider);
+    stripe.invoices.retrieve.mockResolvedValue(provider);
+    return { order, invoice, provider };
+  }
+
+  it("creates automatic-tax invoices with explicit exclusive line tax settings", async () => {
+    const { order, invoice } = enableReviewedTax();
+    mockGetCommercialOrder.mockResolvedValue({ ...order, invoices: [] });
+    mockCreateCommercialInvoiceIntent.mockResolvedValue({
+      order: { ...order, invoices: [] },
+      invoice: { ...invoice, status: "creating" },
+    });
+    stripe.invoices.listLineItems.mockResolvedValueOnce({ data: [] });
+    await createStripeCommercialInvoiceDraft({
+      id: "co_1",
+      account_id: "admin-1",
+      expected_version: 4,
+      reason: "Reviewed automatic tax",
+    });
+    expect(stripe.invoices.create).toHaveBeenCalledWith(
+      expect.objectContaining({ automatic_tax: { enabled: true } }),
+      expect.anything(),
+    );
+    expect(stripe.invoiceItems.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tax_behavior: "exclusive",
+        tax_code: "txcd_10103000",
+        amount: 390000,
+      }),
+      expect.anything(),
+    );
+    expect(mockUpdateCommercialInvoiceProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tax: "780.0000000000",
+        total: "4680.0000000000",
+        provider_snapshot: expect.objectContaining({
+          automatic_tax: { enabled: true, status: "complete" },
+        }),
+      }),
+    );
+  });
+
+  it.each([390000, 468000])(
+    "sends a reviewed complete calculation totaling %s cents",
+    async (total) => {
+      const { provider } = enableReviewedTax(total);
+      stripe.invoices.finalizeInvoice.mockResolvedValue({
+        ...provider,
+        status: "open",
+      });
+      stripe.invoices.sendInvoice.mockResolvedValue({
+        ...provider,
+        status: "open",
+      });
+      await sendStripeCommercialInvoice({
+        id: "co_1",
+        commercial_invoice_id: "ci_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Reviewed automatic tax",
+      });
+      expect(stripe.invoices.sendInvoice).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["requires_location_inputs", "failed", null])(
+    "does not finalize or send incomplete tax: %s",
+    async (status) => {
+      const { provider } = enableReviewedTax();
+      stripe.invoices.retrieve.mockResolvedValue({
+        ...provider,
+        automatic_tax: { enabled: true, status },
+      });
+      await expect(
+        sendStripeCommercialInvoice({
+          id: "co_1",
+          commercial_invoice_id: "ci_1",
+          account_id: "admin-1",
+          expected_version: 4,
+          reason: "Reviewed automatic tax",
+        }),
+      ).rejects.toThrow("not complete");
+      expect(stripe.invoices.finalizeInvoice).not.toHaveBeenCalled();
+      expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not send when tax changes during finalization", async () => {
+    const { provider } = enableReviewedTax();
+    stripe.invoices.finalizeInvoice.mockResolvedValue({
+      ...provider,
+      status: "open",
+      total: 470000,
+    });
+    await expect(
+      sendStripeCommercialInvoice({
+        id: "co_1",
+        commercial_invoice_id: "ci_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Reviewed automatic tax",
+      }),
+    ).rejects.toThrow();
+    expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+  });
+
+  it("rechecks line subtotals on a finalized invoice retry", async () => {
+    const { provider } = enableReviewedTax();
+    stripe.invoices.retrieve.mockResolvedValue({
+      ...provider,
+      status: "open",
+      subtotal: 389999,
+    });
+    await expect(
+      sendStripeCommercialInvoice({
+        id: "co_1",
+        commercial_invoice_id: "ci_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Retry reviewed invoice",
+      }),
+    ).rejects.toThrow("total");
+    expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+  });
+
   it("reports only unlinked invoices from the exact commercial Stripe flow", async () => {
     stripe.invoices.search.mockResolvedValue({
       data: [

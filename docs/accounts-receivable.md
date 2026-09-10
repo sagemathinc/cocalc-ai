@@ -199,6 +199,63 @@ cocalc admin receivables quote stripe reconcile "$ORDER" \
   --expected-version 6 --commit --json
 ```
 
+## Reviewed Stripe Automatic Tax
+
+Stripe invoices and Stripe quotes can opt into Stripe Tax using the approved
+order's `terms_snapshot.invoice`. Existing orders remain untaxed unless this
+option is explicitly enabled; changing Stripe's Dashboard default does not
+retroactively change an approved CoCalc order.
+
+```json
+{
+  "invoice": {
+    "automatic_tax": true,
+    "tax_code": "txcd_10103000",
+    "billing_address": {
+      "line1": "Reviewed customer address",
+      "city": "London",
+      "postal_code": "SW1A 1AA",
+      "country": "GB"
+    }
+  }
+}
+```
+
+The tax code above is an example, not a classification recommendation. Choose
+the correct code for the service. Automatic tax requires an explicit Stripe
+product tax code and a two-letter billing country. Supply the full address:
+Stripe may also require a postal code or state/province.
+
+Before approving the order:
+
+1. In Stripe's live-mode Tax settings, verify the business origin, relevant
+   active tax registrations, and product classification.
+2. Check the customer's legal name, billing/shipping location, tax IDs and
+   exemption/reverse-charge status. CoCalc does not infer or change tax
+   exemptions or register the business for tax.
+3. Preview the same customer, line items, and currency in Stripe with automatic
+   tax enabled and **exclusive** pricing. Do not send an extra Dashboard invoice.
+   Set CoCalc's `agreed_subtotal` to the pre-tax price and `agreed_total` to the
+   reviewed total including tax, then approve through the normal workflow.
+4. Create/review the AR draft, then explicitly finalize/send it. The normal
+   reason, version, fresh-auth, and idempotency checks still apply. An accepted
+   Stripe quote preserves automatic tax on its draft invoice.
+
+Tax is added to the approved line prices, never silently absorbed into them.
+A complete calculation may be zero (including when Stripe has no applicable
+registration); zero is not proof that the customer is legally tax-exempt.
+
+CoCalc blocks delivery if Stripe's automatic-tax setting differs, calculation
+is incomplete, or subtotal/total no longer match the approved amounts. Stripe
+can recalculate at finalization, so totals are checked again before email and
+on delivery retries. If a finalization changes the tax, the invoice may already
+be finalized but remains unsent by CoCalc; inspect that invoice and resolve it
+through the normal void/revision workflow rather than repeatedly creating
+invoices or bypassing the amount checks. Automatic advancement remains off.
+
+See [Stripe Tax for invoices](https://docs.stripe.com/tax/invoicing) and
+[zero-tax calculations](https://docs.stripe.com/tax/zero-tax) for setup details.
+
 ## Local PDF Quote Fallback
 
 Use the local PDF provider for sites without Invoicing Plus or when procurement
