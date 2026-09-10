@@ -84,6 +84,32 @@ def failed_jest_test_paths(report_path: str) -> List[str]:
     ]
 
 
+def preserve_test_attempt(report_root: Optional[str], package: str,
+                          attempt: int, report_path: str, elapsed: float,
+                          status: str) -> None:
+    if not report_root:
+        return
+    directory = os.path.join(report_root, package.strip('/').replace('/', '-'))
+    os.makedirs(directory, exist_ok=True)
+    has_jest_report = os.path.isfile(report_path)
+    if has_jest_report:
+        shutil.copyfile(
+            report_path, os.path.join(directory,
+                                      f'jest-results-{attempt}.json'))
+    with open(os.path.join(directory, f'attempt-{attempt}.json'),
+              'w') as output:
+        json.dump(
+            {
+                'package': package,
+                'attempt': attempt,
+                'status': status,
+                'elapsed_seconds': elapsed,
+                'has_jest_report': has_jest_report,
+            },
+            output,
+            indent=2)
+
+
 def newest_file(path: str) -> str:
     if platform.system() != 'Darwin':
         # See https://gist.github.com/brwyatt/c21a888d79927cb476a4 for this Linux
@@ -466,8 +492,28 @@ def write_github_summary(success: List[str], flaky: List[str],
         print(f"Warning: Could not write GitHub summary: {e}")
 
 
+def parse_jest_shard(value: str) -> str:
+    try:
+        index, count = map(int, value.split('/'))
+        if not 1 <= index <= count:
+            raise ValueError()
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            'shard must be INDEX/COUNT with 1 <= INDEX <= COUNT')
+    return f'{index}/{count}'
+
+
 def test(args) -> None:
     CUR = os.path.abspath('.')
+    shard = getattr(args, 'shard', '')
+    if shard:
+        shard = parse_jest_shard(shard)
+    report_root = os.environ.get("COCALC_TEST_REPORT_DIR")
+    if report_root:
+        report_root = os.path.abspath(report_root)
+        if shard:
+            report_root = os.path.join(report_root,
+                                       'shard-' + shard.replace('/', '-of-'))
     jest_cache_root = os.environ.get("COCALC_JEST_CACHE_DIR",
                                      os.path.join(CUR, ".cache", "jest"))
     flaky: List[str] = []
@@ -512,6 +558,8 @@ def test(args) -> None:
 
     v = packages(args)
     v.sort()
+    if shard and len(v) != 1:
+        raise ValueError('--shard requires exactly one Jest-backed package')
     n = 0
     for path in v:
         n += 1
@@ -522,6 +570,14 @@ def test(args) -> None:
             package_data = json.load(package_file)
         package_scripts = package_data.get("scripts", {})
         jest_backed = is_jest_backed_package(package_data, path)
+        if shard and not jest_backed:
+            raise ValueError('--shard requires a Jest-backed package')
+        if report_root:
+            # A new run must not inherit old retries or missing-report artifacts.
+            report_directory = os.path.join(report_root,
+                                            path.strip('/').replace('/', '-'))
+            if os.path.exists(report_directory):
+                shutil.rmtree(report_directory)
         jest_cache_path = os.path.join(
             jest_cache_root,
             path.strip("/").replace("/", "-"),
@@ -531,6 +587,8 @@ def test(args) -> None:
             print("\n" * 3)
             print("*" * 40)
             print(f"TESTING {n}/{len(v)}: {path}")
+            if shard:
+                print(f"Jest shard: {shard}")
             status(path)
             print("*" * 40)
             sys.stdout.flush(
@@ -546,11 +604,14 @@ def test(args) -> None:
             if args.max_workers and jest_backed:
                 test_cmd += f' --maxWorkers={args.max_workers} '
             if retry_paths:
-                quoted_paths = " ".join(shlex.quote(path)
-                                        for path in retry_paths)
+                quoted_paths = " ".join(
+                    shlex.quote(path) for path in retry_paths)
                 test_cmd += f" --runTestsByPath {quoted_paths}"
-            report_path = os.path.join(tmpdir,
-                                       f"jest-results-{attempt}.json")
+            elif shard:
+                # Retrying explicit failures must not re-shard that smaller list.
+                # Without a usable report, retry the same original shard instead.
+                test_cmd += f" --shard={shard}"
+            report_path = os.path.join(tmpdir, f"jest-results-{attempt}.json")
             if jest_backed:
                 os.makedirs(jest_cache_path, exist_ok=True)
                 test_cmd += (f" --cacheDirectory "
@@ -566,10 +627,12 @@ def test(args) -> None:
         tmpdir, old_tmp_env = set_package_test_tmpdir(path)
         try:
             for i in range(args.retries + 1):
-                report_path = os.path.join(tmpdir,
-                                           f"jest-results-{i}.json")
+                report_path = os.path.join(tmpdir, f"jest-results-{i}.json")
+                attempt_start = time.monotonic()
+                attempt_status = "failed"
                 try:
                     f(i, retry_paths)
+                    attempt_status = "passed"
                     worked = True
                     if i == 0:
                         success.append(path)
@@ -577,6 +640,7 @@ def test(args) -> None:
                         flaky.append(path)
                     break
                 except KeyboardInterrupt:
+                    attempt_status = "interrupted"
                     print("SIGINT -- ending test suite")
                     status()
                     return
@@ -592,6 +656,10 @@ def test(args) -> None:
                         print(
                             f"Trying {path} again at most {args.retries - i} more times"
                         )
+                finally:
+                    preserve_test_attempt(report_root, path, i, report_path,
+                                          time.monotonic() - attempt_start,
+                                          attempt_status)
         finally:
             restore_package_test_tmpdir(tmpdir, old_tmp_env, cleanup=worked)
             restore_scrubbed_env(scrubbed)
@@ -619,14 +687,20 @@ def build(args) -> None:
     v = [package for package in packages(args) if needs_build(package)]
     CUR = os.path.abspath('.')
 
-    def f(path: str) -> None:
-        if not args.parallel and path != 'packages/static':
-            # NOTE: in parallel mode we don't delete or there is no
-            # hope of this working.
+    if not args.parallel:
+        # Clean all selected outputs before any compiler runs. Project references
+        # may build a later package early; deleting it again discards that work.
+        for path in v:
+            if path == 'packages/static':
+                continue
             dist = os.path.join(CUR, path, 'dist')
             if os.path.exists(dist):
-                # clear dist/ dir
-                shutil.rmtree(dist, ignore_errors=True)
+                shutil.rmtree(dist)
+            tsinfo = os.path.join(CUR, path, 'tsconfig.tsbuildinfo')
+            if os.path.exists(tsinfo):
+                os.unlink(tsinfo)
+
+    def f(path: str) -> None:
         package_path = os.path.join(CUR, path)
         if not os.path.exists(package_path):
             # e.g., in some cases we delete packages entirely to speed
@@ -936,6 +1010,11 @@ def main() -> None:
         help=
         'optional maxWorkers argument for Jest-backed packages only. Non-Jest test commands are unchanged.'
     )
+    subparser.add_argument(
+        '--shard',
+        type=parse_jest_shard,
+        default=None,
+        help='Jest INDEX/COUNT shard; requires exactly one selected package')
     packages_arg(subparser)
     subparser.set_defaults(func=test)
 

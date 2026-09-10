@@ -26,6 +26,45 @@ let appendProjectLogRowBestEffortMock: jest.Mock;
 let claimCourseMembershipPackageSeatsForAcceptedInviteMock: jest.Mock;
 let getVerifiedEmailAddressForAccountMock: jest.Mock;
 
+// Keep collaborator limits and SQL orchestration real, but do not load the
+// storage/transport graph through unrelated exports of their dependencies.
+const unexpectedServiceCall = jest.fn((service: string) => {
+  throw new Error(
+    `Unexpected service call in collaborator unit test: ${service}`,
+  );
+});
+
+jest.mock("@cocalc/server/conat/route-client", () => ({
+  conatWithProjectRoutingForAccount: () =>
+    unexpectedServiceCall("project routing"),
+}));
+
+jest.mock("@cocalc/server/membership/usage-status", () => ({
+  getMembershipUsageStatusForAccount: () =>
+    unexpectedServiceCall("usage status"),
+  peekCachedMembershipUsageStatusForAccount: () =>
+    unexpectedServiceCall("cached usage status"),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  getInterBayBridge: () => unexpectedServiceCall("inter-bay bridge"),
+}));
+
+jest.mock("@cocalc/server/inter-bay/directory", () => ({
+  resolveProjectBayAcrossCluster: () =>
+    unexpectedServiceCall("cluster directory"),
+  resolveProjectBayDirect: () => unexpectedServiceCall("bay directory"),
+}));
+
+jest.mock("@cocalc/server/inter-bay/fabric", () => ({
+  getInterBayFabricClient: () => unexpectedServiceCall("inter-bay fabric"),
+}));
+
+jest.mock("@cocalc/conat/inter-bay/api", () => ({
+  createInterBayDirectoryClient: () =>
+    unexpectedServiceCall("directory client"),
+}));
+
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
   assertLocalProjectCollaborator: (...args: any[]) =>
@@ -250,6 +289,7 @@ describe("project collaborators local bay access", () => {
 
   beforeEach(() => {
     jest.resetModules();
+    unexpectedServiceCall.mockClear();
     assertLocalProjectCollaboratorMock = jest.fn(async () => undefined);
     getLocalProjectAccessStatusMock = jest.fn(async () => "local-project-user");
     assertProjectCollaboratorAccessAllowRemoteMock = jest.fn(async () => ({
@@ -324,6 +364,11 @@ describe("project collaborators local bay access", () => {
       ),
     }));
     delete process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS;
+  });
+
+  afterEach(() => {
+    // Catch even unexpected transport calls whose errors were handled upstream.
+    expect(unexpectedServiceCall).not.toHaveBeenCalled();
   });
 
   it("rejects removing collaborators for wrong-bay projects", async () => {
