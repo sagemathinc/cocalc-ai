@@ -44,6 +44,33 @@ export function fileArtifactPreviewSupported(path: string) {
   return TEXT_EXTENSIONS.has(ext) || BINARY_EXTENSIONS.has(ext);
 }
 
+function BinaryPreview({
+  projectId,
+  path,
+  viewer,
+  refresh,
+}: {
+  projectId: string;
+  path: string;
+  viewer: boolean;
+  refresh: number;
+}) {
+  const url = useProjectHostAuthedUrl({
+    project_id: projectId,
+    url: `${viewerRawFileUrl({ project_id: projectId, path, viewer })}${viewer ? "&" : "?"}artifactRefresh=${refresh}`,
+  });
+  return url ? (
+    <PublicViewerFileContents
+      path={path}
+      rawUrl={url}
+      style={{ height: "100%" }}
+      fileContext={{ noSanitize: false }}
+    />
+  ) : (
+    <div role="status">Preparing file preview...</div>
+  );
+}
+
 export function FileArtifact({
   artifact,
   historical,
@@ -65,13 +92,6 @@ export function FileArtifact({
   const binary = BINARY_EXTENSIONS.has(
     path.split(".").pop()?.toLowerCase() ?? "",
   );
-  const binaryUrl = useProjectHostAuthedUrl({
-    project_id: projectId ?? "",
-    url:
-      binary && projectId
-        ? `${viewerRawFileUrl({ project_id: projectId, path, viewer: projectAccess?.role === "viewer" })}${projectAccess?.role === "viewer" ? "&" : "?"}artifactRefresh=${refresh}`
-        : undefined,
-  });
   const contentRef = useRef<HTMLDivElement>(null);
   const [selection, setSelection] = useState<ArtifactFeedback>();
   const displayedRef = useRef<{ path: string; content: string } | undefined>(
@@ -111,6 +131,9 @@ export function FileArtifact({
     setSelection(undefined);
   }, [path]);
   const supported = fileArtifactPreviewSupported(path);
+  const feedbackTooLarge =
+    loaded?.path === path &&
+    new TextEncoder().encode(loaded.content).length > ARTIFACT_TEXT_LIMIT;
   useEffect(() => {
     let cancelled = false;
     setError("");
@@ -156,6 +179,7 @@ export function FileArtifact({
       <Space wrap style={{ flexShrink: 0, marginBottom: 8 }}>
         <strong>{artifact.title}</strong>
         <Button
+          disabled={!actions}
           onClick={() => {
             void actions
               ?.open_file({ path })
@@ -172,11 +196,7 @@ export function FileArtifact({
         </Button>
         <Button
           disabled={
-            !onComment ||
-            binary ||
-            loaded?.path !== path ||
-            new TextEncoder().encode(loaded?.content ?? "").length >
-              ARTIFACT_TEXT_LIMIT
+            !onComment || binary || loaded?.path !== path || feedbackTooLarge
           }
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => {
@@ -215,6 +235,12 @@ export function FileArtifact({
       {selection && (
         <div role="note">
           Comment uses the selected saved-file snapshot, even after refresh.
+        </div>
+      )}
+      {onComment && feedbackTooLarge && (
+        <div role="note">
+          Comment requires a saved-file snapshot of at most 32 KiB. This file
+          can still be previewed or opened.
         </div>
       )}
       <div style={{ overflowWrap: "anywhere", flexShrink: 0 }}>{path}</div>
@@ -271,15 +297,18 @@ export function FileArtifact({
                 : context.urlTransform?.(url, tag),
           }}
         >
-          {binary && !binaryUrl && (
-            <div role="status">Preparing file preview...</div>
+          {binary && !projectId && (
+            <div role="status">
+              Project identity is unavailable. Use Open file.
+            </div>
           )}
-          {binary && binaryUrl && (
-            <PublicViewerFileContents
+          {binary && projectId && (
+            <BinaryPreview
+              key={`${projectId}:${path}:${projectAccess?.role}`}
+              projectId={projectId}
               path={path}
-              rawUrl={binaryUrl}
-              style={{ height: "100%" }}
-              fileContext={{ noSanitize: false }}
+              viewer={projectAccess?.role === "viewer"}
+              refresh={refresh}
             />
           )}
           {!binary && loaded?.path === path && (

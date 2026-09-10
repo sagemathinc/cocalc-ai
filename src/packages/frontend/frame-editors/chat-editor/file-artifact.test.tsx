@@ -133,3 +133,48 @@ test.each(["plot.png", "report.pdf"])(
     expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
   },
 );
+
+test("failed refresh retains previous text and clearly marks it stale", async () => {
+  render(<FileArtifact artifact={artifact} historical={false} />);
+  const preview = await screen.findByTestId("preview");
+  readFile.mockRejectedValueOnce(Error("File was removed"));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByText("Error: File was removed");
+  expect(
+    screen.getByText(/previous preview is retained and may be stale/),
+  ).toBeTruthy();
+  expect(screen.getByTestId("preview")).toBe(preview);
+  expect(preview).toHaveTextContent("Saved policy");
+});
+
+test("large readable files explain why snapshot feedback is unavailable", async () => {
+  readFile.mockResolvedValue("x".repeat(33 * 1024));
+  render(
+    <FileArtifact
+      artifact={artifact}
+      historical={false}
+      onComment={jest.fn()}
+    />,
+  );
+  await screen.findByTestId("preview");
+  expect(screen.getByText(/snapshot of at most 32 KiB/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Open file" })).toBeEnabled();
+});
+
+test("missing initial file shows the error without displaying another path's preview", async () => {
+  const { rerender } = render(
+    <FileArtifact artifact={artifact} historical={false} />,
+  );
+  await screen.findByTestId("preview");
+  stat.mockRejectedValueOnce(Error("No such file"));
+  rerender(
+    <FileArtifact
+      artifact={{ ...artifact, file: { path: "/missing.md" } }}
+      historical={false}
+    />,
+  );
+  await screen.findByText("Error: No such file");
+  expect(screen.queryByTestId("preview")).toBeNull();
+  expect(screen.queryByText(/previous preview is retained/)).toBeNull();
+});
