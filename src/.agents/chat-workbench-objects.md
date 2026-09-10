@@ -172,6 +172,14 @@ acceptance matrix remain unverified. Do not infer completion from this checkpoin
 
 ## Acceptance
 
+Published `qa-image-20260910` through the artifact API with an identical retry
+(replayed, editing base unchanged). Opened its card in browser `8LZYATQUBD`;
+the existing `/home/user/cocalc-ai/src/.agents/scalable-bay.png` loaded through
+the project file route, with natural size 1400x933. File-preview component
+coverage now checks viewer query preservation across refresh/path changes and
+missing project identity (13 tests pass; frontend typecheck/lint pass). This is
+live raster-image acceptance; PDF and actual viewer-role access remain open.
+
 Built `020aeaf0b4` and reloaded the previously crashed QA browser. New session
 `8LZYATQUBD` rendered the chat and artifact cards without the readiness crash or
 stuck loading state. Opened the README file card, then Open file; typed browser

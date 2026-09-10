@@ -11,21 +11,24 @@ const readFile = jest.fn();
 const stat = jest.fn();
 const open_file = jest.fn().mockResolvedValue(undefined);
 const actions = { fs: () => ({ stat, readFile }), open_file };
+let mockRole = "collaborator";
 jest.mock("@cocalc/frontend/project/use-project-host-authed-url", () => ({
   useProjectHostAuthedUrl: ({ url }) => url,
 }));
 jest.mock("@cocalc/frontend/project/viewer-file-editor", () => ({
-  viewerRawFileUrl: ({ project_id, path }) => `/files/${project_id}/${path}`,
+  viewerRawFileUrl: ({ project_id, path, viewer }) =>
+    `/files/${project_id}/${path}${viewer ? "?viewer=1" : ""}`,
 }));
 jest.mock("@cocalc/frontend/project/context", () => ({
-  useProjectContext: () => ({ actions }),
+  useProjectContext: () => ({ actions, projectAccess: { role: mockRole } }),
 }));
 jest.mock("@cocalc/frontend/public-viewer/file-contents", () => ({
   __esModule: true,
-  default: ({ content, fileContext }) => (
+  default: ({ content, fileContext, rawUrl }) => (
     <div
       data-testid="preview"
       data-sanitized={String(fileContext.noSanitize === false)}
+      data-raw-url={rawUrl}
     >
       {content}
     </div>
@@ -73,6 +76,7 @@ test("selected feedback pins original file contents across refresh", async () =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockRole = "collaborator";
   stat.mockResolvedValue({ size: 10 });
   readFile.mockResolvedValue("Saved policy");
 });
@@ -133,6 +137,49 @@ test.each(["plot.png", "report.pdf"])(
     expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
   },
 );
+
+test("viewer binary URLs preserve read-only routing during refresh and file changes", () => {
+  mockRole = "viewer";
+  const { rerender } = render(
+    <FileArtifact
+      artifact={{ ...artifact, file: { path: "plot.png" } }}
+      historical
+      projectId="project"
+    />,
+  );
+  expect(screen.getByTestId("preview")).toHaveAttribute(
+    "data-raw-url",
+    "/files/project/plot.png?viewer=1&artifactRefresh=0",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  expect(screen.getByTestId("preview")).toHaveAttribute(
+    "data-raw-url",
+    "/files/project/plot.png?viewer=1&artifactRefresh=1",
+  );
+  rerender(
+    <FileArtifact
+      artifact={{ ...artifact, file: { path: "report.pdf" } }}
+      historical
+      projectId="project"
+    />,
+  );
+  expect(screen.getByTestId("preview")).toHaveAttribute(
+    "data-raw-url",
+    "/files/project/report.pdf?viewer=1&artifactRefresh=1",
+  );
+  expect(readFile).not.toHaveBeenCalled();
+});
+
+test("binary preview requires project identity rather than using another project's URL", () => {
+  render(
+    <FileArtifact
+      artifact={{ ...artifact, file: { path: "plot.png" } }}
+      historical
+    />,
+  );
+  expect(screen.getByText(/Project identity is unavailable/)).toBeTruthy();
+  expect(screen.queryByTestId("preview")).toBeNull();
+});
 
 test("failed refresh retains previous text and clearly marks it stale", async () => {
   render(<FileArtifact artifact={artifact} historical={false} />);
