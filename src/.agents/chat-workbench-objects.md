@@ -172,6 +172,21 @@ acceptance matrix remain unverified. Do not infer completion from this checkpoin
 
 ## Acceptance
 
+Confirmed the QA project has neither `gh` on its full command PATH nor a GitHub
+CLI configuration; successful credentialed PR refresh remains a prerequisite
+gap, not an unexplained PATH mismatch. No credentials were copied or changed.
+
+Generated a 607-byte one-page PDF fixture, uploaded it with the project file
+API, and published `qa-pdf-20260910` with an identical replayed retry. Native
+capture shows the expected page text in Chromium's PDF viewer at 1400x950.
+Opening the card at 375px selected a full workbench frame; at 375px and 320px
+the host title/path/Open file/Refresh controls wrap and remain visible. The PDF
+viewer retains its own zoom behavior on resize. Restored the QA viewport to
+1400x950. Native capture used the existing spawned daemon through the CLI exec
+helper with its original browser ID (`GPB9TDP768`), avoiding the installed
+CLI's stale post-reload ID mapping; current browser is `X2Q2YQQ9T5`. Actual
+viewer-role access and action/PR-specific narrow layouts remain unverified.
+
 Live sizing check found the raster preview stretched a 1400x933 image to
 302x666 because it inherited the PDF's full-height style. Image previews now
 use intrinsic sizing bounded by the frame, while PDF keeps its full-height
