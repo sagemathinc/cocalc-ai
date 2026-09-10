@@ -146,6 +146,17 @@ matrix remain open.
 
 ## Live Acceptance Checkpoint (2026-09-10)
 
+Merged build `52778b23b3` passes the development static build. On dedicated
+browser `WRMYM7B97U`, inspected native screenshots at 320x812 in dark mode:
+action draft/target/comment fields and decisions remain readable and usable;
+PR controls and full commit hashes wrap inside the frame without horizontal
+overflow. Returning the restored action review stages the expected one approved
+and one unreviewed decision and focuses `Ask Codex...`, with no send or external
+execution. Restored the owner's original System appearance. These are owner
+presentation checks, not viewer authorization or successful PR refresh checks.
+Hosted run `34462407685` targets `52778b23b3`; its plan job passed and build/checks
+were still running at the last observation. Do not infer CI success from this.
+
 Integrated `origin/main` at `209529099b` after GitHub reported PR merge
 conflicts and no current test run. Main now routes ordinary comparison feedback
 to the selected/originating thread using `preserveThread`; removed the
