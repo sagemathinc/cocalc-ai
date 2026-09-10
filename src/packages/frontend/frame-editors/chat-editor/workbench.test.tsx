@@ -5,6 +5,8 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { artifactKey, artifactPublicationKey } from "@cocalc/chat";
 import { Workbench } from "./workbench";
 import { focusChatFrameInput } from "./actions";
+import { refreshPR } from "./github-pr-operations";
+jest.mock("./github-pr-operations", () => ({ refreshPR: jest.fn() }));
 
 jest.mock("./actions", () => ({ focusChatFrameInput: jest.fn() }));
 jest.mock("@cocalc/frontend/components/diff-viewer/document-diff", () => ({
@@ -419,3 +421,82 @@ test("read-only workbenches expose the document but cannot edit or stage feedbac
   expect(stageArtifactFeedback).not.toHaveBeenCalled();
   expect(screen.queryByRole("textbox", { name: "Edit artifact" })).toBeNull();
 });
+
+test.each([false, true])(
+  "PR refresh preserves newer artifact edits (changed=%s)",
+  async (changed) => {
+    const target = { thread_id: "thread", artifact_id: "artifact" };
+    let record: any = {
+      ...artifactKey(target),
+      ...target,
+      schema_version: 1,
+      kind: "github-pr",
+      title: "Original",
+      input: "Original body",
+      github_pr: {
+        repository: "sagemathinc/cocalc-ai",
+        number: 509,
+        state: "open",
+        draft: true,
+        checks: "unknown",
+        fetched_at: "2026-09-10T00:00:00Z",
+        base_sha: "a".repeat(40),
+        head_sha: "b".repeat(40),
+      },
+    };
+    const syncdb = Object.assign(new EventEmitter(), {
+      get: () => [],
+      get_one: () => record,
+      set: jest.fn((patch) => {
+        record = { ...record, ...patch };
+      }),
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+    });
+    let resolve!: (value: any) => void;
+    jest.mocked(refreshPR).mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    render(
+      <Workbench
+        {...({
+          actions: {
+            getArtifactSyncdb: () => syncdb,
+            getChatActions: () => ({ syncdb }),
+          },
+          desc: fromJS({
+            "data-thread": target.thread_id,
+            "data-artifact": target.artifact_id,
+          }),
+          project_id: "p",
+          path: "x.chat",
+          read_only: false,
+        } as any)}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    if (changed) record = { ...record, title: "Concurrent edit" };
+    await act(async () => {
+      resolve({
+        title: "Remote title",
+        input: "Remote body",
+        github_pr: record.github_pr,
+      });
+    });
+    if (changed) {
+      expect(record.title).toBe("Concurrent edit");
+      expect(syncdb.set).not.toHaveBeenCalled();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Artifact changed while refreshing",
+      );
+    } else {
+      expect(record.title).toBe("Remote title");
+      expect(syncdb.save).toHaveBeenCalledTimes(1);
+      expect(syncdb.set).toHaveBeenCalledWith(
+        expect.objectContaining({ event: "chat-artifact" }),
+      );
+    }
+  },
+);

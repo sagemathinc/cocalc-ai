@@ -93,9 +93,20 @@ persisted. Only github.com PR URLs are constructed from validated identity.
 The workbench preview shows cached status and description, links to GitHub, and
 opens the existing review drawer with a pinned merge-base comparison. An already
 open review retains its SHAs when artifact metadata changes. No checkout or
-worktree creation is triggered. Remote identity verification, authenticated
-refresh/fetch, origin-thread review feedback, viewer-only PR presentation and
-live acceptance remain incomplete.
+worktree creation is triggered. Local review now verifies the associated Git
+common directory, a matching GitHub fetch remote and both pinned commit objects.
+An explicit fetch retrieves those SHAs without checking out or updating a branch.
+Refresh uses the project's existing gh credentials, validates remote data, and
+saves against the observed artifact base. Publication snapshots remain unchanged.
+The UI discloses that refreshed metadata is visible to chat collaborators.
+
+The installed gh version lacks baseRefOid in pr view, so refresh uses the PR REST
+endpoint for exact base/head SHAs and a separate check rollup query. Check results
+are accepted only for the same head; unavailable checks remain unknown. Both
+commands were exercised against PR 509. Component/helper tests cover identity
+mismatch, missing objects, explicit fetch, refresh and pinned open comparisons.
+Origin-thread review feedback, viewer-only PR presentation and live browser
+acceptance remain incomplete.
 
 ## Action List Implementation Progress
 

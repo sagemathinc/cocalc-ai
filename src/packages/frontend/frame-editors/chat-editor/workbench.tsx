@@ -15,6 +15,7 @@ import { Alert, Button, Select, Space } from "antd";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import {
   artifactKey,
+  artifactBase,
   readArtifact,
   validateArtifact,
   validateArtifactPublication,
@@ -221,6 +222,27 @@ export function Workbench({
         projectId={project_id}
         sourcePath={path}
         historical={historical}
+        readOnly={read_only}
+        onRefresh={
+          read_only || historical
+            ? undefined
+            : async (next, expected) => {
+                const current = readArtifact(syncdb, target).artifact;
+                if (artifactBase(current) !== artifactBase(expected))
+                  throw Error(
+                    "Artifact changed while refreshing. Retry to avoid overwriting newer changes.",
+                  );
+                const updated = validateArtifact({ ...current, ...next });
+                syncdb.set({
+                  ...artifactKey(target),
+                  title: updated.title,
+                  input: updated.input,
+                  github_pr: updated.github_pr,
+                });
+                syncdb.commit();
+                await syncdb.save();
+              }
+        }
       />
     );
   if (artifact.kind === "actions")
