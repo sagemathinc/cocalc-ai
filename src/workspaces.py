@@ -572,6 +572,12 @@ def test(args) -> None:
         jest_backed = is_jest_backed_package(package_data, path)
         if shard and not jest_backed:
             raise ValueError('--shard requires a Jest-backed package')
+        if report_root:
+            # A new run must not inherit old retries or missing-report artifacts.
+            report_directory = os.path.join(report_root,
+                                            path.strip('/').replace('/', '-'))
+            if os.path.exists(report_directory):
+                shutil.rmtree(report_directory)
         jest_cache_path = os.path.join(
             jest_cache_root,
             path.strip("/").replace("/", "-"),

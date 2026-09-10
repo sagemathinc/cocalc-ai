@@ -116,7 +116,17 @@ class TestReportsTest(unittest.TestCase):
     def test_sharded_retry_without_report_keeps_original_shard(self):
         self.check_retry('2/2', write_report=False)
 
-    def check_retry(self, shard, write_report=True):
+    def test_reused_reports_discard_old_retries(self):
+        self.check_retry('', rerun=True)
+
+    def test_reused_shard_reports_discard_missing_report_artifacts(self):
+        self.check_retry('1/2', rerun=True, rerun_report=False)
+
+    def check_retry(self,
+                    shard,
+                    write_report=True,
+                    rerun=False,
+                    rerun_report=True):
         with tempfile.TemporaryDirectory() as root:
             package = Path(root) / 'packages/example'
             package.mkdir(parents=True)
@@ -194,6 +204,41 @@ class TestReportsTest(unittest.TestCase):
                          f'jest-results-{attempt}.json').read_text())
                     self.assertEqual(result['testResults'][0]['status'],
                                      status)
+
+            if rerun:
+                # Other packages/shards must survive refreshing this selection.
+                siblings = [
+                    reports / 'packages-other/attempt-0.json',
+                    reports / 'shard-2-of-2/packages-example/attempt-0.json'
+                ]
+                for sibling in siblings:
+                    sibling.parent.mkdir(parents=True, exist_ok=True)
+                    sibling.write_text('sentinel')
+                write_report = rerun_report
+                with patch.object(workspaces, 'packages', return_value=['packages/example']), \
+                        patch.object(workspaces, 'cmd', side_effect=run), \
+                        patch.object(workspaces, 'is_github_ci', return_value=False), \
+                        patch.object(workspaces, 'write_github_summary'), \
+                        patch.dict(os.environ, {'COCALC_TEST_REPORT_DIR': str(reports)}), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    cwd = os.getcwd()
+                    try:
+                        os.chdir(root)
+                        workspaces.test(args)
+                    finally:
+                        os.chdir(cwd)
+                self.assertEqual(len(commands), 3)
+                expected = {'attempt-0.json'}
+                if rerun_report:
+                    expected.add('jest-results-0.json')
+                self.assertEqual({p.name
+                                  for p in directory.iterdir()}, expected)
+                metadata = json.loads(
+                    (directory / 'attempt-0.json').read_text())
+                self.assertEqual(metadata['status'], 'passed')
+                self.assertEqual(metadata['has_jest_report'], rerun_report)
+                for sibling in siblings:
+                    self.assertEqual(sibling.read_text(), 'sentinel')
 
     def test_attempt_without_jest_report_still_has_timing(self):
         with tempfile.TemporaryDirectory() as root:
