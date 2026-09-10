@@ -230,15 +230,54 @@ export interface TaskImportResult {
   dry_run: boolean;
 }
 
+export interface ArtifactAction {
+  id: string;
+  title: string;
+  target: string;
+  draft: string;
+  outcome?: "executing" | "succeeded" | "failed" | "unknown";
+  receipt?: string;
+}
+export interface ArtifactGitHubPR {
+  repository: string;
+  number: number;
+  state: "open" | "closed" | "merged";
+  draft: boolean;
+  fetched_at: string;
+  base_sha: string;
+  head_sha: string;
+  checks: "unknown" | "pending" | "passing" | "failing";
+  local?: { path: string; common_directory: string };
+}
+export interface ArtifactPayload {
+  message_id: string;
+  operation_id: string;
+  title: string;
+  markdown: string;
+  /** Choose at most one object type; omit all three for a Markdown document. */
+  file?: { path: string };
+  actions?: ArtifactAction[];
+  github_pr?: ArtifactGitHubPR;
+}
+export interface ArtifactObject {
+  artifact_id: string;
+  thread_id: string;
+  title: string;
+  input: string;
+  kind: "markdown" | "file" | "actions" | "github-pr";
+  file?: { path: string };
+  actions?: ArtifactAction[];
+  github_pr?: ArtifactGitHubPR;
+}
 export interface BackendExecApi {
   /** Experimental live chat artifacts; uses the collaborative store. */
   artifacts: {
     open(options: { path: string; threadId: string; projectIdentifier?: string; experimental?: boolean }): {
       context(messageDate: string): Promise<{ project_id: string; path: string; thread_id: string; message_id: string }>;
-      list(): Promise<Array<{ artifact_id: string; thread_id: string; title: string; input: string }>>;
-      read(artifactId: string): Promise<{ artifact: { artifact_id: string; thread_id: string; title: string; input: string }; base: string }>;
-      create(artifactId: string, payload: { message_id: string; operation_id: string; title: string; markdown: string; file?: { path: string } }): Promise<unknown>;
-      update(artifactId: string, payload: { message_id: string; operation_id: string; title: string; markdown: string; file?: { path: string }; base: string }): Promise<unknown>;
+      list(): Promise<ArtifactObject[]>;
+      read(artifactId: string): Promise<{ artifact: ArtifactObject; base: string }>;
+      create(artifactId: string, payload: ArtifactPayload): Promise<unknown>;
+      update(artifactId: string, payload: ArtifactPayload & { base: string }): Promise<unknown>;
     };
   };
   tasks: {

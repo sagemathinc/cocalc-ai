@@ -25,6 +25,14 @@ test("artifact scripting preserves explicit context and editing base", async () 
     title: "Draft",
     markdown: "New",
     base: "exact base",
+    actions: [
+      {
+        id: "reply",
+        title: "Reply",
+        target: "Ticket 123",
+        draft: "Proposed reply",
+      },
+    ],
   };
   await doc.update("artifact", payload);
   assert.deepEqual(
@@ -39,4 +47,5 @@ test("artifact scripting preserves explicit context and editing base", async () 
     assert.equal(call.experimental, true);
   }
   assert.equal(calls[2].payload, payload);
+  assert.deepEqual(calls[2].payload.actions, payload.actions);
 });

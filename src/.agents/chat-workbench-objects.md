@@ -97,6 +97,28 @@ worktree creation is triggered. Remote identity verification, authenticated
 refresh/fetch, origin-thread review feedback, viewer-only PR presentation and
 live acceptance remain incomplete.
 
+## Action List Implementation Progress
+
+Structured action lists now use the existing artifact publication API and
+immutable publication snapshots. Proposals have bounded IDs, titles, targets,
+drafts and optional agent-reported execution outcomes/receipts. Review decisions
+are separate from publication data and never service authorization.
+
+The workbench supports editing targets/drafts, per-item comments and
+approve/reject/undecided decisions. Draft edits invalidate approval. A changed
+agent proposal blocks staging until the reviewer explicitly adopts its new
+content. Unfinished reviews persist in browser storage scoped by account,
+project, chat, thread and artifact; restored data is validated and checked
+against the current proposals. This is local review state, not collaborative
+approval or fresh auth.
+
+Returning decisions stages the exact drafts in the originating chat, without
+sending a message or executing an external action. The composer and sent-message
+notice expose decision counts and expandable exact review snapshots. The CLI
+exec API declaration describes all three new object payloads. Focused schema,
+workbench and composer tests cover these paths. Read-only object presentation,
+live browser/agent acceptance and the complete acceptance matrix remain open.
+
 ## Acceptance
 
 For each object: CLI create/read/update/retry, current vs publication view,

@@ -95,6 +95,11 @@ export function ArtifactCards({
             >
               <Space wrap>
                 <strong>{publication.snapshot.title}</strong>
+                {publication.snapshot.actions && (
+                  <span>
+                    {publication.snapshot.actions.length} proposed actions
+                  </span>
+                )}
                 {publication.snapshot.github_pr && (
                   <span>
                     #{publication.snapshot.github_pr.number} ·{" "}

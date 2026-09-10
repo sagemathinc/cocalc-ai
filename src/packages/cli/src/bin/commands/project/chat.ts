@@ -67,7 +67,7 @@ export function registerProjectChatCommands(
       )
       .option(
         "--file <path>",
-        "JSON publication payload (optional file: {path} for a file reference), or - for stdin",
+        "JSON publication payload (Markdown, or one of file, actions, github_pr); - for stdin. See exec-api for payload types",
       )
       .option("--experimental", "opt into prototype artifact writes")
       .action(async (opts, command: Command) => {

@@ -8,6 +8,7 @@ import {
   writeChatComposerDraft,
 } from "./use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "./utils";
+import { ActionReviewNotice } from "./artifact-feedback-notice";
 
 const suffix = "artifact-feedback";
 
@@ -114,6 +115,11 @@ export function useArtifactFeedbackDraft({
       <Space wrap style={{ padding: "4px 12px" }}>
         {error ? (
           <Alert type="warning" message={error} />
+        ) : feedback?.action_review ? (
+          <ActionReviewNotice
+            title={feedback.title}
+            decisions={feedback.action_review}
+          />
         ) : (
           <span>
             Feedback on <strong>{feedback?.title}</strong>

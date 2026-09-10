@@ -33,6 +33,8 @@ import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { FileArtifact } from "./file-artifact";
 import { GitHubPRArtifact } from "./github-pr-artifact";
+import { ActionListArtifact } from "./action-list-artifact";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 
 const DocumentDiff = lazyWithRetry(
   () => import("@cocalc/frontend/components/diff-viewer/document-diff"),
@@ -63,6 +65,7 @@ export function Workbench({
   const syncdb = actions.getArtifactSyncdb() ?? chat?.syncdb;
   useArtifactChanges(syncdb);
   const context = useFileContext();
+  const accountId = useTypedRedux("account", "account_id");
   const [editing, setEditing] = useState(false);
   const [version, setVersion] = useState<string | undefined>(
     desc.get("data-version") ?? undefined,
@@ -132,11 +135,14 @@ export function Workbench({
         ...artifact,
         title: pub.snapshot.title,
         input: pub.snapshot.markdown,
-        kind: pub.snapshot.github_pr
-          ? "github-pr"
-          : pub.snapshot.file
-            ? "file"
-            : "markdown",
+        actions: pub.snapshot.actions,
+        kind: pub.snapshot.actions
+          ? "actions"
+          : pub.snapshot.github_pr
+            ? "github-pr"
+            : pub.snapshot.file
+              ? "file"
+              : "markdown",
         github_pr: pub.snapshot.github_pr,
         file: pub.snapshot.file,
       };
@@ -215,6 +221,27 @@ export function Workbench({
         projectId={project_id}
         sourcePath={path}
         historical={historical}
+      />
+    );
+  if (artifact.kind === "actions")
+    return (
+      <ActionListArtifact
+        key={`${accountId}:${artifact.thread_id}:${artifact.artifact_id}:${version ?? "current"}`}
+        artifact={artifact}
+        historical={historical}
+        storageKey={
+          accountId && !read_only
+            ? `chat-action-review:${JSON.stringify([accountId, project_id, path, artifact.thread_id, artifact.artifact_id])}`
+            : undefined
+        }
+        onReview={
+          read_only || !chat?.stageArtifactFeedback
+            ? undefined
+            : async (feedback) => {
+                await chat.stageArtifactFeedback?.(feedback);
+                returnToChat();
+              }
+        }
       />
     );
   return (

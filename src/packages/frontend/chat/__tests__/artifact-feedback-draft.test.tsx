@@ -109,6 +109,34 @@ test("cross-thread staging writes the originating thread's account draft", async
   expect(actions.setSelectedThread).toHaveBeenCalledWith("t");
 });
 
+test("staged action reviews expose exact decisions and drafts without sending", async () => {
+  const { actions, read } = setup();
+  const reviewed = {
+    ...feedback,
+    action_review: [
+      {
+        proposal: {
+          id: "reply",
+          title: "Support reply",
+          target: "Ticket 123",
+          draft: "Exact approved wording",
+        },
+        decision: "approve",
+        comment: "Please use this wording",
+      },
+    ],
+  };
+  await act(async () => {
+    await actions.stageArtifactFeedback(reviewed);
+  });
+  expect(read()?.action_review).toEqual(reviewed.action_review);
+  expect(
+    screen.getByText(/1 approved, 0 rejected, 0 not reviewed/),
+  ).toBeTruthy();
+  expect(screen.getByText("Exact approved wording")).toBeTruthy();
+  expect(screen.queryByText(/whole document/)).toBeNull();
+});
+
 test("delayed send completion does not clear newly staged feedback", async () => {
   const { actions, read, captureClear } = setup();
   await act(async () => {
