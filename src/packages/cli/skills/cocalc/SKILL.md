@@ -1,6 +1,6 @@
 ---
 name: cocalc
-description: Use when working with CoCalc-native documents and workflows, including complete project-side builds of `.tex`, `.Rnw`, `.Rtex`, `.Rmd`, and `.qmd` documents; live `.tasks`, `.chat`, `.board`, and `.slides` files; notebook operations; document history; and CoCalc export/import workflows.
+description: Use when working with CoCalc-native documents and workflows, including chat workbench artifacts (documents, file previews, proposed action reviews, GitHub PR cards); complete project-side document builds; live tasks, chats, boards, slides and notebooks; document history; and CoCalc export/import workflows.
 ---
 
 # CoCalc
@@ -268,6 +268,69 @@ Use `cocalc browser exec` for notebook work only when you need transient UI cont
 - which notebook tab is currently active
 - which cell is selected
 - cursor/scroll/viewport state
+
+## Chat Workbench Artifacts
+
+When a persistent result would help the user review or collaborate beside chat,
+offer a workbench artifact instead of only a file link or a long repeated answer.
+This is experimental: use it when the user requests artifacts or has opted into
+the workbench workflow. CoCalc creates the cards and manages native frame tabs;
+do not script frame layouts or fabricate chat messages to display results.
+
+Choose the supported object that fits the task:
+
+| Object               | Use it for                                                        | Important behavior                                                                                                        |
+| -------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Markdown             | A collaboratively edited plan, draft, or explanation              | Update the same artifact rather than republishing copies.                                                                 |
+| File reference       | An existing compliance document, source file, image, or PDF       | Preview the current saved file with an Open file escape hatch; not historical file bytes.                                 |
+| Proposed action list | Draft support replies, email actions, or decisions needing review | Users edit, comment, approve/reject, then return decisions to the originating chat. Nothing executes in the card.         |
+| GitHub PR            | A PR summary with a GitHub link and local Git review              | Cached status has a retrieval time; refresh uses project-side `gh`; local review pins revisions and fetching is explicit. |
+
+### Discover And Publish
+
+In the examples below, replace `cocalc` with the exact CLI command supplied by
+the runtime (for example, `"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"`).
+Inspect the installed interface before constructing payloads:
+
+```bash
+cocalc project chat artifact --help
+cocalc exec-api
+cocalc project chat artifact context --path "$COCALC_CODEX_CHAT_PATH" \
+  --thread-id "$COCALC_CODEX_THREAD_ID" --message-date "$COCALC_CODEX_MESSAGE_DATE"
+```
+
+Use the returned producing `message_id`. Never substitute the latest message,
+active browser thread, or a guessed ID. If originating context is absent, obtain
+the explicit destination and producing message before publishing. If these
+commands are unavailable, report the missing capability and fall back to normal
+text/file links; never modify the `.chat` file directly.
+
+Create/update take `--path`, `--thread-id`, `--artifact-id`, `--experimental`, and
+`--file <JSON path>` (or `--file -` for stdin). Payloads include `message_id`,
+`operation_id`, `title`, and `markdown`; for other kinds, include exactly one of
+`file`, `actions`, or `github_pr` according to the installed `exec-api` types.
+For example, a file reference has `file: { path: "/home/user/policy.md" }`;
+it references a real file, not an embedded editable copy. Unsupported previews
+should remain file links, not arbitrary HTML, SVG input, apps, or widget code.
+
+The scripting equivalent is `api.artifacts.open({ path, threadId,
+projectIdentifier, experimental: true })`, with `context(messageDate)`, `list()`,
+`read(artifactId)`, `create(artifactId, payload)`, and `update(artifactId, payload)`.
+Read the current artifact before updating and supply its returned `base`.
+Preserve the artifact ID across revisions. Use one stable operation ID per
+publication and retry only with identical content; on a stale-base conflict,
+reread and reconcile rather than removing the check. Feedback may refer to an
+older snapshot; do not overwrite newer collaborative edits blindly.
+
+### Review Is Not Execution
+
+An action-list approval applies to the exact reviewed draft, not later edits or
+blanket service access. Returned decisions are staged in the originating chat
+for the user to send. Before an external action, use the normal typed service
+operation and required fresh-auth/approval flow, retaining its audit trail.
+Do not treat mutable artifact data or agent-reported outcomes as authorization
+or proof of execution. Publish only verified outcomes; do not send messages,
+merge PRs, or otherwise mutate external services just to populate a card.
 
 ## Codex Activity Logs
 
