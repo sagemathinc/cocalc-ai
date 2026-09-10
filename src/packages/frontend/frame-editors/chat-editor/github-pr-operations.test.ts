@@ -148,3 +148,13 @@ test("missing commits report a fetch option without an automatic fetch", async (
   );
   expect(exec).toHaveBeenCalledTimes(3);
 });
+
+test("missing project gh explains the prerequisite without exposing raw spawn output", async () => {
+  exec.mockRejectedValueOnce(
+    Error("spawn gh ENOENT verbose internal command data"),
+  );
+  await expect(refreshPR("project", pr)).rejects.toThrow(
+    "GitHub CLI (gh) was not found on the project's command PATH",
+  );
+  expect(exec).toHaveBeenCalledTimes(1);
+});

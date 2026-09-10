@@ -138,6 +138,37 @@ display current proposals and published drafts without editable controls or
 approval actions. Live browser/agent acceptance and the complete acceptance
 matrix remain open.
 
+## Live Acceptance Checkpoint (2026-09-10)
+
+Built frontend revision `92d3b04c00` and restored the stopped local seed hub
+(port 9100); other bays were left running. Dedicated browser `8QDTTQAT9G`
+(spawn `workbench-objects-20260910`) is usable, unlike the older Chromium QA
+tabs. Operator CLI profile: `workbench-owner-qa-20260910`.
+
+The installed runtime CLI predates artifact commands and cannot be modified.
+It was left unchanged. Its supported `exec --file` command ran the built
+`createProjectChatOps` API through authenticated direct project-host routing,
+not filesystem chat JSON. Temporary harness: `/tmp/workbench-object-fixtures.js`.
+
+In `/home/user/chat-workbench-agent-qa-20260909.chat`, thread
+`9382a253-236b-4a0e-8c54-4f5a83c46ad9`, published `qa-file-20260910`,
+`qa-actions-20260910`, and `qa-pr-20260910`. Create/read succeeded for all three;
+identical retries reported replayed and retained the same editing base. All
+three cards appeared on the intended existing QA message.
+
+The file card opened the repository README and rendered its saved contents in
+the workbench. The action list opened two fictional replies. Approved Alex's
+reply, edited it, observed Not reviewed, approved the revised draft, and staged
+the decisions. The composer showed one approved and one not reviewed; focus
+returned to Ask Codex. No message was sent. Removed the staged QA feedback
+afterward; local review draft state remains available for persistence testing.
+
+PR Refresh retained cached metadata but failed because `gh` was unavailable on
+the project's command PATH. Added a focused prerequisite error instead of raw
+spawn diagnostics. Successful project-side refresh, local review/feedback,
+reload, viewer file previews, keyboard/theme/narrow layout and the rest of the
+acceptance matrix remain unverified. Do not infer completion from this checkpoint.
+
 ## Acceptance
 
 For each object: CLI create/read/update/retry, current vs publication view,

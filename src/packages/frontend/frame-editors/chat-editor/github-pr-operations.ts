@@ -8,16 +8,26 @@ async function run(
   command: string,
   args: string[],
 ) {
-  const result = await webapp_client.project_client.exec({
-    project_id: projectId,
-    path,
-    command,
-    args,
-    bash: false,
-    err_on_exit: false,
-    max_output: 128 * 1024,
-    timeout: 60,
-  });
+  const result = await webapp_client.project_client
+    .exec({
+      project_id: projectId,
+      path,
+      command,
+      args,
+      bash: false,
+      err_on_exit: false,
+      max_output: 128 * 1024,
+      timeout: 60,
+    })
+    .catch((err) => {
+      if (command === "gh" && String(err).includes("ENOENT"))
+        throw Error(
+          "GitHub CLI (gh) was not found on the project's command PATH. Install it in the project and sign in with gh auth login, then retry Refresh. Cached PR data is still available.",
+        );
+      throw Error(
+        `${command} could not run in this project. Check project availability and command access in a terminal.`,
+      );
+    });
   if (result.exit_code !== 0)
     throw Error(
       `${command} operation failed. Check project access and credentials in a terminal.`,
