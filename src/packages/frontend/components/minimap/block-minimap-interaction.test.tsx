@@ -79,6 +79,78 @@ function mockMinimapBounds(minimap: HTMLElement): void {
 }
 
 describe("block minimap rendered interactions", () => {
+  it("settles at idle with freshly allocated visible ranges and still responds to updates", () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let id = 0;
+    const raf = jest
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb) => {
+        frames.set(++id, cb);
+        return id;
+      });
+    const cancel = jest
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation((key) => {
+        frames.delete(key);
+      });
+    const flush = () => {
+      const pending = [...frames.values()];
+      frames.clear();
+      act(() => pending.forEach((cb) => cb(0)));
+    };
+    const { adapter } = makeAdapter();
+    adapter.visibleRange = jest.fn(() => ({
+      firstId: "a",
+      firstFrac: 0,
+      lastId: "a",
+      lastFrac: 0.5,
+    }));
+    const view = render(
+      <BlockMinimap
+        blocks={BLOCKS}
+        height={516}
+        adapter={adapter}
+        label="Idle minimap"
+      />,
+    );
+    try {
+      for (let i = 0; i < 8; i++) flush();
+      expect(frames.size).toBe(0);
+      const calls = jest.mocked(adapter.visibleRange).mock.calls.length;
+      flush();
+      expect(adapter.visibleRange).toHaveBeenCalledTimes(calls);
+      act(() => adapter.scrollToPosition(400));
+      expect(frames.size).toBe(1);
+      flush();
+      expect(
+        screen.getByRole("scrollbar", { name: "Idle minimap" }),
+      ).toHaveAttribute("aria-valuenow", "50");
+      for (let i = 0; i < 3; i++) flush();
+      expect(frames.size).toBe(0);
+      const beforeContentChange = jest.mocked(adapter.visibleRange).mock.calls
+        .length;
+      view.rerender(
+        <BlockMinimap
+          blocks={[...BLOCKS]}
+          height={616}
+          adapter={adapter}
+          label="Idle minimap"
+        />,
+      );
+      flush();
+      expect(
+        jest.mocked(adapter.visibleRange).mock.calls.length,
+      ).toBeGreaterThan(beforeContentChange);
+      act(() => adapter.scrollToPosition(0));
+      view.unmount();
+      expect(frames.size).toBe(0);
+    } finally {
+      view.unmount();
+      raf.mockRestore();
+      cancel.mockRestore();
+    }
+  });
+
   it("moves the viewport to the top, middle, and bottom while dragging", async () => {
     const { adapter } = makeAdapter();
     render(
