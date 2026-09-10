@@ -319,8 +319,18 @@ By default the helper grants:
 
 - `roles/compute.instanceAdmin.v1`
 - `roles/compute.networkUser`
-- `roles/iam.serviceAccountUser`
 - a project custom role named `cocalcRocketFirewallAdmin`
+
+Bay VMs are created with `--no-service-account` by default. This avoids
+exposing project credentials through the VM metadata server and means the
+bootstrap identity does not need `roles/iam.serviceAccountUser`. Rerunning the
+service-account helper removes that legacy project-wide role if present.
+
+If a bay intentionally needs an attached VM identity, pass
+`--service-account <email>`, define a custom role containing only
+`iam.serviceAccounts.actAs`, and bind that role to the bootstrap identity on
+that specific target service account. Do not grant project-wide
+`roles/iam.serviceAccountUser`.
 
 The custom firewall role is intentionally narrower than
 `roles/compute.securityAdmin`. It includes only:
