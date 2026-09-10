@@ -415,3 +415,24 @@ read-only viewer acceptance or refresh-with-an-already-open-review validation.
 Hosted CI run `34463989320` passed on `c472681e57`, including the lightweight
 chat startup budget after the core-entry split. The PR remains draft pending
 the remaining acceptance checks.
+
+### Artifact Discovery (2026-09-10)
+
+- Thread menu > Artifacts and the chatroom sidebar Artifacts button open a
+  shared lazy-loaded browser with thread/chatroom scope, text/type filters,
+  and title/first-publication/latest-publication sorting.
+- Thread and chatroom search include a separate artifact result section using
+  the same catalog. Results are deduplicated by thread and artifact ID and
+  search current stored text, titles, descriptions, paths, and typed metadata.
+  They do not fetch external file contents or GitHub data to search them.
+- Rows preserve themes and open native workbench tabs with the source thread;
+  Show in conversation resolves the publishing message, including archived
+  messages through the existing authorized archive reader. Missing source
+  messages produce an explicit error rather than jumping elsewhere.
+- Publication-only artifacts open their published snapshot. Opening a current
+  artifact no longer silently reuses a historical snapshot tab.
+- The timestamp sort is labeled Recently published, not Recently updated:
+  direct collaborative edits do not have a reliable edit timestamp here.
+- Focused discovery/navigation/search tests, frontend typecheck and lint, and
+  development build pass. Live visual acceptance remains outstanding because
+  the dedicated QA CLI session expired and requires interactive sign-in.

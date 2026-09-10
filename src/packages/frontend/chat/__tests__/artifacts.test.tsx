@@ -163,7 +163,12 @@ test.each([
       title: "Replies",
       markdown: "Published text",
     });
-    const existing = { artifact, thread, origin, version: "old-publication" };
+    const existing: {
+      artifact: any;
+      thread: any;
+      origin: any;
+      version?: string;
+    } = { artifact, thread, origin };
     const frames = {
       _get_frame_type: (id) =>
         id === "existing-artifact" ? "workbench" : "terminal",
@@ -212,7 +217,7 @@ test.each([
     // Focusing a frame must not reset its revision, remount its editor, or close a terminal.
     expect(frames.set_frame_data).not.toHaveBeenCalled();
     expect(frames.close_frame).not.toHaveBeenCalled();
-    expect(existing.version).toBe("old-publication");
+    expect(existing.version).toBeUndefined();
     frames.split_frame.mockClear();
     frames.set_active_id.mockClear();
     fireEvent.click(
@@ -230,7 +235,7 @@ test.each([
       }),
     );
     expect(frames.set_frame_data).not.toHaveBeenCalled();
-    expect(existing.version).toBe("old-publication");
+    expect(existing.version).toBeUndefined();
     if (reuse) {
       // A matching snapshot may be focused, but a different view is never repurposed.
       existing.version = "publication-1";

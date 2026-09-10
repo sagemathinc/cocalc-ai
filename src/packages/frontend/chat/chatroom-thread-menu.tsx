@@ -6,6 +6,8 @@
 import type { MenuProps } from "antd";
 import { Button, Dropdown, message as antdMessage } from "antd";
 import type { MouseEvent, ReactNode } from "react";
+import { Suspense, useState } from "react";
+import { ArtifactBrowserModal } from "./artifact-discovery";
 import { Icon } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import type { ChatActions } from "./actions";
@@ -112,8 +114,10 @@ export function ChatRoomThreadMenu({
         ]
       : [];
 
+  const [artifactsOpen, setArtifactsOpen] = useState(false);
   const menu: MenuProps = {
     items: [
+      { key: "artifacts", label: "Artifacts", disabled: !actions?.syncdb },
       { key: "appearance", label: "Appearance..." },
       { key: "behavior", label: "Behavior..." },
       ...(openChatFile
@@ -170,6 +174,10 @@ export function ChatRoomThreadMenu({
       },
     ],
     onClick: ({ key }) => {
+      if (key === "artifacts") {
+        setArtifactsOpen(true);
+        return;
+      }
       if (key === "appearance") {
         openAppearanceModal(
           threadKey,
@@ -255,24 +263,35 @@ export function ChatRoomThreadMenu({
   };
 
   return (
-    <Dropdown
-      menu={menu}
-      trigger={["click"]}
-      open={open}
-      onOpenChange={onOpenChange}
-    >
-      <Button
-        type={buttonType}
-        size={buttonSize}
-        aria-label={buttonAriaLabel}
-        data-testid={buttonTestId}
-        onClick={onButtonClick}
-        icon={
-          buttonLabel == null ? <Icon name="ellipsis-vertical" /> : undefined
-        }
+    <>
+      <Dropdown
+        menu={menu}
+        trigger={["click"]}
+        open={open}
+        onOpenChange={onOpenChange}
       >
-        {buttonLabel}
-      </Button>
-    </Dropdown>
+        <Button
+          type={buttonType}
+          size={buttonSize}
+          aria-label={buttonAriaLabel}
+          data-testid={buttonTestId}
+          onClick={onButtonClick}
+          icon={
+            buttonLabel == null ? <Icon name="ellipsis-vertical" /> : undefined
+          }
+        >
+          {buttonLabel}
+        </Button>
+      </Dropdown>
+      {artifactsOpen && (
+        <Suspense fallback={null}>
+          <ArtifactBrowserModal
+            actions={actions}
+            threadId={threadKey}
+            onClose={() => setArtifactsOpen(false)}
+          />
+        </Suspense>
+      )}
+    </>
   );
 }
