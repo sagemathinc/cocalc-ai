@@ -68,6 +68,9 @@ const EPHEMERAL_LISTENER_MIN_PORT = 32_768;
 const NON_INTRUSION_KERNEL_SIGNALS = new Set(["oom", "tainted"]);
 const BACKUP_BROWSER_CGROUP = "/cocalc-backup-browsers/browser-*";
 const EXPECTED_IAP_SSH_USERS = new Set(["ubuntu", "user"]);
+// Production operator SSH reaches project hosts through the alpha bastion.
+// Keep this exact rather than trusting the private network generally.
+const EXPECTED_ADMIN_SSH_SOURCES = new Set(["10.138.0.22"]);
 const GOOGLE_IAP_SOURCES = new BlockList();
 GOOGLE_IAP_SOURCES.addSubnet("35.235.240.0", 20, "ipv4");
 GOOGLE_IAP_SOURCES.addSubnet("2600:2d00:1:7::", 64, "ipv6");
@@ -284,7 +287,9 @@ function isActionableAuthentication(value: string): boolean {
     fields == null ||
     typeof fields[1] !== "string" ||
     !EXPECTED_IAP_SSH_USERS.has(fields[1]) ||
-    !isGoogleIapSource(fields[2])
+    typeof fields[2] !== "string" ||
+    (!isGoogleIapSource(fields[2]) &&
+      !EXPECTED_ADMIN_SSH_SOURCES.has(fields[2]))
   );
 }
 

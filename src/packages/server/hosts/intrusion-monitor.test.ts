@@ -866,7 +866,10 @@ describe("project-host intrusion monitor normalization", () => {
         "authentication_7d.accepted": [
           '["publickey","user","35.235.245.17"]',
           '["publickey","user","2600:2d00:1:7::123"]',
+          '["publickey","ubuntu","10.138.0.22"]',
+          '["publickey","ubuntu","10.138.0.23"]',
           '["publickey","root","35.235.245.17"]',
+          '["publickey","root","10.138.0.22"]',
           '["publickey","root","203.0.113.10"]',
         ],
         "privileged_files.writable": ["/usr/local/bin/unsafe"],
@@ -888,7 +891,9 @@ describe("project-host intrusion monitor normalization", () => {
           '["tcp","unknown","0.0.0.0:4444"]',
         ],
         "authentication_7d.accepted": [
+          '["publickey","ubuntu","10.138.0.23"]',
           '["publickey","root","35.235.245.17"]',
+          '["publickey","root","10.138.0.22"]',
           '["publickey","root","203.0.113.10"]',
         ],
         "privileged_files.writable": ["/usr/local/bin/unsafe"],
