@@ -3980,6 +3980,15 @@ describe("CodexAppServerAgent", () => {
       'When you need the CoCalc CLI, use this exact command: `"/root/.local/bin/cocalc"`.',
     );
     expect(turnStartParams?.input?.[0]?.text).toContain(
+      JSON.stringify({
+        COCALC_CODEX_CHAT_PATH: "/new.chat",
+        COCALC_CODEX_THREAD_ID: "new-thread",
+        COCALC_CODEX_MESSAGE_DATE: "2026-09-09T00:00:00Z",
+      }),
+    );
+    expect(turnStartParams?.input?.[0]?.text).not.toContain("/old.chat");
+    expect(turnStartParams?.input?.[0]?.text).not.toContain("project-token");
+    expect(turnStartParams?.input?.[0]?.text).toContain(
       "For live text editor content or edits, prefer backend exec with the live sync/session API",
     );
     expect(turnStartParams?.input?.[0]?.text).toContain(

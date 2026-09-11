@@ -330,6 +330,15 @@ For example, a file reference has `file: { path: "/home/user/policy.md" }`;
 it references a real file, not an embedded editable copy. Unsupported previews
 should remain file links, not arbitrary HTML, SVG input, apps, or widget code.
 
+In an opted-in workbench chat, publish generated raster images as file artifacts
+after image generation succeeds. Use the actual project-local output path (or
+copy it to a durable project path), the exact producing message, and a stable
+artifact ID. A Markdown image or download link alone is not a published card.
+Read the artifact back and verify its file path before reporting success. When
+editing an existing image, keep its artifact identity and publish the new path
+as a revision. Never claim publication succeeded if the installed CLI only
+supports Markdown: report the runtime mismatch explicitly.
+
 The scripting equivalent is `api.artifacts.open({ path, threadId,
 projectIdentifier, experimental: true })`, with `context(messageDate)`, `list()`,
 `read(artifactId)`, `create(artifactId, payload)`, and `update(artifactId, payload)`.

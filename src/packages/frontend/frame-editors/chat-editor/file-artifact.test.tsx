@@ -80,6 +80,21 @@ beforeEach(() => {
   mockRole = "collaborator";
   stat.mockResolvedValue({ size: 10 });
   readFile.mockResolvedValue("Saved policy");
+  URL.createObjectURL = jest.fn(() => "blob:captured-image");
+  URL.revokeObjectURL = jest.fn();
+  global.fetch = jest.fn(async () => ({
+    ok: true,
+    headers: { get: () => "image/png" },
+    body: {
+      getReader: () => ({
+        read: jest
+          .fn()
+          .mockResolvedValueOnce({ value: new Uint8Array([1, 2]), done: false })
+          .mockResolvedValue({ done: true }),
+        cancel: jest.fn(),
+      }),
+    },
+  })) as any;
 });
 
 test("previews saved text, opens the real file, and keeps the preview mounted on refresh", async () => {
@@ -118,14 +133,14 @@ test("does not fetch unsupported active formats or oversized files", async () =>
 
 test.each(["x.html", "x.svg", "x.ipynb"])(
   "does not select active renderer for %s",
-  (path) => {
+  async (path) => {
     expect(fileArtifactPreviewSupported(path)).toBe(false);
   },
 );
 
 test.each(["plot.png", "report.pdf"])(
   "supports binary %s without reading as text",
-  (path) => {
+  async (path) => {
     render(
       <FileArtifact
         artifact={{ ...artifact, file: { path } }}
@@ -136,19 +151,21 @@ test.each(["plot.png", "report.pdf"])(
     expect(fileArtifactPreviewSupported(path)).toBe(true);
     expect(readFile).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
-    expect(screen.getByTestId("preview")).toHaveStyle({
-      height: path.endsWith(".pdf") ? "100%" : "auto",
-    });
-    if (path.endsWith(".png"))
-      expect(screen.getByTestId("preview")).toHaveStyle({
-        width: "auto",
+    if (path.endsWith(".pdf"))
+      expect(screen.getByTestId("preview")).toHaveStyle({ height: "100%" });
+    if (path.endsWith(".png")) {
+      const image = await screen.findByRole("img", { name: path });
+      expect(image).toHaveAttribute("src", "blob:captured-image");
+      expect(image).toHaveStyle({
+        maxWidth: "100%",
         maxHeight: "100%",
         objectFit: "contain",
       });
+    }
   },
 );
 
-test("viewer binary URLs preserve read-only routing during refresh and file changes", () => {
+test("viewer binary URLs preserve read-only routing during refresh and file changes", async () => {
   mockRole = "viewer";
   const { rerender } = render(
     <FileArtifact
@@ -157,14 +174,22 @@ test("viewer binary URLs preserve read-only routing during refresh and file chan
       projectId="project"
     />,
   );
-  expect(screen.getByTestId("preview")).toHaveAttribute(
-    "data-raw-url",
+  await screen.findByRole("img", { name: "plot.png" });
+  expect(fetch).toHaveBeenCalledWith(
     "/files/project/plot.png?viewer=1&artifactRefresh=0",
+    expect.objectContaining({
+      signal: expect.anything(),
+      credentials: "include",
+    }),
   );
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  expect(screen.getByTestId("preview")).toHaveAttribute(
-    "data-raw-url",
+  await screen.findByRole("img", { name: "plot.png" });
+  expect(fetch).toHaveBeenCalledWith(
     "/files/project/plot.png?viewer=1&artifactRefresh=1",
+    expect.objectContaining({
+      signal: expect.anything(),
+      credentials: "include",
+    }),
   );
   rerender(
     <FileArtifact

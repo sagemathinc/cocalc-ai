@@ -1,10 +1,90 @@
 # Contextual Replies And Artifact References
 
-Status: expanded design for maintainer review, 2026-09-11. Not implemented.
+Status: first local-comment slice implemented and tested, 2026-09-11. The broader
+reference/annotation design below remains a roadmap, not a completion claim.
 Parent: [Chat Workbench Prototype](chat-workbench-prototype.md).
 Existing objects and acceptance: [Chat Workbench Objects](chat-workbench-objects.md).
 PR #509 stays draft. This document defines the next slice; it does not authorize
 unrelated external actions or declare the original prototype fully accepted.
+
+## Implemented Slice (September 11)
+
+- Completed assistant responses, Markdown artifacts and supported text file
+  previews expose selection Reply/Comment actions and a nearby Slate editor.
+  Image file previews support whole-image comments. The main composer draft and
+  unrelated staged reviews are not consumed by these sends.
+- Local drafts reuse the existing browser/account-backed private draft
+  controller, separately keyed by account, chat, destination and source. Escape
+  and Keep draft retain text and its original captured context. There is one
+  resumable local draft per source, not yet a multi-comment draft manager.
+- Submission reuses the normal durable outbox, originating thread and a stable
+  retry identity. The visible message contains the quote/comment/image; the
+  existing expandable ACP context carries source IDs, rendered-text offsets,
+  capture time and bounded surrounding text. Focus returns without scrolling
+  the reader or replacing the main draft.
+- Quotes are limited to 8,192 UTF-16 characters, with up to 2,048 surrounding
+  characters on each side. Whole-text comments carry a bounded preview, not a
+  historical full-file snapshot. User comments are limited to 32 KiB UTF-8.
+- Raster previews freeze displayed bytes in a browser blob (10 MiB maximum).
+  Comment Send uploads that captured image through the existing blob path, so
+  the model receives an actual image, not just a mutable filename. No upload
+  happens merely by opening or saving an unsent draft. After reload, a draft's
+  stored hash must match the newly loaded image before sending; if the file
+  changed, the draft is retained and submission refuses to substitute new bytes.
+- PDFs, image regions, notebook cells, multi-artifact attachments, Add to
+  composer, the @ picker, source-independent draft recovery, and unified Git
+  comments remain deferred. This does not implement the entire design below.
+
+### Runtime Repair And Smoke Check
+
+The QA project's installed tools were still Markdown-only. Building project
+tools and upgrading the QA host was insufficient for the already-running
+container: its tools bind mount retained the old version. Restarting only the
+QA project mounted the current bundle. The installed CLI then exposed file,
+action-review, GitHub PR and commit artifacts. This was a runtime upgrade, not a
+secret refresh; secret changes still require no project restart.
+
+Also upgraded the QA host's aligned project-host/ACP worker bundle. A resumed
+tool shell still exposed a prior turn's publication context, so runtime guidance
+now supplies the current request's explicit, non-secret chat/thread/date values
+independently of startup environment. A regression checks current attribution
+and exclusion of startup values/credentials from that prompt section.
+
+`src/scripts/dev/check-workbench-image-publication.js` is a read-only CoCalc
+`exec --file` script, deliberately using the installed artifact API. Run it in
+the generating project after publication, with the exact current chat/thread
+context and `WORKBENCH_IMAGE_ARTIFACT_ID` set. It checks discovery, file kind,
+existing raster bytes and the preview size limit. Its Node tests reject missing
+APIs, absent cards, Markdown-only results and fake image files. It is not itself
+an image generator or a browser-rendering test.
+
+The full manual acceptance exercise additionally asks an actual agent to
+generate an image, publish it, run that checker, then opens the card in the
+workbench and comments on the image. Inspect the publication's producing
+message identity separately; finding an artifact alone does not establish
+correct turn attribution.
+
+Live evidence: QA chat/thread `a5141998-1cb3-4438-8bf5-b0bae520a988` in the
+project below generated artifact `runtime-image-smoke`: a 1,489,143-byte,
+1254-by-1254 PNG. The card opened a rendered image. A whole-image comment
+produced an agent description of its colored facets and an installed-CLI
+checker result of `ok: true`. A separate selected-response reply survived
+private draft close/reload, then sent successfully while a sentinel main
+composer draft remained unchanged. The early image publication was attached
+to an older turn; it is evidence for the attribution fix, not a passing check
+of that earlier publication's identity.
+
+After the explicit-current-context rollout, the same resumed QA thread
+published operation `runtime-image-smoke-final-20260911T015804Z` against its
+actual producing message `2ef87d8f-a9a8-4342-8ed9-6e5f2f752fa8`. The local
+popup was also exercised in dark mode at a 375-by-812 CSS-pixel viewport;
+explicit border-box sizing keeps its padding inside the available width.
+
+Focused UI/outbox tests cover exact quote capture, private draft restoration,
+failed durable storage, duplicate Send, image upload timing, changed-image
+refusal, read-only controls, keyboard focus and Escape. Frontend lint and the
+frontend/static typechecked build pass. Keep PR #509 draft for further use and
+review rather than treating this evidence as full product acceptance.
 
 ## Product Decision
 

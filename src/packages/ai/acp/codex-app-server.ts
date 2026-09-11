@@ -1699,9 +1699,21 @@ function addRuntimeGuidance(
   if (!hasProject) {
     return prompt;
   }
+  // Tool subprocesses in a resumed session may retain their startup environment.
+  // Supply the current, non-secret attribution independently of that environment.
+  const context = Object.fromEntries(
+    [
+      "COCALC_CODEX_CHAT_PATH",
+      "COCALC_CODEX_THREAD_ID",
+      "COCALC_CODEX_MESSAGE_DATE",
+    ].map((key) => [key, runtimeEnv?.[key] ?? ""]),
+  );
+  const attribution = context.COCALC_CODEX_MESSAGE_DATE
+    ? `\n\nCurrent turn publication context (use these exact values as explicit CLI arguments or command-scoped environment overrides, even if a reused shell has older values; never infer the producing message from history):\n${JSON.stringify(context)}`
+    : "";
   return `${getCoCalcRuntimeGuidanceHeader(getCoCalcCliCommand(runtimeEnv), {
     hasBrowser: !!hasBrowser,
-  })}\n\n${prompt}`;
+  })}${attribution}\n\n${prompt}`;
 }
 
 function buildTurnInput({

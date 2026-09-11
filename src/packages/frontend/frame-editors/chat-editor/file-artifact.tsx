@@ -13,6 +13,7 @@ import PublicViewerFileContents from "@cocalc/frontend/public-viewer/file-conten
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";
 import { viewerRawFileUrl } from "@cocalc/frontend/project/viewer-file-editor";
+import { LocalCommentButton } from "@cocalc/frontend/chat/contextual-reply";
 
 const BINARY_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "pdf"]);
 
@@ -59,6 +60,70 @@ function BinaryPreview({
     project_id: projectId,
     url: `${viewerRawFileUrl({ project_id: projectId, path, viewer })}${viewer ? "&" : "?"}artifactRefresh=${refresh}`,
   });
+  const [image, setImage] = useState("");
+  const [error, setError] = useState("");
+  const pdf = path.toLowerCase().endsWith(".pdf");
+  useEffect(() => {
+    if (!url || pdf) return;
+    const abort = new AbortController();
+    let objectUrl: string | undefined;
+    setImage("");
+    setError("");
+    void (async () => {
+      try {
+        const response = await fetch(url, {
+          signal: abort.signal,
+          credentials: "include",
+        });
+        if (!response.ok)
+          throw Error(`Image preview failed: HTTP ${response.status}`);
+        const reader = response.body?.getReader();
+        if (!reader) throw Error("Image preview stream unavailable");
+        const chunks: Uint8Array<ArrayBuffer>[] = [];
+        let size = 0;
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > 10 * 1024 * 1024) {
+            await reader.cancel();
+            throw Error(
+              "Image exceeds the 10 MiB preview limit. Use Open file.",
+            );
+          }
+          chunks.push(new Uint8Array(value));
+        }
+        if (abort.signal.aborted) return;
+        objectUrl = URL.createObjectURL(
+          new Blob(chunks, {
+            type:
+              response.headers.get("content-type") ??
+              "application/octet-stream",
+          }),
+        );
+        setImage(objectUrl);
+      } catch (err) {
+        if (!abort.signal.aborted) setError(String(err));
+      }
+    })();
+    return () => {
+      abort.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [url, pdf]);
+  if (!pdf)
+    return error ? (
+      <Alert type="warning" title={error} />
+    ) : image ? (
+      <img
+        data-comment-image
+        src={image}
+        alt={path.split("/").pop() ?? "Image preview"}
+        style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+      />
+    ) : (
+      <div role="status">Preparing image snapshot...</div>
+    );
   return url ? (
     <PublicViewerFileContents
       path={path}
@@ -85,11 +150,13 @@ export function FileArtifact({
   historical,
   onComment,
   projectId,
+  localComments = false,
 }: {
   artifact: ArtifactRecord;
   historical: boolean;
   projectId?: string;
   onComment?: (feedback: ArtifactFeedback) => Promise<void>;
+  localComments?: boolean;
 }) {
   const { actions, projectAccess } = useProjectContext();
   const context = useFileContext();
@@ -108,6 +175,7 @@ export function FileArtifact({
   );
   displayedRef.current = loaded;
   useEffect(() => {
+    if (localComments) return;
     const capture = () => {
       const value = displayedRef.current;
       const range = window.getSelection();
@@ -135,7 +203,7 @@ export function FileArtifact({
     };
     document.addEventListener("selectionchange", capture);
     return () => document.removeEventListener("selectionchange", capture);
-  }, [path, artifact]);
+  }, [path, artifact, localComments]);
   useEffect(() => {
     setSelection(undefined);
   }, [path]);
@@ -203,30 +271,40 @@ export function FileArtifact({
         >
           Refresh
         </Button>
-        <Button
-          disabled={
-            !onComment || binary || loaded?.path !== path || feedbackTooLarge
-          }
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => {
-            if (!onComment || !contentRef.current || loaded?.path !== path)
-              return;
-            try {
-              const feedback =
-                selection ??
-                captureArtifactSelection(
-                  contentRef.current,
-                  { ...artifact, input: loaded.content },
-                  window.getSelection(),
-                );
-              void onComment(feedback).catch((err) => setError(String(err)));
-            } catch (err) {
-              setError(String(err));
+        {localComments ? (
+          <LocalCommentButton
+            disabled={
+              !supported ||
+              loading ||
+              (binary && path.toLowerCase().endsWith(".pdf"))
             }
-          }}
-        >
-          Comment
-        </Button>
+          />
+        ) : (
+          <Button
+            disabled={
+              !onComment || binary || loaded?.path !== path || feedbackTooLarge
+            }
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              if (!onComment || !contentRef.current || loaded?.path !== path)
+                return;
+              try {
+                const feedback =
+                  selection ??
+                  captureArtifactSelection(
+                    contentRef.current,
+                    { ...artifact, input: loaded.content },
+                    window.getSelection(),
+                  );
+                void onComment(feedback).catch((err) => setError(String(err)));
+              } catch (err) {
+                setError(String(err));
+              }
+            }}
+          >
+            Comment
+          </Button>
+        )}
         {selection && (
           <Button
             onClick={() => {
@@ -277,6 +355,7 @@ export function FileArtifact({
       )}
       <div
         ref={contentRef}
+        data-contextual-source
         role="document"
         aria-label="File preview"
         tabIndex={0}

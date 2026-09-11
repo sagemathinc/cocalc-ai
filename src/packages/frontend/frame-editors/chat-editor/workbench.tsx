@@ -37,6 +37,9 @@ import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { FileArtifact } from "./file-artifact";
+import ContextualReply, {
+  LocalCommentButton,
+} from "@cocalc/frontend/chat/contextual-reply";
 import { GitHubPRArtifact } from "./github-pr-artifact";
 import { ActionListArtifact } from "./action-list-artifact";
 import { CommitArtifact } from "./commit-artifact";
@@ -309,20 +312,29 @@ export function Workbench({
   };
   if (artifact.kind === "file")
     return (
-      <FileArtifact
+      <ContextualReply
+        fill
+        actions={chat}
         projectId={project_id}
-        key={`${artifact.thread_id}:${artifact.artifact_id}`}
-        artifact={artifact}
-        historical={historical}
-        onComment={
-          read_only || !chat
-            ? undefined
-            : async (feedback) => {
-                await stageFeedback(feedback);
-                returnToChat();
-              }
-        }
-      />
+        path={path}
+        disabled={read_only}
+        source={{
+          kind: "artifact",
+          thread_id: artifact.thread_id,
+          id: artifact.artifact_id,
+          title: artifact.title,
+          file: artifact.file?.path,
+          revision: version,
+        }}
+      >
+        <FileArtifact
+          projectId={project_id}
+          key={`${artifact.thread_id}:${artifact.artifact_id}`}
+          artifact={artifact}
+          historical={historical}
+          localComments
+        />
+      </ContextualReply>
     );
   if (artifact.kind === "commit")
     return (
@@ -410,226 +422,221 @@ export function Workbench({
       />
     );
   return (
-    <KeyboardBoundary
-      className="smc-vfill"
-      style={{
-        overflow: "auto",
-        padding: 12,
-        paddingBottom: editing && !read_only && !showChanges ? 0 : 12,
-        color: UI_COLORS.text,
-        background: UI_COLORS.surface,
+    <ContextualReply
+      fill
+      actions={chat}
+      projectId={project_id}
+      path={path}
+      disabled={read_only || editing || showChanges}
+      source={{
+        kind: "artifact",
+        thread_id: value.thread_id,
+        id: value.artifact_id,
+        title: value.title,
+        revision: version,
       }}
     >
-      <FileContext.Provider
-        value={{
-          ...context,
-          noSanitize: false,
-          disableMarkdownCodebar: true,
-          urlTransform: (url, tag) =>
-            tag?.toLowerCase() === "img"
-              ? ""
-              : context.urlTransform?.(url, tag),
+      <KeyboardBoundary
+        className="smc-vfill"
+        style={{
+          overflow: "auto",
+          padding: 12,
+          paddingBottom: editing && !read_only && !showChanges ? 0 : 12,
+          color: UI_COLORS.text,
+          background: UI_COLORS.surface,
         }}
       >
-        <Space wrap style={{ marginBottom: 12, flexShrink: 0 }}>
-          <Button
-            size="small"
-            disabled={!chat}
-            onClick={(event) => {
-              event.stopPropagation();
-              try {
-                if (editing) flushEditor();
-                returnToChat();
-              } catch (err) {
-                setError(String(err));
-              }
-            }}
-          >
-            Back to chat
-          </Button>
-          <strong>{value.title}</strong>
-          <Button
-            size="small"
-            disabled={read_only || historical || !!pinned || showChanges}
-            onClick={() => {
-              try {
-                if (editing) flushEditor();
-                setEditing(!editing);
-              } catch (err) {
-                setError(String(err));
-              }
-            }}
-          >
-            {editing ? "Read" : "Edit"}
-          </Button>
-          <Select
-            aria-label="Artifact revision"
-            size="small"
-            style={{ width: 190, maxWidth: "100%" }}
-            value={
-              version === undefined ? "__current__" : `publication:${version}`
-            }
-            disabled={editing || !!pinned}
-            options={[
-              { value: "__current__", label: "Current document" },
-              ...publications.map((pub, index) => ({
-                value: `publication:${pub.operation_id}`,
-                label: `Published ${index + 1}: ${pub.operation_id.slice(0, 12)}`,
-              })),
-            ]}
-            onChange={(next) => {
-              const selected =
-                next === "__current__"
-                  ? undefined
-                  : next.slice("publication:".length);
-              setVersion(selected);
-              actions.set_frame_data({ id, version: selected ?? null });
-            }}
-          />
-          <Button
-            size="small"
-            disabled={editing || !!pinned}
-            onClick={() => setShowChanges(!showChanges)}
-          >
-            {showChanges ? "Show document" : "See changes"}
-          </Button>
-          <Button
-            size="small"
-            disabled={read_only || editing || showChanges || !chat}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              if (!content.current || !chat) return;
-              try {
-                const feedback =
-                  selectedFeedback.current ??
-                  captureArtifactSelection(
-                    content.current,
-                    value,
-                    window.getSelection(),
-                  );
-                void stageFeedback(feedback)
-                  .then(() => {
-                    returnToChat();
-                  })
-                  .catch((err) => setError(String(err)));
-              } catch (err) {
-                setError(String(err));
-              }
-            }}
-          >
-            Comment
-          </Button>
-          {pinned && (
+        <FileContext.Provider
+          value={{
+            ...context,
+            noSanitize: false,
+            disableMarkdownCodebar: true,
+            urlTransform: (url, tag) =>
+              tag?.toLowerCase() === "img"
+                ? ""
+                : context.urlTransform?.(url, tag),
+          }}
+        >
+          <Space wrap style={{ marginBottom: 12, flexShrink: 0 }}>
             <Button
               size="small"
-              onClick={() => {
-                window.getSelection()?.removeAllRanges();
-                selectedFeedback.current = undefined;
-                setPinned(undefined);
+              disabled={!chat}
+              onClick={(event) => {
+                event.stopPropagation();
+                try {
+                  if (editing) flushEditor();
+                  returnToChat();
+                } catch (err) {
+                  setError(String(err));
+                }
               }}
             >
-              {artifact.input !== pinned.input
-                ? "Show updated document"
-                : "Clear selection"}
+              Back to chat
             </Button>
-          )}
-          <span role="status">
-            {saving
-              ? "Syncing..."
-              : historical
-                ? "Published snapshot"
-                : "Live document"}
-          </span>
-        </Space>
-        {!chat && (
-          <div role="status">
-            The originating chat frame is closed. Reopen this artifact from its
-            thread to comment; you can still read and edit it here.
-          </div>
-        )}
-        {error && (
-          <Alert
-            type="error"
-            title={error}
-            closable
-            onClose={() => setError("")}
-          />
-        )}
-        {showChanges ? (
-          <div style={{ minHeight: 280, flex: 1 }}>
-            <Suspense fallback={<div role="status">Loading changes...</div>}>
-              <DocumentDiff
-                before={before?.snapshot.markdown ?? ""}
-                after={value.input}
-                path="artifact.md"
-                label="Changes since preceding published snapshot"
-                fontSize={font_size}
-              />
-            </Suspense>
-          </div>
-        ) : editing && !read_only ? (
-          <div
-            className="smc-vfill"
-            style={{ minHeight: 0, overflow: "hidden" }}
-          >
-            <MarkdownInput
-              cacheId={`artifact:${project_id}:${path}:${target.thread_id}:${target.artifact_id}`}
-              value={value.input}
-              mergeRemoteValues
-              getRemoteValue={() => readArtifact(syncdb, target).artifact.input}
-              fontSize={font_size}
-              height="100%"
-              autoGrow={false}
-              modeSwitchPlacement="toolbar"
-              getValueRef={getEditorValue}
-              onSave={() => {
+            <strong>{value.title}</strong>
+            <Button
+              size="small"
+              disabled={read_only || historical || !!pinned || showChanges}
+              onClick={() => {
                 try {
-                  flushEditor();
+                  if (editing) flushEditor();
+                  setEditing(!editing);
                 } catch (err) {
                   setError(String(err));
                 }
               }}
-              minimal
-              compact
-              hideHelp
-              enableMentions={false}
-              enableUpload={false}
-              onChange={(input) => {
-                try {
-                  saveInput(input);
-                } catch (err) {
-                  setError(String(err));
-                }
+            >
+              {editing ? "Read" : "Edit"}
+            </Button>
+            <Select
+              aria-label="Artifact revision"
+              size="small"
+              style={{ width: 190, maxWidth: "100%" }}
+              value={
+                version === undefined ? "__current__" : `publication:${version}`
+              }
+              disabled={editing || !!pinned}
+              options={[
+                { value: "__current__", label: "Current document" },
+                ...publications.map((pub, index) => ({
+                  value: `publication:${pub.operation_id}`,
+                  label: `Published ${index + 1}: ${pub.operation_id.slice(0, 12)}`,
+                })),
+              ]}
+              onChange={(next) => {
+                const selected =
+                  next === "__current__"
+                    ? undefined
+                    : next.slice("publication:".length);
+                setVersion(selected);
+                actions.set_frame_data({ id, version: selected ?? null });
               }}
             />
-          </div>
-        ) : (
-          <div
-            ref={content}
-            tabIndex={0}
-            aria-label="Artifact document"
-            aria-description="Use Shift and arrow keys to select text, then activate Comment."
-            onKeyDown={(event) => {
-              if (
-                event.target === event.currentTarget &&
-                event.shiftKey &&
-                !event.altKey &&
-                extendArtifactSelection(
-                  event.currentTarget,
-                  window.getSelection(),
-                  event.key,
-                  event.ctrlKey || event.metaKey,
-                )
-              ) {
-                event.preventDefault();
-                event.stopPropagation();
-              }
-            }}
-          >
-            <StaticMarkdown value={value.input} />
-          </div>
-        )}
-      </FileContext.Provider>
-    </KeyboardBoundary>
+            <Button
+              size="small"
+              disabled={editing || !!pinned}
+              onClick={() => setShowChanges(!showChanges)}
+            >
+              {showChanges ? "Show document" : "See changes"}
+            </Button>
+            <LocalCommentButton
+              disabled={read_only || editing || showChanges || !chat}
+            />
+            {pinned && (
+              <Button
+                size="small"
+                onClick={() => {
+                  window.getSelection()?.removeAllRanges();
+                  selectedFeedback.current = undefined;
+                  setPinned(undefined);
+                }}
+              >
+                {artifact.input !== pinned.input
+                  ? "Show updated document"
+                  : "Clear selection"}
+              </Button>
+            )}
+            <span role="status">
+              {saving
+                ? "Syncing..."
+                : historical
+                  ? "Published snapshot"
+                  : "Live document"}
+            </span>
+          </Space>
+          {!chat && (
+            <div role="status">
+              The originating chat frame is closed. Reopen this artifact from
+              its thread to comment; you can still read and edit it here.
+            </div>
+          )}
+          {error && (
+            <Alert
+              type="error"
+              title={error}
+              closable
+              onClose={() => setError("")}
+            />
+          )}
+          {showChanges ? (
+            <div style={{ minHeight: 280, flex: 1 }}>
+              <Suspense fallback={<div role="status">Loading changes...</div>}>
+                <DocumentDiff
+                  before={before?.snapshot.markdown ?? ""}
+                  after={value.input}
+                  path="artifact.md"
+                  label="Changes since preceding published snapshot"
+                  fontSize={font_size}
+                />
+              </Suspense>
+            </div>
+          ) : editing && !read_only ? (
+            <div
+              className="smc-vfill"
+              style={{ minHeight: 0, overflow: "hidden" }}
+            >
+              <MarkdownInput
+                cacheId={`artifact:${project_id}:${path}:${target.thread_id}:${target.artifact_id}`}
+                value={value.input}
+                mergeRemoteValues
+                getRemoteValue={() =>
+                  readArtifact(syncdb, target).artifact.input
+                }
+                fontSize={font_size}
+                height="100%"
+                autoGrow={false}
+                modeSwitchPlacement="toolbar"
+                getValueRef={getEditorValue}
+                onSave={() => {
+                  try {
+                    flushEditor();
+                  } catch (err) {
+                    setError(String(err));
+                  }
+                }}
+                minimal
+                compact
+                hideHelp
+                enableMentions={false}
+                enableUpload={false}
+                onChange={(input) => {
+                  try {
+                    saveInput(input);
+                  } catch (err) {
+                    setError(String(err));
+                  }
+                }}
+              />
+            </div>
+          ) : (
+            <div
+              ref={content}
+              data-contextual-source
+              tabIndex={0}
+              aria-label="Artifact document"
+              aria-description="Use Shift and arrow keys to select text, then activate Comment."
+              onKeyDown={(event) => {
+                if (
+                  event.target === event.currentTarget &&
+                  event.shiftKey &&
+                  !event.altKey &&
+                  extendArtifactSelection(
+                    event.currentTarget,
+                    window.getSelection(),
+                    event.key,
+                    event.ctrlKey || event.metaKey,
+                  )
+                ) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }
+              }}
+            >
+              <StaticMarkdown value={value.input} />
+            </div>
+          )}
+        </FileContext.Provider>
+      </KeyboardBoundary>
+    </ContextualReply>
   );
 }
