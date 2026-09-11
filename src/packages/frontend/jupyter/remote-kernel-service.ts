@@ -60,8 +60,9 @@ export async function setupRemoteKernel(
     args: remoteKernelSetupArgs(config),
     bash: false,
     timeout: 600,
-    err_on_exit: true,
+    err_on_exit: false,
   });
+  checkRemoteKernelResult(result, config.host);
   const data = JSON.parse(result.stdout);
   if (data.kernel !== `reflect-${config.name}`)
     throw Error("Unexpected remote kernel setup response");
@@ -142,9 +143,40 @@ async function manage(project_id: string, args: string[]): Promise<any> {
     args: ["jupyter", ...args],
     bash: false,
     timeout: 120,
-    err_on_exit: true,
+    err_on_exit: false,
   });
+  const hostIndex = args.indexOf("--host");
+  checkRemoteKernelResult(
+    result,
+    hostIndex < 0 ? undefined : args[hostIndex + 1],
+  );
   return JSON.parse(result.stdout);
+}
+
+function checkRemoteKernelResult(
+  result: { exit_code?: number; stderr?: string; stdout?: string },
+  host?: string,
+): void {
+  if (result.exit_code == null || result.exit_code === 0) return;
+  // Keep the actual diagnostic, not project-exec's wrapper or Node stack frames.
+  const output = (result.stderr?.trim() || result.stdout?.trim() || "").split(
+    /\r?\n/,
+  );
+  const stackStart = output.findIndex((line) => /^\s+at\s/.test(line));
+  const message = (stackStart < 0 ? output : output.slice(0, stackStart))
+    .join("\n")
+    .replace(/^Error: /, "")
+    .trim();
+  const sshFailure = /^SSH operation failed \(255\):\s*/;
+  if (host && sshFailure.test(message)) {
+    const target = /^[a-zA-Z0-9_@.:/-]+$/.test(host)
+      ? host
+      : `'${host.replace(/'/g, "'\\''")}'`;
+    throw Error(`~$ ssh ${target}\n${message.replace(sshFailure, "")}`);
+  }
+  throw Error(
+    message || `Remote kernel command failed (exit ${result.exit_code}).`,
+  );
 }
 
 export async function listRemoteKernelTargets(

@@ -122,7 +122,8 @@ export default function RemoteKernel({
       setChoice(selected);
       defaults(result, target, selected);
     } catch (err) {
-      if (current === generation.current) setError(String(err));
+      if (current === generation.current)
+        setError(err instanceof Error ? err.message : String(err));
     } finally {
       if (current === generation.current) setChecking(false);
     }
@@ -166,7 +167,8 @@ export default function RemoteKernel({
       if (current !== generation.current) return;
       setOpen(false);
     } catch (err) {
-      if (current === generation.current) setError(String(err));
+      if (current === generation.current)
+        setError(err instanceof Error ? err.message : String(err));
     } finally {
       if (current === generation.current) setBusy(false);
     }
@@ -274,7 +276,17 @@ export default function RemoteKernel({
                     ? "Remote kernel setup failed"
                     : "SSH connection or discovery failed"
                 }
-                description={error}
+                description={
+                  <div
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      overflowWrap: "anywhere",
+                      fontFamily: "monospace",
+                    }}
+                  >
+                    {error}
+                  </div>
+                }
                 style={{ marginBottom: 12 }}
               />
             )}

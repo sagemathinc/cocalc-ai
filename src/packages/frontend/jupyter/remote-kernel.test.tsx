@@ -106,7 +106,7 @@ describe("remote kernel setup", () => {
     const user = userEvent.setup();
     const onRegistered = jest.fn();
     (probeRemoteKernel as jest.Mock).mockRejectedValue(
-      Error("SSH host key verification failed"),
+      Error("~$ ssh jupyter\nSSH host key verification failed"),
     );
     render(<RemoteKernel project_id="p" onRegistered={onRegistered} />);
     await user.click(screen.getByRole("button", { name: "Remote kernel" }));
@@ -118,6 +118,13 @@ describe("remote kernel setup", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "SSH host key verification failed",
     );
+    expect(screen.getByText(/~\$ ssh jupyter/).textContent).toBe(
+      "~$ ssh jupyter\nSSH host key verification failed",
+    );
+    expect(screen.getByText(/~\$ ssh jupyter/)).toHaveStyle({
+      whiteSpace: "pre-wrap",
+      overflowWrap: "anywhere",
+    });
     expect(onRegistered).not.toHaveBeenCalled();
     expect(screen.queryByRole("checkbox", { name: "Advanced" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Set up kernel" })).toBeNull();
