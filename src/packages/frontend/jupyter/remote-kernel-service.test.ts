@@ -10,6 +10,20 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 }));
 const config = { name: "gpu", host: "jupyter", environment: "teaching" };
 
+it("normalizes long environment names while retaining suffixes and existing semantics", () => {
+  const padding = "-".repeat(100_000);
+  expect(
+    suggestedEnvironment(`${padding}Student@GPU${padding}`, "python", []),
+  ).toBe("student-gpu-python");
+  expect(suggestedEnvironment(padding, "pytorch-cu128", [])).toBe("remote-gpu");
+  expect(suggestedEnvironment(`CPU${padding}GPU`, "python", [])).toBe(
+    `cpu${"-".repeat(67)}-python`,
+  );
+  expect(suggestedEnvironment("--A__B--C--", "python", [])).toBe(
+    "a__b--c-python",
+  );
+});
+
 it("uses project-scoped execution with separate arguments and no shell", async () => {
   (webapp_client.project_client.exec as jest.Mock).mockResolvedValue({
     stdout: '{"kernel":"reflect-gpu"}',

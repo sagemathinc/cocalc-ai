@@ -120,13 +120,14 @@ export function suggestedEnvironment(
   recipe: string,
   environments: RemoteKernelProbe["environments"],
 ): string {
+  const normalized = host.replace(/[^a-zA-Z0-9_-]+/g, "-");
+  let start = 0;
+  let end = normalized.length;
+  while (start < end && normalized[start] === "-") start++;
+  while (end > start && normalized[end - 1] === "-") end--;
   const base =
-    (host
-      .replace(/[^a-zA-Z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 70)
-      .toLowerCase() || "remote") +
-    (recipe === "pytorch-cu128" ? "-gpu" : "-python");
+    (normalized.slice(start, Math.min(end, start + 70)).toLowerCase() ||
+      "remote") + (recipe === "pytorch-cu128" ? "-gpu" : "-python");
   for (let n = 1; ; n++) {
     const name = n === 1 ? base : `${base}-${n}`;
     const existing = environments.find((x) => x.name === name);
