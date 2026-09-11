@@ -1,8 +1,8 @@
 # Workbench First Release: Go/No-Go
 
 Updated 2026-09-11. Candidate branch: `feature/chat-workbench-prototype`, draft
-PR #509. Validation checkpoint: `8d0f56b8a9` (following thread opt-in change
-`b3c41aed5a`). No production deployment or external support/email action was
+PR #509. Latest validation checkpoint: `2cf1926dcd` (correcting the saved
+thread-config lookup). No production deployment or external support/email action was
 performed. This is a focused release-readiness pass, not a security certification.
 
 **Status: conditional, not yet signed off for release.** Keep the PR draft until
@@ -80,17 +80,121 @@ the remaining gates below have evidence against the frozen release build.
 
 ## Remaining Release Gates
 
+### Follow-up Live Acceptance (2026-09-11)
+
+Operator: Codex in the maintainer-authorized local dev environment. Frontend
+`2cf1926dcdb65c400a8d40e328c0e8df35bdf0fc`, built at
+`2026-09-11T07:29:55.475Z`. Installed QA CLI SHA-256:
+`ce3b176eea6f25c9daaa935e2b0249ce9b245ca7ed10c32a1ced7ae8e2286ede`.
+These are development-stack results, not a qualification of production
+packaging or a fully identified frontend/tools/ACP rollback pair.
+
+#### Iteration 4: Real Accounts And Private Drafts
+
+- Result: no bug reproduced in the completed checks below.
+- Reused disposable project `250ac07f-6ce8-43f9-b845-0ffb10c4d041`,
+  `/home/user/viewer-acceptance.chat`, and the existing Workbench Viewer account.
+  The second account signed in with its own password in an isolated browser
+  context; no impersonation or copied owner session.
+- Viewer: cards and current document readable; no contenteditable elements or
+  Edit/Comment/Send buttons. Removed the account from this project, reloaded its
+  open URL, and verified that project/artifact content was no longer available.
+  Restored membership and the viewer role afterward. This checks removal plus
+  reload, not an already-issued direct data-plane token's revocation timing.
+- Temporarily made the second account a collaborator. Both accounts edited
+  `Clean collaboration check` at opposite ends, switched to Read, and saw both
+  insertions. The collaborator reloaded and still saw both. This is not proof
+  of simultaneous disconnected same-range replacement semantics.
+- Owner wrote an unsent local comment, kept/closed it, and reloaded. The draft
+  returned. The second account opened a comment on the same artifact and saw
+  an empty draft. Discarded the QA drafts afterward; this is UI/live draft
+  isolation evidence, not a comprehensive backend authorization audit.
+- Temporary browser pages/contexts closed; second account restored to viewer.
+  Started only this disposable project for the write test. Original user tab
+  and working draft were not edited.
+- Evidence screenshots: `/tmp/workbench-two-account.png`,
+  `/tmp/workbench-revoked.png`. Harness: `/tmp/workbench-collab-release.cjs`
+  (local operational fixture, not a portable CI test).
+
+#### Iteration 5: Fresh Model Publication And Opt-Out
+
+- Result: medium-severity bug found and fixed in `2cf1926dcd`.
+- First smoke in `/home/user/workbench-release-20260911.chat` created a plan
+  and image, but no cards. The saved config was opted in, while the actual
+  agent reported `COCALC_WORKBENCH=0` and explicit no-publication guidance.
+- Root cause: the preferred SyncDB lookup wraps thread records in Immutable.js;
+  `getCodexConfig` used a plain-object accessor and returned undefined. Normalize
+  that record before reading the configuration. Two new regression cases failed
+  before the fix and pass afterward; the old tests missed the preferred lookup.
+- Validation: 189 frontend tests in 21 suites, frontend typecheck, lint, and
+  static development build passed. Two export/import tests also passed.
+- Fresh rerun after rebuilding: project
+  `1ce4fe78-19c7-40a8-a598-947975744cd9`,
+  `/home/user/workbench-release-fixed-20260911.chat`, thread
+  `f37086b9-84f9-4a2e-98b8-bcfa6c8474fc`, GPT-5.5 Low / ChatGPT plan.
+  Prompt asked for a fictional birdwatching Markdown plan and generated garden
+  bird illustration, with no mention of artifacts/cards. Agent automatically
+  published both using the installed CLI and correct producing message.
+- Plan: `/home/user/birdwatching-release-smoke.md`, 606 bytes,
+  artifact `artifact-7042153007ae51a9776d9f67`.
+  Image: `/home/user/birdwatching-garden-bird.png`, PNG signature verified,
+  2,374,576 bytes, artifact `artifact-bdeaf34bd569093da50dfd52`.
+  Fresh navigation and card activation rendered the actual image.
+- Disabled workbench in the same thread/session, then requested an ordinary
+  indoor-picnic Markdown checklist. File created, no additional publication;
+  stored session ID remained `01a08f60-a607-7ae0-8435-09899887e38c`.
+  The QA thread remains opted out. The Agents surface was not retested live.
+- Whole-image local comment preserved a separate unsent main-composer draft.
+  With the page kept open, the agent replied in the originating thread and
+  identified the image. However, the immediate-close case below blocks full
+  delivery sign-off.
+
+#### Iteration 6: History Recovery And Legacy Schema
+
+- Result: no bug reproduced in this bounded recovery scenario.
+- Read the original QA chat through authenticated project-host SyncDB, then
+  copied its live rows into a new, empty live document:
+  `/home/user/workbench-recovery-20260911-1789110970951.chat`.
+  No direct `.chat` JSON inspection/mutation or restore over a user's chat.
+- Saved history checkpoint `000mtwmh8rv_uSc1VpFzM4PXwzMG`, changed a Markdown
+  artifact on the copy, saved, reverted through SyncDoc history, and saved again.
+  All 10 artifact and 16 publication records matched the original exactly.
+- Closed/reopened using the pre-workbench primary-key/string-column schema
+  from `ad2bcce164^`, wrote an unrelated chat message, saved, and reopened with
+  the current client. Artifact/publication records remained unchanged.
+- This used the current sync engine with the old schema, NOT an old browser
+  bundle. It proves neither full old-client compatibility nor remote backup
+  recovery. Keep both requirements open. Local harness:
+  `/tmp/workbench-release-read.js` with `QA_RECOVERY=1`.
+
+#### Outstanding Delivery Reproduction
+
+- A whole-image comment was saved in the correct thread, but closing its page
+  immediately after the local editor reported success produced no assistant
+  turn. A later comment with the page kept open for 15 seconds received a reply.
+- Affected stored message: `a969f941-e6d5-46e1-9870-2c314beec9e2` in the fixed
+  smoke thread above. Its content/context survived; model execution did not
+  appear in the live chat inspection. Successful comparison message:
+  `453d1b9f-95d3-4d0f-9431-7397bbd95548`.
+- Hypothesis: local send completion precedes durable backend dispatch and
+  closing the tab interrupts that handoff. Not yet a confirmed code-level
+  diagnosis; reproduce with explicit backend acceptance/outbox evidence before
+  patching. No speculative fix made.
+- **Release blocker:** qualify close/disconnect/reload during local-comment
+  sending, including retry without duplicate agent execution. Do not equate a
+  stored chat row or cleared draft with backend acceptance of an agent turn.
+
 Record operator, exact builds, time, and result for each. Mocked tests do not
 close a live permission or model-behavior gate.
 
-1. **Two real accounts and access changes.** In a disposable project, verify
+1. **Two real accounts and access changes (partially closed above).** In a disposable project, verify
    owner/writer collaboration on a Markdown artifact, including simultaneous
    edits and reconnect. As a viewer, verify readable permitted previews but
    no edit, comment/send, proposal mutation, or execution. Create an unsent
    local comment as account A and verify account B cannot see the draft.
    Revoke access and verify subsequent reads/writes fail appropriately; do not
    expect already-rendered bytes to be erased from a browser's memory.
-2. **Frozen runtime, real agent smoke.** Use the actual release CLI/tools,
+2. **Frozen runtime, real agent smoke (development smoke passed above).** Use the actual release CLI/tools,
    project-host/ACP worker, and frontend. In a new opted-in disposable thread,
    request a Markdown plan and a generated image without mentioning artifacts.
    Verify the cards, correct thread, usable file/image, follow-up update, and
@@ -98,7 +202,7 @@ close a live permission or model-behavior gate.
    `scripts/dev/check-workbench-image-publication.js` in that agent context.
    Repeat an ordinary plan request with opt-in off in the same reused session
    and from Agents: no default publication. Keep these paid tests manual, not CI.
-3. **Compatibility and recovery.** On copies, check reload/reconnect, history or
+3. **Compatibility and recovery (history/schema check passed above).** On copies, check reload/reconnect, history or
    backup restore with artifact rows, and coexistence with a pre-release browser
    client. A stale client must not discard artifact rows while editing chat.
    Test an ordinary non-opted-in chat and basic notebook/terminal opening with
