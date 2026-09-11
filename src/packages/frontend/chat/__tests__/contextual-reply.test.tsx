@@ -87,6 +87,8 @@ const actions: any = {
   sendChat: jest.fn(() => identity.date),
   getMessageByDate: jest.fn(),
   getCodexConfig: jest.fn(() => undefined),
+  getMessageById: jest.fn(),
+  store: { get: jest.fn(() => new Map([["message:reply", "queue"]])) },
 };
 const props = {
   actions,
@@ -100,6 +102,8 @@ beforeEach(() => {
   privateDrafts.clear();
   outbox.mockResolvedValue({ id: "pending" });
   actions.getMessageByDate.mockReturnValue(undefined);
+  actions.getMessageById.mockReturnValue(undefined);
+  actions.store.get.mockReturnValue(new Map([["message:reply", "queue"]]));
 });
 
 test("captures bounded exact selection even in a large document", () => {
@@ -180,6 +184,48 @@ test("Escape preserves a private draft and reopening restores its original conte
     "Unsent private thought",
   );
   expect(screen.getByText("exact quote")).toBeVisible();
+});
+
+test("local persistence does not close the editor before backend acceptance", async () => {
+  actions.store.get.mockReturnValue(new Map([["message:reply", "sending"]]));
+  const close = jest.fn();
+  render(<Editor {...props} onClose={close} />);
+  fireEvent.change(await screen.findByRole("textbox"), {
+    target: { value: "Wait for acceptance" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send comment" }));
+  await waitFor(() => expect(actions.sendChat).toHaveBeenCalled());
+  expect(close).not.toHaveBeenCalled();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "waiting for backend confirmation",
+  );
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(close).not.toHaveBeenCalled();
+  expect(privateDrafts.size).toBe(1);
+  actions.store.get.mockReturnValue(new Map([["message:reply", "queue"]]));
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+});
+
+test("unmount and reopen retains an unconfirmed send without dispatching again", async () => {
+  actions.store.get.mockReturnValue(new Map([["message:reply", "sending"]]));
+  const close = jest.fn();
+  const first = render(<Editor {...props} onClose={close} />);
+  fireEvent.change(await screen.findByRole("textbox"), {
+    target: { value: "Retain me" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send comment" }));
+  await waitFor(() => expect(actions.sendChat).toHaveBeenCalledTimes(1));
+  first.unmount();
+  actions.getMessageById.mockReturnValue({ message_id: "reply" });
+  actions.store.get.mockReturnValue(new Map([["message:reply", "not-sent"]]));
+  render(<Editor {...props} onClose={close} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Check send status" }),
+  );
+  await screen.findByText(/Error: Agent submission not confirmed/);
+  expect(close).not.toHaveBeenCalled();
+  expect(actions.sendChat).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("textbox")).toHaveValue("Retain me");
 });
 
 test("outbox failure retains draft and never dispatches", async () => {

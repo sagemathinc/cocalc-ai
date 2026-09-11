@@ -11,6 +11,7 @@ import { stableDraftKeyFromThreadKey } from "./utils";
 import { contextualReplyMessage } from "./contextual-reply-context";
 import type { ReplyContext } from "./contextual-reply-context";
 import type { ChatActions } from "./actions";
+import { waitForCommentAcceptance } from "./comment-send-status";
 import {
   getPendingChatBrowserSessionId,
   storePendingChatSend,
@@ -56,6 +57,8 @@ export default function ContextualReplyEditor({
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
+  const acceptance = useRef<AbortController | undefined>(undefined);
+  useEffect(() => () => acceptance.current?.abort(), []);
   const panel = useRef<HTMLDivElement>(null);
   const getValue = useRef<() => string>(() => value?.text ?? "");
   useEffect(() => {
@@ -118,8 +121,15 @@ export default function ContextualReplyEditor({
         actions.reserveChatSendIdentity({
           reply_thread_id: value.context.source.thread_id,
         });
-      const existing = actions.getMessageByDate(new Date(identity.date));
-      if (existing?.get("message_id") === identity.message_id) {
+      const controller = new AbortController();
+      acceptance.current = controller;
+      const existing = actions.getMessageById?.(identity.message_id);
+      if (existing || value.submitted) {
+        await waitForCommentAcceptance(
+          actions,
+          identity.message_id,
+          controller.signal,
+        );
         await draft.clearInput();
         onClose();
         return;
@@ -149,6 +159,7 @@ export default function ContextualReplyEditor({
         path,
         account_id,
         sender_id: account_id,
+        shouldMarkNotSent: true,
         browser_session_id: getPendingChatBrowserSessionId(),
         ...identity,
         reply_thread_id: captured.source.thread_id,
@@ -175,10 +186,15 @@ export default function ContextualReplyEditor({
         draft.setInput(JSON.stringify(next));
         throw Error("The chat is not ready. Your comment has been kept.");
       }
+      await waitForCommentAcceptance(
+        actions,
+        identity.message_id,
+        controller.signal,
+      );
       await draft.clearInput();
       onClose();
     } catch (err) {
-      setError(String(err));
+      if (!acceptance.current?.signal.aborted) setError(String(err));
     } finally {
       sendingRef.current = false;
       setSending(false);
@@ -230,8 +246,9 @@ export default function ContextualReplyEditor({
       )}
       {value?.submitted && (
         <div role="status">
-          Submitted to the durable outbox. Retry completes this same send, not a
-          second message. Discarding this draft does not cancel the queued send.
+          {sending
+            ? "Sending to agent; waiting for backend confirmation..."
+            : "Agent submission is not confirmed. Your comment is retained. Check status without sending again. Discarding this draft does not cancel a submission."}
         </div>
       )}
       <div ref={panel} inert={sending || value?.submitted}>
@@ -261,7 +278,11 @@ export default function ContextualReplyEditor({
           disabled={!value?.text.trim()}
           onClick={() => void send()}
         >
-          Send comment
+          {sending
+            ? "Sending..."
+            : value?.submitted
+              ? "Check send status"
+              : "Send comment"}
         </Button>
         <Button disabled={sending} onClick={close}>
           Keep draft and close
