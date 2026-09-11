@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260910-v54"
+HELPER_SCHEMA_VERSION = "20260910-v55"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -511,11 +511,102 @@ def collect_loop_mount_backing_files(
     return backing_files
 
 
+def parse_systemd_unit(text):
+    sections = {}
+    current = None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        section_match = re.fullmatch(r"\[([A-Za-z]+)\]", line)
+        if section_match:
+            current = section_match.group(1)
+            sections.setdefault(current, [])
+            continue
+        if current is None or line.endswith("\\") or "=" not in line:
+            return None
+        key, value = line.split("=", 1)
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", key):
+            return None
+        sections[current].append((key, value))
+    return sections
+
+
+def verified_snap_mount_unit(
+    unit_path,
+    name,
+    revision,
+    backing_image,
+    revision_directory,
+    systemd_root,
+):
+    try:
+        info = unit_path.lstat()
+    except OSError:
+        return False
+    if (
+        info.st_uid != 0
+        or info.st_gid != 0
+        or not stat.S_ISREG(info.st_mode)
+        or stat.S_IMODE(info.st_mode) != 0o644
+        or info.st_size > 16 * 1024
+    ):
+        return False
+    sections = parse_systemd_unit(read_text(unit_path, 16 * 1024))
+    expected = {
+        "Unit": collections.Counter(
+            [
+                ("Description", f"Mount unit for {name}, revision {revision}"),
+                ("After", "snapd.mounts-pre.target"),
+                ("Before", "snapd.mounts.target"),
+            ]
+        ),
+        "Mount": collections.Counter(
+            [
+                ("What", os.path.normpath(backing_image)),
+                ("Where", os.path.normpath(revision_directory)),
+                ("Type", "squashfs"),
+                ("Options", "nodev,ro,x-gdu.hide,x-gvfs-hide"),
+                ("LazyUnmount", "yes"),
+            ]
+        ),
+        "Install": collections.Counter(
+            [
+                ("WantedBy", "snapd.mounts.target"),
+                ("WantedBy", "multi-user.target"),
+            ]
+        ),
+    }
+    if sections is None or set(sections) != set(expected):
+        return False
+    if any(
+        collections.Counter(sections[key]) != value
+        for key, value in expected.items()
+    ):
+        return False
+    for wants in ("multi-user.target.wants", "snapd.mounts.target.wants"):
+        link = pathlib.Path(systemd_root) / wants / unit_path.name
+        try:
+            link_info = link.lstat()
+        except OSError:
+            return False
+        if (
+            link_info.st_uid != 0
+            or link_info.st_gid != 0
+            or not stat.S_ISLNK(link_info.st_mode)
+            or stat.S_IMODE(link_info.st_mode) != 0o777
+            or os.path.normpath(read_link(link)) != os.path.normpath(unit_path)
+        ):
+            return False
+    return True
+
+
 def collect_snap_mount_units(
     snap_root="/snap",
     snap_state_root="/var/lib/snapd/snaps",
     mountinfo_file="/proc/self/mountinfo",
     sys_dev_root="/sys/dev/block",
+    systemd_root="/etc/systemd/system",
 ):
     units = []
     backing_files = collect_loop_mount_backing_files(mountinfo_file, sys_dev_root)
@@ -551,7 +642,17 @@ def collect_snap_mount_units(
                 or stat.S_IMODE(info.st_mode) & 0o022
             ):
                 continue
-            units.append(snap_mount_unit(name, revision))
+            unit = snap_mount_unit(name, revision)
+            if not verified_snap_mount_unit(
+                pathlib.Path(systemd_root) / unit,
+                name,
+                revision,
+                backing_image,
+                revision_directory,
+                systemd_root,
+            ):
+                continue
+            units.append(unit)
     return sorted(set(units))[:MAX_ITEMS]
 
 

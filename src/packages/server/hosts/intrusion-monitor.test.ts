@@ -24,6 +24,7 @@ jest.mock("@cocalc/server/project-host/client", () => ({
 
 import {
   activeFleetHasCompleteBaseline,
+  configuredTrustedAdminSshSources,
   diffHostIntrusionSnapshotAgainstFleet,
   diffHostIntrusionSnapshots,
   ensureHostIntrusionMonitorSchema,
@@ -679,6 +680,8 @@ describe("project-host intrusion monitor normalization", () => {
   });
 
   it("records routine Snap revisions without hiding same-unit mutations", () => {
+    const oldHash = "a".repeat(64);
+    const newHash = "b".repeat(64);
     const before = snapshot();
     before.host_processes.summary.push({
       count: 1,
@@ -698,7 +701,7 @@ describe("project-host intrusion monitor normalization", () => {
       mtime: "2026-09-01T00:00:00.000Z",
       size: 100,
       type: "file",
-      sha256: "old-hash",
+      sha256: oldHash,
     });
     before.services.enabled.push("snap-snapd-27710.mount enabled enabled");
     const after = structuredClone(before);
@@ -706,7 +709,7 @@ describe("project-host intrusion monitor normalization", () => {
       "/snap/snapd/27738/usr/lib/snapd/snapd";
     after.persistence.files[1].path =
       "/etc/systemd/system/snap-snapd-27738.mount";
-    after.persistence.files[1].sha256 = "new-hash";
+    after.persistence.files[1].sha256 = newHash;
     after.services.enabled[1] = "snap-snapd-27738.mount enabled enabled";
 
     const normalizedAfter = normalizeHostIntrusionSnapshot(after);
@@ -716,7 +719,21 @@ describe("project-host intrusion monitor normalization", () => {
     );
 
     expect(hasHostIntrusionSnapshotChanges(delta)).toBe(true);
-    expect(selectActionableHostIntrusionChanges(delta)).toEqual({
+    expect(selectActionableHostIntrusionChanges(delta)).toMatchObject({
+      added: {
+        "persistence.files": expect.any(Array),
+        "services.enabled": expect.any(Array),
+      },
+      removed: {
+        "persistence.files": expect.any(Array),
+        "services.enabled": expect.any(Array),
+      },
+    });
+    expect(
+      selectActionableHostIntrusionChanges(delta, {
+        installedSnapMountUnits: ["snap-snapd-27738.mount"],
+      }),
+    ).toEqual({
       added: {},
       removed: {},
     });
@@ -724,14 +741,14 @@ describe("project-host intrusion monitor normalization", () => {
       "snap-snapd-27738.mount",
     );
     expect(normalizedAfter.signals["persistence.files"].join("\n")).toContain(
-      "new-hash",
+      newHash,
     );
 
     const unexpectedExtra = structuredClone(after);
     unexpectedExtra.persistence.files.push({
       ...unexpectedExtra.persistence.files[1],
       path: "/etc/systemd/system/snap-snapd-27739.mount",
-      sha256: "extra-hash",
+      sha256: "c".repeat(64),
     });
     unexpectedExtra.services.enabled.push(
       "snap-snapd-27739.mount enabled enabled",
@@ -740,7 +757,11 @@ describe("project-host intrusion monitor normalization", () => {
       normalizeHostIntrusionSnapshot(before),
       normalizeHostIntrusionSnapshot(unexpectedExtra),
     );
-    expect(selectActionableHostIntrusionChanges(extraDelta)).toMatchObject({
+    expect(
+      selectActionableHostIntrusionChanges(extraDelta, {
+        installedSnapMountUnits: ["snap-snapd-27738.mount"],
+      }),
+    ).toMatchObject({
       added: {
         "persistence.files": expect.arrayContaining([
           expect.stringContaining("snap-snapd-27739.mount"),
@@ -750,7 +771,7 @@ describe("project-host intrusion monitor normalization", () => {
     });
 
     const tampered = structuredClone(before);
-    tampered.persistence.files[1].sha256 = "tampered-hash";
+    tampered.persistence.files[1].sha256 = "d".repeat(64);
     const tamperedDelta = diffHostIntrusionSnapshots(
       normalizeHostIntrusionSnapshot(before),
       normalizeHostIntrusionSnapshot(tampered),
@@ -867,6 +888,9 @@ describe("project-host intrusion monitor normalization", () => {
           '["publickey","user","35.235.245.17"]',
           '["publickey","user","2600:2d00:1:7::123"]',
           '["publickey","ubuntu","10.138.0.22"]',
+          '["password","ubuntu","10.138.0.22"]',
+          '["keyboard-interactive","ubuntu","10.138.0.22"]',
+          '["password","user","35.235.245.17"]',
           '["publickey","ubuntu","10.138.0.23"]',
           '["publickey","root","35.235.245.17"]',
           '["publickey","root","10.138.0.22"]',
@@ -882,7 +906,11 @@ describe("project-host intrusion monitor normalization", () => {
       },
     } satisfies Parameters<typeof selectActionableHostIntrusionChanges>[0];
 
-    expect(selectActionableHostIntrusionChanges(delta)).toEqual({
+    expect(
+      selectActionableHostIntrusionChanges(delta, {
+        trustedAdminSshSources: ["10.138.0.22"],
+      }),
+    ).toEqual({
       added: {
         "host_processes.findings": ['[0,"unknown","/tmp/run"]'],
         "network.listeners": [
@@ -891,6 +919,9 @@ describe("project-host intrusion monitor normalization", () => {
           '["tcp","unknown","0.0.0.0:4444"]',
         ],
         "authentication_7d.accepted": [
+          '["password","ubuntu","10.138.0.22"]',
+          '["keyboard-interactive","ubuntu","10.138.0.22"]',
+          '["password","user","35.235.245.17"]',
           '["publickey","ubuntu","10.138.0.23"]',
           '["publickey","root","35.235.245.17"]',
           '["publickey","root","10.138.0.22"]',
@@ -903,6 +934,49 @@ describe("project-host intrusion monitor normalization", () => {
         "services.enabled": ["security-agent.service enabled"],
       },
     });
+  });
+
+  it("requires public-key auth and explicit trust for admin SSH sources", () => {
+    const source = "10.138.0.22";
+    const publicKey = JSON.stringify(["publickey", "ubuntu", source]);
+    const password = JSON.stringify(["password", "ubuntu", source]);
+    const keyboard = JSON.stringify(["keyboard-interactive", "ubuntu", source]);
+    const delta = {
+      added: {
+        "authentication_7d.accepted": [publicKey, password, keyboard],
+      },
+      removed: {},
+    } satisfies Parameters<typeof selectActionableHostIntrusionChanges>[0];
+
+    expect(selectActionableHostIntrusionChanges(delta)).toEqual(delta);
+    expect(
+      selectActionableHostIntrusionChanges(delta, {
+        trustedAdminSshSources: [source],
+      }),
+    ).toEqual({
+      added: { "authentication_7d.accepted": [password, keyboard] },
+      removed: {},
+    });
+  });
+
+  it("scopes configured admin SSH sources to the current bay", () => {
+    const configured = JSON.stringify({
+      "bay-prod": ["10.138.0.22", "10.138.0.22"],
+      "bay-staging": ["10.0.0.5"],
+    });
+
+    expect(configuredTrustedAdminSshSources("bay-prod", configured)).toEqual([
+      "10.138.0.22",
+    ]);
+    expect(
+      configuredTrustedAdminSshSources("unrelated-deployment", configured),
+    ).toEqual([]);
+    expect(
+      configuredTrustedAdminSshSources(
+        "bay-prod",
+        JSON.stringify({ "bay-prod": ["not-an-ip"] }),
+      ),
+    ).toEqual([]);
   });
 
   it("still alerts on unknown processes and fixed listener changes", () => {

@@ -68,9 +68,6 @@ const EPHEMERAL_LISTENER_MIN_PORT = 32_768;
 const NON_INTRUSION_KERNEL_SIGNALS = new Set(["oom", "tainted"]);
 const BACKUP_BROWSER_CGROUP = "/cocalc-backup-browsers/browser-*";
 const EXPECTED_IAP_SSH_USERS = new Set(["ubuntu", "user"]);
-// Production operator SSH reaches project hosts through the alpha bastion.
-// Keep this exact rather than trusting the private network generally.
-const EXPECTED_ADMIN_SSH_SOURCES = new Set(["10.138.0.22"]);
 const GOOGLE_IAP_SOURCES = new BlockList();
 GOOGLE_IAP_SOURCES.addSubnet("35.235.240.0", 20, "ipv4");
 GOOGLE_IAP_SOURCES.addSubnet("2600:2d00:1:7::", 64, "ipv6");
@@ -281,16 +278,51 @@ function isGoogleIapSource(source: unknown): boolean {
   return GOOGLE_IAP_SOURCES.check(source, family === 4 ? "ipv4" : "ipv6");
 }
 
-function isActionableAuthentication(value: string): boolean {
+function isActionableAuthentication(
+  value: string,
+  trustedAdminSshSources: Set<string>,
+): boolean {
   const fields = decodeSignal(value);
   return (
     fields == null ||
+    fields[0] !== "publickey" ||
     typeof fields[1] !== "string" ||
     !EXPECTED_IAP_SSH_USERS.has(fields[1]) ||
     typeof fields[2] !== "string" ||
-    (!isGoogleIapSource(fields[2]) &&
-      !EXPECTED_ADMIN_SSH_SOURCES.has(fields[2]))
+    (!isGoogleIapSource(fields[2]) && !trustedAdminSshSources.has(fields[2]))
   );
+}
+
+export function configuredTrustedAdminSshSources(
+  bayId: string,
+  configured = process.env
+    .COCALC_HOST_INTRUSION_TRUSTED_ADMIN_SSH_SOURCES_BY_BAY,
+): string[] {
+  // This is deliberately keyed by bay rather than a global allowlist. An
+  // operator address valid for one deployment must remain actionable in all
+  // others unless each bay explicitly opts in.
+  if (!configured) return [];
+  try {
+    const byBay: unknown = JSON.parse(configured);
+    if (byBay == null || typeof byBay !== "object" || Array.isArray(byBay)) {
+      throw Error("configuration must be a JSON object");
+    }
+    const values = (byBay as Record<string, unknown>)[bayId];
+    if (values == null) return [];
+    if (
+      !Array.isArray(values) ||
+      values.some((value) => typeof value !== "string" || isIP(value) === 0)
+    ) {
+      throw Error(`configuration for bay ${bayId} must contain only IPs`);
+    }
+    return [...new Set(values as string[])];
+  } catch (err) {
+    logger.warn("invalid bay-scoped trusted admin SSH source configuration", {
+      bayId,
+      err,
+    });
+    return [];
+  }
 }
 
 function isActionableListener(value: string): boolean {
@@ -430,6 +462,16 @@ function routineSnapRevisionChanges(
     for (const value of delta.added[category] ?? []) {
       const signal = snapRevisionSignal(category, value);
       if (!signal) continue;
+      if (
+        !isVerifiedSnapMountAddition({
+          category,
+          value,
+          delta,
+          installedUnits,
+        })
+      ) {
+        continue;
+      }
       const candidates = removedByKey.get(signal.key);
       const matchIndex =
         candidates?.findIndex(([revision]) => revision !== signal.revision) ??
@@ -619,9 +661,16 @@ export function hasHostIntrusionSnapshotChanges(
 
 export function selectActionableHostIntrusionChanges(
   delta: HostIntrusionSnapshotDelta,
-  { installedSnapMountUnits = [] }: { installedSnapMountUnits?: string[] } = {},
+  {
+    installedSnapMountUnits = [],
+    trustedAdminSshSources = [],
+  }: {
+    installedSnapMountUnits?: string[];
+    trustedAdminSshSources?: string[];
+  } = {},
 ): HostIntrusionSnapshotDelta {
   const actionable: HostIntrusionSnapshotDelta = { added: {}, removed: {} };
+  const trustedAdminSshSourceSet = new Set(trustedAdminSshSources);
   const routineSnap = routineSnapRevisionChanges(
     delta,
     installedSnapMountUnits,
@@ -635,7 +684,9 @@ export function selectActionableHostIntrusionChanges(
       category === "network.listeners"
         ? relevant.filter(isActionableListener)
         : category === "authentication_7d.accepted"
-          ? relevant.filter(isActionableAuthentication)
+          ? relevant.filter((value) =>
+              isActionableAuthentication(value, trustedAdminSshSourceSet),
+            )
           : relevant;
     if (filtered.length) actionable.added[category] = filtered;
   }
@@ -1066,6 +1117,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
     ),
   );
   const alertMode = transitionAlertMode();
+  const trustedAdminSshSources = configuredTrustedAdminSshSources(bayId);
 
   await mapWithConcurrency(hosts, concurrency, async (host) => {
     result.checked += 1;
@@ -1126,6 +1178,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
             ? delta
             : selectActionableHostIntrusionChanges(delta, {
                 installedSnapMountUnits: source.snap_mount_units,
+                trustedAdminSshSources,
               });
       const changedDelta =
         alertDelta != null && hasHostIntrusionSnapshotChanges(alertDelta)

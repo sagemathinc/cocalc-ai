@@ -4318,6 +4318,7 @@ reserve_project_startup_io_capacity
             revision_root.mkdir(parents=True)
             state_root.mkdir()
             backing_image = state_root / "google-cloud-cli_2124.snap"
+            backing_image.touch()
             mountinfo = root / "mountinfo"
             mountinfo.write_text(
                 f"100 1 7:3 / {revision_root} ro - squashfs /dev/loop3 ro\n",
@@ -4330,21 +4331,100 @@ reserve_project_startup_io_capacity
                 f"{backing_image}\n",
                 encoding="utf-8",
             )
-            info = mock.Mock(
-                st_uid=0,
-                st_gid=0,
-                st_mode=namespace["stat"].S_IFREG | 0o644,
+            systemd_root = root / "systemd"
+            unit = r"snap-google\x2dcloud\x2dcli-2124.mount"
+            unit_path = systemd_root / unit
+            systemd_root.mkdir()
+            unit_path.write_text(
+                f"""[Unit]
+Description=Mount unit for google-cloud-cli, revision 2124
+After=snapd.mounts-pre.target
+Before=snapd.mounts.target
+
+[Mount]
+What={backing_image}
+Where={revision_root}
+Type=squashfs
+Options=nodev,ro,x-gdu.hide,x-gvfs-hide
+LazyUnmount=yes
+
+[Install]
+WantedBy=snapd.mounts.target
+WantedBy=multi-user.target
+""",
+                encoding="utf-8",
             )
+            for wants in ("multi-user.target.wants", "snapd.mounts.target.wants"):
+                wants_root = systemd_root / wants
+                wants_root.mkdir()
+                (wants_root / unit).symlink_to(unit_path)
+
+            original_lstat = namespace["os"].lstat
+
+            def root_owned_lstat(path):
+                info = original_lstat(path)
+                return mock.Mock(
+                    st_uid=0,
+                    st_gid=0,
+                    st_mode=info.st_mode,
+                    st_size=info.st_size,
+                )
+
             with mock.patch.object(
-                namespace["pathlib"].Path,
+                namespace["os"],
                 "lstat",
-                return_value=info,
+                side_effect=root_owned_lstat,
             ):
                 units = namespace["collect_snap_mount_units"](
                     str(snap_root),
                     str(state_root),
                     str(mountinfo),
                     str(sys_dev_root),
+                    str(systemd_root),
+                )
+                safe_contents = unit_path.read_text(encoding="utf-8")
+                modified_units = []
+                for unsafe_contents in (
+                    safe_contents.replace(
+                        f"What={backing_image}",
+                        f"What={state_root / 'different_2124.snap'}",
+                    ),
+                    safe_contents.replace(
+                        f"Where={revision_root}",
+                        f"Where={snap_root / 'elsewhere'}",
+                    ),
+                    safe_contents.replace("Type=squashfs", "Type=ext4"),
+                    safe_contents.replace(
+                        "Options=nodev,ro,x-gdu.hide,x-gvfs-hide",
+                        "Options=rw,suid,dev",
+                    ),
+                    safe_contents + "\n[Service]\nExecStart=/bin/true\n",
+                ):
+                    unit_path.write_text(unsafe_contents, encoding="utf-8")
+                    modified_units.append(
+                        namespace["collect_snap_mount_units"](
+                            str(snap_root),
+                            str(state_root),
+                            str(mountinfo),
+                            str(sys_dev_root),
+                            str(systemd_root),
+                        )
+                    )
+                unit_path.write_text(safe_contents, encoding="utf-8")
+                (systemd_root / "multi-user.target.wants" / unit).unlink()
+                (systemd_root / "multi-user.target.wants" / unit).symlink_to(
+                    systemd_root / "unexpected.mount"
+                )
+                redirected_link = namespace["collect_snap_mount_units"](
+                    str(snap_root),
+                    str(state_root),
+                    str(mountinfo),
+                    str(sys_dev_root),
+                    str(systemd_root),
+                )
+                (systemd_root / "multi-user.target.wants" / unit).unlink()
+                (systemd_root / "multi-user.target.wants" / unit).symlink_to(
+                    unit_path
                 )
                 (loop / "backing_file").write_text(
                     f"{state_root / 'different_2124.snap'}\n",
@@ -4355,9 +4435,12 @@ reserve_project_startup_io_capacity
                     str(state_root),
                     str(mountinfo),
                     str(sys_dev_root),
+                    str(systemd_root),
                 )
 
-        self.assertEqual(units, [r"snap-google\x2dcloud\x2dcli-2124.mount"])
+        self.assertEqual(units, [unit])
+        self.assertEqual(modified_units, [[], [], [], [], []])
+        self.assertEqual(redirected_link, [])
         self.assertEqual(mismatched_units, [])
 
     def test_helper_schema_installed_reads_rootctl_marker(self) -> None:
