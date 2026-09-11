@@ -14,7 +14,7 @@ The available choices depend on your CoCalc deployment and account.
 | Your need | Choose | Execution and files |
 | --- | --- | --- |
 | Keep using the project's notebooks, terminals, files, and services together on different compute | [Project host](/docs/hosts/project-hosts) | The host runs the CoCalc project. Moving it transfers project data through backup and restore; running processes do not move with their memory. |
-| Control a conventional machine, install system services, or use a supported Windows environment | [Managed VM](/docs/projects/virtual-machines) | An account-owned machine attached to a project, with its own operating system and files. CoCalc project software is not installed automatically. |
+| Control a conventional machine, install system services, or use a supported Windows environment | [Managed VM](/docs/projects/virtual-machines) | An account-owned machine that can connect to a project, with its own operating system and files. CoCalc project software is not installed automatically. |
 | Use a server or GPU machine that already has your software or datasets, while editing a notebook in CoCalc | [Remote Jupyter kernel](/docs/jupyter/remote-kernels) | The notebook stays in the project, while code runs on the remote machine over SSH. Files are not automatically synchronized. |
 
 A managed VM can also provide a remote kernel. In that combination, use the VM
