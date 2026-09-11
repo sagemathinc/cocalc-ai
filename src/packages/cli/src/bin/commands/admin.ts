@@ -57,6 +57,7 @@ import type {
 } from "@cocalc/conat/hub/api/system";
 import { registerReceivablesCommand } from "./admin/receivables";
 import { registerCrmCommand } from "./admin/crm";
+import { registerCourseAccountSupportCommand } from "./admin/course-account";
 
 const ADMIN_HOST_INTRUSION_SNAPSHOT_TIMEOUT_MS = 130_000;
 
@@ -65,6 +66,10 @@ export type AdminCommandDeps = {
   resolveAccountByIdentifier: any;
   isValidUUID: any;
   waitForLro: any;
+  contextForGlobals?: any;
+  closeCommandContext?: any;
+  resolveProjectConatClient?: any;
+  resolveProjectFilesystem?: any;
 };
 
 type AccountEntitlementOverrideInput = Omit<
@@ -1144,6 +1149,7 @@ Reply example:
 Merge comments are private unless their corresponding --*-comment-public flag is set.
 `,
     );
+  registerCourseAccountSupportCommand(adminSupport, deps);
   const adminCrashes = admin
     .command("crashes")
     .description("audited frontend crash report diagnostics and triage");
