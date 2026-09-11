@@ -344,6 +344,15 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "issues and stores an immutable customer-facing commercial quote",
   },
+  "commercialOrders.issueQuoteLink": {
+    decision: "fresh-auth-required",
+    reason:
+      "issues or replaces a bearer download link for a retained commercial quote",
+  },
+  "commercialOrders.revokeQuoteLink": {
+    decision: "fresh-auth-required",
+    reason: "revokes bearer download access to a retained commercial quote",
+  },
   "commercialOrders.issueManualInvoice": {
     decision: "fresh-auth-required",
     reason: "records an issued customer-facing manual institutional invoice",
@@ -1394,6 +1403,25 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "system.bootstrapCloudflareConfiguration": {
     decision: "fresh-auth-required",
     reason: "Cloudflare tunnel/R2 configuration bootstrap with cloud token",
+  },
+  "system.reconcileCloudflareBlobs": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin provisions Cloudflare blob bucket, Worker and hostname using saved credentials",
+  },
+  "system.bootstrapCloudflareConfigurationOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed implementation reached through authenticated inter-bay dispatch after entry-bay fresh auth",
+  },
+  "system.reconcileCloudflareBlobsOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed implementation reached through authenticated inter-bay dispatch after entry-bay fresh auth",
+  },
+  "system.cancelChatSpeech": {
+    decision: "fresh-auth-not-required",
+    reason: "cancels only the signed-in account's active speech request",
   },
   "system.clearAccountEntitlementOverride": {
     decision: "fresh-auth-required",

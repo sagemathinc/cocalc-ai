@@ -199,6 +199,74 @@ cocalc admin receivables quote stripe reconcile "$ORDER" \
   --expected-version 6 --commit --json
 ```
 
+## Reviewed Stripe Automatic Tax
+
+Stripe invoices and Stripe quotes can opt into Stripe Tax using the approved
+order's `terms_snapshot.invoice`. Existing orders remain untaxed unless this
+option is explicitly enabled; changing Stripe's Dashboard default does not
+retroactively change an approved CoCalc order.
+
+```json
+{
+  "invoice": {
+    "automatic_tax": true,
+    "tax_code": "txcd_10103000",
+    "billing_address": {
+      "line1": "Reviewed customer address",
+      "city": "London",
+      "postal_code": "SW1A 1AA",
+      "country": "GB"
+    }
+  }
+}
+```
+
+The tax code above is an example, not a classification recommendation. Choose
+the correct code for the service. Automatic tax requires an explicit Stripe
+product tax code and a two-letter billing country. Supply the full address:
+Stripe may also require a postal code or state/province.
+
+Before approving the order:
+
+1. In Stripe's live-mode Tax settings, verify the business origin, relevant
+   active tax registrations, and product classification.
+2. Check the customer's legal name, billing/shipping location, tax IDs and
+   exemption/reverse-charge status. CoCalc does not infer or change tax
+   exemptions or register the business for tax.
+3. Preview the same customer, line items, and currency in Stripe with automatic
+   tax enabled and **exclusive** pricing. Do not send an extra Dashboard invoice.
+   Set CoCalc's `agreed_subtotal` to the pre-tax price and `agreed_total` to the
+   reviewed total including tax, then approve through the normal workflow.
+4. Create/review the AR draft, then explicitly finalize/send it. The normal
+   reason, version, fresh-auth, and idempotency checks still apply. An accepted
+   Stripe quote preserves automatic tax on its draft invoice.
+
+Tax is added to the approved line prices, never silently absorbed into them.
+A complete calculation may be zero (including when Stripe has no applicable
+registration); zero is not proof that the customer is legally tax-exempt.
+
+CoCalc blocks delivery if Stripe's automatic-tax setting differs, calculation
+is incomplete, or subtotal/total no longer match the approved amounts. Stripe
+can recalculate at finalization, so totals are checked again before email and
+on delivery retries. If a finalization changes the tax, the invoice may already
+be finalized but remains unsent by CoCalc; inspect that invoice and resolve it
+through the normal void/revision workflow rather than repeatedly creating
+invoices or bypassing the amount checks. Automatic advancement remains off.
+
+For automatic-tax orders, recovery and delivery also verify each invoice
+line's exclusive tax behavior and reviewed product tax code, even when the
+calculated tax is zero or a changed classification produces the same total.
+With the pinned Stripe API, these checks resolve the line's
+`pricing.price_details` references by retrieving its Price and Product; they
+do not assume invoice-item creation parameters are invoice-line response
+fields. Missing or unverifiable tax settings block the operation. The same
+checks apply when adopting an accepted quote's invoice and on finalized send
+retries. Local quote acceptance requires nonnegative tax exactly equal to the
+retained quote's total minus subtotal, including during recovery.
+
+See [Stripe Tax for invoices](https://docs.stripe.com/tax/invoicing) and
+[zero-tax calculations](https://docs.stripe.com/tax/zero-tax) for setup details.
+
 ## Local PDF Quote Fallback
 
 Use the local PDF provider for sites without Invoicing Plus or when procurement
@@ -255,6 +323,48 @@ cocalc admin receivables collection mode AR-2026-000123 \
   --mode stripe_invoice --reason "use Stripe hosted invoicing" \
   --expected-version 8 --commit --json
 ```
+
+## Customer PDF Links
+
+After finalizing a Stripe quote (or issuing a local PDF quote), an admin with
+fresh authentication can issue a private download link:
+
+```sh
+cocalc admin receivables quote share AR-2026-000123 --quote-id <uuid> \
+  --expires-at 2026-10-01T00:00:00Z --reason "Send reviewed quote to customer"
+# Review, then repeat with --expected-version <version> --commit.
+cocalc admin receivables quote revoke-link AR-2026-000123 --quote-id <uuid> \
+  --reason "Revoke previously shared link"
+# Review, then repeat with --expected-version <version> --commit.
+```
+
+Send the returned URL through Zendesk. Anyone holding it can download this one
+PDF without a CoCalc account. Expiration must be within 90 days and no later
+than quote expiration. Issuing another link replaces the previous link;
+revocation does not void the quote. Voiding/cancelling the quote also blocks
+downloads. Revocation cannot recall copies already downloaded or a response
+already in flight.
+
+The token is returned once and only its SHA-256 hash is retained. An idempotent
+retry returns no URL and does not rotate the link. If the response was lost,
+issue a replacement using the current version and a new idempotency key.
+Do not paste these bearer URLs into public issues or audit reasons.
+
+The URL fragment keeps the token out of HTTP access logs. The public landing
+page removes the fragment from browser history and submits the token in a POST
+body when the recipient clicks Download. Do not enable request-body logging
+for this endpoint. Responses use no-store, no-referrer, nosniff and a restrictive
+CSP. JavaScript is required. The page loads no third-party assets.
+
+These small, retained billing documents are seed-owned, not project files;
+serving them through the hub is an intentional control-plane exception. Any
+receiving bay routes downloads to the seed over a narrow internal method that
+returns only the PDF and filename. The seed checks expiry/revocation and the
+2 MiB bound and verifies the retained digest; it never contacts Stripe.
+Each hub limits ingress to 30 requests/IP/minute and 200 requests/minute total.
+The seed atomically limits each link to 20 PDF downloads/minute across hubs.
+Invalid, expired, revoked and per-link-throttled requests get the same generic
+unavailable response. Disabling receivables visibility stops public downloads.
 
 ## Recovery And Idempotency
 

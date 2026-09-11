@@ -57,7 +57,14 @@ function setup(
       output = await fn({
         accountId: ACCOUNT_ID,
         globals: { json },
-        hub: { commercialOrders },
+        hub: {
+          commercialOrders,
+          system: {
+            getPublicSiteUrl: async () => ({
+              url: "https://billing.example.test",
+            }),
+          },
+        },
       });
       return output;
     },
@@ -71,6 +78,73 @@ function setup(
   });
   return { program, output: () => output };
 }
+
+test("quote links preview without mutation and return a URL only on commit", async () => {
+  const calls: any[] = [];
+  const client = {
+    get: async () => order(),
+    issueQuoteLink: async (request: any) => {
+      calls.push(request);
+      return {
+        order: order({ version: 8 }),
+        path: "/commercial/quotes/download#" + "a".repeat(64),
+      };
+    },
+    revokeQuoteLink: async (request: any) => {
+      calls.push(request);
+      return order();
+    },
+  };
+  const args = [
+    "admin",
+    "receivables",
+    "quote",
+    "share",
+    "AR-2026-000123",
+    "--quote-id",
+    "44444444-4444-4444-8444-444444444444",
+    "--expires-at",
+    "2026-10-01",
+    "--reason",
+    "send reviewed quote",
+  ];
+  const dry = setup(client);
+  await dry.program.parseAsync(args, { from: "user" });
+  assert.equal(calls.length, 0);
+  assert.equal(dry.output().preview, true);
+  const committed = setup(client);
+  await committed.program.parseAsync(
+    [...args, "--expected-version", "7", "--commit"],
+    { from: "user" },
+  );
+  assert.equal(calls[0].expected_version, 7);
+  assert.equal(
+    committed.output().url,
+    "https://billing.example.test/commercial/quotes/download#" + "a".repeat(64),
+  );
+  const revoke = [
+    "admin",
+    "receivables",
+    "quote",
+    "revoke-link",
+    "AR-2026-000123",
+    "--quote-id",
+    "44444444-4444-4444-8444-444444444444",
+    "--reason",
+    "revoke reviewed link",
+  ];
+  await setup(client).program.parseAsync(revoke, { from: "user" });
+  assert.equal(calls.length, 1);
+  await setup(client).program.parseAsync(
+    [...revoke, "--expected-version", "7", "--commit"],
+    { from: "user" },
+  );
+  assert.equal(calls.length, 2);
+  assert.equal(
+    calls[1].commercial_quote_id,
+    "44444444-4444-4444-8444-444444444444",
+  );
+});
 
 test("receivables help points agents to the bundled admin runbook", () => {
   const { program } = setup({});

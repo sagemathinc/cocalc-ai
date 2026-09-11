@@ -45,8 +45,8 @@
 
 .git-review-title {
   display: flex;
-  align-items: baseline;
-  gap: 20px;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 

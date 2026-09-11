@@ -49,6 +49,11 @@ import {
 } from "../store";
 import { recordCommercialProviderFailure } from "../observability";
 import {
+  commercialTaxPolicy,
+  assertCommercialAutomaticTax,
+  assertCommercialInvoiceLineTax,
+} from "../tax";
+import {
   assertInvoiceReady,
   invoiceCollectionState,
   normalizeCurrency,
@@ -113,6 +118,7 @@ async function invoicePreviewForOrder(
 ): Promise<CommercialInvoicePreview> {
   const blockers: string[] = [];
   const invoiceTerms = approvedInvoiceTerms(order);
+  const taxPolicy = commercialTaxPolicy(order.terms_snapshot);
   try {
     assertInvoiceReady(order);
   } catch (err) {
@@ -127,12 +133,17 @@ async function invoicePreviewForOrder(
   ) {
     blockers.push("the order already has an active invoice");
   }
-  if (moneyCompare(order.agreed_subtotal, order.agreed_total) !== 0) {
+  if (
+    !taxPolicy.enabled &&
+    moneyCompare(order.agreed_subtotal, order.agreed_total) !== 0
+  ) {
     blockers.push(
-      "agreed_total must equal agreed_subtotal until reviewed institutional tax handling is configured",
+      "agreed_total must equal agreed_subtotal unless reviewed automatic tax is enabled",
     );
   }
   return {
+    automatic_tax: taxPolicy.enabled,
+    tax_code: taxPolicy.taxCode,
     order_id: order.id,
     order_number: order.order_number,
     organization_name: order.organization_name,
@@ -298,6 +309,8 @@ function providerSnapshot(invoice: any): Record<string, unknown> {
     due_date: invoice?.due_date,
     collection_method: invoice?.collection_method,
     auto_advance: invoice?.auto_advance,
+    automatic_tax: invoice?.automatic_tax,
+    total_taxes: invoice?.total_taxes,
     custom_fields: invoice?.custom_fields,
     description: invoice?.description,
     payment_settings: invoice?.payment_settings,
@@ -728,11 +741,7 @@ function assertInvoiceDeliveryConfiguration(
       "Stripe invoice order reference does not match the approved order",
     );
   }
-  if (stripeInvoice.automatic_tax?.enabled !== false) {
-    throw Error(
-      "Stripe invoice tax configuration does not match the approved order",
-    );
-  }
+  assertCommercialAutomaticTax(stripeInvoice, order);
   if (
     JSON.stringify(
       sortedPaymentMethods(
@@ -789,6 +798,7 @@ async function ensureStripeInvoiceItems(opts: {
     ) {
       throw Error("Stripe draft line items do not match the approved order");
     }
+    await assertCommercialInvoiceLineTax(opts.stripe, line, opts.order);
     expected.delete(itemId);
   }
   if (expected.size && opts.stripeInvoice.status !== "draft") {
@@ -802,6 +812,12 @@ async function ensureStripeInvoiceItems(opts: {
         amount: decimalToStripe(item.subtotal),
         currency: opts.order.currency,
         description: item.description,
+        ...(commercialTaxPolicy(opts.order.terms_snapshot).enabled
+          ? {
+              tax_behavior: "exclusive" as const,
+              tax_code: commercialTaxPolicy(opts.order.terms_snapshot).taxCode,
+            }
+          : {}),
         metadata: {
           commercial_order_item_id: item.id,
           product_kind: item.product_kind,
@@ -954,7 +970,9 @@ export async function createStripeCommercialInvoiceDraft(
             ...preview.metadata,
             commercial_invoice_id: invoice.id,
           },
-          automatic_tax: { enabled: false },
+          automatic_tax: {
+            enabled: commercialTaxPolicy(order.terms_snapshot).enabled,
+          },
           payment_settings: {
             payment_method_types: [...PAYMENT_METHOD_TYPES],
           },
@@ -1189,7 +1207,10 @@ async function assertStripeInvoiceMatchesOrder(
   if (`${stripeInvoice.currency}`.toLowerCase() !== order.currency) {
     throw Error("Stripe draft currency no longer matches the approved order");
   }
-  if (Number(stripeInvoice.total) !== expectedCents) {
+  if (
+    Number(stripeInvoice.total) !== expectedCents ||
+    Number(stripeInvoice.subtotal) !== decimalToStripe(order.agreed_subtotal)
+  ) {
     throw Error("Stripe draft total no longer matches the approved order");
   }
   const lines = await listStripeInvoiceLines(
@@ -1210,6 +1231,11 @@ async function assertStripeInvoiceMatchesOrder(
     ) {
       throw Error("Stripe draft line items no longer match the approved order");
     }
+    await assertCommercialInvoiceLineTax(
+      stripe ?? (await getConn()),
+      line,
+      order,
+    );
     expected.delete(itemId);
   }
   if (expected.size) throw Error("Stripe draft is missing approved line items");
@@ -1246,9 +1272,8 @@ export async function sendStripeCommercialInvoice(
     internalInvoice: invoice,
     order,
   });
-  if (latest.status === "draft")
-    await assertStripeInvoiceMatchesOrder(latest, order);
-  else if (latest.status !== "open" && latest.status !== "paid") {
+  await assertStripeInvoiceMatchesOrder(latest, order, stripe);
+  if (!["draft", "open", "paid"].includes(latest.status)) {
     throw Error(`Stripe invoice cannot be sent from status ${latest.status}`);
   }
   await setCommercialProviderOperationStatus({
@@ -1271,6 +1296,8 @@ export async function sendStripeCommercialInvoice(
         internalInvoice: invoice,
         order,
       });
+      // Finalization can recalculate tax; never deliver an unreviewed total.
+      await assertStripeInvoiceMatchesOrder(latest, order, stripe);
     }
     if (latest.status === "open" && !latest.hosted_invoice_url) {
       latest = await stripe.invoices.sendInvoice(

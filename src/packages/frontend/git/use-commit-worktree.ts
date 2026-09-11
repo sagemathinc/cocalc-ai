@@ -28,6 +28,7 @@ export function useCommitWorktree({
     key: string;
     message: string;
     historicalOnly: true;
+    locating: boolean;
   }>();
   const select = useEffectEvent((result: UniqueWorktree, key: string) => {
     if (enabled && !blocked && key === requestKey) onSelect(result);
@@ -39,6 +40,7 @@ export function useCommitWorktree({
         setNotice({
           key: requestKey,
           historicalOnly: true,
+          locating: false,
           message:
             "Automatic worktree selection was interrupted. Choose a working copy explicitly; history remains read-only.",
         });
@@ -49,10 +51,11 @@ export function useCommitWorktree({
     attempted.current = requestKey;
     let cancelled = false,
       finished = false;
-    const report = (message: string) =>
-      setNotice({ key: requestKey, message, historicalOnly: true });
+    const report = (message: string, locating = false) =>
+      setNotice({ key: requestKey, message, historicalOnly: true, locating });
     report(
       "Locating a worktree for this commit; historical viewing remains available.",
+      true,
     );
     void locateCommitWorktree(projectGitReader, origin, commit)
       .then((result) => {

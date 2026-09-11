@@ -45,6 +45,9 @@ if [ ! -f "$CLI_BUNDLE_JS" ]; then
   exit 1
 fi
 
+REFLECT_BUILD="$OUT_DIR/reflect-runtime"
+bash "$(dirname "$0")/build-reflect.sh" "$REFLECT_BUILD"
+
 install_cocalc_cli_runtime() {
   local work_dir="$1"
   mkdir -p "$work_dir/bin" "$work_dir/share/licenses/cocalc-cli"
@@ -60,6 +63,10 @@ exec node "$SCRIPT_DIR/cocalc-cli.js" "$@"
 EOF
   chmod +x "$work_dir/bin/cocalc"
   ln -sf cocalc "$work_dir/bin/cocalc-cli"
+  install -m 0755 "$REFLECT_BUILD/reflect" "$work_dir/bin/reflect"
+  install -m 0644 "$REFLECT_BUILD/reflect.mjs" "$work_dir/bin/reflect.mjs"
+  mkdir -p "$work_dir/share/licenses/reflect"
+  install -m 0644 "$REFLECT_BUILD/LICENSE.txt" "$work_dir/share/licenses/reflect/LICENSE.txt"
 
   if [ -f "$CLI_BUNDLE_LICENSES" ]; then
     cp "$CLI_BUNDLE_LICENSES" \

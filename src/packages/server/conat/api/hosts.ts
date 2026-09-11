@@ -6397,13 +6397,16 @@ export async function startHost({
 export async function startHostInternal({
   account_id,
   id,
+  onWorkQueued,
 }: {
   account_id?: string;
   id: string;
+  onWorkQueued?: (workId: string) => void;
 }): Promise<Host> {
   return await startHostInternalHelper({
     account_id,
     id,
+    onWorkQueued,
     loadHostForStartStop,
     markHostActionPending,
     logStatusUpdate,
@@ -6516,15 +6519,18 @@ export async function restartHostInternal({
   account_id,
   id,
   mode,
+  onWorkQueued,
 }: {
   account_id?: string;
   id: string;
   mode?: "reboot" | "hard";
+  onWorkQueued?: (workId: string) => void;
 }): Promise<Host> {
   return await restartHostInternalHelper({
     account_id,
     id,
     mode,
+    onWorkQueued,
     loadHostForStartStop,
     markHostActionPending,
     logStatusUpdate,

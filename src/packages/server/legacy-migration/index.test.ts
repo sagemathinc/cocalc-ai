@@ -5,6 +5,7 @@
 
 import {
   appendProjectRemediationApplyEvent,
+  assertProjectCanPrepareRemediation,
   MAX_LEGACY_PROJECT_IMPORTS_PER_REQUEST,
   legacyProjectArchiveUncompressedBytes,
   legacyPublicPathTargetFromRetainedRecord,
@@ -20,6 +21,100 @@ import {
 } from "./public-path-slugs";
 
 describe("legacy migration manifest helpers", () => {
+  describe("failed restore preparation", () => {
+    const row: Parameters<typeof assertProjectCanPrepareRemediation>[0] = {
+      legacy_project_id: "legacy-project",
+      project_id: "project",
+      owner_account_id: "owner",
+      title: null,
+      description: null,
+      owner_legacy_account_id: null,
+      legacy_users: null,
+      hidden: false,
+      last_edited: null,
+      last_active: null,
+      disk_mb: null,
+      artifact_bucket: "archives",
+      artifact_key: "project.tar.zst",
+      manifest_key: null,
+      artifact_status: "available",
+      artifact_manifest: {
+        r2_key: "project.tar.zst",
+        compressed_bytes: 123,
+      },
+      restore_status: "failed",
+    };
+
+    it("requires explicit override and an audit reason", () => {
+      expect(() => assertProjectCanPrepareRemediation(row)).toThrow(
+        "restore has not completed",
+      );
+      expect(() => assertProjectCanPrepareRemediation(row, {})).toThrow(
+        "reason is required",
+      );
+      expect(() =>
+        assertProjectCanPrepareRemediation(row, { reason: "  " }),
+      ).toThrow("reason is required");
+      expect(() =>
+        assertProjectCanPrepareRemediation(row, { reason: "Inspect archive" }),
+      ).not.toThrow();
+      expect(row.restore_status).toBe("failed");
+    });
+
+    it.each([
+      "pending",
+      "restoring",
+      "selection-pending",
+      "indexing",
+      "indexed",
+      "skipped",
+      "restored",
+      null,
+    ] as const)("does not bypass the gate for status %s", (restore_status) => {
+      expect(() =>
+        assertProjectCanPrepareRemediation(
+          { ...row, restore_status },
+          { reason: "Inspect archive" },
+        ),
+      ).toThrow("requires a failed restore");
+    });
+
+    it.each([
+      { artifact_status: "missing" },
+      { artifact_key: null },
+      { artifact_manifest: null },
+      { artifact_manifest: { r2_key: "wrong", compressed_bytes: 123 } },
+      { artifact_manifest: { r2_key: "project.tar.zst" } },
+    ])("still requires a valid retained archive: %j", (invalid) => {
+      expect(() =>
+        assertProjectCanPrepareRemediation(
+          { ...row, ...invalid },
+          { reason: "Inspect archive" },
+        ),
+      ).toThrow("archive is not available");
+    });
+
+    it("keeps ordinary restored-project timestamp checks", () => {
+      expect(() =>
+        assertProjectCanPrepareRemediation({
+          ...row,
+          restore_status: "restored",
+        }),
+      ).toThrow("original restore timestamp is missing");
+      expect(() =>
+        assertProjectCanPrepareRemediation({
+          ...row,
+          restore_status: "restored",
+          restore_result: { restored_at: "2026-07-01T00:00:00Z" },
+          artifact_manifest: {
+            ...row.artifact_manifest,
+            r2_refreshed_at: "2026-07-10T00:00:00Z",
+          },
+        }),
+      ).not.toThrow();
+    });
+  });
+
   it("preserves every remediation apply audit event", () => {
     const first = {
       applied_at: "2026-09-01T00:00:00.000Z",

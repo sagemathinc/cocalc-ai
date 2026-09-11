@@ -643,13 +643,21 @@ function emailDomain(email?: string | null): string {
 
 export function activeUserMapEmailDomainCounts(
   users: ActiveUserMapUser[],
+  excludedDomains: string[] = [],
 ): ActiveUserMapEmailDomainCount[] {
+  const excluded = new Set(
+    excludedDomains
+      .map((domain) => domain.trim().toLowerCase())
+      .filter(Boolean),
+  );
   const totals = new Map<string, number>();
+  let total = 0;
   for (const user of users) {
     const domain = emailDomain(user.email_address);
+    if (excluded.has(domain.toLowerCase())) continue;
     totals.set(domain, (totals.get(domain) ?? 0) + 1);
+    total += 1;
   }
-  const total = users.length;
   const visible: ActiveUserMapEmailDomainCount[] = [];
   let other = 0;
   for (const [domain, count] of [...totals].sort(
@@ -725,7 +733,10 @@ export async function getActiveUserMapDetailsAcrossBays(
         region_code,
       }),
     ),
-    domain_counts: activeUserMapEmailDomainCounts(allUsers),
+    domain_counts: activeUserMapEmailDomainCounts(
+      allUsers,
+      query.excluded_email_domains,
+    ),
     bays: report.bays,
   };
 }

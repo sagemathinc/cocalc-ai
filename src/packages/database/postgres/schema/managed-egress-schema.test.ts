@@ -169,6 +169,7 @@ describe("managed-egress declarative schema", () => {
       "account_managed_egress_events_project_time_idx",
       "account_managed_egress_events_time_admin_idx",
       "account_managed_egress_rollups_account_category_time_cover_idx",
+      "account_managed_egress_rollups_account_recent_idx",
       "account_managed_egress_rollups_account_time_idx",
       "account_managed_egress_rollups_category_time_idx",
       "account_managed_egress_rollups_project_time_idx",

@@ -483,7 +483,7 @@ describe("classifyHostAvailabilitySnapshot", () => {
     ).toBeUndefined();
   });
 
-  it("classifies project-host persistence RSS at the 2/4 GiB defaults", () => {
+  it("classifies sustained persistence RSS at the 2/4 GiB defaults", () => {
     const now = 2_000_000;
     const makeRow = (rss_bytes: number) =>
       _test.conatPersistAlertRow(
@@ -491,6 +491,15 @@ describe("classifyHostAvailabilitySnapshot", () => {
           id: "persist-host",
           status: "running",
           metadata: { name: "asia-1" },
+          name: "asia-1-current",
+          persist_history: Array.from({ length: 12 }, (_, i) => ({
+            schema_version: 1,
+            collected_at: new Date(now - 30_000 - i * 60_000).toISOString(),
+            available: true,
+            ready: true,
+            pid: 123,
+            rss_bytes,
+          })),
           conat_persist: {
             schema_version: 1,
             collected_at: new Date(now - 30_000).toISOString(),
@@ -507,20 +516,23 @@ describe("classifyHostAvailabilitySnapshot", () => {
     expect(makeRow(1.5 * 1024 ** 3)).toBeUndefined();
     expect(makeRow(3 * 1024 ** 3)).toMatchObject({
       persist_level: "warning",
-      persist_reason: expect.stringContaining("RSS 3.00 GiB >= 2.00 GiB"),
+      persist_reason: expect.stringContaining("RSS >= 2.00 GiB"),
     });
 
     const row = makeRow(5 * 1024 ** 3);
     expect(row).toMatchObject({
       persist_level: "critical",
-      persist_reason: expect.stringContaining("RSS 5.00 GiB >= 4.00 GiB"),
+      persist_reason: expect.stringContaining("RSS >= 4.00 GiB"),
     });
     expect(_test.formatConatPersistAlertBody([row!])).toContain(
       "observational only",
     );
+    expect(_test.formatConatPersistAlertBody([row!])).toContain(
+      "asia-1-current",
+    );
   });
 
-  it("classifies excessive persistence stream cardinality independently of RSS", () => {
+  it("does not page for stream cardinality alone", () => {
     const now = 2_000_000;
     expect(
       _test.conatPersistAlertRow(
@@ -537,10 +549,7 @@ describe("classifyHostAvailabilitySnapshot", () => {
         },
         now,
       ),
-    ).toMatchObject({
-      persist_level: "warning",
-      persist_reason: expect.stringContaining("open streams 2500"),
-    });
+    ).toBeUndefined();
   });
 
   it("ignores stale or unavailable persistence diagnostics", () => {

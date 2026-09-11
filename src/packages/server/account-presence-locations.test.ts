@@ -122,6 +122,31 @@ describe("account presence locations", () => {
     ]);
   });
 
+  it("excludes domains before recalculating visible shares", async () => {
+    const { activeUserMapEmailDomainCounts } =
+      await import("./account-presence-locations");
+    const users = [
+      ...Array.from({ length: 100 }, (_, index) =>
+        activeMapUser(`gmail-${index}`, `user-${index}@gmail.com`),
+      ),
+      ...Array.from({ length: 98 }, (_, index) =>
+        activeMapUser(`major-${index}`, `user-${index}@major.test`),
+      ),
+      activeMapUser("emerging-1", "one@emerging.test"),
+      activeMapUser("emerging-2", "two@emerging.test"),
+    ];
+
+    expect(activeUserMapEmailDomainCounts(users)).toEqual([
+      { domain: "gmail.com", count: 100 },
+      { domain: "major.test", count: 98 },
+      { domain: "Other", count: 2 },
+    ]);
+    expect(activeUserMapEmailDomainCounts(users, [" GMAIL.COM "])).toEqual([
+      { domain: "major.test", count: 98 },
+      { domain: "emerging.test", count: 2 },
+    ]);
+  });
+
   it("writes one expiring location and throttles repeated heartbeats", async () => {
     const { recordAccountPresenceLocation } =
       await import("./account-presence-locations");

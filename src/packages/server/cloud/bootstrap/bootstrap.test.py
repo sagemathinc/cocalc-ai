@@ -4276,6 +4276,173 @@ reserve_project_startup_io_capacity
             main_body.index('"coverage": "partial"'),
         )
 
+    def test_intrusion_snapshot_resamples_unattributed_listeners(self) -> None:
+        namespace = {"__name__": "intrusion_snapshot_test"}
+        exec(bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER, namespace)
+        responses = {
+            "network_listeners": [
+                "udp UNCONN 0 0 0.0.0.0:26394 0.0.0.0:*",
+                "udp UNCONN 0 0 0.0.0.0:30450 0.0.0.0:*",
+            ],
+            "network_listeners_resample": [
+                "udp UNCONN 0 0 0.0.0.0:30450 0.0.0.0:*",
+            ],
+            "network_established": [],
+        }
+        namespace["run"] = lambda section, args, **kwargs: responses[section]
+
+        with mock.patch.object(namespace["time"], "sleep") as sleep:
+            network = namespace["collect_network"](set())
+
+        sleep.assert_called_once_with(0.2)
+        self.assertEqual(
+            network["listeners"],
+            [
+                {
+                    "count": 1,
+                    "protocol": "udp",
+                    "process": "unattributed",
+                    "local": "0.0.0.0:30450",
+                }
+            ],
+        )
+
+    def test_intrusion_snapshot_reports_verified_snap_mount_units(self) -> None:
+        namespace = {"__name__": "intrusion_snapshot_test"}
+        exec(bootstrap.HOST_INTRUSION_SNAPSHOT_HELPER, namespace)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            snap_root = root / "snap"
+            state_root = root / "state"
+            revision_root = snap_root / "google-cloud-cli" / "2124"
+            revision_root.mkdir(parents=True)
+            state_root.mkdir()
+            backing_image = state_root / "google-cloud-cli_2124.snap"
+            backing_image.touch()
+            mountinfo = root / "mountinfo"
+            mountinfo.write_text(
+                f"100 1 7:3 / {revision_root} ro - squashfs /dev/loop3 ro\n",
+                encoding="utf-8",
+            )
+            sys_dev_root = root / "sys-dev"
+            loop = sys_dev_root / "7:3" / "loop"
+            loop.mkdir(parents=True)
+            (loop / "backing_file").write_text(
+                f"{backing_image}\n",
+                encoding="utf-8",
+            )
+            systemd_root = root / "systemd"
+            unit = r"snap-google\x2dcloud\x2dcli-2124.mount"
+            unit_path = systemd_root / unit
+            systemd_root.mkdir()
+            unit_path.write_text(
+                f"""[Unit]
+Description=Mount unit for google-cloud-cli, revision 2124
+After=snapd.mounts-pre.target
+Before=snapd.mounts.target
+
+[Mount]
+What={backing_image}
+Where={revision_root}
+Type=squashfs
+Options=nodev,ro,x-gdu.hide,x-gvfs-hide
+LazyUnmount=yes
+
+[Install]
+WantedBy=snapd.mounts.target
+WantedBy=multi-user.target
+""",
+                encoding="utf-8",
+            )
+            for wants in ("multi-user.target.wants", "snapd.mounts.target.wants"):
+                wants_root = systemd_root / wants
+                wants_root.mkdir()
+                (wants_root / unit).symlink_to(unit_path)
+
+            original_lstat = namespace["os"].lstat
+
+            def root_owned_lstat(path):
+                info = original_lstat(path)
+                return mock.Mock(
+                    st_uid=0,
+                    st_gid=0,
+                    st_mode=info.st_mode,
+                    st_size=info.st_size,
+                )
+
+            with mock.patch.object(
+                namespace["os"],
+                "lstat",
+                side_effect=root_owned_lstat,
+            ):
+                units = namespace["collect_snap_mount_units"](
+                    str(snap_root),
+                    str(state_root),
+                    str(mountinfo),
+                    str(sys_dev_root),
+                    str(systemd_root),
+                )
+                safe_contents = unit_path.read_text(encoding="utf-8")
+                modified_units = []
+                for unsafe_contents in (
+                    safe_contents.replace(
+                        f"What={backing_image}",
+                        f"What={state_root / 'different_2124.snap'}",
+                    ),
+                    safe_contents.replace(
+                        f"Where={revision_root}",
+                        f"Where={snap_root / 'elsewhere'}",
+                    ),
+                    safe_contents.replace("Type=squashfs", "Type=ext4"),
+                    safe_contents.replace(
+                        "Options=nodev,ro,x-gdu.hide,x-gvfs-hide",
+                        "Options=rw,suid,dev",
+                    ),
+                    safe_contents + "\n[Service]\nExecStart=/bin/true\n",
+                ):
+                    unit_path.write_text(unsafe_contents, encoding="utf-8")
+                    modified_units.append(
+                        namespace["collect_snap_mount_units"](
+                            str(snap_root),
+                            str(state_root),
+                            str(mountinfo),
+                            str(sys_dev_root),
+                            str(systemd_root),
+                        )
+                    )
+                unit_path.write_text(safe_contents, encoding="utf-8")
+                (systemd_root / "multi-user.target.wants" / unit).unlink()
+                (systemd_root / "multi-user.target.wants" / unit).symlink_to(
+                    systemd_root / "unexpected.mount"
+                )
+                redirected_link = namespace["collect_snap_mount_units"](
+                    str(snap_root),
+                    str(state_root),
+                    str(mountinfo),
+                    str(sys_dev_root),
+                    str(systemd_root),
+                )
+                (systemd_root / "multi-user.target.wants" / unit).unlink()
+                (systemd_root / "multi-user.target.wants" / unit).symlink_to(
+                    unit_path
+                )
+                (loop / "backing_file").write_text(
+                    f"{state_root / 'different_2124.snap'}\n",
+                    encoding="utf-8",
+                )
+                mismatched_units = namespace["collect_snap_mount_units"](
+                    str(snap_root),
+                    str(state_root),
+                    str(mountinfo),
+                    str(sys_dev_root),
+                    str(systemd_root),
+                )
+
+        self.assertEqual(units, [unit])
+        self.assertEqual(modified_units, [[], [], [], [], []])
+        self.assertEqual(redirected_link, [])
+        self.assertEqual(mismatched_units, [])
+
     def test_helper_schema_installed_reads_rootctl_marker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
@@ -5311,6 +5478,21 @@ class BootstrapModesTest(unittest.TestCase):
                 any("bootstrap: acquired lifecycle lock" in event for event in events)
             )
 
+    def test_bootstrap_failure_reports_error_before_first_heartbeat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            error = "Podman cannot load libgpgme.so.11"
+            for mode, runner in (([], "run_bootstrap"), (["reconcile"], "run_reconcile")):
+                with self.subTest(mode=mode), \
+                    mock.patch.object(bootstrap, "load_config", return_value=cfg), \
+                    mock.patch.object(bootstrap, "bootstrap_operation_lock"), \
+                    mock.patch.object(bootstrap, "log_line"), \
+                    mock.patch.object(bootstrap, runner, side_effect=RuntimeError(error)), \
+                    mock.patch.object(bootstrap, "report_bootstrap_status") as report:
+                    result = bootstrap.main(mode + ["--bootstrap-dir", cfg.bootstrap_dir])
+                    self.assertEqual(result, 1)
+                    report.assert_called_once_with(cfg, "error", error)
+
     def test_reconcile_mode_runs_under_lifecycle_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
@@ -5711,7 +5893,9 @@ devices:
             original_run_best_effort = bootstrap.run_best_effort
             original_write_text = bootstrap.Path.write_text
             original_chmod = bootstrap.os.chmod
+            original_preserve = bootstrap.preserve_newer_nvidia_toolkit
             try:
+                bootstrap.preserve_newer_nvidia_toolkit = lambda _cfg: False
                 bootstrap.apt_run = (
                     lambda _cfg, args, desc, **kwargs: recorded.append((args, desc))
                 )
@@ -5730,6 +5914,7 @@ devices:
                 bootstrap.run_best_effort = original_run_best_effort
                 bootstrap.Path.write_text = original_write_text
                 bootstrap.os.chmod = original_chmod
+                bootstrap.preserve_newer_nvidia_toolkit = original_preserve
 
             self.assertIn(
                 (
@@ -5751,6 +5936,32 @@ devices:
                 ),
                 recorded,
             )
+
+
+class NvidiaToolkitVersionTest(unittest.TestCase):
+    def test_version_selection(self):
+        for installed, candidate, compare_code, expected in [
+            ("(none)", "1.18.0-1", 1, False),
+            ("1.17.0-1", "1.18.0-1", 1, False),
+            ("1.18.0-1", "1.18.0-1", 1, False),
+            ("1.18.0-1", "1.17.0-1", 0, True),
+            ("1.18.0-1", "(none)", 1, True),
+        ]:
+            with self.subTest(installed=installed, candidate=candidate), tempfile.TemporaryDirectory() as tmpdir:
+                def run(_cfg, args, _desc, **kwargs):
+                    if args[0] == "apt-cache":
+                        return subprocess.CompletedProcess(args, 0, f"Installed: {installed}\nCandidate: {candidate}\n")
+                    return subprocess.CompletedProcess(args, compare_code if args[0] == "dpkg" else 0, "")
+                with mock.patch.object(bootstrap, "run_cmd", side_effect=run) as command:
+                    self.assertEqual(bootstrap.preserve_newer_nvidia_toolkit(make_cfg(tmpdir)), expected)
+                    self.assertEqual(any(call.args[1] == ["nvidia-ctk", "--version"] for call in command.call_args_list), expected)
+
+    def test_unknown_policy_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            bootstrap, "run_cmd", return_value=subprocess.CompletedProcess([], 0, "")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "unable to determine"):
+                bootstrap.preserve_newer_nvidia_toolkit(make_cfg(tmpdir))
 
 
 class AptBootstrapTest(unittest.TestCase):

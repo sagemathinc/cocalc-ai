@@ -224,6 +224,8 @@ export interface CommercialOrderTransitionRequest extends CommercialMutationRequ
 }
 
 export interface CommercialInvoicePreview {
+  automatic_tax?: boolean;
+  tax_code?: string;
   order_id: string;
   order_number: string;
   organization_name: string;
@@ -292,7 +294,19 @@ export interface CommercialQuoteDocument {
   content_base64: string;
 }
 
+export interface CommercialQuoteLinkRequest extends CommercialQuoteVoidRequest {
+  expires_at: string;
+}
+
+export interface CommercialQuoteLinkResult {
+  order: CommercialOrder;
+  // Returned only once. An idempotent replay cannot recover the bearer token.
+  path: string | null;
+}
+
 export interface CommercialStripeQuotePreview extends CommercialQuotePreview {
+  automatic_tax?: boolean;
+  tax_code?: string;
   stripe_mode: "test" | "live";
   stripe_customer_id?: string | null;
   collection_method: "send_invoice";
@@ -552,6 +566,12 @@ export interface CommercialOrdersApi {
   quoteDocument: (
     opts: CommercialQuoteDocumentRequest,
   ) => Promise<CommercialQuoteDocument>;
+  issueQuoteLink: (
+    opts: CommercialQuoteLinkRequest,
+  ) => Promise<CommercialQuoteLinkResult>;
+  revokeQuoteLink: (
+    opts: CommercialQuoteVoidRequest,
+  ) => Promise<CommercialOrder>;
   stripeQuotePreview: (
     opts: CommercialStripeQuotePreviewRequest,
   ) => Promise<CommercialStripeQuotePreview>;
@@ -644,6 +664,8 @@ export const commercialOrders = {
   issueQuote: authFirstRequireAccount,
   voidQuote: authFirstRequireAccount,
   quoteDocument: authFirstRequireAccount,
+  issueQuoteLink: authFirstRequireAccount,
+  revokeQuoteLink: authFirstRequireAccount,
   stripeQuotePreview: authFirstRequireAccount,
   createStripeQuote: authFirstRequireAccount,
   finalizeStripeQuote: authFirstRequireAccount,

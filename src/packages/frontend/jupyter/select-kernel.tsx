@@ -62,6 +62,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { KernelStar } from "../components/run-button/kernel-star";
 import { JupyterActions } from "./browser-actions";
 import Logo from "./logo";
+import RemoteKernel from "./remote-kernel";
 
 const MAIN_STYLE: CSS = {
   padding: "20px 10px",
@@ -829,23 +830,41 @@ export function KernelSelector({
     // those are precisely the cases where forcing a kernel list reload helps.
     const loading = refreshingKernels;
     return (
-      <Button
-        size={embedded ? "small" : "middle"}
-        disabled={loading}
-        onClick={async () => {
-          try {
-            setRefreshingKernels(true);
-            await actions.fetch_jupyter_kernels({
-              noCache: true,
-              autostart: true,
-            });
-          } finally {
-            setRefreshingKernels(false);
-          }
-        }}
-      >
-        <Icon name="refresh" spin={loading} /> Refresh
-      </Button>
+      <Space wrap>
+        {project_id && (
+          <RemoteKernel
+            project_id={project_id}
+            onRemoved={async () => {
+              await actions.fetch_jupyter_kernels({ noCache: true });
+            }}
+            onRegistered={async (name) => {
+              await actions.fetch_jupyter_kernels({
+                noCache: true,
+                autostart: true,
+              });
+              onSelectKernel?.(name);
+              actions.select_kernel(name);
+            }}
+          />
+        )}
+        <Button
+          size={embedded ? "small" : "middle"}
+          disabled={loading}
+          onClick={async () => {
+            try {
+              setRefreshingKernels(true);
+              await actions.fetch_jupyter_kernels({
+                noCache: true,
+                autostart: true,
+              });
+            } finally {
+              setRefreshingKernels(false);
+            }
+          }}
+        >
+          <Icon name="refresh" spin={loading} /> Refresh
+        </Button>
+      </Space>
     );
   }
 

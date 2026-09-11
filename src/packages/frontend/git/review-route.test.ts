@@ -23,6 +23,10 @@ test("worktree history reload preserves pinned tips independently of the selecte
   };
   const url = setGitReviewRoute(new URL(href), route);
   expect(readGitReviewRoute(url)).toEqual(route);
+  url.searchParams.delete("git-ancestry");
+  expect(readGitReviewRoute(url)?.history?.firstParent).toBe(false);
+  url.searchParams.set("git-ancestry", "first-parent");
+  expect(readGitReviewRoute(url)?.history?.firstParent).toBe(true);
   expect(setGitReviewRoute(url).search).toBe("?test=1");
   for (const tip of ["HEAD", "abc1234", "--help", "b".repeat(41)]) {
     url.searchParams.set("git-tip", tip);

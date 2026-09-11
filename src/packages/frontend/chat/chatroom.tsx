@@ -41,6 +41,8 @@ import { EditorComponentProps } from "../frame-editors/frame-tree/types";
 import type { ChatActions } from "./actions";
 import type { ChatComposerDraftAppendRequest } from "./composer-draft-types";
 import { ChatRoomComposer } from "./composer";
+import { ChatSpeechPlayer } from "./audio/chat-speech-player";
+import { SpeechPaneContext } from "./audio/speech-pane-context";
 import { ChatRoomLayout } from "./chatroom-layout";
 import { ChatRoomSidebarContent } from "./chatroom-sidebar";
 import { GitCommitDrawer } from "./git-commit-drawer";
@@ -650,7 +652,16 @@ export function chatActionsStoreName(
   return "";
 }
 
-export function ChatPanel({
+export function ChatPanel(props: ChatPanelProps) {
+  const [speechPaneId] = useState(() => Symbol("chat-speech-pane"));
+  return (
+    <SpeechPaneContext.Provider value={speechPaneId}>
+      <ChatPanelContent {...props} />
+    </SpeechPaneContext.Provider>
+  );
+}
+
+function ChatPanelContent({
   actions,
   project_id,
   path,
@@ -2397,7 +2408,11 @@ export function ChatPanel({
   const sendGitBrowserAgentPrompt = useCallback(
     async (
       prompt: string,
-      options?: { title?: string; workingDirectory?: string },
+      options?: {
+        title?: string;
+        workingDirectory?: string;
+        preserveThread?: boolean;
+      },
     ) => {
       const targetThreadKey = gitBrowserThreadKey ?? selectedThreadKey;
       sendGitCommitAgentTurn({
@@ -2406,6 +2421,7 @@ export function ChatPanel({
         targetThreadKey,
         defaultNewThreadSetup,
         title: options?.title,
+        preserveThread: options?.preserveThread,
         workingDirectory: options?.workingDirectory ?? gitBrowserCwd,
       });
     },
@@ -2852,6 +2868,11 @@ export function ChatPanel({
         readOnly={effectiveReadOnly}
       />
       {automationBanner}
+      <ChatSpeechPlayer
+        path={path}
+        projectId={project_id}
+        threadId={selectedThreadId ?? undefined}
+      />
       {selectedThreadResolved != null ? (
         <ResolvedThreadNotice resolved={selectedThreadResolved} />
       ) : !readOnly ? (
@@ -3161,11 +3182,6 @@ export function ChatPanel({
             onDecreaseFontSize={onDecreaseFontSize}
             onRequestAgentTurn={
               gitBrowserThreadKey ? sendGitBrowserAgentPrompt : undefined
-            }
-            reviewSubmissionHelpText={
-              gitBrowserThreadKey
-                ? undefined
-                : "Open Git review from an agent thread to send feedback. A review URL does not select an agent or change its working directory."
             }
             onDirectCommitLogged={
               gitBrowserThreadKey ? logGitBrowserDirectCommit : undefined

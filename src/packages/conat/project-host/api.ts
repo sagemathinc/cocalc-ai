@@ -263,6 +263,9 @@ export interface HostIntrusionSnapshotResponse {
     enabled: string[];
     failed: string[];
   };
+  // Active snap mounts whose image, on-disk unit contents, and enablement
+  // symlinks have all been verified. Optional during collector rollout.
+  snap_mount_units?: string[];
   network: {
     listeners: Array<{
       count: number;

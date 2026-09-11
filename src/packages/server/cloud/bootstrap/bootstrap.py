@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260904-v52"
+HELPER_SCHEMA_VERSION = "20260910-v55"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -392,8 +392,7 @@ def established_endpoints(fields):
     return fields[local_index], fields[peer_index]
 
 
-def collect_network(host_pids):
-    listener_lines = run("network_listeners", ["/usr/bin/ss", "-H", "-lntup"], max_lines=5000)
+def parse_listener_lines(listener_lines, host_pids):
     listener_counts = collections.Counter()
     listening_ports = set()
     for line in listener_lines:
@@ -408,6 +407,24 @@ def collect_network(host_pids):
         local = clean(fields[4], 256)
         listener_counts[(clean(fields[0], 16), process, local)] += 1
         listening_ports.add(local.rsplit(":", 1)[-1])
+    return listener_counts, listening_ports
+
+
+def collect_network(host_pids):
+    listener_lines = run("network_listeners", ["/usr/bin/ss", "-H", "-lntup"], max_lines=5000)
+    listener_counts, listening_ports = parse_listener_lines(listener_lines, host_pids)
+    if any(key[1] == "unattributed" for key in listener_counts):
+        # ss can observe a pasta forwarding socket while its owning process is
+        # exiting, after the users/PID metadata has already disappeared. Use a
+        # second complete sample so persistent unattributed sockets remain
+        # visible while teardown races do not become security alerts.
+        time.sleep(0.2)
+        listener_lines = run(
+            "network_listeners_resample",
+            ["/usr/bin/ss", "-H", "-lntup"],
+            max_lines=5000,
+        )
+        listener_counts, listening_ports = parse_listener_lines(listener_lines, host_pids)
     listeners = [
         {"count": count, "protocol": key[0], "process": key[1], "local": key[2]}
         for key, count in listener_counts.most_common(200)
@@ -445,6 +462,198 @@ def collect_network(host_pids):
     if len(connection_counts) > len(established):
         truncated["network_established"] = True
     return {"listeners": listeners, "established": established}
+
+
+def snap_mount_unit(name, revision):
+    # systemd path escaping uses '-' as the path separator, so literal hyphens
+    # in snap names are escaped in generated mount unit names.
+    escaped_name = name.replace("-", "\\x2d")
+    return f"snap-{escaped_name}-{revision}.mount"
+
+
+def mountinfo_path(value):
+    return re.sub(
+        r"\\([0-7]{3})",
+        lambda match: chr(int(match.group(1), 8)),
+        value,
+    )
+
+
+def collect_loop_mount_backing_files(
+    mountinfo_file="/proc/self/mountinfo",
+    sys_dev_root="/sys/dev/block",
+):
+    backing_files = {}
+    for line in read_text(mountinfo_file, 4 * 1024 * 1024).splitlines():
+        fields = line.split()
+        try:
+            separator = fields.index("-")
+        except ValueError:
+            continue
+        if (
+            len(fields) <= separator + 2
+            or len(fields) < 5
+            or fields[separator + 1] != "squashfs"
+            or not re.fullmatch(r"[0-9]+:[0-9]+", fields[2])
+        ):
+            continue
+        backing_file = read_text(
+            pathlib.Path(sys_dev_root) / fields[2] / "loop" / "backing_file",
+            4096,
+        ).strip()
+        if not backing_file:
+            continue
+        if not backing_file.startswith("/"):
+            backing_file = f"/{backing_file}"
+        backing_files[os.path.normpath(mountinfo_path(fields[4]))] = os.path.normpath(
+            backing_file
+        )
+    return backing_files
+
+
+def parse_systemd_unit(text):
+    sections = {}
+    current = None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        section_match = re.fullmatch(r"\[([A-Za-z]+)\]", line)
+        if section_match:
+            current = section_match.group(1)
+            sections.setdefault(current, [])
+            continue
+        if current is None or line.endswith("\\") or "=" not in line:
+            return None
+        key, value = line.split("=", 1)
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", key):
+            return None
+        sections[current].append((key, value))
+    return sections
+
+
+def verified_snap_mount_unit(
+    unit_path,
+    name,
+    revision,
+    backing_image,
+    revision_directory,
+    systemd_root,
+):
+    try:
+        info = unit_path.lstat()
+    except OSError:
+        return False
+    if (
+        info.st_uid != 0
+        or info.st_gid != 0
+        or not stat.S_ISREG(info.st_mode)
+        or stat.S_IMODE(info.st_mode) != 0o644
+        or info.st_size > 16 * 1024
+    ):
+        return False
+    sections = parse_systemd_unit(read_text(unit_path, 16 * 1024))
+    expected = {
+        "Unit": collections.Counter(
+            [
+                ("Description", f"Mount unit for {name}, revision {revision}"),
+                ("After", "snapd.mounts-pre.target"),
+                ("Before", "snapd.mounts.target"),
+            ]
+        ),
+        "Mount": collections.Counter(
+            [
+                ("What", os.path.normpath(backing_image)),
+                ("Where", os.path.normpath(revision_directory)),
+                ("Type", "squashfs"),
+                ("Options", "nodev,ro,x-gdu.hide,x-gvfs-hide"),
+                ("LazyUnmount", "yes"),
+            ]
+        ),
+        "Install": collections.Counter(
+            [
+                ("WantedBy", "snapd.mounts.target"),
+                ("WantedBy", "multi-user.target"),
+            ]
+        ),
+    }
+    if sections is None or set(sections) != set(expected):
+        return False
+    if any(
+        collections.Counter(sections[key]) != value
+        for key, value in expected.items()
+    ):
+        return False
+    for wants in ("multi-user.target.wants", "snapd.mounts.target.wants"):
+        link = pathlib.Path(systemd_root) / wants / unit_path.name
+        try:
+            link_info = link.lstat()
+        except OSError:
+            return False
+        if (
+            link_info.st_uid != 0
+            or link_info.st_gid != 0
+            or not stat.S_ISLNK(link_info.st_mode)
+            or stat.S_IMODE(link_info.st_mode) != 0o777
+            or os.path.normpath(read_link(link)) != os.path.normpath(unit_path)
+        ):
+            return False
+    return True
+
+
+def collect_snap_mount_units(
+    snap_root="/snap",
+    snap_state_root="/var/lib/snapd/snaps",
+    mountinfo_file="/proc/self/mountinfo",
+    sys_dev_root="/sys/dev/block",
+    systemd_root="/etc/systemd/system",
+):
+    units = []
+    backing_files = collect_loop_mount_backing_files(mountinfo_file, sys_dev_root)
+    try:
+        snap_directories = sorted(pathlib.Path(snap_root).iterdir())
+    except OSError:
+        return units
+    for snap_directory in snap_directories:
+        name = snap_directory.name
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", name):
+            continue
+        try:
+            revision_directories = sorted(snap_directory.iterdir())
+        except OSError:
+            continue
+        for revision_directory in revision_directories:
+            revision = revision_directory.name
+            if not re.fullmatch(r"[1-9][0-9]*", revision):
+                continue
+            backing_image = pathlib.Path(snap_state_root) / f"{name}_{revision}.snap"
+            if backing_files.get(os.path.normpath(revision_directory)) != os.path.normpath(
+                backing_image
+            ):
+                continue
+            try:
+                info = backing_image.lstat()
+            except OSError:
+                continue
+            if (
+                info.st_uid != 0
+                or info.st_gid != 0
+                or not stat.S_ISREG(info.st_mode)
+                or stat.S_IMODE(info.st_mode) & 0o022
+            ):
+                continue
+            unit = snap_mount_unit(name, revision)
+            if not verified_snap_mount_unit(
+                pathlib.Path(systemd_root) / unit,
+                name,
+                revision,
+                backing_image,
+                revision_directory,
+                systemd_root,
+            ):
+                continue
+            units.append(unit)
+    return sorted(set(units))[:MAX_ITEMS]
 
 
 def collect_authentication():
@@ -569,6 +778,7 @@ def main():
         max_lines=200,
     )
     accounts = collect_accounts()
+    snap_mount_units = collect_snap_mount_units()
     network = collect_network(host_pids)
     authentication = collect_authentication()
     kernel_signals = collect_kernel_signals()
@@ -590,6 +800,7 @@ def main():
             "capabilities": capabilities,
         },
         "services": {"enabled": enabled, "failed": failed},
+        "snap_mount_units": snap_mount_units,
         "network": network,
         "authentication_7d": authentication,
         "kernel_signals_7d": kernel_signals,
@@ -12290,6 +12501,40 @@ Type=simple
         log_line(cfg, "bootstrap: cloudflared config unchanged; keeping tunnel running")
 
 
+def preserve_newer_nvidia_toolkit(cfg: BootstrapConfig) -> bool:
+    policy = run_cmd(
+        cfg, ["apt-cache", "policy", "nvidia-container-toolkit"],
+        "inspect nvidia toolkit versions",
+        timeout=30, env={**os.environ, "LC_ALL": "C"},
+    )
+    versions = {}
+    for line in policy.stdout.splitlines():
+        key, sep, value = line.strip().partition(":")
+        if sep and key in ("Installed", "Candidate"):
+            versions[key] = value.strip()
+    installed = versions.get("Installed")
+    candidate = versions.get("Candidate")
+    if not installed or not candidate:
+        raise RuntimeError("unable to determine nvidia toolkit package versions")
+    if installed == "(none)":
+        return False
+    newer = candidate == "(none)"
+    if not newer:
+        comparison = run_cmd(
+            cfg, ["dpkg", "--compare-versions", installed, "gt", candidate],
+            "compare nvidia toolkit versions", check=False, timeout=10,
+        )
+        if comparison.returncode not in (0, 1):
+            raise RuntimeError("unable to compare nvidia toolkit package versions")
+        newer = comparison.returncode == 0
+    if newer:
+        # Provider images may pin an older repository version. Do not downgrade
+        # a working, newer toolkit (and its tightly coupled base package).
+        run_cmd(cfg, ["nvidia-ctk", "--version"], "verify installed nvidia toolkit", timeout=30)
+        log_line(cfg, f"bootstrap: preserving nvidia toolkit {installed}; apt candidate is {candidate}")
+    return newer
+
+
 def install_gpu_support(cfg: BootstrapConfig) -> None:
     if not cfg.has_gpu:
         return
@@ -12318,6 +12563,12 @@ def install_gpu_support(cfg: BootstrapConfig) -> None:
         "write nvidia repo",
     )
     apt_run(cfg, ["apt-get", "-y", "update"], "apt-get update (nvidia)", retries=3, timeout=60)
+    if not preserve_newer_nvidia_toolkit(cfg):
+        install_nvidia_toolkit_package(cfg)
+    configure_nvidia_toolkit(cfg)
+
+
+def install_nvidia_toolkit_package(cfg: BootstrapConfig) -> None:
     apt_run(
         cfg,
         [
@@ -12331,6 +12582,9 @@ def install_gpu_support(cfg: BootstrapConfig) -> None:
         retries=3,
         timeout=180,
     )
+
+
+def configure_nvidia_toolkit(cfg: BootstrapConfig) -> None:
     run_best_effort(cfg, ["ldconfig"], "ldconfig")
     install_nvidia_cdi_normalizer()
     run_best_effort(cfg, ["nvidia-ctk", "cdi", "generate", "--output=/etc/cdi/nvidia.yaml"], "nvidia cdi generate")
@@ -12689,6 +12943,9 @@ def main(argv: list[str]) -> int:
             return run_bootstrap(cfg)
     except Exception as exc:
         log_line(cfg, f"bootstrap: failed: {exc}")
+        # Bootstrap may fail before the host can heartbeat its local state.
+        # Do not leave the control plane displaying the last running phase.
+        report_bootstrap_status(cfg, "error", str(exc))
         return 1
 
 

@@ -1,6 +1,7 @@
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   getFocusMessageButtonStyle,
+  MESSAGE_ACTIONS_STYLE,
   safeRenderSyncdbGetOne,
   SELECTABLE_MARKDOWN_STYLE,
 } from "../message";
@@ -11,6 +12,11 @@ import {
 } from "../message-state";
 
 describe("message action layout", () => {
+  it("keeps persistent message actions in normal flow at the lower left", () => {
+    expect(MESSAGE_ACTIONS_STYLE.justifyContent).toBe("flex-start");
+    expect(MESSAGE_ACTIONS_STYLE.position).toBeUndefined();
+  });
+
   it("does not vertically offset the focus icon button", () => {
     expect(getFocusMessageButtonStyle()).toEqual({
       color: expect.any(String),

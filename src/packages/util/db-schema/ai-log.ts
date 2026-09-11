@@ -28,6 +28,9 @@ export interface AIUsageLogEntry {
   reasoning_output_tokens?: number;
   request_sequence?: number;
   long_context?: boolean;
+  media_operation?: "transcription" | "speech";
+  audio_duration_ms?: number;
+  input_characters?: number;
   system?: string;
   tag?: string; // useful for keeping track of where queries come frome when doing analytics later
   time: Date;
@@ -100,6 +103,20 @@ Table({
     long_context: {
       type: "boolean",
       desc: "Whether long-context pricing applied to this request.",
+    },
+    media_operation: {
+      type: "string",
+      desc: "Media operation represented by this usage event.",
+    },
+    audio_duration_ms: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "Measured or estimated audio duration in milliseconds.",
+    },
+    input_characters: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "Number of text characters supplied to a media model.",
     },
     system: {
       title: "System Context",
@@ -199,6 +216,9 @@ Table({
           reasoning_output_tokens: null,
           request_sequence: null,
           long_context: null,
+          media_operation: null,
+          audio_duration_ms: null,
+          input_characters: null,
           path: null,
           history: null,
           expire: null,
@@ -251,6 +271,9 @@ Table({
           reasoning_output_tokens: null,
           request_sequence: null,
           long_context: null,
+          media_operation: null,
+          audio_duration_ms: null,
+          input_characters: null,
           path: null,
           history: null,
           funded_turn_id: null,

@@ -449,6 +449,7 @@ export default function SupportNew({
   const [type, setType] = useState<TicketType>(initial.type);
   const [body, setBody] = useState(initial.body);
   const [files, setFiles] = useState<SupportFileRef[]>([]);
+  const [contentConsent, setContentConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [successUrl, setSuccessUrl] = useState("");
@@ -485,7 +486,8 @@ export default function SupportNew({
           email,
           subject,
           body,
-          files,
+          support_content_consent: contentConsent,
+          files: contentConsent ? files : [],
           type,
           url: initial.url,
           info,
@@ -677,25 +679,6 @@ export default function SupportNew({
 
           <Divider style={{ margin: 0 }}>Support Ticket</Divider>
 
-          {!initial.hideExtra && type !== "purchase" && type !== "chat" ? (
-            <div>
-              <SectionLabel done={files.length > 0}>
-                Relevant files
-              </SectionLabel>
-              <Paragraph
-                style={{ color: COLORS.GRAY_D, margin: "10px 0 12px 0" }}
-              >
-                Select any relevant projects and files below. This will make it
-                much easier for us to quickly understand your problem.
-              </Paragraph>
-              <RecentFiles
-                disabled={formLocked}
-                interval="1 day"
-                onChange={setFiles}
-              />
-            </div>
-          ) : null}
-
           <div>
             <SectionLabel
               done={body.trim().length >= MIN_BODY_LENGTH && hasRequired}
@@ -731,8 +714,34 @@ export default function SupportNew({
           ) : null}
 
           <SupportSubmissionNotice
+            contentConsent={contentConsent}
+            onContentConsentChange={(value) => {
+              setContentConsent(value);
+              if (!value) setFiles([]);
+            }}
+            disabled={formLocked || submitting}
             style={{ margin: "0 auto", maxWidth: 900, textAlign: "center" }}
           />
+
+          {contentConsent &&
+          !initial.hideExtra &&
+          type !== "purchase" &&
+          type !== "chat" ? (
+            <div>
+              <SectionLabel done={files.length > 0}>
+                Relevant files
+              </SectionLabel>
+              <Paragraph>
+                Optional starting points for support. We may also inspect other
+                relevant content in the projects involved in this request.
+              </Paragraph>
+              <RecentFiles
+                disabled={formLocked}
+                interval="1 day"
+                onChange={setFiles}
+              />
+            </div>
+          ) : null}
 
           <div style={{ textAlign: "center" }}>
             {formLocked ? (
