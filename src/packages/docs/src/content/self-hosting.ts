@@ -53,9 +53,11 @@ CoCalc system on your own VM.
 
 - Use CoCalc Plus for a local single-user install.
 - Use CoCalc Star for a one-command public VM appliance.
-- Use CoCalc Launchpad for lower-level operator control-plane work, custom
-  project-host connectivity, or deployment development.
-- Use CoCalc Rocket for production multi-user or multi-bay deployments.
+- Use CoCalc Launchpad for a bounded private deployment operated by your team,
+  with more control over the environment than Star.
+- Discuss CoCalc Rocket with CoCalc when planning a broader private-cloud
+  deployment, including infrastructure, operational ownership, and support
+  requirements. Rocket has VM and Kubernetes deployment paths.
 
 ## Current beta target
 
