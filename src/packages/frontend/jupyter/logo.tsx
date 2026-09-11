@@ -11,7 +11,7 @@ import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { filename_extension, getRandomColor } from "@cocalc/util/misc";
 import { CSSProperties, useEffect, useState } from "react";
 import useClientContext from "@cocalc/frontend/client/context";
-import { Icon } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components/icon";
 
 const DEFAULT_HEIGHT = 24; // this matches the rest of the status bar.
 

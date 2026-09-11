@@ -15,7 +15,7 @@ Jupyter HTTP server, or Node installation is required on the VM.
 - For the GPU recipe, working NVIDIA drivers and sufficient disk space for
   several GB of PyTorch/CUDA packages. The validated device is an NVIDIA L40S
   with driver 580.173.02; other provider images need separate validation.
-- An updated CoCalc project tools bundle containing `reflect`.
+- An updated CoCalc project tools bundle containing `reflect` 0.17.0 or newer.
 
 The SSH transport is provider-independent. This does not imply that every GCP
 or Nebius GPU image/framework combination has been tested.
@@ -76,21 +76,21 @@ for setup from an otherwise authorized project.
 
 ```sh
 reflect jupyter ssh-targets
-reflect jupyter probe --host my-gpu
+reflect jupyter discover --host my-gpu
 # Include a separately installed Bash, SageJS, or other language environment:
-reflect jupyter probe --host my-gpu --search-path /opt/env/share/jupyter/kernels
-reflect jupyter setup --host my-gpu --target my-bash \
+reflect jupyter discover --host my-gpu --search-path /opt/env/share/jupyter/kernels
+reflect jupyter target add my-bash --host my-gpu \
   --kernel /opt/env/share/jupyter/kernels/bash/kernel.json
 
 # CPU environment:
-reflect jupyter setup --host my-gpu --target my-vm --environment teaching
+reflect jupyter target add my-vm --host my-gpu --environment teaching
 
 # Explicit GPU environment preparation; requires working NVIDIA drivers:
-reflect jupyter setup --host my-gpu --target my-vm \
+reflect jupyter target add my-vm --host my-gpu \
   --environment pytorch --recipe pytorch-cu128
 
 # Or retain an existing environment without modifying it:
-reflect jupyter setup --host my-gpu --target my-vm \
+reflect jupyter target add my-vm --host my-gpu \
   --environment existing --python /home/user/venv/bin/python
 
 jupyter console --kernel reflect-my-vm
@@ -137,19 +137,27 @@ VM DNS name so new SSH connections resolve its current address. A changed host
 key requires explicit verification, not disabling host-key checking.
 
 ```sh
-reflect jupyter targets
-reflect jupyter sessions
+reflect jupyter target list
+reflect jupyter list
 reflect jupyter status SESSION_ID
 reflect jupyter interrupt SESSION_ID
 reflect jupyter stop SESSION_ID
-reflect jupyter remove --target my-vm
+reflect jupyter remove SESSION_ID
+reflect jupyter target remove my-vm --stop
 ```
 
-Session IDs appear in launcher diagnostics. Connection credentials are not part
+Use a local integer ID from `reflect jupyter list`, or the session UUID exposed
+by `reflect jupyter list --json`. Connection credentials are not part
 of ordinary status output. Removal is also available in **Remote kernel >
 Registered kernels**. It disables new launches, stops recorded sessions, then
 removes the local kernelspec/configuration. Failed removal remains disabled and
 can be retried when SSH connectivity returns.
+
+For a permanently unavailable remote, `reflect jupyter remove SESSION_ID --force`
+forgets only its local session record without contacting the remote or confirming
+kernel shutdown. It leaves target registrations intact. Normal session removal
+requires confirmed shutdown; `--stop` explicitly stops first. Do not combine
+`--stop` with `--force`. A local launcher must exit before its record is removed.
 
 **Removing a target or stopping a kernel does not stop the VM or its billing.**
 It also does not delete the remote environment.
