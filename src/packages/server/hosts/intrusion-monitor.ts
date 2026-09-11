@@ -278,14 +278,51 @@ function isGoogleIapSource(source: unknown): boolean {
   return GOOGLE_IAP_SOURCES.check(source, family === 4 ? "ipv4" : "ipv6");
 }
 
-function isActionableAuthentication(value: string): boolean {
+function isActionableAuthentication(
+  value: string,
+  trustedAdminSshSources: Set<string>,
+): boolean {
   const fields = decodeSignal(value);
   return (
     fields == null ||
+    fields[0] !== "publickey" ||
     typeof fields[1] !== "string" ||
     !EXPECTED_IAP_SSH_USERS.has(fields[1]) ||
-    !isGoogleIapSource(fields[2])
+    typeof fields[2] !== "string" ||
+    (!isGoogleIapSource(fields[2]) && !trustedAdminSshSources.has(fields[2]))
   );
+}
+
+export function configuredTrustedAdminSshSources(
+  bayId: string,
+  configured = process.env
+    .COCALC_HOST_INTRUSION_TRUSTED_ADMIN_SSH_SOURCES_BY_BAY,
+): string[] {
+  // This is deliberately keyed by bay rather than a global allowlist. An
+  // operator address valid for one deployment must remain actionable in all
+  // others unless each bay explicitly opts in.
+  if (!configured) return [];
+  try {
+    const byBay: unknown = JSON.parse(configured);
+    if (byBay == null || typeof byBay !== "object" || Array.isArray(byBay)) {
+      throw Error("configuration must be a JSON object");
+    }
+    const values = (byBay as Record<string, unknown>)[bayId];
+    if (values == null) return [];
+    if (
+      !Array.isArray(values) ||
+      values.some((value) => typeof value !== "string" || isIP(value) === 0)
+    ) {
+      throw Error(`configuration for bay ${bayId} must contain only IPs`);
+    }
+    return [...new Set(values as string[])];
+  } catch (err) {
+    logger.warn("invalid bay-scoped trusted admin SSH source configuration", {
+      bayId,
+      err,
+    });
+    return [];
+  }
 }
 
 function isActionableListener(value: string): boolean {
@@ -321,8 +358,10 @@ function isActionableListener(value: string): boolean {
 }
 
 type SnapRevisionSignal = {
+  identity: string;
   key: string;
   revision: string;
+  unit: string;
 };
 
 function snapRevisionSignal(
@@ -333,8 +372,10 @@ function snapRevisionSignal(
     const match = /snap-([^/\s]+)-(\d+)\.mount/.exec(value);
     if (!match) return;
     return {
+      identity: match[1],
       key: value.replace(match[0], `snap-${match[1]}-<revision>.mount`),
       revision: match[2],
+      unit: match[0],
     };
   }
   if (category === "persistence.files") {
@@ -349,16 +390,90 @@ function snapRevisionSignal(
     );
     // Revision-specific mount unit content changes along with its filename.
     fields[5] = null;
-    return { key: encode(fields), revision: match[2] };
+    return {
+      identity: match[1],
+      key: encode(fields),
+      revision: match[2],
+      unit: match[0],
+    };
   }
   return;
 }
 
-function routineSnapRevisionChanges(delta: HostIntrusionSnapshotDelta): {
+function baselineSnapMountIdentities(
+  snapshots: NormalizedHostIntrusionSnapshot[],
+): Set<string> {
+  const identities = new Set<string>();
+  for (const snapshot of snapshots) {
+    for (const value of snapshot.signals["services.enabled"] ?? []) {
+      const signal = snapRevisionSignal("services.enabled", value);
+      if (signal && value === `${signal.unit} enabled enabled`) {
+        identities.add(signal.identity);
+      }
+    }
+  }
+  return identities;
+}
+
+function isVerifiedSnapMountAddition({
+  category,
+  value,
+  delta,
+  installedUnits,
+}: {
+  category: "persistence.files" | "services.enabled";
+  value: string;
+  delta: HostIntrusionSnapshotDelta;
+  installedUnits: Set<string>;
+}): boolean {
+  const signal = snapRevisionSignal(category, value);
+  if (!signal || !installedUnits.has(signal.unit)) return false;
+  // A same-revision removal indicates content or metadata changed, rather than
+  // snapd adding a newly active mount. Keep that transition actionable.
+  if (
+    (delta.removed[category] ?? []).some((removed) => {
+      const previous = snapRevisionSignal(category, removed);
+      return previous?.unit === signal.unit;
+    })
+  ) {
+    return false;
+  }
+  if (category === "services.enabled") {
+    return value === `${signal.unit} enabled enabled`;
+  }
+  const fields = decodeSignal(value);
+  if (!fields || fields.length !== 6) return false;
+  const [path, uid, gid, mode, type, sha256] = fields;
+  if (uid !== 0 || gid !== 0 || typeof path !== "string") return false;
+  if (path === `/etc/systemd/system/${signal.unit}`) {
+    return (
+      mode === "0644" &&
+      type === "file" &&
+      typeof sha256 === "string" &&
+      /^[a-f0-9]{64}$/.test(sha256)
+    );
+  }
+  return (
+    (path === `/etc/systemd/system/multi-user.target.wants/${signal.unit}` ||
+      path ===
+        `/etc/systemd/system/snapd.mounts.target.wants/${signal.unit}`) &&
+    mode === "0777" &&
+    type === "symlink" &&
+    sha256 == null
+  );
+}
+
+function routineSnapRevisionChanges(
+  delta: HostIntrusionSnapshotDelta,
+  installedSnapMountUnits: string[] = [],
+  baselineSnapshots: NormalizedHostIntrusionSnapshot[] = [],
+): {
   added: Set<string>;
   removed: Set<string>;
 } {
   const routine = { added: new Set<string>(), removed: new Set<string>() };
+  const installedUnits = new Set(installedSnapMountUnits);
+  const baselineIdentities = baselineSnapMountIdentities(baselineSnapshots);
   for (const category of ["persistence.files", "services.enabled"] as const) {
     const removedByKey = new Map<string, Array<[string, string]>>();
     for (const value of delta.removed[category] ?? []) {
@@ -370,7 +485,17 @@ function routineSnapRevisionChanges(delta: HostIntrusionSnapshotDelta): {
     }
     for (const value of delta.added[category] ?? []) {
       const signal = snapRevisionSignal(category, value);
-      if (!signal) continue;
+      if (!signal || !baselineIdentities.has(signal.identity)) continue;
+      if (
+        !isVerifiedSnapMountAddition({
+          category,
+          value,
+          delta,
+          installedUnits,
+        })
+      ) {
+        continue;
+      }
       const candidates = removedByKey.get(signal.key);
       const matchIndex =
         candidates?.findIndex(([revision]) => revision !== signal.revision) ??
@@ -379,6 +504,20 @@ function routineSnapRevisionChanges(delta: HostIntrusionSnapshotDelta): {
       const [[, removed]] = candidates.splice(matchIndex, 1);
       routine.added.add(value);
       routine.removed.add(removed);
+    }
+    for (const value of delta.added[category] ?? []) {
+      const signal = snapRevisionSignal(category, value);
+      if (!signal || !baselineIdentities.has(signal.identity)) continue;
+      if (
+        isVerifiedSnapMountAddition({
+          category,
+          value,
+          delta,
+          installedUnits,
+        })
+      ) {
+        routine.added.add(value);
+      }
     }
   }
   return routine;
@@ -548,9 +687,23 @@ export function hasHostIntrusionSnapshotChanges(
 
 export function selectActionableHostIntrusionChanges(
   delta: HostIntrusionSnapshotDelta,
+  {
+    installedSnapMountUnits = [],
+    baselineSnapshots = [],
+    trustedAdminSshSources = [],
+  }: {
+    installedSnapMountUnits?: string[];
+    baselineSnapshots?: NormalizedHostIntrusionSnapshot[];
+    trustedAdminSshSources?: string[];
+  } = {},
 ): HostIntrusionSnapshotDelta {
   const actionable: HostIntrusionSnapshotDelta = { added: {}, removed: {} };
-  const routineSnap = routineSnapRevisionChanges(delta);
+  const trustedAdminSshSourceSet = new Set(trustedAdminSshSources);
+  const routineSnap = routineSnapRevisionChanges(
+    delta,
+    installedSnapMountUnits,
+    baselineSnapshots,
+  );
   for (const [category, values] of Object.entries(delta.added) as Array<
     [MonitoredCategory, string[]]
   >) {
@@ -560,7 +713,9 @@ export function selectActionableHostIntrusionChanges(
       category === "network.listeners"
         ? relevant.filter(isActionableListener)
         : category === "authentication_7d.accepted"
-          ? relevant.filter(isActionableAuthentication)
+          ? relevant.filter((value) =>
+              isActionableAuthentication(value, trustedAdminSshSourceSet),
+            )
           : relevant;
     if (filtered.length) actionable.added[category] = filtered;
   }
@@ -991,6 +1146,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
     ),
   );
   const alertMode = transitionAlertMode();
+  const trustedAdminSshSources = configuredTrustedAdminSshSources(bayId);
 
   await mapWithConcurrency(hosts, concurrency, async (host) => {
     result.checked += 1;
@@ -1022,9 +1178,11 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
 
       const previous = await loadPreviousCompleteSnapshot(host.id);
       let delta: HostIntrusionSnapshotDelta | undefined;
+      let baselineSnapshots: NormalizedHostIntrusionSnapshot[] = [];
       let baseline: HostTransition["baseline"] = "host";
       let comparedWithFleet = false;
       if (previous) {
+        baselineSnapshots = [previous];
         delta = diffHostIntrusionSnapshots(previous, normalized);
       } else if (hadActiveFleetBaseline) {
         const fleet = await loadFleetCompleteSnapshots({
@@ -1032,6 +1190,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
           excludeHostId: host.id,
         });
         if (fleet.length) {
+          baselineSnapshots = fleet;
           delta = diffHostIntrusionSnapshotAgainstFleet(fleet, normalized);
           baseline = "fleet";
           comparedWithFleet = true;
@@ -1049,7 +1208,11 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
           ? undefined
           : alertMode === "all"
             ? delta
-            : selectActionableHostIntrusionChanges(delta);
+            : selectActionableHostIntrusionChanges(delta, {
+                installedSnapMountUnits: source.snap_mount_units,
+                baselineSnapshots,
+                trustedAdminSshSources,
+              });
       const changedDelta =
         alertDelta != null && hasHostIntrusionSnapshotChanges(alertDelta)
           ? alertDelta
