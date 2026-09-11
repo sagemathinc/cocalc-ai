@@ -10,10 +10,31 @@ import {
   CUSTOM_JUPYTER_KERNELS_BODY,
   JUPYTER_STUDIO_BODY,
   OCTAVE_JUPYTER_KERNEL_BODY,
+  REMOTE_JUPYTER_KERNELS_BODY,
   USE_JUPYTER_BODY,
 } from "../content";
 
 export const JUPYTER_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: REMOTE_JUPYTER_KERNELS_BODY.trim(),
+    category: "Jupyter",
+    id: "jupyter.remote-kernels",
+    image: docsIcon(
+      "/public/docs/custom-jupyter-kernels-58a40bde.webp",
+      "A Jupyter kernel connected to a separate computing environment",
+    ),
+    lastReviewed: "2026-09-11",
+    noActionReason:
+      "Remote kernel setup requires a project-specific SSH destination and is configured in the notebook kernel selector.",
+    searchKeywords:
+      "remote kernel SSH GPU CUDA PyTorch SageJS Bash external compute dedicated VM datasets no file sync",
+    slug: "jupyter/remote-kernels",
+    status: "ready",
+    summary:
+      "Use another machine's Jupyter kernel or GPU from a collaborative CoCalc notebook, without automatically synchronizing files.",
+    title: "Remote Jupyter kernels",
+  },
   {
     actions: [
       {

@@ -12,6 +12,7 @@ export * from "./docs";
 export * from "./files";
 export * from "./hosts";
 export * from "./jupyter";
+export * from "./remote-jupyter";
 export * from "./migration";
 export * from "./projects";
 export * from "./research";
