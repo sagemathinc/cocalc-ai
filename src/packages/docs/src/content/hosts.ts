@@ -49,11 +49,34 @@ may place projects there without delegated host access.
 
 ## Project RAM cap
 
-The host **Project resource policy** has an optional per-project RAM cap. This
-cap lets projects use more RAM on a large host without changing normal project
-policy for CPU and storage. Leave it blank when normal project limits should
-apply. Set it deliberately when the host is dedicated to workloads that need
-larger in-memory notebooks, language models, databases, or agents.
+The host **Project resource policy** has an optional per-project RAM cap.
+With the cap blank, a private host uses a default derived from its reported
+RAM when available, with room left for host services. A public shared-pool host
+keeps the project's normal RAM entitlement.
+
+See [Manage project host access and RAM](/docs/hosts/access-and-ram) for the
+defaults and how to plan for several projects running together.
+
+## CPU sharing
+
+Projects can use otherwise-idle CPU capacity on a CoCalc.ai project host.
+When several projects need CPU at the same time, their shared-compute
+priorities determine their relative shares. Higher priority helps under
+contention; it does not reserve particular cores.
+
+To use several cores at once, your program must run work in parallel. The
+number of cores visible to a program does not guarantee that all of them will
+be available to that program throughout a computation.
+
+## GPU access
+
+On an NVIDIA GPU host, GPU-enabled projects receive access to all of the
+host's GPUs. Projects on the same host can use the same devices, so coordinate
+concurrent jobs with other host users and check available GPU memory before
+starting a large workload.
+
+GPU memory is separate from the project RAM cap. Increasing that cap does not
+increase the memory on a GPU.
 
 ## Moving projects
 
@@ -428,15 +451,25 @@ that should only be usable by a known set of people.
 
 ## Per-project RAM cap
 
-The host access page also includes **Project resource policy**. The optional
-RAM cap applies to projects running on that host. It is useful when a large
-dedicated host should permit larger notebooks, agents, or databases than the
-normal project policy allows.
+The host access page includes **Project resource policy**, where an owner or
+manager can set an optional RAM cap for each project running on the host.
 
-Do not set the cap higher than the host can realistically support for the
-number of simultaneous projects. If several projects can run at once, leave
-headroom for the project host itself, filesystem cache, backups, and runtime
-services.
+- **Private host:** an explicit cap sets the project's RAM limit. With the cap
+  blank, the default is based on reported host RAM, with headroom for host
+  services. The user's shared-pool membership RAM limit does not constrain
+  this host-derived default. If host RAM is unavailable, the existing project
+  RAM limit remains in effect.
+- **Public shared pool:** leaving the cap blank keeps the project's normal
+  RAM entitlement. An explicit cap can lower that limit but cannot raise it
+  beyond the project's entitlement.
+
+All projects share the host's physical RAM. Setting a per-project cap does
+not reserve that amount for every project. Plan for the number of projects
+that will run together, and leave headroom for the project host itself,
+filesystem cache, backups, and runtime services.
+
+The cap covers memory used across the project's running processes, including
+notebook kernels, terminals, databases, and agents.
 
 ## Agent notes
 
