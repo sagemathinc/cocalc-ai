@@ -17,6 +17,9 @@ and Rocket expose the broader operator workflows for managing hosts.
 Use project hosts for heavier workloads such as long-running research
 computations, courses, or agent sandboxes.
 
+For a comparison with managed VMs and remote notebook kernels, see
+[Choose compute for research](/docs/hosts/choose-compute).
+
 The host is not just a label. It controls where the project filesystem lives,
 where project processes run, where host-local snapshots are stored, what runtime
 software is installed, which backup region is used, and which users are allowed
