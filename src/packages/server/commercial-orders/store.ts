@@ -3107,7 +3107,9 @@ export async function completeCommercialQuoteAcceptance(
     if (
       moneyCompare(opts.subtotal, quote.subtotal) !== 0 ||
       moneyCompare(opts.total, quote.total) !== 0 ||
-      moneyCompare(opts.tax, 0) !== 0 ||
+      moneyCompare(opts.tax, 0) < 0 ||
+      moneyCompare(opts.tax, moneySubtract(quote.total, quote.subtotal)) !==
+        0 ||
       moneyCompare(opts.amount_due, quote.total) !== 0
     ) {
       throw Error("Stripe's accepted quote invoice does not match local terms");

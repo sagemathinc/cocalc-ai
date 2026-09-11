@@ -224,6 +224,8 @@ export interface CommercialOrderTransitionRequest extends CommercialMutationRequ
 }
 
 export interface CommercialInvoicePreview {
+  automatic_tax?: boolean;
+  tax_code?: string;
   order_id: string;
   order_number: string;
   organization_name: string;
@@ -303,6 +305,8 @@ export interface CommercialQuoteLinkResult {
 }
 
 export interface CommercialStripeQuotePreview extends CommercialQuotePreview {
+  automatic_tax?: boolean;
+  tax_code?: string;
   stripe_mode: "test" | "live";
   stripe_customer_id?: string | null;
   collection_method: "send_invoice";
