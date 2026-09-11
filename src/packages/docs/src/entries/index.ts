@@ -110,6 +110,7 @@ const DOCS_ENTRY_IDS = [
   "self-hosting.cocalc-star-local-vm",
   "self-hosting.install-chromium",
   "self-hosting.reverse-ssh-access",
+  "troubleshooting.project-start",
   "troubleshooting.memory",
   "troubleshooting.connectivity",
   "hosts.project-hosts",
