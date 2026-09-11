@@ -8,6 +8,9 @@ and CoCalc's key:value blob storage, rather than adding parallel infrastructure.
 
 ## Current Planning Direction (2026-09-11)
 
+Release go/no-go evidence, remaining gates, deployment order, and rollback are
+tracked in [Workbench First Release](workbench-first-release.md).
+
 Keep PR #509 draft. The next implementation plan is
 [Contextual Replies And Artifact References](chat-contextual-replies.md).
 It supersedes the original single-artifact feedback flow and delivery ordering
