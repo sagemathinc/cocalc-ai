@@ -399,6 +399,32 @@ interface HostReadinessAttempt {
   previousSessionId?: string;
 }
 
+function missingReadinessIdentity(attempt: HostReadinessAttempt): boolean {
+  return (
+    attempt.requiresIdentityChange &&
+    !(attempt.provider === "self-host"
+      ? attempt.previousSessionId
+      : attempt.previousBootId)
+  );
+}
+
+class HostReadinessUnverifiedError extends Error {
+  readonly result;
+
+  constructor(attempt: HostReadinessAttempt) {
+    super(
+      `${attempt.provider} recovery request acknowledged, but reboot completion and application readiness are unverified: no pre-operation ${attempt.provider === "self-host" ? "host session" : "boot"} identity was available. The request was sent; it may still be in progress. Check host bootstrap logs and telemetry before retrying.`,
+    );
+    this.result = {
+      cloud_work_id: attempt.workId,
+      provider_action: attempt.action,
+      provider_request_acknowledged: true,
+      readiness: "unverified" as const,
+      reason: "missing_pre_operation_identity",
+    };
+  }
+}
+
 function hostReadinessAttempt(
   kind: HostOpKind,
   input: any,
@@ -420,14 +446,8 @@ function hostReadinessAttempt(
   const previousBootId = `${metadata.host_boot_id ?? ""}`.trim() || undefined;
   const previousSessionId =
     `${metadata.host_session_id ?? ""}`.trim() || undefined;
-  if (
-    requiresIdentityChange &&
-    !(provider === "self-host" ? previousSessionId : previousBootId)
-  ) {
-    throw new Error(
-      `cannot verify ${provider} reboot: missing pre-operation ${provider === "self-host" ? "host session" : "boot"} identity; refresh host telemetry before retrying (no reboot queued)`,
-    );
-  }
+  // First-bootstrap failures may never register an identity. Preserve in-place
+  // recovery dispatch, but do not certify those requests as completed reboots.
   return {
     since,
     action:
@@ -555,6 +575,13 @@ async function waitForHostStatus({
     const completedAt = readinessAttempt
       ? await loadActionCompletion(host_id, readinessAttempt)
       : undefined;
+    if (
+      readinessAttempt &&
+      completedAt != null &&
+      missingReadinessIdentity(readinessAttempt)
+    ) {
+      throw new HostReadinessUnverifiedError(readinessAttempt);
+    }
     if (
       desired.includes(status) &&
       (!readinessAttempt ||
@@ -2732,18 +2759,33 @@ async function handleOp(op: LroSummary): Promise<void> {
       });
     } else {
       logger.warn("host op failed", { op_id, kind, err: `${err}` });
+      // Acknowledged recovery is not a verified reboot. Preserve that distinction
+      // in the durable result without changing the host's actual status.
+      const unverified = err instanceof HostReadinessUnverifiedError;
       const updated = await updateLro({
         op_id,
         status: "failed",
         error: `${err}`,
+        ...(unverified
+          ? {
+              result: { host_id, ...err.result },
+              progress_summary: { phase: "readiness-unverified", host_id },
+            }
+          : {}),
       });
       if (updated) {
         await publishSummary(updated);
       }
-      await progressStep("done", "operation failed", {
-        host_id,
-        error: `${err}`,
-      });
+      await progressStep(
+        unverified ? "readiness-unverified" : "done",
+        unverified ? err.message : "operation failed",
+        {
+          host_id,
+          error: `${err}`,
+          ...(unverified ? err.result : {}),
+        },
+        100,
+      );
     }
   } finally {
     if (

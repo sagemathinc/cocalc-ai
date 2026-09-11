@@ -461,23 +461,30 @@ describe("hosts start-worker wait cancellation", () => {
   });
 
   test.each(["gcp", "hyperstack", "lambda"])(
-    "%s reboot fails before dispatch without a boot baseline",
+    "%s recovery reboot remains dispatchable without a boot baseline",
     (cloud) => {
       for (const host_boot_id of [undefined, "", "   "]) {
-        expect(() =>
-          __test__.hostReadinessAttempt(
-            "host-restart",
-            { mode: "hard" },
-            {
-              metadata: {
-                machine: { cloud },
-                host_boot_id,
-                host_session_id: "old-session",
-              },
+        const attempt = __test__.hostReadinessAttempt(
+          "host-restart",
+          { mode: "hard" },
+          {
+            metadata: {
+              machine: { cloud },
+              host_boot_id,
+              host_session_id: "old-session",
             },
-            1000,
+          },
+          1000,
+        )!;
+        expect(attempt.action).toBe("hard_restart");
+        expect(attempt.requiresIdentityChange).toBe(true);
+        expect(
+          __test__.hostApplicationReady(
+            { last_seen: new Date(2001), metadata: { host_boot_id: "first" } },
+            attempt,
+            2000,
           ),
-        ).toThrow("no reboot queued");
+        ).toBe(false);
       }
     },
   );
@@ -527,16 +534,109 @@ describe("hosts start-worker wait cancellation", () => {
         2000,
       ),
     ).toBe(true);
-    expect(() =>
-      __test__.hostReadinessAttempt(
-        "host-start",
-        {},
-        {
-          metadata: { ...row.metadata, host_boot_id: undefined },
-        },
-        1000,
+    const unobservedAttempt = __test__.hostReadinessAttempt(
+      "host-start",
+      {},
+      {
+        metadata: { ...row.metadata, host_boot_id: undefined },
+      },
+      1000,
+    )!;
+    expect(unobservedAttempt.requiresIdentityChange).toBe(true);
+    expect(
+      __test__.hostApplicationReady(
+        { ...row, last_seen: new Date(2001) },
+        unobservedAttempt,
+        2000,
       ),
-    ).toThrow("no reboot queued");
+    ).toBe(false);
+  });
+
+  test.each([
+    ["gcp", "host-restart"],
+    ["hyperstack", "host-restart"],
+    ["lambda", "host-restart"],
+    ["lambda", "host-start"],
+    ["self-host", "host-restart"],
+  ] as const)(
+    "%s %s acknowledges first-bootstrap recovery without claiming readiness",
+    async (cloud, kind) => {
+      const failedHost = {
+        status: "error",
+        metadata: {
+          machine: { cloud },
+          runtime: { instance_id: "existing-vm" },
+          bootstrap: {
+            status: "error",
+            updated_at: new Date(500).toISOString(),
+            message: "old toolkit error",
+          },
+        },
+      };
+      // Building the attempt must not block the subsequent provider dispatch.
+      const attempt = __test__.hostReadinessAttempt(
+        kind,
+        {},
+        failedHost,
+        1000,
+      )!;
+      attempt.workId = "recovery-work";
+      let polls = 0;
+      const result = __test__.waitForHostStatus({
+        host_id: "h",
+        desired: ["running"],
+        readinessAttempt: attempt,
+        bootstrapFailureSince: 1000,
+        loadStatus: async () => {
+          if (++polls > 2) throw new Error("unverified recovery must not hang");
+          return {
+            ...failedHost,
+            status: "running",
+            last_seen: new Date(2001),
+            metadata: {
+              ...failedHost.metadata,
+              host_boot_id: "first-registration",
+              host_session_id: "first-session",
+            },
+          };
+        },
+        loadActionCompletion: async () => (polls === 1 ? undefined : 2000),
+        onUpdate: async () => {},
+        delayFn: async () => {},
+      });
+      await expect(result).rejects.toMatchObject({
+        message: expect.stringContaining("recovery request acknowledged"),
+        result: {
+          cloud_work_id: "recovery-work",
+          provider_action: kind === "host-start" ? "start" : "restart",
+          provider_request_acknowledged: true,
+          readiness: "unverified",
+          reason: "missing_pre_operation_identity",
+        },
+      });
+      expect(polls).toBe(2);
+    },
+  );
+
+  test("unobserved recovery preserves provider failure instead of reporting acknowledgement", async () => {
+    const attempt = __test__.hostReadinessAttempt(
+      "host-restart",
+      {},
+      { metadata: { machine: { cloud: "gcp" } } },
+      1000,
+    )!;
+    await expect(
+      __test__.waitForHostStatus({
+        host_id: "h",
+        desired: ["running"],
+        readinessAttempt: attempt,
+        loadStatus: async () => ({ status: "restarting" }),
+        loadActionCompletion: async () => {
+          throw new Error("provider rejected recovery");
+        },
+        onUpdate: async () => {},
+      }),
+    ).rejects.toThrow("provider rejected recovery");
   });
 
   test("Hyperstack acknowledgement alone is insufficient even with fresh session telemetry", () => {
@@ -563,7 +663,7 @@ describe("hosts start-worker wait cancellation", () => {
         ),
       ).toBe(host_boot_id === "new");
     }
-    // Defense in depth if a caller bypasses preflight validation.
+    // First registration without a baseline cannot prove a reboot occurred.
     expect(
       __test__.hostApplicationReady(
         { last_seen: new Date(2001) },
