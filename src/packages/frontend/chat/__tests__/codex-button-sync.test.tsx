@@ -156,6 +156,11 @@ jest.mock("@cocalc/frontend/account/codex-credentials-panel", () => ({
 
 jest.mock("@cocalc/frontend/account/lite-ai-settings", () => () => null);
 
+// The actual field's keyboard, popover, and Form binding have separate coverage.
+jest.mock("../codex-workbench-field", () => ({
+  CodexWorkbenchField: () => <div>Workbench (experimental)</div>,
+}));
+
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
@@ -203,6 +208,92 @@ describe("CodexConfigButton", () => {
     getCodexUsageStatus.mockResolvedValue({ available: true });
     projectToolsVersion = "tools-v1";
     window.localStorage.clear();
+  });
+
+  it.each([true, false])(
+    "saves the thread-local workbench setting as %s",
+    async (enabled) => {
+      const actions = {
+        workbenchEnabled: true,
+        getCodexConfig: jest.fn(() => undefined),
+        setCodexConfig: jest.fn(),
+      } as any;
+      render(
+        <CodexConfigButton
+          threadKey="thread-1"
+          chatPath="foo.chat"
+          actions={actions}
+        />,
+      );
+      await waitFor(() =>
+        expect(stableForm.setFieldsValue).toHaveBeenCalledWith(
+          expect.objectContaining({ workbench: false }),
+        ),
+      );
+      fireEvent.click(screen.getByText("Codex"));
+      expect(screen.getByText("Workbench (experimental)")).toBeTruthy();
+      expect(actions.setCodexConfig).not.toHaveBeenCalled();
+      stableForm.getFieldsValue.mockReturnValue({ workbench: enabled });
+      fireEvent.click(
+        screen.getByRole("button", { name: "Save", exact: true }),
+      );
+      expect(actions.setCodexConfig).toHaveBeenCalledWith(
+        "thread-1",
+        expect.objectContaining({ workbench: enabled }),
+      );
+    },
+  );
+
+  it("does not carry the workbench opt-in to an unconfigured thread", async () => {
+    const actions = {
+      workbenchEnabled: true,
+      getCodexConfig: jest.fn(),
+      setCodexConfig: jest.fn(),
+    } as any;
+    const { rerender } = render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        actions={actions}
+        threadConfig={{ workbench: true }}
+      />,
+    );
+    await waitFor(() =>
+      expect(stableForm.setFieldsValue).toHaveBeenLastCalledWith(
+        expect.objectContaining({ workbench: true }),
+      ),
+    );
+    fireEvent.click(screen.getByText("Codex"));
+    rerender(
+      <CodexConfigButton
+        threadKey="thread-2"
+        chatPath="foo.chat"
+        actions={actions}
+      />,
+    );
+    await waitFor(() =>
+      expect(stableForm.setFieldsValue).toHaveBeenLastCalledWith(
+        expect.objectContaining({ workbench: false }),
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel", exact: true }),
+    );
+    expect(actions.setCodexConfig).not.toHaveBeenCalled();
+  });
+
+  it("leaves settings in non-workbench surfaces unchanged", () => {
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        actions={
+          { getCodexConfig: jest.fn(), setCodexConfig: jest.fn() } as any
+        }
+      />,
+    );
+    fireEvent.click(screen.getByText("Codex"));
+    expect(screen.queryByText("Workbench (experimental)")).toBeNull();
   });
 
   it("shows model and thinking level in the phone summary and opens settings", async () => {
@@ -1487,6 +1578,9 @@ describe("CodexConfigButton", () => {
   });
 
   it("uses a stable thread config key independent of object identity", () => {
+    expect(codexThreadConfigKey({ workbench: false })).not.toBe(
+      codexThreadConfigKey({ workbench: true }),
+    );
     expect(
       codexThreadConfigKey({
         model: "gpt-5.4",

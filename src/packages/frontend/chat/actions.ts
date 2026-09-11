@@ -500,6 +500,7 @@ export class ChatActions extends Actions<ChatState> {
   // this prevents that at least.
   public chatStreams: Set<string> = new Set([]);
   public frameId: string = "";
+  // Surface capability only; each thread must separately opt in via acp_config.
   public workbenchEnabled = false;
   // this might not be set for deprecated side chat:
   public frameTreeActions?: CodeEditorActions;

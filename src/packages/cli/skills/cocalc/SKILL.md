@@ -330,6 +330,10 @@ For example, a file reference has `file: { path: "/home/user/policy.md" }`;
 it references a real file, not an embedded editable copy. Unsupported previews
 should remain file links, not arbitrary HTML, SVG input, apps, or widget code.
 
+Workbench is off by default. Users enable it per thread in Codex settings >
+Model and session > Workbench (experimental). The full chat editor's presence
+alone is not opt-in. Existing cards remain usable when the setting is off.
+
 In a turn marked workbench-enabled, publication is part of finishing durable
 reviewable work unless the user asks otherwise. Publish plans saved to disk as
 file references (not duplicate editable Markdown), images as file references,
