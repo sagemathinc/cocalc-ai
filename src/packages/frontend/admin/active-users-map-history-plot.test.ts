@@ -1,5 +1,8 @@
 import type { ActiveUserMapHistoryPoint } from "@cocalc/conat/inter-bay/api";
-import { buildActiveUsersHistoryPlotSeries } from "./active-users-map-history-plot";
+import {
+  activeUsersHistoryTickStep,
+  buildActiveUsersHistoryPlotSeries,
+} from "./active-users-map-history-plot";
 
 function point(
   snapshot_hour: string,
@@ -85,5 +88,30 @@ describe("buildActiveUsersHistoryPlotSeries", () => {
       snapshot_hour: "2026-07-10T14:00:00.000Z",
       active_count: 6,
     });
+  });
+});
+
+describe("activeUsersHistoryTickStep", () => {
+  function series(
+    current: Array<number | null>,
+    previous: Array<number | null> = [],
+  ) {
+    const points = (counts: Array<number | null>) =>
+      counts.map((active_count, index) => ({
+        actual_date: `2026-08-${index + 1}`,
+        display_date: `2026-08-${index + 1}`,
+        snapshot_hour: null,
+        active_count,
+      }));
+    return { current: points(current), previous: points(previous) };
+  }
+
+  it("never selects a fractional user interval", () => {
+    expect(activeUsersHistoryTickStep(series([0, 1]))).toBe(1);
+  });
+
+  it("selects a readable integer interval for larger counts", () => {
+    expect(activeUsersHistoryTickStep(series([2, 8]))).toBe(2);
+    expect(activeUsersHistoryTickStep(series([2], [3_400]))).toBe(1_000);
   });
 });

@@ -32,6 +32,23 @@ export interface ActiveUsersHistoryPlotSeries {
   previous: ActiveUsersHistoryPlotPoint[];
 }
 
+export function activeUsersHistoryTickStep(
+  series: ActiveUsersHistoryPlotSeries,
+  targetIntervals = 5,
+): number {
+  const maximum = Math.max(
+    0,
+    ...series.current.map(({ active_count }) => active_count ?? 0),
+    ...series.previous.map(({ active_count }) => active_count ?? 0),
+  );
+  const roughStep = Math.max(1, maximum / targetIntervals);
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+  const normalized = roughStep / magnitude;
+  const factor =
+    normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return Math.max(1, factor * magnitude);
+}
+
 function bucketDate(
   value: string | Date,
   activeMinutes: ActiveUserMapHistoryWindowMinutes,
@@ -184,6 +201,7 @@ export function ActiveUsersMapHistoryPlot({
     : undefined;
   const hasPrevious = (series?.previous.length ?? 0) > 0;
   const comparisonLabel = activeMinutes === 1440 ? "364 days" : "28 days";
+  const yTickStep = series ? activeUsersHistoryTickStep(series) : 1;
   const countryOptions = [
     { label: "All the world", value: ALL_COUNTRIES },
     ...(history?.country_codes ?? []).map((countryCode) => ({
@@ -232,8 +250,8 @@ export function ActiveUsersMapHistoryPlot({
               type: "scatter",
               mode: plotMode(series.current),
               connectgaps: false,
-              line: { color: COLORS.BLUE_D },
-              marker: { color: COLORS.BLUE_D },
+              line: { color: COLORS.CATEGORICAL[0], width: 3 },
+              marker: { color: COLORS.CATEGORICAL[0] },
               name: hasPrevious ? `Latest ${comparisonLabel}` : "Active users",
               hovertemplate: "%{y:,}<extra>%{fullData.name}</extra>",
             },
@@ -244,8 +262,8 @@ export function ActiveUsersMapHistoryPlot({
                     type: "scatter" as const,
                     mode: plotMode(series.previous),
                     connectgaps: false,
-                    line: { color: COLORS.GRAY, dash: "dash" },
-                    marker: { color: COLORS.GRAY },
+                    line: { color: COLORS.CATEGORICAL[3], width: 2 },
+                    marker: { color: COLORS.CATEGORICAL[3] },
                     name: `Previous ${comparisonLabel}`,
                     hovertemplate: "%{y:,}<extra>%{fullData.name}</extra>",
                   },
@@ -255,7 +273,14 @@ export function ActiveUsersMapHistoryPlot({
           layout={{
             height: 320,
             hovermode: "x unified",
-            margin: { l: 55, r: 20, t: 20, b: 45 },
+            legend: {
+              orientation: "h",
+              x: 0,
+              xanchor: "left",
+              y: 1,
+              yanchor: "top",
+            },
+            margin: { l: 20, r: 55, t: 20, b: 45 },
             shapes: selectedDate
               ? [
                   {
@@ -277,7 +302,12 @@ export function ActiveUsersMapHistoryPlot({
                   ? "%B %-d, %Y UTC"
                   : "%B %-d, %Y, %H:%M UTC",
             },
-            yaxis: { rangemode: "tozero" },
+            yaxis: {
+              dtick: yTickStep,
+              rangemode: "tozero",
+              side: "right",
+              tickformat: ",d",
+            },
           }}
           config={{ displayModeBar: false, responsive: true }}
           onClick={(event) => {

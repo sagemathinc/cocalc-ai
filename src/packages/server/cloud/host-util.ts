@@ -514,8 +514,12 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
     }
   }
   if (providerId === "gcp" && gpu) {
+    // The deployed container-runtime bundle links against Ubuntu 24.04's
+    // libgpgme.so.11. New accelerator OS releases require runtime validation
+    // before adoption; choosing the newest image can leave Podman unstartable.
     const { family, project } = await getGcpAcceleratorImage(
       machine.machine_type ?? "",
+      { ubuntuVersion: 2404 },
     );
     sourceImage = undefined;
     sourceImageFamily = family;
