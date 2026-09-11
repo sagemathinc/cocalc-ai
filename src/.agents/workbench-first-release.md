@@ -169,6 +169,20 @@ packaging or a fully identified frontend/tools/ACP rollback pair.
 
 #### Outstanding Delivery Reproduction
 
+Follow-up fix: `281728417e`. Local comments now remain open with "Sending..."
+until the existing ACP state reports queue/running/sent, or a backend-owned
+assistant row confirms the submission. Local row existence alone never counts.
+After 30 seconds without confirmation, retain the private draft and show an
+unconfirmed status. Reopened submitted drafts check the original identity
+without blindly dispatching again. Outbox recovery marks missing agent messages
+as not sent. This reuses the existing ACP/outbox path, not a new execution queue.
+
+Validation: 34 focused tests across four suites, frontend typecheck, lint, and
+development build pass. Tests cover delayed acknowledgment, timeout, Escape
+during sending, and interrupted editor/reopen without duplicate dispatch.
+The post-fix immediate-close browser smoke still needs a successful rerun;
+do not infer that it passed from the deterministic tests.
+
 - A whole-image comment was saved in the correct thread, but closing its page
   immediately after the local editor reported success produced no assistant
   turn. A later comment with the page kept open for 15 seconds received a reply.
