@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from "react";
-import { Button, Dropdown, Tag } from "antd";
+import { Button, Dropdown } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -126,54 +126,135 @@ export function ArtifactCard({
           .map((a) => a.title)
           .join(" · ")
       : s.markdown.replace(/[#*`>]/g, "").trim());
+  const hasThumbnail = !!(
+    theme?.image_blob ||
+    (projectId && s.file && /\.(png|jpe?g|gif|webp)$/i.test(s.file.path))
+  );
+  const metadata = s.commit
+    ? `${s.commit.sha.slice(0, 12)}${s.commit.branch ? ` · ${s.commit.branch}` : ""}`
+    : s.github_pr
+      ? `${s.github_pr.repository} #${s.github_pr.number} · ${s.github_pr.draft ? "Draft" : s.github_pr.state} · Checks: ${s.github_pr.checks}`
+      : s.actions
+        ? `${s.actions.length} proposed actions · Review drafts`
+        : s.file
+          ? s.file.path
+          : excerpt;
+  const details = [
+    kind,
+    metadata,
+    excerpt,
+    s.file ? "Current saved file, not historical contents" : "",
+    s.github_pr ? `Status retrieved ${s.github_pr.fetched_at}` : "",
+    s.commit?.path,
+    updated ? "Updated since this message" : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
   return (
     <article
       aria-label={`${kind}: ${title}`}
+      title={details}
       style={{
-        marginTop: 12,
+        position: "relative",
+        width: "fit-content",
+        maxWidth: "min(520px, 100%)",
+        minWidth: 0,
+        boxSizing: "border-box",
+        marginTop: 6,
         border: `1px solid ${UI_COLORS.border}`,
         borderInlineStart: `3px solid ${theme?.color ?? UI_COLORS.border}`,
-        borderRadius: 12,
+        borderRadius: 8,
         background: theme?.accent_color
           ? `linear-gradient(120deg, color-mix(in srgb, ${theme.accent_color} 10%, ${UI_COLORS.surface}), ${UI_COLORS.surface})`
           : `linear-gradient(120deg, ${UI_COLORS.surface}, ${UI_COLORS.inset})`,
         color: UI_COLORS.text,
-        overflow: "hidden",
       }}
     >
+      {open && (
+        <Button
+          type="text"
+          aria-label={`Open artifact: ${title}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            open();
+          }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            borderRadius: 7,
+          }}
+        />
+      )}
       <div
         style={{
           display: "flex",
-          alignItems: "start",
-          padding: "14px 14px 8px",
-          gap: 8,
+          alignItems: "center",
+          gap: 10,
+          padding: "10px 12px",
+          pointerEvents: "none",
+          minWidth: 0,
         }}
       >
-        {open ? (
-          <Button
-            type="text"
-            aria-label={`Open artifact: ${title}`}
-            disabled={!open}
-            onClick={(e) => {
-              e.stopPropagation();
-              open?.();
-            }}
+        <span
+          aria-hidden
+          style={{
+            flex: "0 0 48px",
+            width: 48,
+            height: 48,
+            display: "grid",
+            placeItems: "center",
+            borderRadius: 6,
+            background: UI_COLORS.surface,
+            fontSize: 22,
+          }}
+        >
+          {hasThumbnail ? (
+            <Suspense
+              fallback={<Icon name={(theme?.icon || icon) as IconName} />}
+            >
+              <Thumbnail
+                imageBlob={theme?.image_blob}
+                path={s.file?.path}
+                projectId={projectId}
+                title={title}
+              />
+            </Suspense>
+          ) : (
+            <Icon name={(theme?.icon || icon) as IconName} />
+          )}
+        </span>
+        <span style={{ minWidth: 0, flex: "1 1 auto", lineHeight: 1.45 }}>
+          <strong
             style={{
-              padding: 0,
-              height: "auto",
-              whiteSpace: "normal",
-              textAlign: "start",
-              flex: 1,
-              minWidth: 0,
-              justifyContent: "start",
-              color: "inherit",
+              display: "block",
+              fontSize: 14,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
             }}
           >
-            <ArtifactIdentity title={s.title} theme={theme} icon={icon} />
-          </Button>
-        ) : (
-          <ArtifactIdentity title={s.title} theme={theme} icon={icon} />
-        )}
+            {title}
+          </strong>
+          <span
+            style={{
+              display: "block",
+              fontSize: 12,
+              color: UI_COLORS.secondary,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {s.file || s.commit ? (
+              <code style={{ fontSize: "inherit" }}>{metadata}</code>
+            ) : (
+              metadata || kind
+            )}
+            {updated && <span> · Updated</span>}
+          </span>
+        </span>
         {open && (
           <Dropdown
             autoFocus
@@ -199,86 +280,17 @@ export function ArtifactCard({
           >
             <Button
               type="text"
+              size="small"
               aria-label={`More options for ${title}`}
+              style={{
+                pointerEvents: "auto",
+                flexShrink: 0,
+                position: "relative",
+              }}
               onClick={(e) => e.stopPropagation()}
               icon={<Icon name="ellipsis" />}
             />
           </Dropdown>
-        )}
-      </div>
-      <div style={{ padding: "0 16px 14px", overflowWrap: "anywhere" }}>
-        <div
-          style={{ fontSize: 12, color: UI_COLORS.secondary, marginBottom: 8 }}
-        >
-          {kind}
-          {s.github_pr
-            ? ` · ${s.github_pr.repository} #${s.github_pr.number}`
-            : ""}
-        </div>
-        {updated && (
-          <div
-            style={{
-              fontSize: 11,
-              color: UI_COLORS.secondary,
-              marginBottom: 6,
-            }}
-          >
-            Updated since this message
-          </div>
-        )}
-        {excerpt && (
-          <div
-            style={{
-              display: "-webkit-box",
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: "vertical",
-              overflow: "hidden",
-              lineHeight: 1.5,
-              marginBottom: 8,
-            }}
-          >
-            {excerpt.slice(0, 280)}
-          </div>
-        )}
-        {s.file && (
-          <div>
-            <code>{s.file.path}</code>
-            <div style={{ fontSize: 12, color: UI_COLORS.secondary }}>
-              Current saved file, not historical contents
-            </div>
-          </div>
-        )}
-        {(theme?.image_blob ||
-          (projectId &&
-            s.file &&
-            /\.(png|jpe?g|gif|webp)$/i.test(s.file.path))) && (
-          <Suspense fallback={<div style={{ height: 180 }} />}>
-            <Thumbnail
-              imageBlob={theme?.image_blob}
-              path={s.file?.path}
-              projectId={projectId}
-              title={title}
-            />
-          </Suspense>
-        )}
-        {s.actions && (
-          <Tag>{s.actions.length} proposed actions · Review drafts</Tag>
-        )}
-        {s.github_pr && (
-          <>
-            <Tag>{s.github_pr.draft ? "Draft" : s.github_pr.state}</Tag>
-            <Tag>Checks: {s.github_pr.checks}</Tag>
-            <div style={{ fontSize: 11, color: UI_COLORS.secondary }}>
-              Status retrieved {s.github_pr.fetched_at}
-            </div>
-          </>
-        )}
-        {s.commit && (
-          <>
-            <code>{s.commit.sha.slice(0, 12)}</code>
-            {s.commit.branch && ` · ${s.commit.branch}`}
-            <div style={{ fontSize: 12 }}>{s.commit.path}</div>
-          </>
         )}
       </div>
       {editing && current && (

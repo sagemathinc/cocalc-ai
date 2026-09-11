@@ -33,6 +33,7 @@ test("file fallback is viewer-aware, lazy, bounded and recovers for a new source
   expect(img.getAttribute("src")).toBe("/authed/plot.png?viewer=1");
   expect(img.getAttribute("loading")).toBe("lazy");
   expect(img.style.objectFit).toBe("contain");
+  expect(img.parentElement).toHaveStyle({ width: "48px", height: "48px" });
   fireEvent.error(img);
   expect(screen.getByText("Preview unavailable")).toBeTruthy();
   rerender(<Thumbnail projectId="project" path="/new.png" title="New plot" />);

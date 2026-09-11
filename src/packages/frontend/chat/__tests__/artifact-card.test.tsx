@@ -29,6 +29,8 @@ test("card title and history are keyboard accessible without triggering the surr
   );
   await user.keyboard("{Enter}");
   expect(open).toHaveBeenCalledWith();
+  await user.keyboard(" ");
+  expect(open).toHaveBeenCalledTimes(2);
   expect(parent).not.toHaveBeenCalled();
   await user.tab();
   expect(document.activeElement).toBe(
@@ -48,4 +50,38 @@ test("card title and history are keyboard accessible without triggering the surr
   });
   await waitFor(() => expect(open).toHaveBeenCalledWith("version"));
   expect(parent).not.toHaveBeenCalled();
+});
+
+test("compact attachment bounds its width and keeps metadata on one line", () => {
+  render(
+    <ArtifactCard
+      publication={
+        {
+          snapshot: {
+            title: "A very long file title ".repeat(20),
+            markdown: "A description that belongs in the workbench.",
+            file: { path: "/repo/" + "long-directory/".repeat(20) + "plan.md" },
+          },
+        } as any
+      }
+      open={jest.fn()}
+    />,
+  );
+  expect(screen.getByRole("article")).toHaveStyle({
+    width: "fit-content",
+    maxWidth: "min(520px, 100%)",
+  });
+  const open = screen.getByRole("button", { name: /Open artifact:/ });
+  expect(open).toHaveStyle({
+    position: "absolute",
+    width: "100%",
+    height: "100%",
+  });
+  expect(screen.getByText(/\/repo\//).parentElement).toHaveStyle({
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
+  });
+  expect(
+    screen.queryByText("A description that belongs in the workbench."),
+  ).toBeNull();
 });

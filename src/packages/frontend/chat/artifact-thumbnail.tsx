@@ -16,8 +16,8 @@ export function ThumbnailImage({
   return (
     <div
       style={{
-        height: 160,
-        margin: "10px 0",
+        width: 48,
+        height: 48,
         borderRadius: 8,
         overflow: "hidden",
         background: UI_COLORS.inset,
@@ -32,10 +32,17 @@ export function ThumbnailImage({
           loading="lazy"
           decoding="async"
           onError={() => setFailed(src)}
-          style={{ width: "100%", height: 160, objectFit: "contain" }}
+          style={{ width: "100%", height: 48, objectFit: "contain" }}
         />
       ) : (
-        <span style={{ fontSize: 12, color: UI_COLORS.secondary }}>
+        <span
+          style={{
+            fontSize: 10,
+            lineHeight: 1.2,
+            textAlign: "center",
+            color: UI_COLORS.secondary,
+          }}
+        >
           {failed ? "Preview unavailable" : "Preparing preview..."}
         </span>
       )}
