@@ -170,6 +170,10 @@ test("saved comparison feedback sends by keyboard without worktree consent and c
   await user.keyboard("{Enter}");
   await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
   expect(send.mock.calls[0][0]).toContain(target.head);
+  expect(send.mock.calls[0][1]).toEqual({
+    title: "Address comparison review",
+    preserveThread: true,
+  });
   expect(send.mock.calls[0][0]).toContain(target.base);
   expect(send.mock.calls[0][1]).toEqual({
     title: "Address comparison review",
@@ -179,6 +183,27 @@ test("saved comparison feedback sends by keyboard without worktree consent and c
   expect(
     jest.mocked(saveTargetReview).mock.calls[0][0].body.last_submitted_at,
   ).toEqual(expect.any(Number));
+});
+
+test("origin-thread feedback works without worktree consent or matching HEAD", async () => {
+  savedFeedback();
+  jest.mocked(validateAgentWorktree).mockRejectedValue(Error("HEAD differs"));
+  const send = jest.fn();
+  const user = userEvent.setup();
+  render(<TargetReviewPane {...props} onRequestAgentTurn={send} />);
+  const button = await screen.findByRole("button", {
+    name: "Send saved review to agent",
+  });
+  await waitFor(() => expect(button).toBeEnabled());
+  expect(
+    screen.queryByRole("checkbox", { name: /Send agent feedback in/ }),
+  ).toBeNull();
+  button.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+  expect(send.mock.calls[0][0]).toContain(target.base);
+  expect(send.mock.calls[0][0]).toContain(target.head);
+  expect(validateAgentWorktree).not.toHaveBeenCalled();
 });
 
 test("changed saved heads prevent comparison dispatch", async () => {

@@ -1505,6 +1505,9 @@ importers:
         specifier: ^3.0.1
         version: 3.0.1
     devDependencies:
+      '@cocalc/sync':
+        specifier: workspace:*
+        version: link:../sync
       '@playwright/test':
         specifier: ^1.57.0
         version: 1.57.0

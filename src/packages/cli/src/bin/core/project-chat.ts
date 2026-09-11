@@ -1,9 +1,16 @@
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { prepareArtifactPublication } from "./artifact-publication";
 
 import {
   buildThreadConfigRecord,
   deriveAcpLogRefs,
+  publishArtifact,
+  readArtifact,
+  validateArtifact,
+  validateArtifactPublication,
+  artifactPublicationKey,
+  type PublishArtifactInput,
   type ChatThreadConfigRecord,
 } from "@cocalc/chat";
 import {
@@ -165,6 +172,28 @@ export function mergeThreadConfigRecord(opts: {
   });
 }
 
+export function resolveArtifactMessage(
+  rows: any[],
+  threadId: string,
+  messageDate: string,
+): string {
+  const timestamp = new Date(messageDate).valueOf();
+  if (!threadId.trim() || !Number.isFinite(timestamp))
+    throw Error("explicit thread and valid message date are required");
+  const matches = rows.filter(
+    (row) =>
+      row.event === "chat" &&
+      row.thread_id === threadId &&
+      new Date(row.date).valueOf() === timestamp &&
+      typeof row.message_id === "string",
+  );
+  if (matches.length !== 1)
+    throw Error(
+      "producing message is missing or ambiguous; do not substitute the latest message",
+    );
+  return matches[0].message_id;
+}
+
 async function withProjectChatFile<Ctx, Project extends ProjectIdentity, T>({
   deps,
   ctx,
@@ -216,6 +245,125 @@ async function withProjectChatFile<Ctx, Project extends ProjectIdentity, T>({
 export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
   deps: ProjectChatOpsDeps<Ctx, Project>,
 ) {
+  async function projectChatArtifactData({
+    ctx,
+    projectIdentifier,
+    path,
+    threadId,
+    action,
+    artifactId,
+    operationId,
+    messageDate,
+    experimental,
+    payload,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    threadId: string;
+    action: "create" | "update" | "read" | "list" | "context" | "publish";
+    artifactId?: string;
+    operationId?: string;
+    messageDate?: string;
+    experimental?: boolean;
+    payload?: PublishArtifactInput;
+  }) {
+    if (
+      (action === "create" || action === "update" || action === "publish") &&
+      experimental !== true
+    ) {
+      throw Error("artifact writes require explicit experimental opt-in");
+    }
+    return await withProjectChatFile({
+      deps,
+      ctx,
+      projectIdentifier,
+      chatPath: path,
+      fn: async ({ syncdb, rows, project }) => {
+        if (action === "publish") {
+          const input = prepareArtifactPublication({
+            payload: payload ?? {},
+            threadId,
+            artifactId,
+            messageId: resolveArtifactMessage(
+              rows,
+              threadId,
+              messageDate ?? "",
+            ),
+          });
+          const result = publishArtifact(syncdb, input);
+          syncdb.commit();
+          await syncdb.save();
+          await syncdb.save_to_disk();
+          return {
+            ...result,
+            artifact_id: input.artifact_id,
+            message_id: input.message_id,
+            operation_id: input.operation_id,
+            current: readArtifact(syncdb, input),
+          };
+        }
+        if (action === "context") {
+          return {
+            project_id: project.project_id,
+            path,
+            thread_id: threadId,
+            message_id: resolveArtifactMessage(
+              rows,
+              threadId,
+              messageDate ?? "",
+            ),
+          };
+        }
+        if (action === "list") {
+          return rows
+            .filter(
+              (row) =>
+                row.event === "chat-artifact" && row.thread_id === threadId,
+            )
+            .slice(0, 100)
+            .map(validateArtifact);
+        }
+        const target = { thread_id: threadId, artifact_id: artifactId ?? "" };
+        if (action === "read") {
+          return operationId
+            ? validateArtifactPublication(
+                syncdb.get_one(artifactPublicationKey(target, operationId)),
+              )
+            : readArtifact(syncdb, target);
+        }
+        if (
+          !payload ||
+          (action === "update"
+            ? typeof payload.base !== "string"
+            : payload.base !== undefined)
+        ) {
+          throw Error(
+            "create requires a payload without base; update requires the base returned by read",
+          );
+        }
+        // An artifact belongs to an actual producing message, never browser selection.
+        if (
+          !rows.some(
+            (row) =>
+              row.event === "chat" &&
+              row.thread_id === threadId &&
+              row.message_id === payload.message_id,
+          )
+        ) {
+          throw Error(
+            "artifact producing message does not exist in the specified thread",
+          );
+        }
+        const result = publishArtifact(syncdb, { ...payload, ...target });
+        syncdb.commit();
+        await syncdb.save();
+        await syncdb.save_to_disk();
+        return { ...result, current: readArtifact(syncdb, target) };
+      },
+    });
+  }
+
   async function projectChatThreadCreateData({
     ctx,
     projectIdentifier,
@@ -459,6 +607,7 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
   }
 
   return {
+    projectChatArtifactData,
     projectChatThreadCreateData,
     projectChatThreadStatusData,
     projectChatAutomationData,

@@ -56,84 +56,102 @@ describe("processAcpLLM", () => {
     resetAcpApiStateForTests();
   });
 
-  it("uses steer for Send Now without interrupting the active turn", async () => {
-    jest.spyOn(Date, "now").mockReturnValue(4700);
-    mockSteerAcp.mockResolvedValue({
-      ok: true,
-      state: "steered",
-      threadId: "thr-running-47",
-    });
+  it.each([
+    [undefined, undefined, false],
+    [true, undefined, false],
+    [true, false, false],
+    [true, true, true],
+    [false, true, false],
+    [undefined, true, false],
+  ])(
+    "uses steer with surface=%s and thread opt-in=%s (workbench=%s)",
+    async (surface, optIn, enabled) => {
+      jest.spyOn(Date, "now").mockReturnValue(4700);
+      mockSteerAcp.mockResolvedValue({
+        ok: true,
+        state: "steered",
+        threadId: "thr-running-47",
+      });
 
-    const acpState = new FakeAcpState();
-    const store: any = {
-      get: (key: string) => {
-        if (key === "project_id") return "proj";
-        if (key === "path") return "x.chat";
-        if (key === "acpState") return acpState;
-        return undefined;
-      },
-      setState: jest.fn(),
-    };
-
-    const actions: any = {
-      syncdb: {
-        save: jest.fn().mockResolvedValue(undefined),
-        set: jest.fn(),
-        commit: jest.fn(),
-      },
-      store,
-      chatStreams: new Set<string>(),
-      getAllMessages: () =>
-        new Map<string, any>([
-          [
-            "4700",
-            {
-              date: new Date(4700),
-              message_id: "root-msg-47",
-              thread_id: "thread-47",
-            },
-          ],
-        ]),
-      getThreadMetadata: jest.fn(() => undefined),
-      getMessagesInThread: jest.fn(() => []),
-      getCodexConfig: jest.fn(() => undefined),
-      sendReply: jest.fn(),
-    };
-
-    const message: any = {
-      event: "chat",
-      sender_id: "user-1",
-      date: new Date(4700),
-      message_id: "user-msg-47",
-      thread_id: "thread-47",
-      history: [
-        {
-          author_id: "user-1",
-          content: "please focus on tests",
-          date: new Date(4700).toISOString(),
+      const acpState = new FakeAcpState();
+      const store: any = {
+        get: (key: string) => {
+          if (key === "project_id") return "proj";
+          if (key === "path") return "x.chat";
+          if (key === "acpState") return acpState;
+          return undefined;
         },
-      ],
-    };
+        setState: jest.fn(),
+      };
 
-    await processAcpLLM({
-      message,
-      model: "codex-agent",
-      input: "please focus on tests",
-      actions,
-      sendMode: "immediate",
-    });
+      const actions: any = {
+        workbenchEnabled: surface,
+        syncdb: {
+          save: jest.fn().mockResolvedValue(undefined),
+          set: jest.fn(),
+          commit: jest.fn(),
+        },
+        store,
+        chatStreams: new Set<string>(),
+        getAllMessages: () =>
+          new Map<string, any>([
+            [
+              "4700",
+              {
+                date: new Date(4700),
+                message_id: "root-msg-47",
+                thread_id: "thread-47",
+              },
+            ],
+          ]),
+        getThreadMetadata: jest.fn(() => undefined),
+        getMessagesInThread: jest.fn(() => []),
+        getCodexConfig: jest.fn(() => ({ workbench: optIn })),
+        sendReply: jest.fn(),
+      };
 
-    expect(mockSteerAcp).toHaveBeenCalledTimes(1);
-    expect(mockStreamAcp).not.toHaveBeenCalled();
-    expect(mockInterruptAcp).not.toHaveBeenCalled();
-    expect(acpState.get("message:user-msg-47")).toBe("sent");
-    expect(actions.syncdb.set).toHaveBeenCalledWith(
-      expect.objectContaining({
+      const message: any = {
+        event: "chat",
+        sender_id: "user-1",
+        date: new Date(4700),
         message_id: "user-msg-47",
-        acp_state: "sent",
-      }),
-    );
-  });
+        thread_id: "thread-47",
+        history: [
+          {
+            author_id: "user-1",
+            content: "please focus on tests",
+            date: new Date(4700).toISOString(),
+          },
+        ],
+      };
+
+      await processAcpLLM({
+        message,
+        model: "codex-agent",
+        input: "please focus on tests",
+        actions,
+        sendMode: "immediate",
+        // Per-turn overrides cannot opt a thread into experimental publication.
+        acpConfigOverride: { workbench: true },
+      });
+
+      expect(mockSteerAcp).toHaveBeenCalledTimes(1);
+      expect(mockSteerAcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chat: expect.objectContaining({ workbench: enabled }),
+        }),
+      );
+      expect(mockStreamAcp).not.toHaveBeenCalled();
+      expect(mockInterruptAcp).not.toHaveBeenCalled();
+      expect(acpState.get("message:user-msg-47")).toBe("sent");
+      expect(actions.syncdb.set).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message_id: "user-msg-47",
+          acp_state: "sent",
+        }),
+      );
+    },
+  );
 
   it("retries a no-ack ACP submission with interrupt and backoff", async () => {
     jest.spyOn(Date, "now").mockReturnValue(4500);
@@ -983,6 +1001,7 @@ describe("queued ACP controls", () => {
           user_parent_message_id: undefined,
           parent_message_id: "user-msg-missing",
           thread_id: "thread-missing",
+          workbench: false,
         }),
       }),
       { timeout: expect.any(Number) },

@@ -40,6 +40,8 @@ import type { NodeDesc } from "../frame-editors/frame-tree/types";
 import { EditorComponentProps } from "../frame-editors/frame-tree/types";
 import type { ChatActions } from "./actions";
 import type { ChatComposerDraftAppendRequest } from "./composer-draft-types";
+import { useArtifactFeedbackDraft } from "./use-artifact-feedback";
+import { artifactFeedbackPrompt } from "@cocalc/chat";
 import { ChatRoomComposer } from "./composer";
 import { ChatSpeechPlayer } from "./audio/chat-speech-player";
 import { SpeechPaneContext } from "./audio/speech-pane-context";
@@ -1092,6 +1094,14 @@ function ChatPanelContent({
       path,
       composerDraftKey,
     });
+  const artifactFeedback = useArtifactFeedbackDraft({
+    actions,
+    account_id,
+    project_id,
+    path,
+    composerDraftKey,
+    threadId: selectedThreadKey,
+  });
   const {
     input: acpPrompt,
     setInput: setAcpPrompt,
@@ -1291,6 +1301,7 @@ function ChatPanelContent({
         const sent = actions.sendChat({
           input: pending.input,
           acp_prompt: pending.acp_prompt,
+          artifact_feedback: pending.artifact_feedback,
           sender_id: pending.sender_id,
           reply_thread_id: pending.reply_thread_id,
           parent_message_id: pending.parent_message_id,
@@ -2047,6 +2058,16 @@ function ChatPanelContent({
   ): Promise<void> {
     const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
     const rawAcpPrompt = `${acpPromptRef.current ?? ""}`.trim();
+    let feedback;
+    try {
+      feedback = artifactFeedback.read();
+    } catch (err) {
+      antdMessage.error(String(err));
+      return;
+    }
+    const feedbackPrompt = feedback
+      ? `${rawAcpPrompt || rawSendingText}\n\n${artifactFeedbackPrompt(feedback)}`
+      : rawAcpPrompt;
     const sendingText = rawSendingText.trim();
     if (sendingText.length === 0) return;
     const target = resolveReplyTarget(opts?.immediate === true);
@@ -2216,7 +2237,8 @@ function ChatPanelContent({
       account_id,
       sender_id: account_id,
       input: resolvedInput,
-      acp_prompt: rawAcpPrompt || undefined,
+      acp_prompt: feedbackPrompt || undefined,
+      artifact_feedback: feedback,
       date: chatIdentity.date,
       message_id: chatIdentity.message_id,
       thread_id: chatIdentity.thread_id,
@@ -2246,7 +2268,8 @@ function ChatPanelContent({
       reply_thread_id,
       parent_message_id,
       input: resolvedInput,
-      acp_prompt: rawAcpPrompt || undefined,
+      acp_prompt: feedbackPrompt || undefined,
+      artifact_feedback: feedback,
       send_mode: sendMode,
       name: newThreadName,
       threadAgent,
@@ -2265,6 +2288,7 @@ function ChatPanelContent({
       setAcpPrompt(rawAcpPrompt);
       return;
     }
+    if (feedback) await artifactFeedback.clear(feedback);
     const threadKey =
       !reply_thread_id && timeStamp
         ? (() => {
@@ -2877,6 +2901,7 @@ function ChatPanelContent({
         <ResolvedThreadNotice resolved={selectedThreadResolved} />
       ) : !readOnly ? (
         <>
+          {artifactFeedback.control}
           <ChatRoomComposer
             actions={actions}
             project_id={project_id}

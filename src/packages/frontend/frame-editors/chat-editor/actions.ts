@@ -39,7 +39,7 @@ const FAST_OPEN_CHAT_STATUS = "Loading live collaboration...";
 const logger = getLogger("frontend:frame-editors:chat-editor");
 const CHAT_FRAME_FOCUS_SELECTORS = [
   '[contenteditable="true"]',
-  '[data-slate-editor="true"]',
+  '[data-slate-editor="true"]:not([contenteditable="false"])',
   '[role="textbox"]',
   ".CodeMirror textarea",
   ".CodeMirror-code",
@@ -50,7 +50,10 @@ const CHAT_FRAME_FOCUS_SELECTORS = [
 
 type ChatEditorState = CodeEditorState & ChatState;
 
-export function focusChatFrameInput(frameId: string): boolean {
+export function focusChatFrameInput(
+  frameId: string,
+  { waitForInput = false }: { waitForInput?: boolean } = {},
+): boolean {
   const frame = document.getElementById(`frame-${frameId}`);
   if (!(frame instanceof HTMLElement)) return false;
   let target: HTMLElement | null = null;
@@ -66,6 +69,33 @@ export function focusChatFrameInput(frameId: string): boolean {
     target.setAttribute("tabindex", "-1");
   }
   target.focus({ preventScroll: true });
+  if (target === frame && waitForInput) {
+    // A restored maximized chat may mount its lazy composer after the frame.
+    // Do not steal focus if the user starts interacting elsewhere meanwhile.
+    const observer = new MutationObserver(() => {
+      if (!frame.isConnected || document.activeElement !== frame) {
+        cleanup();
+        return;
+      }
+      focusChatFrameInput(frameId);
+      if (document.activeElement !== frame) cleanup();
+    });
+    const cleanup = () => {
+      observer.disconnect();
+      window.clearTimeout(timeout);
+      document.removeEventListener("focusin", onFocus);
+    };
+    const onFocus = () => {
+      if (document.activeElement !== frame) cleanup();
+    };
+    const timeout = window.setTimeout(cleanup, 2000);
+    document.addEventListener("focusin", onFocus);
+    observer.observe(frame, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    });
+  }
   return (
     target === document.activeElement || target.contains(document.activeElement)
   );
@@ -209,6 +239,10 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     });
   }
 
+  getArtifactSyncdb() {
+    return this._syncstring;
+  }
+
   getChatActions(
     frameId?,
     opts?: { allowMissingFrameType?: boolean },
@@ -249,6 +283,7 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     // our store is not exactly a ChatStore but it's close enough
     actions.set_syncdb(syncdb, this.store as ChatStore, messageCache);
     actions.frameId = frameId;
+    actions.workbenchEnabled = true;
     actions.frameTreeActions = this as any;
     this.chatActions[frameId] = actions;
     return actions;

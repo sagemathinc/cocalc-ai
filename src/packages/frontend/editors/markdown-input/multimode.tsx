@@ -40,6 +40,8 @@ export default function MultiMarkdownInput({
   unboundedAutoGrow,
   clampAutoGrowToHost,
   getValueRef,
+  mergeRemoteValues,
+  getRemoteValue,
   height = "auto",
   autoGrow,
   hideHelp,
@@ -134,7 +136,7 @@ export default function MultiMarkdownInput({
   const toolbarInset = showToolbarModeSwitch ? 28 : 0;
   const editorHeight =
     showToolbarModeSwitch && height != null && height !== "auto"
-      ? `calc(${height} - ${toolbarInset}px)`
+      ? "100%" // The flex body already excludes the toolbar height.
       : height;
   const shellHeight =
     unboundedAutoGrow && height === "auto"
@@ -436,6 +438,8 @@ export default function MultiMarkdownInput({
         ) : undefined}
         {mode === "editor" ? (
           <SlateRichTextAdapter
+            mergeRemoteValues={mergeRemoteValues}
+            getRemoteValue={getRemoteValue}
             localHistoryCacheId={
               localHistoryCachePrefix != null &&
               (undoMode === "local" || redoMode === "local")

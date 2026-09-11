@@ -1,4 +1,8 @@
 import { Command } from "commander";
+import { readFile } from "node:fs/promises";
+import { basename, resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -40,6 +44,217 @@ export function registerProjectChatCommands(
   } = deps;
 
   const chat = project.command("chat").description("project chat operations");
+
+  const artifact = chat
+    .command("artifact")
+    .description(
+      "experimental Markdown, file-reference, proposed-action, GitHub PR, and commit artifacts with shared appearance",
+    );
+  artifact
+    .command("publish")
+    .description(
+      "publish a reviewable result using current turn context; returns verified card and retry identity",
+    )
+    .option("-w, --project <project>", "target project")
+    .option("--path <path>", "chat path (defaults to COCALC_CODEX_CHAT_PATH)")
+    .option(
+      "--thread-id <id>",
+      "originating thread (defaults to COCALC_CODEX_THREAD_ID)",
+    )
+    .option(
+      "--message-date <date>",
+      "exact producing timestamp (defaults to COCALC_CODEX_MESSAGE_DATE)",
+    )
+    .option(
+      "--source <path>",
+      "absolute project file path to preview, including plans and images",
+    )
+    .option(
+      "--commit <revision>",
+      "pin a commit resolved from the local repository",
+    )
+    .option(
+      "--repo <path>",
+      "local repository/worktree for --commit",
+      process.cwd(),
+    )
+    .option(
+      "--file <path>",
+      "publication JSON: title, markdown, optional file/actions/github_pr/commit/theme; - for stdin",
+    )
+    .option(
+      "--title <title>",
+      "card title (defaults to filename or commit subject for shortcuts)",
+    )
+    .option(
+      "--update <id>",
+      "update this artifact; requires --base from a prior read",
+    )
+    .option(
+      "--base <base>",
+      "reviewed update base; never automatically rebased",
+    )
+    .option(
+      "--experimental",
+      "explicitly enable publication outside a workbench-enabled turn",
+    )
+    .action(async (opts, command: Command) => {
+      await withContext(
+        command,
+        "project chat artifact publish",
+        async (ctx) => {
+          if (!opts.experimental && process.env.COCALC_WORKBENCH !== "1")
+            throw Error(
+              "Publication requires a workbench-enabled turn or --experimental",
+            );
+          if (
+            [opts.source, opts.commit, opts.file].filter(Boolean).length !== 1
+          )
+            throw Error("Choose exactly one of --source, --commit, --file");
+          let payload: any;
+          if (opts.source) {
+            if (!opts.source.startsWith("/"))
+              throw Error("--source must be an absolute project file path");
+            payload = {
+              title: basename(opts.source),
+              file: { path: opts.source },
+            };
+          } else if (opts.commit) {
+            const git = async (...args: string[]) =>
+              (
+                await promisify(execFile)("git", args, {
+                  cwd: resolve(opts.repo),
+                  maxBuffer: 1024 * 1024,
+                })
+              ).stdout.trim();
+            const sha = await git(
+              "rev-parse",
+              "--verify",
+              "--end-of-options",
+              `${opts.commit}^{commit}`,
+            );
+            payload = {
+              title: await git("show", "-s", "--format=%s", sha),
+              commit: {
+                sha,
+                path: await git("rev-parse", "--show-toplevel"),
+                common_directory: await git(
+                  "rev-parse",
+                  "--path-format=absolute",
+                  "--git-common-dir",
+                ),
+              },
+            };
+          } else {
+            let source = "";
+            if (opts.file === "-") {
+              const chunks: Buffer[] = [];
+              let size = 0;
+              for await (const chunk of process.stdin) {
+                const b = Buffer.from(chunk);
+                size += b.length;
+                if (size > 128 * 1024)
+                  throw Error("artifact payload exceeds 128 KiB");
+                chunks.push(b);
+              }
+              source = Buffer.concat(chunks).toString("utf8");
+            } else source = await readFile(opts.file, "utf8");
+            if (Buffer.byteLength(source) > 128 * 1024)
+              throw Error("artifact payload exceeds 128 KiB");
+            payload = JSON.parse(source);
+          }
+          if (opts.title) payload.title = opts.title;
+          if (opts.base !== undefined) payload.base = opts.base;
+          return deps.projectChatArtifactData({
+            ctx,
+            action: "publish",
+            experimental: true,
+            projectIdentifier: opts.project,
+            path: normalizePath(
+              opts.path ?? process.env.COCALC_CODEX_CHAT_PATH,
+            ),
+            threadId: normalizeThreadId(
+              opts.threadId ?? process.env.COCALC_CODEX_THREAD_ID,
+            ),
+            messageDate:
+              opts.messageDate ?? process.env.COCALC_CODEX_MESSAGE_DATE,
+            artifactId: opts.update,
+            payload,
+          });
+        },
+      );
+    });
+  for (const action of [
+    "create",
+    "update",
+    "read",
+    "list",
+    "context",
+  ] as const) {
+    artifact
+      .command(action)
+      .requiredOption("--path <path>", "chat document path")
+      .requiredOption("--thread-id <id>", "originating thread")
+      .option("-w, --project <project>", "project id or name")
+      .option("--artifact-id <id>", "stable artifact id (required except list)")
+      .option("--operation-id <id>", "read an exact published snapshot")
+      .option(
+        "--message-date <date>",
+        "exact producing message timestamp for context",
+      )
+      .option(
+        "--file <path>",
+        "JSON publication payload (Markdown, or one of file, actions, github_pr, commit; optional theme); - for stdin. See exec-api for payload types",
+      )
+      .option("--experimental", "opt into prototype artifact writes")
+      .action(async (opts, command: Command) => {
+        await withContext(
+          command,
+          `project chat artifact ${action}`,
+          async (ctx) => {
+            if (action !== "list" && action !== "context" && !opts.artifactId)
+              throw Error("--artifact-id is required");
+            let payload;
+            if (action === "create" || action === "update") {
+              if (!opts.file)
+                throw Error(
+                  "--file <path> (or --file - for stdin) is required",
+                );
+              let source: string;
+              if (opts.file === "-") {
+                const chunks: Buffer[] = [];
+                let size = 0;
+                for await (const chunk of process.stdin) {
+                  const buffer = Buffer.from(chunk);
+                  size += buffer.length;
+                  if (size > 128 * 1024)
+                    throw Error("artifact payload exceeds 128 KiB");
+                  chunks.push(buffer);
+                }
+                source = Buffer.concat(chunks).toString("utf8");
+              } else {
+                source = await readFile(opts.file, "utf8");
+              }
+              if (Buffer.byteLength(source) > 128 * 1024)
+                throw Error("artifact payload exceeds 128 KiB");
+              payload = JSON.parse(source);
+            }
+            return deps.projectChatArtifactData({
+              ctx,
+              action,
+              projectIdentifier: opts.project,
+              path: normalizePath(opts.path),
+              threadId: normalizeThreadId(opts.threadId),
+              artifactId: opts.artifactId,
+              operationId: opts.operationId,
+              messageDate: opts.messageDate,
+              experimental: opts.experimental,
+              payload,
+            });
+          },
+        );
+      });
+  }
 
   const thread = chat.command("thread").description("project chat threads");
 

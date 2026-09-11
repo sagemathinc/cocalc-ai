@@ -4,7 +4,19 @@
   "description": "Shared chat helpers and types for CoCalc",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "core": [
+        "dist/core.d.ts"
+      ]
+    }
+  },
   "exports": {
+    "./core": {
+      "import": "./dist/core.js",
+      "require": "./dist/core.js",
+      "types": "./dist/core.d.ts"
+    },
     ".": {
       "import": "./dist/index.js",
       "require": "./dist/index.js",

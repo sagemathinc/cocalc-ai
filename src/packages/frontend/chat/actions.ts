@@ -114,6 +114,8 @@ import type {
   ChatExportOpenRequest,
 } from "./export-types";
 import type { ChatComposerDraftAppendRequest } from "./composer-draft-types";
+import { validateArtifactFeedback } from "@cocalc/chat";
+import type { ArtifactFeedback } from "@cocalc/chat";
 
 const AUTOSAVE_INTERVAL = 15_000;
 const logger = getLogger("frontend:chat:actions");
@@ -498,6 +500,8 @@ export class ChatActions extends Actions<ChatState> {
   // this prevents that at least.
   public chatStreams: Set<string> = new Set([]);
   public frameId: string = "";
+  // Surface capability only; each thread must separately opt in via acp_config.
+  public workbenchEnabled = false;
   // this might not be set for deprecated side chat:
   public frameTreeActions?: CodeEditorActions;
   public openExportModal?: (opts?: ChatExportOpenRequest) => void;
@@ -505,6 +509,7 @@ export class ChatActions extends Actions<ChatState> {
   public appendToComposerDraft?: (
     request: ChatComposerDraftAppendRequest,
   ) => void;
+  public stageArtifactFeedback?: (feedback: ArtifactFeedback) => Promise<void>;
   // Shared message cache for this actions instance; used by both React and actions.
   public messageCache?: ChatMessageCache;
   private chatStoreRegistrationAttempted: Set<string> = new Set();
@@ -886,6 +891,7 @@ export class ChatActions extends Actions<ChatState> {
   // chatgpt is totally done.
   sendChat = ({
     input,
+    artifact_feedback,
     acp_prompt,
     sender_id = this.redux.getStore("account").get_account_id(),
     reply_thread_id,
@@ -906,6 +912,7 @@ export class ChatActions extends Actions<ChatState> {
     skipDraftDelete,
   }: {
     input?: string;
+    artifact_feedback?: ArtifactFeedback;
     acp_prompt?: string;
     sender_id?: string;
     reply_thread_id?: string;
@@ -1027,6 +1034,11 @@ export class ChatActions extends Actions<ChatState> {
     }
     if (trimmedAcpPrompt) {
       (message as any).acp_prompt = trimmedAcpPrompt;
+    }
+    if (artifact_feedback) {
+      const feedback = validateArtifactFeedback(artifact_feedback);
+      if (feedback.thread_id !== thread_id) return "";
+      (message as any).artifact_feedback = feedback;
     }
     if (trimmedName && !explicitReplyThreadId) {
       (message as any).name = trimmedName;
@@ -2789,7 +2801,11 @@ export class ChatActions extends Actions<ChatState> {
     const normalizedThreadId = this.normalizeThreadId(threadId);
     if (!normalizedThreadId) return;
     const threadConfig = this.getThreadConfigRecordById(normalizedThreadId);
-    const cfgFromThread = field<CodexThreadConfig>(threadConfig, "acp_config");
+    // Preferred SyncDB records are Immutable, while cache records are plain.
+    const cfgFromThread = field<CodexThreadConfig>(
+      threadConfig?.toJS?.() ?? threadConfig,
+      "acp_config",
+    );
     if (cfgFromThread == null) return;
     return cfgFromThread;
   };

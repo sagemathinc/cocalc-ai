@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { ArtifactSearchResults } from "./artifact-discovery";
 import {
   Alert,
   Button,
@@ -2485,6 +2486,13 @@ export function ChatRoomThreadPanel({
               </span>
             ) : null}
           </div>
+          {selectedThreadId && (
+            <ArtifactSearchResults
+              actions={actions}
+              threadId={selectedThreadId}
+              query={threadSearchQuery}
+            />
+          )}
           {selectedThreadId && threadSearchQuery.trim().length > 0 ? (
             <div
               style={{

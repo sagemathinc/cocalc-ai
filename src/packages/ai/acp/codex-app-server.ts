@@ -363,6 +363,12 @@ function getCoCalcProjectRuntimeGuidance(cliCommand: string): string[] {
     `Example read: ${cliCommand} exec 'const doc = api.text.open({ path: "/home/user/file.md", projectIdentifier: process.env.COCALC_PROJECT_ID }); return await doc.read();'`,
     `Example append: ${cliCommand} exec 'const doc = api.text.open({ path: "/home/user/file.md", projectIdentifier: process.env.COCALC_PROJECT_ID }); const before = await doc.read(); return await doc.append("\\nAgent note", { expectedHash: before.hash });'`,
     "The `api.text` write/append/replace methods save to disk by default; pass `{ saveToDisk: false }` only for intentional live-only collaborative edits.",
+    `For a requested or opted-in chat workbench workflow, inspect \`${cliCommand} project chat artifact --help\` and the cocalc skill. Supported artifacts: collaborative Markdown, file previews, proposed action reviews, GitHub PR cards, and pinned Git commits. Publish useful persistent results through this API; CoCalc handles cards and native frame tabs. If unavailable, report that and use normal text/file links, never direct .chat writes or arbitrary HTML/apps.`,
+    "Use COCALC_CODEX_CHAT_PATH, COCALC_CODEX_THREAD_ID, and COCALC_CODEX_MESSAGE_DATE as explicit originating context when provided. Resolve the producing message with `project chat artifact context --path <chat> --thread-id <thread> --message-date <date>`; never choose the latest message or the selected browser thread.",
+    "Artifact create/update accept --path, --thread-id, --artifact-id and --file <JSON file> (or --file - for stdin). Payload fields: message_id, operation_id (a fresh stable retry ID), title, markdown; other kinds add exactly one of file, actions, github_pr, commit. Optional theme uses shared title/description/color/accent_color/icon/image_blob fields; omit it on updates to retain user appearance. A commit requires full sha, absolute path and common_directory, with optional branch context. Inspect exec-api for installed payload types. Update also requires base from a current artifact read. Retry with the same operation_id and content; a changed-base error requires rereading, not dropping the base check.",
+    "File previews show current saved files, not historical bytes. PR metadata is cached; refresh uses project gh credentials and local review pins revisions. Proposed action decisions return to the originating chat; they do not execute actions or replace service authorization, fresh auth, or audit trails. Recheck the exact approved draft before execution.",
+    "Read the current artifact before changing it, including after user feedback on an older snapshot. Keep the same artifact_id for revisions. Publishing creates a card; do not fabricate a user message, iframe, or Markdown command to display it.",
+    "Artifact writes require explicit prototype opt-in: --experimental on CLI create/update, or experimental: true in api.artifacts.open({ path, threadId, projectIdentifier, experimental: true }). The scripting API has context(messageDate), list(), read(artifactId), create(artifactId, payload), and update(artifactId, payload). Inspect exec-api for the installed declaration before using it.",
   ];
 }
 
@@ -1693,9 +1699,25 @@ function addRuntimeGuidance(
   if (!hasProject) {
     return prompt;
   }
+  // Tool subprocesses in a resumed session may retain their startup environment.
+  // Supply the current, non-secret attribution independently of that environment.
+  const context = Object.fromEntries(
+    [
+      "COCALC_CODEX_CHAT_PATH",
+      "COCALC_CODEX_THREAD_ID",
+      "COCALC_CODEX_MESSAGE_DATE",
+    ].map((key) => [key, runtimeEnv?.[key] ?? ""]),
+  );
+  const attribution = context.COCALC_CODEX_MESSAGE_DATE
+    ? `\n\nCurrent turn publication context (use these exact values as explicit CLI arguments or command-scoped environment overrides, even if a reused shell has older values; never infer the producing message from history):\n${JSON.stringify(context)}`
+    : "";
+  const workbench =
+    runtimeEnv?.COCALC_WORKBENCH === "1"
+      ? `\n\nWorkbench is enabled for this turn. Publishing durable reviewable results is part of task completion: publish written plans/documents as file references, generated images as file references, completed commits and PRs as their respective cards, and support drafts requiring approval as proposed actions. Use ${getCoCalcCliCommand(runtimeEnv)} project chat artifact publish --help. Keep ordinary explanations and scratch work in chat. Read and update an existing artifact when revising the same object; do not duplicate it. Respect a user's request not to publish. Verify the returned publication before claiming success. Publishing proposals does not approve or execute them. If the installed command is unavailable, report the runtime mismatch and use ordinary links; never write .chat files directly.`
+      : "\n\nThis turn has no workbench-enabled surface. Do not publish artifacts by default; use ordinary text and file links unless explicitly requested.";
   return `${getCoCalcRuntimeGuidanceHeader(getCoCalcCliCommand(runtimeEnv), {
     hasBrowser: !!hasBrowser,
-  })}\n\n${prompt}`;
+  })}${attribution}${workbench}\n\n${prompt}`;
 }
 
 function buildTurnInput({
@@ -2713,6 +2735,19 @@ export class CodexAppServerAgent implements AcpAgent {
         ...(spawned.runtimeEnv ?? {}),
       }).filter(([, value]) => typeof value === "string" && !!`${value}`),
     ) as Record<string, string>;
+    // A reused process retains its first turn's environment. Chat attribution
+    // must follow this request, without overriding launcher-owned credentials.
+    for (const key of [
+      "COCALC_CODEX_CHAT_PATH",
+      "COCALC_CODEX_THREAD_ID",
+      "COCALC_CODEX_MESSAGE_DATE",
+      "COCALC_BROWSER_ID",
+      "COCALC_WORKBENCH",
+    ]) {
+      const value = request.runtime_env?.[key];
+      // Empty overrides also clear a value inherited from process startup.
+      turnEnv[key] = typeof value === "string" ? value : "";
+    }
     // Goal lifecycle belongs to Codex and explicit user actions. Starting a
     // chat or automation turn must not clear this or other threads' goals.
     const errors: string[] = [];

@@ -96,6 +96,50 @@ function bindRealDeleteDraft(actions: any): void {
 }
 
 describe("sendChat identity fields", () => {
+  it("retains pinned artifact feedback on the sent message and refuses a different thread", () => {
+    const feedback = {
+      schema_version: 1,
+      artifact_id: "artifact",
+      thread_id: "thread",
+      title: "Draft",
+      markdown: "Hello",
+      rendered_text: "Hello",
+      start: 0,
+      end: 5,
+      quote: "Hello",
+    };
+    const actions = makeActions();
+    actions.sendChat({
+      input: "Shorten this",
+      chatIdentity: {
+        date: "2026-02-21T17:00:00.000Z",
+        thread_id: "thread",
+        message_id: "feedback-message",
+      },
+      reply_thread_id: "thread",
+      artifact_feedback: feedback,
+    });
+    expect(actions.syncdb.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifact_feedback: feedback,
+        thread_id: "thread",
+      }),
+    );
+    actions.syncdb.set.mockClear();
+    expect(
+      actions.sendChat({
+        input: "Wrong thread",
+        chatIdentity: {
+          date: "2026-02-21T17:00:00.000Z",
+          thread_id: "other",
+          message_id: "rejected-message",
+        },
+        reply_thread_id: "other",
+        artifact_feedback: feedback,
+      }),
+    ).toBe("");
+    expect(actions.syncdb.set).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     jest
@@ -963,6 +1007,47 @@ describe("thread-config by thread_id", () => {
     expect(row?.agent_kind).toBe("acp");
     expect(row?.agent_mode).toBe("interactive");
   });
+
+  it.each([true, false])(
+    "reads saved workbench=%s through the preferred SyncDB record path",
+    (workbench) => {
+      const threadId = "37333333-3333-4333-8333-333333333333";
+      const actions = makeActions();
+      const config = {
+        model: "gpt-5.5",
+        workbench,
+        sessionId: "saved-session",
+      };
+      actions.syncdb.get = jest.fn(() => [
+        {
+          event: "chat-thread-config",
+          sender_id: `__thread_config__:${threadId}`,
+          date: CHAT_THREAD_META_ROW_DATE,
+          thread_id: threadId,
+          acp_config: config,
+        },
+      ]);
+      expect(actions.getCodexConfig(threadId)).toEqual(config);
+    },
+  );
+
+  it.each([true, false])(
+    "persists workbench=%s in only the target thread config",
+    (workbench) => {
+      const threadId = "37333333-3333-4333-8333-333333333333";
+      const actions = makeActions();
+      actions.setCodexConfig(threadId, { workbench });
+      const configs = actions.syncdb.set.mock.calls
+        .map((x) => x[0])
+        .filter((row: any) => row.event === "chat-thread-config");
+      expect(configs).toHaveLength(1);
+      expect(configs[0]).toMatchObject({
+        thread_id: threadId,
+        acp_config: { workbench },
+      });
+      expect(actions.syncdb.commit).toHaveBeenCalled();
+    },
+  );
 
   it("migrates the legacy Codex notify setting when saving partial config", () => {
     const threadId = "37333333-3333-4333-8333-333333333333";

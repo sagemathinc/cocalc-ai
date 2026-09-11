@@ -19,6 +19,7 @@ const RUNTIME_AUTH_ENV_KEYS = new Set([
   "COCALC_CODEX_MESSAGE_DATE",
   "COCALC_CODEX_THREAD_ID",
   "COCALC_CODEX_TURN_ID",
+  "COCALC_WORKBENCH",
   "COCALC_PROJECT_ID",
 ]);
 
@@ -159,6 +160,7 @@ export async function buildCodexRuntimeEnv({
   const browserId = `${request.chat?.browser_id ?? ""}`.trim();
   if (browserId) out.COCALC_BROWSER_ID = browserId;
   const chatPath = `${request.chat?.path ?? ""}`.trim();
+  out.COCALC_WORKBENCH = request.chat?.workbench === true ? "1" : "0";
   const threadId = `${request.chat?.thread_id ?? ""}`.trim();
   const messageDate = `${request.chat?.message_date ?? ""}`.trim();
   if (chatPath && threadId) {

@@ -22,6 +22,8 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { codexAgentName } from "@cocalc/frontend/account/chatbot";
 import { CSS, useMemo, useRef, useState } from "@cocalc/frontend/app-framework";
 import { useNarrowChatViewport } from "./use-chat-viewport";
+import { ArtifactCards } from "./artifacts";
+import { ArtifactFeedbackNotice } from "./artifact-feedback-notice";
 import {
   DropdownMenu,
   Gap,
@@ -58,6 +60,7 @@ import {
   type InlineCodeLink,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
+import ContextualReply from "./contextual-reply";
 import { messageToMarkdown } from "./message-to-markdown";
 import { isCodexAgentMessageAuthor } from "./message-author";
 import { codexEventsToMarkdown } from "./codex-activity";
@@ -2289,65 +2292,103 @@ export default function Message({
               />
             ),
             children: (
-              <div onClickCapture={openCommitFromMessage}>
-                {messageBodyMode === "select" ? (
-                  renderSelectableMarkdownBody({
-                    value,
-                    message_class,
-                    style: MARKDOWN_STYLE,
-                  })
-                ) : (
-                  <StaticMarkdown
-                    style={MARKDOWN_STYLE}
-                    value={value}
-                    className={message_class}
-                    editorTheme={editorTheme}
-                    highlightQuery={searchHighlight}
-                    inlineCodeLinks={
-                      Array.isArray(inlineCodeLinks)
-                        ? inlineCodeLinks
-                        : undefined
-                    }
-                    inlineCodeProjectRoot={activityBasePath}
+              <ContextualReply
+                actions={actions}
+                projectId={project_id ?? ""}
+                path={path ?? ""}
+                disabled={
+                  read_only ||
+                  !project_id ||
+                  !path ||
+                  !msgWrittenByLLM ||
+                  !messageThreadId
+                }
+                source={{
+                  kind: "message",
+                  id: field<string>(message, "message_id") ?? `${date}`,
+                  thread_id: messageThreadId ?? "",
+                  title: "Assistant response",
+                }}
+              >
+                <div onClickCapture={openCommitFromMessage}>
+                  {messageBodyMode === "select" ? (
+                    renderSelectableMarkdownBody({
+                      value,
+                      message_class,
+                      style: MARKDOWN_STYLE,
+                    })
+                  ) : (
+                    <StaticMarkdown
+                      style={MARKDOWN_STYLE}
+                      value={value}
+                      className={message_class}
+                      editorTheme={editorTheme}
+                      highlightQuery={searchHighlight}
+                      inlineCodeLinks={
+                        Array.isArray(inlineCodeLinks)
+                          ? inlineCodeLinks
+                          : undefined
+                      }
+                      inlineCodeProjectRoot={activityBasePath}
+                    />
+                  )}
+                  <CodexQuotaHelp
+                    message={value}
+                    projectId={project_id}
+                    isError={showCodexErrorHelp}
                   />
-                )}
-                <CodexQuotaHelp
-                  message={value}
-                  projectId={project_id}
-                  isError={showCodexErrorHelp}
-                />
-              </div>
+                </div>
+              </ContextualReply>
             ),
           })
         ) : !shouldRenderInterleavedCodexActivityBody &&
           !suppressPlaceholderBody &&
           value.trim().length > 0 ? (
-          <div onClickCapture={openCommitFromMessage}>
-            {messageBodyMode === "select" ? (
-              renderSelectableMarkdownBody({
-                value,
-                message_class,
-                style: MARKDOWN_STYLE,
-              })
-            ) : (
-              <StaticMarkdown
-                style={MARKDOWN_STYLE}
-                value={value}
-                className={message_class}
-                editorTheme={editorTheme}
-                highlightQuery={searchHighlight}
-                inlineCodeLinks={
-                  Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
-                }
-                inlineCodeProjectRoot={activityBasePath}
+          <ContextualReply
+            actions={actions}
+            projectId={project_id ?? ""}
+            path={path ?? ""}
+            disabled={
+              read_only ||
+              !project_id ||
+              !path ||
+              !msgWrittenByLLM ||
+              !messageThreadId
+            }
+            source={{
+              kind: "message",
+              id: field<string>(message, "message_id") ?? `${date}`,
+              thread_id: messageThreadId ?? "",
+              title: "Assistant response",
+            }}
+          >
+            <div onClickCapture={openCommitFromMessage}>
+              {messageBodyMode === "select" ? (
+                renderSelectableMarkdownBody({
+                  value,
+                  message_class,
+                  style: MARKDOWN_STYLE,
+                })
+              ) : (
+                <StaticMarkdown
+                  style={MARKDOWN_STYLE}
+                  value={value}
+                  className={message_class}
+                  editorTheme={editorTheme}
+                  highlightQuery={searchHighlight}
+                  inlineCodeLinks={
+                    Array.isArray(inlineCodeLinks) ? inlineCodeLinks : undefined
+                  }
+                  inlineCodeProjectRoot={activityBasePath}
+                />
+              )}
+              <CodexQuotaHelp
+                message={value}
+                projectId={project_id}
+                isError={showCodexErrorHelp}
               />
-            )}
-            <CodexQuotaHelp
-              message={value}
-              projectId={project_id}
-              isError={showCodexErrorHelp}
-            />
-          </div>
+            </div>
+          </ContextualReply>
         ) : null}
         {!showCodexActivity ? (
           <AttachedSteerStatusList attachedSteers={attachedSteers} />
@@ -2545,6 +2586,12 @@ export default function Message({
             ? renderEditMessage()
             : renderMessageBody({ message_class })}
           {renderEditingMeta()}
+          <ArtifactFeedbackNotice value={field(message, "artifact_feedback")} />
+          <ArtifactCards
+            actions={actions}
+            threadId={field<string>(message, "thread_id")}
+            messageId={field<string>(message, "message_id")}
+          />
           {renderInterruptedControls()}
           {renderMessageActions()}
         </div>

@@ -85,6 +85,8 @@ export interface AcpChatContext {
   api_url?: string;
   // Browser session initiating this turn (for agent/browser automation routing).
   browser_id?: string;
+  // This thread opted in and the initiating chat surface supports workbench tabs.
+  workbench?: boolean;
   // Schema-v2 identities for robust row targeting.
   message_id?: string;
   thread_id?: string;
