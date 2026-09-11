@@ -2801,7 +2801,11 @@ export class ChatActions extends Actions<ChatState> {
     const normalizedThreadId = this.normalizeThreadId(threadId);
     if (!normalizedThreadId) return;
     const threadConfig = this.getThreadConfigRecordById(normalizedThreadId);
-    const cfgFromThread = field<CodexThreadConfig>(threadConfig, "acp_config");
+    // Preferred SyncDB records are Immutable, while cache records are plain.
+    const cfgFromThread = field<CodexThreadConfig>(
+      threadConfig?.toJS?.() ?? threadConfig,
+      "acp_config",
+    );
     if (cfgFromThread == null) return;
     return cfgFromThread;
   };

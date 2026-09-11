@@ -1009,6 +1009,29 @@ describe("thread-config by thread_id", () => {
   });
 
   it.each([true, false])(
+    "reads saved workbench=%s through the preferred SyncDB record path",
+    (workbench) => {
+      const threadId = "37333333-3333-4333-8333-333333333333";
+      const actions = makeActions();
+      const config = {
+        model: "gpt-5.5",
+        workbench,
+        sessionId: "saved-session",
+      };
+      actions.syncdb.get = jest.fn(() => [
+        {
+          event: "chat-thread-config",
+          sender_id: `__thread_config__:${threadId}`,
+          date: CHAT_THREAD_META_ROW_DATE,
+          thread_id: threadId,
+          acp_config: config,
+        },
+      ]);
+      expect(actions.getCodexConfig(threadId)).toEqual(config);
+    },
+  );
+
+  it.each([true, false])(
     "persists workbench=%s in only the target thread config",
     (workbench) => {
       const threadId = "37333333-3333-4333-8333-333333333333";
