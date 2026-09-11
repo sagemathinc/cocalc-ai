@@ -5,12 +5,17 @@ import {
   setupRemoteKernel,
   listRemoteKernelTargets,
   removeRemoteKernelTarget,
+  remoteSshTargets,
+  probeRemoteKernel,
 } from "./remote-kernel-service";
 
 jest.mock("./remote-kernel-service", () => ({
+  ...jest.requireActual("./remote-kernel-service"),
   setupRemoteKernel: jest.fn(),
   listRemoteKernelTargets: jest.fn(),
   removeRemoteKernelTarget: jest.fn(),
+  remoteSshTargets: jest.fn(),
+  probeRemoteKernel: jest.fn(),
 }));
 jest.mock("@cocalc/frontend/components", () => ({ Icon: () => null }));
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -26,9 +31,34 @@ describe("remote kernel setup", () => {
   afterAll(() => {
     window.getComputedStyle = getComputedStyle;
   });
-  beforeEach(() => jest.clearAllMocks());
+  const cpuProbe = {
+    platform: "Linux x86_64",
+    suggested_name: "jupyter",
+    gpu: { status: "absent" },
+    kernels: [],
+    environments: [],
+    warnings: [],
+    search_paths: [],
+  };
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (remoteSshTargets as jest.Mock).mockResolvedValue({
+      aliases: ["jupyter"],
+      warnings: [],
+    });
+    (probeRemoteKernel as jest.Mock).mockResolvedValue(cpuProbe);
+  });
 
-  it("opens from the keyboard, focuses the name, and restores focus on Escape", async () => {
+  async function connect(user) {
+    await user.type(
+      screen.getByRole("combobox", { name: "SSH destination or alias" }),
+      "jupyter",
+    );
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await screen.findByRole("button", { name: "Set up kernel" });
+  }
+
+  it("opens from the keyboard, focuses SSH target, and restores focus on Escape", async () => {
     const user = userEvent.setup();
     render(<RemoteKernel project_id="p" onRegistered={jest.fn()} />);
     const trigger = screen.getByRole("button", { name: "Remote kernel" });
@@ -39,7 +69,7 @@ describe("remote kernel setup", () => {
     ).toBeTruthy();
     await waitFor(() =>
       expect(document.activeElement).toBe(
-        screen.getByRole("textbox", { name: "Kernel name" }),
+        screen.getByRole("combobox", { name: "SSH destination or alias" }),
       ),
     );
     await user.keyboard("{Escape}");
@@ -53,21 +83,19 @@ describe("remote kernel setup", () => {
     (setupRemoteKernel as jest.Mock).mockResolvedValue("reflect-my-vm");
     render(<RemoteKernel project_id="p" onRegistered={onRegistered} />);
     await user.click(screen.getByRole("button", { name: "Remote kernel" }));
-    await user.type(
-      screen.getByRole("textbox", { name: "SSH destination or alias" }),
-      "jupyter",
-    );
+    await connect(user);
+    await user.click(screen.getByRole("checkbox", { name: "Advanced" }));
     await user.click(screen.getByRole("radio", { name: "Existing Python" }));
     await user.type(
       screen.getByRole("textbox", { name: "Remote Python interpreter" }),
       "/home/user/gpu/bin/python",
     );
-    await user.click(screen.getByRole("button", { name: "Register kernel" }));
+    await user.click(screen.getByRole("button", { name: "Set up kernel" }));
     await waitFor(() =>
       expect(setupRemoteKernel).toHaveBeenCalledWith("p", {
-        name: "my-vm",
+        name: "jupyter",
         host: "jupyter",
-        environment: "teaching",
+        environment: "jupyter-python",
         python: "/home/user/gpu/bin/python",
       }),
     );
@@ -77,20 +105,47 @@ describe("remote kernel setup", () => {
   it("keeps failures visible without selecting a kernel", async () => {
     const user = userEvent.setup();
     const onRegistered = jest.fn();
-    (setupRemoteKernel as jest.Mock).mockRejectedValue(
+    (probeRemoteKernel as jest.Mock).mockRejectedValue(
       Error("SSH host key verification failed"),
     );
     render(<RemoteKernel project_id="p" onRegistered={onRegistered} />);
     await user.click(screen.getByRole("button", { name: "Remote kernel" }));
     await user.type(
-      screen.getByRole("textbox", { name: "SSH destination or alias" }),
+      screen.getByRole("combobox", { name: "SSH destination or alias" }),
       "jupyter",
     );
-    await user.click(screen.getByRole("button", { name: "Register kernel" }));
+    await user.click(screen.getByRole("button", { name: "Connect" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "SSH host key verification failed",
     );
     expect(onRegistered).not.toHaveBeenCalled();
+    expect(screen.queryByRole("checkbox", { name: "Advanced" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Set up kernel" })).toBeNull();
+  });
+
+  it("keeps unknown GPU status distinct from CPU-only and preserves advanced names on refresh", async () => {
+    const user = userEvent.setup();
+    (probeRemoteKernel as jest.Mock).mockResolvedValue({
+      ...cpuProbe,
+      gpu: { status: "unknown", reason: "Hardware probe timed out" },
+    });
+    render(<RemoteKernel project_id="p" onRegistered={jest.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Remote kernel" }));
+    await connect(user);
+    expect(screen.getByText("Hardware probe timed out")).toBeTruthy();
+    await user.click(screen.getByRole("checkbox", { name: "Advanced" }));
+    const name = screen.getByRole("textbox", { name: "Kernel name" });
+    await user.clear(name);
+    await user.type(name, "my-custom-kernel");
+    await user.click(screen.getByRole("button", { name: "Refresh discovery" }));
+    await screen.findByRole("button", { name: "Set up kernel" });
+    expect(screen.getByRole("textbox", { name: "Kernel name" })).toHaveValue(
+      "my-custom-kernel",
+    );
+    await user.click(screen.getByRole("combobox", { name: "Kernel software" }));
+    expect(
+      screen.queryByText("PyTorch 2.8 / CUDA 12.8 (NVIDIA GPU)"),
+    ).toBeNull();
   });
 
   it("requires confirmation before removing a registered kernel", async () => {
@@ -141,15 +196,98 @@ describe("remote kernel setup", () => {
       <RemoteKernel project_id="p" onRegistered={onRegistered} />,
     );
     await user.click(screen.getByRole("button", { name: "Remote kernel" }));
-    await user.type(
-      screen.getByRole("textbox", { name: "SSH destination or alias" }),
-      "jupyter",
-    );
-    await user.click(screen.getByRole("button", { name: "Register kernel" }));
+    await connect(user);
+    await user.click(screen.getByRole("button", { name: "Set up kernel" }));
     await waitFor(() => expect(finish).toBeDefined());
     view.unmount();
     finish("reflect-my-vm");
     await Promise.resolve();
     expect(onRegistered).not.toHaveBeenCalled();
+  });
+
+  it("suggests GPU Python with derived names after only selecting an SSH alias", async () => {
+    (probeRemoteKernel as jest.Mock).mockResolvedValue({
+      ...cpuProbe,
+      gpu: { status: "available", description: "L40S" },
+    });
+    (setupRemoteKernel as jest.Mock).mockResolvedValue("reflect-jupyter");
+    const user = userEvent.setup();
+    render(<RemoteKernel project_id="p" onRegistered={jest.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Remote kernel" }));
+    await user.click(
+      screen.getByRole("combobox", { name: "SSH destination or alias" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "jupyter" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Set up kernel" }),
+    );
+    await waitFor(() =>
+      expect(setupRemoteKernel).toHaveBeenCalledWith(
+        "p",
+        expect.objectContaining({
+          host: "jupyter",
+          name: "jupyter",
+          environment: "jupyter-gpu",
+          recipe: "pytorch-cu128",
+        }),
+      ),
+    );
+  });
+
+  it("registers discovered non-Python kernels without an installation recipe", async () => {
+    (probeRemoteKernel as jest.Mock).mockResolvedValue({
+      ...cpuProbe,
+      kernels: [
+        {
+          id: "/kernels/sagejs/kernel.json",
+          name: "sagejs",
+          language: "javascript",
+          display_name: "SageJS",
+        },
+      ],
+    });
+    (setupRemoteKernel as jest.Mock).mockResolvedValue("reflect-jupyter");
+    const user = userEvent.setup();
+    render(<RemoteKernel project_id="p" onRegistered={jest.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Remote kernel" }));
+    await connect(user);
+    expect(screen.getByText("SageJS (javascript)")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Set up kernel" }));
+    await waitFor(() =>
+      expect(setupRemoteKernel).toHaveBeenCalledWith(
+        "p",
+        expect.objectContaining({
+          kernel: "/kernels/sagejs/kernel.json",
+          recipe: undefined,
+          python: undefined,
+        }),
+      ),
+    );
+  });
+
+  it("discards a late probe after the SSH target changes", async () => {
+    let finish!: (value: unknown) => void;
+    (probeRemoteKernel as jest.Mock).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    render(<RemoteKernel project_id="p" onRegistered={jest.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Remote kernel" }));
+    const target = screen.getByRole("combobox", {
+      name: "SSH destination or alias",
+    });
+    await user.type(target, "old");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await user.clear(target);
+    await user.type(target, "new");
+    finish(cpuProbe);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Set up kernel" }),
+      ).toBeNull(),
+    );
   });
 });

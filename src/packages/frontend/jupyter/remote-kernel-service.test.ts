@@ -1,6 +1,7 @@
 import {
   remoteKernelSetupArgs,
   setupRemoteKernel,
+  suggestedEnvironment,
 } from "./remote-kernel-service";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
@@ -31,4 +32,35 @@ it.each([
   { ...config, python: "python3" },
 ])("rejects invalid setup fields", (value) => {
   expect(() => remoteKernelSetupArgs(value)).toThrow();
+});
+
+it("registers any language using a kernelspec, not a Python recipe", () => {
+  const args = remoteKernelSetupArgs({
+    ...config,
+    kernel: "/opt/sagejs/kernel.json",
+  });
+  expect(args).toEqual(
+    expect.arrayContaining(["--kernel", "/opt/sagejs/kernel.json"]),
+  );
+  expect(args).not.toContain("--recipe");
+  expect(() =>
+    remoteKernelSetupArgs({ ...config, kernel: "relative/kernel.json" }),
+  ).toThrow();
+  expect(() =>
+    remoteKernelSetupArgs({
+      ...config,
+      kernel: "/kernel.json",
+      python: "/bin/python",
+    }),
+  ).toThrow();
+});
+
+it("avoids unknown and incompatible environment names and reuses matching recipes", () => {
+  expect(
+    suggestedEnvironment("student@gpu", "pytorch-cu128", [
+      { name: "student-gpu-gpu", recipe: null },
+      { name: "student-gpu-gpu-2", recipe: "python" },
+      { name: "student-gpu-gpu-3", recipe: "pytorch-cu128" },
+    ]),
+  ).toBe("student-gpu-gpu-3");
 });

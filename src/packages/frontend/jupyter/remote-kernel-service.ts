@@ -5,6 +5,7 @@ export interface RemoteKernelSetup {
   host: string;
   environment: string;
   python?: string;
+  kernel?: string;
   recipe?: "python" | "pytorch-cu128";
 }
 
@@ -33,7 +34,11 @@ export function remoteKernelSetupArgs(config: RemoteKernelSetup): string[] {
     "--environment",
     config.environment,
   ];
-  if (config.python) {
+  if (config.kernel) {
+    if (config.python || !config.kernel.startsWith("/"))
+      throw Error("Choose an absolute remote kernelspec path");
+    args.push("--kernel", config.kernel);
+  } else if (config.python) {
     if (!config.python.startsWith("/"))
       throw Error("Use an absolute remote Python path.");
     args.push("--python", config.python);
@@ -68,6 +73,65 @@ export interface RemoteKernelTarget {
   host: string;
   environment: string;
   disabled?: boolean;
+}
+
+export interface RemoteKernelProbe {
+  platform: string;
+  suggested_name: string;
+  gpu: {
+    status: "available" | "absent" | "unknown" | "unavailable" | "unsupported";
+    reason?: string;
+    description?: string;
+  };
+  kernels: {
+    id: string;
+    name: string;
+    display_name: string;
+    language: string;
+  }[];
+  environments: { name: string; recipe: string | null }[];
+  warnings: string[];
+  search_paths: string[];
+}
+
+export async function remoteSshTargets(
+  project_id: string,
+): Promise<{ aliases: string[]; warnings: string[] }> {
+  return await manage(project_id, ["ssh-targets"]);
+}
+
+export async function probeRemoteKernel(
+  project_id: string,
+  host: string,
+  searchPath?: string,
+): Promise<RemoteKernelProbe> {
+  if (!host || host.startsWith("-") || /[\s\x00-\x1f]/.test(host))
+    throw Error("Enter an SSH destination or alias");
+  return await manage(project_id, [
+    "probe",
+    "--host",
+    host,
+    ...(searchPath ? ["--search-path", searchPath] : []),
+  ]);
+}
+
+export function suggestedEnvironment(
+  host: string,
+  recipe: string,
+  environments: RemoteKernelProbe["environments"],
+): string {
+  const base =
+    (host
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 70)
+      .toLowerCase() || "remote") +
+    (recipe === "pytorch-cu128" ? "-gpu" : "-python");
+  for (let n = 1; ; n++) {
+    const name = n === 1 ? base : `${base}-${n}`;
+    const existing = environments.find((x) => x.name === name);
+    if (!existing || existing.recipe === recipe) return name;
+  }
 }
 
 async function manage(project_id: string, args: string[]): Promise<any> {

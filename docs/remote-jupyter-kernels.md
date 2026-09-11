@@ -1,6 +1,6 @@
 # Remote Jupyter Kernels
 
-Run a CoCalc notebook's Python kernel on a dedicated VM while retaining CoCalc's
+Run a CoCalc notebook's Jupyter kernel on a dedicated VM while retaining CoCalc's
 notebook editor, collaboration, outputs, and grading support. The same installed
 kernelspec also works in standard local Jupyter clients. No CoCalc runtime,
 Jupyter HTTP server, or Node installation is required on the VM.
@@ -43,13 +43,29 @@ or Nebius GPU image/framework combination has been tested.
    ssh -o BatchMode=yes -o StrictHostKeyChecking=yes my-gpu true
    ```
 
-5. Open a notebook's kernel selector, choose **Remote kernel**, then enter a
-   kernel name, SSH destination/alias, and environment name. Choose either:
-   - **Prepare Python**, with Python or the PyTorch/CUDA recipe; or
-   - **Existing Python**, with an absolute remote interpreter path. This path
-     must already have `ipykernel` and `jupyter_client` installed.
-6. Register the kernel. Setup verifies a real Jupyter handshake before making the
-   kernelspec available. The registered kernel is selected in the notebook.
+5. Open a notebook's kernel selector and choose **Remote kernel**. Select an SSH
+   alias, or type a destination and press **Connect**. SSH must succeed before
+   any kernel configuration is offered. Alias discovery reads the project's
+   SSH config and Includes; OpenSSH still handles the actual connection.
+6. Choose a discovered kernel (any language), or create Python / GPU Python
+   (PyTorch). A supported NVIDIA GPU makes PyTorch the default suggestion; an
+   inconclusive probe displays a warning, not a CPU-only result. Kernel and
+   environment names are filled automatically. Click **Set up kernel**.
+
+**Advanced** exposes the names, existing Python interpreter option, software
+recipe, and an additional remote kernelspec directory for environments outside
+the normal search paths. Discovery covers Jupyter's reported catalog, standard
+data directories, and Reflect-managed environments. It cannot find arbitrary
+unregistered installations anywhere on disk; add their kernelspec directory.
+Discovery is read-only and never installs software or starts a kernel.
+
+Existing kernels retain their language, argv, environment, and interruption
+mode. Setup validates their executable and connection-file arguments; the client
+performs the Jupyter readiness handshake when launching. Python preparation and
+the explicit Python-interpreter path additionally perform a setup-time handshake.
+The registered kernel is selected in the notebook. Python 3 is needed for remote
+discovery/supervision, not as the language of the chosen kernel. On minimal VMs
+without Python, explicit preparation can bootstrap the private runtime first.
 
 Collaborators able to run code in a project share its execution authority,
 including SSH credentials accessible to that project. Use separate projects and
@@ -59,6 +75,13 @@ for setup from an otherwise authorized project.
 ## Terminal Equivalent
 
 ```sh
+reflect jupyter ssh-targets
+reflect jupyter probe --host my-gpu
+# Include a separately installed Bash, SageJS, or other language environment:
+reflect jupyter probe --host my-gpu --search-path /opt/env/share/jupyter/kernels
+reflect jupyter setup --host my-gpu --target my-bash \
+  --kernel /opt/env/share/jupyter/kernels/bash/kernel.json
+
 # CPU environment:
 reflect jupyter setup --host my-gpu --target my-vm --environment teaching
 
@@ -73,7 +96,9 @@ reflect jupyter setup --host my-gpu --target my-vm \
 jupyter console --kernel reflect-my-vm
 ```
 
-Use one setup alternative, not all three for the same target/environment. The
+Use one setup alternative per target. Existing local kernel names are never
+overwritten. Compatible marked environments can be reused; unknown or mismatched
+environment names require a different name. The
 Python recipe pins `ipykernel` 6.30.1 and `ipywidgets` 8.1.7. The GPU recipe adds
 PyTorch 2.8.0/CUDA 12.8 and NumPy 2.2.6, and checks actual CUDA matrix computation.
 Preparation uses pinned, checksum-verified uv; it does not invoke sudo or modify

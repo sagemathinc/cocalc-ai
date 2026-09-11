@@ -695,6 +695,27 @@ export class JupyterKernel
       return;
     }
     try {
+      if (
+        signal === "SIGINT" &&
+        this._kernel?.kernel_spec.interrupt_mode === "message"
+      ) {
+        this.sockets?.send({
+          parent_header: {},
+          metadata: {},
+          channel: "control",
+          content: {},
+          header: {
+            msg_id: uuid(),
+            username: "",
+            session: "",
+            msg_type: "interrupt_request" as MessageType,
+            version: VERSION,
+            date: new Date().toISOString(),
+          },
+        });
+        this.clear_execute_code_queue();
+        return;
+      }
       process.kill(-pid, signal); // negative to signal the process group
       this.clear_execute_code_queue();
     } catch {}
