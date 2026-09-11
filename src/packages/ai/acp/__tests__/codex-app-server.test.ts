@@ -3947,6 +3947,7 @@ describe("CodexAppServerAgent", () => {
         COCALC_CODEX_CHAT_PATH: "/new.chat",
         COCALC_CODEX_THREAD_ID: "new-thread",
         COCALC_CODEX_MESSAGE_DATE: "2026-09-09T00:00:00Z",
+        COCALC_WORKBENCH: "1",
       },
       stream: async () => {},
       config: {
@@ -3968,6 +3969,9 @@ describe("CodexAppServerAgent", () => {
       COCALC_CODEX_MESSAGE_DATE: "2026-09-09T00:00:00Z",
     });
     expect(turnStartParams?.approvalPolicy).toBe("never");
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "Publishing durable reviewable results is part of task completion",
+    );
     expect(turnStartParams?.sandboxPolicy).toEqual({
       type: "workspaceWrite",
       writableRoots: [],
@@ -4077,6 +4081,7 @@ describe("CodexAppServerAgent", () => {
 
     const text = turnStartParams?.input?.[0]?.text;
     expect(text).toContain("project build -h");
+    expect(text).toContain("Do not publish artifacts by default");
     expect(text).toContain("project build <path>");
     expect(text).toContain("complete editor pipeline");
     expect(text).not.toContain("COCALC_BROWSER_ID");

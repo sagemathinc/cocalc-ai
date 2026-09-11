@@ -983,6 +983,7 @@ describe("queued ACP controls", () => {
           user_parent_message_id: undefined,
           parent_message_id: "user-msg-missing",
           thread_id: "thread-missing",
+          workbench: false,
         }),
       }),
       { timeout: expect.any(Number) },

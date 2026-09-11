@@ -85,6 +85,8 @@ export interface AcpChatContext {
   api_url?: string;
   // Browser session initiating this turn (for agent/browser automation routing).
   browser_id?: string;
+  // The initiating chat surface supports artifact cards and native workbench tabs.
+  workbench?: boolean;
   // Schema-v2 identities for robust row targeting.
   message_id?: string;
   thread_id?: string;

@@ -330,6 +330,38 @@ For example, a file reference has `file: { path: "/home/user/policy.md" }`;
 it references a real file, not an embedded editable copy. Unsupported previews
 should remain file links, not arbitrary HTML, SVG input, apps, or widget code.
 
+In a turn marked workbench-enabled, publication is part of finishing durable
+reviewable work unless the user asks otherwise. Publish plans saved to disk as
+file references (not duplicate editable Markdown), images as file references,
+completed commits/PRs as their respective cards, and support drafts for approval
+as proposed actions. Ordinary answers and scratch work stay in chat. The Agents
+page/flyout is not workbench-enabled; do not publish there by default.
+
+Prefer `project chat artifact publish`:
+
+```sh
+# Use the exact runtime CLI command in place of cocalc below.
+cocalc project chat artifact publish --source /home/user/plan.md
+cocalc project chat artifact publish --source /home/user/plot.png --title "Spectrum"
+cocalc project chat artifact publish --commit HEAD --repo /home/user/worktree
+cocalc project chat artifact publish --file proposal.json
+```
+
+JSON contains `title`, `markdown`, and optionally one of `file`, `actions`,
+`github_pr`, `commit`, plus optional `theme`. No message/operation/artifact IDs
+are needed for creation. Chat/thread/date default to current runtime context;
+use the explicit current-turn values in the prompt if a reused shell is stale.
+The command resolves the producing message, generates stable retry IDs, saves
+through the live collaborative document, and returns the publication/current
+record. Retry the same input unchanged after an ambiguous response.
+
+For revisions, read the artifact, then publish with `--update <artifact-id>` and
+`--base <read.base>` (or include base in JSON). Keep the same ID; do not remove
+the base check after a conflict. Omit theme to retain user appearance. Commit
+resolution uses the local repository where the CLI runs; file paths refer to
+the target project. `--experimental` is required outside an enabled turn and
+is explicit opt-in, not permission to execute proposed support actions.
+
 In an opted-in workbench chat, publish generated raster images as file artifacts
 after image generation succeeds. Use the actual project-local output path (or
 copy it to a durable project path), the exact producing message, and a stable

@@ -1,5 +1,6 @@
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { prepareArtifactPublication } from "./artifact-publication";
 
 import {
   buildThreadConfigRecord,
@@ -260,14 +261,17 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
     projectIdentifier?: string;
     path: string;
     threadId: string;
-    action: "create" | "update" | "read" | "list" | "context";
+    action: "create" | "update" | "read" | "list" | "context" | "publish";
     artifactId?: string;
     operationId?: string;
     messageDate?: string;
     experimental?: boolean;
     payload?: PublishArtifactInput;
   }) {
-    if ((action === "create" || action === "update") && experimental !== true) {
+    if (
+      (action === "create" || action === "update" || action === "publish") &&
+      experimental !== true
+    ) {
       throw Error("artifact writes require explicit experimental opt-in");
     }
     return await withProjectChatFile({
@@ -276,6 +280,29 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
       projectIdentifier,
       chatPath: path,
       fn: async ({ syncdb, rows, project }) => {
+        if (action === "publish") {
+          const input = prepareArtifactPublication({
+            payload: payload ?? {},
+            threadId,
+            artifactId,
+            messageId: resolveArtifactMessage(
+              rows,
+              threadId,
+              messageDate ?? "",
+            ),
+          });
+          const result = publishArtifact(syncdb, input);
+          syncdb.commit();
+          await syncdb.save();
+          await syncdb.save_to_disk();
+          return {
+            ...result,
+            artifact_id: input.artifact_id,
+            message_id: input.message_id,
+            operation_id: input.operation_id,
+            current: readArtifact(syncdb, input),
+          };
+        }
         if (action === "context") {
           return {
             project_id: project.project_id,

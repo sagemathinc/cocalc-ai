@@ -447,6 +447,7 @@ export async function processAcpLLM({
   chatMetadata.thread_title = actions.getThreadMetadata?.(thread_id, {
     threadId: thread_id,
   })?.name;
+  chatMetadata.workbench = actions.workbenchEnabled === true;
   let acknowledged = false;
   try {
     await ensureChatStatePersisted();

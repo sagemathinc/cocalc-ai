@@ -283,6 +283,7 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     // our store is not exactly a ChatStore but it's close enough
     actions.set_syncdb(syncdb, this.store as ChatStore, messageCache);
     actions.frameId = frameId;
+    actions.workbenchEnabled = true;
     actions.frameTreeActions = this as any;
     this.chatActions[frameId] = actions;
     return actions;
