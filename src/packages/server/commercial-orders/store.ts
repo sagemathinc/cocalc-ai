@@ -65,6 +65,7 @@ import type {
   CommercialQuote,
   CommercialWorkflowState,
 } from "@cocalc/util/commercial-orders";
+import { getDiagnosticAmounts } from "./diagnostic-amounts";
 import { COMMERCIAL_ORDER_DOCUMENT_MAX_BYTES } from "@cocalc/util/commercial-orders";
 import {
   moneyAdd,
@@ -3439,14 +3440,7 @@ export async function getCommercialOrderDiagnostics(): Promise<CommercialOrderDi
        FROM commercial_orders GROUP BY workflow_state
       UNION ALL SELECT 'collection:'||collection_state,count(*)::text
        FROM commercial_orders GROUP BY collection_state`),
-    getPool().query<{ key: string; amount: string }>(`
-      SELECT 'open_amount' AS key,COALESCE(sum(agreed_total),0)::text AS amount
-       FROM commercial_orders WHERE workflow_state NOT IN ('complete','cancelled')
-      UNION ALL SELECT 'overdue_amount',COALESCE(sum(agreed_total),0)::text
-       FROM commercial_orders WHERE collection_state='overdue'
-      UNION ALL SELECT 'fulfilled_unpaid_amount',COALESCE(sum(agreed_total),0)::text
-       FROM commercial_orders WHERE fulfillment_state='provisioned'
-        AND collection_state NOT IN ('paid','waived')`),
+    getDiagnosticAmounts(),
     getStaleCommercialInvoiceIds({ limit: 500 }),
     getStaleCommercialQuoteIds({ limit: 500 }),
     getPool().query<{ id: string }>(`
@@ -3563,9 +3557,16 @@ export async function getCommercialOrderDiagnostics(): Promise<CommercialOrderDi
     counts: Object.fromEntries(
       countsResult.rows.map(({ key, count }) => [key, Number(count)]),
     ),
-    amounts: Object.fromEntries(
-      amountsResult.rows.map(({ key, amount }) => [key, money(amount)]),
-    ),
+    amounts: {
+      open_amount: money(amountsResult.usd?.invoice_outstanding ?? 0),
+      overdue_amount: money(amountsResult.usd?.invoice_overdue ?? 0),
+      fulfilled_unpaid_amount: money(
+        amountsResult.usd?.fulfilled_invoice_outstanding ?? 0,
+      ),
+    },
+    amounts_by_currency: amountsResult,
+    amount_scope: "linked_local_invoices",
+    unlinked_invoice_scan: "not_requested",
     reconciliation: {
       provider_local_mismatch_count:
         Number(reconciliation.rows[0]?.provider_local_mismatch_count ?? 0) +
