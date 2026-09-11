@@ -8,6 +8,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
+import { reflectCliArgs } from "./reflect-cli-args";
 
 import type { WorkspaceSshConnectionInfo } from "@cocalc/conat/hub/api/projects";
 
@@ -560,6 +561,16 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     const reflectHome = reflectSyncHomeDir(authConfigPathValue);
     mkdirSync(reflectHome, { recursive: true, mode: 0o700 });
     const cliEntry = resolveReflectSyncCliEntry();
+    if (args[0] === "forward" && args[1] === "remove") {
+      const version = await runCommandCapture(
+        process.execPath,
+        [cliEntry, "--version"],
+        { env: process.env },
+      );
+      if (version.code !== 0)
+        throw Error("Unable to establish the installed Reflect CLI version");
+      args = reflectCliArgs(args, version.stdout);
+    }
     const result = await runCommandCapture(
       process.execPath,
       [
@@ -595,7 +606,7 @@ export function createProjectSyncOps<Ctx, Project extends ProjectLike>(
     forwardRefs: string[],
   ): Promise<void> {
     if (!forwardRefs.length) return;
-    await runReflectSyncCli(["forward", "terminate", ...forwardRefs]);
+    await runReflectSyncCli(["forward", "remove", ...forwardRefs, "--stop"]);
   }
 
   return {

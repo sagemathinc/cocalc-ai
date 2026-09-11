@@ -26,10 +26,10 @@ export function remoteKernelSetupArgs(config: RemoteKernelSetup): string[] {
   }
   const args = [
     "jupyter",
-    "setup",
-    "--json",
-    "--target",
+    "target",
+    "add",
     config.name,
+    "--json",
     "--host",
     config.host,
     "--environment",
@@ -111,7 +111,7 @@ export async function probeRemoteKernel(
   if (!host || host.startsWith("-") || /[\s\x00-\x1f]/.test(host))
     throw Error("Enter an SSH destination or alias");
   return await manage(project_id, [
-    "probe",
+    "discover",
     "--host",
     host,
     ...(trustNewHost ? ["--trust-new-host"] : []),
@@ -119,7 +119,7 @@ export async function probeRemoteKernel(
   ]);
 }
 
-export const MIN_REFLECT_VERSION = "0.16.1";
+export const MIN_REFLECT_VERSION = "0.17.0";
 
 export function supportsRemoteKernels(version: string): boolean {
   // Release versions only: an unrecognized development build is not a baseline.
@@ -240,7 +240,7 @@ function checkRemoteKernelResult(
 export async function listRemoteKernelTargets(
   project_id: string,
 ): Promise<RemoteKernelTarget[]> {
-  return await manage(project_id, ["targets"]);
+  return await manage(project_id, ["target", "list"]);
 }
 
 export async function removeRemoteKernelTarget(
@@ -248,5 +248,5 @@ export async function removeRemoteKernelTarget(
   name: string,
 ): Promise<void> {
   if (!/^[a-zA-Z0-9_-]{1,100}$/.test(name)) throw Error("Invalid target name");
-  await manage(project_id, ["remove", "--target", name]);
+  await manage(project_id, ["target", "remove", name, "--stop"]);
 }
