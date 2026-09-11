@@ -130,6 +130,61 @@ describe("remote kernel setup", () => {
     expect(screen.queryByRole("button", { name: "Set up kernel" })).toBeNull();
   });
 
+  it("requires explicit keyboard confirmation to trust a new host", async () => {
+    const user = userEvent.setup();
+    (probeRemoteKernel as jest.Mock).mockRejectedValueOnce(
+      Error(
+        "No ED25519 host key is known for gpu and you have requested strict checking.\nHost key verification failed.",
+      ),
+    );
+    render(<RemoteKernel project_id="p" onRegistered={jest.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Remote kernel" }));
+    await user.type(
+      screen.getByRole("combobox", { name: "SSH destination or alias" }),
+      "gpu",
+    );
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    const trust = await screen.findByRole("button", {
+      name: "Trust new host and connect",
+    });
+    expect(screen.queryByRole("button", { name: "Set up kernel" })).toBeNull();
+    expect(probeRemoteKernel).toHaveBeenCalledTimes(1);
+    trust.focus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("button", { name: "Set up kernel" });
+    expect(probeRemoteKernel).toHaveBeenLastCalledWith(
+      "p",
+      "gpu",
+      undefined,
+      true,
+    );
+  });
+
+  it.each([
+    "REMOTE HOST IDENTIFICATION HAS CHANGED!\nHost key verification failed.",
+    "Restart your project to load updated tools.",
+  ])(
+    "keeps configuration blocked without a trust bypass: %s",
+    async (error) => {
+      const user = userEvent.setup();
+      (probeRemoteKernel as jest.Mock).mockRejectedValueOnce(Error(error));
+      render(<RemoteKernel project_id="p" onRegistered={jest.fn()} />);
+      await user.click(screen.getByRole("button", { name: "Remote kernel" }));
+      await user.type(
+        screen.getByRole("combobox", { name: "SSH destination or alias" }),
+        "gpu",
+      );
+      await user.click(screen.getByRole("button", { name: "Connect" }));
+      await screen.findByRole("alert");
+      expect(
+        screen.queryByRole("button", { name: "Trust new host and connect" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "Set up kernel" }),
+      ).toBeNull();
+    },
+  );
+
   it("keeps unknown GPU status distinct from CPU-only and preserves advanced names on refresh", async () => {
     const user = userEvent.setup();
     (probeRemoteKernel as jest.Mock).mockResolvedValue({

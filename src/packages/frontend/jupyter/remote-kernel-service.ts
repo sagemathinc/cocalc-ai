@@ -27,6 +27,7 @@ export function remoteKernelSetupArgs(config: RemoteKernelSetup): string[] {
   const args = [
     "jupyter",
     "setup",
+    "--json",
     "--target",
     config.name,
     "--host",
@@ -105,6 +106,7 @@ export async function probeRemoteKernel(
   project_id: string,
   host: string,
   searchPath?: string,
+  trustNewHost = false,
 ): Promise<RemoteKernelProbe> {
   if (!host || host.startsWith("-") || /[\s\x00-\x1f]/.test(host))
     throw Error("Enter an SSH destination or alias");
@@ -112,8 +114,52 @@ export async function probeRemoteKernel(
     "probe",
     "--host",
     host,
+    ...(trustNewHost ? ["--trust-new-host"] : []),
     ...(searchPath ? ["--search-path", searchPath] : []),
   ]);
+}
+
+export const MIN_REFLECT_VERSION = "0.16.1";
+
+export function supportsRemoteKernels(version: string): boolean {
+  // Release versions only: an unrecognized development build is not a baseline.
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return false;
+  const parts = version.split(".").map(Number);
+  const baseline = MIN_REFLECT_VERSION.split(".").map(Number);
+  for (let i = 0; i < baseline.length; i++) {
+    if (parts[i] !== baseline[i]) return parts[i] > baseline[i];
+  }
+  return true;
+}
+
+async function checkReflectVersion(project_id: string): Promise<void> {
+  try {
+    const result = await webapp_client.project_client.exec({
+      project_id,
+      command: "reflect",
+      args: ["--version"],
+      bash: false,
+      timeout: 15,
+      err_on_exit: false,
+    });
+    if (
+      (result.exit_code == null || result.exit_code === 0) &&
+      supportsRemoteKernels(result.stdout.trim())
+    )
+      return;
+  } catch {
+    // Missing executables and unavailable version responses cannot establish compatibility.
+  }
+  throw Error(
+    `Restart your project to load the updated remote kernel tools (Reflect ${MIN_REFLECT_VERSION} or newer). If this persists, a private installation of reflect may be overriding the bundled version.`,
+  );
+}
+
+export function isUnknownRemoteSshHost(error: string): boolean {
+  return (
+    /No [^\r\n]+ host key is known for [^\r\n]+strict checking\./.test(error) &&
+    !/REMOTE HOST IDENTIFICATION HAS CHANGED/.test(error)
+  );
 }
 
 export function suggestedEnvironment(
@@ -137,10 +183,22 @@ export function suggestedEnvironment(
 }
 
 async function manage(project_id: string, args: string[]): Promise<any> {
+  const version = checkReflectVersion(project_id);
+  const operation = manageResult(project_id, args).catch(async (err) => {
+    // An obsolete executable can reject --json before its version check finishes.
+    // Prefer the actionable upgrade message over that secondary CLI error.
+    await version;
+    throw err;
+  });
+  const [, result] = await Promise.all([version, operation]);
+  return result;
+}
+
+async function manageResult(project_id: string, args: string[]): Promise<any> {
   const result = await webapp_client.project_client.exec({
     project_id,
     command: "reflect",
-    args: ["jupyter", ...args],
+    args: ["jupyter", ...args, "--json"],
     bash: false,
     timeout: 120,
     err_on_exit: false,

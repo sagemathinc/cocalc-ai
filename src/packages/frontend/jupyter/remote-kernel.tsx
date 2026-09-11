@@ -20,6 +20,7 @@ import {
   remoteSshTargets,
   probeRemoteKernel,
   suggestedEnvironment,
+  isUnknownRemoteSshHost,
   type RemoteKernelProbe,
   type RemoteKernelSetup,
 } from "./remote-kernel-service";
@@ -95,7 +96,7 @@ export default function RemoteKernel({
         selection === "pytorch-cu128" ? "pytorch-cu128" : "python";
     form.setFieldsValue(values);
   }
-  async function connect(target = host) {
+  async function connect(target = host, trustNewHost = false) {
     const current = ++generation.current;
     setHost(target);
     setProbe(undefined);
@@ -106,6 +107,7 @@ export default function RemoteKernel({
         project_id,
         target,
         searchPath || undefined,
+        ...(trustNewHost ? [true] : []),
       );
       if (current !== generation.current) return;
       const selected =
@@ -269,23 +271,44 @@ export default function RemoteKernel({
             {error && (
               <Alert
                 role="alert"
-                type="error"
+                type={isUnknownRemoteSshHost(error) ? "warning" : "error"}
                 showIcon
                 title={
-                  probe
-                    ? "Remote kernel setup failed"
-                    : "SSH connection or discovery failed"
+                  isUnknownRemoteSshHost(error)
+                    ? "First connection to this SSH host"
+                    : probe
+                      ? "Remote kernel setup failed"
+                      : "SSH connection or discovery failed"
                 }
                 description={
-                  <div
-                    style={{
-                      whiteSpace: "pre-wrap",
-                      overflowWrap: "anywhere",
-                      fontFamily: "monospace",
-                    }}
-                  >
-                    {error}
-                  </div>
+                  <>
+                    {isUnknownRemoteSshHost(error) && (
+                      <div style={{ marginBottom: 12 }}>
+                        <p>
+                          This project has not saved a key for this host. Trust
+                          the key presented on the first connection only if you
+                          recognize the destination. Its identity has not been
+                          independently verified; changed keys will still be
+                          rejected.
+                        </p>
+                        <Button
+                          onClick={() => void connect(host, true)}
+                          disabled={checking || busy}
+                        >
+                          Trust new host and connect
+                        </Button>
+                      </div>
+                    )}
+                    <div
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
+                        fontFamily: "monospace",
+                      }}
+                    >
+                      {error}
+                    </div>
+                  </>
                 }
                 style={{ marginBottom: 12 }}
               />
