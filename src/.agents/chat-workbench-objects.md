@@ -3,6 +3,18 @@
 Status: implementation in progress. Extends the text prototype without replacing
 Patchflow, the existing artifact tools, or CoCalc's editors.
 
+## Next Slice (2026-09-11)
+
+The maintainer approved expanding the plan before further implementation.
+[Contextual Replies And Artifact References](chat-contextual-replies.md) is the
+next review document. It covers message selection replies as well as artifact
+comments, private durable popup drafts, multiple references, captured image
+context, and runtime capability alignment. Its next-slice decisions supersede
+the single-feedback and whole-text-snapshot restrictions described below.
+Keep PR #509 draft until the new acceptance gates and outstanding earlier
+permissions/collaboration checks are satisfied. Existing progress entries below
+are historical evidence; do not reset or silently mark them complete.
+
 ## Ordered Delivery
 
 - [ ] File references: stable artifact ID, same-project path, read-only workbench

@@ -6,6 +6,18 @@ Updated 2026-09-09. Usable text prototype; extended acceptance checks remain.
 Revised to build on Patchflow syncdoc, the existing Slate Markdown editor,
 and CoCalc's key:value blob storage, rather than adding parallel infrastructure.
 
+## Current Planning Direction (2026-09-11)
+
+Keep PR #509 draft. The next implementation plan is
+[Contextual Replies And Artifact References](chat-contextual-replies.md).
+It supersedes the original single-artifact feedback flow and delivery ordering
+below: local selection replies, private durable comment drafts, multiple typed
+references, and image feedback come before additional renderer types. The
+original prototype contract and acceptance chronology remain here as history,
+not a claim that the expanded interaction is implemented or accepted.
+The file/action/PR extensions and their acceptance record are in
+[Chat Workbench Objects](chat-workbench-objects.md).
+
 ## Decision In One Page
 
 Build a small shared Markdown artifact inside an existing CoCalc agent chat.
