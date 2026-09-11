@@ -135,7 +135,8 @@ export type DocsLiveVerificationReport = {
   results: DocsLiveVerificationResult[];
 };
 
-const DOCS_LINK_RE = /\/docs\/([A-Za-z0-9._/-]+)/g;
+// Match site-relative docs paths, not a /docs/ segment inside an external URL.
+const DOCS_LINK_RE = /(?<![A-Za-z0-9/:._-])\/docs\/([A-Za-z0-9._/-]+)/g;
 const APP_DOCS_LINK_RE = /\/app-docs(?:\/[A-Za-z0-9._/-]+)?/g;
 const LEGACY_DOCS_RE = /https:\/\/doc\.cocalc\.com\/[^\s"'<>)]*/g;
 const DEFAULT_STALE_REVIEW_DAYS = 90;

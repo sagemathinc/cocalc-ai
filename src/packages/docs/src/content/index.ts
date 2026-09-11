@@ -20,3 +20,6 @@ export * from "./self-hosting";
 export * from "./teaching";
 export * from "./terminal";
 export * from "./troubleshooting";
+export * from "./research-workflows";
+export * from "./research-remote";
+export * from "./research-specialist";

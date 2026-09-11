@@ -276,11 +276,8 @@ the CoCalc CLI writes into your local \`~/.ssh/config\`.
 Open **Project Settings → SSH** in the target project. The panel shows commands
 for the current site and project.
 
-Install the CoCalc CLI once:
-
-~~~sh
-curl -fsSL https://software.cocalc.ai/software/cocalc/install.sh | bash
-~~~
+Install the CoCalc CLI using the [CLI quickstart](/docs/cli/getting-started),
+which includes Linux/macOS and native Windows PowerShell instructions.
 
 Configure the project, replacing the example project id:
 
@@ -320,6 +317,51 @@ rsync -a ./local-directory/ \
 
 \`rsync\` must be installed at both ends. If \`scp\` or \`sftp\` reports a
 missing SFTP server, install \`openssh-sftp-server\` in the project image.
+
+## Transfer individual files with SFTP
+
+After the SSH setup above, open a local terminal in the folder containing a
+small test file named \`local-file.txt\`. On Windows, use PowerShell with the
+[OpenSSH client](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh-overview),
+which includes \`sftp\`. Connect using the same alias as \`ssh\`, replacing the
+example project id:
+
+~~~sh
+sftp 00000000-0000-4000-8000-000000000000
+~~~
+
+OpenSSH reads the managed \`Host\` entry, including its real \`HostName\`, user,
+key, and transport settings. If you configured a custom \`--alias\`, use that
+alias instead. If setup used a custom \`--config\` file, pass its path to
+\`sftp -F PATH_TO_CONFIG ALIAS\`.
+
+At the \`sftp>\` prompt, enter these commands without copying the prompt itself.
+Choose unused destination names: \`put\` and \`get\` can overwrite files.
+
+~~~text
+lpwd
+pwd
+ls
+put local-file.txt sftp-upload-demo.txt
+ls sftp-upload-demo.txt
+get sftp-upload-demo.txt downloaded-file.txt
+bye
+~~~
+
+\`lpwd\` shows the local directory; \`pwd\` and \`ls\` describe the remote
+project. \`put\` reads a local file and writes its remote destination; \`get\`
+reads a remote file and writes its local destination. Confirm the uploaded file
+appears in the remote listing and compare the downloaded file with your original.
+Use \`lcd\` to change the local directory and \`cd\` to change the remote one;
+quote paths containing spaces. Type \`help\` for the installed client's commands.
+
+A graphical SFTP client must support the route and authentication settings in
+the generated SSH configuration, including \`ProxyCommand\` when present.
+Entering the project-id alias in a generic hostname field alone is insufficient;
+do not assume the application imports OpenSSH configuration automatically.
+If a connection fails, inspect \`sftp -v ALIAS\` and the SSH troubleshooting
+steps below. For a complete upload/run/download workflow through the CoCalc CLI,
+see [remote analysis](/docs/research/remote-cli).
 
 ## Connect from one CoCalc project to another
 
