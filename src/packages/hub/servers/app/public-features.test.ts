@@ -2,6 +2,11 @@ import type { AddressInfo } from "node:net";
 import express from "express";
 import initPublicFeatures from "./public-features";
 
+jest.mock("@cocalc/server/launchpad/mode", () => ({
+  getCocalcProduct: jest.fn(() => "launchpad"),
+  isLaunchpadProduct: jest.fn(() => true),
+}));
+
 jest.mock("@cocalc/database/settings/customize", () => ({
   __esModule: true,
   default: jest.fn(async () => ({ siteName: "CoCalc" })),
@@ -73,6 +78,39 @@ describe("public feature and docs routes", () => {
       "<title>Project secrets - Documentation | CoCalc</title>",
     );
     expect(body).toContain('/docs/projects/project-secrets" rel="canonical"');
+    expect(body).toContain("<h1>Project secrets</h1>");
+    expect(body).toContain('data-cocalc-public-prerender="docs-detail"');
+    expect(body).toContain('id="what-project-secrets-are-for"');
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=10, must-revalidate",
+    );
+    expect(response.headers.get("vary")).toContain("Host");
+  });
+
+  it("serves a crawlable docs index from the clean URL", async () => {
+    const response = await request("/docs");
+    const body = await response.text();
+    expect(response.status).toBe(200);
+    expect(body).toContain('data-cocalc-public-prerender="docs-index"');
+    expect(body).toContain('href="/docs/projects/project-secrets"');
+    expect(body).not.toContain('href="/docs/admin/users"');
+    expect(body).not.toContain('href="/docs/account/settings"');
+    expect(body).not.toContain('href="/docs/projects/virtual-machines"');
+  });
+
+  it("preserves status and indexing behavior without exposing restricted articles", async () => {
+    const restricted = await request("/docs/admin/users");
+    const restrictedBody = await restricted.text();
+    expect(restricted.status).toBe(200);
+    expect(restrictedBody).toContain('content="noindex"');
+    expect(restrictedBody).not.toContain(
+      'data-cocalc-public-prerender="docs-detail"',
+    );
+    const missing = await request("/docs/does-not-exist");
+    expect(missing.status).toBe(404);
+    expect(await missing.text()).not.toContain(
+      'data-cocalc-public-prerender="docs-detail"',
+    );
   });
 
   it("serves rootfs image pages from clean URLs", async () => {
