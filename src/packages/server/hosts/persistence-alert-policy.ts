@@ -2,7 +2,9 @@ import type { HostConatPersistMetrics } from "@cocalc/conat/hub/api/hosts";
 
 const MINUTE = 60_000;
 const GIB = 1024 ** 3;
-export const PERSISTENCE_HISTORY_MS = 35 * MINUTE;
+export function persistenceHistoryMs(freshMs: number): number {
+  return freshMs + 30 * MINUTE;
+}
 
 export interface PersistenceAlert {
   level: "warning" | "critical";
@@ -36,7 +38,7 @@ export function persistenceAlert(
   ]
     .filter((m) => {
       const age = now - Date.parse(m.collected_at);
-      return age >= 0 && age <= PERSISTENCE_HISTORY_MS;
+      return age >= 0 && age <= persistenceHistoryMs(policy.freshMs);
     })
     .sort((a, b) => Date.parse(b.collected_at) - Date.parse(a.collected_at));
   const latest = samples[0];

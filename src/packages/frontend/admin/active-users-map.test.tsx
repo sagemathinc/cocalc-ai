@@ -6,6 +6,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
+import userEvent from "@testing-library/user-event";
 import type { ActiveUserMapDetails } from "@cocalc/conat/hub/api/system";
 
 import {
@@ -338,6 +339,28 @@ describe("ActiveUsersMapAdmin", () => {
         name: "Hide gmail.com from chart",
       }),
     ).toBeChecked();
+  });
+
+  it("toggles the Gmail filter with the keyboard and retains focus", async () => {
+    const user = userEvent.setup();
+    render(<ActiveUsersMapAdmin />);
+    await user.click(
+      await screen.findByRole("button", { name: "Select map location" }),
+    );
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "Hide gmail.com from chart",
+    });
+    checkbox.focus();
+    expect(checkbox).toHaveFocus();
+    await user.keyboard(" ");
+    await waitFor(() => expect(checkbox).toBeChecked());
+    await waitFor(() => expect(checkbox).toBeEnabled());
+    expect(checkbox).toHaveFocus();
+    expect(mockGetActiveUserMapDetails).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        excluded_email_domains: ["gmail.com"],
+      }),
+    );
   });
 
   it("restores the applied filter when a chart refresh fails", async () => {

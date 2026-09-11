@@ -68,7 +68,8 @@ readiness, and workload over time. Look for recovery after load declines before
 diagnosing a leak. Missing/stale telemetry is not proof of health: existing host
 heartbeat/availability monitoring remains necessary alongside this policy.
 
-History reads are bounded to 35 minutes and at most 512 samples per host using the
+History reads are bounded to the configured freshness window plus 30 minutes
+(35 minutes by default) and at most 512 samples per host using the
 existing `(host_id, collected_at)` index. Existing one-minute metrics sampling
 provides sufficient resolution. No fleet-wide scan of old metric history is
 needed, and this PR does not deploy or change production services itself.

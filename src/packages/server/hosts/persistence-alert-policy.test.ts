@@ -2,6 +2,8 @@ import type { HostConatPersistMetrics } from "@cocalc/conat/hub/api/hosts";
 import {
   persistenceAlert,
   persistenceAlertDelivery,
+  persistenceHistoryMs,
+  DEFAULT_PERSISTENCE_ALERT_POLICY,
 } from "./persistence-alert-policy";
 
 const now = Date.parse("2026-09-10T18:00:00Z");
@@ -24,6 +26,25 @@ function history(
 }
 
 describe("persistence alert policy", () => {
+  it.each([8, 40])(
+    "retains a full growth window for fresh samples %i minutes old",
+    (age) => {
+      const samples = history((minute) => ({
+        rss_bytes: (1.8 - minute * 0.025) * GIB,
+        collected_at: new Date(now - (minute + age) * 60_000).toISOString(),
+      }));
+      const policy = {
+        ...DEFAULT_PERSISTENCE_ALERT_POLICY,
+        freshMs: (age + 2) * 60_000,
+      };
+      expect(persistenceHistoryMs(policy.freshMs)).toBe((age + 32) * 60_000);
+      expect(persistenceAlert(samples, now, policy)).toMatchObject({
+        signal: "growth",
+      });
+      expect(persistenceAlert(samples, now)).toBeUndefined();
+    },
+  );
+
   it("keeps even large and growing stream counts informational", () => {
     expect(
       persistenceAlert(

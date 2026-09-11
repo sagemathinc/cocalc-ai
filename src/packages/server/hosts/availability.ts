@@ -17,7 +17,7 @@ import { runProjectHostRuntimeMaintenance } from "./runtime-maintenance";
 import {
   persistenceAlert,
   persistenceAlertDelivery,
-  PERSISTENCE_HISTORY_MS,
+  persistenceHistoryMs,
 } from "./persistence-alert-policy";
 import type { PersistenceAlert } from "./persistence-alert-policy";
 import type {
@@ -1539,7 +1539,7 @@ async function getConatPersistAlertRows(): Promise<ConatPersistAlertRow[]> {
       ORDER BY h.last_seen DESC NULLS LAST
       LIMIT 1000
     `,
-    [PERSISTENCE_HISTORY_MS],
+    [persistenceHistoryMs(CONAT_PERSIST_ALERT_FRESH_METRICS_MS)],
   );
   const now = Date.now();
   return rows
