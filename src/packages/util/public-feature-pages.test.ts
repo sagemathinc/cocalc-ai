@@ -1,8 +1,11 @@
 import {
+  PUBLIC_FEATURE_NAV_ITEMS,
   PUBLIC_FEATURE_PAGES,
   getPublicFeatureIndexPages,
   getPublicFeaturePage,
+  publicFeatureHref,
 } from "./public-feature-pages";
+import { getDocsEntry } from "@cocalc/docs";
 
 function expectNonEmptyString(value: string, label: string) {
   if (value.trim().length === 0) {
@@ -11,6 +14,61 @@ function expectNonEmptyString(value: string, label: string) {
 }
 
 describe("public feature page catalog", () => {
+  it.each([
+    ["/docs/hosts/storage", "/", "/docs/hosts/storage"],
+    [
+      "/docs/hosts/storage?view=full#backups",
+      "/prefix",
+      "/prefix/docs/hosts/storage?view=full#backups",
+    ],
+    [
+      "/prefix/docs/hosts/storage?view=full#backups",
+      "/prefix",
+      "/prefix/docs/hosts/storage?view=full#backups",
+    ],
+    ["/prefix?view=full#top", "/prefix", "/prefix?view=full#top"],
+    ["/prefix-other/docs", "/prefix", "/prefix/prefix-other/docs"],
+    ["/docs/hosts/storage", "/prefix/", "/prefix/docs/hosts/storage"],
+    [
+      "https://example.com/docs?view=full#backups",
+      "/prefix",
+      "https://example.com/docs?view=full#backups",
+    ],
+    ["//example.com/docs", "/prefix", "//example.com/docs"],
+    ["mailto:support@example.com", "/prefix", "mailto:support@example.com"],
+    ["#backups", "/prefix", "#backups"],
+    ["?view=full", "/prefix", "?view=full"],
+  ])(
+    "resolves %s on %s without changing its target",
+    (href, basePath, expected) => {
+      expect(publicFeatureHref(href, basePath)).toBe(expected);
+    },
+  );
+
+  it("connects research compute discovery to public documentation", () => {
+    const page = getPublicFeaturePage("research-compute");
+    expect(page).toBeDefined();
+    expect(getPublicFeatureIndexPages()).toContain(page);
+    expect(
+      PUBLIC_FEATURE_NAV_ITEMS.some((item) => item.slug === page?.slug),
+    ).toBe(true);
+    const links = [
+      page?.docsUrl,
+      ...(page?.sections?.flatMap(
+        (section) => section.links?.map((link) => link.href) ?? [],
+      ) ?? []),
+    ];
+    expect(links.length).toBeGreaterThan(1);
+    for (const href of links) {
+      expect(href).toMatch(/^\/docs\//);
+      expect(
+        getDocsEntry(href!.slice("/docs/".length), {
+          siteProfile: "cocalc-ai",
+        }),
+      ).toBeDefined();
+    }
+  });
+
   it("returns exactly the pages marked for the public feature index", () => {
     expect(getPublicFeatureIndexPages()).toEqual(
       PUBLIC_FEATURE_PAGES.filter((page) => page.index),

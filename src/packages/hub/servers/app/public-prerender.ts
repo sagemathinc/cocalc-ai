@@ -7,6 +7,7 @@ import {
   getPublicFeatureIndexPages,
   getPublicFeaturePage,
   PUBLIC_FEATURE_NAV_ITEMS,
+  publicFeatureHref,
   type PublicFeaturePage,
   type PublicFeatureSection,
 } from "@cocalc/util/public-feature-pages";
@@ -34,7 +35,10 @@ function featurePath(basePath: string, slug?: string): string {
   return joinUrlPath(basePath, slug ? `features/${slug}` : "features");
 }
 
-function renderSection(section: PublicFeatureSection): string {
+function renderSection(
+  section: PublicFeatureSection,
+  basePath: string,
+): string {
   const paragraphs = (section.paragraphs ?? [])
     .map((paragraph) => `<p>${htmlEscape(paragraph)}</p>`)
     .join("");
@@ -49,7 +53,7 @@ function renderSection(section: PublicFeatureSection): string {
       ? `<ul>${section.links
           .map(
             ({ href, label }) =>
-              `<li><a href="${htmlEscape(href)}">${htmlEscape(label)}</a></li>`,
+              `<li><a href="${htmlEscape(publicFeatureHref(href, basePath))}">${htmlEscape(label)}</a></li>`,
           )
           .join("")}</ul>`
       : "";
@@ -79,7 +83,9 @@ function renderFeatureDetail(
   page: PublicFeaturePage,
   basePath: string,
 ): string {
-  const sections = (page.sections ?? []).map(renderSection).join("");
+  const sections = (page.sections ?? [])
+    .map((section) => renderSection(section, basePath))
+    .join("");
   const title = page.metadataTitle ?? page.title;
   return `<article data-cocalc-public-prerender="feature" style="${ARTICLE_STYLE}">
 <header>
