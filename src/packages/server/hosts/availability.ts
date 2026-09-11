@@ -14,6 +14,12 @@ import {
 import { createLro, ensureLroSchema } from "@cocalc/server/lro/lro-db";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import { runProjectHostRuntimeMaintenance } from "./runtime-maintenance";
+import {
+  persistenceAlert,
+  persistenceAlertDelivery,
+  PERSISTENCE_HISTORY_MS,
+} from "./persistence-alert-policy";
+import type { PersistenceAlert } from "./persistence-alert-policy";
 import type {
   HostAvailabilityCategory,
   HostAvailabilityEvent,
@@ -116,19 +122,6 @@ const CONAT_PERSIST_CRITICAL_RSS_BYTES = Math.max(
     128 * 1024 ** 2,
   ),
 );
-const CONAT_PERSIST_WARNING_OPEN_STREAMS = envNumberAtLeast(
-  "COCALC_HOST_CONAT_PERSIST_WARNING_OPEN_STREAMS",
-  2_000,
-  100,
-);
-const CONAT_PERSIST_CRITICAL_OPEN_STREAMS = Math.max(
-  CONAT_PERSIST_WARNING_OPEN_STREAMS,
-  envNumberAtLeast(
-    "COCALC_HOST_CONAT_PERSIST_CRITICAL_OPEN_STREAMS",
-    5_000,
-    100,
-  ),
-);
 const CONAT_PERSIST_ALERT_FRESH_METRICS_MS = envNumberAtLeast(
   "COCALC_HOST_CONAT_PERSIST_ALERT_FRESH_METRICS_MS",
   5 * 60_000,
@@ -221,11 +214,13 @@ type RuntimeDegradedHostRow = ProjectHostAvailabilitySnapshot & {
 };
 
 type ConatPersistAlertRow = ProjectHostAvailabilitySnapshot & {
+  name?: string | null;
   public_url?: string | null;
   metric_collected_at?: Date | string | null;
   conat_persist?: HostConatPersistMetrics | null;
   persist_level: "warning" | "critical";
   persist_reason: string;
+  persist_signal: PersistenceAlert["signal"];
 };
 
 type RootFilesystemAlertRow = ProjectHostAvailabilitySnapshot & {
@@ -1440,54 +1435,25 @@ export async function runRootFilesystemAlertCheck(): Promise<number> {
 
 function conatPersistAlertRow(
   row: ProjectHostAvailabilitySnapshot & {
+    name?: string | null;
     public_url?: string | null;
     metric_collected_at?: Date | string | null;
     conat_persist?: HostConatPersistMetrics | null;
+    persist_history?: (HostConatPersistMetrics | null)[] | null;
   },
   now = Date.now(),
 ): ConatPersistAlertRow | undefined {
-  const metrics = row.conat_persist;
-  if (!metrics?.available) return undefined;
-  const collectedAt = timestampMs(
-    metrics.collected_at ?? row.metric_collected_at,
-  );
-  if (
-    collectedAt == null ||
-    now - collectedAt > CONAT_PERSIST_ALERT_FRESH_METRICS_MS
-  ) {
-    return undefined;
-  }
-  const rss = numericValue(metrics.rss_bytes);
-  const streams = numericValue(metrics.open_streams);
-  let persist_level: ConatPersistAlertRow["persist_level"] | undefined;
-  const reasons: string[] = [];
-  if (rss != null && rss >= CONAT_PERSIST_CRITICAL_RSS_BYTES) {
-    persist_level = "critical";
-    reasons.push(
-      `RSS ${formatBytes(rss)} >= ${formatBytes(CONAT_PERSIST_CRITICAL_RSS_BYTES)}`,
-    );
-  } else if (rss != null && rss >= CONAT_PERSIST_WARNING_RSS_BYTES) {
-    persist_level = "warning";
-    reasons.push(
-      `RSS ${formatBytes(rss)} >= ${formatBytes(CONAT_PERSIST_WARNING_RSS_BYTES)}`,
-    );
-  }
-  if (streams != null && streams >= CONAT_PERSIST_CRITICAL_OPEN_STREAMS) {
-    persist_level = "critical";
-    reasons.push(
-      `open streams ${streams} >= ${CONAT_PERSIST_CRITICAL_OPEN_STREAMS}`,
-    );
-  } else if (streams != null && streams >= CONAT_PERSIST_WARNING_OPEN_STREAMS) {
-    persist_level ??= "warning";
-    reasons.push(
-      `open streams ${streams} >= ${CONAT_PERSIST_WARNING_OPEN_STREAMS}`,
-    );
-  }
-  if (!persist_level) return undefined;
+  const alert = persistenceAlert(row.persist_history ?? [], now, {
+    warningRss: CONAT_PERSIST_WARNING_RSS_BYTES,
+    criticalRss: CONAT_PERSIST_CRITICAL_RSS_BYTES,
+    freshMs: CONAT_PERSIST_ALERT_FRESH_METRICS_MS,
+  });
+  if (!alert) return undefined;
   return {
     ...row,
-    persist_level,
-    persist_reason: reasons.join("; "),
+    persist_level: alert.level,
+    persist_reason: alert.reason,
+    persist_signal: alert.signal,
   };
 }
 
@@ -1496,13 +1462,14 @@ function formatConatPersistAlertBody(rows: ConatPersistAlertRow[]): string {
     `${rows.length} project-host persistence daemon${rows.length === 1 ? " requires" : "s require"} operator attention.`,
     "",
     "This alert is observational only. It does not restart persistence, stop projects, or change admission.",
+    "Stream counts are context, not capacity limits. Inspect host metrics/history and persistence logs. Warning reminders are limited to every 4 hours, critical reminders to every hour, per host and signal.",
     "",
     "Hosts:",
     "",
     ...rows.slice(0, CONAT_PERSIST_ALERT_LIMIT).map((row) => {
       const metrics = row.conat_persist;
       return [
-        `- ${pressureAlertHostName(row)}`,
+        `- ${row.name || pressureAlertHostName(row)}`,
         `host_id=${row.id}`,
         `level=${row.persist_level}`,
         metrics?.pid != null ? `pid=${metrics.pid}` : undefined,
@@ -1529,21 +1496,25 @@ async function getConatPersistAlertRows(): Promise<ConatPersistAlertRow[]> {
   await ensureProjectHostMetricsSamplesSchema();
   const { rows } = await pool().query<
     ProjectHostAvailabilitySnapshot & {
+      name?: string | null;
       public_url?: string | null;
       metric_collected_at?: Date | string | null;
       conat_persist?: HostConatPersistMetrics | null;
+      persist_history: (HostConatPersistMetrics | null)[] | null;
     }
   >(
     `
       SELECT
         h.id,
+        h.name,
         h.status,
         h.deleted,
         h.last_seen,
         h.metadata,
         h.public_url,
         m.collected_at AS metric_collected_at,
-        m.conat_persist
+        m.conat_persist,
+        history.persist_history
       FROM project_hosts h
       LEFT JOIN LATERAL (
         SELECT collected_at, conat_persist
@@ -1552,26 +1523,52 @@ async function getConatPersistAlertRows(): Promise<ConatPersistAlertRow[]> {
         ORDER BY collected_at DESC
         LIMIT 1
       ) m ON true
+      LEFT JOIN LATERAL (
+        SELECT jsonb_agg(sample.conat_persist ORDER BY sample.collected_at DESC) AS persist_history
+        FROM (
+          SELECT collected_at, conat_persist
+          FROM project_host_metrics_samples
+          WHERE host_id = h.id AND collected_at >= NOW() - ($1::double precision * interval '1 millisecond')
+          ORDER BY collected_at DESC
+          LIMIT 512
+        ) sample
+      ) history ON true
       WHERE h.deleted IS NULL
         AND h.status = 'running'
         AND m.conat_persist IS NOT NULL
       ORDER BY h.last_seen DESC NULLS LAST
       LIMIT 1000
     `,
+    [PERSISTENCE_HISTORY_MS],
   );
-  return rows.map(conatPersistAlertRow).filter((row) => row != null);
+  const now = Date.now();
+  return rows
+    .map((row) => conatPersistAlertRow(row, now))
+    .filter((row) => row != null);
 }
 
 export async function runConatPersistAlertCheck(): Promise<number> {
-  const rows = await getConatPersistAlertRows();
-  if (!rows.length) return 0;
-  await adminAlert({
-    subject: "Project-host persistence pressure is high",
-    body: formatConatPersistAlertBody(rows),
-    dedupMinutes: 30,
-    dedupBySubject: true,
-  });
-  return rows.length;
+  // The message dedup check and insert are separate queries. Serialize passes
+  // across bay workers, including overlapping timer callbacks, to avoid races.
+  return (
+    (await withSessionAdvisoryLock({
+      lockKey: "project-host-persistence-alerts",
+      fn: async () => {
+        const rows = await getConatPersistAlertRows();
+        for (const row of rows) {
+          await adminAlert({
+            ...persistenceAlertDelivery(row.id, {
+              level: row.persist_level,
+              signal: row.persist_signal,
+              reason: row.persist_reason,
+            }),
+            body: formatConatPersistAlertBody([row]),
+          });
+        }
+        return rows.length;
+      },
+    })) ?? 0
+  );
 }
 
 function runtimeDegradedHostName(row: RuntimeDegradedHostRow): string {
