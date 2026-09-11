@@ -358,6 +358,7 @@ function isActionableListener(value: string): boolean {
 }
 
 type SnapRevisionSignal = {
+  identity: string;
   key: string;
   revision: string;
   unit: string;
@@ -371,6 +372,7 @@ function snapRevisionSignal(
     const match = /snap-([^/\s]+)-(\d+)\.mount/.exec(value);
     if (!match) return;
     return {
+      identity: match[1],
       key: value.replace(match[0], `snap-${match[1]}-<revision>.mount`),
       revision: match[2],
       unit: match[0],
@@ -388,9 +390,29 @@ function snapRevisionSignal(
     );
     // Revision-specific mount unit content changes along with its filename.
     fields[5] = null;
-    return { key: encode(fields), revision: match[2], unit: match[0] };
+    return {
+      identity: match[1],
+      key: encode(fields),
+      revision: match[2],
+      unit: match[0],
+    };
   }
   return;
+}
+
+function baselineSnapMountIdentities(
+  snapshots: NormalizedHostIntrusionSnapshot[],
+): Set<string> {
+  const identities = new Set<string>();
+  for (const snapshot of snapshots) {
+    for (const value of snapshot.signals["services.enabled"] ?? []) {
+      const signal = snapRevisionSignal("services.enabled", value);
+      if (signal && value === `${signal.unit} enabled enabled`) {
+        identities.add(signal.identity);
+      }
+    }
+  }
+  return identities;
 }
 
 function isVerifiedSnapMountAddition({
@@ -444,12 +466,14 @@ function isVerifiedSnapMountAddition({
 function routineSnapRevisionChanges(
   delta: HostIntrusionSnapshotDelta,
   installedSnapMountUnits: string[] = [],
+  baselineSnapshots: NormalizedHostIntrusionSnapshot[] = [],
 ): {
   added: Set<string>;
   removed: Set<string>;
 } {
   const routine = { added: new Set<string>(), removed: new Set<string>() };
   const installedUnits = new Set(installedSnapMountUnits);
+  const baselineIdentities = baselineSnapMountIdentities(baselineSnapshots);
   for (const category of ["persistence.files", "services.enabled"] as const) {
     const removedByKey = new Map<string, Array<[string, string]>>();
     for (const value of delta.removed[category] ?? []) {
@@ -461,7 +485,7 @@ function routineSnapRevisionChanges(
     }
     for (const value of delta.added[category] ?? []) {
       const signal = snapRevisionSignal(category, value);
-      if (!signal) continue;
+      if (!signal || !baselineIdentities.has(signal.identity)) continue;
       if (
         !isVerifiedSnapMountAddition({
           category,
@@ -482,6 +506,8 @@ function routineSnapRevisionChanges(
       routine.removed.add(removed);
     }
     for (const value of delta.added[category] ?? []) {
+      const signal = snapRevisionSignal(category, value);
+      if (!signal || !baselineIdentities.has(signal.identity)) continue;
       if (
         isVerifiedSnapMountAddition({
           category,
@@ -663,9 +689,11 @@ export function selectActionableHostIntrusionChanges(
   delta: HostIntrusionSnapshotDelta,
   {
     installedSnapMountUnits = [],
+    baselineSnapshots = [],
     trustedAdminSshSources = [],
   }: {
     installedSnapMountUnits?: string[];
+    baselineSnapshots?: NormalizedHostIntrusionSnapshot[];
     trustedAdminSshSources?: string[];
   } = {},
 ): HostIntrusionSnapshotDelta {
@@ -674,6 +702,7 @@ export function selectActionableHostIntrusionChanges(
   const routineSnap = routineSnapRevisionChanges(
     delta,
     installedSnapMountUnits,
+    baselineSnapshots,
   );
   for (const [category, values] of Object.entries(delta.added) as Array<
     [MonitoredCategory, string[]]
@@ -1149,9 +1178,11 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
 
       const previous = await loadPreviousCompleteSnapshot(host.id);
       let delta: HostIntrusionSnapshotDelta | undefined;
+      let baselineSnapshots: NormalizedHostIntrusionSnapshot[] = [];
       let baseline: HostTransition["baseline"] = "host";
       let comparedWithFleet = false;
       if (previous) {
+        baselineSnapshots = [previous];
         delta = diffHostIntrusionSnapshots(previous, normalized);
       } else if (hadActiveFleetBaseline) {
         const fleet = await loadFleetCompleteSnapshots({
@@ -1159,6 +1190,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
           excludeHostId: host.id,
         });
         if (fleet.length) {
+          baselineSnapshots = fleet;
           delta = diffHostIntrusionSnapshotAgainstFleet(fleet, normalized);
           baseline = "fleet";
           comparedWithFleet = true;
@@ -1178,6 +1210,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
             ? delta
             : selectActionableHostIntrusionChanges(delta, {
                 installedSnapMountUnits: source.snap_mount_units,
+                baselineSnapshots,
                 trustedAdminSshSources,
               });
       const changedDelta =

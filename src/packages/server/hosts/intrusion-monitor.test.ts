@@ -732,6 +732,7 @@ describe("project-host intrusion monitor normalization", () => {
     expect(
       selectActionableHostIntrusionChanges(delta, {
         installedSnapMountUnits: ["snap-snapd-27738.mount"],
+        baselineSnapshots: [normalizeHostIntrusionSnapshot(before)],
       }),
     ).toEqual({
       added: {},
@@ -760,6 +761,7 @@ describe("project-host intrusion monitor normalization", () => {
     expect(
       selectActionableHostIntrusionChanges(extraDelta, {
         installedSnapMountUnits: ["snap-snapd-27738.mount"],
+        baselineSnapshots: [normalizeHostIntrusionSnapshot(before)],
       }),
     ).toMatchObject({
       added: {
@@ -782,7 +784,7 @@ describe("project-host intrusion monitor normalization", () => {
     });
   });
 
-  it("suppresses add-only mount records only for verified active snaps", () => {
+  it("requires a verified active snap and its identity in the baseline", () => {
     const unit = "snap-core24-2124.mount";
     const mountRecord = JSON.stringify([
       `/etc/systemd/system/${unit}`,
@@ -821,7 +823,27 @@ describe("project-host intrusion monitor normalization", () => {
       selectActionableHostIntrusionChanges(delta, {
         installedSnapMountUnits: [unit],
       }),
+    ).toEqual(delta);
+
+    const prior = snapshot();
+    prior.services.enabled.push("snap-core24-1643.mount enabled enabled");
+    expect(
+      selectActionableHostIntrusionChanges(delta, {
+        installedSnapMountUnits: [unit],
+        baselineSnapshots: [normalizeHostIntrusionSnapshot(prior)],
+      }),
     ).toEqual({ added: {}, removed: {} });
+
+    const unrelatedPrior = snapshot();
+    unrelatedPrior.services.enabled.push(
+      "snap-snapd-27738.mount enabled enabled",
+    );
+    expect(
+      selectActionableHostIntrusionChanges(delta, {
+        installedSnapMountUnits: [unit],
+        baselineSnapshots: [normalizeHostIntrusionSnapshot(unrelatedPrior)],
+      }),
+    ).toEqual(delta);
 
     const unexpectedPath = JSON.stringify([
       `/etc/systemd/system/unexpected/${unit}`,
