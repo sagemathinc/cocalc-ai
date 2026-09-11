@@ -392,6 +392,7 @@ export type ActiveUserMapDetailScope = "all" | "group" | "unknown";
 export interface ActiveUserMapDetailsQuery extends ActiveUserMapQuery {
   scope: ActiveUserMapDetailScope;
   group_id?: string;
+  excluded_email_domains?: string[];
 }
 
 export interface ActiveUserMapEmailDomainCount {

@@ -92,6 +92,7 @@ jest.mock("@cocalc/frontend/frame-editors/generic/client", () => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  window.localStorage.clear();
   mockGetActiveUserMap.mockResolvedValue({
     enabled: true,
     checked_at: "2026-08-27T00:00:00.000Z",
@@ -274,6 +275,22 @@ describe("ActiveUsersMapAdmin", () => {
       screen.queryByRole("button", { name: "Next" }),
     ).not.toBeInTheDocument();
 
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Hide gmail.com from chart" }),
+    );
+    await waitFor(() =>
+      expect(mockGetActiveUserMapDetails).toHaveBeenLastCalledWith({
+        active_minutes: 15,
+        group_by: "country",
+        scope: "group",
+        group_id: "CA",
+        excluded_email_domains: ["gmail.com"],
+      }),
+    );
+    expect(
+      window.localStorage.getItem("cocalc:admin:activeUsersMapHideGmail"),
+    ).toBe("true");
+
     fireEvent.click(screen.getByRole("button", { name: "Active users: 1" }));
     await waitFor(() =>
       expect(mockGetActiveUserMapDetails).toHaveBeenLastCalledWith({
@@ -281,6 +298,7 @@ describe("ActiveUsersMapAdmin", () => {
         group_by: "country",
         scope: "all",
         group_id: undefined,
+        excluded_email_domains: ["gmail.com"],
       }),
     );
 
@@ -296,6 +314,66 @@ describe("ActiveUsersMapAdmin", () => {
     expect(
       await screen.findByText("user-result:account-1:projects:true"),
     ).toBeVisible();
+  });
+
+  it("restores the browser-local Gmail chart preference", async () => {
+    window.localStorage.setItem("cocalc:admin:activeUsersMapHideGmail", "true");
+
+    render(<ActiveUsersMapAdmin />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Select map location" }),
+    );
+
+    await waitFor(() =>
+      expect(mockGetActiveUserMapDetails).toHaveBeenCalledWith({
+        active_minutes: 15,
+        group_by: "country",
+        scope: "group",
+        group_id: "CA",
+        excluded_email_domains: ["gmail.com"],
+      }),
+    );
+    expect(
+      await screen.findByRole("checkbox", {
+        name: "Hide gmail.com from chart",
+      }),
+    ).toBeChecked();
+  });
+
+  it("restores the applied filter when a chart refresh fails", async () => {
+    render(<ActiveUsersMapAdmin />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Select map location" }),
+    );
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "Hide gmail.com from chart",
+    });
+    expect(checkbox).not.toBeChecked();
+
+    mockGetActiveUserMapDetails.mockRejectedValueOnce(Error("bay offline"));
+    fireEvent.click(checkbox);
+
+    await waitFor(() =>
+      expect(mockGetActiveUserMapDetails).toHaveBeenCalledWith({
+        active_minutes: 15,
+        group_by: "country",
+        scope: "group",
+        group_id: "CA",
+        excluded_email_domains: ["gmail.com"],
+      }),
+    );
+    await waitFor(() => expect(checkbox).not.toBeChecked());
+    expect(
+      window.localStorage.getItem("cocalc:admin:activeUsersMapHideGmail"),
+    ).toBe("false");
+    await waitFor(() =>
+      expect(mockGetActiveUserMapDetails).toHaveBeenLastCalledWith({
+        active_minutes: 15,
+        group_by: "country",
+        scope: "group",
+        group_id: "CA",
+      }),
+    );
   });
 
   it("warns when a detail fetch is missing a bay", async () => {
