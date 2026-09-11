@@ -48,9 +48,9 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     metadataTitle: "CPU, RAM, and GPU Compute for Research",
     tagline: "Keep research code, computation, and collaboration connected.",
     summary:
-      "Use project hosts for larger research workloads, or connect a remote Jupyter kernel to an existing machine and its datasets.",
+      "Run larger research workloads in CoCalc, or connect a remote Jupyter kernel to an existing machine and its datasets.",
     metadataSummary:
-      "Explore research compute in CoCalc: project hosts, CPU and RAM requirements, GPU workloads, remote Jupyter kernels, storage, and CLI inspection. Follow the documented setup and operating limits.",
+      "Explore research compute in CoCalc: CPU and RAM requirements, GPU workloads, remote Jupyter kernels, storage, and CLI inspection. Follow the documented setup and operating limits.",
     docsUrl: "/docs/hosts/project-hosts",
     index: true,
     sections: [
