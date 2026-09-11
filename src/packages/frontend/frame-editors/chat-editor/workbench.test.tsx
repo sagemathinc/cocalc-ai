@@ -14,6 +14,19 @@ jest.mock("@cocalc/frontend/chat/use-chat-composer-draft", () => ({
 }));
 jest.mock("./github-pr-operations", () => ({ refreshPR: jest.fn() }));
 
+// Exercise the real selection wrapper; draft persistence and sending are covered
+// by contextual-reply.test.tsx, not by a second mocked composer implementation.
+const mockLocalEditor = jest.fn(({ context, onClose }) => (
+  <div role="dialog" aria-label="Local comment">
+    <blockquote>{context.quote}</blockquote>
+    <button onClick={onClose}>Close local comment</button>
+  </div>
+));
+jest.mock("@cocalc/frontend/chat/contextual-reply-editor", () => ({
+  __esModule: true,
+  default: (props) => mockLocalEditor(props),
+}));
+
 jest.mock("./actions", () => ({ focusChatFrameInput: jest.fn() }));
 jest.mock("@cocalc/frontend/components/diff-viewer/document-diff", () => ({
   __esModule: true,
@@ -161,8 +174,10 @@ test("Back to chat renders the destination before requesting composer focus", ()
 });
 
 test.each([false, true])(
-  "selected text stays pinned and Comment returns to chat (maximized=%s)",
+  "selected text stays pinned and Comment stays in the workbench (maximized=%s)",
   async (maximized) => {
+    mockLocalEditor.mockClear();
+    jest.mocked(focusChatFrameInput).mockClear();
     const target = { thread_id: "thread", artifact_id: "artifact" };
     let record = {
       ...artifactKey(target),
@@ -216,6 +231,7 @@ test.each([false, true])(
     delete (selection as any).modify;
     const range = document.createRange();
     range.selectNodeContents(screen.getByText("Original passage"));
+    range.getBoundingClientRect = () => new DOMRect(10, 20, 100, 20);
     act(() => {
       window.getSelection()!.removeAllRanges();
       window.getSelection()!.addRange(range);
@@ -227,25 +243,24 @@ test.each([false, true])(
     });
     expect(screen.getByText("Original passage")).toBeTruthy();
     expect(screen.queryByText("New passage")).toBeNull();
-    const comment = screen.getByRole("button", { name: "Comment" });
+    const comment = screen.getAllByRole("button", { name: "Comment" })[0];
     comment.focus();
     window.getSelection()?.removeAllRanges();
     await act(async () => {
       fireEvent.click(comment);
     });
-    expect(stageArtifactFeedback).toHaveBeenCalledWith(
-      expect.objectContaining({
-        thread_id: "thread",
-        markdown: "Original passage",
-        quote: "Original passage",
-      }),
-    );
-    expect(focusChatFrameInput).toHaveBeenCalledWith("origin", {
-      waitForInput: true,
+    await screen.findByRole("dialog", { name: "Local comment" });
+    expect(mockLocalEditor.mock.calls.at(-1)?.[0].context).toMatchObject({
+      source: { kind: "artifact", thread_id: "thread", id: "artifact" },
+      quote: "Original passage",
     });
-    if (maximized)
-      expect(actions.set_frame_full).toHaveBeenCalledWith("origin");
-    else expect(actions.set_active_id).toHaveBeenCalledWith("origin");
+    expect(stageArtifactFeedback).not.toHaveBeenCalled();
+    expect(focusChatFrameInput).not.toHaveBeenCalled();
+    expect(actions.set_frame_full).not.toHaveBeenCalled();
+    expect(actions.set_active_id).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close local comment" }),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Show updated document" }),
     );
