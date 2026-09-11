@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type * as Store from "./store";
 import type { CommercialOrderCreateRequest } from "@cocalc/conat/hub/api/commercial-orders";
@@ -918,6 +918,154 @@ describePglite("commercial order store", () => {
       idempotency_key: `stripe-quote-operation-${randomUUID()}`,
     });
     expect(operation.operation.commercial_quote_id).toBe(intent.quote.id);
+  });
+
+  async function issuedTaxQuoteAcceptance(
+    status: "remote_started" | "indeterminate",
+  ) {
+    const created = await store.createCommercialOrder(
+      request({
+        collection_mode: "stripe_invoice",
+        agreed_total: "4680",
+        terms_snapshot: {
+          invoice: {
+            automatic_tax: true,
+            tax_code: "txcd_10103000",
+            billing_address: { country: "GB" },
+          },
+        },
+      }),
+    );
+    const intent = await store.createCommercialStripeQuoteIntent({
+      account_id: actor,
+      id: created.id,
+      expected_version: created.version,
+      reason: "Reviewed taxable quote",
+      idempotency_key: `tax-quote-${randomUUID()}`,
+      valid_until: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+    });
+    await store.approveCommercialOrder({
+      account_id: actor,
+      id: created.id,
+      expected_version: intent.order.version,
+      reason: "Approve reviewed taxable quote",
+    });
+    const pdf = Buffer.from("%PDF-1.4\nTaxable Stripe quote\n%%EOF\n");
+    const quoteId = `qt_${randomUUID().replaceAll("-", "")}`;
+    const issued = await store.updateCommercialQuoteProvider({
+      quote_id: intent.quote.id,
+      status: "issued",
+      provider_quote_id: quoteId,
+      provider_status: "open",
+      provider_snapshot: {},
+      issued_at: new Date().toISOString(),
+      document_filename: "taxable.pdf",
+      document_data: pdf,
+      document_sha256: createHash("sha256").update(pdf).digest("hex"),
+      actor_account_id: actor,
+      event_type: "stripe-quote-finalized",
+      event_source: "cli",
+      event_reason: "Retain reviewed taxable quote",
+      event_idempotency_key: `issue-tax-${randomUUID()}`,
+    });
+    const invoice = await store.createCommercialInvoiceIntent({
+      order_id: issued.id,
+      actor_account_id: actor,
+      expected_version: issued.version,
+      reason: "Adopt accepted taxable quote",
+      idempotency_key: `accept-tax-invoice-${randomUUID()}`,
+    });
+    const { operation } = await store.reserveCommercialProviderOperation({
+      order_id: issued.id,
+      quote_id: intent.quote.id,
+      invoice_id: invoice.invoice.id,
+      operation: "quote_accept",
+      expected_version: invoice.order.version,
+      idempotency_key: `accept-tax-operation-${randomUUID()}`,
+    });
+    await store.setCommercialProviderOperationStatus({
+      id: operation.id,
+      status,
+    });
+    const update: Store.CommercialQuoteAcceptanceUpdate = {
+      operation_id: operation.id,
+      quote_id: intent.quote.id,
+      invoice_id: invoice.invoice.id,
+      provider_quote_id: quoteId,
+      provider_invoice_id: `in_${randomUUID().replaceAll("-", "")}`,
+      provider_customer_id: "cus_tax_test",
+      quote_provider_snapshot: { status: "accepted" },
+      invoice_provider_snapshot: {
+        automatic_tax: { enabled: true, status: "complete" },
+      },
+      acceptance_source:
+        status === "indeterminate"
+          ? "provider_reconciliation"
+          : "operator_confirmed",
+      subtotal: "3900",
+      tax: "780",
+      total: "4680",
+      amount_due: "4680",
+      actor_account_id: actor,
+      event_source: "cli",
+      event_reason: "Record accepted taxable invoice",
+      event_idempotency_key: `tax-accepted-${randomUUID()}`,
+    };
+    return { orderId: issued.id, update };
+  }
+
+  it.each(["remote_started", "indeterminate"] as const)(
+    "completes positive-tax quote acceptance from %s and replays once",
+    async (status) => {
+      const { orderId, update } = await issuedTaxQuoteAcceptance(status);
+      const accepted = await store.completeCommercialQuoteAcceptance(update);
+      expect(accepted.collection_state).toBe("draft_invoice");
+      expect(accepted.quotes[0].status).toBe("accepted");
+      expect(accepted.invoices).toHaveLength(1);
+      expect(accepted.invoices[0]).toMatchObject({
+        status: "draft",
+        subtotal: "3900.0000000000",
+        tax: "780.0000000000",
+        total: "4680.0000000000",
+        amount_due: "4680.0000000000",
+      });
+      const replay = await store.completeCommercialQuoteAcceptance(update);
+      expect(replay.version).toBe(accepted.version);
+      expect(replay.invoices).toHaveLength(1);
+      const result = await pool.query(
+        "SELECT status FROM commercial_provider_operations WHERE id=$1",
+        [update.operation_id],
+      );
+      expect(result.rows[0].status).toBe("succeeded");
+      const events = await pool.query(
+        "SELECT id FROM commercial_order_events WHERE commercial_order_id=$1 AND event_type='stripe-quote-accepted'",
+        [orderId],
+      );
+      expect(events.rows).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    { tax: "0" },
+    { tax: "779.99" },
+    { tax: "780.01" },
+    { tax: "-780" },
+    { subtotal: "3899.99", tax: "780.01" },
+    { total: "4680.01", tax: "780.01", amount_due: "4680.01" },
+    { amount_due: "3900" },
+  ])("rolls back mismatched taxable acceptance %j", async (changes) => {
+    const { orderId, update } = await issuedTaxQuoteAcceptance("indeterminate");
+    await expect(
+      store.completeCommercialQuoteAcceptance({ ...update, ...changes }),
+    ).rejects.toThrow("does not match local terms");
+    const unchanged = await store.getCommercialOrder(orderId);
+    expect(unchanged.quotes[0].status).toBe("issued");
+    expect(unchanged.invoices[0].status).toBe("creating");
+    const result = await pool.query(
+      "SELECT status FROM commercial_provider_operations WHERE id=$1",
+      [update.operation_id],
+    );
+    expect(result.rows[0].status).toBe("indeterminate");
   });
 
   it("attaches, downloads, and voids immutable purchase-order PDFs", async () => {

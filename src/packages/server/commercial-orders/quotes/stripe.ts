@@ -49,7 +49,11 @@ import {
   quoteValidUntil,
 } from "../store";
 import { requireReason } from "../state";
-import { commercialTaxPolicy, assertCommercialAutomaticTax } from "../tax";
+import {
+  commercialTaxPolicy,
+  assertCommercialAutomaticTax,
+  assertCommercialInvoiceLineTax,
+} from "../tax";
 
 const logger = getLogger("server:commercial-orders:stripe-quotes");
 const FLOW = "commercial_quote";
@@ -1141,6 +1145,7 @@ async function normalizeAcceptedInvoice(opts: {
   }
   const remaining = [...opts.order.items];
   for (const line of lineResult.data) {
+    await assertCommercialInvoiceLineTax(opts.stripe, line, opts.order);
     const invoiceLine = line as any;
     const lineProductId =
       stripeId(invoiceLine?.price?.product) ??

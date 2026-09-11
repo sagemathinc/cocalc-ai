@@ -48,7 +48,11 @@ import {
   updateCommercialInvoiceProvider,
 } from "../store";
 import { recordCommercialProviderFailure } from "../observability";
-import { commercialTaxPolicy, assertCommercialAutomaticTax } from "../tax";
+import {
+  commercialTaxPolicy,
+  assertCommercialAutomaticTax,
+  assertCommercialInvoiceLineTax,
+} from "../tax";
 import {
   assertInvoiceReady,
   invoiceCollectionState,
@@ -794,6 +798,7 @@ async function ensureStripeInvoiceItems(opts: {
     ) {
       throw Error("Stripe draft line items do not match the approved order");
     }
+    await assertCommercialInvoiceLineTax(opts.stripe, line, opts.order);
     expected.delete(itemId);
   }
   if (expected.size && opts.stripeInvoice.status !== "draft") {
@@ -1226,6 +1231,11 @@ async function assertStripeInvoiceMatchesOrder(
     ) {
       throw Error("Stripe draft line items no longer match the approved order");
     }
+    await assertCommercialInvoiceLineTax(
+      stripe ?? (await getConn()),
+      line,
+      order,
+    );
     expected.delete(itemId);
   }
   if (expected.size) throw Error("Stripe draft is missing approved line items");

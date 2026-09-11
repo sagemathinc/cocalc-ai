@@ -307,6 +307,7 @@ function stripeInvoiceFixture(changes: Record<string, unknown> = {}) {
 describe("commercial Stripe quotes", () => {
   const stripe = {
     publishable_key: "pk_test_123",
+    prices: { retrieve: jest.fn() },
     products: {
       create: jest.fn(),
       retrieve: jest.fn(),
@@ -451,7 +452,11 @@ describe("commercial Stripe quotes", () => {
           id: "il_1",
           amount: 390000,
           quantity: 1,
-          price: { product: "prod_site" },
+          pricing: {
+            type: "price_details",
+            price_details: { price: "price_site", product: "prod_site" },
+            unit_amount_decimal: "390000",
+          },
         },
       ],
       has_more: false,
@@ -609,6 +614,11 @@ describe("commercial Stripe quotes", () => {
       ],
     });
     stripe.quotes.create.mockResolvedValue(provider);
+    stripe.prices.retrieve.mockResolvedValue({
+      id: "price_site",
+      tax_behavior: "exclusive",
+      product: { id: "prod_site", tax_code: terms.tax_code },
+    });
     stripe.quotes.retrieve.mockResolvedValue(provider);
     stripe.quotes.listLineItems.mockResolvedValue({
       data: [
@@ -711,6 +721,103 @@ describe("commercial Stripe quotes", () => {
     );
     expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
   });
+
+  it.each(["changed", "missing"])(
+    "rejects %s invoice product tax code after quote acceptance",
+    async (change) => {
+      const { order, quote, provider } = enableReviewedTax();
+      const issued = {
+        ...quote,
+        status: "issued" as const,
+        document_sha256: "a".repeat(64),
+      };
+      mockGetCommercialQuote.mockResolvedValue(issued);
+      mockGetCommercialOrder.mockResolvedValue({ ...order, quotes: [issued] });
+      stripe.quotes.retrieve.mockResolvedValue({ ...provider, status: "open" });
+      stripe.quotes.accept.mockResolvedValue({
+        ...provider,
+        status: "accepted",
+        invoice: "in_1",
+      });
+      stripe.prices.retrieve.mockResolvedValue({
+        id: "price_site",
+        tax_behavior: "exclusive",
+        product: {
+          id: "prod_site",
+          tax_code: change === "missing" ? null : "txcd_10000000",
+        },
+      });
+      await expect(
+        acceptStripeCommercialQuote({
+          id: "co_1",
+          commercial_quote_id: "cq_1",
+          account_id: "admin-1",
+          expected_version: 4,
+          customer_acceptance_confirmed: true,
+          reason: "Customer accepted",
+        }),
+      ).rejects.toThrow("line tax settings");
+      expect(mockCompleteCommercialQuoteAcceptance).not.toHaveBeenCalled();
+      expect(stripe.invoices.updateLineItem).not.toHaveBeenCalled();
+      expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+      expect(mockSetCommercialProviderOperationStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "indeterminate" }),
+      );
+    },
+  );
+
+  it.each(["exclusive", "inclusive"])(
+    "checks %s invoice pricing when recovering an accepted taxable quote",
+    async (taxBehavior) => {
+      const { order, quote, provider } = enableReviewedTax();
+      const issued = {
+        ...quote,
+        status: "issued" as const,
+        document_sha256: "a".repeat(64),
+      };
+      mockGetCommercialQuote.mockResolvedValue(issued);
+      mockGetCommercialOrder.mockResolvedValue({ ...order, quotes: [issued] });
+      stripe.quotes.retrieve.mockResolvedValue({
+        ...provider,
+        status: "accepted",
+        invoice: "in_1",
+      });
+      stripe.invoices.retrieve.mockResolvedValue(
+        stripeInvoiceFixture({
+          total: 468000,
+          amount_due: 468000,
+          amount_remaining: 468000,
+          automatic_tax: { enabled: true, status: "complete" },
+        }),
+      );
+      stripe.prices.retrieve.mockResolvedValue({
+        id: "price_site",
+        tax_behavior: taxBehavior,
+        product: { id: "prod_site", tax_code: "txcd_10103000" },
+      });
+      const recover = reconcileStripeCommercialQuoteById({
+        order_id: "co_1",
+        commercial_quote_id: "cq_1",
+        source: "stripe-webhook",
+        reason: "Recover accepted taxable quote",
+        event_idempotency_key: "evt_tax_recovery",
+      });
+      if (taxBehavior === "exclusive") {
+        await recover;
+        expect(mockCompleteCommercialQuoteAcceptance).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tax: "780.0000000000",
+            acceptance_source: "provider_reconciliation",
+          }),
+        );
+      } else {
+        await expect(recover).rejects.toThrow("line tax settings");
+        expect(mockCompleteCommercialQuoteAcceptance).not.toHaveBeenCalled();
+      }
+      expect(stripe.quotes.accept).not.toHaveBeenCalled();
+      expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+    },
+  );
 
   it("uses the reviewed line description as the Stripe Product name", async () => {
     stripe.products.search.mockResolvedValue({ data: [] });

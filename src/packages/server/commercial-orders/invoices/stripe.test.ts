@@ -235,6 +235,8 @@ function stripeInvoiceFixture(changes: Record<string, unknown> = {}) {
 describe("commercial Stripe invoices", () => {
   const stripe = {
     publishable_key: "pk_test_123",
+    prices: { retrieve: jest.fn() },
+    products: { retrieve: jest.fn() },
     customers: {
       create: jest.fn(),
       retrieve: jest.fn(),
@@ -436,8 +438,209 @@ describe("commercial Stripe invoices", () => {
     );
     stripe.invoices.create.mockResolvedValue(provider);
     stripe.invoices.retrieve.mockResolvedValue(provider);
+    stripe.invoices.listLineItems.mockResolvedValue({
+      data: [
+        {
+          id: "il_1",
+          amount: 390000,
+          currency: "usd",
+          description: "Campus adoption pilot",
+          metadata: { commercial_order_item_id: "item_1" },
+          pricing: {
+            type: "price_details",
+            price_details: { price: "price_1", product: "prod_1" },
+            unit_amount_decimal: "390000",
+          },
+        },
+      ],
+      has_more: false,
+    });
+    stripe.prices.retrieve.mockResolvedValue({
+      id: "price_1",
+      tax_behavior: "exclusive",
+      product: { id: "prod_1", tax_code: terms.tax_code },
+    });
     return { order, invoice, provider };
   }
+
+  describe.each([390000, 468000])(
+    "line tax validation with total %s",
+    (total) => {
+      it.each(["recover", "draft send", "finalized retry"])(
+        "verifies matching tax configuration during %s",
+        async (path) => {
+          const { order, invoice, provider } = enableReviewedTax(total);
+          if (path === "recover") {
+            const creating = {
+              ...invoice,
+              status: "creating" as const,
+              idempotency_key: "invoice-draft:key",
+            };
+            mockGetCommercialOrder.mockResolvedValue({
+              ...order,
+              invoices: [creating],
+            });
+            stripe.invoices.search.mockResolvedValue({ data: [provider] });
+            await createStripeCommercialInvoiceDraft({
+              id: "co_1",
+              account_id: "admin-1",
+              expected_version: 4,
+              reason: "Recover reviewed invoice",
+            });
+            expect(stripe.invoices.create).not.toHaveBeenCalled();
+            expect(stripe.invoiceItems.create).not.toHaveBeenCalled();
+          } else {
+            stripe.invoices.retrieve.mockResolvedValue({
+              ...provider,
+              status: path === "finalized retry" ? "open" : "draft",
+            });
+            stripe.invoices.finalizeInvoice.mockResolvedValue({
+              ...provider,
+              status: "open",
+            });
+            stripe.invoices.sendInvoice.mockResolvedValue({
+              ...provider,
+              status: "open",
+            });
+            await sendStripeCommercialInvoice({
+              id: "co_1",
+              account_id: "admin-1",
+              expected_version: 4,
+              reason: "Send reviewed invoice",
+            });
+            expect(stripe.invoices.sendInvoice).toHaveBeenCalledTimes(1);
+          }
+          expect(stripe.prices.retrieve).toHaveBeenCalledWith("price_1", {
+            expand: ["product"],
+          });
+        },
+      );
+
+      describe.each(["recover", "draft send", "finalized retry"])(
+        "%s",
+        (path) => {
+          it.each([
+            ["changed tax code", "exclusive", "txcd_10000000"],
+            ["missing tax code", "exclusive", null],
+            ["inclusive price", "inclusive", "txcd_10103000"],
+            ["unspecified behavior", "unspecified", "txcd_10103000"],
+          ])(
+            "blocks %s even when totals are unchanged",
+            async (_label, behavior, code) => {
+              const { order, invoice, provider } = enableReviewedTax(total);
+              stripe.prices.retrieve.mockResolvedValue({
+                id: "price_1",
+                tax_behavior: behavior,
+                product: { id: "prod_1", tax_code: code },
+              });
+              let action: Promise<unknown>;
+              if (path === "recover") {
+                mockGetCommercialOrder.mockResolvedValue({
+                  ...order,
+                  invoices: [
+                    {
+                      ...invoice,
+                      status: "creating",
+                      idempotency_key: "invoice-draft:key",
+                    },
+                  ],
+                });
+                stripe.invoices.search.mockResolvedValue({ data: [provider] });
+                action = createStripeCommercialInvoiceDraft({
+                  id: "co_1",
+                  account_id: "admin-1",
+                  expected_version: 4,
+                  reason: "Recover reviewed invoice",
+                });
+              } else {
+                stripe.invoices.retrieve.mockResolvedValue({
+                  ...provider,
+                  status: path === "finalized retry" ? "open" : "draft",
+                });
+                action = sendStripeCommercialInvoice({
+                  id: "co_1",
+                  account_id: "admin-1",
+                  expected_version: 4,
+                  reason: "Send reviewed invoice",
+                });
+              }
+              await expect(action).rejects.toThrow("line tax settings");
+              expect(stripe.invoiceItems.create).not.toHaveBeenCalled();
+              expect(stripe.invoices.finalizeInvoice).not.toHaveBeenCalled();
+              expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+              expect(
+                mockUpdateCommercialInvoiceProvider,
+              ).not.toHaveBeenCalled();
+            },
+          );
+        },
+      );
+    },
+  );
+
+  it.each(["txcd_10103000", "txcd_10000000"])(
+    "checks quote-derived finalized invoices against reviewed tax code %s",
+    async (taxCode) => {
+      const { provider } = enableReviewedTax(390000);
+      const accepted = {
+        ...provider,
+        status: "open",
+        metadata: {
+          ...provider.metadata,
+          accepted_commercial_quote_id: "cq_1",
+        },
+      };
+      stripe.invoices.retrieve.mockResolvedValue(accepted);
+      stripe.invoices.sendInvoice.mockResolvedValue(accepted);
+      stripe.prices.retrieve.mockResolvedValue({
+        id: "price_1",
+        tax_behavior: "exclusive",
+        product: { id: "prod_1", tax_code: taxCode },
+      });
+      const send = sendStripeCommercialInvoice({
+        id: "co_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Send accepted quote invoice",
+      });
+      if (taxCode === "txcd_10103000") {
+        await send;
+        expect(stripe.invoices.sendInvoice).toHaveBeenCalledTimes(1);
+      } else {
+        await expect(send).rejects.toThrow("line tax settings");
+        expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+      }
+      expect(stripe.invoices.finalizeInvoice).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rechecks line tax configuration after finalization without a total change", async () => {
+    const { provider } = enableReviewedTax(390000);
+    stripe.prices.retrieve.mockResolvedValueOnce({
+      id: "price_1",
+      tax_behavior: "exclusive",
+      product: { id: "prod_1", tax_code: "txcd_10103000" },
+    });
+    stripe.prices.retrieve.mockResolvedValue({
+      id: "price_1",
+      tax_behavior: "exclusive",
+      product: { id: "prod_1", tax_code: null },
+    });
+    stripe.invoices.finalizeInvoice.mockResolvedValue({
+      ...provider,
+      status: "open",
+    });
+    await expect(
+      sendStripeCommercialInvoice({
+        id: "co_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Send reviewed invoice",
+      }),
+    ).rejects.toThrow("line tax settings");
+    expect(stripe.invoices.finalizeInvoice).toHaveBeenCalledTimes(1);
+    expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+  });
 
   it("creates automatic-tax invoices with explicit exclusive line tax settings", async () => {
     const { order, invoice } = enableReviewedTax();

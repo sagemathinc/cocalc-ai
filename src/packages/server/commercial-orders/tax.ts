@@ -4,6 +4,47 @@
  */
 
 import type { CommercialOrder } from "@cocalc/util/commercial-orders";
+import type Stripe from "stripe";
+
+type StripeClient = InstanceType<typeof Stripe>;
+type InvoiceLine = Awaited<
+  ReturnType<StripeClient["invoices"]["listLineItems"]>
+>["data"][number];
+
+export async function assertCommercialInvoiceLineTax(
+  stripe: Pick<StripeClient, "prices" | "products">,
+  line: Pick<InvoiceLine, "pricing">,
+  order: Pick<CommercialOrder, "terms_snapshot">,
+): Promise<void> {
+  const policy = commercialTaxPolicy(order.terms_snapshot);
+  if (!policy.enabled) return;
+
+  // Invoice lines expose price/product references, not the tax_code and
+  // tax_behavior accepted by invoiceItems.create. Resolve fresh provider data
+  // on every verification, including retries of already-finalized invoices.
+  const details = line.pricing?.price_details;
+  const priceId =
+    typeof details?.price === "string" ? details.price : details?.price?.id;
+  if (!priceId || !details?.product) {
+    throw Error("Stripe invoice line tax settings cannot be verified");
+  }
+  const price = await stripe.prices.retrieve(priceId, { expand: ["product"] });
+  const product =
+    typeof price.product === "string"
+      ? await stripe.products.retrieve(price.product)
+      : price.product;
+  if (
+    price.id !== priceId ||
+    price.tax_behavior !== "exclusive" ||
+    product.id !== details.product ||
+    product.deleted ||
+    (typeof product.tax_code === "string"
+      ? product.tax_code
+      : product.tax_code?.id) !== policy.taxCode
+  ) {
+    throw Error("Stripe invoice line tax settings do not match reviewed terms");
+  }
+}
 
 export function commercialTaxPolicy(terms: Record<string, unknown> = {}): {
   enabled: boolean;

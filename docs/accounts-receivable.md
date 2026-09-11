@@ -253,6 +253,17 @@ be finalized but remains unsent by CoCalc; inspect that invoice and resolve it
 through the normal void/revision workflow rather than repeatedly creating
 invoices or bypassing the amount checks. Automatic advancement remains off.
 
+For automatic-tax orders, recovery and delivery also verify each invoice
+line's exclusive tax behavior and reviewed product tax code, even when the
+calculated tax is zero or a changed classification produces the same total.
+With the pinned Stripe API, these checks resolve the line's
+`pricing.price_details` references by retrieving its Price and Product; they
+do not assume invoice-item creation parameters are invoice-line response
+fields. Missing or unverifiable tax settings block the operation. The same
+checks apply when adopting an accepted quote's invoice and on finalized send
+retries. Local quote acceptance requires nonnegative tax exactly equal to the
+retained quote's total minus subtotal, including during recovery.
+
 See [Stripe Tax for invoices](https://docs.stripe.com/tax/invoicing) and
 [zero-tax calculations](https://docs.stripe.com/tax/zero-tax) for setup details.
 
