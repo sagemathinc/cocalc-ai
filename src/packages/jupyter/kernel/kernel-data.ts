@@ -109,6 +109,9 @@ export async function get_kernel_data_by_name(
 export async function getPythonKernelName() {
   const kernels = await get_kernel_data();
   for (const x of kernels) {
+    // Implicit Python selection is for local helpers/tests. A remote execution
+    // target must always be an explicit user choice.
+    if (x.metadata?.reflect?.remote === true) continue;
     const language = (x.language ?? "").toLowerCase();
     if (language === "python") {
       return x.name;

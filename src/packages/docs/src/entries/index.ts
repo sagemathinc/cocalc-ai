@@ -96,6 +96,7 @@ const DOCS_ENTRY_IDS = [
   "jupyter.create-notebook",
   "jupyter.use-jupyter",
   "jupyter.studio-view",
+  "jupyter.remote-kernels",
   "troubleshooting.jupyter-kernel-terminated",
   "jupyter.custom-kernels",
   "jupyter.octave-kernel",

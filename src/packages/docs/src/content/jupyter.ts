@@ -82,6 +82,11 @@ virtual environment; see [Custom Jupyter kernels with uv](/docs/jupyter/custom-k
 For a shared software stack across many projects, use a runtime image instead of
 hand-configuring each notebook.
 
+On CoCalc AI, you can also run a notebook's kernel on an SSH-accessible machine,
+including a GPU VM, while keeping the notebook in your project. See
+[Remote Jupyter kernels](/docs/jupyter/remote-kernels). Remote files are not
+automatically synchronized with project files.
+
 ## Agents and notebooks
 
 Agents should treat the live notebook state as the source of truth. Use
