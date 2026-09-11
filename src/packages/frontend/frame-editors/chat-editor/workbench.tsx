@@ -520,6 +520,7 @@ export function Workbench({
               {showChanges ? "Show document" : "See changes"}
             </Button>
             <LocalCommentButton
+              size="small"
               disabled={read_only || editing || showChanges || !chat}
             />
             {pinned && (

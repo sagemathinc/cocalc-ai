@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { Alert, Button } from "antd";
+import type { ButtonProps } from "antd";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import type { ChatActions } from "./actions";
 import { captureReplyContext } from "./contextual-reply-context";
@@ -22,12 +23,14 @@ const CommentContext = createContext<(() => void) | undefined>(undefined);
 
 export function LocalCommentButton({
   disabled = false,
+  size,
 }: {
   disabled?: boolean;
+  size?: ButtonProps["size"];
 }) {
   const comment = useContext(CommentContext);
   return (
-    <Button size="small" disabled={disabled || !comment} onClick={comment}>
+    <Button size={size} disabled={disabled || !comment} onClick={comment}>
       Comment
     </Button>
   );

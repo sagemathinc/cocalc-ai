@@ -243,6 +243,14 @@ test("a restored image draft refuses substituted image bytes", async () => {
   expect(screen.getByRole("textbox")).toHaveValue("Change this image");
 });
 
+test("Comment uses standard toolbar sizing unless compact sizing is requested", () => {
+  const mounted = render(<LocalCommentButton />);
+  const button = screen.getByRole("button", { name: "Comment" });
+  expect(button).not.toHaveClass("ant-btn-sm");
+  mounted.rerender(<LocalCommentButton size="small" />);
+  expect(button).toHaveClass("ant-btn-sm");
+});
+
 test("a double click creates only one outbox entry and one send", async () => {
   let release!: () => void;
   outbox.mockImplementationOnce(
