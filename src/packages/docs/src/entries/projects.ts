@@ -84,11 +84,13 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
       "/public/docs/project-secrets-ea9872ae.webp",
       "Project secrets mounted as protected read-only files",
     ),
-    lastReviewed: "2026-05-24",
+    lastReviewed: "2026-09-11",
+    searchKeywords:
+      "project secrets environment variables CLI copy names overwrite conflicts missing mount refresh stdin",
     slug: "projects/project-secrets",
     status: "ready",
     summary:
-      "Store API keys and credentials as encrypted, read-only files mounted into the running project.",
+      "Store runtime credentials as encrypted files, select secrets to copy with the CLI, and check mount-refresh results.",
     title: "Project secrets",
   },
   {
