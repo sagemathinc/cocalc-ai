@@ -4314,22 +4314,51 @@ reserve_project_startup_io_capacity
             root = Path(tmpdir)
             snap_root = root / "snap"
             state_root = root / "state"
-            (snap_root / "google-cloud-cli" / "2124").mkdir(parents=True)
+            revision_root = snap_root / "google-cloud-cli" / "2124"
+            revision_root.mkdir(parents=True)
             state_root.mkdir()
+            backing_image = state_root / "google-cloud-cli_2124.snap"
+            mountinfo = root / "mountinfo"
+            mountinfo.write_text(
+                f"100 1 7:3 / {revision_root} ro - squashfs /dev/loop3 ro\n",
+                encoding="utf-8",
+            )
+            sys_dev_root = root / "sys-dev"
+            loop = sys_dev_root / "7:3" / "loop"
+            loop.mkdir(parents=True)
+            (loop / "backing_file").write_text(
+                f"{backing_image}\n",
+                encoding="utf-8",
+            )
             info = mock.Mock(
                 st_uid=0,
                 st_gid=0,
                 st_mode=namespace["stat"].S_IFREG | 0o644,
             )
-            with (
-                mock.patch.object(namespace["os"].path, "ismount", return_value=True),
-                mock.patch.object(namespace["pathlib"].Path, "lstat", return_value=info),
+            with mock.patch.object(
+                namespace["pathlib"].Path,
+                "lstat",
+                return_value=info,
             ):
                 units = namespace["collect_snap_mount_units"](
-                    str(snap_root), str(state_root)
+                    str(snap_root),
+                    str(state_root),
+                    str(mountinfo),
+                    str(sys_dev_root),
+                )
+                (loop / "backing_file").write_text(
+                    f"{state_root / 'different_2124.snap'}\n",
+                    encoding="utf-8",
+                )
+                mismatched_units = namespace["collect_snap_mount_units"](
+                    str(snap_root),
+                    str(state_root),
+                    str(mountinfo),
+                    str(sys_dev_root),
                 )
 
         self.assertEqual(units, [r"snap-google\x2dcloud\x2dcli-2124.mount"])
+        self.assertEqual(mismatched_units, [])
 
     def test_helper_schema_installed_reads_rootctl_marker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

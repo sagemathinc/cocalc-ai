@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260910-v53"
+HELPER_SCHEMA_VERSION = "20260910-v54"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -471,8 +471,54 @@ def snap_mount_unit(name, revision):
     return f"snap-{escaped_name}-{revision}.mount"
 
 
-def collect_snap_mount_units(snap_root="/snap", snap_state_root="/var/lib/snapd/snaps"):
+def mountinfo_path(value):
+    return re.sub(
+        r"\\([0-7]{3})",
+        lambda match: chr(int(match.group(1), 8)),
+        value,
+    )
+
+
+def collect_loop_mount_backing_files(
+    mountinfo_file="/proc/self/mountinfo",
+    sys_dev_root="/sys/dev/block",
+):
+    backing_files = {}
+    for line in read_text(mountinfo_file, 4 * 1024 * 1024).splitlines():
+        fields = line.split()
+        try:
+            separator = fields.index("-")
+        except ValueError:
+            continue
+        if (
+            len(fields) <= separator + 2
+            or len(fields) < 5
+            or fields[separator + 1] != "squashfs"
+            or not re.fullmatch(r"[0-9]+:[0-9]+", fields[2])
+        ):
+            continue
+        backing_file = read_text(
+            pathlib.Path(sys_dev_root) / fields[2] / "loop" / "backing_file",
+            4096,
+        ).strip()
+        if not backing_file:
+            continue
+        if not backing_file.startswith("/"):
+            backing_file = f"/{backing_file}"
+        backing_files[os.path.normpath(mountinfo_path(fields[4]))] = os.path.normpath(
+            backing_file
+        )
+    return backing_files
+
+
+def collect_snap_mount_units(
+    snap_root="/snap",
+    snap_state_root="/var/lib/snapd/snaps",
+    mountinfo_file="/proc/self/mountinfo",
+    sys_dev_root="/sys/dev/block",
+):
     units = []
+    backing_files = collect_loop_mount_backing_files(mountinfo_file, sys_dev_root)
     try:
         snap_directories = sorted(pathlib.Path(snap_root).iterdir())
     except OSError:
@@ -489,9 +535,11 @@ def collect_snap_mount_units(snap_root="/snap", snap_state_root="/var/lib/snapd/
             revision = revision_directory.name
             if not re.fullmatch(r"[1-9][0-9]*", revision):
                 continue
-            if not os.path.ismount(revision_directory):
-                continue
             backing_image = pathlib.Path(snap_state_root) / f"{name}_{revision}.snap"
+            if backing_files.get(os.path.normpath(revision_directory)) != os.path.normpath(
+                backing_image
+            ):
+                continue
             try:
                 info = backing_image.lstat()
             except OSError:
