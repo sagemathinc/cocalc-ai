@@ -724,6 +724,74 @@ test("support context resolves requester identity for agents", async () => {
   });
 });
 
+for (const command of ["list", "search"] as const) {
+  for (const status of [undefined, "active", "merged", "archived"] as const) {
+    test(`people ${command} preserves ${status ?? "omitted"} status and pagination`, async () => {
+      const calls: unknown[] = [];
+      const response = {
+        people: [],
+        next_cursor: "synthetic-next-cursor",
+        truncated: true,
+        result_bytes: 2,
+      };
+      const { program, output } = setup({
+        [command === "list" ? "listPeople" : "searchPeople"]: async (
+          opts: unknown,
+        ) => {
+          calls.push(opts);
+          return response;
+        },
+      });
+      await program.parseAsync([
+        "node",
+        "test",
+        "admin",
+        "crm",
+        "people",
+        command,
+        "--search",
+        "Synthetic Contact",
+        "--organization",
+        "CRM-2026-000001",
+        "--cursor",
+        "synthetic-start-cursor",
+        "--limit",
+        "2",
+        "--max-bytes",
+        "100000",
+        "--reason",
+        "verify synthetic contact search",
+        ...(status ? ["--status", status] : []),
+      ]);
+      assert.deepEqual(calls, [
+        {
+          search: "Synthetic Contact",
+          organization: "CRM-2026-000001",
+          cursor: "synthetic-start-cursor",
+          limit: 2,
+          max_bytes: 100000,
+          status,
+          reason: "verify synthetic contact search",
+        },
+      ]);
+      assert.deepEqual(output(), {
+        schema_version: 1,
+        provenance: {
+          authority: "seed",
+          service: "adminCrm",
+          source: "cli",
+        },
+        redaction: {
+          profile: "bounded_admin",
+          unrestricted_provider_payloads: false,
+          payment_credentials: false,
+        },
+        data: response,
+      });
+    });
+  }
+}
+
 test("people link manages reviewed email relationships without raw SQL", async () => {
   let captured: any;
   const { program } = setup({
