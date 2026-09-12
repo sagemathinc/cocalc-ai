@@ -326,10 +326,10 @@ export default function X11FeaturePage({
               <Paragraph
                 style={{ fontSize: PUBLIC_TYPE.lead, margin: 0, maxWidth: 720 }}
               >
-                Launch Wayland and X11 applications inside a persistent CoCalc
-                project. Each application appears as its own browser-streamed
-                window, without putting a traditional Linux desktop between you
-                and the program.
+                Launch Wayland and X11 applications inside a Linux CoCalc
+                project with graphical support installed. Each application
+                appears as its own browser-streamed window, without putting a
+                traditional Linux desktop between you and the program.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -409,7 +409,8 @@ export default function X11FeaturePage({
             Start programs from the terminal in the center of the workspace or
             use a launcher button. When a launcher application is missing,
             CoCalc offers to install the required Ubuntu package before starting
-            it.
+            it. Automatic installation requires compatible package tools and
+            permitted sudo access.
           </Paragraph>
           <Paragraph>
             Choose the <strong>X11 software environment</strong> for a project
@@ -435,9 +436,10 @@ export default function X11FeaturePage({
           title="Clipboard and sound cross the browser boundary"
         >
           <Paragraph>
-            Copy and paste works between your local browser and graphical
-            applications. Application sound runs through a private PipeWire
-            server in the project, is encoded by Blit, and plays in the browser.
+            Copy and paste connects your local browser and graphical
+            applications when browser clipboard permissions allow it.
+            Application sound runs through a private PipeWire server in the
+            project, is encoded by Blit, and plays in the browser.
           </Paragraph>
           <Paragraph>
             Browsers block unsolicited audio, so a new display starts muted. Use
@@ -465,8 +467,9 @@ pygame.mixer.Sound("effect.wav").play()`}
             Every <code>.x11</code> file in a project opens the same graphical
             session. That deliberate project-wide model avoids several hidden
             desktops and gives applications a predictable display. Closing a
-            browser tab does not terminate the session; use the shutdown button
-            when you want to stop it.
+            browser tab does not itself terminate the session, but stopping the
+            project or its graphical app ends running applications. Use the
+            shutdown button when you want to stop the shared display.
           </Paragraph>
           <Paragraph>
             Multiple browsers and collaborators can open that display at the
@@ -482,27 +485,35 @@ pygame.mixer.Sound("effect.wav").play()`}
           anchor="a-display-variable"
           icon="terminal"
           imageComponent={
-            <CodeBlock
-              ariaLabel="Launching X11 programs from a terminal and Python notebook"
-              code={`# From any project terminal
-export DISPLAY=:20
-xclock
-
-# From a Python or Jupyter session
+            <Flex vertical gap={12}>
+              <CodeBlock
+                ariaLabel="Check the display in the graphical workspace terminal"
+                code={`# In the running graphical workspace terminal
+echo "$DISPLAY"
+xclock`}
+              />
+              <CodeBlock
+                ariaLabel="Launch Tkinter from Python in the same project runtime"
+                code={`# Python in the same project runtime
+# Replace :20 with the graphical terminal's DISPLAY value.
 import os
 os.environ["DISPLAY"] = ":20"
 
 import tkinter as tk
 tk.Tk().mainloop()`}
-            />
+              />
+            </Flex>
           }
           title="Launch X11 applications from anywhere in the project"
         >
           <Paragraph>
             The terminal inside the graphical workspace already has its display
-            environment configured. From a normal project terminal, script, or
-            Jupyter notebook, set <code>DISPLAY=:20</code> before launching an
-            X11 program. Its window then appears in the same surface rail.
+            environment configured. Start the graphical session and check{" "}
+            <code>DISPLAY</code> there before using another terminal, script, or
+            notebook in the same project runtime. Set that value before
+            launching an X11 program; <code>:20</code> is a common value, not a
+            display that exists without a running session. Its window appears in
+            the same surface rail.
           </Paragraph>
           <Paragraph>
             Native Wayland applications use the compositor socket directly; X11

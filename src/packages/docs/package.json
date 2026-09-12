@@ -18,21 +18,29 @@
     "./verification": {
       "types": "./dist/verification.d.ts",
       "default": "./dist/verification.js"
+    },
+    "./essential": {
+      "types": "./dist/essential.d.ts",
+      "default": "./dist/essential.js"
     }
   },
   "typesVersions": {
     "*": {
       "verification": [
         "dist/verification.d.ts"
+      ],
+      "essential": [
+        "dist/essential.d.ts"
       ]
     }
   },
   "scripts": {
-    "test": "pnpm build && node --test test/*.test.cjs",
+    "test": "pnpm build && node --test test/*.test.cjs && pnpm test:examples",
     "build": "pnpm exec tsc --build --force",
     "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
     "gaps": "pnpm build && node dist/verify.js --gaps",
-    "verify": "pnpm build && node dist/verify.js"
+    "verify": "pnpm build && node dist/verify.js",
+    "test:examples": "python3 test/research_examples.py"
   },
   "files": [
     "dist/**",

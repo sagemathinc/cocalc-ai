@@ -51,7 +51,9 @@ defense-in-depth protections:
   upstream to managed apps,
 - project-host bootstrap bearer auth is stripped after validation and not sent
   to upstream apps,
-- project-host `/customize` no longer exposes `account_id`,
+- the ordinary project-host `/customize` payload omits `account_id`; the
+  separate exam-mode bootstrap can include the admitted exam session's account
+  and project identifiers,
 - managed app URLs require authenticated project collaboration; CoCalc does
   not publish project apps for anonymous access.
 

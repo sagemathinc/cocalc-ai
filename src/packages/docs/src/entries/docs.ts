@@ -9,7 +9,7 @@ import {
   BROWSER_AUTOMATION_BODY,
   DOCS_ACTIONS_BODY,
   DOCS_BROWSER_BODY,
-} from "../content";
+} from "../content/docs";
 
 export const DOCUMENTATION_ENTRIES: DocsEntry[] = [
   {

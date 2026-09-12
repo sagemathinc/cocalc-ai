@@ -243,7 +243,7 @@ export default function PublicTopNav({
             label: <a href={appPath("features")}>All features</a>,
           },
           ...PUBLIC_FEATURE_NAV_ITEMS.filter(({ slug }) =>
-            getPublicFeaturePage(slug),
+            getPublicFeaturePage(slug, config ?? {}),
           ).map(({ label, slug }) => {
             const meta = featureMeta(slug);
             return {

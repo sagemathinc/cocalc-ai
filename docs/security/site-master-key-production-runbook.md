@@ -83,6 +83,17 @@ The application reads the credential from `CREDENTIALS_DIRECTORY` when systemd
 provides it. This keeps the service path read-only from the process point of
 view and makes missing production keys fail closed.
 
+Key-path selection in `cocalc admin master-key` is local; `status` and
+`doctor --files-only` do not query a running bay. An interactive shell does not
+inherit a systemd service's
+`CREDENTIALS_DIRECTORY`. Use an explicitly selected key path for shell checks,
+and inspect the service configuration and logs separately to verify loading.
+
+The temporary provisioning and restore examples below assume a shell without
+`CREDENTIALS_DIRECTORY`, `COCALC_SITE_MASTER_KEY_PATH`,
+`COCALC_SECRET_SETTINGS_KEY_PATH`, or `SECRETS` overrides. Those settings can
+take precedence over the `COCALC_DATA_DIR` used for staging.
+
 ## Initial Production Key Creation
 
 Do this once, before creating production data that depends on encrypted
@@ -110,9 +121,13 @@ printf '%s\n' 'REPLACE_WITH_1PASSWORD_GENERATED_PASSPHRASE' \
 Generate the key:
 
 ```sh
-COCALC_DATA_DIR="$COCALC_KEY_WORKDIR/source" \
+COCALC_REQUIRE_SITE_MASTER_KEY=0 \
+  COCALC_DATA_DIR="$COCALC_KEY_WORKDIR/source" \
   cocalc admin master-key init
 ```
+
+The temporary initialization command permits key creation only in this provisioning
+shell. Keep `COCALC_REQUIRE_SITE_MASTER_KEY=1` in production services.
 
 Verify:
 
@@ -217,19 +232,28 @@ sudo systemctl daemon-reload
 sudo systemctl restart cocalc-bay.target
 ```
 
-After startup, run:
+After startup, check the installed key from an operator shell on the bay with
+the CLI available to `sudo`:
 
 ```sh
-cocalc admin master-key status
-cocalc admin master-key doctor --files-only
+sudo env -u CREDENTIALS_DIRECTORY \
+  COCALC_SITE_MASTER_KEY_PATH=/etc/cocalc/site-master-key \
+  cocalc admin master-key status
+sudo env -u CREDENTIALS_DIRECTORY \
+  COCALC_SITE_MASTER_KEY_PATH=/etc/cocalc/site-master-key \
+  cocalc admin master-key doctor --files-only
 ```
 
-Expected:
+Expected for these explicit shell checks:
 
-- key source is `systemd-credential`.
+- key source is `environment`, with path `/etc/cocalc/site-master-key`.
 - key is readable and valid.
 - permissions are private.
-- no missing-key errors in `journalctl`.
+
+`systemd-credential` is the source only when the checking process receives the
+service's credential environment. Matching the shell checks does not prove
+that a running service loaded the key; also inspect the units and ensure there
+are no credential or missing-key errors in `journalctl`.
 
 Check logs:
 
@@ -246,15 +270,19 @@ Expected:
 
 ## Multi-Bay Verification
 
-Every bay must report the same key SHA-256 in `cocalc admin master-key status`.
-
-Run on every bay:
+Compare the SHA-256 of the installed key file on every bay:
 
 ```sh
-cocalc admin master-key status | jq -r '.site_master_key.sha256'
+sudo env -u CREDENTIALS_DIRECTORY \
+  COCALC_SITE_MASTER_KEY_PATH=/etc/cocalc/site-master-key \
+  cocalc admin master-key status | jq -er '.site_master_key.sha256 | select(type == "string" and length == 64)'
 ```
 
-Compare outputs. They must be identical across all production bays.
+Require each command to succeed; stop on a missing or invalid fingerprint.
+The validated 64-character fingerprints must match across all production bays.
+This verifies the
+selected local key files, not the credentials already loaded by running
+processes; complete the service and log checks on every bay too.
 
 If any bay differs:
 
@@ -323,8 +351,12 @@ sudo systemctl restart cocalc-bay.target
 Verify after restore:
 
 ```sh
-cocalc admin master-key doctor --files-only
-cocalc admin master-key status | jq -r '.site_master_key.sha256'
+sudo env -u CREDENTIALS_DIRECTORY \
+  COCALC_SITE_MASTER_KEY_PATH=/etc/cocalc/site-master-key \
+  cocalc admin master-key doctor --files-only
+sudo env -u CREDENTIALS_DIRECTORY \
+  COCALC_SITE_MASTER_KEY_PATH=/etc/cocalc/site-master-key \
+  cocalc admin master-key status | jq -er '.site_master_key.sha256 | select(type == "string" and length == 64)'
 sudo journalctl -u 'cocalc-bay-*' --since '30 minutes ago' \
   | rg -i 'site master key|required but missing|invalid master key|decrypt|credential'
 ```
@@ -438,8 +470,10 @@ Before launch:
 - [ ] Every bay systemd unit that needs secrets has
       `LoadCredential=site-master-key:/etc/cocalc/site-master-key`.
 - [ ] Every production bay process has `COCALC_REQUIRE_SITE_MASTER_KEY=1`.
-- [ ] `cocalc admin master-key status` reports the same SHA-256 on every bay.
-- [ ] `cocalc admin master-key doctor --files-only` is clean on every bay,
-      except for the expected “software cannot verify backup” warning.
+- [ ] The explicit installed-key status checks above succeed and report the same validated
+      SHA-256 on every bay; service configuration and logs confirm key loading.
+- [ ] The explicit installed-key `doctor --files-only` checks above are clean
+      on every bay, except for the expected “software cannot verify backup”
+      warning.
 - [ ] A disposable-host restore test has restored the encrypted backup and
       matched the recorded key SHA-256.

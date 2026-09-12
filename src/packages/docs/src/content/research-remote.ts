@@ -532,6 +532,32 @@ This check runs inside the project. \`127.0.0.1:8765\` on your laptop refers to
 your laptop, not to CoCalc. If you choose a different port in the spec, update
 the verification URL too.
 
+## Managed local forwards
+
+For local tools, \`cocalc project app forward APP_ID --project PROJECT_ID\`
+creates or reuses a managed SSH tunnel to a service app. It may start the app,
+ensure/install an SSH key, and write local SSH configuration. The default
+local bind address is loopback. Inspect the returned \`project_id\`,
+\`app_id\`, \`local_url\`, \`forward_id\`, and \`reused\` fields before using
+or stopping the tunnel; a reused tunnel may also serve another local task.
+
+- \`project app forward-list APP_ID --project PROJECT_ID\` lists matching
+  managed local forwards.
+- \`project app forward-stop APP_ID --project PROJECT_ID\` can stop multiple
+  matching forwards for that app.
+- \`project sync forward terminate FORWARD_ID\` targets the explicit local
+  forward id. Record the id from the forward response when you need to limit
+  cleanup to one tunnel.
+
+Stopping a tunnel does not stop the app or remove installed SSH keys and
+configuration. App cleanup is separate, as described below. A reported running
+tunnel or a TCP-ready app does not establish correct HTTP output; check the
+application response separately. Local tunnel access also does not establish
+that a collaborator can open the authenticated app URL.
+
+See the [CLI command reference](/docs/cli/command-reference) for command
+help and [SSH access](/docs/terminal/ssh-access) for connection setup.
+
 ## Open and share with a collaborator
 
 1. Open the same project in CoCalc's full interface and select **Apps**.

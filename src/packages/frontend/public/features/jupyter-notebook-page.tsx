@@ -47,9 +47,10 @@ export default function JupyterNotebookFeaturePage({
                 Online Jupyter notebooks, built for collaboration
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Fully compatible Jupyter notebooks in your browser. They keep
-                running when you close the tab, and collaborators and Codex see
-                the real session state.
+                Collaborative Jupyter notebooks in your browser. Computations
+                can continue after you close the tab while the kernel runtime
+                remains running, and collaborators and Codex can inspect the
+                session.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -67,12 +68,12 @@ export default function JupyterNotebookFeaturePage({
               items={[
                 {
                   icon: "stopwatch",
-                  label: "Runs keep going when you close the tab",
+                  label: "Close the tab while the kernel keeps running",
                 },
                 { icon: "comment", label: "Chat anchored to any cell" },
                 {
                   icon: "history",
-                  label: "TimeTravel history of every change",
+                  label: "TimeTravel document edit history",
                 },
                 {
                   icon: "server",
@@ -98,8 +99,9 @@ export default function JupyterNotebookFeaturePage({
       <Row className="cocalc-jupyter-story-row" gutter={[16, 16]}>
         <Col xs={24} md={8}>
           <StoryCard icon="stopwatch" title="Keep runs alive">
-            Start a long computation, close the tab, and come back later: the
-            run continues and the output is waiting for you.
+            Closing a tab does not stop the shared kernel. Keep its runtime
+            running and save intermediate results so you can recover if the
+            kernel or project stops.
           </StoryCard>
         </Col>
         <Col xs={24} md={8}>
@@ -114,8 +116,8 @@ export default function JupyterNotebookFeaturePage({
             icon="history"
             title="Review and recover changes"
           >
-            TimeTravel records every edit with authorship. Recover lost work and
-            see how an analysis evolved.
+            TimeTravel keeps document edit history with authorship. Recover work
+            and see how an analysis evolved.
           </StoryCard>
         </Col>
       </Row>
@@ -157,10 +159,10 @@ export default function JupyterNotebookFeaturePage({
             cursors and changes as they type, and you see who is online.
           </Paragraph>
           <Paragraph>
-            Because the kernel session runs in the shared project, the status
-            and results of all computations are <strong>synchronized</strong>{" "}
-            too, including interactive ipywidgets. Everyone experiences the
-            notebook in the same way.
+            Collaborators share the notebook's kernel session. Its status and
+            results are <strong>synchronized</strong>, including supported
+            interactive ipywidgets, so you can inspect the same computation
+            together.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -230,17 +232,16 @@ export default function JupyterNotebookFeaturePage({
           alt="Video of the TimeTravel slider moving through the history of a Jupyter notebook"
           anchor="a-timetravel"
           icon="history"
-          title="TimeTravel: every change, recorded"
+          title="TimeTravel: document edit history"
           video={[
             "cocalc-jupyter2-timetravel-20170515-3x.webm",
             "cocalc-jupyter2-timetravel-20170515-3x.mp4",
           ]}
         >
           <Paragraph>
-            TimeTravel records the changes in your notebook in fine detail. Move
-            back and forth across <strong>thousands of revisions</strong> to see
-            every previous edit, with authorship, then copy anything you need
-            back into the current version.
+            Browse the notebook's recorded revisions and authorship with
+            TimeTravel, then copy content you need back into the current
+            version. This is document history, not a saved running kernel.
           </Paragraph>
           <Paragraph>
             This makes it easy to recover lost work, review how an analysis
@@ -266,15 +267,21 @@ export default function JupyterNotebookFeaturePage({
           title="Kernels from your software environment"
         >
           <Paragraph>
-            Each project runs on a{" "}
-            <strong>software environment you choose</strong>, and the kernels
-            available in a notebook come from that environment: Python,
-            SageMath, R, Julia, Octave, and more, depending on the image you
-            pick.
+            Choose a <strong>software environment</strong> that provides your
+            language and packages. Hosted images can supply Python, SageMath, R,
+            Julia, Octave, and other kernels. Registered{" "}
+            <a href={appPath("docs/jupyter/remote-kernels")}>remote kernels</a>{" "}
+            can instead run on another machine.
           </Paragraph>
           <Paragraph>
-            The project is a full Linux system, so you stay in control: install
-            your own packages on top or register custom kernels.
+            Hosted project images provide Linux software; native CoCalc Plus
+            uses your computer's operating system and installed tools. Select
+            the kernel that has the dependencies your notebook needs, or follow
+            the{" "}
+            <a href={appPath("docs/jupyter/custom-kernels")}>
+              custom kernel instructions
+            </a>{" "}
+            to register another environment.
           </Paragraph>
           <Paragraph>
             <LinkButton href={appPath("features/software-environment")}>
@@ -305,8 +312,9 @@ export default function JupyterNotebookFeaturePage({
             everything down or terminates the session.
           </Paragraph>
           <Paragraph>
-            If a computation goes off the rails, you see it immediately and can
-            interrupt or restart the kernel before the session dies.
+            Use the indicators to decide when to interrupt or restart a kernel.
+            They do not prevent resource exhaustion; save intermediate results
+            before a long run and remember that restarting clears kernel state.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -324,9 +332,11 @@ export default function JupyterNotebookFeaturePage({
             CoCalc's notebooks support both{" "}
             <strong>automatic and manual grading</strong> via nbgrader. The
             teacher's notebook contains exercise and test cells; students run
-            some of them for immediate feedback, and after collecting the
-            assignments, CoCalc runs the full test suite across all student
-            notebooks and tabulates the results.
+            some of them for immediate feedback. After collecting assignments,
+            instructors run the autograder and review the results. The course's
+            nbgrader settings choose whether grading runs in student projects or
+            a selected grading project; see the{" "}
+            <a href={appPath("docs/teaching/nbgrader")}>nbgrader workflow</a>.
           </Paragraph>
           <Paragraph>
             <LinkButton href={appPath("features/teaching")}>

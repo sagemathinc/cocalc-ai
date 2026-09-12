@@ -1,27 +1,58 @@
-# Recent Architecture Docs (past month)
+# Architecture and operations references
 
-Use this as a quick entry point to the new subsystem docs added in late 2025. Each link is to a full write\-up; the paragraph summarizes the concrete behavior and implementation details.
+Use these topic references to locate the owning implementation and operational
+guidance. Follow each document's stated scope: a design plan is not a validated
+installation or recovery procedure. The public user guides are available in the
+[documentation browser](https://cocalc.ai/docs).
 
-- [star.md](./star.md) — CoCalc Star product and deployment plan for the single public VM appliance. Describes the zero-config user story, one-line installer, sslip.io + Caddy + Let's Encrypt HTTPS path, onboarding page, first-admin bootstrap flow, invite-user goal, first-release support target, and boundaries versus Plus, Launchpad, and Rocket.
+## Products and deployment
 
-- [project\-rootfs.md](./project-rootfs.md) — How a project’s root filesystem image is chosen and flows through the stack. The hub reads `rootfs_image` \(or legacy `compute_image`\), sends it to the project\-host, which resolves the image, caches it locally, runs a lightweight host-side preflight, and then hands it to project\-runner. At first start, the runtime bootstraps `user:2001:2001`, `sudo`, and CA certificates inside the project overlay before dropping privileges. Overlayfs uppers under `.local/share/overlay/` are captured in snapshots/backups and move with the project. Supports Docker/OCI refs today \(defaulting to Docker Hub\), with planned support for local rootfs directories.
+- [architecture.md](architecture.md): project-host architecture and component
+  responsibilities.
+- [launchpad.md](launchpad.md): Launchpad control-plane defaults, host
+  connectivity, and local backup transport reference.
+- [self-host.md](self-host.md): connecting self-hosted project hosts.
+- [star.md](star.md): Star product and deployment plan. Use the
+  [Star installer reference](../src/scripts/star/README.md) for its current
+  commands.
+- [VM/systemd bay tooling](../src/scripts/bay-systemd/README.md) and
+  [Rocket package](../src/packages/rocket/README.md): deployment-specific
+  artifacts and operating references.
 
-- [project\-backups.md](./project-backups.md) — Backup pipeline using btrfs snapshots \+ rustic. Describes what’s included \(project files \+ per\-project persist store\), excluded \(btrfs snapshots\), flow \(take RO snapshot, rustic backup to repo, drop snapshot\), restore to any host, job states, failure/restart behavior, and the current hosted storage model \(region buckets on R2 with DB-assigned shared repos\). Notes daily scheduling, concurrency limits, observability, and open items like pruning policy.
+## Project state and storage
 
-- [buckets.md](./buckets.md) — Bucket architecture plan for backups and artifacts on Cloudflare R2. Defines the bucket registry, `project_backup_repos`, current one-shared-repo-per-region startup policy, future sharding via DB-controlled repo assignment, and explicit migration rules. Includes a diagram and deletion guidance for shared repos.
+- [project-rootfs.md](project-rootfs.md): project image selection and runtime
+  filesystem state.
+- [project-startup-script.md](project-startup-script.md): project startup script
+  location, execution, and logs.
+- [project-backups.md](project-backups.md), [backup-indexes.md](backup-indexes.md),
+  and [backup-secrets.md](backup-secrets.md): backup data, indexes, and keys.
+- [buckets.md](buckets.md): backup and artifact storage architecture.
+- [project-move.md](project-move.md): project move orchestration and cleanup.
+- [long-running-operations.md](long-running-operations.md): durable operations
+  and progress reporting.
+- [persistence-alerts.md](persistence-alerts.md): persistence diagnostics.
 
-- [project\-move.md](./project-move.md) — Current move flow using rustic backup/restore and restore staging. Describes the LRO orchestration, stop + final backup, restore on the destination, start, and post\-move cleanup without host\-to\-host SSH.
+## Routing, authentication, and collaboration
 
-- [ssh\-key\-distribution.md](./ssh-key-distribution.md) — SSH key lifecycle for sshpiperd (inbound user SSH). Shows where keys are stored, how hosts register the public key with the hub, and rotation guidance.
+- [conat-routing.md](conat-routing.md): explicit routing and authority.
+- [http-proxy.md](http-proxy.md): HTTP/WebSocket proxying and managed apps.
+- [project-host-auth.md](project-host-auth.md): project-host Conat authentication.
+- [ssh-key-distribution.md](ssh-key-distribution.md) and [ssh-proxy.md](ssh-proxy.md):
+  project SSH keys and routing.
+- [secrets.md](secrets.md): project and site secret handling.
+- [sync.md](sync.md): collaborative synchronization.
+- [remote-jupyter-kernels.md](remote-jupyter-kernels.md): remote kernel transport.
 
-- [ssh\-proxy.md](./ssh-proxy.md) — SSH path for user access to projects via sshpiperd. Shows components \(project container sshd, host sshpiperd\), the auth flow \(username → project lookup, assembled authorized_keys from DB \+ project files \+ managed file\), port selection from sqlite, and how full SSH features \(port/X11 forwarding, rsync\) are preserved. Points to the key code paths for auth and key refresh.
+## Agents, tools, and administration
 
-- [http\-proxy.md](./http-proxy.md) — HTTP/WebSocket proxying to project services \(e.g., JupyterLab\). Describes the URL shape `/PROJECT/port/<p>/...`, hub\-level host resolution and proxying, project\-host proxying into the container’s internal proxy on port 80 with `prependPath:false` and `xfwd`, and the single exposed path for WS upgrades. Includes a diagram and pointers to the hub and project\-host proxy code.
-
-- [long\-running\-operations.md](./long-running-operations.md) — LRO framework used for project start/backup/restore/move and host operations. Covers the LRO tables, conat progress streams, UI wiring, worker pattern, and durability strategy.
-
-- [architecture.md](./architecture.md) — Current end\-to\-end architecture of the project\-host model. Summarizes how the control hub routes conat/HTTP/WS to project\-hosts, how each host bundles file\-server, runner, proxies, and sshpiperd on btrfs with per\-project subvolumes/quotas/snapshots/backups, how podman \+ overlayfs stores user changes, and how moves/backups flow via rustic repos. Includes a mermaid diagram and goals/non\-goals.
-
-- [agents.md](./agents.md) — How Codex/ACP agents are integrated in CoCalc. Covers ACP basics, the frontend → conat → ACP hub flow, where agents run \(local for cocalc\-plus or in a codex\-acp podman container for multiuser\), how tool adapters gate file/exec access \(file\-server \+ sandboxExec\), approval routing, and security notes. Two mermaid diagrams illustrate the local and podman paths.
-
-- [membership.md](./membership.md) — Membership system implementation overview. Explains the tier table, resolver, entitlement application \(project defaults \+ LLM limits\), store purchase flow with proration, APIs \(Next.js \+ conat\), key UI surfaces, and current gaps.
+- [agents.md](agents.md) and [codex-auth.md](codex-auth.md): agent integration and
+  authentication.
+- [api.md](api.md) and [browser-debugging.md](browser-debugging.md): browser
+  automation and debugging.
+- [membership.md](membership.md): membership implementation.
+- [accounts-receivable.md](accounts-receivable.md): accounts-receivable operations.
+- [support-impersonation.md](support-impersonation.md): support content consent.
+- [security/private-app-trust-model.md](security/private-app-trust-model.md) and
+  [security/site-master-key-production-runbook.md](security/site-master-key-production-runbook.md):
+  trust boundaries and site-key operations.

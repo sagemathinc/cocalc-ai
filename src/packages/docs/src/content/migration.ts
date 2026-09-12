@@ -7,8 +7,8 @@ export const MIGRATING_FROM_COCALC_COM_BODY = String.raw`
 ## Before you start
 
 Use the same email address on CoCalc.ai that you used for cocalc.com. Legacy
-billing and projects are matched by verified email address, so a different
-email address will not show the migration tools.
+billing and projects are matched by verified email address. Verify the legacy
+address on your CoCalc.ai account so it can find the matching records.
 
 On CoCalc.ai, sign up or sign in with the same email address you used
 on cocalc.com, then verify the email address in **profile settings**.
@@ -38,8 +38,9 @@ billing data found** with **Pending credit**, **Remaining paid value**,
 
 Choose **Apply now** to add the pending legacy credit to your CoCalc account
 balance. If the preview offers a membership grant, the grant starts when you
-choose **Apply now** and the **Membership grant** field shows the free
-membership period. After applying, the panel records the migrated items in your
+choose **Apply now**. The preview shows the offered free membership period;
+after applying, an active grant panel shows when it ends. The panel also records
+the migrated items in your
 CoCalc billing history and membership status.
 
 If the panel says **Verify your email address to migrate legacy billing**, open
@@ -58,10 +59,10 @@ cocalc.com account appeared in the legacy project user list.
 Use the filters to find projects:
 
 1. **All statuses**, **Ready to restore**, **Restoring**, **Restored**,
-   **Not yet available**, or **Failed**.
+   **Unavailable**, or **Failed**.
 2. **Include hidden** if you need hidden legacy projects.
-3. **Include not yet available** if you want to see projects whose archives are
-   known but not ready to import.
+3. **Include unavailable** if you want to see legacy project records without a
+   recoverable archive.
 4. **Max size GB** and **Search legacy projects** to narrow a long list.
 
 For one project, choose **Restore and Open**. CoCalc opens **Import legacy
@@ -90,6 +91,11 @@ If a project opens while files are still restoring, you can leave the page and
 come back later. If CoCalc reports file warnings, the restored project contains
 the available files and the warning lists archive entries that were not restored.
 
+For restored \`.sagews\` files, see the legacy Sage worksheet section in
+[Using Jupyter in CoCalc](/docs/jupyter/use-jupyter) before rerunning them. Opening
+a worksheet may create a notebook without historical outputs or reuse an
+existing notebook.
+
 ## Troubleshooting
 
 If you see **Verify your email address to find legacy projects**, open
@@ -101,7 +107,6 @@ account uses the same verified email address as the old cocalc.com account. To
 try another address, change and verify your email address in **profile
 settings**, then refresh the migration page.
 
-If a project is **Not yet available**, CoCalc knows about the legacy project but
-does not yet have an importable archive for it. Check again later or contact
-support if you expected the project to be ready.
+If a project is **Unavailable**, no recoverable archive is available for that
+legacy project. Contact support if you expected to restore it.
 `;

@@ -18,8 +18,9 @@ files, run commands, work with notebooks, and make changes.
 4. Ask a concrete task, including relevant files and constraints.
 
 For terminal-native agents such as Claude Code or opencode, install and run them
-inside a normal project terminal. CoCalc provides the durable Linux environment;
-those tools provide their own agent interface.
+inside a normal project terminal with compatible software and permissions.
+Hosted project images and local CoCalc Plus can provide different operating
+systems and installed tools; terminal-native agents provide their own interface.
 
 On phones, open **Chat tools** using the ellipsis button, then choose
 **Thread actions** to open the thread menu.
@@ -311,6 +312,58 @@ or updating the selected API key. Read the
 reported error instead of assuming that every failed request is an allowance
 problem. Retrying is an explicit submission, so verify the message text
 before sending it again.
+
+## Send to an existing thread from the CLI
+
+Use an authenticated account with project access and working Codex credentials.
+Run these commands in the terminal where you installed the CoCalc CLI, using the
+profile for the intended site. Check \`cocalc project chat send --help\` first;
+older CLI releases may not include this command.
+
+Identify the project, the chat document's path inside it, and the CoCalc thread
+ID. Use **Thread ID** in **Codex settings**, not the adjacent **Session ID**, or
+select it from the list below. Replace the example profile and chat path with
+your existing site's profile and chat document:
+
+~~~bash
+export CLI_PROFILE=cocalc-ai
+export PROJECT_ID='REPLACE_WITH_FULL_PROJECT_ID'
+export CHAT_PATH='/home/user/research.chat'
+
+cocalc --profile "$CLI_PROFILE" --json project chat thread list \
+  --project "$PROJECT_ID" --path "$CHAT_PATH"
+~~~
+
+The JSON \`data\` array contains \`thread_id\`, \`name\`, \`agent_kind\`, and
+\`archived\`. Select an existing, unarchived Codex/ACP thread. A thread ID alone
+does not identify the project or chat document; provide all three values.
+Inspect its model, access mode, and working directory before submitting work.
+
+~~~bash
+export THREAD_ID='REPLACE_WITH_LISTED_THREAD_ID'
+
+cocalc --profile "$CLI_PROFILE" --json project chat thread status \
+  --project "$PROJECT_ID" --path "$CHAT_PATH" --thread-id "$THREAD_ID"
+
+cocalc --profile "$CLI_PROFILE" --json project chat send \
+  --project "$PROJECT_ID" --path "$CHAT_PATH" --thread-id "$THREAD_ID" \
+  'Inspect this project without changing files and summarize the next step.'
+~~~
+
+The send command saves a real user message and starts a turn when idle, or
+queues it behind active work. Add \`--guidance\` only when the message should
+guide a running turn; if that is no longer possible it can queue or start a
+normal turn. For multiline text, use \`--stdin < request.txt\` with a local UTF-8
+file instead of message arguments. Empty messages and combining \`--stdin\`
+with message arguments are rejected.
+
+A successful response returns \`data.state:"accepted"\` and a
+\`data.message_id\`; it acknowledges submission, not task completion. Inspect
+the thread for results and any requests requiring attention. If the CLI says
+the message was saved but submission was not confirmed, inspect that message
+before resending: an automatic retry could submit the work twice. The saved
+message remains in the chat document, and the command does not roll back any
+work already performed.
 
 ## Set the working directory and keep session context
 

@@ -11,7 +11,9 @@ and fires a `'mesg'` event, along with the JSON object or blob in the message
 So, one listens with:
 
 ```js
-socket.on('mesg', (type, value) -> ...)
+socket.on("mesg", (type, value) => {
+  // Handle the decoded message.
+});
 ```
 
 where type is one of `"json"` or `"blob"`.
@@ -26,4 +28,4 @@ will send the message of the given type on the socket. When type=`"json'`,
 data is just a JSON-able object. When type=`'blob'`, `data={uuid:..., blob:...};`
 since every blob is tagged with a uuid.
 
-**NOTE:** As of June 2022, I don't think the `"blob"` message type is used at all anymore.  I think in all cases where we did or would have used that, we instead transfer the same data over HTTP via the project's express http server.  That's asynchronous, cached, and much better for handling blobs than blocking our websocket would be.
+**NOTE:** As of June 2022, I don't think the `"blob"` message type is used at all anymore. I think in all cases where we did or would have used that, we instead transfer the same data over HTTP via the project's express http server. That's asynchronous, cached, and much better for handling blobs than blocking our websocket would be.

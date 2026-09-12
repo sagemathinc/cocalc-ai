@@ -4,7 +4,7 @@
  */
 
 import type { DocsEntry } from "../types";
-import { MIGRATING_FROM_COCALC_COM_BODY } from "../content";
+import { MIGRATING_FROM_COCALC_COM_BODY } from "../content/migration";
 
 export const MIGRATION_ENTRIES: DocsEntry[] = [
   {

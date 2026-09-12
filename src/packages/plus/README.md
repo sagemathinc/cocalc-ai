@@ -95,7 +95,9 @@ cocalc-plus
 ```
 
 The installer keeps application versions separate from the workspace and
-supports `-Rollback` and `-Uninstall`. Uninstalling never deletes workspace
-files.
+supports `-Rollback` and `-Uninstall`. Uninstall recursively removes the selected
+installation root and launcher. The default workspace is outside that root and
+is retained; keep a custom workspace or other user data outside `-InstallRoot`
+if it must survive uninstall.
 
 Packaging artifacts are intended for redistribution; keep core runtime changes in Lite so Plus remains a thin product wrapper. The CLI `cocalc-plus` delegates to `@cocalc/lite/bin/start` (no extra build required), and Electron uses `electron.js` as the main entry.

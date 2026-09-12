@@ -429,7 +429,7 @@ async function buildHead(req: Request): Promise<{
   return {
     body:
       renderPublicDocsPrerender(route, basePath, config) ||
-      renderPublicRoutePrerender(route, basePath),
+      renderPublicRoutePrerender(route, basePath, config),
     head: `${basePathMetaTag()}\n  <title>${htmlEscape(
       metadata.title,
     )}</title>\n  ${socialTags}`,

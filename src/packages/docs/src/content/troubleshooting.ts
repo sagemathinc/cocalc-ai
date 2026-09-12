@@ -18,7 +18,8 @@ language servers, background jobs, web apps, databases, and agents.
 
 1. Open the project process or activity view and stop work you do not need.
 2. Restart the notebook kernel or terminal process that is using too much RAM.
-3. Close idle notebooks, terminals, and servers.
+3. Shut down unneeded notebook kernels, terminal processes, and servers. Closing
+   an editor or browser tab alone does not reliably free their backend memory.
 4. Load less data at once, stream data in chunks, or write intermediate results
    to files.
 5. Avoid keeping duplicate large arrays, dataframes, models, or images in
@@ -30,9 +31,12 @@ the available RAM.
 
 ## When the workload really needs more memory
 
-If the computation genuinely needs more RAM, move the project to a host or plan
-with more memory. For repeated workloads, choose a project host with enough RAM
-and disk for the largest expected dataset and runtime image.
+Check the project's effective RAM limit and the host's available memory before
+changing a plan or moving work. On CoCalc AI, a private host's per-project cap
+and shared physical RAM differ from a shared-pool membership entitlement; see
+[Host access and RAM](https://cocalc.ai/docs/hosts/access-and-ram). For repeated workloads, choose
+capacity with enough RAM and disk for the largest expected dataset and runtime
+image.
 
 If the project is on a shared host, remember that other work on the same host
 can compete for memory. A dedicated host or larger host is more predictable for
@@ -162,18 +166,20 @@ are separate checks; increasing RAM does not address a disk-quota denial.
 ## Distinguish a host prerequisite from a project failure
 
 Creating or starting a billable dedicated host can also be blocked by
-membership, account-security, or funding checks. Address the requirement named
-in the error:
+membership, account-security, funding, or usage-window checks. After signing
+in, use **Account Settings** for the requirement named in the error:
 
-- For host roles, placement, or membership RAM, use [Host access and RAM](/docs/hosts/access-and-ram).
-- For a two-factor requirement, use [Two-factor authentication](/docs/account/two-factor-authentication).
-- For prepaid credit, a payment method, automatic billing, or a usage-window
-  limit, inspect [Billing settings and payment methods](/docs/billing/settings).
-  Follow the specific funding
-  or limit explanation in the host controls; contact support if it is unclear.
+- **Profile > Security** for CoCalc two-factor authentication.
+- **Membership**, **Balance**, or **Payment methods** for the named membership,
+  prepaid-credit, or saved-payment-method requirement.
+- **Usage & Limits** for usage windows and reset information. If a window is
+  exhausted, follow the reset information in the message.
 
-Changing a notebook or repeatedly starting its project does not satisfy a
-host-level requirement.
+If the error requires automatic billing, or the responsible account's settings
+do not resolve the requirement, contact site support with the exact message.
+Use [Host access and RAM](/docs/hosts/access-and-ram) for host roles, placement,
+and RAM policy. Changing a notebook or repeatedly starting its project does
+not satisfy an account or host prerequisite.
 
 Once the blocking condition is addressed, check the current project state and
 start it if needed. Then verify the notebook, terminal, or application you

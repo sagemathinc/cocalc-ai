@@ -2,7 +2,15 @@
 
 import type { ReactElement } from "react";
 
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { PublicConfigProvider } from "@cocalc/frontend/public/config";
 import PublicTopNav from "./top-nav";
@@ -405,4 +413,203 @@ describe("PublicTopNav", () => {
         .length,
     ).toBe(1);
   });
+
+  it.each([
+    [1280, "launchpad", true],
+    [1280, "rocket", true],
+    [1280, "plus", false],
+    [1280, undefined, false],
+    [480, "launchpad", true],
+    [480, "rocket", true],
+    [480, "plus", false],
+    [480, undefined, false],
+  ] as const)(
+    "filters Compute in navigation at width %s for product %s",
+    async (width, product, available) => {
+      setViewportWidth(width);
+      render(
+        <PublicConfigProvider config={{ cocalc_product: product }}>
+          <PublicTopNav active="features" />
+        </PublicConfigProvider>,
+      );
+      if (width === 480) {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Open navigation menu" }),
+        );
+        fireEvent.click(screen.getByText("Features"));
+      } else {
+        const menu = screen.getByRole("menu", { name: "Public pages" });
+        const features = within(menu).getByRole("menuitem", {
+          name: /^Features(?: down)?$/,
+        });
+        fireEvent.mouseEnter(features);
+      }
+      expect(
+        await screen.findByRole("link", { name: "All features" }),
+      ).toHaveAttribute("href", "/features");
+      expect(screen.getByRole("link", { name: "Jupyter" })).toHaveAttribute(
+        "href",
+        "/features/jupyter-notebook",
+      );
+      if (available) {
+        expect(screen.getByRole("link", { name: "Compute" })).toHaveAttribute(
+          "href",
+          "/features/research-compute",
+        );
+      } else {
+        expect(screen.queryByRole("link", { name: "Compute" })).toBeNull();
+      }
+    },
+  );
+
+  it("updates the compact Compute menu when an unknown product resolves", async () => {
+    setViewportWidth(480);
+    const { rerender } = render(
+      <PublicConfigProvider>
+        <PublicTopNav active="features" />
+      </PublicConfigProvider>,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open navigation menu" }),
+    );
+    fireEvent.click(screen.getByText("Features"));
+    await screen.findByRole("link", { name: "Jupyter" });
+    expect(screen.queryByRole("link", { name: "Compute" })).toBeNull();
+    rerender(
+      <PublicConfigProvider config={{ cocalc_product: "launchpad" }}>
+        <PublicTopNav active="features" />
+      </PublicConfigProvider>,
+    );
+    expect(
+      await screen.findByRole("link", { name: "Compute" }),
+    ).toHaveAttribute("href", "/features/research-compute");
+  });
+
+  it.each([
+    [1280, "launchpad"],
+    [1280, "plus"],
+    [480, "launchpad"],
+    [480, "plus"],
+  ] as const)(
+    "keeps keyboard navigation and restored focus at width %s for %s",
+    async (width, product) => {
+      // JSDOM has no layout. Supply geometry only for visible elements so
+      // the real menu's focus discovery can run; do not mock menu behavior.
+      const geometry = jest
+        .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+        .mockImplementation(function (this: HTMLElement) {
+          let visible = true;
+          for (
+            let node: HTMLElement | null = this;
+            node;
+            node = node.parentElement
+          ) {
+            const style = window.getComputedStyle(node);
+            if (style.display === "none" || style.visibility === "hidden")
+              visible = false;
+          }
+          return {
+            x: 0,
+            y: 0,
+            top: 0,
+            left: 0,
+            right: visible ? 100 : 0,
+            bottom: visible ? 20 : 0,
+            width: visible ? 100 : 0,
+            height: visible ? 20 : 0,
+            toJSON: () => ({}),
+          };
+        });
+      try {
+        const user = userEvent.setup();
+        setViewportWidth(width);
+        render(
+          <PublicConfigProvider config={{ cocalc_product: product }}>
+            <PublicTopNav active="features" />
+          </PublicConfigProvider>,
+        );
+        let drawerTrigger: HTMLElement | undefined;
+        if (width === 480) {
+          drawerTrigger = screen.getByRole("button", {
+            name: "Open navigation menu",
+          });
+          act(() => drawerTrigger!.focus());
+          expect(drawerTrigger).toHaveFocus();
+          await user.keyboard("{Enter}");
+          const dialog = await screen.findByRole("dialog");
+          await user.tab();
+          await waitFor(() =>
+            expect(dialog).toContainElement(
+              document.activeElement as HTMLElement,
+            ),
+          );
+        }
+        const menu = screen.getByRole("menu", { name: "Public pages" });
+        const features = within(menu).getByRole("menuitem", {
+          name: /^Features(?: down)?$/,
+        });
+        act(() => features.focus());
+        expect(features).toHaveFocus();
+        // The installed menu handles the legacy `which` value as well as the
+        // native key name. Exercise its actual keyboard handler.
+        fireEvent.keyDown(features, {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+        });
+        await waitFor(() =>
+          expect(features).toHaveAttribute("aria-expanded", "true"),
+        );
+        const allFeatures = await screen.findByRole("link", {
+          name: "All features",
+        });
+        if (width === 480) {
+          fireEvent.keyDown(features, {
+            key: "ArrowDown",
+            code: "ArrowDown",
+            keyCode: 40,
+            which: 40,
+          });
+        }
+        await waitFor(() => expect(allFeatures).toHaveFocus());
+        fireEvent.keyDown(allFeatures, {
+          key: "ArrowDown",
+          code: "ArrowDown",
+          keyCode: 40,
+          which: 40,
+        });
+        const next = screen.getByRole("link", {
+          name: product === "launchpad" ? "Compute" : "Jupyter",
+          exact: true,
+        });
+        await waitFor(() => expect(next).toHaveFocus());
+        expect(next).toHaveAttribute(
+          "href",
+          product === "launchpad"
+            ? "/features/research-compute"
+            : "/features/jupyter-notebook",
+        );
+        if (product === "plus")
+          expect(screen.queryByRole("link", { name: "Compute" })).toBeNull();
+        fireEvent.keyDown(next, {
+          key: "Escape",
+          code: "Escape",
+          keyCode: 27,
+          which: 27,
+        });
+        if (width === 480) {
+          await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+          await waitFor(() => expect(drawerTrigger).toHaveFocus());
+        } else {
+          await waitFor(() =>
+            expect(features).toHaveAttribute("aria-expanded", "false"),
+          );
+          await waitFor(() => expect(features).toHaveFocus());
+        }
+      } finally {
+        geometry.mockRestore();
+      }
+    },
+  );
 });

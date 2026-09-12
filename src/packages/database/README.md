@@ -9,7 +9,9 @@ This package connects the hub and nextjs servers to the PostgreSQL database, and
 
 See [DB_DEVELOPMENT.md](./DB_DEVELOPMENT.md) for architecture overview, testing guidelines, and modernization patterns.
 
-**WARNING**: This is the single scariest chunk of CoffeeScript left in CoCalc!
+The implementation is TypeScript. It retains a composed database interface
+with callback-compatible methods; use the development guide when changing
+those interfaces.
 
 ## Experimental PGlite
 

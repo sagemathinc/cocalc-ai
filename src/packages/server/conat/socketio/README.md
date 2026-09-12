@@ -7,7 +7,7 @@ In CoCalc, Conat security is primarily enforced by restricting which subjects a 
 The same policy model is used in two places:
 
 - Central hub adapter: [src/packages/server/conat/socketio/auth.ts](./auth.ts)
-- Project-host adapter: [src/packages/project-host/conat-auth.ts](../../project-host/conat-auth.ts)
+- Project-host adapter: [src/packages/project-host/conat-auth.ts](../../../project-host/conat-auth.ts)
 
 To avoid policy drift, shared rule helpers live in [src/packages/conat/auth/subject-policy.ts](../../../conat/auth/subject-policy.ts).
 
@@ -16,7 +16,14 @@ and verified on project-hosts using only the public key.
 
 ## What Rules Are Enforced
 
-At a high level:
+The following summarizes common subject rules for ordinary account/project
+connections; it is not the complete permission specification. The central hub
+also handles host identities. The project-host adapter accepts account/project
+connections and trusted internal hub identities, but rejects ordinary host
+identities. Trusted hub identities follow a separate internal-service branch.
+Adapter-specific agent, API-key, exam, viewer and share checks can further
+restrict or specialize access; consult the adapters and their tests for a
+particular credential and operation.
 
 - Allow publish to own hub request subject: `hub.<type>.<id>.*`
 - Allow publish to `_INBOX.*` (request/reply responses)
@@ -62,5 +69,5 @@ flowchart TD
 
 ## Related Documentation
 
-- [docs/project-host-auth.md](../../../../docs/project-host-auth.md)
-- [docs/codex-auth.md](../../../../docs/codex-auth.md)
+- [docs/project-host-auth.md](../../../../../docs/project-host-auth.md)
+- [docs/codex-auth.md](../../../../../docs/codex-auth.md)

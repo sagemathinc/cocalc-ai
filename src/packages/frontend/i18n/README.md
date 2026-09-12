@@ -2,7 +2,7 @@
 
 ## Development
 
-Right now, all of this is only for the frontend – the Next.js part could be done similarly, but needs a separate workflow. In particular, on those "next" landing pages there would be additional sections for different languages – here, we translate specific strings in-place.
+This workflow translates strings in the full frontend. Other clients and public surfaces need their own extraction and locale-provider integration; do not assume this pipeline translates every CoCalc page. Run the package commands below from `src/packages/frontend/`.
 
 To get started, you either define messages directly in a `tsx` file in the component or use `./common.ts` for messages that are used in multiple places across the application. Search for e.g. `labels.projects` to see how such defined messages are used. It is generally discouraged to re-use messages, because context usually matters – the exception are short labels and single words, which should actually be consistent across their usage. Use `./common.ts` only for messages that need to be shared; component-specific messages should be defined locally in the component file where they are used.
 
@@ -14,7 +14,7 @@ To get a feeling how this works, search in the source code for existing usages. 
 - Note: There is a type `IntlMessage` defined by us here in `./types.ts`. It requires `id` and `defaultMessage`. Search for `isIntlMessage` in the code base to see, how it is used to check what to do with it.
 - Outside the react context, you use `i18n/index::getIntl`.
 
-Note: The "extract" step parses the source-code of all `*.tsx` files and only a few selected `*.ts` files. You cannot use variables where messages are defined, because the extract tool does not know what to do with them. So, for example, the files that define commands are `*.ts` files, and the messages it uses are referencing the exported messages defined in `i18n/common.ts`. Scanning all files just takes too long.
+Note: The "extract" step selects tracked `*.ts` and `*.tsx` files containing `defaultMessage`, plus the shared i18n inputs listed in `i18n/bin/extract.sh`. You cannot use variables where messages are defined, because the extract tool does not know what to do with them. So, for example, the files that define commands are `*.ts` files, and the messages it uses are referencing the exported messages defined in `i18n/common.ts`. Check that script when adding a new source location.
 
 Note: the provider could be changed at any time – what's important is to end up with matching "compiled" files for each language, where "compiled" means we need those `single-language-json` formatted files for `formatjs`. In the end, just look at the language files: they are pretty simple and unique IDs for each message just need an entry in each language. Otherwise the `defaultMessage` is shown and an error is thrown.
 
@@ -22,16 +22,16 @@ Note: the provider could be changed at any time – what's important is to end u
 
 After introducing new messages, these are the steps to get all translations into CoCalc:
 
-`frontend/package.json` has four script entries, which are for [SimpleLocalize](https://simplelocalize.io/).
+`frontend/package.json` defines the local extraction/compilation scripts and the [SimpleLocalize](https://simplelocalize.io/) upload/download/delete scripts. Uploading and deleting change the translation service; downloading writes local translation files.
 
 1.  `pnpm i18n:extract`:
 
-    This command requires to use git to pass in the tsx files `$(git ls-files '**/*.tsx')`. Otherwise, even though there are excludes, it just runs forever or until it runs out of memory. The resulting extracted strings are in the `i18n/extracted.json` file. That's the one that will be uploaded...
+    The script uses `git grep` to select tracked TypeScript and TSX files containing `defaultMessage`, then passes those and shared i18n inputs to FormatJS. It rejects extracted messages with an empty `defaultMessage`. The resulting extracted strings are in the `i18n/extracted.json` file. That's the one that will be uploaded...
 
 1.  `export SIMPLELOCALIZE_KEY=...` (key comes from simplelocalize)
 1.  `pnpm i18n:upload`:
 
-    Basically, the `i18n/extracted.json` will be sent to SimpleLocalize.
+    The `i18n/extracted.json` file is sent to SimpleLocalize. The script then starts automatic translation and waits for job status, failing on errors or its bounded timeout. If translation fails after upload, the uploaded English source may already have changed; inspect the reported state before retrying.
     The `--overwrite` switch is set, such that all new `defaultMessage`s will show up in the English language source.
     This also means it makes no sense to touch the English language strings – they must be fixed in the source code in CoCalc's code base.
 
@@ -41,11 +41,11 @@ After introducing new messages, these are the steps to get all translations into
 
 1.  `pnpm i18n:download`
 
-    Will grab the updated files like `zh_CN.json` and save them in the `i18n` folder.
+    Downloads locale files such as `zh_CN.json` into `i18n/trans/`.
 
 1.  `pnpm i18n:compile`
 
-    This transforms the `[locale].json` files to `[locale].compiles.json`.
+    This validates `i18n/trans/[locale].json` and compiles it to `i18n/trans/[locale].compiled.json`.
     This could also reveal problems, when conditional ICU messages aren't properly formatted.
     E.g. `"Sí, cerrar sesión{en todas partes, seleccionar, verdadero { en todas partes} otro {}}" with ID "account.sign-out.button.ok" in file "./i18n/es_ES.json"`: In the brackets, it has to start according to the syntax: `{everywhere, select, true {..} other {}}`.
 
@@ -114,7 +114,7 @@ CoCalc specific rules for implementing translations, of which I think are good t
 
 - **Explicit ID**: Technically, the ID is optional. Then it is computed as a hash upon extraction. However, this has two negative sides:
   - If the message changes, it's hash changes, and you have to start over with the translation. This is good from an idealistic standpoint, but if you just tweak a word or correct a typo, the existing translations are still ok. If the meaning changes completely, it's better to create a new ID. (Of course, changes to the `defaultMessage` need to go through the `extract → upload` step, except that the English translation uses the `defaultMessage` directly.)
-  - Sorting: All the translations and also online tools like SimpleLocalize sort the translations by their keys. Look at the translated `i18n/de_DE.json` and you'll see that messages that are related are also next to each other. This also makes it possible to filter for a specific
+  - Sorting: All the translations and also online tools like SimpleLocalize sort the translations by their keys. Look at the translated `i18n/trans/de_DE.json` and you'll see that messages that are related are also next to each other. This also makes it possible to filter for a specific
   - Never reference an ID directly – always reference the object of the "defined message", such that label changes (for updating the translation) or typos do not cause problems.
   - Extracting the IDs check for duplicates, so, no worries about that.
 - Pitfall **No variables in properties**: I think the extraction process does not know how to deal with variables, when extracting strings from properties. So, either define the message objects elsewhere (like it is done with `labels`) or write a multiline string in place. See the examples below for what works.
@@ -132,7 +132,9 @@ We discussed this internally on 2024-08-19 and came to the conclusion that we sh
 
 ## SimpleLocalize
 
-### Configuration
+### Recorded provider configuration
+
+The following records the intended SimpleLocalize setup, not a live check of its current UI or project configuration. Confirm the service settings before changing translations. The dated observations below remain historical evidence.
 
 This is about auto-translations, in "Settings → Auto-translation":
 
@@ -299,4 +301,4 @@ build_on_save: {
 }
 ```
 
-Many of those messages are actually defined in `i18n/common.ts`. There are groups of messages, e.g. `jupyter.commands`. Messages are only extracted from `*.tsx` and some `*.ts` files – check the code of `i18n/bin/extract.sh` to see what's going on. This file is accompanied by `i18n.test.ts`, which checks the prefixes of all IDs!
+Many of those messages are actually defined in `i18n/common.ts`. There are groups of messages, e.g. `jupyter.commands`. Extraction selects tracked `*.ts` and `*.tsx` files containing `defaultMessage`, plus shared inputs; check `i18n/bin/extract.sh` when adding a source location. This file is accompanied by `i18n.test.ts`, which checks the prefixes of all IDs!

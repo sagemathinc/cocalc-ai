@@ -9,7 +9,7 @@ import {
   GRAPHICAL_APPLICATIONS_BODY,
   SSH_ACCESS_BODY,
   USE_TERMINAL_BODY,
-} from "../content";
+} from "../content/terminal";
 
 export const TERMINAL_ENTRIES: DocsEntry[] = [
   {

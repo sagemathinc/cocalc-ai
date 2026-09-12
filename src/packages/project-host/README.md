@@ -2,13 +2,16 @@
 
 `@cocalc/project-host` is the multi-project host that embeds the Lite core and layers in podman/btrfs/project services. It is the building block for “project runner” nodes that can serve many projects and optionally attach to a remote master.
 
-_Current status: minimal host._ It starts a local conat server, embeds file-server + project-runner, and exposes a tiny (insecure) HTTP API to start/stop/check status of projects sharing the same podman/btrfs instance.
+The host runs local Conat services, file-server + project-runner, SSH ingress,
+and an authenticated HTTP/WS proxy. Project control uses authorized Conat APIs;
+the early unauthenticated HTTP project start/stop API is no longer the current
+interface. See [project-host authentication](../../../docs/project-host-auth.md).
 
 This package deliberately **does not depend on @cocalc/server, @cocalc/hub, or @cocalc/database**. The file-server bootstrap is vendored locally for project-host; the central master will not run file-server.
 
 ## Role
 
-- Reuses the lightweight version of "hub/server/database" implemented  in [../lite](../lite/README.md) as the control\-plane core.
+- Reuses the lightweight version of "hub/server/database" implemented in [../lite](../lite/README.md) as the control\-plane core.
 - Adds local project execution via `@cocalc/project-runner`, file access via `@cocalc/file-server`, and ingress via `@cocalc/project-proxy`.
 - Owns podman/btrfs lifecycle for per\-project subvolumes, quotas, snapshots, and migrations.
 - Provides SSH ingress \(with sshpiperd\) and HTTP/WS proxying to running project containers.
@@ -19,7 +22,7 @@ This package deliberately **does not depend on @cocalc/server, @cocalc/hub, or @
 - Shared logic belongs in Lite. Keep project-host focused on container/btrfs/ingress concerns and host-level orchestration.
 - Avoid duplicating hub/server features; extend Lite instead and consume from here.
 - Keep dependencies narrow: podman, btrfs, project-runner, file-server, and project-proxy live here; frontend and heavy hub logic stay out.
-- When adding host APIs, design them so future “Plus” flows can reuse the same Lite surface without forks.
+- Reuse appropriate Lite helpers without exposing the host-wide control database to project clients; the persistence boundaries below still apply.
 
 ## Routing Rules (HTTP vs conat)
 
@@ -85,15 +88,14 @@ persistence is project-scoped; Lite table changefeeds are Plus-only.**
 - Run locally with `pnpm --filter @cocalc/project-host app` (builds then starts the embedded file-server + runner).
 - CLI: `cocalc-project-host` works after a build (uses the compiled dist).
 - Daemon helpers for local dev (background with log + pid):
-  - `pnpm --filter @cocalc/project-host daemon:start` (defaults mirror the `g` script: mount=/home/wstein/scratch/btrfs2/mnt/0, runner id=0, host=127.0.0.1, port=9002, DEBUG=cocalc:*, DEBUG_FILE=./log)
+  - `pnpm --filter @cocalc/project-host daemon:start` starts the configured host-agent instance (default instance index 0); it is not a clean-machine storage/bootstrap installer.
   - `pnpm --filter @cocalc/project-host daemon:stop`
-- HTTP API (no auth yet):
-  - `GET /healthz`
-  - `GET /projects` (recently touched projects)
-  - `GET /projects/:id/status`
-  - `POST /projects/:id/start` (optional JSON body `{ config: ... }`)
-  - `POST /projects/:id/stop` (optional JSON body `{ force: boolean }`)
-- Functionality is intentionally minimal/insecure; podman/btrfs lifecycle, ingress, and master-link wiring will be layered in next.
+- `GET /healthz` is the host health endpoint. Project list/start/stop/status
+  operations use the Conat control APIs and their identity checks, not the
+  removed `/projects/:id/...` HTTP routes.
+- Build and daemon commands assume configured host storage, runtime user,
+  credentials, and service environment. For deployment entry points, start with
+  [Star](../../../docs/star.md) or the [SelfHost connector](../../../docs/self-host.md).
 
 ## Packaging
 

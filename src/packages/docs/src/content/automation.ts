@@ -64,10 +64,11 @@ and authenticated local development.
 
 ## API keys in CoCalc-ai
 
-CoCalc-ai intentionally reduced the capabilities of broad API keys. Very few
-users relied on the old broad API-key surface, and keeping it large creates
-security risk. New API keys should be scoped to the minimum capability needed
-for the integration.
+New API keys require at least one explicit capability. Choose only the
+capabilities needed by the integration. Keys with \`project:read\`,
+\`project:write\`, \`file:read\`, \`file:write\`, \`project:exec\`, or
+\`codex:run\` also require at least one allowed project ID. Set that allowlist
+to the projects the integration needs.
 
 Treat API keys like credentials:
 
@@ -83,6 +84,12 @@ Treat API keys like credentials:
 
 The HTTP API uses basic authentication. Put the API key in the username field
 and leave the password blank.
+
+The following command shows the authentication syntax while requesting the
+\`/api/v2\` reference index. Fetching that index does not verify that a key is
+valid or permitted to run an operation. Select the intended operation from the
+reference and follow its documented URL, HTTP method, request fields, and
+permissions.
 
 ~~~sh
 curl -u "$COCALC_API_KEY:" https://cocalc.ai/api/v2

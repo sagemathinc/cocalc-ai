@@ -320,8 +320,15 @@ This runs a focused smoke against the real routed `project codex exec` path:
 2. Stops the project first by default, so the Codex turn must autostart it.
 3. Runs one Codex turn and verifies a real upstream thread id is returned.
 4. Runs a second turn with `--session-id <thread-id>` and verifies context resume.
-5. For site-key auth, waits for a new `codex-site-key` metering row in
-   `openai_chatgpt_log`.
+5. For site-key auth, attempts to wait for a new `codex-site-key` metering row
+   in the legacy `openai_chatgpt_log` table.
+
+The current helper still queries `openai_chatgpt_log`, but schema synchronization
+renames that table to `ai_usage_log`. On a database using the current schema,
+the site-funded metering branch needs a code update before this smoke can serve
+as acceptance evidence. The initial metering query runs before the project
+stop and Codex turns; a failure there does not test those later steps. Do not
+rename a live database table to accommodate this helper.
 
 Notes:
 

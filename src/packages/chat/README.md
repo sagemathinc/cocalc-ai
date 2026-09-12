@@ -13,25 +13,17 @@ Chat schema v2 introduces explicit records:
 
 `schema_version` is defined by `CHAT_SCHEMA_V2` in [src/packages/chat/src/index.ts](./src/index.ts).
 
-## One-Off Migration (v1 -> v2)
+## Legacy chat records
 
-Build the package, then run:
+The former `migrate:v1-v2` package script and its migration executable are no
+longer present. Do not use the old one-off command as a repair procedure.
 
-```bash
-pnpm --filter @cocalc/chat build
-pnpm --filter @cocalc/chat run migrate:v1-v2 -- /path/to/file.chat
-```
-
-Useful flags:
-
-- `--dry-run` (report only, no write)
-- `--out <path>` (write to a separate output file)
-- `--no-backup` (skip `.bak` backup)
-- `--strip-root-thread-fields` (remove legacy thread metadata duplicated on root message rows)
-
-Implementation entrypoint:
-
-- [src/packages/chat/src/scripts/migrate-v1-to-v2.ts](./src/scripts/migrate-v1-to-v2.ts)
+The frontend contains compatibility readers in
+[normalize.ts](../frontend/chat/normalize.ts) and
+[message-cache.ts](../frontend/chat/message-cache.ts). Normalization is not a
+complete file migration or a guarantee that missing thread configuration has
+been repaired. Inspect the actual records and integrity report before deciding
+on a repair; preserve the original file before any mutation.
 
 ## Integrity Checker
 
@@ -50,7 +42,7 @@ If a codex thread appears to lose codex controls/config:
 
 1. Confirm a `chat-thread-config` row exists for the thread's `thread_id`.
 2. Confirm `thread_id` matches between message rows and the thread-config row.
-3. Run migration on the chat file and re-check integrity counters.
+3. Inspect the integrity counters and relevant records; the compatibility reader is not a repair command.
 
 If a turn appears stuck "running":
 
