@@ -24,6 +24,7 @@ import {
   recordProjectionRepairFailure,
 } from "@cocalc/frontend/projection-diagnostics";
 import { markStartupPhaseOnce } from "@cocalc/frontend/app/startup-phase";
+import { ACCOUNT_APPEARANCE_SNAPSHOT } from "./appearance";
 
 export type AccountProjectionRepairReason =
   | "write-ack"
@@ -50,6 +51,7 @@ export function applyAccountPatch(opts: {
   redux;
   patch: Record<string, any>;
   first_set?: boolean;
+  appearance_snapshot?: boolean;
 }): void {
   const actions = opts.redux.getActions("account");
   const next = normalizeAccountPatch(opts.redux, opts.patch);
@@ -61,12 +63,31 @@ export function applyAccountPatch(opts: {
     actions.setState({ is_ready: true });
     opts.redux.getStore("account").emit("is_ready");
   }
+  const settings = opts.patch.other_settings;
+  if (
+    opts.first_set ||
+    (opts.appearance_snapshot &&
+      Object.prototype.hasOwnProperty.call(opts.patch, "other_settings") &&
+      (settings == null ||
+        Object.prototype.hasOwnProperty.call(settings, "appearance_theme") ||
+        Object.prototype.hasOwnProperty.call(settings, "dark_mode")))
+  ) {
+    // Realtime settings payloads are authoritative snapshots, not proof of a
+    // change to each nested key. Unlike ordinary Redux notifications, an equal
+    // value here must still supersede an optimistic cross-tab cache choice.
+    const account = opts.redux.getStore("account");
+    account.emit(ACCOUNT_APPEARANCE_SNAPSHOT, account.get("account_id"));
+  }
 }
 
 // Create and register account table, which gets automatically
 // synchronized with the server.
 export class AccountTable extends Table {
   private first_set = true;
+  private lastAppearanceSnapshot?: {
+    accountId: string | undefined;
+    settings: Record<string, unknown>;
+  };
 
   constructor(name, redux) {
     super(name, redux);
@@ -132,6 +153,39 @@ export class AccountTable extends Table {
     const changes = table.get_one();
     if (!changes) return;
     const obj = changes.toJS();
+    const settings = obj.other_settings ?? {};
+    const appearanceFields = ["appearance_theme", "dark_mode"];
+    const appearanceSettings = Object.fromEntries(
+      appearanceFields
+        .filter((key) => Object.prototype.hasOwnProperty.call(settings, key))
+        .map((key) => [key, settings[key]]),
+    );
+    // This table is snapshot-only; realtime patches update Redux separately.
+    // A local edit emits the whole old row. Forward only changed appearance
+    // fields so an unrelated edit cannot replay them over a newer preference.
+    // Compare raw fields independently: legacy -> explicit Light is still a
+    // persisted-key change, even though the effective appearance is unchanged.
+    const previous = this.lastAppearanceSnapshot;
+    if (
+      !this.first_set &&
+      previous != null &&
+      previous.accountId === obj.account_id &&
+      obj.other_settings != null
+    ) {
+      obj.other_settings = { ...settings };
+      for (const key of appearanceFields) {
+        if (
+          Object.prototype.hasOwnProperty.call(previous.settings, key) &&
+          previous.settings[key] === settings[key]
+        ) {
+          delete obj.other_settings[key];
+        }
+      }
+    }
+    this.lastAppearanceSnapshot = {
+      accountId: obj.account_id,
+      settings: appearanceSettings,
+    };
     applyAccountPatch({
       redux: this.redux,
       patch: obj,
@@ -251,6 +305,7 @@ function handleRealtimeFeedChange(
   if (
     event == null ||
     event.type !== "account.upsert" ||
+    event.account_id !== getAccountId() ||
     realtimeRedux == null
   ) {
     return;
@@ -258,6 +313,7 @@ function handleRealtimeFeedChange(
   applyAccountPatch({
     redux: realtimeRedux,
     patch: event.account as AccountFeedAccountRow,
+    appearance_snapshot: true,
   });
 }
 
