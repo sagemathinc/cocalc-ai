@@ -11,6 +11,33 @@ jest.mock("../master-status", () => ({
 }));
 
 describe("wireHostsApi", () => {
+  it("forwards identity issuance and queued-delivery authorization as the host, not as an account", async () => {
+    const { hubApi } = await import("@cocalc/lite/hub/api");
+    const { wireHostsApi } = await import("./hosts");
+    wireHostsApi();
+    const opts = {
+      account_id: "account",
+      project_id: "project",
+      path: "a.chat",
+      thread_id: "thread",
+      run_id: "run",
+    };
+    await hubApi.agent.issueIdentity(opts);
+    expect(callHubMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "agent.issueIdentity",
+        args: [opts],
+        host_id: process.env.PROJECT_HOST_ID,
+      }),
+    );
+    await hubApi.agent.authorizeDelivery({ ...opts, message_id: "message" });
+    expect(callHubMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "agent.authorizeDelivery",
+        host_id: process.env.PROJECT_HOST_ID,
+      }),
+    );
+  });
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();

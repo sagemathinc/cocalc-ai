@@ -1,4 +1,7 @@
 import { Command } from "commander";
+import { randomUUID } from "node:crypto";
+import { sendIdentityMessage } from "../../core/agent-message";
+import { registerChatAgentCommands } from "./chat-agents";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -42,6 +45,7 @@ export function registerProjectChatCommands(
   } = deps;
 
   const chat = project.command("chat").description("project chat operations");
+  registerChatAgentCommands(chat, deps);
 
   const thread = chat.command("thread").description("project chat threads");
 
@@ -54,12 +58,20 @@ export function registerProjectChatCommands(
       "[message...]",
       "message text (use --stdin for multiline text or JSON)",
     )
-    .requiredOption("--path <path>", "chat document path inside the project")
-    .requiredOption(
+    .option("--path <path>", "chat document path inside the project")
+    .option(
       "--thread-id <id>",
       "thread id from 'project chat thread list' or Codex settings",
     )
     .option("-w, --project <project>", "project id or name")
+    .option(
+      "--to-agent <id>",
+      "registered target agent; requires a runtime identity credential",
+    )
+    .option(
+      "--request-id <uuid>",
+      "stable idempotency key for identity sends and receipt lookup",
+    )
     .option("--stdin", "read the message from standard input")
     .option(
       "--guidance",
@@ -74,6 +86,8 @@ export function registerProjectChatCommands(
           project?: string;
           stdin?: boolean;
           guidance?: boolean;
+          toAgent?: string;
+          requestId?: string;
         },
         command: Command,
       ) => {
@@ -81,6 +95,40 @@ export function registerProjectChatCommands(
           throw new Error("use either message arguments or --stdin, not both");
         const prompt = opts.stdin ? await readAllStdin() : message.join(" ");
         if (!prompt.trim()) throw new Error("message must not be empty");
+        if (opts.toAgent || process.env.COCALC_AGENT_IDENTITY_FILE) {
+          if (opts.toAgent && (opts.project || opts.path || opts.threadId))
+            throw new Error("use --to-agent or project/path/thread, not both");
+          const globals = deps.globalsFrom(command);
+          const request_id = opts.requestId || randomUUID();
+          try {
+            const result = await sendIdentityMessage(
+              {
+                action: "send",
+                request_id,
+                body: prompt,
+                guidance: opts.guidance,
+                ...(opts.toAgent
+                  ? { target_agent_id: opts.toAgent }
+                  : {
+                      target: {
+                        project_id: opts.project || "",
+                        path: normalizePath(opts.path),
+                        thread_id: normalizeThreadId(opts.threadId),
+                      },
+                    }),
+              },
+              globals.api,
+            );
+            deps.emitSuccess({ globals }, "project chat send", result);
+          } catch (error) {
+            throw new Error(
+              `Agent send request ${request_id} was not confirmed. Retry only with this same --request-id. ${error instanceof Error ? error.message : error}`,
+            );
+          }
+          return;
+        }
+        if (opts.requestId)
+          throw new Error("--request-id requires an agent identity credential");
         await withContext(command, "project chat send", async (ctx) => {
           return await projectChatSendData({
             ctx,

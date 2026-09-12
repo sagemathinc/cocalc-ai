@@ -23,6 +23,36 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
+  "agent.registerIdentity": {
+    decision: "fresh-auth-required",
+    reason:
+      "binds an agent identity and execution account to an existing thread",
+  },
+  "agent.grantMessaging": {
+    decision: "fresh-auth-required",
+    reason:
+      "authorizes send-only access and optional guidance to a specific agent",
+  },
+  "agent.revokeMessaging": {
+    decision: "fresh-auth-required",
+    reason: "revokes a directional agent messaging grant",
+  },
+  "agent.disableIdentity": {
+    decision: "fresh-auth-required",
+    reason: "disables a registered identity and all its credentials",
+  },
+  "agent.issueIdentity": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
+  "agent.endIdentityRun": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
+  "agent.authorizeDelivery": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
   "adminCrm.addActivity": {
     decision: "fresh-auth-required",
     reason: "appends an immutable internal customer activity",

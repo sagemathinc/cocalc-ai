@@ -10,6 +10,11 @@ import {
   getRememberMeHashFromCookieValue,
 } from "@cocalc/server/auth/remember-me";
 import LRU from "lru-cache";
+import {
+  AGENT_IDENTITY_TOKEN_PREFIX,
+  allowsAgentSubject,
+} from "@cocalc/conat/agents/protocol";
+import { agentStore } from "@cocalc/server/agents/store";
 import { conatPassword } from "@cocalc/backend/data";
 import {
   ACCOUNT_ID_COOKIE_NAME,
@@ -113,6 +118,8 @@ function assertHubInteractiveEgressAllowed(
 }
 
 type CoCalcUserWithAgent = CoCalcUser & {
+  auth_agent_id?: string;
+  auth_agent_run_id?: string;
   auth_actor?: "account" | "agent";
   auth_scopes?: string[];
   auth_project_id?: string;
@@ -248,6 +255,23 @@ export async function getUser(
 ): Promise<CoCalcUser> {
   const bearerToken = getBearerToken(socket);
   if (bearerToken) {
+    if (bearerToken.startsWith(AGENT_IDENTITY_TOKEN_PREFIX)) {
+      const run = await agentStore().authenticate(bearerToken);
+      await assertAccountSecurityStateAllowsToken({
+        account_id: run.account_id,
+        issued_at_s: run.issued_at.getTime() / 1000,
+      });
+      return {
+        account_id: run.account_id,
+        auth_actor: "agent",
+        auth_agent_id: run.agent_id,
+        auth_agent_run_id: run.run_id,
+        auth_token_fingerprint: run.token_hash,
+        auth_iat_s: run.issued_at.getTime() / 1000,
+        auth_exp_s: run.expires_at.getTime() / 1000,
+        auth_scopes: [],
+      };
+    }
     const hostToken = await verifyProjectHostToken(bearerToken, {
       purpose: "master-conat",
     });
@@ -477,6 +501,38 @@ export async function isAllowed({
     return true;
   }
   const agentUser = user as CoCalcUserWithAgent;
+  if (agentUser.auth_agent_id) {
+    try {
+      if (
+        !agentUser.auth_agent_run_id ||
+        !agentUser.auth_token_fingerprint ||
+        !allowsAgentSubject(
+          agentUser.auth_agent_id,
+          agentUser.auth_agent_run_id,
+          subject,
+          type,
+        )
+      )
+        return false;
+      const run = await agentStore().activeRun(
+        agentUser.auth_agent_id,
+        agentUser.auth_agent_run_id,
+        agentUser.auth_token_fingerprint,
+      );
+      return await hasProjectCollaboratorAccessAllowRemote({
+        account_id: run.account_id,
+        project_id: run.project_id,
+      });
+    } catch {
+      return false;
+    }
+  }
+  // Only an identity credential may publish to the identity-sealed service.
+  if (
+    subject.startsWith("agent-messaging.") ||
+    subject.startsWith("_INBOX.agent-identity.")
+  )
+    return false;
   if (agentUser.auth_actor === "agent") {
     const agentApiSubject = [
       "hub",

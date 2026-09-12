@@ -7,6 +7,19 @@ pnpm test `pwd`/auth.test.ts
 import { getUser, isAllowed } from "./auth";
 import { inboxPrefix } from "@cocalc/conat/names";
 import { recordApiKeyAuditEventSoon } from "@cocalc/server/api/api-key-audit";
+import {
+  agentMessagingSubject,
+  agentInboxPrefix,
+} from "@cocalc/conat/agents/protocol";
+
+const identityAuthenticate = jest.fn();
+const identityActiveRun = jest.fn();
+jest.mock("@cocalc/server/agents/store", () => ({
+  agentStore: () => ({
+    authenticate: identityAuthenticate,
+    activeRun: identityActiveRun,
+  }),
+}));
 
 const verifyProjectHostTokenMock = jest.fn();
 const verifyProjectHostAuthTokenMock = jest.fn();
@@ -123,6 +136,8 @@ const account_id = "00000000-0000-4000-8000-000000000010";
 const account_id2 = "00000000-0000-4000-8000-000000000011";
 
 beforeEach(() => {
+  identityAuthenticate.mockReset();
+  identityActiveRun.mockReset();
   verifyProjectHostTokenMock.mockReset().mockResolvedValue(undefined);
   verifyProjectHostAuthTokenMock.mockReset();
   ensureAccountSecurityStateReadyMock.mockReset().mockResolvedValue(undefined);
@@ -140,6 +155,77 @@ function projectHostBearerToken(nonce?: string) {
     nonce,
   })}.signature`;
 }
+
+describe("registered agent identity transport", () => {
+  const agent_id = project_id2,
+    run_id = project_id3;
+  const makeRun = () => ({
+    agent_id,
+    run_id,
+    account_id,
+    project_id,
+    token_hash: "hashed",
+    issued_at: new Date(),
+    expires_at: new Date(Date.now() + 60000),
+  });
+  it("derives identity from the verified token, not the handshake claimed id", async () => {
+    identityAuthenticate.mockResolvedValue(makeRun());
+    const user = await getUser({
+      handshake: {
+        auth: { bearer: "cocalc_agent_identity_test", agent_id: host_id },
+        headers: {},
+      },
+    });
+    expect(user).toMatchObject({
+      auth_agent_id: agent_id,
+      auth_agent_run_id: run_id,
+      auth_scopes: [],
+    });
+    expect(verifyProjectHostTokenMock).not.toHaveBeenCalled();
+  });
+  it("checks live credential and membership on every request and never grants project/account APIs", async () => {
+    const user = {
+      account_id,
+      auth_actor: "agent" as const,
+      auth_agent_id: agent_id,
+      auth_agent_run_id: run_id,
+      auth_token_fingerprint: "hashed",
+    };
+    identityActiveRun.mockResolvedValue(makeRun());
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
+    const subject = agentMessagingSubject(agent_id, run_id);
+    expect(await isAllowed({ user, subject, type: "pub" })).toBe(true);
+    expect(
+      await isAllowed({
+        user,
+        subject: `${agentInboxPrefix(agent_id, run_id)}.response`,
+        type: "sub",
+      }),
+    ).toBe(true);
+    for (const denied of [
+      `project.${project_id}.api`,
+      `hub.account.${account_id}.api`,
+      "public.>",
+      `_INBOX.account-${account_id}.>`,
+      agentMessagingSubject(agent_id, host_id),
+    ]) {
+      for (const type of ["pub", "sub"] as const)
+        expect(await isAllowed({ user, subject: denied, type })).toBe(false);
+    }
+    identityActiveRun.mockRejectedValue(new Error("revoked"));
+    expect(await isAllowed({ user, subject, type: "pub" })).toBe(false);
+    identityActiveRun.mockResolvedValue(makeRun());
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      false,
+    );
+    expect(await isAllowed({ user, subject, type: "pub" })).toBe(false);
+    expect(
+      await isAllowed({ user: { account_id }, subject, type: "pub" }),
+    ).toBe(false);
+  });
+});
 
 describe("test isAllowed for non-authenticated", () => {
   it("non-authenticated users can't do anything we try", async () => {
