@@ -30,6 +30,7 @@ const allocationsGetByNameMock = jest.fn();
 const allocationsDeleteMock = jest.fn();
 const projectsGetMock = jest.fn();
 const resourceAdviceListMock = jest.fn();
+const clientDisposeMock = jest.fn();
 
 jest.mock("../nebius/client", () => {
   class NebiusClient {
@@ -58,6 +59,10 @@ jest.mock("../nebius/client", () => {
     readonly resourceAdvice = { list: resourceAdviceListMock };
 
     constructor(private creds: any) {}
+
+    async [Symbol.asyncDispose]() {
+      await clientDisposeMock();
+    }
 
     parentId() {
       return this.creds.parentId;
@@ -99,8 +104,85 @@ function buildSpec(overrides: Partial<HostSpec> = {}): HostSpec {
   };
 }
 
+describe("Nebius client lifecycle", () => {
+  const creds = {
+    parentId: "project-1",
+    serviceAccountId: "svc-1",
+    publicKeyId: "pub-1",
+    privateKeyPem: "key",
+    sshPublicKey: "unused",
+  };
+  const runtime = { provider: "nebius" as const, instance_id: "instance-1" };
+
+  beforeEach(() => {
+    clientDisposeMock.mockReset();
+    instancesGetMock.mockReset();
+    allocationsDeleteMock.mockReset();
+  });
+
+  it("closes every client used by repeated reconciliation polling", async () => {
+    instancesGetMock.mockResolvedValue({
+      status: { state: { name: "RUNNING" } },
+    });
+    const provider = new NebiusProvider();
+    for (let i = 0; i < 20; i++) {
+      await provider.getInstance(runtime, creds);
+      await provider.getStatus(runtime, creds);
+    }
+    expect(clientDisposeMock).toHaveBeenCalledTimes(40);
+  });
+
+  it("closes on both missing instances and failed requests", async () => {
+    const provider = new NebiusProvider();
+    instancesGetMock.mockRejectedValueOnce(new Error("NOT_FOUND"));
+    await expect(provider.getInstance(runtime, creds)).resolves.toBeUndefined();
+    instancesGetMock.mockRejectedValueOnce(new Error("provider unavailable"));
+    await expect(provider.getInstance(runtime, creds)).rejects.toThrow(
+      "provider unavailable",
+    );
+    expect(clientDisposeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("closes on an early return without a request", async () => {
+    await new NebiusProvider().listInstances({ ...creds, parentId: "" });
+    expect(clientDisposeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])(
+    "waits for operation completion before disposal (failure=%s)",
+    async (fail) => {
+      let finish!: () => void;
+      let enteredWait!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        enteredWait = resolve;
+      });
+      const waiting = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      allocationsDeleteMock.mockResolvedValue({
+        wait: async () => {
+          enteredWait();
+          await waiting;
+          if (fail) throw new Error("operation failed");
+        },
+      });
+      const operation = new NebiusProvider().releasePublicAddress(
+        "allocation-1",
+        creds,
+      );
+      await entered;
+      expect(clientDisposeMock).not.toHaveBeenCalled();
+      finish();
+      if (fail) await expect(operation).rejects.toThrow("operation failed");
+      else await operation;
+      expect(clientDisposeMock).toHaveBeenCalledTimes(1);
+    },
+  );
+});
+
 describe("NebiusProvider", () => {
   beforeEach(() => {
+    clientDisposeMock.mockReset();
     jest.useRealTimers();
     disksCreateMock.mockReset();
     disksListMock.mockReset();

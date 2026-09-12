@@ -4,6 +4,7 @@ const platformsListMock = jest.fn();
 const imagesListMock = jest.fn();
 const imagesListPublicMock = jest.fn();
 const mockFetchNebiusPricingFromDocs = jest.fn();
+const clientDisposeMock = jest.fn();
 
 jest.mock("../nebius/client", () => {
   class NebiusClient {
@@ -14,6 +15,10 @@ jest.mock("../nebius/client", () => {
     };
 
     constructor(private creds: any) {}
+
+    async [Symbol.asyncDispose]() {
+      await clientDisposeMock();
+    }
 
     parentId() {
       return this.creds.parentId;
@@ -47,10 +52,28 @@ const image = (id: string, recommendedPlatforms: string[]) => ({
 
 describe("Nebius catalog", () => {
   beforeEach(() => {
+    clientDisposeMock.mockReset();
     platformsListMock.mockReset();
     imagesListMock.mockReset();
     imagesListPublicMock.mockReset();
     mockFetchNebiusPricingFromDocs.mockReset();
+  });
+
+  afterEach(() => {
+    expect(clientDisposeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the client when fetching the catalog fails", async () => {
+    platformsListMock.mockRejectedValue(new Error("catalog unavailable"));
+    imagesListMock.mockResolvedValue({ items: [], nextPageToken: "" });
+    await expect(
+      fetchNebiusCatalog({
+        parentId: "project-1",
+        serviceAccountId: "svc-1",
+        publicKeyId: "pub-1",
+        privateKeyPem: "key",
+      }),
+    ).rejects.toThrow("catalog unavailable");
   });
 
   it("adds documented B200 and RTX GPU presets when prices and images exist", async () => {

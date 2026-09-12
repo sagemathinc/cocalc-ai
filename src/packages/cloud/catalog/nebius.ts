@@ -657,7 +657,7 @@ function addDocumentedNebiusGpuPlatforms(opts: {
 export async function fetchNebiusCatalog(
   opts: NebiusCatalogOpts,
 ): Promise<NebiusCatalog> {
-  const client = new NebiusClient(opts);
+  await using client = new NebiusClient(opts);
   const regions = (opts.regions ?? []).filter(Boolean);
   const [platforms, images] = await Promise.all([
     listAllPlatforms(client),

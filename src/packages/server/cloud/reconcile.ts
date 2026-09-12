@@ -562,7 +562,7 @@ async function dataDiskStatus(
     const diskId = runtimeMeta.diskIds?.data;
     if (!diskId) return "unknown";
     try {
-      const client = new NebiusClient(creds);
+      await using client = new NebiusClient(creds);
       const parentId = creds.parentId;
       if (!parentId) return "unknown";
       let pageToken = "";
